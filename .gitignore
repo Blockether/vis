@@ -1,0 +1,24 @@
+# Build / cache
+.cpcache/
+.clj-kondo/
+.lsp/
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.calva/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific docs (not tracked)
+GOALS.md
+HERMES_ARCHITECTURE.md
+LANTERNA_3X_API_REFERENCE.md
+PLAN.md
+
+# Sessions / runtime data
+.omc/

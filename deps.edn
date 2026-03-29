@@ -1,0 +1,54 @@
+{:paths ["src" "resources"]
+
+ :deps
+ {org.clojure/clojure              {:mvn/version "1.12.4"}
+  hiccup/hiccup                    {:mvn/version "2.0.0"}
+  ;; LLM structured output (local clone for context management improvements)
+  com.blockether/svar              {:local/root "../svar"}
+  ;; Browser automation (Playwright)
+  com.blockether/spel              {:mvn/version "0.7.7"}
+  ;; Ring — Jetty adapter
+  ring/ring-jetty-adapter          {:mvn/version "1.15.3"}
+  ;; Reitit — data-driven router
+  metosin/reitit-ring              {:mvn/version "0.7.2"}
+  ;; nREPL — embedded in dev + prod
+  nrepl/nrepl                      {:mvn/version "1.6.0"}
+  ;; Structural code editing — clojure-mcp (form editing core only)
+  io.github.bhauman/clojure-mcp   {:git/tag "v0.3.1" :git/sha "81005ce"
+                                   :exclusions [;; LLM / MCP / agent ecosystem — not needed
+                                                io.modelcontextprotocol.sdk/mcp
+                                                dev.langchain4j/langchain4j
+                                                dev.langchain4j/langchain4j-open-ai
+                                                dev.langchain4j/langchain4j-anthropic
+                                                dev.langchain4j/langchain4j-google-ai-gemini
+                                                org.apache.tika/tika-core
+                                                pogonos/pogonos
+                                                org.clojure/tools.cli
+                                                org.clj-commons/pretty
+                                                ;; Logging conflicts with Telemere
+                                                com.taoensso/timbre
+                                                org.slf4j/slf4j-nop]}
+  ;; Structured logging
+  com.taoensso/telemere            {:mvn/version "1.2.1"}
+  ;; SLF4J -> Telemere bridge (Jetty, Datalevin use SLF4J)
+  com.taoensso/telemere-slf4j      {:mvn/version "1.2.1"}
+  ;; Fast EDN parsing
+  io.github.tonsky/fast-edn        {:mvn/version "1.1.3"}
+  ;; i18n — pluralization and translations
+  tongue/tongue                     {:mvn/version "0.4.4"}
+  ;; Dependency injection
+  org.clojars.darkleaf/di           {:mvn/version "3.6.0"}
+  ;; Terminal UI
+  com.googlecode.lanterna/lanterna  {:mvn/version "3.1.5"}
+  ;; JSON serialization (CLI output, agent results)
+  com.cnuernber/charred             {:mvn/version "1.038"}}
+
+ :aliases
+ {:dev {:extra-paths ["dev"]
+        :extra-deps  {cider/cider-nrepl            {:mvn/version "0.58.0"}
+                      io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
+                      io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}}}
+  :run {:jvm-opts  ["--enable-native-access=ALL-UNNAMED"]
+        :main-opts ["-m" "com.blockether.vis.cli"]}
+  :web {:jvm-opts  ["--enable-native-access=ALL-UNNAMED"]
+        :main-opts ["-m" "com.blockether.vis.web.server"]}}}
