@@ -42,6 +42,9 @@ body{font-family:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;background
 .ai-bubble{background:var(--ai-bg);border-bottom-left-radius:4px;border:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,0.08);position:relative}
 .iteration{margin-bottom:10px;padding:10px 12px;background:rgba(0,0,0,0.015);border-radius:10px;border-left:3px solid var(--border)}
 .iteration-final{border-left-color:#4a8;background:rgba(74,136,74,0.04)}
+.iteration-error{border-left-color:#c44;background:rgba(204,68,68,0.04)}
+.iter-error-tag{color:#c44;font-weight:800}
+.iter-error{font-size:12px;color:#c44;padding:6px 10px;background:rgba(204,68,68,0.06);border-radius:6px;margin-bottom:6px}
 .iter-header{font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;opacity:.8}
 .final{color:#4a8;font-weight:800}
 .thinking{font-size:13px;color:var(--dim);font-style:italic;margin-bottom:8px;padding:8px 10px;background:rgba(0,0,0,0.025);border-radius:8px;white-space:pre-wrap;line-height:1.5}
