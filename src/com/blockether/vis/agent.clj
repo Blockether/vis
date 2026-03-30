@@ -64,6 +64,7 @@ WORKSPACE RULES:
 - :context PERSISTS across queries in this session — it IS your long-term memory.
 - USE VARS: (def data (some-call ...)) — vars auto-persist across queries in the session.
   Context only shows [stored in var: data] for def'd values. Use the var name to access full data.
+  IMPORTANT: vars are VALUES not functions. Use `data` to reference, NOT `(data)`. Maps are not callable with 0 args.
 - Use (ctx-add! text) for extra notes. Use (ctx-remove! idx) or (ctx-replace! from to summary) to manage.
 - When context exceeds 12 entries, a [SYSTEM_NUDGE] will ask you to clean up. ALWAYS obey it.
 - <recent-messages> shows the last 3 user messages as safety net.
