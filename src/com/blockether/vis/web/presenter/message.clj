@@ -34,9 +34,13 @@
           (string? clean) clean
           :else [:pre.exec-data (pr-str clean)])]])))
 
-(defn- render-iteration [{:keys [iteration thinking executions final?]}]
-  [:div.iteration {:class (when final? "iteration-final")}
-   [:div.iter-header (str "Iteration " (inc iteration)) (when final? [:span.final " FINAL"])]
+(defn- render-iteration [{:keys [iteration thinking executions final? error]}]
+  [:div.iteration {:class (cond final? "iteration-final" error "iteration-error")}
+   [:div.iter-header (str "Iteration " (inc iteration))
+    (when final? [:span.final " FINAL"])
+    (when error [:span.iter-error-tag " ERROR"])]
+   (when error
+     [:div.iter-error (str (:message error) (when (:type error) (str " [" (:type error) "]")))])
    (when (and thinking (not (str/blank? thinking)))
      [:div.thinking thinking])
    (when (seq executions) (keep render-exec executions))])
