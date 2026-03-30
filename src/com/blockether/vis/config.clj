@@ -36,8 +36,9 @@
        :label "Blockether"
        :base-url be-url
        :api-key be-key
-       :default-models ["glm-5.1" "claude-opus-4-6" "minimax-m2.5" "gpt-5-mini"
-                        "claude-sonnet-4-6" "gemini-2.5-pro"]})))
+       :default-models ["gpt-4o" "claude-sonnet-4-6" "gpt-5-mini"
+                        "minimax-m2.5" "gemini-2.5-pro"
+                        "claude-opus-4-6"]})))
 
 (defn provider-presets
   "All known provider presets. Includes Blockether when BLOCKETHER_* env vars are set."
