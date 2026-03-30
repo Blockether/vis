@@ -174,6 +174,170 @@ function copyModalText() {
   });
 }
 
+// ── Message selection mode (Apple Messages style) ───────────────────────
+
+var selectMode = false;
+var selectedMsgs = new Set();
+
+function toggleSelectMode() {
+  if (selectMode) exitSelectMode();
+  else enterSelectMode();
+}
+
+function enterSelectMode() {
+  var msgs = document.querySelectorAll('.msg');
+  if (!msgs.length) { showToast('No messages'); return; }
+  selectMode = true;
+  selectedMsgs.clear();
+  document.body.classList.add('select-mode');
+  // Add floating action bar
+  var bar = document.createElement('div');
+  bar.id = 'select-bar';
+  bar.className = 'select-bar';
+  bar.innerHTML = '<button class="select-cancel" onclick="exitSelectMode()">Cancel</button>' +
+    '<span id="select-count">0 selected</span>' +
+    '<button class="select-copy" onclick="copySelected()">Copy</button>';
+  document.body.appendChild(bar);
+  // Make messages tappable
+  document.querySelectorAll('.msg').forEach(function(msg, i) {
+    msg.dataset.selectIdx = i;
+    msg.addEventListener('click', onMsgSelect);
+  });
+}
+
+function exitSelectMode() {
+  selectMode = false;
+  selectedMsgs.clear();
+  document.body.classList.remove('select-mode');
+  var bar = document.getElementById('select-bar');
+  if (bar) bar.remove();
+  document.querySelectorAll('.msg').forEach(function(msg) {
+    msg.classList.remove('msg-selected');
+    msg.removeEventListener('click', onMsgSelect);
+  });
+}
+
+function onMsgSelect(e) {
+  if (!selectMode) return;
+  e.preventDefault();
+  var msg = e.currentTarget;
+  var idx = msg.dataset.selectIdx;
+  if (selectedMsgs.has(idx)) {
+    selectedMsgs.delete(idx);
+    msg.classList.remove('msg-selected');
+  } else {
+    selectedMsgs.add(idx);
+    msg.classList.add('msg-selected');
+  }
+  var countEl = document.getElementById('select-count');
+  if (countEl) countEl.textContent = selectedMsgs.size + ' selected';
+}
+
+function copySelected() {
+  var texts = [];
+  document.querySelectorAll('.msg').forEach(function(msg) {
+    if (selectedMsgs.has(msg.dataset.selectIdx)) {
+      var bubble = msg.querySelector('.bubble');
+      if (bubble) {
+        var isUser = msg.classList.contains('user-msg');
+        var prefix = isUser ? 'User: ' : 'Assistant: ';
+        // Get clean text
+        var clone = bubble.cloneNode(true);
+        var meta = clone.querySelector('.meta');
+        if (meta) meta.remove();
+        clone.querySelectorAll('.iter-header,.thinking').forEach(function(el) { el.remove(); });
+        var answer = clone.querySelector('.answer');
+        var text = answer ? answer.textContent.trim() : clone.textContent.trim();
+        texts.push(prefix + text);
+      }
+    }
+  });
+  if (texts.length > 0) {
+    copyToClipboard(texts.join('\n\n')).then(function(ok) {
+      if (ok !== false) showToast('Copied ' + texts.length + ' messages');
+    });
+  }
+  exitSelectMode();
+}
+
+// ── Context viewer ──────────────────────────────────────────────────────
+
+function showContext() {
+  var sid = chat.dataset.session;
+  if (!sid) return;
+  var sidebar = document.getElementById('context-sidebar');
+  if (!sidebar) return;
+  sidebar.classList.add('open');
+  var bg = document.getElementById('sidebar-bg');
+  if (!bg) {
+    bg = document.createElement('div');
+    bg.id = 'sidebar-bg';
+    bg.className = 'sidebar-bg open';
+    bg.onclick = closeContext;
+    document.body.appendChild(bg);
+  } else {
+    bg.classList.add('open');
+  }
+  fetch('/s/' + sid + '/context')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var html = '';
+      // Context section
+      if (data.context && data.context.length > 0) {
+        html += '<div class="ctx-section">';
+        html += '<div class="ctx-section-header"><i data-lucide="layers"></i> Context <span class="ctx-count">' + data.context.length + '</span></div>';
+        data.context.forEach(function(item, i) {
+          html += '<div class="ctx-card"><span class="ctx-idx">' + i + '</span>';
+          html += '<span class="ctx-text">' + escHtml(String(item)) + '</span></div>';
+        });
+        html += '</div>';
+      }
+      // Learnings section
+      if (data.learnings && data.learnings.length > 0) {
+        html += '<div class="ctx-section">';
+        html += '<div class="ctx-section-header"><i data-lucide="lightbulb"></i> Learnings <span class="ctx-count">' + data.learnings.length + '</span></div>';
+        data.learnings.forEach(function(l, i) {
+          var p = l.priority || 'medium';
+          html += '<div class="ctx-card ctx-learning"><span class="ctx-priority ctx-p-' + escHtml(p) + '">' + escHtml(p) + '</span>';
+          html += '<span class="ctx-text">' + escHtml(l.text) + '</span></div>';
+        });
+        html += '</div>';
+      }
+      // Variables section
+      if (data.variables && data.variables.length > 0) {
+        html += '<div class="ctx-section">';
+        html += '<div class="ctx-section-header"><i data-lucide="variable"></i> Variables <span class="ctx-count">' + data.variables.length + '</span></div>';
+        data.variables.forEach(function(v) {
+          html += '<div class="ctx-card ctx-var">';
+          html += '<span class="ctx-var-name">' + escHtml(v.name) + '</span>';
+          html += '<span class="ctx-var-value">' + escHtml(v.value.substring(0, 200)) + (v.value.length > 200 ? '...' : '') + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+      if (!html) html = '<div class="ctx-empty">Empty. The agent will populate this as it works.</div>';
+      if (typeof lucide !== 'undefined') setTimeout(function() { lucide.createIcons(); }, 50);
+      document.getElementById('sidebar-content').innerHTML = html;
+    })
+    .catch(function() { showToast('Failed to load context'); });
+}
+
+function closeContext() {
+  var sidebar = document.getElementById('context-sidebar');
+  if (sidebar) sidebar.classList.remove('open');
+  var bg = document.getElementById('sidebar-bg');
+  if (bg) bg.classList.remove('open');
+}
+
+function copyCtxItem(btn) {
+  var text = btn.parentElement.querySelector('.ctx-text');
+  if (text) {
+    copyToClipboard(text.textContent).then(function(ok) {
+      if (ok !== false) showToast('Copied');
+    });
+  }
+}
+
 // ── Infinite scroll (load older messages) ───────────────────────────────
 
 var loadingMore = false;
@@ -209,12 +373,16 @@ function initInfiniteScroll() {
 
 // ── DOM helpers for chat ────────────────────────────────────────────────
 
+function getChatInner() {
+  return chat.querySelector('.chat-inner') || chat;
+}
+
 function appendUserBubble(text) {
   var d = document.createElement('div');
   d.className = 'msg user-msg';
   d.innerHTML = '<div class="bubble user-bubble">' +
     text.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
-  chat.appendChild(d);
+  getChatInner().appendChild(d);
 }
 
 function appendThinkingBubble() {
@@ -224,7 +392,7 @@ function appendThinkingBubble() {
   d.innerHTML = '<div class="bubble ai-bubble" style="color:var(--dim)">' +
     '<div id="live-trace"></div>' +
     '<span class="thinking-dots">Thinking<span>.</span><span>.</span><span>.</span></span></div>';
-  chat.appendChild(d);
+  getChatInner().appendChild(d);
 }
 
 function appendErrorBubble(msg) {
@@ -235,7 +403,7 @@ function appendErrorBubble(msg) {
   d.innerHTML = '<div class="bubble ai-bubble" style="border-color:#c44">' +
     '<div style="color:#c44;font-weight:600;font-size:13px">' +
     msg.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div></div>';
-  chat.appendChild(d);
+  getChatInner().appendChild(d);
   scrollToBottom();
 }
 
@@ -243,7 +411,8 @@ function setButtonLoading(loading) {
   if (loading) {
     btn.disabled = true;
     btn.innerHTML = '<div class="spinner"></div>';
-    input.disabled = true;
+    input.disabled = false;
+    input.focus();
   } else {
     btn.disabled = true; // re-enabled by input listener
     btn.innerHTML = '<i data-lucide="arrow-up" style="width:20px;height:20px"></i>';
@@ -261,6 +430,10 @@ function replaceChat(html) {
       chat.style.opacity = '0';
       chat.innerHTML = nc.innerHTML;
       chat.dataset.total = nc.dataset.total;
+      // Update session title from server response
+      var newTitle = doc.querySelector('.topbar-title');
+      var curTitle = document.querySelector('.topbar-title');
+      if (newTitle && curTitle) curTitle.textContent = newTitle.textContent;
       scrollToBottom(true);
       renderMarkdown();
       initIcons();
@@ -303,9 +476,7 @@ function renderLiveTrace(iterations) {
           html += '<div class="exec"><div class="exec-code">' + escHtml(ex.code || '') + '</div>';
           html += '<div class="exec-error">' + escHtml(ex.error) + '</div></div>';
         } else if (ex.code) {
-          var badge = extractBadge(ex.code);
           html += '<div class="exec">';
-          if (badge) html += '<span class="exec-badge">' + escHtml(badge) + '</span>';
           html += '<div class="exec-code">' + escHtml(ex.code) + '</div>';
           if (ex.result) html += '<div class="exec-result">' + escHtml(ex.result) + '</div>';
           html += '</div>';
@@ -346,11 +517,13 @@ function pollForResponse(action, expectedCount) {
             .then(function(html) {
               replaceChat(html);
               setButtonLoading(false);
+              onQueryComplete();
             })
             .catch(function(e) {
               appendErrorBubble('Connection error. Tap to reload.');
               chat.lastChild.onclick = function() { document.location.reload(); };
               setButtonLoading(false);
+              onQueryComplete();
             });
         } else {
           // Render live trace iterations
@@ -362,10 +535,13 @@ function pollForResponse(action, expectedCount) {
               lastIterCount = data.iterations.length;
             }
           }
-          // Update status text
+          // Update status text — hide when final
           var dots = document.querySelector('.thinking-dots');
           if (dots) {
-            if (data.status) {
+            var hasFinal = data.iterations && data.iterations.some(function(it) { return it["final?"]; });
+            if (hasFinal) {
+              dots.style.display = 'none';
+            } else if (data.status) {
               dots.textContent = data.status;
             } else if (data.iterations && data.iterations.length > 0) {
               dots.textContent = 'Working…';
@@ -379,9 +555,85 @@ function pollForResponse(action, expectedCount) {
           appendErrorBubble('Response timed out. Tap to reload.');
           chat.lastChild.onclick = function() { document.location.reload(); };
           setButtonLoading(false);
+          onQueryComplete();
         }
       });
   }, 2000);
+}
+
+// ── Message queue (localStorage) ────────────────────────────────────────
+
+var MSG_QUEUE_KEY = 'vis_msg_queue_' + (chat ? chat.dataset.session : '');
+var queryInFlight = false;
+
+function getQueue() {
+  try { return JSON.parse(localStorage.getItem(MSG_QUEUE_KEY)) || []; }
+  catch(e) { return []; }
+}
+
+function saveQueue(q) {
+  localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(q));
+}
+
+function clearQueue() {
+  localStorage.removeItem(MSG_QUEUE_KEY);
+}
+
+function sendMessage(q) {
+  queryInFlight = true;
+  appendUserBubble(q);
+  appendThinkingBubble();
+  scrollToBottom();
+  setButtonLoading(true);
+
+  var msgCount = parseInt(chat.dataset.total || '0') + 1;
+  fetch(form.action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'q=' + encodeURIComponent(q)
+  });
+
+  pollForResponse(form.action, msgCount);
+}
+
+var titlePoll = null;
+
+function refreshTitle() {
+  if (titlePoll) clearInterval(titlePoll);
+  var curTitle = document.querySelector('.topbar-title');
+  if (!curTitle) return;
+  var original = curTitle.textContent;
+  var attempts = 0;
+  titlePoll = setInterval(function() {
+    attempts++;
+    if (attempts > 15) { clearInterval(titlePoll); titlePoll = null; return; }
+    fetch(form.action)
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newTitle = doc.querySelector('.topbar-title');
+        if (newTitle && newTitle.textContent !== original) {
+          curTitle.textContent = newTitle.textContent;
+          clearInterval(titlePoll);
+          titlePoll = null;
+        }
+      })
+      .catch(function() {});
+  }, 2000);
+}
+
+function onQueryComplete() {
+  queryInFlight = false;
+  // Poll for title update (name generation is async)
+  refreshTitle();
+  // Check queue for pending messages
+  var queue = getQueue();
+  if (queue.length > 0) {
+    var next = queue.shift();
+    saveQueue(queue);
+    // Small delay to let UI settle
+    setTimeout(function() { sendMessage(next); }, 500);
+  }
 }
 
 // ── Form submission ─────────────────────────────────────────────────────
@@ -397,22 +649,21 @@ function initFormSubmit() {
   form.addEventListener('submit', function(e) {
     e.preventDefault();
     var q = input.value.trim();
-    if (!q || btn.disabled) return;
-
-    appendUserBubble(q);
-    appendThinkingBubble();
-    scrollToBottom();
-    setButtonLoading(true);
+    if (!q) return;
     input.value = '';
+    btn.disabled = true;
 
-    var msgCount = parseInt(chat.dataset.total || '0') + 1;
-    fetch(form.action, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'q=' + encodeURIComponent(q)
-    });
-
-    pollForResponse(form.action, msgCount);
+    if (queryInFlight) {
+      // Queue the message for later
+      var queue = getQueue();
+      queue.push(q);
+      saveQueue(queue);
+      appendUserBubble(q);
+      scrollToBottom();
+      showToast('Queued (' + queue.length + ')');
+    } else {
+      sendMessage(q);
+    }
   });
 }
 
@@ -427,9 +678,13 @@ function checkInFlight() {
         // Query finished while page was reloading
         fetch(form.action)
           .then(function(r) { return r.text(); })
-          .then(function(html) { replaceChat(html); });
+          .then(function(html) {
+            replaceChat(html);
+            onQueryComplete(); // drain queue
+          });
       } else if (data.inflight) {
         // Query still running — show thinking and poll
+        queryInFlight = true;
         appendThinkingBubble();
         if (data.status) {
           var dots = document.querySelector('.thinking-dots');
@@ -438,9 +693,12 @@ function checkInFlight() {
         scrollToBottom();
         setButtonLoading(true);
         pollForResponse(form.action, total);
+      } else {
+        // Nothing in-flight — drain any queued messages from localStorage
+        onQueryComplete();
       }
     })
-    .catch(function() {});
+    .catch(function() { onQueryComplete(); });
 }
 
 // ── Boot ────────────────────────────────────────────────────────────────

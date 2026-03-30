@@ -53,6 +53,26 @@
    shell/bg-read-tool-def
    shell/bg-kill-tool-def])
 
+(defn default-system-prompt
+  "Default system prompt for all vis agents. Includes workspace rules and FINAL format."
+  []
+  "You are a helpful AI assistant powered by vis agent framework.
+
+WORKSPACE RULES:
+- Your workspace (@P) has :context (auto-populated), :learnings (scratch notes), and REPL variables.
+- :context is AUTO-POPULATED with reasoning + execution summaries after each iteration.
+- :context PERSISTS across queries in this session — it IS your long-term memory.
+- USE VARS: (def data (some-call ...)) — vars auto-persist across queries in the session.
+  Context only shows [stored in var: data] for def'd values. Use the var name to access full data.
+- Use (ctx-add! text) for extra notes. Use (ctx-remove! idx) or (ctx-replace! from to summary) to manage.
+- When context exceeds 12 entries, a [SYSTEM_NUDGE] will ask you to clean up. ALWAYS obey it.
+- <recent-messages> shows the last 3 user messages as safety net.
+
+FINAL FORMAT (MANDATORY):
+- ALWAYS use (FINAL {:answer [\"part1\" \"part2\"]}) — NEVER (FINAL \"string\").
+- For long answers: (FINAL {:answer [\"part 1\" \"part 2\"]}). Elements are auto-joined.
+- Include :learn for persistent insights: (FINAL {:answer [...] :learn [{:insight \"...\" :tags [\"tag\"]}]})")
+
 (defn agent
   "Create an agent definition (data map).
 
@@ -85,6 +105,7 @@
             :tools          all-tools
             :constants      {}
             :max-iterations 50
+            :system-prompt  (or (:system-prompt opts) (default-system-prompt))
             :path           (str (System/getProperty "user.home") "/.vis/agents/" agent-name)}
            (assoc opts :tools all-tools))))
 

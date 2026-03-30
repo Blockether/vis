@@ -3,7 +3,6 @@
   (:require [com.blockether.vis.agent :as agent]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.web.routes :as routes]
-            [com.blockether.svar.internal.llm :as llm]
             [com.blockether.svar.internal.rlm :as rlm]
             [com.blockether.svar.internal.rlm.db :as rlm-db]
             [ring.adapter.jetty :as jetty]
@@ -15,32 +14,26 @@
 
 ;;; ── State ───────────────────────────────────���──────────────────────────
 
-(def sessions-dir (str (System/getProperty "user.home") "/.vis/web-sessions"))
+(def sessions-dir (str (System/getProperty "user.home") "/.vis/sessions"))
 
 (defonce sessions (atom {}))
 (defonce live-status (atom {}))
 
-(defonce ^:private router-atom (atom nil))
 
 ;;; ── Router ──��─────────────────────────────��────────────────────────────
 
-(defn get-router []
-  (or @router-atom
-      (let [cfg (config/resolve-config nil)
-            r   (llm/make-router (:providers cfg))]
-        (reset! router-atom r)
-        r)))
+(defn get-router [] (config/get-router))
 
 ;;; ── Session name generation ────────────────────────────────────────────
 
 (defn generate-session-name [first-message]
   (try
-    (let [result (llm/routed-chat-completion
-                  (get-router)
-                  [{:role "system" :content "Generate a short title (max 5 words) for this chat. Reply with ONLY the title, no quotes."}
-                   {:role "user" :content first-message}]
-                  {:prefer [:cost :speed] :capabilities #{:chat}})
-          title  (str/trim (:content result))
+    (let [result (config/ask!
+                  {:messages [{:role "system" :content "Generate a short title (max 5 words) for this chat. Reply with ONLY the title."}
+                              {:role "user" :content first-message}]
+                   :spec {:title {:type :string :description "Short chat title, max 5 words, no quotes or markup"}}
+                   :prefer :speed :capabilities #{:chat}})
+          title  (str/trim (or (:title (:result result)) ""))
           raw    (if (str/blank? title) first-message title)]
       (if (> (count raw) 65)
         (str (subs raw 0 62) "…")
@@ -126,7 +119,7 @@
                (let [t (:text %)]
                  (if (> (count t) 65) (str (subs t 0 62) "…") t)))
             messages)
-      "Chat"))
+      "New Chat"))
 
 (defn load-sessions! []
   (let [dir (io/file sessions-dir)]

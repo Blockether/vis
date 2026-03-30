@@ -106,7 +106,7 @@
         (swap! server/sessions update-in [session-id :messages] conj
                {:role :user :text query :ts (str (Instant/now))})
         ;; Generate session name from first message
-        (when (str/starts-with? (:name (server/get-session session-id) "") "Chat ")
+        (when (= "New Chat" (:name (server/get-session session-id)))
           (async/go
             (let [title (async/<! (async/thread (server/generate-session-name query)))]
               (when (server/get-session session-id)
