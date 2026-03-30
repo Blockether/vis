@@ -41,7 +41,7 @@
 
       ;; GET /new → create session and redirect
       (and (= meth :get) (= uri "/new"))
-      (let [sess (srv-create-session! (str "Chat " (inc (count @(srv)))))]
+      (let [sess (srv-create-session! "New Chat")]
         {:status 302 :headers {"Location" (str "/s/" (:id sess))}})
 
       ;; GET /s/:id → show session (or delete, or poll)
@@ -49,11 +49,32 @@
       (let [parts (str/split uri #"/")
             id    (nth parts 2 nil)
             id    (when (valid-session-id? id) id)]
-        (if (and id (str/ends-with? uri "/delete"))
-          (let [sid (second (re-find #"/s/([^/]+)/delete" uri))]
-            (srv-delete-session! sid)
-            {:status 302 :headers {"Location" "/"}})
-          (if-let [sess (srv-get-session id)]
+        (cond
+          (str/ends-with? uri "/context")
+          (if-let [sess (when id (srv-get-session id))]
+            (let [env    (:env sess)
+                  p-atom (:p-atom env)
+                  p-val  (or (when p-atom @p-atom) {:context [] :learnings []})
+                  raw-vars ((requiring-resolve 'com.blockether.svar.internal.rlm.tools/sci-user-vars) (:sci-ctx env) (:initial-ns-keys env))
+                  vars   (when (seq raw-vars)
+                           (mapv (fn [{:keys [name value type]}]
+                                   (let [s (pr-str value)]
+                                     {:name name
+                                      :value (if (> (count s) 200) (str (subs s 0 197) "...") s)
+                                      :type type}))
+                                 raw-vars))]
+              {:status 200
+               :headers {"Content-Type" "application/json"}
+               :body (json/write-json-str (cond-> p-val
+                                            (seq vars) (assoc :variables vars)))})
+            {:status 404 :headers {"Content-Type" "application/json"} :body "{\"error\":\"not found\"}"})
+
+          (str/ends-with? uri "/delete")
+          (do (when id (srv-delete-session! id))
+              {:status 302 :headers {"Location" "/"}})
+
+          :else
+          (if-let [sess (when id (srv-get-session id))]
             (let [qs     (:query-string req)
                   check  (when qs (some->> (re-find #"check=(\d+)" qs) second parse-long))
                   offset (when qs (some->> (re-find #"offset=(\d+)" qs) second parse-long))]

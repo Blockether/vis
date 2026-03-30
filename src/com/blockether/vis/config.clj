@@ -4,7 +4,8 @@
    Used by both agent.clj (programmatic) and provider.clj (TUI)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.svar.internal.llm :as llm]))
 
 ;;; ── Paths ───────────────────────────────────────────────────────────────
 
@@ -132,3 +133,29 @@
       (throw (ex-info (str "No provider config. Create ~/.vis/config.edn "
                            "(see SAMPLE_CONFIG.edn) or set BLOCKETHER_OPENAI_API_KEY env var.")
                       {}))))
+
+;;; ── Shared Router ──────────────────────────────────────────────────────
+
+(defonce ^:private router-atom (atom nil))
+
+(defn get-router
+  "Get or create the shared LLM router. Singleton — reused across all components."
+  []
+  (or @router-atom
+      (let [cfg (resolve-config nil)
+            r   (llm/make-router (:providers cfg))]
+        (reset! router-atom r)
+        r)))
+
+(defn reset-router!
+  "Reset the shared router (e.g. after config change)."
+  []
+  (reset! router-atom nil))
+
+;;; ── Convenience LLM calls ──────────────────────────────────────────────
+
+(defn ask!
+  "Structured LLM call via shared router. Convenience wrapper around svar ask!.
+   opts: :messages, :spec, :prefer (:cost/:speed/:intelligence), :capabilities"
+  [opts]
+  (llm/ask! (assoc opts :router (get-router))))
