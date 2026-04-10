@@ -1,6 +1,7 @@
 (ns com.blockether.vis.web.presenter.message
   "Message rendering — user/assistant bubbles, iterations, executions."
   (:require [com.blockether.vis.trace :as trace]
+            [com.blockether.vis.web.presenter.tool-render :as tool-render]
             [clojure.string :as str])
   (:import [java.util Locale]))
 
@@ -11,8 +12,13 @@
 (defn- exec-badge [code]
   (when code
     (let [t (str/trim code)
-          b (if (str/starts-with? t "(") (subs t 1) t)]
-      (first (str/split b #"[\s\)\(\"']" 2)))))
+          b (if (str/starts-with? t "(") (subs t 1) t)
+          first-sym (first (str/split b #"[\s\)\(\"']" 2))]
+      ;; If wrapped in (def name (tool ...)), extract the inner tool name
+      (if (= first-sym "def")
+        (when-let [inner (second (re-find #"\(def\s+\S+\s+\((\S+)" t))]
+          inner)
+        first-sym))))
 
 (defn- render-exec [{:keys [code result error stdout]}]
   (let [clean     (trace/clean-result result)
@@ -22,30 +28,38 @@
       is-final? nil
       error
       [:div.exec.exec-errored
+       (when code [:div.exec-code code])
        [:div.exec-error (str error)]]
       :else
-      [:div.exec
-       [:div.exec-code code]
-       (when (and stdout (not (str/blank? stdout)))
-         [:div.exec-stdout stdout])
-       [:div.exec-result
-        (cond
-          (nil? clean) "nil"
-          (string? clean) clean
-          :else [:pre.exec-data (pr-str clean)])]])))
+      (or
+        ;; Try tool-specific renderer first
+        (when badge
+          (when-let [rendered (tool-render/render-tool badge clean code)]
+            [:div.exec rendered]))
+        ;; Fallback to default rendering
+        [:div.exec
+         [:div.exec-code code]
+         (when (and stdout (not (str/blank? stdout)))
+           [:div.exec-stdout stdout])
+         (when-not (nil? clean)
+           [:div.exec-result
+            (cond
+              (string? clean) clean
+              :else [:pre.exec-data (pr-str clean)])])]))))
 
 (defn- render-iteration [{:keys [iteration thinking executions final? error]}]
-  [:div.iteration {:class (cond final? "iteration-final" error "iteration-error")}
-   [:div.iter-header (str "Iteration " (inc iteration))
-    (when final? [:span.final " FINAL"])
-    (when error [:span.iter-error-tag " ERROR"])]
-   (when error
-     [:div.iter-error (str (:message error) (when (:type error) (str " [" (:type error) "]")))])
-   (when (and thinking (not (str/blank? thinking)))
-     [:div.thinking thinking])
-   (when (seq executions) (keep render-exec executions))])
+  ;; Skip FINAL iterations entirely — the answer is rendered separately
+  (when-not final?
+    [:div.iteration {:class (when error "iteration-error")}
+     [:div.iter-header (str "Iteration " (inc iteration))
+      (when error [:span.iter-error-tag " ERROR"])]
+     (when error
+       [:div.iter-error (str (:message error) (when (:type error) (str " [" (:type error) "]")))])
+     (when (and thinking (not (str/blank? thinking)))
+       [:div.thinking.md-content thinking])
+     (when (seq executions) (keep render-exec executions))]))
 
-(defn render-msg [idx {:keys [role text result]}]
+(defn render-msg [_idx {:keys [role text result]}]
   (case role
     :user [:div.msg.user-msg [:div.bubble.user-bubble [:span text]]]
     :assistant
@@ -54,7 +68,13 @@
       (when-let [trace (:trace result)]
         (map render-iteration trace))
       (when-let [a (:answer result)]
-        [:div.answer.md-content (let [v (if (map? a) (:result a) a)] (if (string? v) v (pr-str v)))])
+        (let [v (if (map? a) (:result a) a)
+              raw (cond (string? v)     v
+                        (sequential? v) (str/join "\n" (map str v))
+                        :else           (pr-str v))
+              cleaned (-> raw str/trim (str/replace #"\n{3,}" "\n\n"))]
+          (when-not (str/blank? cleaned)
+            [:div.answer.md-content cleaned])))
       (let [{:keys [iterations duration-ms tokens cost]} result]
         [:div.meta
          (str/join " · "

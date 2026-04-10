@@ -3,7 +3,8 @@
    Surgical text replacement: old_string → new_string.
    Matches exact content, not line numbers — robust against file changes."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [com.github.difflib DiffUtils UnifiedDiffUtils]))
 
 ;;; ── Safety ─────────────────────────────────────────────────────────────
 
@@ -66,14 +67,22 @@
                             ". Provide more context to make it unique, or pass replace-all=true.")
                        {:path path :matches occurrences})))
      ;; Use String.replace (literal, no regex backreferences) for safety
-     (let [new-content  (if replace-all
+     (let [first-idx    (.indexOf ^String content ^String old-string)
+           new-content  (if replace-all
                           (.replace ^String content ^String old-string ^String new-string)
-                          (let [idx (.indexOf ^String content ^String old-string)]
-                            (str (subs content 0 idx) new-string (subs content (+ idx (.length old-string))))))
-           replacements (if replace-all occurrences 1)]
+                          (str (subs content 0 first-idx) new-string (subs content (+ first-idx (.length old-string)))))
+           replacements (if replace-all occurrences 1)
+           ;; Generate unified diff via java-diff-utils
+           old-lines    (vec (str/split-lines content))
+           new-lines    (vec (str/split-lines new-content))
+           patch        (DiffUtils/diff old-lines new-lines)
+           diff-lines   (vec (UnifiedDiffUtils/generateUnifiedDiff
+                               (str "a/" (.getName f)) (str "b/" (.getName f))
+                               old-lines patch 3))]
        (spit f new-content :encoding "UTF-8")
        {:path         (.getCanonicalPath f)
-        :replacements replacements}))))
+        :replacements replacements
+        :diff         diff-lines}))))
 
 ;;; ── Tool definition ────────────────────────────────────────────────────
 

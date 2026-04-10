@@ -2,7 +2,8 @@
   "Base WRITE tool for RLM agents.
    Full file overwrite. For surgical edits, use edit.clj."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [com.github.difflib DiffUtils UnifiedDiffUtils]))
 
 ;;; ── Safety ─────────────────────────────────────────────────────────────
 
@@ -33,13 +34,30 @@
   (when (> (count content) max-write-size)
     (throw (ex-info (str "Content too large: " (quot (count content) 1024) "KB (max " (quot max-write-size 1024) "KB)")
                     {:size (count content) :max max-write-size})))
-  (let [f   (validate-write-path! path)
-        dir (.getParentFile f)]
-    (when (and dir (not (.exists dir)))
-      (.mkdirs dir))
-    (spit f content :encoding "UTF-8")
-    {:path  (.getCanonicalPath f)
-     :lines (if (str/blank? content) 0 (count (str/split-lines content)))}))
+  (let [f          (validate-write-path! path)
+        dir        (.getParentFile f)
+        existed?   (.exists f)
+        old-content (when existed?
+                      (try (slurp f :encoding "UTF-8")
+                           (catch Exception _ nil)))
+        _          (when (and dir (not (.exists dir)))
+                     (.mkdirs dir))
+        _          (spit f content :encoding "UTF-8")
+        new-lines  (if (str/blank? content) 0 (count (str/split-lines content)))
+        fname      (.getName f)]
+    (cond-> {:path     (.getCanonicalPath f)
+             :lines    new-lines
+             :created? (not existed?)}
+      ;; For overwrites, generate unified diff
+      old-content (assoc :old-lines (if (str/blank? old-content) 0 (count (str/split-lines old-content)))
+                         :diff (let [old-lines (vec (str/split-lines (or old-content "")))
+                                     new-lines-v (vec (str/split-lines content))
+                                     patch (DiffUtils/diff old-lines new-lines-v)]
+                                 (vec (UnifiedDiffUtils/generateUnifiedDiff
+                                        (str "a/" fname) (str "b/" fname)
+                                        old-lines patch 3))))
+      ;; For new files, include a preview
+      (not existed?) (assoc :preview (vec (take 20 (if (str/blank? content) [] (str/split-lines content))))))))
 
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
