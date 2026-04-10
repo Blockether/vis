@@ -16,6 +16,7 @@
   (:refer-clojure :exclude [agent run!])
   (:require
    [charred.api :as json]
+   [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.rlm :as rlm]
    [com.blockether.vis.config :as config]
    [com.blockether.vis.languages.commons.edit :as edit]
@@ -54,25 +55,38 @@
    shell/bg-kill-tool-def])
 
 (defn default-system-prompt
-  "Default system prompt for all vis agents. Includes workspace rules and FINAL format."
+  "vis-specific persona + workspace rules prepended to svar's own RLM system prompt.
+   svar renders ITERATION_SPEC (the :thinking/:code/:final JSON shape) into the prompt
+   itself — do NOT re-describe the iteration protocol here. This prompt only teaches
+   the things svar doesn't know about: the vis persona, how def'd vars persist, how
+   restore-var works, the iteration budget escape hatch, and the file/shell tools vis
+   registers on top."
   []
-  "You are a helpful AI assistant powered by vis agent framework.
+  "You are a vis agent — a senior engineer pair that writes Clojure in an SCI sandbox
+with file and shell tools to solve concrete engineering tasks on this machine.
 
-WORKSPACE RULES:
-- Your workspace (@P) has :context (auto-populated), :learnings (scratch notes), and REPL variables.
-- :context is AUTO-POPULATED with reasoning + execution summaries after each iteration.
-- :context PERSISTS across queries in this session — it IS your long-term memory.
-- USE VARS: (def data (some-call ...)) — vars auto-persist across queries in the session.
-  Context only shows [stored in var: data] for def'd values. Use the var name to access full data.
-  IMPORTANT: vars are VALUES not functions. Use `data` to reference, NOT `(data)`. Maps are not callable with 0 args.
-- Use (ctx-add! text) for extra notes. Use (ctx-remove! idx) or (ctx-replace! from to summary) to manage.
-- When context exceeds 12 entries, a [SYSTEM_NUDGE] will ask you to clean up. ALWAYS obey it.
-- <recent-messages> shows the last 3 user messages as safety net.
+MEMORY (persists across queries in this session):
+- Any (def name value) you run is stored under the current conversation. On the next
+  query you'll see it in the <var_index> block that's injected automatically.
+- Vars are VALUES, not functions. `data` references, `(data)` calls — maps are not
+  callable with zero args.
+- If a symbol isn't in <var_index> but you know a previous query def'd it, call
+  (restore-var 'name) — or (restore-vars ['a 'b]) — to rebind it from persistent
+  storage before recomputing.
 
-FINAL FORMAT (MANDATORY):
-- ALWAYS use (FINAL {:answer [\"part1\" \"part2\"]}) — NEVER (FINAL \"string\").
-- For long answers: (FINAL {:answer [\"part 1\" \"part 2\"]}). Elements are auto-joined.
-- Include :learn for persistent insights: (FINAL {:answer [...] :learn [{:insight \"...\" :tags [\"tag\"]}]})")
+ITERATION BUDGET:
+- Call (request-more-iterations N) early if you can tell the task needs more steps.
+  It returns {:granted :new-budget :cap}. Don't wait until the budget is exhausted.
+
+FILE & SHELL TOOLS:
+- read-file, write-file, edit-file, list-dir, shell-exec — positional args only.
+  Check the tool doc for each (shown above this prompt by svar). Never pass maps
+  where positional ints are expected.
+- edit-file replaces one exact occurrence by default; pass replace-all=true to
+  change every match. Prefer edit-file over full write-file overwrites.
+
+REPETITION: if the runtime says ⚠ REPETITION DETECTED, stop retrying — change
+strategy or finish with what you have.")
 
 (defn agent
   "Create an agent definition (data map).
@@ -152,22 +166,31 @@ FINAL FORMAT (MANDATORY):
 
    Options:
    - :system-prompt  — Override agent's system prompt
-   - :context        — Data context for the RLM (string → P handle, map → `context` var in SCI)
+   - :context        — Data context for the RLM. String becomes P (the symbolic handle
+                       with get-page/page-count); maps/vectors are bound to `context`
+                       in the SCI sandbox.
    - :spec           — svar output spec for structured responses
    - :model          — Override model (agent-level or per-run)
    - :max-iterations — Override max iterations
-   - :hooks          — Per-run hooks override (deep-merged into env hooks)
+   - :on-chunk       — Streaming callback fn. Receives {:iteration :thinking :code
+                       :final :done?} on each partial chunk and once with :done? true
+                       when the iteration produces a final answer.
    - :verify?        — Enable claim verification (default false)
    - :debug?         — Enable svar debug logging (default false)
-   - :config         — Provider config override (skips ~/.vis/config.edn)"
-  [agent-def prompt & [{:keys [system-prompt context spec model max-iterations hooks
-                               verify? debug? config]
+   - :config         — Provider config override (skips ~/.vis/config.edn)
+   - :conversation   — Resume a conversation. :latest reopens the most recent, or pass
+                       a [:entity/id uuid] lookup ref."
+  [agent-def prompt & [{:keys [system-prompt context spec model max-iterations on-chunk
+                               verify? debug? config conversation]
                         :as _opts}]]
-  (let [rlm-cfg (config/resolve-config config)
+  (let [_cfg    (config/resolve-config config)  ;; ensures a router exists / throws on missing
+        router  (config/get-router)
         path    (:path agent-def)
-         ;; Create environment with agent-level hooks
-        env     (rlm/create-env (cond-> {:config rlm-cfg :path path}
-                                  (:hooks agent-def) (assoc :hooks (:hooks agent-def))))
+        ;; Create env against the shared router; persistent DB at the agent's path.
+        ;; :conversation :latest resumes any prior run for this agent.
+        env     (rlm/create-env router
+                  (cond-> {:db path}
+                    conversation (assoc :conversation conversation)))
         ;; Register tools
         env     (reduce (fn [e {:keys [sym fn] :as tool-def}]
                           (rlm/register-env-fn! e sym fn
@@ -189,16 +212,18 @@ FINAL FORMAT (MANDATORY):
                   context      (assoc :context context)
                   spec         (assoc :spec spec)
                   mdl          (assoc :model mdl)
-                  hooks        (assoc :hooks hooks)
+                  on-chunk     (assoc :on-chunk on-chunk)
                   verify?      (assoc :verify? true)
                   debug?       (assoc :debug? true))
         ;; System prompt: passed as first-class option to query-env!
         ;; Rendered as <agent_instructions> in the RLM system prompt.
         raw-sys (or system-prompt (:system-prompt agent-def))
         sys     (str raw-sys (environment-info))
-        q-opts  (assoc q-opts :system-prompt sys)]
+        q-opts  (assoc q-opts :system-prompt sys)
+        ;; svar requires a vector of message maps, not a bare string.
+        messages (if (string? prompt) [(llm/user prompt)] prompt)]
     (try
-      (let [result (rlm/query-env! env prompt q-opts)]
+      (let [result (rlm/query-env! env messages q-opts)]
         (cond-> {:answer      (:answer result)
                  :iterations  (:iterations result)
                  :duration-ms (:duration-ms result)

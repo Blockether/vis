@@ -434,6 +434,12 @@ function replaceChat(html) {
       var newTitle = doc.querySelector('.topbar-title');
       var curTitle = document.querySelector('.topbar-title');
       if (newTitle && curTitle) curTitle.textContent = newTitle.textContent;
+      // Enable select/copy button if messages are now present
+      var selectBtn = document.getElementById('select-btn');
+      if (selectBtn && nc.children.length > 0) {
+        selectBtn.disabled = false;
+        selectBtn.classList.remove('topbar-btn-disabled');
+      }
       scrollToBottom(true);
       renderMarkdown();
       initIcons();
@@ -461,13 +467,12 @@ function renderLiveTrace(iterations) {
   var html = '';
   for (var i = 0; i < iterations.length; i++) {
     var it = iterations[i];
-    var cls = it["final?"] ? 'iteration iteration-final' : 'iteration';
-    html += '<div class="' + cls + '">';
+    if (it["final?"]) continue; // FINAL iterations hidden — answer shown separately
+    html += '<div class="iteration">';
     html += '<div class="iter-header">Iteration ' + (it.iteration + 1);
-    if (it["final?"]) html += '<span class="final"> FINAL</span>';
     html += '</div>';
     if (it.thinking) {
-      html += '<div class="thinking">' + escHtml(it.thinking) + '</div>';
+      html += '<div class="thinking md-content">' + escHtml(it.thinking) + '</div>';
     }
     if (it.executions) {
       for (var j = 0; j < it.executions.length; j++) {
@@ -478,7 +483,7 @@ function renderLiveTrace(iterations) {
         } else if (ex.code) {
           html += '<div class="exec">';
           html += '<div class="exec-code">' + escHtml(ex.code) + '</div>';
-          if (ex.result) html += '<div class="exec-result">' + escHtml(ex.result) + '</div>';
+          if (ex.result && ex.result !== 'nil') html += '<div class="exec-result">' + escHtml(ex.result) + '</div>';
           html += '</div>';
         }
       }
@@ -583,6 +588,9 @@ function sendMessage(q) {
   queryInFlight = true;
   appendUserBubble(q);
   appendThinkingBubble();
+  // Enable select/copy button now that we have messages
+  var selectBtn = document.getElementById('select-btn');
+  if (selectBtn) { selectBtn.disabled = false; selectBtn.classList.remove('topbar-btn-disabled'); }
   scrollToBottom();
   setButtonLoading(true);
 

@@ -41,7 +41,9 @@
   ;; Terminal UI
   com.googlecode.lanterna/lanterna  {:mvn/version "3.1.5"}
   ;; JSON serialization (CLI output, agent results)
-  com.cnuernber/charred             {:mvn/version "1.038"}}
+  com.cnuernber/charred             {:mvn/version "1.038"}
+  ;; Line-by-line diff (unified diff format for edit/write tool rendering)
+  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.15"}}
 
  :aliases
  {:dev {:extra-paths ["dev"]

@@ -52,20 +52,39 @@
         (cond
           (str/ends-with? uri "/context")
           (if-let [sess (when id (srv-get-session id))]
-            (let [env    (:env sess)
-                  p-atom (:p-atom env)
-                  p-val  (or (when p-atom @p-atom) {:context [] :learnings []})
-                  raw-vars ((requiring-resolve 'com.blockether.svar.internal.rlm.tools/sci-user-vars) (:sci-ctx env) (:initial-ns-keys env))
-                  vars   (when (seq raw-vars)
-                           (mapv (fn [{:keys [name value type]}]
-                                   (let [s (pr-str value)]
-                                     {:name name
-                                      :value (if (> (count s) 200) (str (subs s 0 197) "...") s)
-                                      :type type}))
-                                 raw-vars))]
+            ;; Resolved late via requiring-resolve to dodge the server→routes cycle.
+            (let [env          (:env sess)
+                  db-latest    (requiring-resolve 'com.blockether.svar.internal.rlm.db/db-latest-var-registry)
+                  conv-ref     (:conversation-ref env)
+                  db-info      (when-let [a (:db-info-atom env)] @a)
+                  ;; Pull the persisted var registry straight from Datalevin — this
+                  ;; replaces the defunct @P workspace view. Each entry has
+                  ;; {:value :code :query-id :query-ref :iteration-id :created-at}.
+                  var-registry (try (when (and db-info conv-ref) (db-latest db-info conv-ref))
+                                    (catch Exception _ nil))
+                  vars         (when (seq var-registry)
+                                 (->> var-registry
+                                      (sort-by first)
+                                      (mapv (fn [[sym {:keys [value code]}]]
+                                              (let [s (pr-str value)]
+                                                {:name  (str sym)
+                                                 :value (if (> (count s) 200) (str (subs s 0 197) "...") s)
+                                                 :code  code
+                                                 :type  (cond
+                                                          (nil? value) "nil"
+                                                          (map? value) "map"
+                                                          (vector? value) "vector"
+                                                          (set? value) "set"
+                                                          (sequential? value) "seq"
+                                                          (string? value) "string"
+                                                          (integer? value) "int"
+                                                          (float? value) "float"
+                                                          (boolean? value) "bool"
+                                                          (keyword? value) "keyword"
+                                                          :else (.getSimpleName (class value)))})))))]
               {:status 200
                :headers {"Content-Type" "application/json"}
-               :body (json/write-json-str (cond-> p-val
+               :body (json/write-json-str (cond-> {:context [] :learnings []}
                                             (seq vars) (assoc :variables vars)))})
             {:status 404 :headers {"Content-Type" "application/json"} :body "{\"error\":\"not found\"}"})
 

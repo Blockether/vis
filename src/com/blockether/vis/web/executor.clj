@@ -3,8 +3,8 @@
    State lives in server.clj atoms. Only the executor mutates during query execution.
    Survives page reloads — queries run to completion regardless of client state."
   (:require [com.blockether.vis.agent :as agent]
-            [com.blockether.vis.trace :as trace]
             [com.blockether.vis.web.server :as server]
+            [com.blockether.svar.internal.llm :as llm]
             [com.blockether.svar.internal.rlm :as rlm]
             [clojure.core.async :as async]
             [clojure.string :as str])
@@ -20,6 +20,49 @@
 
 ;;; ── Worker ─────────────────────────────────────────────────────────────
 
+(defn- first-symbol
+  "Extract the leading symbol name from a Clojure expression string, for live-status
+   labels like 'Iteration … → read-file'. Returns nil if it can't find one."
+  [code]
+  (when code
+    (let [t (str/trim code)
+          b (if (str/starts-with? t "(") (subs t 1) t)
+          nm (first (str/split b #"[\s\)\(\"']" 2))]
+      (when (and nm (not (str/blank? nm))) nm))))
+
+(defn- on-chunk-handler
+  "Build the :on-chunk callback svar now uses (post-:hooks refactor). svar calls it
+   during streaming with {:iteration :thinking :code :final :done?} and once with
+   :done? true when an iteration finalizes. We project each call into the web
+   live-status atom so the /check polling endpoint can stream UI updates."
+  [session-id]
+  (fn [{:keys [iteration thinking code final done?]}]
+    (let [code-vec (when (sequential? code) (vec code))
+          first-code (first (filter identity code-vec))
+          label (cond
+                  done?                     "Finalizing…"
+                  (seq first-code)          (str "Iteration " (inc iteration) " → "
+                                                 (or (first-symbol first-code) "…"))
+                  (and thinking (seq (str/trim thinking)))
+                                            (str "Iteration " (inc iteration) " · thinking…")
+                  :else                     (str "Iteration " (inc iteration) "…"))]
+      (swap! server/live-status
+             (fn [ls]
+               (let [sess-state (or (get ls session-id) {})
+                     iters-so-far (or (:iterations sess-state) [])
+                     entry {:iteration iteration
+                            :thinking  thinking
+                            :final?    (boolean final)
+                            :executions (mapv (fn [c] {:code c}) (or code-vec []))}
+                     iters' (cond
+                              (< iteration (count iters-so-far)) (assoc iters-so-far iteration entry)
+                              (= iteration (count iters-so-far)) (conj iters-so-far entry)
+                              :else                               (conj iters-so-far entry))]
+                 (assoc ls session-id
+                        (assoc sess-state
+                               :iterations iters'
+                               :current (when-not done? label)))))))))
+
 (defn- execute-query!
   "Run a single query. Updates server state atoms. Guards against deleted sessions."
   [{:keys [session-id query]}]
@@ -28,35 +71,11 @@
     (if-let [sess (server/get-session session-id)]
       (try
         (let [sys-prompt (str (:system-prompt (agent/agent {:name "web"}))
-                             (agent/environment-info))
-              hooks {:iteration
-                     {:pre  (fn [{:keys [iteration]}]
-                              (swap! server/live-status assoc-in [session-id :current]
-                                     (str "Iteration " (inc iteration) "…")))
-                      :post (fn [{:keys [iteration thinking executions final?] :as entry}]
-                              (swap! server/live-status update-in [session-id :iterations]
-                                     (fnil conj [])
-                                     {:iteration iteration
-                                      :thinking  thinking
-                                      :final?    (boolean final?)
-                                      :executions (mapv (fn [{:keys [code result error]}]
-                                                          {:code   code
-                                                           :result (str (trace/clean-result result))
-                                                           :error  (some-> error str)})
-                                                        executions)})
-                              (swap! server/live-status assoc-in [session-id :current] nil))}
-                     :code-exec
-                     {:pre (fn [{:keys [code]}]
-                             (when code
-                               (let [t (str/trim code)
-                                     nm (first (str/split
-                                                (if (str/starts-with? t "(") (subs t 1) t)
-                                                #"[\s\)\(\"']" 2))]
-                                 (when nm
-                                   (swap! server/live-status assoc-in [session-id :current]
-                                          (str "Iteration … → " nm))))))}}
-              result (rlm/query-env! (:env sess) query
-                                     {:system-prompt sys-prompt :hooks hooks})]
+                              (agent/environment-info))
+              messages   [(llm/user query)]
+              result (rlm/query-env! (:env sess) messages
+                                     {:system-prompt sys-prompt
+                                      :on-chunk (on-chunk-handler session-id)})]
           ;; Only write back if session still exists (not deleted mid-query)
           (when (server/get-session session-id)
             (swap! server/sessions update-in [session-id :messages] conj
