@@ -823,11 +823,12 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
                                 " :warning \"auto-repaired delimiters\"")
-                 time-part (when execution-time-ms
-                             (str " :time-ms " execution-time-ms
-                               (when (> (or execution-time-ms 0) SLOW_EXECUTION_MS)
-                                 " :perf-warning \"SLOW — optimize algorithm or reduce input size\"")))]
-             (str "{" code-str " → " val-part (or stdout-part "") (or warning-part "") (or time-part "") "}")))
+                 time-ms (or execution-time-ms 0)
+                 slow? (> time-ms SLOW_EXECUTION_MS)
+                 time-part (str " :time-ms " time-ms
+                             (when slow?
+                               " :perf-warning \"SLOW — optimize algorithm or reduce input size\""))]
+             (str "{" code-str " → " val-part (or stdout-part "") (or warning-part "") time-part "}")))
       executions)))
 
 (def ^:private EXECUTION_SAFETY_CAP_CHARS
