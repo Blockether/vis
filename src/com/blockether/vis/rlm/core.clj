@@ -71,9 +71,10 @@ Pattern: [thing] [action] [reason]. [next step].")
                 (when (:has-final data) "FINAL=true"))
 
               :code-exec
-              (fmt (str "│  ▶ EXEC [" (:idx data) "/" (:total data) "]")
-                (str-truncate (str/replace (str (:code data)) #"\s+" " ") 80)
-                (str "budget=" (:time-ms data) "ms"))
+              (let [code-1line (str/replace (str (:code data)) #"\s+" " ")]
+                (fmt (str "│  ▶ EXEC [" (:idx data) "/" (:total data) "]")
+                  code-1line
+                  (str "budget=" (:time-ms data) "ms")))
 
               :code-result
               (fmt (str "│  ◀ EXEC [" (:idx data) "/" (:total data) "]")
