@@ -59,14 +59,9 @@ Pattern: [thing] [action] [reason]. [next step].")
               (fmt (str "┌─ ITER " iteration)
                 (str "msgs=" (:msg-count data)))
 
-              :llm-call
-              (fmt "│  ⇒ LLM"
-                (str "tokens=" (:input-tokens data)))
-
               :llm-response
               (let [thinking (str (:thinking data))]
                 (fmt "│  ⇐ LLM"
-                  (str (:duration-ms data) "ms")
                   (str "code=" (:code-count data))
                   (when (:has-final data) "FINAL=true")
                   (when (seq thinking)
@@ -388,8 +383,8 @@ Pattern: [thing] [action] [reason]. [next step].")
           page-counts (when (seq docs)
                         (into {}
                           (for [doc docs]
-                            [(:document/id doc)
-                             (rlm-db/db-count-document-pages db-info (:document/id doc))])))
+                            [(:id doc)
+                             (rlm-db/db-count-document-pages db-info (:id doc))])))
           total-pages (reduce + 0 (vals page-counts))
           types-map (rlm-db/db-entity-type-counts db-info)
           total-entities (reduce + 0 (vals types-map))
@@ -404,14 +399,14 @@ Pattern: [thing] [action] [reason]. [next step].")
           "\nDocuments:\n"
           (str/join "\n"
             (map (fn [doc]
-                   (let [id (:document/id doc)
-                         title (or (:document/title doc) (:document/name doc) id)
-                         ext (:document/extension doc)
+                   (let [id (:id doc)
+                         title (or (:title doc) (:name doc) id)
+                         ext (:extension doc)
                          pages (get page-counts id 0)]
                      (str "  [" id "] " title
                        (when ext (str " (" ext ")"))
                        ", " pages " pages")))
-              (sort-by :document/id docs))))))))
+              (sort-by :id docs))))))))
 
 (defn- format-git-context
   "Render the GIT REPO context block(s) for the system prompt. Caveman style.
@@ -423,8 +418,8 @@ Pattern: [thing] [action] [reason]. [next step].")
   [git-repos]
   (when (seq git-repos)
     (let [multi? (> (count git-repos) 1)
-          blocks (for [rm (sort-by :repo/name git-repos)
-                       :let [{:repo/keys [name path head-short branch commits-ingested]} rm]]
+          blocks (for [rm (sort-by :name git-repos)
+                       :let [{:keys [name path head-short branch commits-ingested]} rm]]
                    (str "
 GIT REPO: " name " (" path ")
   head: " (or head-short "?") (when branch (str " on " branch)) "
@@ -465,127 +460,37 @@ Git tools available this session — all prefixed `git-`:
     "Clojure SCI agent. Write, exec, iterate.
 
 MINDSET:
-- Keep reasoning short (2-5 lines). Don't monologue.
-- FOR CODE/ALGORITHM TASKS: think in code, not prose. Write it, run it, see results.
-  Don't mentally simulate — the sandbox is right here. Code + test + :final in one shot.
-  If tests fail: read the error, fix, resubmit. Don't re-derive from scratch.
-- FOR TEXT/ANALYSIS/Q&A TASKS: think, fetch data with tools, then :final with your answer.
-  No code gymnastics needed — just gather info and respond.
-- ASSERTS MUST HAVE MESSAGES: (assert (= x y) \"x should equal y\") not bare (assert (= x y)).
-  Bare asserts give \"Assert failed\" with no context. Messages tell you WHAT failed.
+- Reasoning: 2-5 lines max. No monologues.
+- Code tasks: CODE IT. Don't mentally simulate. Sandbox is here. Code + test + :final in one shot.
+- Text/Q&A tasks: fetch data with tools, then :final.
+- Asserts: ALWAYS (assert expr \"message\"). Bare asserts = useless errors.
 
 ARCH:
-- Single-shot iter. No msg history. State → def'd vars (persist).
-- <var_index> → vars. <execution_results> → last return.
-- (doc fn) for docs.
-- Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
+- Single-shot iter. State = def'd vars. <var_index> = vars. <execution_results> = last results.
+- (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
+- Receipts: full :value, :time-ms per block. >5s = :perf-warning.
+- (def x \"docstring\" val) → docstring in <var_index>. Always include.
+- :final.answer = one token var name → auto-resolved to var value.
 
-EXECUTION RECEIPTS (next iteration's <execution_results>):
-- Each :code entry gets one receipt with the FULL evaluated :value — no
-  summarisation, no preview truncation. Lazy seqs are capped at 100 items
-  by realize-value; everything else is printed in full. Ground your answer
-  on what you see here, never on memory or guesses.
-- Every receipt includes :time-ms (wall-clock ms). Blocks >5s get :perf-warning.
-  If you see a perf-warning, OPTIMIZE before calling FINAL.
-- (def sym expr) is first-class. The receipt shows:
-    [1] (def here (list-dir \"/tmp\"))
-        {:success? true :result-kind :var :var-name \"here\"
-         :value-type map :value-size 4-items
-         :value {:path \"/tmp\" :entries [{:name \"a\" :type \"file\"} ...]
-         :time-ms 12}
-    [2] (slow-brute-force 999999999)
-        {:success? true :result-type int :value 42 :time-ms 87000
-         :perf-warning \"SLOW \u2014 optimize algorithm, avoid brute-force, reduce input size\"}
-  You can reference the var `here` in the next iteration and see its full
-  contents there too.
-- Need last iteration's var rendered again? Either USE it in code
-  (e.g. `(pr-str here)`), PRINT it (`(prn here)` — stdout is captured), or
-  DEF it into a new var. Nothing carries over implicitly besides what you
-  actively surface.
-- Lazy seqs only: capped at 100 items with \"...<truncated lazy seq at 100
-  elements>\" marker. For more, slice explicitly: (vec (take N my-seq)).
+GROUNDING:
+- Only tools listed below exist. No shell/git/docker/web/IDE.
+- Data in :final MUST come from <execution_results>. Never fabricate.
+- Trust tool output over intuition.
 
-DEF DISCIPLINE:
-- Every `(def …)` you write MUST include a docstring:
-    (def here \"current directory listing from list-dir\" (list-dir \"/tmp\"))
-  The docstring lands in <var_index> alongside the var preview and helps
-  future-you recognise what each var is for. Anonymous data = lost data.
+SUB-CALLS:
+- (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).
 
-SINGLE-WORD FINAL:
-- If your :final.answer is one token (e.g. \"here\", \"reply\", \"listing\"),
-  the runtime will try to resolve it as a var name and substitute the var's
-  full value verbatim. So `{:final {:answer \"reply\"}}` when `reply` is a
-  def'd string prints the whole string to the user, no truncation.
-- If the token is not a var, it is returned literally.
-- Use this when the answer is already stored in a var — don't copy-paste
-  the whole blob into :final.answer, just name the var.
+PERF:
+- SCI is FAST. def=100ms, assert=500ms, heavy=2000ms max. No 5000+ budgets.
+- COMPUTE, DON'T SCAN. Never drop-while millions. Compute start from n directly.
+- Separate def from tests. One block = one concern. Vars persist across blocks.
 
-GROUNDING (anti-hallucination — read carefully):
-- Your tools = the functions listed below in this prompt. If not listed, it does not exist in this runtime.
-- Not available here: shell, git CLI, docker, CI, deploy, Obsidian, Jira, Slack, PRD/ticket tools, design tools, web fetch, package installers, IDE actions. Do not claim them.
-- When the user asks what you can do, list the real function names with one-line signatures from the tool list below. No categories, no paraphrase, no marketing.
-- Never describe results of a call you did not actually execute. No imagined output.
-- DATA GROUNDING (hard rule): any concrete data in :final.answer — file names,
-  directory entries, sizes, counts, ids, values — MUST come verbatim from
-  <execution_results> or <var_index>. Do NOT fill from prior knowledge,
-  training data, or memory. If you need data that isn't in the results, run
-  the tool to fetch it. Fabricating entries is a critical failure.
-- When the listing you received does not match what you think it should
-  contain, TRUST THE TOOL OUTPUT. Your intuition about the filesystem is
-  wrong; the tool is right. Report what the tool returned, not what you
-  expected.
-
-LLM SUB-CALLS:
-- (sub-rlm-query \"q\") → {:content :code} prose + Clojure code blocks (vec<str>).
-- (sub-rlm-query \"q\" {:routing {:optimize :cost}}) → cheap path.
-- (sub-rlm-query-batch [\"q1\" \"q2\" ...]) → vec of results. N≥2 independent → batch. Dependent → serial.
-- Independent = output of A NOT input of B. Same question × many inputs = batch.
-- Shape guaranteed by provider-enforced JSON. :content always present, :code nil when no code applies.
-- Eval returned :code via the usual iteration flow (each entry = one complete form).
-- Need typed data? Ask the sub-RLM to emit code that defs the data structure; eval it.
-
-PERFORMANCE & time-ms BUDGETS:
-- Clojure on SCI is FAST. Most expressions run in <10ms. Set time-ms accordingly.
-- time-ms guidelines:
-    (def ...)            → 100ms
-    (assert ...)         → 500ms
-    simple computation   → 200ms
-    heavy computation    → 2000ms (rare — if you need this, your algorithm is probably wrong)
-    network/IO           → does not apply here (no network in sandbox)
-- DO NOT give 5000ms or 30000ms budgets — that means your code is too slow.
-  If a simple assert needs >500ms, your algorithm is brute-force. Fix it.
-- Every receipt includes :time-ms (actual wall-clock). Compare vs your budget.
-- Blocks >5s get :perf-warning. If you see it, OPTIMIZE before submitting :final.
-- Benchmark-critical: your solution is re-verified in a stricter runtime.
-  A correct-but-slow answer WILL fail.
-- COMPUTE, DON'T SCAN. Never iterate/filter/drop-while over millions of candidates.
-  If you need the first X >= N in a sequence, compute X's position directly from N.
-  BAD:  (drop-while #(< % n) (generate-all-from-zero))  ← scans millions for large n
-  GOOD: compute starting index/seed from n, generate from there  ← O(1) start
-  This applies to ANY ordered sequence: palindromes, primes, Fibonacci, etc.
-
-CODE BLOCKS — SPLIT, DON'T BUNDLE:
-- ALWAYS separate def from tests. One block = one concern.
-  BAD:  (let [solution (fn ...) ] (assert ...) (assert ...) (assert ...))  ← one timeout kills all
-  GOOD: Block 1: (def solution \"doc\" (fn [...] ...))
-        Block 2: (assert (= (f 0) expected))
-        Block 3: (assert (= (f 1) expected))
-- Each block gets its own :time-ms budget. Splitting lets you see which test fails/times out.
-- def'd vars persist across blocks within the same iteration. Use them.
-
-CLOJURE PATTERNS:
-- letfn for recursive/mutually-recursive local fns. (let [f (fn [] (f))] ...) → BROKEN. Use (letfn [(f [] (f))] ...).
-- iterate passes ONE value. Destructure vectors: (fn [[r len]] ...) NOT (fn [r len] ...).
-- Quote lists: '(1 2 3). Bare () = fn call.
-- PREFER (fn [x] ...) over #(). Nested #() is illegal; #() with string-heavy args causes paren confusion.
-- 'code' entry = complete expr. No fragments. No split across strings.
-- Docstring defs: (def x \"doc\" val) → aids <var_index>.
-- AVOID LAZY SEQS. Prefer eager: mapv filterv reduce into.
-  - (map f xs) = lazy. (filter p xs) = lazy. (for [...] ...) = lazy. Result not computed.
-  - (future (map f xs)) = TRAP. Future holds unrealized seq. Deref → serial on consumer thread. WRONG.
-  - Fix: (future (mapv f xs)) OR (future (doall (map f xs))) OR (pmap f xs).
-  - Only use lazy when consuming once without realization (very rare here).
-- future/promise/deliver available. Parallel = sub-rlm-query-batch (preferred) OR (mapv deref (mapv #(future ...) xs)).
+CLJ:
+- letfn for recursion. (let [f (fn [] (f))] ...) → BROKEN. Use letfn.
+- iterate = ONE arg. Destructure: (fn [[a b]] ...) not (fn [a b] ...).
+- Prefer (fn [x] ...) over #(). Nested #() = illegal.
+- Eager > lazy: mapv filterv reduce into.
+- Quote lists: '(1 2 3). Complete expr per block. No fragments.
 "
     (rlm-skills/skills-manifest-block skill-registry)
     (format-git-context git-repos)
@@ -685,9 +590,6 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
   [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration] :or {iteration-spec ITERATION_SPEC}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [model-name (resolve-root-model (:router rlm-env))
-          input-tokens (router/count-messages (or model-name "gpt-4o") messages)
-          _ (rlm-stage! :llm-call iteration
-              {:msg-count (count messages) :input-tokens input-tokens})
           ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
           ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
                        (llm/ask! (:router rlm-env)
@@ -1189,14 +1091,14 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
 
 (defn- rehydrate-final-results!
   "Injects previous final-result-N vars into SCI context from SQLite.
-   Final results are now terminal iterations (with non-nil :iteration/answer).
+   Final results are now terminal iterations (with non-nil :answer).
    Returns the list of final results for conversation thread rendering."
   [sci-ctx db-info conversation-ref]
   (when db-info
     (let [results (db-list-final-results db-info {:conversation-ref conversation-ref})]
       (doseq [[idx result] (map-indexed vector results)]
         (let [var-name (str "final-result-" (inc idx))
-              answer (:iteration/answer result)
+              answer (:answer result)
               doc-str (str-truncate (or answer "Previous query result") 100)
               val-map {:answer answer}]
           (try
@@ -1530,7 +1432,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                            :iterations (inc iteration)
                                            :status :success}
                                    :done? true}))
-                        ;; Final result persisted via store-iteration! with :iteration/answer
+                        ;; Final result persisted via store-iteration! with :answer
                       (merge (cond-> {:answer (:answer final-result)
                                       :trace (conj trace trace-entry)
                                       :iterations (inc iteration)
@@ -1622,15 +1524,15 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
   "Extracts entities from a visual node (image/table) using vision or text.
 
    Params:
-   `node` - Map. Page node with :page.node/type, :page.node/image-data, :page.node/description.
+   `node` - Map. Page node with :type, :image-data, :description.
    `rlm-router` - Router from llm/make-router.
 
    Returns:
    Map with :entities and :relationships keys (empty if extraction fails)."
   [node rlm-router]
   (try
-    (let [image-data (:page.node/image-data node)
-          description (:page.node/description node)]
+    (let [image-data (:image-data node)
+          description (:description node)]
       (cond
         ;; Has image data - use vision
         image-data
@@ -1671,27 +1573,27 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
   [db-info document rlm-router opts]
   (let [max-pages (or (:max-extraction-pages opts) 50)
         max-vision (or (:max-vision-rescan-nodes opts) 10)
-        pages (take max-pages (:document/pages document))
-        doc-id (:document/id document (:document/name document))
+        pages (take max-pages (:pages document))
+        doc-id (:id document (:name document))
         entities-atom (atom [])
         relationships-atom (atom [])
         errors-atom (atom 0)
         vision-count-atom (atom 0)]
     ;; Process each page
     (doseq [page pages]
-      (let [nodes (:page/nodes page)
-            text-nodes (filter #(not (#{:image :table} (:page.node/type %))) nodes)
-            visual-nodes (filter #(#{:image :table} (:page.node/type %)) nodes)]
+      (let [nodes (:nodes page)
+            text-nodes (filter #(not (#{:image :table} (:type %))) nodes)
+            visual-nodes (filter #(#{:image :table} (:type %)) nodes)]
         ;; Extract from text
         (when (seq text-nodes)
-          (let [text (str/join "\n" (keep :page.node/content text-nodes))]
+          (let [text (str/join "\n" (keep :content text-nodes))]
             (when (not (str/blank? text))
               (try
                 (let [result (extract-entities-from-page! text rlm-router)]
                   (swap! entities-atom into (:entities result))
                   (swap! relationships-atom into (:relationships result)))
                 (catch Exception e
-                  (trove/log! {:level :warn :data {:page (:page/index page) :error (ex-message e)}
+                  (trove/log! {:level :warn :data {:page (:index page) :error (ex-message e)}
                                :msg "Entity extraction failed for page"})
                   (swap! errors-atom inc))))))
         ;; Extract from visual nodes (capped)
@@ -1703,7 +1605,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                 (swap! entities-atom into (:entities result))
                 (swap! relationships-atom into (:relationships result)))
               (catch Exception e
-                (trove/log! {:level :warn :data {:node-type (:page.node/type vnode) :error (ex-message e)}
+                (trove/log! {:level :warn :data {:node-type (:type vnode) :error (ex-message e)}
                              :msg "Entity extraction failed for visual node"})
                 (swap! errors-atom inc)))))))
     ;; Persist extraction results (entity + relationship transactions)
