@@ -117,8 +117,10 @@ Pattern: [thing] [action] [reason]. [next step].")
               (fmt "│  ⚠ EMPTY" "no code blocks")
 
               ;; fallback
-              (fmt (str "│  " (name stage)) (pr-str data)))]
-    (trove/log! {:level :info :id ::rlm-stage :msg msg})))
+              (fmt (str "│  " (name stage)) (pr-str data)))
+        env-id (:rlm-env-id *rlm-ctx*)
+        prefix (when env-id (str "[q=" env-id " i=" iteration "] "))]
+    (trove/log! {:level :info :id ::rlm-stage :msg (str prefix msg)})))
 
 (defn- status->id
   [status]
