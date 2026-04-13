@@ -493,7 +493,7 @@
            {:model root-model
             :max-iterations max-iterations
             :reasoning? (some? (:reasoning-params (first (mapcat :models (:providers (:router env))))))
-            :query (rlm-db/str-truncate query-str 120)})
+            :query query-str})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
                {:keys [iteration-result query-ref
