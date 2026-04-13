@@ -1307,11 +1307,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                          (catch Exception e
                            (trove/log! {:level :warn :data {:error (ex-message e)}
                                         :msg log-msg})))))]
-    (rlm-stage! :query-start 0
-      {:model effective-model
-       :max-iterations max-iterations
-       :reasoning? has-reasoning?
-       :query (str-truncate query 120)})
+    ;; query-start is logged in query.clj — don't duplicate
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [iteration 0 messages initial-messages trace [] consecutive-errors 0 restarts 0
              prev-executions nil prev-iteration -1
