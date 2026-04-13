@@ -465,11 +465,14 @@ Git tools available this session — all prefixed `git-`:
     "Clojure SCI agent. Write, exec, iterate.
 
 MINDSET:
-- THINK IN CODE, NOT PROSE. Your reasoning should be 2-5 lines max.
-  Don't work through algorithms mentally — write code, run it, see results.
-- First iteration: write the solution + ALL tests. Submit code + :final together.
-- If tests fail/timeout: read the error, fix the code, resubmit. Don't re-derive from scratch.
-- NEVER spend 1000+ tokens reasoning about an approach. Spend 50 tokens thinking, then CODE IT.
+- Keep reasoning short (2-5 lines). Don't monologue.
+- FOR CODE/ALGORITHM TASKS: think in code, not prose. Write it, run it, see results.
+  Don't mentally simulate — the sandbox is right here. Code + test + :final in one shot.
+  If tests fail: read the error, fix, resubmit. Don't re-derive from scratch.
+- FOR TEXT/ANALYSIS/Q&A TASKS: think, fetch data with tools, then :final with your answer.
+  No code gymnastics needed — just gather info and respond.
+- ASSERTS MUST HAVE MESSAGES: (assert (= x y) \"x should equal y\") not bare (assert (= x y)).
+  Bare asserts give \"Assert failed\" with no context. Messages tell you WHAT failed.
 
 ARCH:
 - Single-shot iter. No msg history. State → def'd vars (persist).
@@ -596,11 +599,11 @@ Doc tools (2 fns):
    (search-documents \"q\" {:in :pages})  — narrow to :pages|:toc|:entities
    (search-documents \"q\" {:top-k 20 :document-id \"doc-1\"})
 2. (fetch-document-content ref) → full content:
-   [:page.node/id \"id\"] → page text
-   [:document/id \"id\"] → vec of ~4K char pages
-   [:document.toc/id \"id\"] → TOC desc
-   [:entity/id \"id\"] → {:entity {...} :relationships [...]} 
-(def pages (fetch-document-content [:document/id \"doc-1\"]))
+   [:node/id \"id\"] → page text
+   [:doc/id \"id\"] → vec of ~4K char pages
+   [:toc/id \"id\"] → TOC desc
+   [:id \"id\"] → {:entity {...} :relationships [...]} 
+(def pages (fetch-document-content [:doc/id \"doc-1\"]))
 Search in English. Translate non-EN queries first.
 "))
     (when system-prompt
@@ -1512,10 +1515,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                           {:answer (str-truncate (answer-str (:answer final-result)) 200)
                            :confidence (:confidence final-result)
                            :iterations (inc iteration)})
-                        (rlm-stage! :iter-end iteration
-                          {:blocks (count executions)
-                           :errors (count (filter :error executions))
-                           :times (mapv :execution-time-ms executions)})
+                      (rlm-stage! :iter-end iteration
+                        {:blocks (count executions)
+                         :errors (count (filter :error executions))
+                         :times (mapv :execution-time-ms executions)})
                         ;; Fire final streaming callback
                       (when on-chunk
                         (on-chunk {:iteration iteration
