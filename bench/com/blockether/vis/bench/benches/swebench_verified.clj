@@ -141,7 +141,8 @@
                      :iterations  (:iterations result)
                      :tokens      (:tokens result)
                      :cost        (:cost result)
-                     :duration-ms duration}))}))
+                     :duration-ms duration
+                     :trace       (:trace result)}))}))
 
 (defn- collect-pi-prediction! [task model]
   (let [pi-result (common/run-pi! (build-prompt task) model)]
@@ -258,11 +259,11 @@
   [predictions-path run-id report-dir]
   (.mkdirs (io/file report-dir))
   (let [args ["python" "-m" "swebench.harness.run_evaluation"
-               "--dataset_name"   "princeton-nlp/SWE-bench_Verified"
-               "--predictions_path" predictions-path
-               "--max_workers"    (str harness-max-workers)
-               "--run_id"         run-id
-               "--report_dir"     report-dir]
+              "--dataset_name"   "princeton-nlp/SWE-bench_Verified"
+              "--predictions_path" predictions-path
+              "--max_workers"    (str harness-max-workers)
+              "--run_id"         run-id
+              "--report_dir"     report-dir]
         pb   (ProcessBuilder. (into-array String args))
         _    (.redirectErrorStream pb true)
         proc (.start pb)]
@@ -357,7 +358,8 @@
      :tokens         (:tokens prediction)
      :cost           (:cost prediction)
      :duration-ms    (:duration-ms prediction)
-     :error          (:error prediction)}))
+     :error          (:error prediction)
+     :trace          (:trace prediction)}))
 
 ;; =============================================================================
 ;; Phase 6: Summary
@@ -455,7 +457,7 @@
           resolved   (count (filter #(= :resolved (:harness-status %)) results))
           unresolved (count (filter #(= :unresolved (:harness-status %)) results))
           errors-cnt (count (filter #(or (= :error (:harness-status %))
-                                      (some? (:error %))) results))
+                                       (some? (:error %))) results))
           accuracy   (if (pos? total-q) (/ (double resolved) total-q) 0.0)
           total-dur  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
           avg-dur    (if (pos? total-q) (/ (double total-dur) total-q) 0.0)

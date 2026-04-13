@@ -1876,7 +1876,7 @@
             (#'rlm-db/dispose-rlm-conn! db-info)))))))
 
 ;; =============================================================================
-;; Datalevin-era entity/relationship/auto-commit tests removed during SQLite
+;; SQLite-era entity/relationship/auto-commit tests removed during SQLite
 ;; cutover. Reinstate against rlm-db/db-search-entities + rlm-db/store-entity!
 ;; + rlm-db/store-relationship! once the SQLite-backed equivalents are
 ;; covered. See git history at commit 0edace75a9 for the original suite.

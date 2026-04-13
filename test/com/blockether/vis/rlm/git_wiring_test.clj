@@ -3,7 +3,7 @@
    Covers (1) single-repo wiring, (2) multi-repo auto-dispatch via path for
    blame/file-history and via SHA for commit-diff, (3) system prompt renders
    one GIT REPO block per attached repo, (4) DB-backed repo attachments
-   (no atoms — :repo entities persist in Datalevin, git SCI tools open+close
+   (no atoms — :repo entities persist in SQLite, git SCI tools open+close
    Repositories lazily per call).
 
    All git tools are prefixed `git-`.
@@ -352,13 +352,13 @@
                                    :repo/head-short "deadbeef0000"
                                    :repo/branch "main"
                                    :repo/commits-ingested 290}
-                                  {:repo/name "datalevin"
-                                   :repo/path "/x/datalevin"
+                                  {:repo/name "sqlite-rlm"
+                                   :repo/path "/x/sqlite-rlm"
                                    :repo/head-short "cafef00d0000"
                                    :repo/branch "master"
                                    :repo/commits-ingested 5000}]})]
         (expect (str/includes? prompt "GIT REPO: svar"))
-        (expect (str/includes? prompt "GIT REPO: datalevin"))
+        (expect (str/includes? prompt "GIT REPO: sqlite-rlm"))
         (expect (str/includes? prompt "on main"))
         (expect (str/includes? prompt "on master"))
         (expect (str/includes? prompt "290"))

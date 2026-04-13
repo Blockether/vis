@@ -270,7 +270,7 @@
        (if in [] {:pages [] :toc [] :entities []})))))
 
 (defn make-fetch-document-content-fn
-  "Creates fetch-document-content — fetches content using Datalevin lookup ref syntax.
+  "Creates fetch-document-content — fetches content using SQLite lookup ref syntax.
 
    Returns:
      [:page.node/id id]    → content string
@@ -490,24 +490,24 @@
                        'date-minus-days date-minus-days 'date-format date-format 'today-str today-str}
         db-bindings (when db-info
                       (cond->
-                       {;; Unified document tools
-                        'search-documents (make-search-documents-fn db-info)
-                        'fetch-document-content (make-fetch-document-content-fn db-info)
-                        'find-related (fn find-related
-                                        ([entity-id] (when db-info (db/find-related db-info entity-id)))
-                                        ([entity-id opts] (when db-info (db/find-related db-info entity-id opts))))
-                        'search-batch (fn search-batch
-                                        ([queries] (when db-info (db/db-search-batch db-info queries)))
-                                        ([queries opts] (when db-info (db/db-search-batch db-info queries opts))))
-                        'results->md (fn results->md [results] (db/results->markdown results))
-                        'search-entities (fn search-entities
-                                           ([query] (when db-info (db-search-entities db-info query)))
-                                           ([query opts] (when db-info (db-search-entities db-info query opts))))
-                        'get-entity (fn get-entity
-                                      [entity-id] (when db-info (db-get-entity db-info entity-id)))
-                        'list-relationships (fn list-relationships
-                                              ([entity-id] (when db-info (db-list-relationships db-info entity-id)))
-                                              ([entity-id opts] (when db-info (db-list-relationships db-info entity-id opts))))}
+                        {;; Unified document tools
+                         'search-documents (make-search-documents-fn db-info)
+                         'fetch-document-content (make-fetch-document-content-fn db-info)
+                         'find-related (fn find-related
+                                         ([entity-id] (when db-info (db/find-related db-info entity-id)))
+                                         ([entity-id opts] (when db-info (db/find-related db-info entity-id opts))))
+                         'search-batch (fn search-batch
+                                         ([queries] (when db-info (db/db-search-batch db-info queries)))
+                                         ([queries opts] (when db-info (db/db-search-batch db-info queries opts))))
+                         'results->md (fn results->md [results] (db/results->markdown results))
+                         'search-entities (fn search-entities
+                                            ([query] (when db-info (db-search-entities db-info query)))
+                                            ([query opts] (when db-info (db-search-entities db-info query opts))))
+                         'get-entity (fn get-entity
+                                       [entity-id] (when db-info (db-get-entity db-info entity-id)))
+                         'list-relationships (fn list-relationships
+                                               ([entity-id] (when db-info (db-list-relationships db-info entity-id)))
+                                               ([entity-id opts] (when db-info (db-list-relationships db-info entity-id opts))))}
                         (and db-info conversation-ref)
                         (assoc 'session-history (make-session-history-fn db-info conversation-ref)
                           'session-code (make-session-code-fn db-info conversation-ref)
@@ -573,18 +573,30 @@
                                                :classes {'java.lang.Character Character
                                                          'java.lang.Math Math
                                                          'java.lang.String String
+                                                         'java.lang.StringBuilder java.lang.StringBuilder
                                                          'java.lang.Integer Integer
                                                          'java.lang.Long Long
                                                          'java.lang.Double Double
+                                                         'java.lang.Float Float
+                                                         'java.lang.Byte java.lang.Byte
+                                                         'java.lang.Short java.lang.Short
                                                          'java.lang.Boolean Boolean
+                                                         'java.lang.Comparable java.lang.Comparable
+                                                         'java.lang.Number java.lang.Number
+                                                         'java.lang.Exception java.lang.Exception
                                                          'java.util.Collections java.util.Collections
                                                          'java.util.Arrays java.util.Arrays
                                                          'java.util.regex.Pattern java.util.regex.Pattern
                                                          'java.util.regex.Matcher java.util.regex.Matcher
                                                          'java.time.LocalDate java.time.LocalDate
                                                          'java.time.Period java.time.Period
+                                                         'java.time.Instant java.time.Instant
+                                                         'java.time.LocalDateTime java.time.LocalDateTime
+                                                         'java.time.format.DateTimeFormatter java.time.format.DateTimeFormatter
                                                          'java.util.UUID java.util.UUID
                                                          'clojure.lang.PersistentQueue clojure.lang.PersistentQueue
+                                                         'clojure.lang.BigInt clojure.lang.BigInt
+                                                         'clojure.lang.Ratio clojure.lang.Ratio
                                                          'java.math.BigInteger java.math.BigInteger
                                                          'java.math.BigDecimal java.math.BigDecimal}
                            ;; Bare class imports matching Clojure/Babashka defaults
@@ -603,14 +615,20 @@
                                                           Short java.lang.Short
                                                           String java.lang.String
                                                           StringBuilder java.lang.StringBuilder
-                                      ;; Utility classes
+                                       ;; Utility classes
                                                           Arrays java.util.Arrays
                                                           Collections java.util.Collections
                                                           UUID java.util.UUID
                                                           Pattern java.util.regex.Pattern
                                                           Matcher java.util.regex.Matcher
                                                           LocalDate java.time.LocalDate
+                                                          LocalDateTime java.time.LocalDateTime
+                                                          Instant java.time.Instant
+                                                          DateTimeFormatter java.time.format.DateTimeFormatter
+                                                          Period java.time.Period
                                                           PersistentQueue clojure.lang.PersistentQueue
+                                                          BigInt clojure.lang.BigInt
+                                                          Ratio clojure.lang.Ratio
                                                           BigInteger java.math.BigInteger
                                                           BigDecimal java.math.BigDecimal}
                                                :deny '[;; No code loading / evaluation
@@ -777,7 +795,7 @@
 ;; =============================================================================
 ;; Git Tool Binding — lazy-open per call, no atoms. Bindings live in the
 ;; standard SCI sandbox (see make-git-sci-bindings below); :repo entities
-;; are read from Datalevin on every call. System prompt renders
+;; are read from SQLite on every call. System prompt renders
 ;; per-attached-repo GIT REPO blocks via core/format-git-context.
 ;; =============================================================================
 
@@ -910,7 +928,7 @@
               (if (and repo (repo-has-object? repo sha))
                 (try (f repo) (finally (.close repo)))
                 (do (when repo (try (.close repo) (catch Exception _ nil)))
-                    (recur (rest remaining)))))
+                  (recur (rest remaining)))))
             (throw (ex-info (str "SHA " (pr-str sha) " not found in any attached repo. Attached: "
                               (pr-str (mapv :repo/name repos)))
                      {:type :rlm/no-repo-for-sha
@@ -1143,7 +1161,7 @@
               (do (trove/log! {:level :warn
                                :data {:stage :before :id id :ret ret}
                                :msg "Before hook returned unknown shape; ignoring"})
-                  acc)))
+                acc)))
           (catch Throwable t
             (reduced (assoc acc
                        :short-circuit {:result nil
@@ -1190,7 +1208,7 @@
             (do (trove/log! {:level :warn
                              :data {:stage :after :id id :ret ret}
                              :msg "After hook returned unknown shape; ignoring"})
-                outcome)))
+              outcome)))
         (catch Throwable t
           (update outcome :hook-errors (fnil conj [])
             {:stage :after :id id :error {:type :hook-exception
@@ -1287,10 +1305,10 @@
     ;; Global :on-tool-invoked — pure observer, return ignored
     (when-let [g (:on-tool-invoked hooks)]
       (try (g invocation)
-           (catch Throwable t
-             (trove/log! {:level :warn
-                          :data {:error (ex-message t)}
-                          :msg ":on-tool-invoked observer threw; ignoring"}))))
+        (catch Throwable t
+          (trove/log! {:level :warn
+                       :data {:error (ex-message t)}
+                       :msg ":on-tool-invoked observer threw; ignoring"}))))
     (let [{transformed-args :args short-circuit :short-circuit skipped? :skipped?}
           (run-before-chain before-hooks invocation)
           start-ns (System/nanoTime)
@@ -1335,10 +1353,10 @@
       ;; Global :on-tool-completed — pure observer, return ignored
       (when-let [g (:on-tool-completed hooks)]
         (try (g final-outcome)
-             (catch Throwable t
-               (trove/log! {:level :warn
-                            :data {:error (ex-message t)}
-                            :msg ":on-tool-completed observer threw; ignoring"}))))
+          (catch Throwable t
+            (trove/log! {:level :warn
+                         :data {:error (ex-message t)}
+                         :msg ":on-tool-completed observer threw; ignoring"}))))
       final-outcome)))
 
 (defn wrap-tool-for-sci

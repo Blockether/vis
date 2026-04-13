@@ -1,5 +1,5 @@
 (ns com.blockether.vis.rlm.db
-  "Thin facade over rlm.sqlite — Datalevin is gone. Preserves the legacy
+  "Thin facade over rlm.sqlite — SQLite is gone. Preserves the legacy
    public API (fn names + namespaced return shapes) so callers don't change.
 
    db-info map layout:
@@ -35,7 +35,7 @@
 ;; -----------------------------------------------------------------------------
 
 (def create-rlm-conn
-  "Open a SQLite RLM store. Drop-in replacement for the legacy Datalevin
+  "Open a SQLite RLM store. Drop-in replacement for the legacy SQLite
    constructor. See rlm.sqlite/open-store for db-spec forms."
   sq/open-store)
 
@@ -68,6 +68,9 @@
 
 (def store-iteration!        sq/store-iteration!)
 (def db-list-iteration-vars  sq/db-list-iteration-vars)
+
+(def db-list-conversations-by-prefix  sq/db-list-conversations-by-prefix)
+(def delete-entity-tree!               sq/delete-entity-tree!)
 
 (def db-list-conversation-queries  sq/db-list-conversation-queries)
 (def db-list-query-iterations      sq/db-list-query-iterations)

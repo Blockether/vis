@@ -2,7 +2,7 @@
   "Conversation state and LLM integration via svar RLM.
 
    The TUI has one long-lived conversation named `tui:default` inside the
-   shared `~/.vis/vis.mdb` Datalevin DB (see `config/db-path`). Telegram
+   shared `~/.vis/vis.mdb` SQLite DB (see `config/db-path`). Telegram
    chats and web sessions live alongside it under different names
    (`telegram:*`, `session:*`) — svar resolves them by `:conversation/name`,
    so the TUI stays isolated from the others despite the shared DB."
@@ -25,7 +25,7 @@
    {:role :assistant :text (if (string? text) text (pr-str text)) :timestamp timestamp}))
 
 (defn- load-history
-  "Load the prior conversation from svar's Datalevin DB. Uses the entity model
+  "Load the prior conversation from svar's SQLite DB. Uses the entity model
    (conversation → query → iteration) via db-query-history. Returns the user/
    assistant message list in chronological order, or [] on any failure."
   [env]
@@ -45,7 +45,7 @@
 
 (defn make-conversation
   "Open the TUI's long-lived conversation (name `tui:default`) on the shared
-   `~/.vis/vis.mdb` Datalevin DB. First launch creates it; subsequent launches
+   `~/.vis/vis.mdb` SQLite DB. First launch creates it; subsequent launches
    resolve the existing one so message history and var registry persist.
    `provider-config` is accepted for caller compat — we always route through
    the shared router from config.clj. Returns {:env env :history [msgs]}."
@@ -70,6 +70,6 @@
 
 (defn dispose!
   "Release the RLM env handle. Persistent data in `~/.vis/vis.mdb` stays;
-   svar leaves the shared Datalevin conn open for sibling envs."
+   svar leaves the shared SQLite conn open for sibling envs."
   [{:keys [env]}]
   (rlm/dispose-env! env))

@@ -57,7 +57,7 @@
                   db-latest    (requiring-resolve 'com.blockether.svar.internal.rlm.db/db-latest-var-registry)
                   conv-ref     (:conversation-ref env)
                   db-info      (:db-info env)
-                  ;; Pull the persisted var registry straight from Datalevin — this
+                  ;; Pull the persisted var registry straight from SQLite — this
                   ;; replaces the defunct @P workspace view. Each entry has
                   ;; {:value :code :query-id :query-ref :iteration-id :created-at}.
                   var-registry (try (when (and db-info conv-ref) (db-latest db-info conv-ref))
@@ -89,8 +89,11 @@
             {:status 404 :headers {"Content-Type" "application/json"} :body "{\"error\":\"not found\"}"})
 
           (str/ends-with? uri "/delete")
-          (do (when id (srv-delete-session! id))
-              {:status 302 :headers {"Location" "/"}})
+          (if (and id ((requiring-resolve 'com.blockether.vis.web.executor/in-flight?) id))
+            {:status 409 :headers {"Content-Type" "application/json"}
+             :body "{\"error\":\"session has in-flight query\"}"}
+            (do (when id (srv-delete-session! id))
+                {:status 302 :headers {"Location" "/"}}))
 
           :else
           (if-let [sess (when id (srv-get-session id))]

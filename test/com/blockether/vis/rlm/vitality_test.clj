@@ -1,5 +1,5 @@
 (ns com.blockether.vis.rlm.vitality-test
-  "Pending SQLite port — original Datalevin-based vitality tests removed
+  "Pending SQLite port — original SQLite-based vitality tests removed
    during the SQLite cutover. Rewrite against rlm-db/* vitality APIs
    (compute-page-vitality, record-page-access!, propagate-activation!,
    finalize-q-updates!) when reinstating coverage."

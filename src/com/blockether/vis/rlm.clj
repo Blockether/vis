@@ -151,7 +151,7 @@
    on `:repo-name`. The repo is then closed — the `:repo` entity holds the
    filesystem path, so git SCI tools re-open it lazily per call.
 
-   **No atoms touched. Everything lives in Datalevin.** As a consequence:
+   **No atoms touched. Everything lives in SQLite.** As a consequence:
    * Persistent DBs resume with attached repos intact across env restarts.
    * `dispose-env!` has nothing git-specific to clean up.
    * Multi-repo ingestion = multiple `ingest-git!` calls with distinct

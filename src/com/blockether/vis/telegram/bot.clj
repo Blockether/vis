@@ -7,7 +7,7 @@
      clojure -M:run telegram    ;; or: vis telegram
 
    One process can serve many chats — each Telegram chat is a named
-   `:conversation` inside the shared `~/.vis/vis.mdb` Datalevin DB (see
+   `:conversation` inside the shared `~/.vis/vis.mdb` SQLite DB (see
    `config/db-path`), managed in `telegram.sessions`."
   (:require [com.blockether.vis.telegram.api :as tg]
             [com.blockether.vis.telegram.sessions :as sessions]))

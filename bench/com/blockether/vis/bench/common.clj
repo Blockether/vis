@@ -9,6 +9,8 @@
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.llm :as llm]
+   [com.blockether.vis.rlm :as rlm]
+   [com.blockether.vis.rlm.query :as rlm-query]
    [com.blockether.vis.rlm.db :as rlm-db]
    [com.blockether.vis.rlm.trajectory :as trajectory]
    [taoensso.trove :as trove])
@@ -94,8 +96,8 @@
   {:max-iterations 20 :debug? true})
 
 (defn run-query-env-task!
-  "High-level wrapper that runs a single task through svar/query-env! with full
-   trajectory plumbing: temp Datalevin DB per task, trajectory persisted as EDN,
+  "High-level wrapper that runs a single task through rlm-query/query-env! with full
+   trajectory plumbing: temp SQLite DB per task, trajectory persisted as EDN,
    DB cleaned up afterwards. Removes the boilerplate from every benchmark.
 
    Params map:
@@ -119,16 +121,16 @@
     (llm/reset-provider! router (:id p)))
   (let [edn-path (trajectory-edn-path bench model run-ts task-id)
         db-path  (trajectory-temp-db-path task-id)
-         env      (svar/create-env router {:db db-path})
+         env      (rlm/create-env router {:db db-path})
         start    (System/currentTimeMillis)]
     (try
-      (let [result   (svar/query-env! env [(svar/user (prompt-fn task))]
+      (let [result   (rlm-query/query-env! env [(llm/user (prompt-fn task))]
                        (merge DEFAULT_QUERY_ENV_OPTS {:model model} query-opts))
             duration (- (System/currentTimeMillis) start)]
         (persist-trajectory! env edn-path)
         (score-fn task result duration))
       (finally
-        (svar/dispose-env! env)
+        (rlm/dispose-env! env)
         (cleanup-temp-db! db-path)))))
 
 ;; =============================================================================
