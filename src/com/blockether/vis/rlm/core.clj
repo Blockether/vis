@@ -97,7 +97,7 @@ Pattern: [thing] [action] [reason]. [next step].")
                 (str "total=" (reduce + 0 (or (:times data) [])) "ms"))
 
               :final
-              (fmt "══ FINAL"
+              (fmt "│  ══ FINAL"
                 (str "answer=\"" (str/replace (str (:answer data)) #"\s+" " ") "\"")
                 (str "confidence=" (:confidence data))
                 (str "iters=" (:iterations data)))
