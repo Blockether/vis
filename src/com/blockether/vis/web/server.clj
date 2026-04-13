@@ -1,23 +1,39 @@
 (ns com.blockether.vis.web.server
-  "Session management, RLM lifecycle, and Jetty server."
+  "Session management, RLM lifecycle, and Jetty server.
+
+   All web sessions live as named :conversations inside the shared
+   `~/.vis/vis.mdb` Datalevin DB (`config/db-path`), named `session:<uuid>`.
+   No per-session directories — svar resolves/creates by name, and Datalevin's
+   process-wide conn cache means every session env shares one Connection."
   (:require [com.blockether.vis.agent :as agent]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.web.routes :as routes]
             [com.blockether.svar.internal.rlm :as rlm]
             [com.blockether.svar.internal.rlm.db :as rlm-db]
+            [datalevin.core :as d]
             [ring.adapter.jetty :as jetty]
             [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.time Instant]
            [java.util UUID]))
 
-;;; ── State ───────────────────────────────────���──────────────────────────
-
-(def sessions-dir (str (System/getProperty "user.home") "/.vis/sessions"))
+;;; ── State ──────────────────────────────────────────────────────────────
 
 (defonce sessions (atom {}))
 (defonce live-status (atom {}))
+
+;; Long-lived db-info handle for server-level queries (list sessions, delete
+;; session entities). Holds the same Datalevin conn that every session env
+;; uses — d/get-conn caches per path. Opened in `start!`.
+(defonce ^:private server-db-info (atom nil))
+
+(defn- db-info []
+  (or @server-db-info
+      (reset! server-db-info (rlm-db/create-rlm-conn config/db-path))))
+
+(def ^:private session-name-prefix "session:")
+
+(defn- session-name [id] (str session-name-prefix id))
 
 
 ;;; ── Router ──��─────────────────────────────��────────────────────────────
@@ -42,9 +58,7 @@
       (let [fm first-message]
         (if (> (count fm) 65) (str (subs fm 0 62) "…") fm)))))
 
-;;; ── Session CRUD ───────���───────────────────────────────────────────────
-
-(defn- session-path [id] (str sessions-dir "/" id))
+;;; ── Session CRUD ───────────────────────────────────────────────────────
 
 (defn- maybe-ingest-git!
   "If the process working directory is inside a git repository, ingest recent
@@ -61,35 +75,73 @@
         (println (str "[server] git ingestion skipped (" cwd "): " (ex-message e)))
         nil))))
 
+(defn- register-base-tools! [env]
+  (reduce (fn [e {:keys [sym fn] :as tool-def}]
+            (rlm/register-env-fn! e sym fn (dissoc tool-def :sym :fn)))
+          env
+          agent/base-tools))
+
 (defn create-session! [name]
   (let [id     (str (UUID/randomUUID))
         _cfg   (config/resolve-config nil)  ;; throw early if no provider config
         router (config/get-router)
-        path   (session-path id)
-        env    (rlm/create-env router {:db path})
-        env    (reduce (fn [e {:keys [sym fn] :as tool-def}]
-                         (rlm/register-env-fn! e sym fn (dissoc tool-def :sym :fn)))
-                       env
-                       agent/base-tools)
+        ;; Open a new named :conversation in the shared DB. First-time name
+        ;; ⇒ svar creates it; on restart the same name resolves to the
+        ;; existing conversation and rehydrates history + var registry.
+        env    (rlm/create-env router
+                 {:db config/db-path
+                  :conversation {:name (session-name id)}})
+        env    (register-base-tools! env)
         _      (maybe-ingest-git! env)
-        sess   {:id id :name (or name "New Chat") :env env :messages [] :created-at (str (Instant/now))}]
+        sess   {:id id :name (or name "New Chat") :env env :messages []
+                :created-at (str (Instant/now))}]
     (swap! sessions assoc id sess)
     sess))
 
 (defn get-session [id] (get @sessions id))
 
+(defn- retract-conversation-tree!
+  "Retract a :conversation, every :query under it, every :iteration under those
+   queries, and every :iteration-var under those iterations. :entity/parent-id
+   isn't a :db.type/ref so datalevin won't cascade — we walk the hierarchy and
+   issue explicit retracts in one transaction."
+  [db-info conv-ref]
+  (let [conn    (:conn db-info)
+        conv-id (second conv-ref)
+        queries (rlm-db/db-list-conversation-queries db-info conv-ref)
+        iter-entities (into [] (mapcat
+                                 #(rlm-db/db-list-query-iterations db-info
+                                    [:entity/id (:entity/id %)]))
+                            queries)
+        iter-ids (mapv :entity/id iter-entities)
+        var-ids  (when (seq iter-ids)
+                   (d/q '[:find [?id ...] :in $ [?parent ...]
+                          :where [?e :entity/type :iteration-var]
+                                 [?e :entity/parent-id ?parent]
+                                 [?e :entity/id ?id]]
+                        (d/db conn) iter-ids))
+        all-ids  (concat var-ids
+                         iter-ids
+                         (map :entity/id queries)
+                         [conv-id])]
+    (when (seq all-ids)
+      (d/transact! conn
+        (mapv (fn [id] [:db/retractEntity [:entity/id id]]) all-ids)))))
+
 (defn delete-session! [id]
   (when-let [sess (get-session id)]
     (if ((requiring-resolve 'com.blockether.vis.web.executor/in-flight?) id)
       (println (str "[server] Session " id " has in-flight query, skipping delete"))
-      (do
+      (let [conv-ref (some-> sess :env :conversation-ref)]
         (try (rlm/dispose-env! (:env sess)) (catch Exception _ nil))
         (swap! sessions dissoc id)
         (swap! live-status dissoc id)
-        (let [dir (io/file (session-path id))]
-          (when (.exists dir)
-            (doseq [f (reverse (file-seq dir))]
-              (.delete f))))))))
+        (when conv-ref
+          (try
+            (retract-conversation-tree! (db-info) conv-ref)
+            (catch Exception e
+              (println (str "[server] delete-session! retract failed for "
+                            id ": " (ex-message e))))))))))
 
 (defn sessions-list []
   (->> (vals @sessions)
@@ -159,7 +211,7 @@
    so a corrupted session doesn't take the whole server down."
   [env]
   (try
-    (let [db-info @(:db-info-atom env)
+    (let [db-info (:db-info env)
           conv-ref (:conversation-ref env)
           queries  (rlm-db/db-list-conversation-queries db-info conv-ref)]
       (into [] (mapcat #(query-entity->message-pair db-info %)) queries))
@@ -174,31 +226,46 @@
             messages)
       "New Chat"))
 
+(defn- list-session-conversations
+  "Enumerate every :conversation in the shared DB whose :conversation/name starts
+   with `session:`. Returns `[{:id uuid-str :created-at inst}, …]` ordered by
+   creation. We derive the session-id from the suffix of :conversation/name so
+   callers can stitch back to URL-level ids without touching :entity/id."
+  [db-info]
+  (let [conn (:conn db-info)]
+    (when conn
+      (->> (d/q '[:find ?nm ?ca
+                  :where [?e :entity/type :conversation]
+                         [?e :conversation/name ?nm]
+                         [?e :entity/created-at ?ca]]
+                (d/db conn))
+           (keep (fn [[nm ca]]
+                   (when (str/starts-with? nm session-name-prefix)
+                     {:id (subs nm (count session-name-prefix))
+                      :created-at ca})))
+           (sort-by :created-at)
+           vec))))
+
 (defn load-sessions! []
-  (let [dir (io/file sessions-dir)]
-    (when (.exists dir)
-      (doseq [f (.listFiles dir)]
-        (when (.isDirectory f)
-          (let [id (.getName f)]
-            (try
-              (let [_cfg   (config/resolve-config nil)
-                    router (config/get-router)
-                    ;; :conversation :latest resumes the prior conversation on the
-                    ;; persistent DB — svar rehydrates its own SCI var state.
-                    env    (rlm/create-env router {:db (str f) :conversation :latest})
-                    env    (reduce (fn [e {:keys [sym fn] :as tool-def}]
-                                     (rlm/register-env-fn! e sym fn (dissoc tool-def :sym :fn)))
-                                   env
-                                   agent/base-tools)
-                    ;; Re-bind git SCI tools onto the freshly created env. Commits are
-                    ;; already persisted in Datalevin from the original ingest; this
-                    ;; just reopens the JGit repo and wires the sandbox bindings.
-                    _      (maybe-ingest-git! env)
-                    msgs   (load-messages-from-db env)
-                    name   (session-name-from-messages msgs)]
-                (swap! sessions assoc id {:id id :name name :env env :messages msgs :created-at ""}))
-              (catch Exception e
-                (println (str "[server] Failed to load session " id ": " (ex-message e)))))))))))
+  (let [_cfg   (config/resolve-config nil)
+        router (config/get-router)
+        convs  (list-session-conversations (db-info))]
+    (doseq [{:keys [id created-at]} convs]
+      (try
+        ;; Named resolver: resolves to the already-existing conversation and
+        ;; rehydrates svar's SCI var state. All envs share the Datalevin conn
+        ;; via d/get-conn caching, so opening many here is cheap.
+        (let [env  (rlm/create-env router
+                     {:db config/db-path
+                      :conversation {:name (session-name id)}})
+              env  (register-base-tools! env)
+              _    (maybe-ingest-git! env)
+              msgs (load-messages-from-db env)
+              name (session-name-from-messages msgs)]
+          (swap! sessions assoc id {:id id :name name :env env :messages msgs
+                                    :created-at (str created-at)}))
+        (catch Exception e
+          (println (str "[server] Failed to load session " id ": " (ex-message e))))))))
 
 ;;; ── Jetty ────────────────────────────────────────��─────────────────────
 

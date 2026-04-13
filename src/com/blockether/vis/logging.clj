@@ -19,8 +19,12 @@
 
 ;; Open /dev/tty directly for Lanterna — completely independent of System/out.
 ;; This is the ONLY way to guarantee log output can't corrupt the TUI.
-(def tty-in  (FileInputStream.  "/dev/tty"))
-(def tty-out (FileOutputStream. "/dev/tty"))
+;;
+;; Wrapped in `delay` so non-TUI entrypoints (`vis run`, `vis telegram`, web
+;; server) that have no controlling TTY don't crash at class-load time. The
+;; TUI is the only caller and derefs on startup.
+(def tty-in  (delay (FileInputStream.  "/dev/tty")))
+(def tty-out (delay (FileOutputStream. "/dev/tty")))
 
 ;; Capture original stdout at class-load time, BEFORE any redirects.
 ;; CLI mode uses this to print results to the terminal after redirecting everything else.

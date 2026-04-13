@@ -122,29 +122,49 @@ All application state lives in `tui/state.clj` using a re-frame dispatch pattern
 
 ### Session Database (Datalevin)
 
-Sessions are persisted in `~/.vis/sessions/<uuid>/` as Datalevin databases. Each session has: `data.mdb`, `lock.mdb`, `txlog/`, `snapshots/`, `VERSION`.
+**ONE Datalevin DB for everything.** Path: `~/.vis/vis.mdb` (`config/db-path`). Every vis entrypoint — TUI chat, web sessions, Telegram chats, CLI `run` — opens the same DB. Each entrypoint owns a distinct `:conversation` inside, addressed by the caller-supplied `:conversation/name`:
 
-**IMPORTANT:** The web server holds a lock on session DBs. You MUST stop the server before querying DBs directly. Use `lsof -ti:3000 | xargs kill` first.
+| Entrypoint | Conversation name | Helper                                  |
+|------------|-------------------|-----------------------------------------|
+| TUI chat   | `tui:default`     | `(config/conversation-name :tui)`       |
+| Web session| `session:<uuid>`  | `(config/conversation-name :session id)`|
+| Telegram   | `telegram:<chat-id>` | `(config/conversation-name :telegram chat-id)` |
+| CLI run    | fresh each call (no name) unless caller passes `:conversation`| — |
 
-**svar's entity model (as of the RLM refactor):**
-- `:conversation` — one per session, holds `:conversation/env-id`, `:conversation/model`, `:conversation/system-prompt`
+svar resolves `{:conversation {:name s}}` as lookup-or-create: first call with a name creates the `:conversation` entity; subsequent calls resolve the existing one and rehydrate message history + var registry.
+
+Datalevin's `d/get-conn` is process-wide idempotent per path, so every env shares one Connection. svar's `dispose-env!` leaves persistent conns open (`:owned? false`) so disposing one env never breaks sibling envs.
+
+**IMPORTANT:** The web server holds a lock on `vis.mdb`. Stop the server before querying the DB directly. Use `lsof -ti:3000 | xargs kill` first.
+
+**svar's entity model:**
+- `:conversation` — one per session/chat, holds `:conversation/name` (unique identity, caller-supplied), `:conversation/env-id`, `:conversation/model`, `:conversation/system-prompt`
 - `:query` — one per user turn, parented to `:conversation` via `:entity/parent-id`, holds `:query/text`, `:query/answer`, `:query/status`, `:query/iterations`, `:query/duration-ms`, `:query/messages` (pr-str'd)
 - `:iteration` — one per LLM iteration inside a query, parented to `:query`, holds `:iteration/code` (pr-str'd vec of source strings), `:iteration/results` (pr-str'd vec), `:iteration/thinking`, `:iteration/answer` (present iff this iteration emitted `:final`), `:iteration/duration-ms`
 - `:iteration-var` — one per `(def …)` executed in an iteration, parented to `:iteration`, holds `:iteration.var/name`, `:iteration.var/value` (pr-str'd), `:iteration.var/code`
 
 All ordering within a parent is by `:entity/created-at` (no explicit index attribute). The LLM uses `restore-var`/`restore-vars` SCI tools to rebind prior `:iteration-var`s on demand. There is **no** `:message`, `:final-result/*`, or `@P` workspace — those are all from the pre-refactor world and do not exist.
 
-**Investigating session data:**
+**Investigating DB state:**
 ```clojure
-;; Kill web server first, then:
+;; Stop the web server first (lsof -ti:3000 | xargs kill), then:
 (require '[datalevin.core :as d]
-         '[com.blockether.svar.internal.rlm.db :as rlm-db])
+         '[com.blockether.svar.internal.rlm.db :as rlm-db]
+         '[com.blockether.vis.config :as config])
 
-(let [conn    (d/get-conn (str (System/getProperty "user.home") "/.vis/sessions/<UUID>"))
+(let [conn    (d/get-conn config/db-path)
       db-info {:conn conn}
-      conv    (rlm-db/db-find-latest-conversation-ref db-info)]
+      ;; Pick one conversation by name — telegram chat 12345 in this example:
+      conv    (rlm-db/db-resolve-conversation-ref db-info {:name "telegram:12345"})]
 
-  ;; Compact query summaries (what `load-messages-from-db` walks)
+  ;; List every named conversation in the DB (sessions, chats, TUI, agents):
+  (d/q '[:find ?name ?ca
+         :where [?e :entity/type :conversation]
+                [?e :conversation/name ?name]
+                [?e :entity/created-at ?ca]]
+       (d/db conn))
+
+  ;; Compact query summaries for one conversation (what load-messages-from-db walks)
   (rlm-db/db-query-history db-info conv)
 
   ;; Full iteration entities for one query
@@ -158,14 +178,15 @@ All ordering within a parent is by `:entity/created-at` (no explicit index attri
 ```
 
 **Common DB issues:**
-- `Invalid txn-log record magic` — DB corrupted from `kill -9`. Delete the session dir and restart.
-- `Sessions: 0` on startup — `load-sessions!` now prints `[server] Failed to load session <id>: <msg>` instead of swallowing errors.
-- `lock.mdb` stale — if server crashed, delete `lock.mdb` manually before reconnecting.
+- `Invalid txn-log record magic` — DB corrupted from `kill -9`. Delete `~/.vis/vis.mdb` and restart (loses all conversation history).
+- `Sessions: 0` on startup — `load-sessions!` prints `[server] Failed to load session <id>: <msg>` when a `:conversation/name` is present but rehydration fails.
+- `lock.mdb` stale — if server crashed, delete `~/.vis/vis.mdb/lock.mdb` manually before reconnecting.
 - WAL `.tmp` files — incomplete writes from hard kills. Safe to delete.
 
 **Key svar DB functions (post-refactor — verify against `../svar` before assuming):**
 - `rlm-db/db-find-latest-conversation-ref` — lookup ref for the most-recent `:conversation`
-- `rlm-db/db-resolve-conversation-ref` — resolves `:latest`, uuid, or lookup ref
+- `rlm-db/db-find-named-conversation-ref` — lookup ref by `:conversation/name` (nil if absent)
+- `rlm-db/db-resolve-conversation-ref` — resolves `:latest`, uuid, lookup ref, or `{:name s}`
 - `rlm-db/db-list-conversation-queries` — ordered `:query` entities under a conversation
 - `rlm-db/db-list-query-iterations` — ordered `:iteration` entities under a query
 - `rlm-db/db-list-iteration-vars` — persisted `:iteration-var` entities
@@ -173,17 +194,17 @@ All ordering within a parent is by `:entity/created-at` (no explicit index attri
 - `rlm-db/db-latest-var-registry` — last-write-wins map of `sym → {:value :code ...}`
 
 **svar RLM entrypoints vis uses (`com.blockether.svar.internal.rlm`):**
-- `create-env router {:db path :conversation :latest|ref|nil}` — positional router, explicit db spec
+- `create-env router {:db path :conversation selector}` — selector is `:latest` | `{:name s}` | uuid | `[:entity/id uuid]` | nil. `{:name s}` is lookup-or-create — if the conversation exists it's resumed, otherwise a new one is created with that name.
 - `register-env-fn!` / `register-env-def!` — wire tools/constants into the SCI sandbox
 - `query-env! env [(llm/user "...")] opts` — **messages must be a vector of message maps**; `opts` accepts `:system-prompt :context :spec :model :max-iterations :on-chunk :verify? :debug? :eval-timeout-ms`
-- `ingest-git! env {:repo-path path :n 100}` — JGit-backed, attaches `search-commits`/`commit-history`/`file-history`/`blame`/`commit-diff`/`commit-parents`/`commits-by-ticket` to the sandbox
-- `dispose-env!` — closes Datalevin + any attached git repo
+- `ingest-git! env {:repo-path path :n 100}` — JGit-backed, attaches `search-commits`/`commit-history`/`file-history`/`blame`/`commit-diff`/`commit-parents`/`commits-by-ticket` to the sandbox. `:repo/name` is unique identity — repeated calls for the same repo dedupe.
+- `dispose-env!` — releases the env handle; on a persistent :db path, the shared Datalevin conn stays open so sibling envs keep working.
 
 **Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends an `ITERATION_SPEC`-validated JSON response with `:thinking`, `:code` (vec of source strings), and an optional `:final {:answer :confidence :language :sources}` sub-map. When `:final` is set, svar stops iterating and the answer is the RLM result. Observability is via the single `:on-chunk` callback — `{:iteration :thinking :code :final :done?}` — not the old `:hooks` map, which no longer exists.
 
 **Web session lifecycle:**
-- `server/create-session!` — creates env + Datalevin DB at `~/.vis/sessions/<uuid>/`
-- `server/load-sessions!` — restores all sessions from disk on startup, using `:conversation :latest` so svar re-hydrates its own SCI state
-- `server/load-messages-from-db` — projects `:conversation` → `:query` → `:iteration` into the presenter's `{:role :text :result}` shape; no message entities involved
-- `server/delete-session!` — disposes env + removes DB dir
-- `executor/on-chunk-handler` — maps svar's streaming callback into `server/live-status` so the `/s/:id?check=N` polling endpoint can drive the live trace UI
+- `server/create-session!` — opens a named `:conversation` `session:<uuid>` in the shared DB; no per-session directory.
+- `server/load-sessions!` — on startup, `d/q`s every conversation whose `:conversation/name` starts with `session:` and rehydrates each into an env (conn is shared across envs).
+- `server/load-messages-from-db` — projects `:conversation` → `:query` → `:iteration` into the presenter's `{:role :text :result}` shape; no message entities involved.
+- `server/delete-session!` — disposes env + retracts the conversation's entity tree (`retract-conversation-tree!` walks `:conversation` → `:query` → `:iteration` → `:iteration-var` and retracts in one `d/transact!`).
+- `executor/on-chunk-handler` — maps svar's streaming callback into `server/live-status` so the `/s/:id?check=N` polling endpoint can drive the live trace UI.

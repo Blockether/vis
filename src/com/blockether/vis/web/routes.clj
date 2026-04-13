@@ -56,7 +56,7 @@
             (let [env          (:env sess)
                   db-latest    (requiring-resolve 'com.blockether.svar.internal.rlm.db/db-latest-var-registry)
                   conv-ref     (:conversation-ref env)
-                  db-info      (when-let [a (:db-info-atom env)] @a)
+                  db-info      (:db-info env)
                   ;; Pull the persisted var registry straight from Datalevin — this
                   ;; replaces the defunct @P workspace view. Each entry has
                   ;; {:value :code :query-id :query-ref :iteration-id :created-at}.

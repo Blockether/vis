@@ -12,6 +12,27 @@
 (def config-dir  (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
 
+;; One Datalevin DB for everything — TUI sessions, web sessions, telegram chats,
+;; CLI agent runs. Each is a named :conversation inside. Replaces the old
+;; per-entrypoint dirs (~/.vis/sessions/<uuid>/, ~/.vis/telegram/<chat-id>/,
+;; ~/.vis/agents/<name>/, ~/.vis/rlm/) — all collapsed here.
+(def db-path (str config-dir "/vis.mdb"))
+
+(defn conversation-name
+  "Build the stable caller-supplied conversation name that svar stores as
+   :conversation/name. Each vis entrypoint picks a `source` and an id so
+   conversations are namespaced in the shared DB:
+
+     (conversation-name :telegram 12345)  => \"telegram:12345\"
+     (conversation-name :session \"abc\") => \"session:abc\"
+     (conversation-name :tui)             => \"tui:default\"
+     (conversation-name :cli \"run-x\")   => \"cli:run-x\"
+
+   Pass the result as `:conversation {:name (conversation-name ...)}` to
+   `rlm/create-env`."
+  ([source]     (str (name source) ":default"))
+  ([source id]  (str (name source) ":" id)))
+
 ;;; ── Provider presets ────────────────────────────────────────────────────
 
 (def ^:private base-providers
