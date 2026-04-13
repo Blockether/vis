@@ -53,7 +53,7 @@ Pattern: [thing] [action] [reason]. [next step].")
                 (str "model=" (:model data))
                 (str "max-iter=" (:max-iterations data))
                 (when (:reasoning? data) "reasoning=true")
-                (str "query=\"" (:query data) "\""))
+                (str "query=\"" (str/replace (str (:query data)) #"\s+" " ") "\""))
 
               :iter-start
               (fmt (str "┌─ ITER " iteration)
