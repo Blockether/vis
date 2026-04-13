@@ -672,12 +672,13 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           _ (rlm-stage! :llm-call iteration
               {:msg-count (count messages) :input-tokens input-tokens})
           ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
-          ask-result (llm/ask! (:router rlm-env)
-                       (cond-> {:spec iteration-spec
-                                :messages messages
-                                :routing (or routing {})
-                                :check-context? false}
-                         on-chunk (assoc :on-chunk on-chunk)))
+          ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
+                       (llm/ask! (:router rlm-env)
+                         (cond-> {:spec iteration-spec
+                                  :messages messages
+                                  :routing (or routing {})
+                                  :check-context? false}
+                           on-chunk (assoc :on-chunk on-chunk))))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           ;; Native reasoning takes priority over spec-parsed thinking
