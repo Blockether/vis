@@ -1548,14 +1548,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                             budget-warning (when (<= remaining-iters 5)
                                              (str "\n[SYSTEM_NUDGE] Only " remaining-iters " iterations left! "
                                                "Set final NOW with what you have. DO NOT start new explorations."))
-                            all-passed? (every? #(nil? (:error %)) executions)
-                            all-passed-nudge (when all-passed?
-                                               (str "\n[SYSTEM_NUDGE] ALL " (count executions) " blocks passed with 0 errors. "
-                                                 "Submit :final NOW with your answer. Do NOT run more tests."))
                             force-final-nudge (when (> iteration 20)
                                                 (str "\n[SYSTEM_NUDGE] You have been running for " (inc iteration) " iterations. "
                                                   "STOP exploring. Set final IMMEDIATELY with your current findings."))
-                            user-feedback (str iteration-header "\n" exec-feedback repetition-warning budget-warning all-passed-nudge force-final-nudge)]
+                            user-feedback (str iteration-header "\n" exec-feedback repetition-warning budget-warning force-final-nudge)]
                         (rlm-stage! :iter-end iteration
                           {:blocks (count executions)
                            :errors (count (filter :error executions))
