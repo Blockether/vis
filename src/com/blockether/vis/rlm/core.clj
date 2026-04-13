@@ -98,7 +98,7 @@ Pattern: [thing] [action] [reason]. [next step].")
 
               :final
               (fmt "══ FINAL"
-                (str "answer=\"" (:answer data) "\"")
+                (str "answer=\"" (str/replace (str (:answer data)) #"\s+" " ") "\"")
                 (str "confidence=" (:confidence data))
                 (str "iters=" (:iterations data)))
 
@@ -787,9 +787,6 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                         :confidence confidence}
                                  (seq sources) (assoc :sources sources)
                                  (:reasoning final-data) (assoc :reasoning (:reasoning final-data)))]
-              (rlm-debug! {:final-answer (str-truncate final-answer 200)
-                           :confidence confidence
-                           :sources-count (count sources)} "Final answer accepted")
               {:response nil :thinking thinking :next-optimize next-optimize
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
