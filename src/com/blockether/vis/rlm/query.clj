@@ -351,8 +351,8 @@
     (if status
       ;; failure path
       (do
-        (rlm-core/rlm-debug! {:status status :iterations iterations :duration-ms duration-ms}
-          "RLM query-env! finished (max iterations)")
+        (rlm-core/rlm-stage! :query-end 0
+          {:duration-ms duration-ms :iterations iterations :status status})
         (try
           (rlm-db/update-query! db-info query-ref
             {:answer      (:result answer answer)
@@ -385,12 +385,9 @@
                                 :claim/verified? (boolean (get claim :claim/verified? true))}))
                 (catch Exception e
                   (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Failed to store claim"}))))))
-        (rlm-core/rlm-debug! {:iterations       iterations
-                              :duration-ms      duration-ms
-                              :refinement-count refinement-count
-                              :confidence       confidence
-                              :answer-preview   (rlm-db/str-truncate (pr-str final-answer) 200)}
-          "RLM query-env! finished (success)")
+        (rlm-core/rlm-stage! :query-end 0
+          {:duration-ms duration-ms :iterations iterations
+           :cost (str (:total-cost @total-cost-atom))})
         (try
           (rlm-db/update-query! db-info query-ref
             {:answer      final-answer
@@ -492,13 +489,11 @@
                                                 (:max-parallel-llm merged-concurrency))
                schema/*sub-rlm-deadline*      nil]
        (binding [schema/*max-recursion-depth* max-recursion-depth]
-         (rlm-core/rlm-debug! {:query          query-str
-                               :root-model     root-model
-                               :max-iterations max-iterations
-                               :verify?        verify?
-                               :plan?          plan?
-                               :refine-mode    :final-confidence}
-           "RLM query-env! started")
+         (rlm-core/rlm-stage! :query-start 0
+           {:model root-model
+            :max-iterations max-iterations
+            :reasoning? (some? (:reasoning-params (first (mapcat :models (:providers (:router env))))))
+            :query (rlm-db/str-truncate query-str 120)})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
                {:keys [iteration-result query-ref
