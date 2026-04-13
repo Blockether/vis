@@ -334,20 +334,33 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                  ::spec/cardinality :spec.cardinality/many
                  ::spec/description "IDs of sources used to derive the answer. Include page.node IDs, document IDs, or entity IDs that you fetched/searched and actually used. REQUIRED when you used search-documents or fetch-document-content."})))
 
+(def CODE_BLOCK_SPEC
+  "Spec for a single code block with its expected execution time budget."
+  (spec/spec :code_block
+    (spec/field {::spec/name :expr
+                 ::spec/type :spec.type/string
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/description "Clojure expression to execute in the sandbox"})
+    (spec/field {::spec/name :time-ms
+                 ::spec/type :spec.type/int
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/description "Expected max execution time in milliseconds. Runtime uses this as the per-block timeout."})))
+
 (def ITERATION_SPEC
   "Spec for each RLM iteration response. Forces structured output from LLM.
    Used when the provider does NOT have native reasoning (thinking) capability."
   (spec/spec
-    {:refs [FINAL_SPEC]}
+    {:refs [FINAL_SPEC CODE_BLOCK_SPEC]}
     (spec/field {::spec/name :thinking
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/description "Your reasoning: what you observed, what you learned, what to do next"})
     (spec/field {::spec/name :code
-                 ::spec/type :spec.type/string
+                 ::spec/type :spec.type/ref
+                 ::spec/target :code_block
                  ::spec/cardinality :spec.cardinality/many
                  ::spec/required false
-                 ::spec/description "Clojure expressions to execute in the sandbox. OMIT entirely when emitting :final — no need to stage an echo expression."})
+                 ::spec/description "Code blocks to execute. Each has :expr (Clojure code) and :time-ms (expected max execution time). OMIT entirely when emitting :final."})
     (spec/field {::spec/name :next-optimize
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -368,12 +381,13 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
    No 'thinking' field — the model's native reasoning tokens handle that.
    Saves output tokens by not duplicating reasoning in JSON."
   (spec/spec
-    {:refs [FINAL_SPEC]}
+    {:refs [FINAL_SPEC CODE_BLOCK_SPEC]}
     (spec/field {::spec/name :code
-                 ::spec/type :spec.type/string
+                 ::spec/type :spec.type/ref
+                 ::spec/target :code_block
                  ::spec/cardinality :spec.cardinality/many
                  ::spec/required false
-                 ::spec/description "Clojure expressions to execute in the sandbox. OMIT entirely when emitting :final — no need to stage an echo expression."})
+                 ::spec/description "Code blocks to execute. Each has :expr (Clojure code) and :time-ms (expected max execution time). OMIT entirely when emitting :final."})
     (spec/field {::spec/name :next-optimize
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
