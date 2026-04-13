@@ -1500,6 +1500,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                           {:answer (str-truncate (answer-str (:answer final-result)) 200)
                            :confidence (:confidence final-result)
                            :iterations (inc iteration)})
+                        (rlm-stage! :iter-end iteration
+                          {:blocks (count executions)
+                           :errors (count (filter :error executions))
+                           :times (mapv :execution-time-ms executions)})
                         ;; Fire final streaming callback
                       (when on-chunk
                         (on-chunk {:iteration iteration
