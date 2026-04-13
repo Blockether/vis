@@ -64,11 +64,13 @@ Pattern: [thing] [action] [reason]. [next step].")
                 (str "tokens=" (:input-tokens data)))
 
               :llm-response
-              (fmt "│  ⇐ LLM"
-                (str (:duration-ms data) "ms")
-                (when (:has-reasoning data) "reasoning=true")
-                (str "code=" (:code-count data))
-                (when (:has-final data) "FINAL=true"))
+              (let [thinking (str (:thinking data))]
+                (fmt "│  ⇐ LLM"
+                  (str (:duration-ms data) "ms")
+                  (str "code=" (:code-count data))
+                  (when (:has-final data) "FINAL=true")
+                  (when (seq thinking)
+                    (str "\n│     reasoning: " (str/replace thinking #"\s+" " ")))))
 
               :code-exec
               (let [code-1line (str/replace (str (:code data)) #"\s+" " ")]
@@ -667,14 +669,15 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                          on-chunk (assoc :on-chunk on-chunk)))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
+          ;; Native reasoning takes priority over spec-parsed thinking
+          thinking (or model-reasoning (:thinking parsed))
           _ (rlm-stage! :llm-response iteration
               {:has-reasoning (some? model-reasoning)
                :has-final (some? (:final parsed))
                :code-count (count (:code parsed))
                :duration-ms (:duration-ms ask-result)
-               :tokens (:tokens ask-result)})
-          ;; Native reasoning takes priority over spec-parsed thinking
-          thinking (or model-reasoning (:thinking parsed))
+               :tokens (:tokens ask-result)
+               :thinking thinking})
           ;; LLM's preference for next iteration's model selection
           next-optimize (when-let [opt (:next-optimize parsed)]
                           (keyword opt))
