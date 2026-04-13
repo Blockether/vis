@@ -10,7 +10,7 @@
    [com.blockether.vis.rlm.data :as rlm-data]
    [com.blockether.vis.rlm.routing
     :refer [make-routed-sub-rlm-query-fn resolve-root-model provider-has-reasoning?]]
-   [com.blockether.vis.rlm.schema
+   [com.blockether.vis.rlm.schema :as schema
     :refer [ENTITY_EXTRACTION_SPEC ENTITY_EXTRACTION_OBJECTIVE
             ITERATION_SPEC ITERATION_SPEC_CODE_ONLY
             *eval-timeout-ms*
@@ -184,7 +184,7 @@ Pattern: [thing] [action] [reason]. [next step].")
     (catch Throwable e
       (ex-message e))))
 
-(defn execute-code [{:keys [sci-ctx sandbox-ns]} code]
+(defn execute-code [{:keys [sci-ctx sandbox-ns]} code & {:keys [timeout-ms]}]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
     (let [bal (paren-repair/paren-balance code)
           _ (rlm-debug! {:code code
@@ -209,7 +209,10 @@ Pattern: [thing] [action] [reason]. [next step].")
                 {:result nil :stdout "" :stderr "" :error parse-error
                  :execution-time-ms 0 :timeout? false})))
         ;; Normal execution path
-          (let [execution-result (run-sci-code sci-ctx code :sandbox-ns sandbox-ns)
+          (let [execution-result (if timeout-ms
+                                  (binding [*eval-timeout-ms* (schema/clamp-eval-timeout-ms timeout-ms)]
+                                    (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                                  (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
                 execution-time (- (System/currentTimeMillis) start-time)]
             (if (:timeout? execution-result)
               (do
@@ -645,10 +648,25 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
               language (when-let [l (:language final-data)] (keyword l))
               code-answer? (= answer-type :code)
               clojure? (and code-answer? (or (= language :clojure) (nil? language)))
-              code-blocks (vec (remove str/blank? (or (:code parsed) [])))
+              ;; Extract code blocks — handles both map {:expr :time-ms} and plain string format
+              raw-code (or (:code parsed) [])
+              code-entries (vec (keep (fn [block]
+                                        (if (map? block)
+                                          (let [expr (str (:expr block ""))]
+                                            (when-not (str/blank? expr)
+                                              {:expr expr :time-ms (:time-ms block)}))
+                                          (let [s (str block)]
+                                            (when-not (str/blank? s)
+                                              {:expr s :time-ms nil}))))
+                               raw-code))
+              code-blocks (mapv :expr code-entries)
               ;; Execute code blocks in SCI — only for Clojure code answers.
               exec-results (when (and clojure? (seq code-blocks))
-                             (mapv (fn [code] (execute-code rlm-env code)) code-blocks))
+                             (mapv (fn [{:keys [expr time-ms]}]
+                                     (if time-ms
+                                       (execute-code rlm-env expr :timeout-ms time-ms)
+                                       (execute-code rlm-env expr)))
+                               code-entries))
               exec-errors (when exec-results
                             (seq (filter :error exec-results)))
               ;; Only require a self-test when the FINAL answer is Clojure code.
@@ -694,33 +712,55 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
         ;; Normal path: execute code blocks
-        (let [raw-blocks (vec (remove str/blank? (or (:code parsed) [])))
+        ;; Code blocks can be maps {:expr "..." :time-ms N} or plain strings (backward compat)
+        (let [raw-parsed (or (:code parsed) [])
+              ;; Normalize: extract expr string + optional time-ms from each block
+              normalized (vec (keep (fn [block]
+                                      (if (map? block)
+                                        (let [expr (str (:expr block ""))]
+                                          (when-not (str/blank? expr)
+                                            {:expr expr :time-ms (:time-ms block)}))
+                                        (let [s (str block)]
+                                          (when-not (str/blank? s)
+                                            {:expr s :time-ms nil}))))
+                               raw-parsed))
+              raw-exprs (mapv :expr normalized)
               ;; Coalesce fragments: when model splits one expression across multiple
               ;; array entries (one line per string), join unbalanced blocks with the
               ;; next until parens balance. Prevents paren-repair from "fixing" each
               ;; line individually into a broken zero-body form.
-              code-blocks (loop [remaining raw-blocks
-                                 result []]
-                            (if (empty? remaining)
-                              result
-                              (let [block (first remaining)
-                                    bal (paren-repair/paren-balance block)]
-                                (if (and (pos? bal) (next remaining))
-                                  ;; Unbalanced opener - join with subsequent blocks
-                                  (let [[joined rest-blocks]
-                                        (loop [acc block
-                                               rem (rest remaining)]
-                                          (if (or (<= (paren-repair/paren-balance acc) 0) (empty? rem))
-                                            [acc rem]
-                                            (recur (str acc "\n" (first rem)) (rest rem))))]
-                                    (recur rest-blocks (conj result joined)))
-                                  (recur (rest remaining) (conj result block))))))
+              coalesced (loop [remaining normalized
+                               result []]
+                          (if (empty? remaining)
+                            result
+                            (let [{:keys [expr time-ms]} (first remaining)
+                                  bal (paren-repair/paren-balance expr)]
+                              (if (and (pos? bal) (next remaining))
+                                ;; Unbalanced opener - join with subsequent blocks, sum timeouts
+                                (let [[joined-expr joined-time rest-blocks]
+                                      (loop [acc expr
+                                             t-acc (or time-ms 0)
+                                             rem (rest remaining)]
+                                        (if (or (<= (paren-repair/paren-balance acc) 0) (empty? rem))
+                                          [acc t-acc rem]
+                                          (let [nxt (first rem)]
+                                            (recur (str acc "\n" (:expr nxt))
+                                              (+ t-acc (or (:time-ms nxt) 0))
+                                              (rest rem)))))]
+                                  (recur rest-blocks
+                                    (conj result {:expr joined-expr
+                                                  :time-ms (when (pos? joined-time) joined-time)})))
+                                (recur (rest remaining) (conj result (first remaining)))))))
+              code-blocks (mapv :expr coalesced)
+              time-limits (mapv :time-ms coalesced)
               _ (rlm-debug! {:code-block-count (count code-blocks)
-                             :raw-count (count raw-blocks)
+                             :raw-count (count raw-exprs)
                              :code-previews (mapv #(str-truncate % 120) code-blocks)} "Code blocks extracted")
-              execution-results (mapv (fn [code]
-                                        (execute-code rlm-env code))
-                                  code-blocks)
+              execution-results (mapv (fn [code timeout]
+                                        (if timeout
+                                          (execute-code rlm-env code :timeout-ms timeout)
+                                          (execute-code rlm-env code)))
+                                  code-blocks time-limits)
               ;; Combine code blocks with their execution results
               executions (mapv (fn [idx code result]
                                  {:id idx
