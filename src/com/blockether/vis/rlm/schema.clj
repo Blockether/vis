@@ -360,7 +360,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                  ::spec/target :code_block
                  ::spec/cardinality :spec.cardinality/many
                  ::spec/required false
-                 ::spec/description "Code blocks to execute. Each has :expr (Clojure code) and :time-ms (expected max execution time). OMIT entirely when emitting :final."})
+                 ::spec/description "Code blocks to execute. Each has :expr and :time-ms. CAN combine with :final: code runs first, then final accepted."})
     (spec/field {::spec/name :next-optimize
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -374,7 +374,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                  ::spec/target :final
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/required false
-                 ::spec/description "Set when you have the final answer. Omit to continue iterating."})))
+                 ::spec/description "Final answer. CAN set with :code in same response: code executes first, if all pass final is accepted."})))
 
 (def ITERATION_SPEC_CODE_ONLY
   "Spec for RLM iteration response when the provider has native reasoning.
@@ -387,7 +387,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                  ::spec/target :code_block
                  ::spec/cardinality :spec.cardinality/many
                  ::spec/required false
-                 ::spec/description "Code blocks to execute. Each has :expr (Clojure code) and :time-ms (expected max execution time). OMIT entirely when emitting :final."})
+                 ::spec/description "Code blocks to execute. Each has :expr and :time-ms. CAN combine with :final: code runs first, then final accepted."})
     (spec/field {::spec/name :next-optimize
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -401,7 +401,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                  ::spec/target :final
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/required false
-                 ::spec/description "Set when you have the final answer. Omit to continue iterating."})))
+                 ::spec/description "Final answer. CAN set with :code in same response: code executes first, if all pass final is accepted."})))
 
 (def SUB_RLM_QUERY_SPEC
   "Spec for sub-rlm-query responses. Forces structured output: prose content +
