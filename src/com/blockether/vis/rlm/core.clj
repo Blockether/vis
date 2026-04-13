@@ -648,24 +648,20 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
               language (when-let [l (:language final-data)] (keyword l))
               code-answer? (= answer-type :code)
               clojure? (and code-answer? (or (= language :clojure) (nil? language)))
-              ;; Extract code blocks — handles both map {:expr :time-ms} and plain string format
+              ;; Extract code blocks — must be maps with :expr and :time-ms
               raw-code (or (:code parsed) [])
               code-entries (vec (keep (fn [block]
-                                        (if (map? block)
-                                          (let [expr (str (:expr block ""))]
+                                        (when (map? block)
+                                          (let [expr (str (:expr block ""))
+                                                time-ms (:time-ms block)]
                                             (when-not (str/blank? expr)
-                                              {:expr expr :time-ms (:time-ms block)}))
-                                          (let [s (str block)]
-                                            (when-not (str/blank? s)
-                                              {:expr s :time-ms nil}))))
+                                              {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
                                raw-code))
               code-blocks (mapv :expr code-entries)
               ;; Execute code blocks in SCI — only for Clojure code answers.
               exec-results (when (and clojure? (seq code-blocks))
                              (mapv (fn [{:keys [expr time-ms]}]
-                                     (if time-ms
-                                       (execute-code rlm-env expr :timeout-ms time-ms)
-                                       (execute-code rlm-env expr)))
+                                     (execute-code rlm-env expr :timeout-ms time-ms))
                                code-entries))
               exec-errors (when exec-results
                             (seq (filter :error exec-results)))
@@ -711,18 +707,15 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
               {:response nil :thinking thinking :next-optimize next-optimize
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
-        ;; Normal path: execute code blocks
-        ;; Code blocks can be maps {:expr "..." :time-ms N} or plain strings (backward compat)
+        ;; Normal path: execute code blocks — must be maps with :expr and :time-ms
         (let [raw-parsed (or (:code parsed) [])
-              ;; Normalize: extract expr string + optional time-ms from each block
+              ;; Extract: every block must be a map with :expr and :time-ms
               normalized (vec (keep (fn [block]
-                                      (if (map? block)
-                                        (let [expr (str (:expr block ""))]
+                                      (when (map? block)
+                                        (let [expr (str (:expr block ""))
+                                              time-ms (:time-ms block)]
                                           (when-not (str/blank? expr)
-                                            {:expr expr :time-ms (:time-ms block)}))
-                                        (let [s (str block)]
-                                          (when-not (str/blank? s)
-                                            {:expr s :time-ms nil}))))
+                                            {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
                                raw-parsed))
               raw-exprs (mapv :expr normalized)
               ;; Coalesce fragments: when model splits one expression across multiple
@@ -749,7 +742,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                               (rest rem)))))]
                                   (recur rest-blocks
                                     (conj result {:expr joined-expr
-                                                  :time-ms (when (pos? joined-time) joined-time)})))
+                                                  :time-ms joined-time})))
                                 (recur (rest remaining) (conj result (first remaining)))))))
               code-blocks (mapv :expr coalesced)
               time-limits (mapv :time-ms coalesced)
@@ -757,9 +750,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                              :raw-count (count raw-exprs)
                              :code-previews (mapv #(str-truncate % 120) code-blocks)} "Code blocks extracted")
               execution-results (mapv (fn [code timeout]
-                                        (if timeout
-                                          (execute-code rlm-env code :timeout-ms timeout)
-                                          (execute-code rlm-env code)))
+                                        (execute-code rlm-env code :timeout-ms timeout))
                                   code-blocks time-limits)
               ;; Combine code blocks with their execution results
               executions (mapv (fn [idx code result]
