@@ -1,13 +1,13 @@
 (ns com.blockether.vis.rlm.skills
-  "SKILL.md discovery, parsing, validation, registry, and Datalevin ingestion.
+  "SKILL.md discovery, parsing, validation, registry, and SQLite ingestion.
 
-   Skills are loaded from filesystem paths AND ingested into Datalevin as
+   Skills are loaded from filesystem paths AND ingested into SQLite as
    :document/type :skill documents. The RLM searches skills the same way it
    searches any other document — via search-documents + fetch-document-content.
 
    Skill lifecycle:
    1. load-skills — scan files → parse → validate → registry
-   2. ingest-skills! — store into Datalevin as :skill documents (searchable)
+   2. ingest-skills! — store into SQLite as :skill documents (searchable)
    3. skill-manage — SCI tool for RLM to create/patch/refine/delete skills
    4. save-skill! — write back to SKILL.md on disk (procedural memory)"
   (:require
@@ -354,7 +354,7 @@
         (str/join "\n" lines) "\n"))))
 
 ;; =============================================================================
-;; Datalevin Ingestion — skills as searchable documents
+;; SQLite Ingestion — skills as searchable documents
 ;; =============================================================================
 
 (defn ingest-skills!
@@ -411,7 +411,7 @@
 
 (defn skill-manage
   "SCI-callable skill management tool. RLM uses this to create, patch, refine,
-   or delete skills. Changes are persisted to disk AND Datalevin.
+   or delete skills. Changes are persisted to disk AND SQLite.
 
    Actions:
    :create  — create a new skill
@@ -421,11 +421,11 @@
              {:name :kw :old \"old text\" :new \"new text\"}
    :refine  — update the abstract/description without changing body
              {:name :kw :abstract \"new abstract\" :description \"new desc\"}
-   :delete  — remove a skill from disk and Datalevin
+   :delete  — remove a skill from disk and SQLite
              {:name :kw}
 
    Params:
-   `db-info`         — Datalevin db-info map (can be nil).
+   `db-info`         — SQLite db-info map (can be nil).
    `skill-registry`  — atom with current skill registry map.
    `action`          — keyword (:create :patch :refine :delete).
    `opts`            — action-specific opts map."
@@ -441,7 +441,7 @@
           path (save-skill! skill-def)]
       ;; Update registry
       (swap! skill-registry assoc (:name skill-def) (assoc skill-def :source-path path))
-      ;; Ingest into Datalevin
+      ;; Ingest into SQLite
       (when db-info
         (ingest-skills! db-info {(:name skill-def) skill-def}))
       {:created (:name skill-def) :path path})

@@ -12,7 +12,7 @@
 (def config-dir  (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
 
-;; One Datalevin DB for everything — TUI sessions, web sessions, telegram chats,
+;; One SQLite DB for everything — TUI sessions, web sessions, telegram chats,
 ;; CLI agent runs. Each is a named :conversation inside. Replaces the old
 ;; per-entrypoint dirs (~/.vis/sessions/<uuid>/, ~/.vis/telegram/<chat-id>/,
 ;; ~/.vis/agents/<name>/, ~/.vis/rlm/) — all collapsed here.

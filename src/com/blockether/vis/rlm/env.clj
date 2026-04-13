@@ -156,7 +156,7 @@
                                       :last-digest-ms nil
                                       :last-revision 0}})
         skill-registry-map (rlm-skills/load-skills {})
-        ;; Ingest skills into Datalevin as :skill documents (searchable)
+        ;; Ingest skills into SQLite as :skill documents (searchable)
         _ (when db-info
             (rlm-skills/ingest-skills! db-info skill-registry-map))
         ;; Pooled: low-traffic mutable state grouped into one atom

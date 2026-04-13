@@ -11,7 +11,6 @@
    [charred.api :as json]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [edamame.core :as edamame]
    [com.blockether.vis.bench.common :as common]
    [com.blockether.svar.core :as svar]
    [taoensso.trove :as trove])
@@ -45,18 +44,12 @@
 ;; bb verification
 ;; =============================================================================
 
-(defn- single-form?
-  "Returns true if candidate is a single Clojure form (safe for def binding)."
-  [s]
-  (try
-    (= 1 (count (edamame/parse-string-all s {:all true})))
-    (catch Exception _ false)))
-
 (defn- build-bb-script [tests candidate]
-  (let [use-def? (single-form? candidate)
-        filled-tests (if use-def?
-                       tests ;; tests keep __ literal, resolved via (def __)
-                       (mapv #(str/replace % "__" candidate) tests))
+  ;; Always inline-replace __ with the candidate. 4clojure tests are designed
+  ;; for inline replacement — some have paren counts that only balance when __
+  ;; is substituted as a multi-token expression (e.g. let-bindings, tests with
+  ;; extra grouping parens). Using (def __ ...) breaks those cases.
+  (let [filled-tests (mapv #(str/replace % "__" candidate) tests)
         test-forms (str/join "\n"
                      (map-indexed
                        (fn [i test-str]
@@ -66,7 +59,7 @@
                        filled-tests))]
     (str "(def results (atom []))\n"
       "(def is identity)\n"
-      (when use-def? (str "(def __ " candidate ")\n"))
+
       test-forms "\n"
       "(let [rs @results
              passed (count (filter #(= :pass %) rs))
@@ -90,7 +83,7 @@
         (if finished?
           {:ok? (zero? (.exitValue proc)) :output (str/trim output) :timeout? false}
           (do (.destroyForcibly proc) (future-cancel output-future)
-              {:ok? false :output "Timed out" :timeout? true})))
+            {:ok? false :output "Timed out" :timeout? true})))
       (finally
         (.delete path)))))
 
@@ -104,7 +97,7 @@
            :failures [{:error (str "Parse error: " (:output bb-result))}]}))
       {:all-passed? false :passed 0 :total (count tests)
        :failures [{:error (if (:timeout? bb-result) "bb timed out"
-                              (str "bb: " (:output bb-result)))}]})))
+                            (str "bb: " (:output bb-result)))}]})))
 
 ;; =============================================================================
 ;; Prompt
@@ -118,11 +111,14 @@
     (str/join "\n" (map #(str "  " %) tests))
     (when (seq restricted)
       (str "\n\nRestricted (do NOT use these): " (str/join ", " restricted)))
-    "\n\nSelf-test block (run in code[] BEFORE submitting final):\n"
-    "(let [__ YOUR_SOLUTION]\n"
-    (str/join "\n" (map #(str "  (assert " % ")") tests))
-    "\n  :all-tests-pass)\n"
-    "\nFinal answer = single inline Clojure expression that replaces __."))
+    "\n\nSelf-test: replace __ with your answer INLINE in the test forms and run (assert ...).\n"
+    "IMPORTANT: __ is replaced textually, so your answer must work when pasted in place of __.\n"
+    "- For value answers: just the value, e.g. 42 or :a :b :c\n"
+    "- For function answers: use (fn [...] ...) form — NOT partial application like (into ()) or (reduce f init).\n"
+    "  Partial application breaks because (__ arg) becomes ((into ()) arg) which calls a list as a function.\n"
+    "  Instead: (fn [coll] (into () coll))\n"
+    "- Do NOT use (let [__ ...] ...) — multi-token answers break let binding syntax.\n"
+    "\nFinal answer = the Clojure expression (or bare values) that replaces __."))
 
 (defn- build-pi-prompt [{:keys [title description tests restricted]}]
   (str "4CLOJURE PROBLEM\n\n"
@@ -134,7 +130,9 @@
       (str "\n\nRestricted (do NOT use these): " (str/join ", " restricted))
       "")
     "\n\nReturn ONLY the Clojure expression that replaces __. No explanation, no markdown.\n"
-    "- Nested #() is ILLEGAL. Use (fn [...] ...) for inner lambdas.\n"
+    "- __ is replaced TEXTUALLY in test forms, so your answer must work when pasted in place of __.\n"
+    "- For function answers: use (fn [...] ...) — NOT partial application like (into ()) or (reduce f init).\n"
+    "- Prefer (fn [...] ...) over #(). Nested #() is ILLEGAL.\n"
     "- Quote list literals: '(1 2 3) not (1 2 3)\n"
     "- % args only work inside #(). Don't use them standalone."))
 
@@ -151,7 +149,7 @@
      :run-ts     run-ts
      :task-id    (or (:id problem) (:title problem) (str (hash problem)))
      :prompt-fn  build-prompt
-     :query-opts (cond-> {:system-prompt "ALWAYS run the self-test block in code[] before submitting final. Never skip testing."}
+     :query-opts (cond-> {:system-prompt "ALWAYS self-test by replacing __ with your answer INLINE in the test forms and running (assert ...) before submitting final. Never skip testing."}
                    debug? (assoc :debug? true))
      :score-fn  (fn [p result duration]
                   (let [answer (str/trim (str (or (:answer result) "")))
@@ -167,7 +165,8 @@
                      :iterations  (:iterations result)
                      :tokens      (:tokens result)
                      :cost        (:cost result)
-                     :duration-ms duration}))}))
+                     :duration-ms duration
+                     :trace       (:trace result)}))}))
 
 (defn- eval-pi! [problem model & {:keys [router]}]
   (let [prompt   (build-pi-prompt problem)
@@ -206,7 +205,8 @@
    :tokens      (:tokens eval-result)
    :cost        (:cost eval-result)
    :duration-ms (:duration-ms eval-result)
-   :iterations  (:iterations eval-result)})
+   :iterations  (:iterations eval-result)
+   :trace       (:trace eval-result)})
 
 ;; =============================================================================
 ;; Main runner

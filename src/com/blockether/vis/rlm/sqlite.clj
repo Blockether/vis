@@ -1,5 +1,5 @@
 (ns com.blockether.vis.rlm.sqlite
-  "SQLite store for RLM. Replaces Datalevin.
+  "SQLite store for RLM. Replaces SQLite.
 
    Schema: 11 entity-side tables + 1 unified FTS5 search virtual table.
    Driver: org.xerial/sqlite-jdbc, accessed via next.jdbc + HoneySQL.
@@ -8,7 +8,7 @@
      (open-store db-spec)   → {:datasource ds :path ... :owned? bool :mode ...}
      (close-store store)    → idempotent dispose
 
-   db-spec mirrors the legacy Datalevin API:
+   db-spec mirrors the legacy SQLite API:
      nil              — no DB (returns nil)
      :temp            — ephemeral file under java.io.tmpdir, deleted on close
      \"path/to.db\"   — persistent SQLite file
@@ -34,7 +34,7 @@
    (org.sqlite.javax SQLiteConnectionPoolDataSource)))
 
 ;; =============================================================================
-;; Type coercion at the Datalevin↔SQLite boundary
+;; Type coercion helpers
 ;; =============================================================================
 
 (defn ->id
@@ -809,7 +809,7 @@
         :iteration.var/value (x :value v)
         :iteration.var/code  (x :code v)
 
-        ;; silently drop unknown keys — preserves Datalevin's open-attr behavior
+        ;; silently drop unknown keys — preserves SQLite's open-attr behavior
         nil))
     (assoc @out :type type-kw)))
 
@@ -947,6 +947,48 @@
     (and (map? selector) (string? (:name selector)))
     (db-find-named-conversation-ref db-info (:name selector))
     :else nil))
+
+(defn db-list-conversations-by-prefix
+  "List conversations whose :conversation/name starts with `prefix`.
+   Returns [{:id uuid-str :name str :created-at inst} …] ordered by creation."
+  [db-info prefix]
+  (when (ds db-info)
+    (->> (query! db-info
+           {:select [[:e.id :id] [:ca.name :name] [:e.created_at :created_at]]
+            :from [[:entity :e]]
+            :join [[:conversation_attrs :ca] [:= :ca.entity_id :e.id]]
+            :where [:and
+                    [:= :e.type "conversation"]
+                    [:like :ca.name (str prefix "%")]]
+            :order-by [[:e.created_at :asc]]})
+         (mapv (fn [row]
+                 {:id         (:id row)
+                  :name       (:name row)
+                  :created-at (some-> (:created_at row) long (Date.))})))))
+
+(defn delete-entity-tree!
+  "Delete an entity and all descendants linked via parent_id.
+   Walks the parent_id chain (conversation → queries → iterations → vars)
+   and deletes all in one shot. Attr tables cascade via ON DELETE CASCADE."
+  [db-info entity-id]
+  (when (and (ds db-info) entity-id)
+    (let [id (str entity-id)
+          ;; Collect all descendant IDs via iterative BFS
+          all-ids (loop [queue [id] acc []]
+                    (if (empty? queue)
+                      acc
+                      (let [children (->> (query! db-info
+                                           {:select [:id]
+                                            :from :entity
+                                            :where [:in :parent_id queue]})
+                                         (mapv :id))]
+                        (recur children (into acc queue)))))]
+      (when (seq all-ids)
+        ;; Delete in batches — children's attr tables cascade automatically
+        (doseq [batch (partition-all 100 all-ids)]
+          (jdbc/execute! (ds db-info)
+            (sql/format {:delete-from :entity
+                         :where [:in :id batch]})))))))
 
 ;; =============================================================================
 ;; Query

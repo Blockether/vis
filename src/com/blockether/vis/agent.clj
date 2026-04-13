@@ -170,7 +170,7 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
                         :as _opts}]]
   (let [_cfg    (config/resolve-config config)  ;; ensures a router exists / throws on missing
         router  (config/get-router)
-        ;; Shared Datalevin DB for everything vis does (TUI, web, telegram, CLI).
+        ;; Shared SQLite DB for everything vis does (TUI, web, telegram, CLI).
         ;; Without `:conversation`, svar creates a fresh conversation scoped to
         ;; this run. Callers that want to resume pass `:conversation {:name …}`
         ;; or a [:entity/id uuid] lookup ref.

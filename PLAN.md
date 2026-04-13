@@ -56,7 +56,7 @@ lazytest, http-client. Aliases added: `:test`, `:bench`.
 
 1. **`SQLITE_CONSTRAINT_FOREIGNKEY` on `toc_entry` / `page` / `page_node`**
    — tests insert child rows without first inserting the parent `document`.
-   The SQLite schema enforces FKs (Datalevin didn't). Fix options:
+   The SQLite schema enforces FKs (SQLite didn't). Fix options:
      (a) preferred: test setup stores a stub document via
          `rlm-db/db-store-pageindex-document!` before child inserts,
      (b) add a `db-store-toc-entry!` variant that upserts the parent doc,

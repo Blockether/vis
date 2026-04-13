@@ -1,7 +1,7 @@
 (ns com.blockether.vis.telegram.sessions
   "Per-chat svar environments for the Telegram bot.
 
-   All chats share the single `~/.vis/vis.mdb` Datalevin DB (see
+   All chats share the single `~/.vis/vis.mdb` SQLite DB (see
    `config/db-path`). Each chat is a distinct :conversation inside that DB,
    named `telegram:<chat-id>` via svar's `{:conversation {:name …}}` lookup
    — first message creates it, subsequent messages resume it. svar's
@@ -10,7 +10,7 @@
    which svar already fulltext-indexes).
 
    Envs are opened lazily on the first message in each chat and cached in
-   the process-level `sessions` atom. The Datalevin conn itself is shared
+   the process-level `sessions` atom. The SQLite conn itself is shared
    across envs (LMDB single-writer) — svar's dispose leaves persistent
    conns open so disposing one chat's env doesn't break the others."
   (:require [com.blockether.vis.agent :as agent]

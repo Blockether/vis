@@ -2,15 +2,14 @@
   "Session management, RLM lifecycle, and Jetty server.
 
    All web sessions live as named :conversations inside the shared
-   `~/.vis/vis.mdb` Datalevin DB (`config/db-path`), named `session:<uuid>`.
-   No per-session directories — svar resolves/creates by name, and Datalevin's
-   process-wide conn cache means every session env shares one Connection."
+   SQLite DB (`config/db-path`), named `session:<uuid>`.
+   No per-session directories — svar resolves/creates by name, and the
+   connection pool means every session env shares one DataSource."
   (:require [com.blockether.vis.agent :as agent]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.web.routes :as routes]
             [com.blockether.svar.internal.rlm :as rlm]
-            [com.blockether.svar.internal.rlm.db :as rlm-db]
-            [datalevin.core :as d]
+            [com.blockether.vis.rlm.db :as rlm-db]
             [ring.adapter.jetty :as jetty]
             [clojure.edn :as edn]
             [clojure.string :as str])
@@ -23,8 +22,8 @@
 (defonce live-status (atom {}))
 
 ;; Long-lived db-info handle for server-level queries (list sessions, delete
-;; session entities). Holds the same Datalevin conn that every session env
-;; uses — d/get-conn caches per path. Opened in `start!`.
+;; session entities). Uses the same SQLite DataSource that every session env
+;; shares. Opened lazily on first access.
 (defonce ^:private server-db-info (atom nil))
 
 (defn- db-info []
@@ -101,47 +100,28 @@
 (defn get-session [id] (get @sessions id))
 
 (defn- retract-conversation-tree!
-  "Retract a :conversation, every :query under it, every :iteration under those
-   queries, and every :iteration-var under those iterations. :entity/parent-id
-   isn't a :db.type/ref so datalevin won't cascade — we walk the hierarchy and
-   issue explicit retracts in one transaction."
+  "Delete a conversation and all descendant entities (queries, iterations,
+   iteration-vars). Uses rlm-db/delete-entity-tree! which walks the parent_id
+   chain and deletes in one shot — attr tables cascade via ON DELETE CASCADE."
   [db-info conv-ref]
-  (let [conn    (:conn db-info)
-        conv-id (second conv-ref)
-        queries (rlm-db/db-list-conversation-queries db-info conv-ref)
-        iter-entities (into [] (mapcat
-                                 #(rlm-db/db-list-query-iterations db-info
-                                    [:entity/id (:entity/id %)]))
-                            queries)
-        iter-ids (mapv :entity/id iter-entities)
-        var-ids  (when (seq iter-ids)
-                   (d/q '[:find [?id ...] :in $ [?parent ...]
-                          :where [?e :entity/type :iteration-var]
-                                 [?e :entity/parent-id ?parent]
-                                 [?e :entity/id ?id]]
-                        (d/db conn) iter-ids))
-        all-ids  (concat var-ids
-                         iter-ids
-                         (map :entity/id queries)
-                         [conv-id])]
-    (when (seq all-ids)
-      (d/transact! conn
-        (mapv (fn [id] [:db/retractEntity [:entity/id id]]) all-ids)))))
+  (let [conv-id (second conv-ref)]
+    (rlm-db/delete-entity-tree! db-info conv-id)))
 
-(defn delete-session! [id]
+(defn delete-session!
+  "Delete a session — dispose env, remove from atoms, retract DB tree.
+   Caller (routes) is responsible for checking in-flight status first."
+  [id]
   (when-let [sess (get-session id)]
-    (if ((requiring-resolve 'com.blockether.vis.web.executor/in-flight?) id)
-      (println (str "[server] Session " id " has in-flight query, skipping delete"))
-      (let [conv-ref (some-> sess :env :conversation-ref)]
-        (try (rlm/dispose-env! (:env sess)) (catch Exception _ nil))
-        (swap! sessions dissoc id)
-        (swap! live-status dissoc id)
-        (when conv-ref
-          (try
-            (retract-conversation-tree! (db-info) conv-ref)
-            (catch Exception e
-              (println (str "[server] delete-session! retract failed for "
-                            id ": " (ex-message e))))))))))
+    (let [conv-ref (some-> sess :env :conversation-ref)]
+      (try (rlm/dispose-env! (:env sess)) (catch Exception _ nil))
+      (swap! sessions dissoc id)
+      (swap! live-status dissoc id)
+      (when conv-ref
+        (try
+          (retract-conversation-tree! (db-info) conv-ref)
+          (catch Exception e
+            (println (str "[server] delete-session! retract failed for "
+                          id ": " (ex-message e)))))))))
 
 (defn sessions-list []
   (->> (vals @sessions)
@@ -232,19 +212,10 @@
    creation. We derive the session-id from the suffix of :conversation/name so
    callers can stitch back to URL-level ids without touching :entity/id."
   [db-info]
-  (let [conn (:conn db-info)]
-    (when conn
-      (->> (d/q '[:find ?nm ?ca
-                  :where [?e :entity/type :conversation]
-                         [?e :conversation/name ?nm]
-                         [?e :entity/created-at ?ca]]
-                (d/db conn))
-           (keep (fn [[nm ca]]
-                   (when (str/starts-with? nm session-name-prefix)
-                     {:id (subs nm (count session-name-prefix))
-                      :created-at ca})))
-           (sort-by :created-at)
-           vec))))
+  (->> (rlm-db/db-list-conversations-by-prefix db-info session-name-prefix)
+       (mapv (fn [{:keys [name created-at]}]
+               {:id         (subs name (count session-name-prefix))
+                :created-at created-at}))))
 
 (defn load-sessions! []
   (let [_cfg   (config/resolve-config nil)
@@ -253,8 +224,8 @@
     (doseq [{:keys [id created-at]} convs]
       (try
         ;; Named resolver: resolves to the already-existing conversation and
-        ;; rehydrates svar's SCI var state. All envs share the Datalevin conn
-        ;; via d/get-conn caching, so opening many here is cheap.
+        ;; rehydrates svar's SCI var state. All envs share the SQLite
+        ;; DataSource, so opening many here is cheap.
         (let [env  (rlm/create-env router
                      {:db config/db-path
                       :conversation {:name (session-name id)}})
@@ -274,8 +245,8 @@
 (defn start! [& [{:keys [port] :or {port 3000}}]]
   (when @server (.stop @server))
   (load-sessions!)
-  ;; Start the executor
-  ((requiring-resolve 'com.blockether.vis.web.executor/start!))
+  (let [exec-start! (requiring-resolve 'com.blockether.vis.web.executor/start!)]
+    (exec-start!))
   (println (str "Starting vis web on http://0.0.0.0:" port))
   (println (str "Local network: http://192.168.0.143:" port))
   (println (str "Sessions: " (count @sessions)))
@@ -283,7 +254,8 @@
                                    {:port port :join? false :host "0.0.0.0"})))
 
 (defn stop! []
-  ((requiring-resolve 'com.blockether.vis.web.executor/stop!))
+  (let [exec-stop! (requiring-resolve 'com.blockether.vis.web.executor/stop!)]
+    (exec-stop!))
   (when @server (.stop @server) (reset! server nil)))
 
 (defn -main [& args]

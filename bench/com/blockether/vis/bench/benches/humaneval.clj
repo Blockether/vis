@@ -89,7 +89,8 @@
                      :iterations  (:iterations result)
                      :tokens      (:tokens result)
                      :cost        (:cost result)
-                     :duration-ms duration}))}))
+                     :duration-ms duration
+                     :trace       (:trace result)}))}))
 
 (defn- eval-pi! [task model]
   (let [pi-result (common/run-pi! (build-prompt task) model)]
@@ -119,7 +120,8 @@
    :tokens      (:tokens eval-result)
    :cost        (:cost eval-result)
    :duration-ms (:duration-ms eval-result)
-   :iterations  (:iterations eval-result)})
+   :iterations  (:iterations eval-result)
+   :trace       (:trace eval-result)})
 
 ;; =============================================================================
 ;; Main runner

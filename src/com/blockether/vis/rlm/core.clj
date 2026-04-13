@@ -134,7 +134,7 @@ Pattern: [thing] [action] [reason]. [next step].")
     (.close stderr-writer)
     (if (nil? execution-result)
       (do (future-cancel exec-future)
-          {:result nil :stdout "" :stderr "" :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+        {:result nil :stdout "" :stderr "" :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
 (defn- detect-common-mistakes
@@ -195,12 +195,19 @@ Pattern: [thing] [action] [reason]. [next step].")
       (if lint-error
         ;; Pre-exec lint caught a known mistake - return clear error without eval
         (do (rlm-debug! {:lint-error lint-error} "Pre-exec lint caught mistake")
-            {:result nil :stdout "" :stderr "" :error lint-error
-             :execution-time-ms 0 :timeout? false})
+          {:result nil :stdout "" :stderr "" :error lint-error
+           :execution-time-ms 0 :timeout? false})
         (if-let [parse-error (parse-clojure-syntax code)]
-          (do (rlm-debug! {:parse-error parse-error} "Edamame pre-parse failed")
-              {:result nil :stdout "" :stderr "" :error parse-error
-               :execution-time-ms 0 :timeout? false})
+          ;; Pre-parse failed — attempt paren repair before giving up
+          (let [repaired (try (paren-repair/repair-code code) (catch Throwable _ code))]
+            (if (and (not= repaired code) (nil? (parse-clojure-syntax repaired)))
+              (do (rlm-debug! {:parse-error parse-error :repaired-len (count repaired)} "Edamame pre-parse failed, paren repair recovered")
+                (let [result (run-sci-code sci-ctx repaired :sandbox-ns sandbox-ns)
+                      t (- (System/currentTimeMillis) start-time)]
+                  (assoc result :execution-time-ms t :timeout? false :repaired? true)))
+              (do (rlm-debug! {:parse-error parse-error} "Edamame pre-parse failed, repair did not help")
+                {:result nil :stdout "" :stderr "" :error parse-error
+                 :execution-time-ms 0 :timeout? false})))
         ;; Normal execution path
           (let [execution-result (run-sci-code sci-ctx code :sandbox-ns sandbox-ns)
                 execution-time (- (System/currentTimeMillis) start-time)]
@@ -216,7 +223,7 @@ Pattern: [thing] [action] [reason]. [next step].")
                                          (do (trove/log! {:level :debug :id ::repair-noop
                                                           :data {:code-len (count code) :error error}
                                                           :msg "Paren repair: no change needed"})
-                                             execution-result)
+                                           execution-result)
                                          (let [retry (run-sci-code sci-ctx repaired :sandbox-ns sandbox-ns)]
                                            (if (:error retry)
                                              (do (trove/log! {:level :warn :id ::repair-retry-failed
@@ -227,7 +234,7 @@ Pattern: [thing] [action] [reason]. [next step].")
                                                                      :added-chars (- (count repaired) (count code))
                                                                      :repaired-tail (subs repaired (max 0 (- (count repaired) 80)))}
                                                               :msg "Paren repair changed code but retry still failed"})
-                                                 execution-result)
+                                               execution-result)
                                              (do
                                                (trove/log! {:level :info :id ::repair-applied
                                                             :data {:original code :repaired repaired :sci-error error}
@@ -395,12 +402,17 @@ EXECUTION RECEIPTS (next iteration's <execution_results>):
   summarisation, no preview truncation. Lazy seqs are capped at 100 items
   by realize-value; everything else is printed in full. Ground your answer
   on what you see here, never on memory or guesses.
+- Every receipt includes :time-ms (wall-clock ms). Blocks >5s get :perf-warning.
+  If you see a perf-warning, OPTIMIZE before calling FINAL.
 - (def sym expr) is first-class. The receipt shows:
     [1] (def here (list-dir \"/tmp\"))
         {:success? true :result-kind :var :var-name \"here\"
          :value-type map :value-size 4-items
-         :value {:path \"/tmp\" :entries [{:name \"a\" :type \"file\"} ...
-                 ... every entry, every key, every value, no truncation]}}
+         :value {:path \"/tmp\" :entries [{:name \"a\" :type \"file\"} ...]
+         :time-ms 12}
+    [2] (slow-brute-force 999999999)
+        {:success? true :result-type int :value 42 :time-ms 87000
+         :perf-warning \"SLOW \u2014 optimize algorithm, avoid brute-force, reduce input size\"}
   You can reference the var `here` in the next iteration and see its full
   contents there too.
 - Need last iteration's var rendered again? Either USE it in code
@@ -449,9 +461,17 @@ LLM SUB-CALLS:
 - Eval returned :code via the usual iteration flow (each entry = one complete form).
 - Need typed data? Ask the sub-RLM to emit code that defs the data structure; eval it.
 
+PERFORMANCE:
+- Every code block receipt includes :time-ms (execution time in milliseconds).
+- Blocks >5s get :perf-warning. If you see it, OPTIMIZE before submitting :final.
+- Common fixes: skip brute-force scans, jump to answer mathematically,
+  reduce input size, use efficient data structures (set lookup vs linear scan).
+- Benchmark-critical: your solution may be re-verified in a stricter runtime
+  with tighter time limits. A correct-but-slow answer can still fail.
+
 GOTCHAS:
 - Quote lists: '(1 2 3). Bare () = fn call.
-- No nested #(). Use (fn [...] ...).
+- PREFER (fn [x] ...) over #(). Nested #() is illegal; #() with string-heavy args causes paren confusion. Use (fn [...] ...) by default.
 - 'code' entry = complete expr. No fragments. No split across strings.
 - Docstring defs: (def x \"doc\" val) → aids <var_index>.
 - AVOID LAZY SEQS. Prefer eager: mapv filterv reduce into.
@@ -563,9 +583,9 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           _ (trove/log! {:level :info :id ::llm-call
                          :data {:env-id (:env-id rlm-env)
                                 :iteration iteration
-                                :msg-count (count messages)
+                                :effective-msg-count (count messages)
                                 :input-tokens input-tokens}
-                         :msg "LLM call started"})
+                         :msg "Sending effective-messages to ask! (ask! will add spec msg internally)"})
           ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
           ask-result (llm/ask! (:router rlm-env)
                        (cond-> {:spec iteration-spec
@@ -655,12 +675,12 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           (if validation-error
             (do (rlm-debug! {:final-answer (str-truncate final-answer 200)
                              :validation-error validation-error} "FINAL rejected")
-                {:response nil :thinking thinking :next-optimize next-optimize
-                 :executions (or executions
-                               [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
-                                 :error validation-error}])
-                 :final-result nil :api-usage api-usage
-                 :duration-ms (or (:duration-ms ask-result) 0)})
+              {:response nil :thinking thinking :next-optimize next-optimize
+               :executions (or executions
+                             [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
+                               :error validation-error}])
+               :final-result nil :api-usage api-usage
+               :duration-ms (or (:duration-ms ask-result) 0)})
             (let [sources (vec (or (:sources final-data) []))
                   final-result (cond-> {:final? true
                                         :answer {:result final-answer :type String}
@@ -774,13 +794,18 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
 
         :else nil))))
 
+(def ^:private SLOW_EXECUTION_MS
+  "Threshold in ms above which execution time is flagged as slow."
+  5000)
+
 (defn format-executions
   "Formats executions for LLM feedback as EDN.
    All results shown inline — context budget handles size naturally.
-   Error hints injected only when an error matches a known pattern."
+   Error hints injected only when an error matches a known pattern.
+   Includes execution time for every block; warns when slow."
   [executions]
   (str/join "\n"
-    (map (fn [{:keys [code error result stdout repaired?]}]
+    (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
            (let [code-str (str/trim (or code ""))
                  hint (when error (error-hint error))
                  val-part (cond
@@ -797,8 +822,12 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
-                                " :warning \"auto-repaired delimiters\"")]
-             (str "{" code-str " → " val-part (or stdout-part "") (or warning-part "") "}")))
+                                " :warning \"auto-repaired delimiters\"")
+                 time-part (when execution-time-ms
+                             (str " :time-ms " execution-time-ms
+                               (when (> (or execution-time-ms 0) SLOW_EXECUTION_MS)
+                                 " :perf-warning \"SLOW — optimize algorithm or reduce input size\"")))]
+             (str "{" code-str " → " val-part (or stdout-part "") (or warning-part "") (or time-part "") "}")))
       executions)))
 
 (def ^:private EXECUTION_SAFETY_CAP_CHARS
@@ -851,18 +880,23 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
     (str "<execution_results iteration=\"" iteration "\">\n"
       (str/join "\n"
         (map-indexed
-          (fn [idx {:keys [code error result stdout stderr]}]
+          (fn [idx {:keys [code error result stdout stderr execution-time-ms]}]
             (let [code-str (str/trim (or code ""))
                   stdout-part (when-not (str/blank? stdout)
                                 (str " :stdout " (pr-str stdout)))
                   stderr-part (when-not (str/blank? stderr)
                                 (str " :stderr " (pr-str (str-truncate stderr EXECUTION_STDERR_CHARS))))
+                  time-ms (or execution-time-ms 0)
+                  slow? (> time-ms SLOW_EXECUTION_MS)
+                  time-part (str " :time-ms " time-ms
+                              (when slow?
+                                " :perf-warning \"SLOW — optimize algorithm, avoid brute-force, reduce input size\""))
                   result-info (cond
                                 error
-                                (str "{:success? false :error " (pr-str (str-truncate error 400)) "}")
+                                (str "{:success? false :error " (pr-str (str-truncate error 400)) time-part "}")
 
                                 (fn? result)
-                                "{:success? false :error \"Result is a function, not a value\"}"
+                                (str "{:success? false :error \"Result is a function, not a value\"" time-part "}")
 
                                 (instance? clojure.lang.Var result)
                                 (let [^clojure.lang.Var var-obj result
@@ -875,6 +909,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                     (str/replace (size-suffix bound) ":size" ":value-size")
                                     " :value " value-str
                                     stdout-part stderr-part
+                                    time-part
                                     "}"))
 
                                 :else
@@ -884,6 +919,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                     (size-suffix v)
                                     " :value " value-str
                                     stdout-part stderr-part
+                                    time-part
                                     "}")))]
               (str "  [" (inc idx) "] " code-str "\n      " result-info)))
           executions))
@@ -1011,7 +1047,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
         "\n</restore_context>"))))
 
 (defn- rehydrate-final-results!
-  "Injects previous final-result-N vars into SCI context from Datalevin.
+  "Injects previous final-result-N vars into SCI context from SQLite.
    Final results are now terminal iterations (with non-nil :iteration/answer).
    Returns the list of final results for conversation thread rendering."
   [sci-ctx db-info conversation-ref]
@@ -1060,7 +1096,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                     (pos? (count (db-list-documents db {:limit 1 :include-toc? false}))))
         doc-summary (when (and has-docs? (:db-info rlm-env))
                       (build-document-summary (:db-info rlm-env)))
-        ;; Git repos are read from Datalevin on each iteration (NOT from an
+        ;; Git repos are read from SQLite on each iteration (NOT from an
         ;; atom) so persistent conversations resume with attached repos
         ;; intact. Empty list elides the GIT REPO block entirely from the
         ;; system prompt.
@@ -1179,16 +1215,16 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           (when cancel-atom @cancel-atom)
           (do (trove/log! {:level :info :data {:iteration iteration}
                            :msg "Query cancelled via cancel-atom"})
-              (emit-hook! on-cancel {:iteration iteration
-                                     :status :cancelled
-                                     :status-id (status->id :cancelled)}
-                "on-cancel hook threw — swallowing")
-              (merge {:answer nil
-                      :status :cancelled
-                      :status-id (status->id :cancelled)
-                      :trace trace
-                      :iterations iteration}
-                (finalize-cost)))
+            (emit-hook! on-cancel {:iteration iteration
+                                   :status :cancelled
+                                   :status-id (status->id :cancelled)}
+              "on-cancel hook threw — swallowing")
+            (merge {:answer nil
+                    :status :cancelled
+                    :status-id (status->id :cancelled)
+                    :trace trace
+                    :iterations iteration}
+              (finalize-cost)))
 
           (>= iteration (effective-max-iterations))
           (let [debug? (:rlm-debug? *rlm-ctx*)
@@ -1227,10 +1263,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
               (do (trove/log! {:level :warn :data {:iteration iteration :consecutive-errors consecutive-errors
                                                    :restarts restarts}
                                :msg "Error budget exhausted — too many consecutive errors across restarts. Simplify your code or break the task into smaller steps."})
-                  (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
-                    {:status-id (status->id :error-budget-exhausted)}
-                    (finalize-cost))))
-            (let [_ (rlm-debug! {:iteration iteration :msg-count (count messages)} "Iteration start")
+                (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
+                  {:status-id (status->id :error-budget-exhausted)}
+                  (finalize-cost))))
+            (let [_ (rlm-debug! {:iteration iteration :accumulated-msg-count (count messages)} "Iteration start (accumulated history)")
                   ;; Build single-shot prompt: conversation + journal + execution results + var index
                   var-index-str (get-var-index)
                   exec-results-str (format-execution-results prev-executions prev-iteration)
@@ -1245,15 +1281,23 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                   effective-messages (cond-> base-messages
                                        (not (str/blank? iteration-context))
                                        (conj {:role "user" :content iteration-context}))
-                  ;; Streaming callback: parse partial JSON for thinking/code
                   iter-on-chunk (when on-chunk
-                                  (fn [accumulated-text]
-                                    (let [partial (jsonish/parse-partial accumulated-text)]
+                                  (fn [{:keys [result reasoning tokens cost done?]}]
+                                    (if done?
                                       (on-chunk {:iteration iteration
-                                                 :thinking (or (:thinking partial) accumulated-text)
-                                                 :code (when-let [c (:code partial)]
+                                                 :thinking nil
+                                                 :code nil
+                                                 :final nil
+                                                 :tokens tokens
+                                                 :cost cost
+                                                 :done? true})
+                                      (on-chunk {:iteration iteration
+                                                 :thinking (or reasoning (:thinking result))
+                                                 :code (when-let [c (:code result)]
                                                          (if (sequential? c) (vec c) nil))
                                                  :final nil
+                                                 :tokens nil
+                                                 :cost nil
                                                  :done? false}))))
                   iteration-result (try
                                      (run-iteration rlm-env effective-messages
@@ -1336,24 +1380,24 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                   (if final-result
                     (do (trove/log! {:level :info :data {:iteration iteration :answer (str-truncate (answer-str (:answer final-result)) 200)} :msg "FINAL detected"})
                         ;; Fire final streaming callback
-                        (when on-chunk
-                          (on-chunk {:iteration iteration
-                                     :thinking thinking
-                                     :code (mapv :code executions)
-                                     :final {:answer (:answer final-result)
-                                             :confidence (:confidence final-result)
-                                             :summary (:summary final-result)
-                                             :iterations (inc iteration)
-                                             :status :success}
-                                     :done? true}))
+                      (when on-chunk
+                        (on-chunk {:iteration iteration
+                                   :thinking thinking
+                                   :code (mapv :code executions)
+                                   :final {:answer (:answer final-result)
+                                           :confidence (:confidence final-result)
+                                           :summary (:summary final-result)
+                                           :iterations (inc iteration)
+                                           :status :success}
+                                   :done? true}))
                         ;; Final result persisted via store-iteration! with :iteration/answer
-                        (merge (cond-> {:answer (:answer final-result)
-                                        :trace (conj trace trace-entry)
-                                        :iterations (inc iteration)
-                                        :confidence (:confidence final-result)}
-                                 (:sources final-result)   (assoc :sources (:sources final-result))
-                                 (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
-                          (finalize-cost)))
+                      (merge (cond-> {:answer (:answer final-result)
+                                      :trace (conj trace trace-entry)
+                                      :iterations (inc iteration)
+                                      :confidence (:confidence final-result)}
+                               (:sources final-result)   (assoc :sources (:sources final-result))
+                               (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
+                        (finalize-cost)))
                     (if (empty? executions)
                       ;; Empty iteration: DON'T increment iteration counter, DON'T add to trace.
                       ;; Retry immediately with a nudge — this doesn't waste an iteration slot.
@@ -1468,7 +1512,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
         ;; Neither - skip
         :else
         (do (trove/log! {:level :warn :msg "Visual node has no image-data or description, skipping"})
-            {:entities [] :relationships []})))
+          {:entities [] :relationships []})))
     (catch Exception e
       (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Visual node extraction failed"})
       {:entities [] :relationships []})))
