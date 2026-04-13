@@ -51,7 +51,7 @@
   (when-let [c (config/load-config)]
     (state/dispatch [:set-config c]))
 
-  (let [terminal (UnixTerminal. logging/tty-in logging/tty-out (Charset/defaultCharset))
+  (let [terminal (UnixTerminal. @logging/tty-in @logging/tty-out (Charset/defaultCharset))
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)

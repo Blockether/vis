@@ -101,23 +101,6 @@
 
       :else nil)))
 
-;;; ── shell-exec ────────────────────────────────────────────────────────
-
-(defn render-shell-exec [result code]
-  (when (and (map? result) (contains? result :exit-code))
-    (let [{:keys [exit-code stdout stderr timed-out]} result
-          ok? (zero? exit-code)]
-      [:div.tool-shell
-       [:div.tool-header
-        [:i {:data-lucide "terminal"}]
-        [:span.tool-shell-cmd code]
-        [:span.tool-exit {:class (if ok? "tool-exit-ok" "tool-exit-err")}
-         (if timed-out "TIMEOUT" (str "exit " exit-code))]]
-       (when (and stdout (not (str/blank? stdout)))
-         [:pre.tool-shell-out stdout])
-       (when (and stderr (not (str/blank? stderr)))
-         [:pre.tool-shell-err stderr])])))
-
 ;;; ── read-file ─────────────────────────────────────────────────────────
 
 (defn render-read-file [result code]
@@ -244,22 +227,6 @@
 
       :else nil)))
 
-;;; ── shell-bg-read ─────────────────────────────────────────────────────
-
-(defn render-shell-bg-read [result]
-  (when (and (map? result) (contains? result :alive))
-    (let [{:keys [pid alive exit-code stdout stderr]} result]
-      [:div.tool-shell
-       [:div.tool-header
-        [:i {:data-lucide "terminal"}]
-        [:span (str "PID " pid)]
-        [:span.tool-exit {:class (if alive "tool-exit-bg" (if (and exit-code (zero? exit-code)) "tool-exit-ok" "tool-exit-err"))}
-         (if alive "RUNNING" (str "exit " exit-code))]]
-       (when (and stdout (not (str/blank? stdout)))
-         [:pre.tool-shell-out stdout])
-       (when (and stderr (not (str/blank? stderr)))
-         [:pre.tool-shell-err stderr])])))
-
 ;;; ── Dispatch ──────────────────────────────────────────────────────────
 
 (defn render-tool
@@ -267,10 +234,8 @@
    Returns hiccup or nil (nil = fall back to default rendering)."
   [tool-name result code]
   (case tool-name
-    "list-dir"      (render-list-dir result code)
-    "shell-exec"    (render-shell-exec result code)
-    "read-file"     (render-read-file result code)
-    "write-file"    (render-write-file result code)
-    "edit-file"     (render-edit-file result code)
-    "shell-bg-read" (render-shell-bg-read result)
+    "list-dir"   (render-list-dir result code)
+    "read-file"  (render-read-file result code)
+    "write-file" (render-write-file result code)
+    "edit-file"  (render-edit-file result code)
     nil))

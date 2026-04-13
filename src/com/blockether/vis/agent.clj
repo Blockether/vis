@@ -22,7 +22,6 @@
    [com.blockether.vis.languages.commons.edit :as edit]
    [com.blockether.vis.languages.commons.list :as list]
    [com.blockether.vis.languages.commons.read :as read]
-   [com.blockether.vis.languages.commons.shell :as shell]
    [com.blockether.vis.languages.commons.write :as write]))
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
@@ -45,48 +44,31 @@
   (assoc opts :sym sym :fn f))
 
 (def base-tools
-  "Common tools available to every agent: file read/write/edit, directory listing, shell execution."
+  "Common tools available to every agent: file read/write/edit + directory listing.
+   Shell execution is intentionally NOT in this set — the Telegram bot and any
+   other untrusted caller would otherwise have arbitrary code execution on the
+   host. If an agent truly needs shell, wire a scoped tool at the call site."
   [read/tool-def
    write/tool-def
    edit/tool-def
-   list/tool-def
-   shell/tool-def
-   shell/bg-read-tool-def
-   shell/bg-kill-tool-def])
+   list/tool-def])
 
 (defn default-system-prompt
-  "vis-specific persona + workspace rules prepended to svar's own RLM system prompt.
-   svar renders ITERATION_SPEC (the :thinking/:code/:final JSON shape) into the prompt
-   itself — do NOT re-describe the iteration protocol here. This prompt only teaches
-   the things svar doesn't know about: the vis persona, how def'd vars persist, how
-   restore-var works, the iteration budget escape hatch, and the file/shell tools vis
-   registers on top."
+  "Tiny vis-side persona block. svar's own RLM prompt already covers ARCH,
+   GROUNDING, iteration spec, execution receipts, def discipline, final
+   mechanics. Here we only add what svar cannot know: the vis persona, the
+   specific tools vis registers, cross-query var persistence. Keep short."
   []
-  "You are a vis agent — a senior engineer pair that writes Clojure in an SCI sandbox
-with file and shell tools to solve concrete engineering tasks on this machine.
+  "You are a vis agent — senior engineer pair, Clojure SCI sandbox, file tools only.
 
-MEMORY (persists across queries in this session):
-- Any (def name value) you run is stored under the current conversation. On the next
-  query you'll see it in the <var_index> block that's injected automatically.
-- Vars are VALUES, not functions. `data` references, `(data)` calls — maps are not
-  callable with zero args.
-- If a symbol isn't in <var_index> but you know a previous query def'd it, call
-  (restore-var 'name) — or (restore-vars ['a 'b]) — to rebind it from persistent
-  storage before recomputing.
+Cross-query memory: `(def name \"doc\" val)` persists in this conversation; next
+query sees it in <var_index>. If a symbol should exist but isn't there, call
+(restore-var 'name) or (restore-vars ['a 'b]).
 
-ITERATION BUDGET:
-- Call (request-more-iterations N) early if you can tell the task needs more steps.
-  It returns {:granted :new-budget :cap}. Don't wait until the budget is exhausted.
+File tools (positional args, never maps): read-file, write-file, edit-file, list-dir.
+No shell, no git CLI, no network. If the user needs a shell command, say so plainly.
 
-FILE & SHELL TOOLS:
-- read-file, write-file, edit-file, list-dir, shell-exec — positional args only.
-  Check the tool doc for each (shown above this prompt by svar). Never pass maps
-  where positional ints are expected.
-- edit-file replaces one exact occurrence by default; pass replace-all=true to
-  change every match. Prefer edit-file over full write-file overwrites.
-
-REPETITION: if the runtime says ⚠ REPETITION DETECTED, stop retrying — change
-strategy or finish with what you have.")
+Iteration budget: (request-more-iterations N) when you know the task will need more.")
 
 (defn agent
   "Create an agent definition (data map).
@@ -100,8 +82,12 @@ strategy or finish with what you have.")
    - :hooks          — Hooks map (see svar docs: :iteration, :code-exec, :tool-call, :llm-call, :query + data hooks)
    - :model          — Override default model selection
    - :max-iterations — Max RLM iterations (default 50)
-   - :path           — Persistent storage path (default ~/.vis/agents/<name>)
    - :no-base-tools? — If true, skip base-tools (default false)
+
+   Storage: every agent run goes into the shared `~/.vis/vis.mdb` DB. Each
+   `run!` call creates a fresh :conversation by default (not resumed). To
+   resume a prior run, pass `:conversation {:name \"agent:<name>:<id>\"}` or
+   a `[:entity/id uuid]` lookup ref to `run!`.
 
    Example:
      (agent {:name \"code-reviewer\"
@@ -120,8 +106,7 @@ strategy or finish with what you have.")
             :tools          all-tools
             :constants      {}
             :max-iterations 50
-            :system-prompt  (or (:system-prompt opts) (default-system-prompt))
-            :path           (str (System/getProperty "user.home") "/.vis/agents/" agent-name)}
+            :system-prompt  (or (:system-prompt opts) (default-system-prompt))}
            (assoc opts :tools all-tools))))
 
 ;;; ── Config Resolution ────────────────────────────────────────────────────
@@ -185,11 +170,12 @@ strategy or finish with what you have.")
                         :as _opts}]]
   (let [_cfg    (config/resolve-config config)  ;; ensures a router exists / throws on missing
         router  (config/get-router)
-        path    (:path agent-def)
-        ;; Create env against the shared router; persistent DB at the agent's path.
-        ;; :conversation :latest resumes any prior run for this agent.
+        ;; Shared Datalevin DB for everything vis does (TUI, web, telegram, CLI).
+        ;; Without `:conversation`, svar creates a fresh conversation scoped to
+        ;; this run. Callers that want to resume pass `:conversation {:name …}`
+        ;; or a [:entity/id uuid] lookup ref.
         env     (rlm/create-env router
-                  (cond-> {:db path}
+                  (cond-> {:db config/db-path}
                     conversation (assoc :conversation conversation)))
         ;; Register tools
         env     (reduce (fn [e {:keys [sym fn] :as tool-def}]

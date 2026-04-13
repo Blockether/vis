@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.agent :as agent]
             [com.blockether.vis.logging :as logging]
+            [com.blockether.vis.telegram.bot :as telegram]
             [com.blockether.vis.trace :as trace]
             [com.blockether.vis.tui.screen :as screen]))
 
@@ -62,6 +63,7 @@
   (println "  vis                  Start interactive TUI chat")
   (println "  vis chat             Start interactive TUI chat")
   (println "  vis run \"prompt\"     Run a one-shot agent query")
+  (println "  vis telegram         Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)")
   (println "  vis help             Show this help")
   (println)
   (println "Run `vis run --help` for agent options."))
@@ -160,6 +162,11 @@
       ;; Help
       (#{"help" "--help" "-h"} cmd)
       (print-help!)
+
+      ;; Telegram bot — stdout stays connected for startup logs
+      (= cmd "telegram")
+      (do (logging/init-cli!)
+          (telegram/-main))
 
       ;; TUI chat (explicit or no args)
       (or (nil? cmd) (= cmd "chat"))

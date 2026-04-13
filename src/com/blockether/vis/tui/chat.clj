@@ -1,13 +1,16 @@
 (ns com.blockether.vis.tui.chat
   "Conversation state and LLM integration via svar RLM.
-   Uses svar's persistent Datalevin DB at ~/.vis/rlm for conversation history."
+
+   The TUI has one long-lived conversation named `tui:default` inside the
+   shared `~/.vis/vis.mdb` Datalevin DB (see `config/db-path`). Telegram
+   chats and web sessions live alongside it under different names
+   (`telegram:*`, `session:*`) — svar resolves them by `:conversation/name`,
+   so the TUI stays isolated from the others despite the shared DB."
   (:require [com.blockether.vis.config :as config]
             [com.blockether.svar.internal.llm :as llm]
             [com.blockether.svar.internal.rlm :as rlm]
             [com.blockether.svar.internal.rlm.db :as rlm-db]
             [taoensso.telemere :as t]))
-
-(def ^:private rlm-path (str (System/getProperty "user.home") "/.vis/rlm"))
 
 (defn user-msg
   "Create a structured user message with timestamp."
@@ -27,7 +30,7 @@
    assistant message list in chronological order, or [] on any failure."
   [env]
   (try
-    (let [db-info  (when-let [a (:db-info-atom env)] @a)
+    (let [db-info  (:db-info env)
           conv-ref (:conversation-ref env)
           history  (when (and db-info conv-ref)
                      (rlm-db/db-query-history db-info conv-ref))]
@@ -41,13 +44,16 @@
       [])))
 
 (defn make-conversation
-  "Create an RLM environment with persistent storage at ~/.vis/rlm.
-   `provider-config` is accepted for backwards compatibility with TUI callers but
-   we route through the shared router from config.clj so the whole process reuses
-   one circuit-breakered client. Returns {:env env, :history [structured-messages]}."
+  "Open the TUI's long-lived conversation (name `tui:default`) on the shared
+   `~/.vis/vis.mdb` Datalevin DB. First launch creates it; subsequent launches
+   resolve the existing one so message history and var registry persist.
+   `provider-config` is accepted for caller compat — we always route through
+   the shared router from config.clj. Returns {:env env :history [msgs]}."
   [_provider-config]
-  (let [router  (config/get-router)
-        env     (rlm/create-env router {:db rlm-path :conversation :latest})
+  (let [router (config/get-router)
+        env    (rlm/create-env router
+                 {:db config/db-path
+                  :conversation {:name (config/conversation-name :tui)}})
         history (load-history env)]
     {:env env :history history}))
 
@@ -63,6 +69,7 @@
       {:error (str "error: " (ex-message e))})))
 
 (defn dispose!
-  "Dispose the RLM environment. Persistent data at ~/.vis/rlm is preserved."
+  "Release the RLM env handle. Persistent data in `~/.vis/vis.mdb` stays;
+   svar leaves the shared Datalevin conn open for sibling envs."
   [{:keys [env]}]
   (rlm/dispose-env! env))
