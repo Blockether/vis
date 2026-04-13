@@ -547,9 +547,20 @@ PERFORMANCE & time-ms BUDGETS:
 - Benchmark-critical: your solution is re-verified in a stricter runtime.
   A correct-but-slow answer WILL fail.
 
-GOTCHAS:
+CODE BLOCKS — SPLIT, DON'T BUNDLE:
+- ALWAYS separate def from tests. One block = one concern.
+  BAD:  (let [solution (fn ...) ] (assert ...) (assert ...) (assert ...))  ← one timeout kills all
+  GOOD: Block 1: (def solution \"doc\" (fn [...] ...))
+        Block 2: (assert (= (f 0) expected))
+        Block 3: (assert (= (f 1) expected))
+- Each block gets its own :time-ms budget. Splitting lets you see which test fails/times out.
+- def'd vars persist across blocks within the same iteration. Use them.
+
+CLOJURE PATTERNS:
+- letfn for recursive/mutually-recursive local fns. (let [f (fn [] (f))] ...) → BROKEN. Use (letfn [(f [] (f))] ...).
+- iterate passes ONE value. Destructure vectors: (fn [[r len]] ...) NOT (fn [r len] ...).
 - Quote lists: '(1 2 3). Bare () = fn call.
-- PREFER (fn [x] ...) over #(). Nested #() is illegal; #() with string-heavy args causes paren confusion. Use (fn [...] ...) by default.
+- PREFER (fn [x] ...) over #(). Nested #() is illegal; #() with string-heavy args causes paren confusion.
 - 'code' entry = complete expr. No fragments. No split across strings.
 - Docstring defs: (def x \"doc\" val) → aids <var_index>.
 - AVOID LAZY SEQS. Prefer eager: mapv filterv reduce into.
