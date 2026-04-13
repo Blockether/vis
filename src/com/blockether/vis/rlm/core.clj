@@ -86,9 +86,9 @@ Pattern: [thing] [action] [reason]. [next step].")
                 (when (and (not (:error data)) (not (:timeout? data)))
                   (let [r (:result data)]
                     (cond
-                      (nil? r) "ok=✓"
-                      (fn? r) (str "ok=fn")
-                      :else (str "ok=" (str-truncate (str/replace (pr-str r) #"\s+" " ") 80))))))
+                      (nil? r) "result=✓"
+                      (fn? r) "result=fn"
+                      :else (str "result=" (str-truncate (str/replace (pr-str r) #"\s+" " ") 80))))))
 
               :iter-end
               (fmt (str "└─ ITER " iteration)
@@ -464,6 +464,13 @@ Git tools available this session — all prefixed `git-`:
   (str
     "Clojure SCI agent. Write, exec, iterate.
 
+MINDSET:
+- THINK IN CODE, NOT PROSE. Your reasoning should be 2-5 lines max.
+  Don't work through algorithms mentally — write code, run it, see results.
+- First iteration: write the solution + ALL tests. Submit code + :final together.
+- If tests fail/timeout: read the error, fix the code, resubmit. Don't re-derive from scratch.
+- NEVER spend 1000+ tokens reasoning about an approach. Spend 50 tokens thinking, then CODE IT.
+
 ARCH:
 - Single-shot iter. No msg history. State → def'd vars (persist).
 - <var_index> → vars. <execution_results> → last return.
@@ -548,6 +555,11 @@ PERFORMANCE & time-ms BUDGETS:
 - Blocks >5s get :perf-warning. If you see it, OPTIMIZE before submitting :final.
 - Benchmark-critical: your solution is re-verified in a stricter runtime.
   A correct-but-slow answer WILL fail.
+- COMPUTE, DON'T SCAN. Never iterate/filter/drop-while over millions of candidates.
+  If you need the first X >= N in a sequence, compute X's position directly from N.
+  BAD:  (drop-while #(< % n) (generate-all-from-zero))  ← scans millions for large n
+  GOOD: compute starting index/seed from n, generate from there  ← O(1) start
+  This applies to ANY ordered sequence: palindromes, primes, Fibonacci, etc.
 
 CODE BLOCKS — SPLIT, DON'T BUNDLE:
 - ALWAYS separate def from tests. One block = one concern.
