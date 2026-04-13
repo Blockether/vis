@@ -72,16 +72,20 @@ Pattern: [thing] [action] [reason]. [next step].")
 
               :code-exec
               (fmt (str "│  ▶ EXEC [" (:idx data) "/" (:total data) "]")
-                (str-truncate (:code data) 80)
+                (str-truncate (str/replace (str (:code data)) #"\s+" " ") 80)
                 (str "budget=" (:time-ms data) "ms"))
 
               :code-result
               (fmt (str "│  ◀ EXEC [" (:idx data) "/" (:total data) "]")
                 (str (:execution-time-ms data) "ms")
-                (when (:error data) (str "ERROR: " (str-truncate (:error data) 80)))
+                (when (:error data) (str "ERROR: " (str-truncate (str/replace (str (:error data)) #"\s+" " ") 80)))
                 (when (:timeout? data) "TIMEOUT")
                 (when (and (not (:error data)) (not (:timeout? data)))
-                  (str "ok=" (str-truncate (pr-str (:result data)) 80))))
+                  (let [r (:result data)]
+                    (cond
+                      (nil? r) "ok=✓"
+                      (fn? r) (str "ok=fn")
+                      :else (str "ok=" (str-truncate (str/replace (pr-str r) #"\s+" " ") 80))))))
 
               :iter-end
               (fmt (str "└─ ITER " iteration)
@@ -258,9 +262,6 @@ Pattern: [thing] [action] [reason]. [next step].")
 (defn execute-code [{:keys [sci-ctx sandbox-ns]} code & {:keys [timeout-ms]}]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
     (let [bal (paren-repair/paren-balance code)
-          _ (rlm-debug! {:code code
-                         :code-len (count code)
-                         :paren-balance bal} "Executing code (full)")
           start-time (System/currentTimeMillis)
           lint-error (detect-common-mistakes code)]
       (if lint-error
@@ -287,7 +288,6 @@ Pattern: [thing] [action] [reason]. [next step].")
                 execution-time (- (System/currentTimeMillis) start-time)]
             (if (:timeout? execution-result)
               (do
-                (rlm-debug! {:execution-time-ms execution-time} "Code execution timed out — break long-running code into smaller steps or use (deref (future ...) timeout-ms :timeout)")
                 (assoc execution-result :execution-time-ms execution-time :timeout? true))
               (let [{:keys [error]} execution-result
                     final-result (if (and error (paren-repair/parse-error? error))
@@ -318,12 +318,6 @@ Pattern: [thing] [action] [reason]. [next step].")
                                        execution-result))
                                    execution-result)
                     {:keys [result stdout stderr error]} final-result]
-                (rlm-debug! {:execution-time-ms execution-time
-                             :has-error? (some? error)
-                             :error error
-                             :result-preview (str-truncate (pr-str result) 200)
-                             :stdout-preview (when-not (str/blank? stdout) (str-truncate stdout 200))
-                             :stderr-preview (when-not (str/blank? stderr) (str-truncate stderr 200))} "Code execution complete")
                 (assoc final-result :execution-time-ms execution-time :timeout? false)))))))))
 
 (defn answer-str
