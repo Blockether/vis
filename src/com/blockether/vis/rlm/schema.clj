@@ -344,7 +344,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
     (spec/field {::spec/name :time-ms
                  ::spec/type :spec.type/int
                  ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Expected max execution time in milliseconds. Runtime uses this as the per-block timeout."})))
+                 ::spec/description "Expected max execution time in ms. SCI is fast: def 100ms, assert 500ms, heavy 2000ms max. DO NOT set >5000."})))
 
 (def ITERATION_SPEC
   "Spec for each RLM iteration response. Forces structured output from LLM.
