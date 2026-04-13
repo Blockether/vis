@@ -2385,9 +2385,8 @@
                               (:version skill)  (assoc :version (str (:version skill))))]
                    :on-conflict [:document_id]
                    :do-update-set [:body :source_path :content_hash :agent_config :requires :version]}))))))
-      (trove/log! {:level :info :id ::skills-ingested
-                   :data {:total (count skill-registry) :changed (count changed)}
-                   :msg "Skills ingested (change-detected)"})
+      (trove/log! {:level :debug :id ::skills-ingested
+                   :msg (str "Skills ingested: " (count changed) "/" (count skill-registry) " changed")})
       (count changed))))
 
 (defn delete-skill-entity!

@@ -329,10 +329,8 @@
                         (assoc m (:name s) s)))
                     {}
                     filtered)]
-     (trove/log! {:level :info :id ::skills-loaded
-                  :data {:count (count registry)
-                         :names (vec (keys registry))}
-                  :msg "Skills loaded"})
+     (trove/log! {:level :debug :id ::skills-loaded
+                  :msg (str "Skills loaded: " (count registry))})
      registry)))
 
 (defn skills-manifest-block
