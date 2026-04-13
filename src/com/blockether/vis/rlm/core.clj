@@ -57,7 +57,8 @@ Pattern: [thing] [action] [reason]. [next step].")
 
               :iter-start
               (fmt (str "┌─ ITER " iteration)
-                (str "msgs=" (:msg-count data)))
+                (str "msgs=" (:msg-count data))
+                (when-let [r (:reasoning data)] (str "reasoning=" r)))
 
               :llm-response
               (let [thinking (str (:thinking data))]
@@ -587,7 +588,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
      - :iteration-spec - Spec for ask! (default: ITERATION_SPEC).
                          When provider has reasoning, pass ITERATION_SPEC_CODE_ONLY.
      - :on-chunk - Streaming callback function."
-  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration] :or {iteration-spec ITERATION_SPEC}}]]
+  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration reasoning-effort] :or {iteration-spec ITERATION_SPEC}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [model-name (resolve-root-model (:router rlm-env))
           ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
@@ -597,7 +598,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                   :messages messages
                                   :routing (or routing {})
                                   :check-context? false}
-                           on-chunk (assoc :on-chunk on-chunk))))
+                           on-chunk (assoc :on-chunk on-chunk)
+                           reasoning-effort (assoc :extra-body {:reasoning_effort reasoning-effort}))))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           ;; Native reasoning takes priority over spec-parsed thinking
@@ -1302,7 +1304,11 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                 (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
                   {:status-id (status->id :error-budget-exhausted)}
                   (finalize-cost))))
-            (let [_ (rlm-stage! :iter-start iteration {:msg-count (count messages)})
+            (let [reasoning-effort (cond
+                                     (zero? consecutive-errors) "low"
+                                     (= 1 consecutive-errors) "medium"
+                                     :else "high")
+                  _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-effort})
                   ;; Build single-shot prompt: conversation + journal + execution results + var index
                   var-index-str (get-var-index)
                   exec-results-str (format-execution-results prev-executions prev-iteration)
@@ -1335,12 +1341,18 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                                  :tokens nil
                                                  :cost nil
                                                  :done? false}))))
+                  ;; Adaptive reasoning: start low, escalate on errors
+                  reasoning-effort (cond
+                                     (zero? consecutive-errors) "low"
+                                     (= 1 consecutive-errors) "medium"
+                                     :else "high")
                   iteration-result (try
                                      (run-iteration rlm-env effective-messages
                                        (cond-> {:iteration-spec (if has-reasoning?
                                                                   ITERATION_SPEC_CODE_ONLY
                                                                   ITERATION_SPEC)
                                                 :iteration iteration
+                                                :reasoning-effort reasoning-effort
                                                 :routing (when prev-optimize {:optimize prev-optimize})}
                                          iter-on-chunk (assoc :on-chunk iter-on-chunk)))
                                      (catch Exception e
