@@ -775,7 +775,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           (if validation-error
             (do (rlm-debug! {:final-answer (str-truncate final-answer 200)
                              :validation-error validation-error} "FINAL rejected")
-              {:response nil :thinking thinking :next-optimize next-optimize
+              {:thinking thinking :next-optimize next-optimize
                :executions (or executions
                              [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
                                :error validation-error}])
@@ -787,7 +787,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                         :confidence confidence}
                                  (seq sources) (assoc :sources sources)
                                  (:reasoning final-data) (assoc :reasoning (:reasoning final-data)))]
-              {:response nil :thinking thinking :next-optimize next-optimize
+              {:thinking thinking :next-optimize next-optimize
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
         ;; Normal path: execute code blocks — must be maps with :expr and :time-ms
@@ -854,7 +854,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                   :execution-time-ms (:execution-time-ms result)
                                   :repaired? (:repaired? result)})
                            (range) code-blocks execution-results)]
-          {:response nil :thinking thinking :next-optimize next-optimize
+          {:thinking thinking :next-optimize next-optimize
            :executions executions :final-result nil :api-usage api-usage
            :duration-ms (or (:duration-ms ask-result) 0)})))))
 
@@ -1461,7 +1461,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                     nil -1 journal nil))
                 ;; Normal path — accumulate token usage
                 (let [_ (accumulate-usage! (:api-usage iteration-result))
-                      {:keys [response thinking executions final-result next-optimize]} iteration-result
+                      {:keys [thinking executions final-result next-optimize]} iteration-result
                       vars-snapshot (restorable-var-snapshots rlm-env executions)
                       ;; Store iteration snapshot — exact input/output for fine-tuning
                       _traj-iter (rlm-db/store-iteration! db-info
@@ -1489,7 +1489,6 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                            :duration-ms (or (:duration-ms iteration-result) 0)}
                           "on-iteration hook threw (success branch) — swallowing")
                       trace-entry {:iteration iteration
-                                   :response response
                                    :thinking thinking
                                    :executions executions
                                    :final? (boolean final-result)}]
@@ -1534,7 +1533,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                            :executions nil :thinking thinking :duration-ms (or (:duration-ms iteration-result) 0)})
                         (recur (inc iteration) ;; still increment to prevent infinite loop
                           (conj messages
-                            {:role "assistant" :content (or response thinking "[empty]")}
+                            {:role "assistant" :content (or thinking "[empty]")}
                             {:role "user" :content nudge})
                           trace ;; DON'T add empty trace entry
                           (inc consecutive-errors)
@@ -1549,10 +1548,14 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                             budget-warning (when (<= remaining-iters 5)
                                              (str "\n[SYSTEM_NUDGE] Only " remaining-iters " iterations left! "
                                                "Set final NOW with what you have. DO NOT start new explorations."))
+                            all-passed? (every? #(nil? (:error %)) executions)
+                            all-passed-nudge (when all-passed?
+                                               (str "\n[SYSTEM_NUDGE] ALL " (count executions) " blocks passed with 0 errors. "
+                                                 "Submit :final NOW with your answer. Do NOT run more tests."))
                             force-final-nudge (when (> iteration 20)
                                                 (str "\n[SYSTEM_NUDGE] You have been running for " (inc iteration) " iterations. "
                                                   "STOP exploring. Set final IMMEDIATELY with your current findings."))
-                            user-feedback (str iteration-header "\n" exec-feedback repetition-warning budget-warning force-final-nudge)]
+                            user-feedback (str iteration-header "\n" exec-feedback repetition-warning budget-warning all-passed-nudge force-final-nudge)]
                         (rlm-stage! :iter-end iteration
                           {:blocks (count executions)
                            :errors (count (filter :error executions))
