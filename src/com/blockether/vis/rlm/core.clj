@@ -922,7 +922,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                     stdout-part stderr-part
                                     time-part
                                     "}")))]
-              (str "  [" (inc idx) "] " code-str "\n      " result-info)))
+              (str "  [" (inc idx) "] " code-str " → " result-info)))
           executions))
       "\n</execution_results>")))
 
