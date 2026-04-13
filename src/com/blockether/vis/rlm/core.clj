@@ -529,13 +529,20 @@ LLM SUB-CALLS:
 - Eval returned :code via the usual iteration flow (each entry = one complete form).
 - Need typed data? Ask the sub-RLM to emit code that defs the data structure; eval it.
 
-PERFORMANCE:
-- Every code block receipt includes :time-ms (execution time in milliseconds).
+PERFORMANCE & time-ms BUDGETS:
+- Clojure on SCI is FAST. Most expressions run in <10ms. Set time-ms accordingly.
+- time-ms guidelines:
+    (def ...)            → 100ms
+    (assert ...)         → 500ms
+    simple computation   → 200ms
+    heavy computation    → 2000ms (rare — if you need this, your algorithm is probably wrong)
+    network/IO           → does not apply here (no network in sandbox)
+- DO NOT give 5000ms or 30000ms budgets — that means your code is too slow.
+  If a simple assert needs >500ms, your algorithm is brute-force. Fix it.
+- Every receipt includes :time-ms (actual wall-clock). Compare vs your budget.
 - Blocks >5s get :perf-warning. If you see it, OPTIMIZE before submitting :final.
-- Common fixes: skip brute-force scans, jump to answer mathematically,
-  reduce input size, use efficient data structures (set lookup vs linear scan).
-- Benchmark-critical: your solution may be re-verified in a stricter runtime
-  with tighter time limits. A correct-but-slow answer can still fail.
+- Benchmark-critical: your solution is re-verified in a stricter runtime.
+  A correct-but-slow answer WILL fail.
 
 GOTCHAS:
 - Quote lists: '(1 2 3). Bare () = fn call.
