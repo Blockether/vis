@@ -42,6 +42,77 @@ Pattern: [thing] [action] [reason]. [next step].")
   (when (:rlm-debug? *rlm-ctx*)
     (trove/log! {:level :info :data (assoc data :rlm-phase (:rlm-phase *rlm-ctx*)) :msg msg})))
 
+(defn rlm-stage!
+  "Always-on structured stage log for RLM pipeline visibility.
+   Produces a single compact line per event with visual hierarchy."
+  [stage iteration data]
+  (let [fmt (fn [& parts] (str/join "  " (remove nil? parts)))
+        msg (case stage
+              :query-start
+              (fmt "── RLM START"
+                (str "model=" (:model data))
+                (str "max-iter=" (:max-iterations data))
+                (when (:reasoning? data) "reasoning=true")
+                (str "query=\"" (:query data) "\""))
+
+              :iter-start
+              (fmt (str "┌─ ITER " iteration)
+                (str "msgs=" (:msg-count data)))
+
+              :llm-call
+              (fmt "│  ⇒ LLM"
+                (str "tokens=" (:input-tokens data)))
+
+              :llm-response
+              (fmt "│  ⇐ LLM"
+                (str (:duration-ms data) "ms")
+                (when (:has-reasoning data) "reasoning=true")
+                (str "code=" (:code-count data))
+                (when (:has-final data) "FINAL=true"))
+
+              :code-exec
+              (fmt (str "│  ▶ EXEC [" (:idx data) "/" (:total data) "]")
+                (str-truncate (:code data) 80)
+                (str "budget=" (:time-ms data) "ms"))
+
+              :code-result
+              (fmt (str "│  ◀ EXEC [" (:idx data) "/" (:total data) "]")
+                (str (:execution-time-ms data) "ms")
+                (when (:error data) (str "ERROR: " (str-truncate (:error data) 80)))
+                (when (:timeout? data) "TIMEOUT")
+                (when (and (not (:error data)) (not (:timeout? data)))
+                  (str "ok=" (str-truncate (pr-str (:result data)) 80))))
+
+              :iter-end
+              (fmt (str "└─ ITER " iteration)
+                (str "blocks=" (:blocks data))
+                (str "errors=" (:errors data))
+                (str "total=" (reduce + 0 (or (:times data) [])) "ms"))
+
+              :final
+              (fmt "══ FINAL"
+                (str "answer=\"" (:answer data) "\"")
+                (str "confidence=" (:confidence data))
+                (str "iters=" (:iterations data)))
+
+              :query-end
+              (fmt "── RLM END"
+                (str (:duration-ms data) "ms")
+                (str "iters=" (:iterations data))
+                (when (:cost data) (str "cost=$" (:cost data))))
+
+              :error
+              (fmt "│  ✘ ERR"
+                (str "reason=" (:reason data))
+                (when (:max data) (str "max=" (:max data))))
+
+              :empty
+              (fmt "│  ⚠ EMPTY" "no code blocks")
+
+              ;; fallback
+              (fmt (str "│  " (name stage)) (pr-str data)))]
+    (trove/log! {:level :info :id ::rlm-stage :msg msg})))
+
 (defn- status->id
   [status]
   (when status
@@ -210,9 +281,9 @@ Pattern: [thing] [action] [reason]. [next step].")
                  :execution-time-ms 0 :timeout? false})))
         ;; Normal execution path
           (let [execution-result (if timeout-ms
-                                  (binding [*eval-timeout-ms* (schema/clamp-eval-timeout-ms timeout-ms)]
-                                    (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
-                                  (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                                   (binding [*eval-timeout-ms* (schema/clamp-eval-timeout-ms timeout-ms)]
+                                     (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                                   (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
                 execution-time (- (System/currentTimeMillis) start-time)]
             (if (:timeout? execution-result)
               (do
@@ -492,7 +563,7 @@ GOTCHAS:
 DOCUMENTS: " document-summary "
 
 Doc tools (2 fns):
-1. (search-documents \"q\") → {:pages [...] :toc [...] :entities [...]} 
+1. (search-documents \"q\") → markdown string
    (search-documents \"q\" {:in :pages})  — narrow to :pages|:toc|:entities
    (search-documents \"q\" {:top-k 20 :document-id \"doc-1\"})
 2. (fetch-document-content ref) → full content:
@@ -583,12 +654,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [model-name (resolve-root-model (:router rlm-env))
           input-tokens (router/count-messages (or model-name "gpt-4o") messages)
-          _ (trove/log! {:level :info :id ::llm-call
-                         :data {:env-id (:env-id rlm-env)
-                                :iteration iteration
-                                :effective-msg-count (count messages)
-                                :input-tokens input-tokens}
-                         :msg "Sending effective-messages to ask! (ask! will add spec msg internally)"})
+          _ (rlm-stage! :llm-call iteration
+              {:msg-count (count messages) :input-tokens input-tokens})
           ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
           ask-result (llm/ask! (:router rlm-env)
                        (cond-> {:spec iteration-spec
@@ -598,9 +665,12 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                          on-chunk (assoc :on-chunk on-chunk)))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
-          _ (rlm-debug! {:has-reasoning (some? model-reasoning)
-                         :has-final (some? (:final parsed))
-                         :code-count (count (:code parsed))} "ask! response received")
+          _ (rlm-stage! :llm-response iteration
+              {:has-reasoning (some? model-reasoning)
+               :has-final (some? (:final parsed))
+               :code-count (count (:code parsed))
+               :duration-ms (:duration-ms ask-result)
+               :tokens (:tokens ask-result)})
           ;; Native reasoning takes priority over spec-parsed thinking
           thinking (or model-reasoning (:thinking parsed))
           ;; LLM's preference for next iteration's model selection
@@ -656,7 +726,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                                 time-ms (:time-ms block)]
                                             (when-not (str/blank? expr)
                                               {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
-                               raw-code))
+                                  raw-code))
               code-blocks (mapv :expr code-entries)
               ;; Execute code blocks in SCI — only for Clojure code answers.
               exec-results (when (and clojure? (seq code-blocks))
@@ -716,7 +786,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                               time-ms (:time-ms block)]
                                           (when-not (str/blank? expr)
                                             {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
-                               raw-parsed))
+                                raw-parsed))
               raw-exprs (mapv :expr normalized)
               ;; Coalesce fragments: when model splits one expression across multiple
               ;; array entries (one line per string), join unbalanced blocks with the
@@ -746,12 +816,20 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                 (recur (rest remaining) (conj result (first remaining)))))))
               code-blocks (mapv :expr coalesced)
               time-limits (mapv :time-ms coalesced)
-              _ (rlm-debug! {:code-block-count (count code-blocks)
-                             :raw-count (count raw-exprs)
-                             :code-previews (mapv #(str-truncate % 120) code-blocks)} "Code blocks extracted")
-              execution-results (mapv (fn [code timeout]
-                                        (execute-code rlm-env code :timeout-ms timeout))
-                                  code-blocks time-limits)
+              total-blocks (count code-blocks)
+              execution-results (mapv (fn [idx code timeout]
+                                        (rlm-stage! :code-exec iteration
+                                          {:idx (inc idx) :total total-blocks
+                                           :code code :time-ms timeout})
+                                        (let [r (execute-code rlm-env code :timeout-ms timeout)]
+                                          (rlm-stage! :code-result iteration
+                                            {:idx (inc idx) :total total-blocks
+                                             :execution-time-ms (:execution-time-ms r)
+                                             :error (:error r)
+                                             :timeout? (:timeout? r)
+                                             :result (:result r)})
+                                          r))
+                                  (range) code-blocks time-limits)
               ;; Combine code blocks with their execution results
               executions (mapv (fn [idx code result]
                                  {:id idx
@@ -1229,12 +1307,11 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                          (catch Exception e
                            (trove/log! {:level :warn :data {:error (ex-message e)}
                                         :msg log-msg})))))]
-    (rlm-debug! {:query query :max-iterations max-iterations :model effective-model
-                 :has-output-spec? (some? output-spec) :has-pre-fetched? (some? pre-fetched-context)
-                 :has-reasoning? has-reasoning?
-                 :prev-final-results (count prev-final-results)
-                 :has-restore-context? (some? restore-context)
-                 :msg-count (count initial-messages)} "Iteration loop started")
+    (rlm-stage! :query-start 0
+      {:model effective-model
+       :max-iterations max-iterations
+       :reasoning? has-reasoning?
+       :query (str-truncate query 120)})
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [iteration 0 messages initial-messages trace [] consecutive-errors 0 restarts 0
              prev-executions nil prev-iteration -1
@@ -1245,8 +1322,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           ;; Cooperative cancellation — caller-owned :cancel-atom from query-env!
           ;; (or an internal per-query atom when not supplied).
           (when cancel-atom @cancel-atom)
-          (do (trove/log! {:level :info :data {:iteration iteration}
-                           :msg "Query cancelled via cancel-atom"})
+          (do (rlm-stage! :error iteration {:reason :cancelled})
             (emit-hook! on-cancel {:iteration iteration
                                    :status :cancelled
                                    :status-id (status->id :cancelled)}
@@ -1261,8 +1337,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           (>= iteration (effective-max-iterations))
           (let [debug? (:rlm-debug? *rlm-ctx*)
                 locals (when debug? (get-locals rlm-env))]
-            (trove/log! {:level :warn :data {:iteration iteration :max (effective-max-iterations)}
-                         :msg "Max iterations reached — call (request-more-iterations N) earlier to extend budget"})
+            (rlm-stage! :error iteration {:reason :max-iterations :max (effective-max-iterations)})
             (merge {:answer nil
                     :status :max-iterations
                     :status-id (status->id :max-iterations)
@@ -1298,7 +1373,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                 (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
                   {:status-id (status->id :error-budget-exhausted)}
                   (finalize-cost))))
-            (let [_ (rlm-debug! {:iteration iteration :accumulated-msg-count (count messages)} "Iteration start (accumulated history)")
+            (let [_ (rlm-stage! :iter-start iteration {:msg-count (count messages)})
                   ;; Build single-shot prompt: conversation + journal + execution results + var index
                   var-index-str (get-var-index)
                   exec-results-str (format-execution-results prev-executions prev-iteration)
@@ -1410,7 +1485,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                    :executions executions
                                    :final? (boolean final-result)}]
                   (if final-result
-                    (do (trove/log! {:level :info :data {:iteration iteration :answer (str-truncate (answer-str (:answer final-result)) 200)} :msg "FINAL detected"})
+                    (do (rlm-stage! :final iteration
+                          {:answer (str-truncate (answer-str (:answer final-result)) 200)
+                           :confidence (:confidence final-result)
+                           :iterations (inc iteration)})
                         ;; Fire final streaming callback
                       (when on-chunk
                         (on-chunk {:iteration iteration
@@ -1433,7 +1511,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                     (if (empty? executions)
                       ;; Empty iteration: DON'T increment iteration counter, DON'T add to trace.
                       ;; Retry immediately with a nudge — this doesn't waste an iteration slot.
-                      (let [nudge (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
+                      (let [_ (rlm-stage! :empty iteration {})
+                            nudge (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
                                     "{:requirement " (pr-str (str-truncate query 200)) "}\n"
                                     "⚠ EMPTY — no code executed. You MUST include code. "
                                     (if has-reasoning?
@@ -1465,12 +1544,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                                 (str "\n[SYSTEM_NUDGE] You have been running for " (inc iteration) " iterations. "
                                                   "STOP exploring. Set final IMMEDIATELY with your current findings."))
                             user-feedback (str iteration-header "\n" exec-feedback repetition-warning budget-warning force-final-nudge)]
-                        (rlm-debug! {:iteration iteration
-                                     :code-blocks (count executions)
-                                     :errors (count (filter :error executions))
-                                     :has-thinking? (some? thinking)
-                                     :thinking-preview (when thinking (str-truncate thinking 150))
-                                     :feedback-len (count user-feedback)} "Iteration feedback")
+                        (rlm-stage! :iter-end iteration
+                          {:blocks (count executions)
+                           :errors (count (filter :error executions))
+                           :times (mapv :execution-time-ms executions)})
                         (let [had-successful-execution? (some #(nil? (:error %)) executions)
                               next-errors (if had-successful-execution? 0 (inc consecutive-errors))
                               _ (when had-successful-execution?
