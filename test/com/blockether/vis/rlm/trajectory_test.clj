@@ -66,10 +66,10 @@
           (let [results (sut/list-queries db-info)]
             (expect (= 1 (count results)))
             (let [q (first results)]
-              (expect (= :query (:entity/type q)))
-              (expect (= :success (:query/status q)))
-              (expect (some? (:entity/id q)))
-              (expect (some? (:entity/created-at q)))))
+              (expect (= :query (:type q)))
+              (expect (= :success (:status q)))
+              (expect (some? (:id q)))
+              (expect (some? (:created-at q)))))
           (finally (dispose-db! db-info)))))
 
     (it "returns multiple stored queries"
@@ -117,7 +117,7 @@
         (seed-query! db-info {:text "bad" :status :error})
         (let [results (sut/list-queries db-info {:status :success})]
           (expect (= 1 (count results)))
-          (expect (= :success (:query/status (first results)))))
+          (expect (= :success (:status (first results)))))
         (finally (dispose-db! db-info)))))
 
   (it "returns only :error queries when status :error applied"
@@ -127,7 +127,7 @@
         (seed-query! db-info {:text "bad" :status :error})
         (let [results (sut/list-queries db-info {:status :error})]
           (expect (= 1 (count results)))
-          (expect (= :error (:query/status (first results)))))
+          (expect (= :error (:status (first results)))))
         (finally (dispose-db! db-info)))))
 
   (it "returns only :max-iter queries when status :max-iter applied"
@@ -137,7 +137,7 @@
         (seed-query! db-info {:text "maxed" :status :max-iter})
         (let [results (sut/list-queries db-info {:status :max-iter})]
           (expect (= 1 (count results)))
-          (expect (= :max-iter (:query/status (first results)))))
+          (expect (= :max-iter (:status (first results)))))
         (finally (dispose-db! db-info)))))
 
   (it "returns all queries when no status filter"
@@ -162,7 +162,7 @@
         (seed-query! db-info {:text "many" :iterations 5})
         (let [results (sut/list-queries db-info {:min-iterations 3})]
           (expect (= 1 (count results)))
-          (expect (= "many" (:query/text (first results)))))
+          (expect (= "many" (:text (first results)))))
         (finally (dispose-db! db-info)))))
 
   (it "includes queries meeting min-iterations exactly"
@@ -188,7 +188,7 @@
                               :eval-score 0.9 :iteration-code "(def x 1)"})
         (let [results (sut/filter-queries db-info {:min-eval-score 0.7 :min-score -100
                                                    :min-iterations 2 :max-iterations 50})]
-          (expect (every? #(>= (or (:query/eval-score %) 0.0) 0.7) results)))
+          (expect (every? #(>= (or (:eval-score %) 0.0) 0.7) results)))
         (finally (dispose-db! db-info)))))
 
   (it "includes queries without eval-score when min-eval-score set"

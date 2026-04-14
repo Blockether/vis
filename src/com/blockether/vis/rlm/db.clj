@@ -24,11 +24,15 @@
 (defn str-lower [s] (when s (str/lower-case s)))
 (defn str-includes? [s substr] (when s (str/includes? s substr)))
 
+(def ->id sq/->id)
+(def ->kw sq/->kw)
+(def ->epoch-ms sq/->epoch-ms)
+
 (defn- read-edn-safe [s fallback]
   (if (or (nil? s) (= "" s))
     fallback
     (try (edn/read-string s)
-         (catch Exception _ fallback))))
+      (catch Exception _ fallback))))
 
 ;; -----------------------------------------------------------------------------
 ;; Connection lifecycle
@@ -86,7 +90,7 @@
 
 (defn- parse-forms-safe [code]
   (try (edamame/parse-string-all (or code "") {:all true})
-       (catch Exception _ [])))
+    (catch Exception _ [])))
 
 (defn- form->defined-symbol [form]
   (when (seq? form)
@@ -95,7 +99,7 @@
         sym))))
 
 (defn- iteration->defined-symbols [iteration]
-  (->> (read-edn-safe (:iteration/code iteration) [])
+  (->> (read-edn-safe (:code iteration) [])
     (mapcat parse-forms-safe)
     (keep form->defined-symbol)
     distinct
@@ -106,21 +110,21 @@
   [db-info conversation-ref]
   (let [queries (db-list-conversation-queries db-info conversation-ref)]
     (mapv (fn [idx query]
-            (let [qref [:entity/id (:entity/id query)]
+            (let [qref [:id (:id query)]
                   iterations (db-list-query-iterations db-info qref)
                   key-vars (->> iterations (mapcat iteration->defined-symbols) distinct vec)
                   answer-preview (str-truncate
-                                   (or (some-> (:query/answer query) (read-edn-safe nil) str)
-                                     (:query/answer query)
-                                     (some-> iterations last :iteration/answer)
+                                   (or (some-> (:answer query) (read-edn-safe nil) str)
+                                     (:answer query)
+                                     (some-> iterations last :answer)
                                      "")
                                    160)]
               {:query-pos idx
                :query-ref qref
-               :query-id (:entity/id query)
-               :created-at (:entity/created-at query)
-               :text (:query/text query)
-               :status (:query/status query)
+               :query-id (:id query)
+               :created-at (:created-at query)
+               :text (:text query)
+               :status (:status query)
                :iterations (count iterations)
                :answer-preview answer-preview
                :key-vars key-vars}))
@@ -133,9 +137,9 @@
   (->> (db-list-query-iterations db-info query-ref)
     (map-indexed (fn [iter-pos iter]
                    {:iteration-pos iter-pos
-                    :created-at (:entity/created-at iter)
-                    :code (read-edn-safe (:iteration/code iter) [])
-                    :answer (:iteration/answer iter)}))
+                    :created-at (:created-at iter)
+                    :code (read-edn-safe (:code iter) [])
+                    :answer (:answer iter)}))
     vec))
 
 (defn db-query-results
@@ -143,34 +147,36 @@
   [db-info query-ref]
   (->> (db-list-query-iterations db-info query-ref)
     (map-indexed (fn [iter-pos iter]
-                   (let [iref [:entity/id (:entity/id iter)]]
+                   (let [iref [:id (:id iter)]]
                      {:iteration-pos iter-pos
-                      :created-at (:entity/created-at iter)
-                      :results (read-edn-safe (:iteration/results iter) [])
+                      :created-at (:created-at iter)
+                      :results (read-edn-safe (:results iter) [])
                       :vars (db-list-iteration-vars db-info iref)
-                      :answer (:iteration/answer iter)})))
+                      :answer (:answer iter)})))
     vec))
 
 (defn db-latest-var-registry
   "Builds latest restorable var registry for a conversation (last write wins)."
   ([db-info conversation-ref] (db-latest-var-registry db-info conversation-ref {}))
   ([db-info conversation-ref {:keys [max-scan-queries]}]
-   (let [queries (cond->> (db-list-conversation-queries db-info conversation-ref)
-                   max-scan-queries (take-last (max 0 (long max-scan-queries))))]
+   (let [ordered-queries (sort-by :created-at (db-list-conversation-queries db-info conversation-ref))
+         queries (if max-scan-queries
+                   (take-last (max 0 (long max-scan-queries)) ordered-queries)
+                   ordered-queries)]
      (reduce (fn [acc query]
-               (let [qref [:entity/id (:entity/id query)]]
+               (let [qref [:id (:id query)]]
                  (reduce (fn [m iter]
                            (reduce (fn [m2 {:keys [name value code]}]
                                      (if name
                                        (assoc m2 (symbol name)
                                          {:value value :code code
-                                          :query-id (:entity/id query)
+                                          :query-id (:id query)
                                           :query-ref qref
-                                          :iteration-id (:entity/id iter)
-                                          :created-at (:entity/created-at iter)})
+                                          :iteration-id (:id iter)
+                                          :created-at (:created-at iter)})
                                        m2))
                              m
-                             (db-list-iteration-vars db-info [:entity/id (:entity/id iter)])))
+                             (db-list-iteration-vars db-info [:id (:id iter)])))
                    acc
                    (db-list-query-iterations db-info qref))))
        {}
@@ -182,6 +188,7 @@
 
 (def db-list-documents             sq/db-list-documents)
 (def db-get-document               sq/db-get-document)
+(def store-document!               sq/store-document!)
 (def db-store-pageindex-document!  sq/db-store-pageindex-document!)
 
 (def db-store-toc-entry!    sq/db-store-toc-entry!)

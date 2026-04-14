@@ -59,7 +59,8 @@
   [env messages opts]
   (let [{:keys [context spec model max-iterations max-refinements threshold
                 max-context-tokens max-recursion-depth verify? concurrency
-                system-prompt plan? debug? hooks cancel-atom eval-timeout-ms]
+                system-prompt plan? debug? hooks cancel-atom eval-timeout-ms
+                reasoning-default]
          :or   {max-iterations      schema/MAX_ITERATIONS
                 max-refinements     1
                 threshold           0.8
@@ -173,6 +174,7 @@
        :debug?                 debug?
        :hooks                  hooks
        :eval-timeout-ms        eval-timeout-ms
+       :reasoning-default      reasoning-default
        :messages               messages})))
 
 ;; -----------------------------------------------------------------------------
@@ -184,7 +186,8 @@
    Returns iteration-result, query-ref, cost atoms, and merge-cost! fn."
   [{:keys [rlm-router rlm-env query-str messages spec max-iterations
            max-context-tokens custom-docs cite-docs system-prompt
-           current-iteration-atom hooks cancel-atom plan? db-info]}]
+           current-iteration-atom hooks cancel-atom plan? db-info
+           reasoning-default]}]
   (let [query-ref        (rlm-db/store-query! db-info
                            {:conversation-ref (:conversation-ref rlm-env)
                             :text             query-str
@@ -204,6 +207,7 @@
                             :max-context-tokens     max-context-tokens
                             :custom-docs            (into (or custom-docs []) cite-docs)
                             :system-prompt          system-prompt
+                            :reasoning-default      reasoning-default
                             :pre-fetched-context    plan-context
                             :user-messages          messages
                             :current-iteration-atom current-iteration-atom
@@ -380,9 +384,9 @@
             (doseq [claim @claims-atom]
               (try
                 (rlm-db/db-store-claim! db-info
-                  (merge claim {:claim/id        (util/uuid)
-                                :claim/query-id  query-id
-                                :claim/verified? (boolean (get claim :claim/verified? true))}))
+                  (merge claim {:id        (util/uuid)
+                                :query-id  query-id
+                                :verified? (boolean (get claim :verified? true))}))
                 (catch Exception e
                   (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Failed to store claim"}))))))
         (rlm-core/rlm-stage! :query-end 0
@@ -446,9 +450,11 @@
      - :max-refinements - Max refine iterations (default: 1).
      - :threshold - Min eval score 0.0-1.0 for refinement early stop (default: 0.8).
      - :verify? - Enable claim verification with citations (default: false).
-     - :max-context-tokens - Token budget for context.
-     - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
-       code execution, LLM responses at :info level with :rlm-phase context.
+      - :max-context-tokens - Token budget for context.
+      - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
+        code execution, LLM responses at :info level with :rlm-phase context.
+      - :reasoning-default - Optional base reasoning effort for reasoning-capable models.
+        Accepts :low/:medium/:high or low/medium/high strings. Adaptive escalation still applies.
 
     Returns:
    Map with:
@@ -469,8 +475,8 @@
      - :confidence - Confidence level (:high/:medium/:low) from final iteration.
      - :sources - Vector of source IDs cited in the answer.
      - :verified-claims - Verified claims (only when :verify? true).
-     - :reasoning - String summary of how the answer was derived (from LLM's FINAL call).
-     - :status - Only present on failure, e.g. :max-iterations."
+      - :reasoning - String summary of how the answer was derived (from LLM's FINAL call).
+      - :status - Only present on failure, e.g. :max-iterations."
   ([env messages]
    (query-env! env messages {}))
   ([env messages opts]

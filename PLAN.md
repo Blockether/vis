@@ -131,3 +131,7 @@ vis has TUI + web + agent + telegram layers that don't yet call RLM:
   closed by vis — caller owns them.
 - No circular dep: vis → svar. svar must never `require`
   `com.blockether.vis.*`.
+
+## Refactor Plans
+
+- [Flatten Namespaced Keywords](plans/flatten-keywords.md) — Remove Datomic-style `:entity/*`, `:document.toc/*`, `:page.node/*` key prefixes across the entire RLM. ~1050 key references across ~25 files, 5 phases.

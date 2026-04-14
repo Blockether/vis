@@ -228,19 +228,95 @@
             (recur (rest remaining) (conj current para)
               (+ current-size para-size) result)))))))
 
+(defn- append-pages-md [^StringBuilder sb pages]
+  (let [by-page (group-by :page-id pages)]
+    (doseq [[pid nodes] (sort-by key by-page)]
+      (.append sb (str "## " (or pid "unknown") "\n"))
+      (doseq [n nodes]
+        (let [t (some-> (:type n) name)
+              zone (some-> (:vitality-zone n) name)
+              preview (or (:preview n) "")]
+          (.append sb (str "- **" t "**" (when zone (str " [" zone "]")) " " preview "\n"))))
+      (.append sb "\n"))))
+
+(defn- append-toc-md [^StringBuilder sb toc]
+  (.append sb "## TOC\n")
+  (doseq [e toc]
+    (.append sb (str "- " (or (:level e) "") " " (or (:title e) "")
+                  (when-let [p (:target-page e)] (str " (p." p ")"))
+                  "\n")))
+  (.append sb "\n"))
+
+(defn- append-entities-md [^StringBuilder sb entities]
+  (.append sb "## Entities\n")
+  (doseq [e entities]
+    (.append sb (str "- **" (or (:name e) "") "** ("
+                  (some-> (:type e) name) ") "
+                  (str-truncate (or (:description e) "") 80) "\n")))
+  (.append sb "\n"))
+
+(defn- append-relationships-md [^StringBuilder sb rels]
+  (.append sb "## Relationships\n")
+  (doseq [r rels]
+    (let [rtype (some-> (:type r) name)
+          src (:source-id r)
+          tgt (:target-id r)]
+      (.append sb (str "- **" rtype "** " src " → " tgt "\n"))))
+  (.append sb "\n"))
+
+(defn- page-node? [x] (and (map? x) (some? (:id x))))
+(defn- toc-entry? [x] (and (map? x) (some? (:id x))))
+(defn- entity? [x] (and (map? x) (some? (:id x))))
+(defn- relationship? [x] (and (map? x) (some? (:type x))))
+
+(defn- format-docs
+  "Format arbitrary document data into compact markdown.
+   Handles: {:pages [...] :toc [...] :entities [...]} maps,
+   vectors of page-nodes / toc-entries / entities / relationships,
+   or a single entity/relationship/page-node map."
+  [data]
+  (cond
+    (string? data) data
+    (nil? data) ""
+    (map? data)
+    (cond
+      (page-node? data) (format-docs [data])
+      (toc-entry? data) (format-docs [data])
+      (entity? data) (format-docs [data])
+      (relationship? data) (format-docs [data])
+      :else
+      (let [sb (StringBuilder.)]
+        (when (seq (:pages data)) (append-pages-md sb (:pages data)))
+        (when (seq (:toc data)) (append-toc-md sb (:toc data)))
+        (when (seq (:entities data)) (append-entities-md sb (:entities data)))
+        (when (seq (:relationships data)) (append-relationships-md sb (:relationships data)))
+        (str sb)))
+    (coll? data)
+    (let [groups (group-by (fn [x]
+                             (cond (page-node? x) :pages
+                               (toc-entry? x) :toc
+                               (entity? x) :entities
+                               (relationship? x) :relationships
+                               :else :unknown))
+                   data)
+          sb (StringBuilder.)]
+      (when (seq (:pages groups)) (append-pages-md sb (:pages groups)))
+      (when (seq (:toc groups)) (append-toc-md sb (:toc groups)))
+      (when (seq (:entities groups)) (append-entities-md sb (:entities groups)))
+      (when (seq (:relationships groups)) (append-relationships-md sb (:relationships groups)))
+      (str sb))
+    :else (str data)))
+
 (defn make-search-documents-fn
   "Creates search-documents — unified search across pages, TOC, and entities.
+   Returns markdown directly.
 
    Usage:
      (search-documents \"query\")                     ;; searches everywhere (default)
      (search-documents \"query\" {:in :pages})        ;; pages only
      (search-documents \"query\" {:in :toc})          ;; TOC only
      (search-documents \"query\" {:in :entities})     ;; entities only
-     (search-documents \"query\" {:top-k 20 :document-id \"doc-1\"})
-
-   Returns:
-     :in omitted → {:pages [...] :toc [...] :entities [...]}
-     :in set     → vector of results for that target"
+     (search-documents \"query\" {:top-k 20 :document-id \"doc-1\"})"
   [db-info]
   (fn search-documents
     ([query] (search-documents query {}))
@@ -251,7 +327,7 @@
                                          document-id (assoc :document-id document-id)
                                          type (assoc :type type)))]
                          ;; Track search hit access (weight 0.2) for returned pages
-                         (let [page-ids (distinct (keep :page.node/page-id results))]
+                         (let [page-ids (distinct (keep :page-id results))]
                            (doseq [page-id page-ids]
                              (record-page-access! db-info page-id 0.2))
                            ;; Record co-occurrence for search result pages
@@ -262,28 +338,29 @@
                         (cond-> {:top-k top-k}
                           document-id (assoc :document-id document-id)
                           type (assoc :type type)))]
-         (case in
-           :pages (do-pages)
-           :toc (do-toc)
-           :entities (do-ents)
-           {:pages (do-pages) :toc (do-toc) :entities (do-ents)}))
-       (if in [] {:pages [] :toc [] :entities []})))))
+         (format-docs
+           (case in
+             :pages {:pages (do-pages)}
+             :toc {:toc (do-toc)}
+             :entities {:entities (do-ents)}
+             {:pages (do-pages) :toc (do-toc) :entities (do-ents)})))
+       ""))))
 
 (defn make-fetch-document-content-fn
-  "Creates fetch-document-content — fetches content using SQLite lookup ref syntax.
+  "Creates fetch-document-content — fetches content using lookup ref syntax.
 
    Returns:
-     [:page.node/id id]    → content string
-     [:document/id id]     → vector of ~4000 char page strings (chunked)
-     [:document.toc/id id] → TOC entry description string
-     [:entity/id id]       → {:entity {...} :relationships [...]}
+     [:node/id id] → content string
+     [:doc/id id]  → vector of ~4000 char page strings (chunked)
+     [:toc/id id]  → TOC entry description string
+     [:id id]      → {:entity {...} :relationships [...]} 
 
    The LLM stores results in variables:
-     (def clause (fetch-document-content [:page.node/id \"abc\"]))
-     (def doc (fetch-document-content [:document/id \"doc-1\"]))
+     (def clause (fetch-document-content [:node/id \"abc\"]))
+     (def doc (fetch-document-content [:doc/id \"doc-1\"]))
      (count doc)      ;; number of pages
      (nth doc 5)      ;; page 5 content
-     (def p (fetch-document-content [:entity/id \"e1\"]))
+     (def p (fetch-document-content [:id \"e1\"]))
      (:entity p)      ;; entity map
      (:relationships p) ;; connected entities"
   [db-info]
@@ -292,38 +369,38 @@
       (when (and (vector? lookup-ref) (= 2 (count lookup-ref)))
         (let [[attr id] lookup-ref]
           (case attr
-            :page.node/id
+            :node/id
             (when-let [node (db-get-page-node db-info id)]
               ;; Track page access (weight 1.0) — resolve node's page-id
-              (when-let [page-id (:page.node/page-id node)]
+              (when-let [page-id (:page-id node)]
                 (record-page-access! db-info page-id 1.0))
-              (or (:page.node/content node) (:page.node/description node) ""))
+              (or (:content node) (:description node) ""))
 
-            :document/id
+            :doc/id
             (let [nodes (db/db-document-page-nodes-full db-info id)
                   ;; Track access for all pages in document (weight 1.0)
-                  page-ids (distinct (keep :page.node/page-id nodes))]
+                  page-ids (distinct (keep :page-id nodes))]
               (doseq [pid page-ids]
                 (record-page-access! db-info pid 1.0))
               ;; Record co-occurrence for all pages in document
               (db/record-cooccurrences! db-info page-ids)
               (when (seq nodes)
                 (let [full-text (->> nodes
-                                  (keep :page.node/content)
+                                  (keep :content)
                                   (str/join "\n"))]
                   (chunk-text full-text))))
 
-            :document.toc/id
+            :toc/id
             (when-let [toc (db-get-toc-entry db-info id)]
-              (or (:document.toc/description toc) (:document.toc/title toc) ""))
+              (or (:description toc) (:title toc) ""))
 
-            :entity/id
+            :id
             (when-let [entity (db-get-entity db-info id)]
               {:entity entity
                :relationships (db-list-relationships db-info id {})})
 
             (throw (ex-info (str "fetch-document-content unknown lookup attribute: " attr
-                              ". Use :page.node/id, :document/id, :document.toc/id, or :entity/id")
+                              ". Use :node/id, :doc/id, :toc/id, or :id")
                      {:type :svar/invalid-lookup-ref :attr attr :id id}))))))))
 
 (defn make-cite-fn
@@ -333,33 +410,33 @@
     ([claim-text document-id page section quote]
      (CITE claim-text document-id page section quote 1.0))
     ([claim-text document-id page section quote confidence]
-     (let [claim {:claim/id (util/uuid)
-                  :claim/text claim-text
-                  :claim/document-id document-id
-                  :claim/page (long (if (string? page) (Long/parseLong page) page))
-                  :claim/section section
-                  :claim/quote quote
-                  :claim/confidence (float (if (string? confidence) (Double/parseDouble confidence) confidence))
-                  :claim/created-at (java.util.Date.)}]
+     (let [claim {:id (util/uuid)
+                  :text claim-text
+                  :document-id document-id
+                  :page (long (if (string? page) (Long/parseLong page) page))
+                  :section section
+                  :quote quote
+                  :confidence (float (if (string? confidence) (Double/parseDouble confidence) confidence))
+                  :created-at (java.util.Date.)}]
        (swap! claims-atom conj claim)
-       {:cited true :claim-id (:claim/id claim) :claim-text claim-text}))))
+       {:cited true :claim-id (:id claim) :claim-text claim-text}))))
 
 (defn make-cite-unverified-fn
   "Creates CITE-UNVERIFIED function for claims without source verification."
   [claims-atom]
   (fn CITE-UNVERIFIED
     [claim-text]
-    (let [claim {:claim/id (util/uuid)
-                 :claim/text claim-text
-                 :claim/document-id nil
-                 :claim/page nil
-                 :claim/section nil
-                 :claim/quote nil
-                 :claim/confidence 0.5
-                 :claim/verified? false
-                 :claim/created-at (java.util.Date.)}]
+    (let [claim {:id (util/uuid)
+                 :text claim-text
+                 :document-id nil
+                 :page nil
+                 :section nil
+                 :quote nil
+                 :confidence 0.5
+                 :verified? false
+                 :created-at (java.util.Date.)}]
       (swap! claims-atom conj claim)
-      {:cited true :verified? false :claim-id (:claim/id claim) :claim-text claim-text})))
+      {:cited true :verified? false :claim-id (:id claim) :claim-text claim-text})))
 
 (defn make-list-claims-fn
   "Creates list-claims function to retrieve accumulated claims."
@@ -388,8 +465,9 @@
     (cond
       (nil? query-selector) (some-> history last :query-ref)
       (integer? query-selector) (some->> history (filter #(= (:query-pos %) query-selector)) first :query-ref)
-      (and (vector? query-selector) (= :entity/id (first query-selector))) query-selector
-      (uuid? query-selector) [:entity/id query-selector]
+      (and (vector? query-selector) (= :id (first query-selector))) [:id (second query-selector)]
+      (and (vector? query-selector) (= :id (first query-selector))) query-selector
+      (uuid? query-selector) [:id query-selector]
       :else nil)))
 
 (defn make-session-code-fn
@@ -497,12 +575,8 @@
                                          ([entity-id] (when db-info (db/find-related db-info entity-id)))
                                          ([entity-id opts] (when db-info (db/find-related db-info entity-id opts))))
                          'search-batch (fn search-batch
-                                         ([queries] (when db-info (db/db-search-batch db-info queries)))
-                                         ([queries opts] (when db-info (db/db-search-batch db-info queries opts))))
-                         'results->md (fn results->md [results] (db/results->markdown results))
-                         'search-entities (fn search-entities
-                                            ([query] (when db-info (db-search-entities db-info query)))
-                                            ([query opts] (when db-info (db-search-entities db-info query opts))))
+                                         ([queries] (when db-info (format-docs (db/db-search-batch db-info queries))))
+                                         ([queries opts] (when db-info (format-docs (db/db-search-batch db-info queries opts)))))
                          'get-entity (fn get-entity
                                        [entity-id] (when db-info (db-get-entity db-info entity-id)))
                          'list-relationships (fn list-relationships
@@ -674,17 +748,15 @@
                             ['context "The data context passed to query-env!." nil]
                             ['parse-date "Parse ISO date string to LocalDate." '([s])]
                             ['today-str "Today as ISO-8601 string." '([])]
-                             ;; Document navigation — 2 unified tools
-                            ['search-documents "Search across documents. No :in = search everywhere (pages+toc+entities).\n  (search-documents \"query\") → {:pages [...] :toc [...] :entities [...]}\n  (search-documents \"query\" {:in :pages})      ;; pages only\n  (search-documents \"query\" {:in :toc})        ;; TOC only\n  (search-documents \"query\" {:in :entities})   ;; entities only\n  Opts: :top-k :document-id :type" '([query] [query opts])]
-                            ['fetch-document-content "Fetch full content by lookup ref.\n  [:page.node/id \"id\"]    → page text\n  [:document/id \"id\"]     → vector of ~4K char pages\n  [:document.toc/id \"id\"] → TOC entry description\n  [:entity/id \"id\"]       → {:entity {...} :relationships [...]}" '([lookup-ref])]
+                              ;; Document navigation — 2 unified tools
+                            ['search-documents "Search across documents. Returns markdown. No :in = search everywhere.\n  (search-documents \"query\")                  ;; pages+toc+entities\n  (search-documents \"query\" {:in :pages})      ;; pages only\n  (search-documents \"query\" {:in :toc})        ;; TOC only\n  (search-documents \"query\" {:in :entities})   ;; entities only\n  Opts: :top-k :document-id :type" '([query] [query opts])]
+                            ['fetch-document-content "Fetch full content by lookup ref.\n  [:node/id \"id\"] → page text\n  [:doc/id \"id\"]  → vector of ~4K char pages\n  [:toc/id \"id\"]  → TOC entry description\n  [:id \"id\"]      → {:entity {...} :relationships [...]}" '([lookup-ref])]
                             ['find-related "BFS graph traversal from an anchor entity.\n  (find-related entity-id)              ;; depth 2\n  (find-related entity-id {:depth 3})   ;; deeper\n  Returns related entities sorted by distance, with cross-document canonical linking." '([entity-id] [entity-id opts])]
-                            ['search-entities "Search entities by name/description text.\n  (search-entities \"schema therapy\")\n  (search-entities \"auth\" {:top-k 20 :type :concept :document-id doc})\n  Returns ranked entity maps." '([query] [query opts])]
                             ['get-entity "Get a single entity by UUID.\n  (get-entity entity-uuid)  → entity map or nil" '([entity-id])]
                             ['list-relationships "List all relationships where entity is source or target.\n  (list-relationships entity-id)\n  (list-relationships entity-id {:type :depends-on})\n  Returns vector of relationship maps." '([entity-id] [entity-id opts])]
-                            ['search-batch "Parallel multi-query search. Deduplicates, ranks by vitality.\n  (search-batch [\"schemas\" \"modes\" \"treatment\"])\n  (search-batch [\"q1\" \"q2\"] {:top-k 5 :limit 20})" '([queries] [queries opts])]
-                            ['results->md "Convert search results to compact markdown for LLM.\n  (results->md (search-batch [...]))\n  (results->md (search-documents \"query\"))" '([results])]
+                            ['search-batch "Parallel multi-query search. Returns markdown. Deduplicates, ranks by vitality.\n  (search-batch [\"schemas\" \"modes\" \"treatment\"])\n  (search-batch [\"q1\" \"q2\"] {:top-k 5 :limit 20})" '([queries] [queries opts])]
                             ['session-history "List prior query summaries in the current conversation.\n  (session-history)\n  (session-history 5) ;; last 5 queries" '([] [n])]
-                            ['session-code "Get prior query code blocks by query position or ref.\n  (session-code 0)\n  (session-code [:entity/id uuid])" '([query-selector])]
+                            ['session-code "Get prior query code blocks by query position or ref.\n  (session-code 0)\n  (session-code [:id uuid])" '([query-selector])]
                             ['session-results "Get prior query execution results and restorable vars.\n  (session-results 0)" '([query-selector])]
                             ['restore-var "Restore a persisted data var from a prior iteration, binding it in the sandbox.\n  (restore-var 'anomalies)  ;; binds anomalies and returns its value\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([sym] [sym opts])]
                             ['restore-vars "Batch restore persisted data vars, binding each success in the sandbox.\n  (restore-vars ['a 'b])  ;; returns {a val-a, b {:error {...}}} on partial failure\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([syms] [syms opts])]
@@ -693,7 +765,7 @@
                             ['git-search-commits "Query ingested git commits. All filters optional, AND semantics. Cross-repo — pass :document-id to scope.\n  (git-search-commits {:category :bug :since \"2025-06-01\" :path \"src/\" :author-email \"a@x\" :ticket \"SVAR-42\" :limit 20})" '([] [opts])]
                             ['git-commit-history "Recent commits across all ingested repos.\n  (git-commit-history {:limit 20})" '([] [opts])]
                             ['git-commits-by-ticket "Commits that reference a ticket.\n  (git-commits-by-ticket \"SVAR-42\")" '([ticket-ref])]
-                            ['git-commit-parents "Parent SHAs of a commit (DB-backed, reads :commit/parents).\n  (git-commit-parents \"abc123\")" '([sha])]
+                            ['git-commit-parents "Parent SHAs of a commit (DB-backed, reads :parents).\n  (git-commit-parents \"abc123\")" '([sha])]
                             ['git-file-history "Commits touching a file, most-recent first. JGit, follows renames.\n  Single repo: (git-file-history \"src/foo.clj\")\n  Multi-repo:  (git-file-history \"/abs/path/svar/src/foo.clj\" {:n 10})" '([path] [path opts])]
                             ['git-blame "Per-line blame attribution, inclusive line range (1-indexed). Follows renames.\n  Single repo: (git-blame \"src/foo.clj\" 42 58)\n  Multi-repo:  (git-blame \"/abs/path/svar/src/foo.clj\" 42 58)\n  Returns vec of {:line :sha :short :author :email :date :content}." '([path from to])]
                             ['git-commit-diff "Unified patch for a commit. SHA auto-dispatches to owning repo. Refs like HEAD are ambiguous multi-repo.\n  (git-commit-diff \"abc123\")" '([sha])]]]
@@ -717,6 +789,14 @@
 (def ^:private ^:const MAX_VAR_INDEX_ROWS 40)
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 (def ^:private ^:const MAX_VAR_INDEX_PREVIEW 150)
+
+(defn- safe-preview-str
+  "Render a bounded printable preview for arbitrary values.
+   Uses print limits so infinite/lazy seqs (e.g. (range)) do not OOM."
+  [val]
+  (binding [*print-length* 20
+            *print-level* 4]
+    (pr-str val)))
 
 (defn build-var-index
   "Builds a formatted var index table from user-def'd vars in the SCI context.
@@ -770,7 +850,7 @@
                                           :else "\u2014")
                                    preview (if (fn? val)
                                              "\u2014"
-                                             (str-truncate (pr-str val) MAX_VAR_INDEX_PREVIEW))]
+                                             (str-truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))]
                                {:name (str sym) :type type-label :size size
                                 :doc (if doc (str-truncate doc 80) "\u2014")
                                 :preview preview}))))]
@@ -819,7 +899,7 @@
    * 0 repos → :rlm/no-git-repos
    * 1 repo  → use it; relative or absolute path both accepted
    * N repos → absolute path required (:rlm/no-repo-for-path :reason
-     :relative-path otherwise); picks the repo whose `:repo/path` prefix
+     :relative-path otherwise); picks the repo whose `:path` prefix
      matches the absolute path."
   [db-info ^String path f]
   (let [repos (when db-info (db/db-list-repos db-info))]
@@ -830,13 +910,13 @@
 
       (= 1 (count repos))
       (let [repo-meta (first repos)
-            ^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:repo/path repo-meta))]
+            ^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:path repo-meta))]
         (when-not repo
-          (throw (ex-info (str "Attached repo " (pr-str (:repo/name repo-meta))
-                            " no longer opens at " (pr-str (:repo/path repo-meta)))
+          (throw (ex-info (str "Attached repo " (pr-str (:name repo-meta))
+                            " no longer opens at " (pr-str (:path repo-meta)))
                    {:type :rlm/repo-open-failed
-                    :repo-name (:repo/name repo-meta)
-                    :repo-path (:repo/path repo-meta)})))
+                    :repo-name (:name repo-meta)
+                    :repo-path (:path repo-meta)})))
         (try
           (let [wt (.getAbsolutePath (.getWorkTree repo))
                 rel (strip-worktree-prefix (str path) wt)]
@@ -848,26 +928,26 @@
         (when-not (.isAbsolute pf)
           (throw (ex-info (str "Multi-repo mode requires an absolute path. Got "
                             (pr-str path) ". Attached repos: "
-                            (pr-str (mapv :repo/name repos)))
+                            (pr-str (mapv :name repos)))
                    {:type :rlm/no-repo-for-path
                     :path path
                     :reason :relative-path
-                    :attached (mapv :repo/name repos)})))
+                    :attached (mapv :name repos)})))
         (let [abs (.getAbsolutePath pf)
               hit (->> repos
                     (filter (fn [rm]
-                              (let [rp (:repo/path rm)]
+                              (let [rp (:path rm)]
                                 (or (= abs rp)
                                   (str/starts-with? abs (str rp java.io.File/separator))))))
                     first)]
           (when-not hit
             (throw (ex-info (str "No attached git repo owns path " (pr-str path)
                               ". Pass an absolute path inside one of: "
-                              (pr-str (mapv :repo/name repos)))
+                              (pr-str (mapv :name repos)))
                      {:type :rlm/no-repo-for-path
                       :path path
-                      :attached (mapv :repo/name repos)})))
-          (let [^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:repo/path hit))]
+                      :attached (mapv :name repos)})))
+          (let [^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:path hit))]
             (try
               (let [wt (.getAbsolutePath (.getWorkTree repo))
                     rel (strip-worktree-prefix abs wt)]
@@ -905,10 +985,10 @@
 
       (= 1 (count repos))
       (let [repo-meta (first repos)
-            ^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:repo/path repo-meta))]
+            ^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:path repo-meta))]
         (when-not repo
-          (throw (ex-info (str "Attached repo " (pr-str (:repo/name repo-meta))
-                            " no longer opens at " (pr-str (:repo/path repo-meta)))
+          (throw (ex-info (str "Attached repo " (pr-str (:name repo-meta))
+                            " no longer opens at " (pr-str (:path repo-meta)))
                    {:type :rlm/repo-open-failed})))
         (try (f repo) (finally (.close repo))))
 
@@ -917,23 +997,23 @@
         (when ref-like?
           (throw (ex-info (str "Ref " (pr-str sha)
                             " is ambiguous across multiple attached repos "
-                            (pr-str (mapv :repo/name repos))
+                            (pr-str (mapv :name repos))
                             ". Pass an actual SHA instead.")
                    {:type :rlm/ambiguous-ref
                     :ref sha
-                    :attached (mapv :repo/name repos)})))
+                    :attached (mapv :name repos)})))
         (loop [remaining repos]
           (if-let [rm (first remaining)]
-            (let [^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:repo/path rm))]
+            (let [^org.eclipse.jgit.lib.Repository repo (rlm-git/open-repo (:path rm))]
               (if (and repo (repo-has-object? repo sha))
                 (try (f repo) (finally (.close repo)))
                 (do (when repo (try (.close repo) (catch Exception _ nil)))
                   (recur (rest remaining)))))
             (throw (ex-info (str "SHA " (pr-str sha) " not found in any attached repo. Attached: "
-                              (pr-str (mapv :repo/name repos)))
+                              (pr-str (mapv :name repos)))
                      {:type :rlm/no-repo-for-sha
                       :sha sha
-                      :attached (mapv :repo/name repos)}))))))))
+                      :attached (mapv :name repos)}))))))))
 
 (defn make-git-sci-bindings
   "Return the map of git-* SCI symbol → fn for a given `db-info`.
@@ -967,7 +1047,7 @@
      [sha]
      (when db-info
        (let [commit (db/db-commit-by-sha db-info sha)]
-         (vec (:commit/parents commit)))))
+         (vec (:parents commit)))))
 
    'git-file-history
    (fn git-file-history

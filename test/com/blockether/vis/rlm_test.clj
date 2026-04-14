@@ -198,9 +198,9 @@
                 b-only (rlm-db/db-list-final-results db-info {:conversation-ref conv-b})
                 all-finals (rlm-db/db-list-final-results db-info)]
             (expect (= 1 (count a-only)))
-            (expect (= "answer-a" (:iteration/answer (first a-only))))
+            (expect (= "answer-a" (:answer (first a-only))))
             (expect (= 1 (count b-only)))
-            (expect (= "answer-b" (:iteration/answer (first b-only))))
+            (expect (= "answer-b" (:answer (first b-only))))
             (expect (= 2 (count all-finals)))))
         (finally
           (#'rlm-db/dispose-rlm-conn! db-info))))))
@@ -233,7 +233,7 @@
               conv (rlm-db/db-get-conversation db-info conv-ref)]
           (try
             (expect (vector? conv-ref))
-            (expect (= "telegram:12345" (:conversation/name conv)))
+            (expect (= "telegram:12345" (:name conv)))
             (finally
               (sut/dispose-env! env))))
         (finally
@@ -292,7 +292,7 @@
                             (:conversation-ref env-b))]
               (expect (vector? q-ref))
               (expect (= 1 (count queries)))
-              (expect (= "sibling-survives?" (:query/text (first queries)))))
+              (expect (= "sibling-survives?" (:text (first queries)))))
             (finally
               (sut/dispose-env! env-b))))
         (finally
@@ -417,10 +417,10 @@
                                                 :api-usage nil
                                                 :duration-ms 321})]
           (sut/query-env! env [(llm/user "What next?")] {:max-iterations 1 :refine? false})
-          (let [query-ref [:entity/id (-> (rlm-db/db-list-conversation-queries (:db-info env) (:conversation-ref env))
-                                        last :entity/id)]
+          (let [query-ref [:id (-> (rlm-db/db-list-conversation-queries (:db-info env) (:conversation-ref env))
+                                 last :id)]
                 iteration (last (rlm-db/db-list-query-iterations (:db-info env) query-ref))]
-            (expect (= 321 (:iteration/duration-ms iteration)))))
+            (expect (= 321 (:duration-ms iteration)))))
         (finally
           (sut/dispose-env! env)))))
 
@@ -564,7 +564,7 @@
       (expect (str/includes? prompt "DOCUMENTS"))
       (expect (str/includes? prompt "search-documents"))
       (expect (str/includes? prompt "fetch-document-content"))
-      (expect (str/includes? prompt ":entity/id"))))
+      (expect (str/includes? prompt ":id"))))
 
   (it "includes spec schema when provided"
     (let [test-spec (svar/spec
@@ -873,6 +873,112 @@
                  llm/eval!* (fn [_router# opts#] (~eval-fn _router# opts#))]
      ~@body))
 
+(defdescribe adaptive-reasoning-effort-test
+  (describe "normalize-reasoning-effort"
+    (it "accepts low/medium/high as keyword or string"
+      (expect (= "low" (#'rlm-core/normalize-reasoning-effort :low)))
+      (expect (= "medium" (#'rlm-core/normalize-reasoning-effort " medium ")))
+      (expect (= "high" (#'rlm-core/normalize-reasoning-effort "HIGH"))))
+
+    (it "returns nil for invalid values"
+      (expect (nil? (#'rlm-core/normalize-reasoning-effort nil)))
+      (expect (nil? (#'rlm-core/normalize-reasoning-effort :turbo)))
+      (expect (nil? (#'rlm-core/normalize-reasoning-effort "")))))
+
+  (describe "reasoning-effort-for-errors"
+    (it "maps errors with low base"
+      (expect (= "low" (#'rlm-core/reasoning-effort-for-errors "low" -1)))
+      (expect (= "low" (#'rlm-core/reasoning-effort-for-errors "low" 0)))
+      (expect (= "medium" (#'rlm-core/reasoning-effort-for-errors "low" 1)))
+      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "low" 2))))
+
+    (it "respects higher base effort"
+      (expect (= "medium" (#'rlm-core/reasoning-effort-for-errors "medium" 0)))
+      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "medium" 1)))
+      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "high" 0)))
+      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "high" 5)))))
+
+  (describe "iteration-loop wiring"
+    (it "passes configured base reasoning on first iteration"
+      (let [captured (atom [])]
+        (with-test-env* {} (fn [env]
+                             (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
+                                           rlm-core/run-iteration (fn [_ _ opts]
+                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    {:thinking nil
+                                                                     :executions []
+                                                                     :final-result {:answer {:result "done" :type String}
+                                                                                    :confidence :high}
+                                                                     :api-usage nil
+                                                                     :duration-ms 0})]
+                               (sut/query-env! env [(llm/user "ping")]
+                                 {:max-iterations 3
+                                  :refine? false
+                                  :reasoning-default "medium"}))))
+        (expect (= ["medium"] @captured))))
+
+    (it "escalates after one all-error iteration"
+      (let [captured (atom [])
+            call-count (atom 0)]
+        (with-test-env* {} (fn [env]
+                             (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
+                                           rlm-core/run-iteration (fn [_ _ opts]
+                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    (if (= 1 (swap! call-count inc))
+                                                                      {:thinking nil
+                                                                       :executions [{:id 0 :code "(bad)" :result nil :stdout "" :stderr ""
+                                                                                     :error "boom" :execution-time-ms 1}]
+                                                                       :final-result nil
+                                                                       :api-usage nil
+                                                                       :duration-ms 0}
+                                                                      {:thinking nil
+                                                                       :executions []
+                                                                       :final-result {:answer {:result "done" :type String}
+                                                                                      :confidence :high}
+                                                                       :api-usage nil
+                                                                       :duration-ms 0}))]
+                               (sut/query-env! env [(llm/user "ping")]
+                                 {:max-iterations 3
+                                  :refine? false
+                                  :reasoning-default "low"}))))
+        (expect (= ["low" "medium"] @captured))))
+
+    (it "does not set reasoning effort when provider has no reasoning"
+      (let [captured (atom [])]
+        (with-test-env* {} (fn [env]
+                             (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] false)
+                                           rlm-core/run-iteration (fn [_ _ opts]
+                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    {:thinking nil
+                                                                     :executions []
+                                                                     :final-result {:answer {:result "done" :type String}
+                                                                                    :confidence :high}
+                                                                     :api-usage nil
+                                                                     :duration-ms 0})]
+                               (sut/query-env! env [(llm/user "ping")]
+                                 {:max-iterations 2
+                                  :refine? false
+                                  :reasoning-default "high"}))))
+        (expect (= [nil] @captured))))
+
+    (it "falls back to low when config value invalid"
+      (let [captured (atom [])]
+        (with-test-env* {} (fn [env]
+                             (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
+                                           rlm-core/run-iteration (fn [_ _ opts]
+                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    {:thinking nil
+                                                                     :executions []
+                                                                     :final-result {:answer {:result "done" :type String}
+                                                                                    :confidence :high}
+                                                                     :api-usage nil
+                                                                     :duration-ms 0})]
+                               (sut/query-env! env [(llm/user "ping")]
+                                 {:max-iterations 2
+                                  :refine? false
+                                  :reasoning-default "turbo"}))))
+        (expect (= ["low"] @captured))))))
+
 ;; =============================================================================
 ;; Mock Response Factories (Domain-Specific)
 ;; =============================================================================
@@ -884,22 +990,22 @@
    Mock ask! response with entities, relationships, and metadata."
   []
   (make-mock-ask-response
-    {:entities [{:entity/id (str (UUID/randomUUID))
-                 :entity/type "party"
-                 :entity/name "Acme Corp"
-                 :entity/description "Contracting party, seller"}
-                {:entity/id (str (UUID/randomUUID))
-                 :entity/type "party"
-                 :entity/name "Widget Inc"
-                 :entity/description "Contracting party, buyer"}
-                {:entity/id (str (UUID/randomUUID))
-                 :entity/type "obligation"
-                 :entity/name "Payment Terms"
-                 :entity/description "Net 30 payment on delivery"}
-                {:entity/id (str (UUID/randomUUID))
-                 :entity/type "clause"
-                 :entity/name "Limitation of Liability"
-                 :entity/description "Cap at contract value"}]
+    {:entities [{:id (str (UUID/randomUUID))
+                 :type "party"
+                 :name "Acme Corp"
+                 :description "Contracting party, seller"}
+                {:id (str (UUID/randomUUID))
+                 :type "party"
+                 :name "Widget Inc"
+                 :description "Contracting party, buyer"}
+                {:id (str (UUID/randomUUID))
+                 :type "obligation"
+                 :name "Payment Terms"
+                 :description "Net 30 payment on delivery"}
+                {:id (str (UUID/randomUUID))
+                 :type "clause"
+                 :name "Limitation of Liability"
+                 :description "Cap at contract value"}]
      :relationships [{:from "Acme Corp" :to "Widget Inc" :type "contracts-with"}
                      {:from "Widget Inc" :to "Payment Terms" :type "obligated-to"}]
      :confidence 0.92}))
@@ -952,76 +1058,76 @@
    Returns:
    Map conforming to PageIndex document structure."
   []
-  {:document/name "test-contract"
-   :document/extension "pdf"
-   :document/title "Master Services Agreement"
-   :document/abstract "Agreement between Acme Corp and Widget Inc for software services."
-   :document/author "Legal Dept"
-   :document/pages [{:page/index 0
-                     :page/nodes [{:page.node/type :section
-                                   :page.node/id "s1"
-                                   :page.node/description "Definitions and Parties"}
-                                  {:page.node/type :heading
-                                   :page.node/id "h1"
-                                   :page.node/parent-id "s1"
-                                   :page.node/level "h1"
-                                   :page.node/content "1. DEFINITIONS AND PARTIES"}
-                                  {:page.node/type :paragraph
-                                   :page.node/id "p1"
-                                   :page.node/parent-id "s1"
-                                   :page.node/content "This Master Services Agreement (\"Agreement\") is entered into between Acme Corp (\"Provider\") and Widget Inc (\"Client\"). \"Services\" shall mean the software development services described in Exhibit A. \"Confidential Information\" shall mean any non-public information disclosed by either party."}]}
-                    {:page/index 1
-                     :page/nodes [{:page.node/type :section
-                                   :page.node/id "s2"
-                                   :page.node/description "Obligations and Payment Terms"}
-                                  {:page.node/type :heading
-                                   :page.node/id "h2"
-                                   :page.node/parent-id "s2"
-                                   :page.node/level "h1"
-                                   :page.node/content "2. OBLIGATIONS AND PAYMENT"}
-                                  {:page.node/type :paragraph
-                                   :page.node/id "p2"
-                                   :page.node/parent-id "s2"
-                                   :page.node/content "Provider shall deliver Services as defined in Section 1. Client shall pay Provider within Net 30 days of invoice. Late payments accrue interest at 1.5% per month. See Section 3 for limitation of liability."}
-                                  {:page.node/type :paragraph
-                                   :page.node/id "p3"
-                                   :page.node/parent-id "s2"
-                                   :page.node/content "Provider warrants that Services shall conform to the specifications in Exhibit A. Client's sole remedy for breach of this warranty is re-performance of the non-conforming Services."}]}
-                    {:page/index 2
-                     :page/nodes [{:page.node/type :section
-                                   :page.node/id "s3"
-                                   :page.node/description "Liability and Indemnification"}
-                                  {:page.node/type :heading
-                                   :page.node/id "h3"
-                                   :page.node/parent-id "s3"
-                                   :page.node/level "h1"
-                                   :page.node/content "3. LIMITATION OF LIABILITY AND INDEMNIFICATION"}
-                                  {:page.node/type :paragraph
-                                   :page.node/id "p4"
-                                   :page.node/parent-id "s3"
-                                   :page.node/content "Neither party's aggregate liability under this Agreement shall exceed the total fees paid during the 12 months preceding the claim. As defined in Section 1, Confidential Information remains protected for 5 years after termination."}
-                                  {:page.node/type :paragraph
-                                   :page.node/id "p5"
-                                   :page.node/parent-id "s3"
-                                   :page.node/content "Each party shall indemnify the other against third-party claims arising from breach of this Agreement, subject to the limitations in this Section 3."}]}]
-   :document/toc [{:document.toc/type :toc-entry
-                   :document.toc/id "toc-1"
-                   :document.toc/title "Definitions and Parties"
-                   :document.toc/target-page 0
-                   :document.toc/target-section-id "s1"
-                   :document.toc/level "l1"}
-                  {:document.toc/type :toc-entry
-                   :document.toc/id "toc-2"
-                   :document.toc/title "Obligations and Payment"
-                   :document.toc/target-page 1
-                   :document.toc/target-section-id "s2"
-                   :document.toc/level "l1"}
-                  {:document.toc/type :toc-entry
-                   :document.toc/id "toc-3"
-                   :document.toc/title "Limitation of Liability and Indemnification"
-                   :document.toc/target-page 2
-                   :document.toc/target-section-id "s3"
-                   :document.toc/level "l1"}]})
+  {:name "test-contract"
+   :extension "pdf"
+   :title "Master Services Agreement"
+   :abstract "Agreement between Acme Corp and Widget Inc for software services."
+   :author "Legal Dept"
+   :pages [{:index 0
+            :nodes [{:type :section
+                     :id "s1"
+                     :description "Definitions and Parties"}
+                    {:type :heading
+                     :id "h1"
+                     :parent-id "s1"
+                     :level "h1"
+                     :content "1. DEFINITIONS AND PARTIES"}
+                    {:type :paragraph
+                     :id "p1"
+                     :parent-id "s1"
+                     :content "This Master Services Agreement (\"Agreement\") is entered into between Acme Corp (\"Provider\") and Widget Inc (\"Client\"). \"Services\" shall mean the software development services described in Exhibit A. \"Confidential Information\" shall mean any non-public information disclosed by either party."}]}
+           {:index 1
+            :nodes [{:type :section
+                     :id "s2"
+                     :description "Obligations and Payment Terms"}
+                    {:type :heading
+                     :id "h2"
+                     :parent-id "s2"
+                     :level "h1"
+                     :content "2. OBLIGATIONS AND PAYMENT"}
+                    {:type :paragraph
+                     :id "p2"
+                     :parent-id "s2"
+                     :content "Provider shall deliver Services as defined in Section 1. Client shall pay Provider within Net 30 days of invoice. Late payments accrue interest at 1.5% per month. See Section 3 for limitation of liability."}
+                    {:type :paragraph
+                     :id "p3"
+                     :parent-id "s2"
+                     :content "Provider warrants that Services shall conform to the specifications in Exhibit A. Client's sole remedy for breach of this warranty is re-performance of the non-conforming Services."}]}
+           {:index 2
+            :nodes [{:type :section
+                     :id "s3"
+                     :description "Liability and Indemnification"}
+                    {:type :heading
+                     :id "h3"
+                     :parent-id "s3"
+                     :level "h1"
+                     :content "3. LIMITATION OF LIABILITY AND INDEMNIFICATION"}
+                    {:type :paragraph
+                     :id "p4"
+                     :parent-id "s3"
+                     :content "Neither party's aggregate liability under this Agreement shall exceed the total fees paid during the 12 months preceding the claim. As defined in Section 1, Confidential Information remains protected for 5 years after termination."}
+                    {:type :paragraph
+                     :id "p5"
+                     :parent-id "s3"
+                     :content "Each party shall indemnify the other against third-party claims arising from breach of this Agreement, subject to the limitations in this Section 3."}]}]
+   :toc [{:type :toc-entry
+          :id "toc-1"
+          :title "Definitions and Parties"
+          :target-page 0
+          :target-section-id "s1"
+          :level "l1"}
+         {:type :toc-entry
+          :id "toc-2"
+          :title "Obligations and Payment"
+          :target-page 1
+          :target-section-id "s2"
+          :level "l1"}
+         {:type :toc-entry
+          :id "toc-3"
+          :title "Limitation of Liability and Indemnification"
+          :target-page 2
+          :target-section-id "s3"
+          :level "l1"}]})
 
 (defn make-test-entity
   "Creates a test entity map.
@@ -1032,12 +1138,12 @@
    `description` - String, entity description.
    
    Returns:
-   Entity map with :entity/id, :entity/type, :entity/name, :entity/description."
+   Entity map with :id, :type, :name, :description."
   [type name description]
-  {:entity/id (str (UUID/randomUUID))
-   :entity/type type
-   :entity/name name
-   :entity/description description})
+  {:id (str (UUID/randomUUID))
+   :type type
+   :name name
+   :description description})
 
 (defn make-test-relationship
   "Creates a test relationship map.
@@ -1119,30 +1225,30 @@
    Returns:
    Minimal document map with empty pages vector."
   []
-  {:document/name "empty-doc"
-   :document/extension "pdf"
-   :document/pages []
-   :document/toc []})
+  {:name "empty-doc"
+   :extension "pdf"
+   :pages []
+   :toc []})
 
 (defn make-test-image-only-document
   "Creates a PageIndex document with only image nodes.
-   Uses :page.node/image-data for binary image bytes (not :page.node/content base64).
+   Uses :image-data for binary image bytes (not :content base64).
    
    Returns:
    Document map with 1 page containing only image nodes."
   []
-  {:document/name "image-only"
-   :document/extension "pdf"
-   :document/pages [{:page/index 0
-                     :page/nodes [{:page.node/type :image
-                                   :page.node/id "img1"
-                                   :page.node/image-data (byte-array [1 2 3 4])
-                                   :page.node/description "A scanned page image"}
-                                  {:page.node/type :image
-                                   :page.node/id "img2"
-                                   :page.node/image-data (byte-array [5 6 7 8])
-                                   :page.node/description "Another scanned page image"}]}]
-   :document/toc []})
+  {:name "image-only"
+   :extension "pdf"
+   :pages [{:index 0
+            :nodes [{:type :image
+                     :id "img1"
+                     :image-data (byte-array [1 2 3 4])
+                     :description "A scanned page image"}
+                    {:type :image
+                     :id "img2"
+                     :image-data (byte-array [5 6 7 8])
+                     :description "Another scanned page image"}]}]
+   :toc []})
 
 (defn make-test-single-page-document
   "Creates a minimal PageIndex document with 1 page.
@@ -1150,18 +1256,18 @@
    Returns:
    Document map with a single page containing basic content."
   []
-  {:document/name "single-page"
-   :document/extension "pdf"
-   :document/title "Single Page Document"
-   :document/pages [{:page/index 0
-                     :page/nodes [{:page.node/type :heading
-                                   :page.node/id "h1"
-                                   :page.node/level "h1"
-                                   :page.node/content "Title"}
-                                  {:page.node/type :paragraph
-                                   :page.node/id "p1"
-                                   :page.node/content "This is the only paragraph in the document."}]}]
-   :document/toc []})
+  {:name "single-page"
+   :extension "pdf"
+   :title "Single Page Document"
+   :pages [{:index 0
+            :nodes [{:type :heading
+                     :id "h1"
+                     :level "h1"
+                     :content "Title"}
+                    {:type :paragraph
+                     :id "p1"
+                     :content "This is the only paragraph in the document."}]}]
+   :toc []})
 
 ;; =============================================================================
 ;; Mock Infrastructure Tests
@@ -1229,17 +1335,17 @@
   (describe "make-test-legal-document"
     (it "has 3 pages"
       (let [doc (make-test-legal-document)]
-        (expect (= 3 (count (:document/pages doc))))))
+        (expect (= 3 (count (:pages doc))))))
 
     (it "has TOC entries"
       (let [doc (make-test-legal-document)]
-        (expect (= 3 (count (:document/toc doc))))))
+        (expect (= 3 (count (:toc doc))))))
 
     (it "contains legal content"
       (let [doc (make-test-legal-document)
-            all-content (->> (:document/pages doc)
-                          (mapcat :page/nodes)
-                          (keep :page.node/content)
+            all-content (->> (:pages doc)
+                          (mapcat :nodes)
+                          (keep :content)
                           (str/join " "))]
         (expect (str/includes? all-content "Acme Corp"))
         (expect (str/includes? all-content "Widget Inc"))
@@ -1250,10 +1356,10 @@
   (describe "make-test-entity"
     (it "creates entity with all required fields"
       (let [e (make-test-entity "party" "Acme" "The seller")]
-        (expect (string? (:entity/id e)))
-        (expect (= "party" (:entity/type e)))
-        (expect (= "Acme" (:entity/name e)))
-        (expect (= "The seller" (:entity/description e))))))
+        (expect (string? (:id e)))
+        (expect (= "party" (:type e)))
+        (expect (= "Acme" (:name e)))
+        (expect (= "The seller" (:description e))))))
 
   (describe "make-test-relationship"
     (it "creates relationship map"
@@ -1295,27 +1401,27 @@
 (defdescribe edge-case-documents-test
   (describe "make-test-empty-document"
     (it "has 0 pages"
-      (expect (= 0 (count (:document/pages (make-test-empty-document)))))))
+      (expect (= 0 (count (:pages (make-test-empty-document)))))))
 
   (describe "make-test-image-only-document"
     (it "has only image nodes"
       (let [doc (make-test-image-only-document)
-            nodes (get-in doc [:document/pages 0 :page/nodes])]
+            nodes (get-in doc [:pages 0 :nodes])]
         (expect (= 2 (count nodes)))
-        (expect (every? #(= :image (:page.node/type %)) nodes))))
+        (expect (every? #(= :image (:type %)) nodes))))
 
-    (it "uses :page.node/image-data not :page.node/content"
+    (it "uses :image-data not :content"
       (let [doc (make-test-image-only-document)
-            nodes (get-in doc [:document/pages 0 :page/nodes])]
-        (expect (every? #(some? (:page.node/image-data %)) nodes))
-        (expect (every? #(nil? (:page.node/content %)) nodes)))))
+            nodes (get-in doc [:pages 0 :nodes])]
+        (expect (every? #(some? (:image-data %)) nodes))
+        (expect (every? #(nil? (:content %)) nodes)))))
 
   (describe "make-test-single-page-document"
     (it "has exactly 1 page"
-      (expect (= 1 (count (:document/pages (make-test-single-page-document))))))
+      (expect (= 1 (count (:pages (make-test-single-page-document))))))
 
     (it "has content nodes"
-      (let [nodes (get-in (make-test-single-page-document) [:document/pages 0 :page/nodes])]
+      (let [nodes (get-in (make-test-single-page-document) [:pages 0 :nodes])]
         (expect (= 2 (count nodes)))))))
 
 ;; =============================================================================
@@ -1332,13 +1438,13 @@
 (defn- make-test-image-with-description-document
   "Creates a doc with an image node that has description but no image-data."
   []
-  {:document/name "image-desc-only"
-   :document/extension "pdf"
-   :document/pages [{:page/index 0
-                     :page/nodes [{:page.node/type :image
-                                   :page.node/id "img-desc"
-                                   :page.node/description "Scanned table of payments"}]}]
-   :document/toc []})
+  {:name "image-desc-only"
+   :extension "pdf"
+   :pages [{:index 0
+            :nodes [{:type :image
+                     :id "img-desc"
+                     :description "Scanned table of payments"}]}]
+   :toc []})
 
 (defdescribe entity-extraction-ingest-test
   (it "extracts entities from text nodes when enabled"
@@ -1346,11 +1452,11 @@
       (with-mock-ask! (fn [_router opts]
                         (swap! calls conj opts)
                         (make-mock-ask-response
-                          {:entities [{:entity/name "Acme Corp"
-                                       :entity/type "organization"
-                                       :entity/description "Provider"
-                                       :entity/section "s1"
-                                       :entity/page 0}]
+                          {:entities [{:name "Acme Corp"
+                                       :type "organization"
+                                       :description "Provider"
+                                       :section "s1"
+                                       :page 0}]
                            :relationships []}))
         (let [env (sut/create-env test-ingest-router {:db :temp})
               result (sut/ingest-to-env! env [(make-test-single-page-document)] {:extract-entities? true})]
@@ -1454,31 +1560,28 @@
 ;; =============================================================================
 
 (defdescribe entity-bindings-test
-  (it "search-documents with :in :entities returns empty vector when no entities exist"
+  (it "search-documents with :in :entities returns empty markdown string when no entities exist"
     (with-test-env* {} (fn [env]
                          (let [result (#'rlm-core/execute-code env "(search-documents \"party\" {:in :entities})")]
                            (expect (nil? (:error result)))
-                           (expect (= [] (:result result)))))))
+                           (expect (= "" (:result result)))))))
 
-  (it "search-documents without :in returns map with empty collections"
+  (it "search-documents without :in returns empty markdown string on empty DB"
     (with-test-env* {} (fn [env]
                          (let [result (#'rlm-core/execute-code env "(search-documents \"party\")")]
                            (expect (nil? (:error result)))
-                           (expect (map? (:result result)))
-                           (expect (contains? (:result result) :pages))
-                           (expect (contains? (:result result) :toc))
-                           (expect (contains? (:result result) :entities))))))
+                           (expect (string? (:result result))))))
 
-  (it "fetch-document-content returns nil for non-existent entity lookup"
-    (with-test-env* {} (fn [env]
-                         (let [result (#'rlm-core/execute-code env "(fetch-document-content [:entity/id (java.util.UUID/randomUUID)])")]
-                           (expect (nil? (:error result)))
-                           (expect (nil? (:result result)))))))
+    (it "fetch-document-content returns nil for non-existent entity lookup"
+      (with-test-env* {} (fn [env]
+                           (let [result (#'rlm-core/execute-code env "(fetch-document-content [:id (java.util.UUID/randomUUID)])")]
+                             (expect (nil? (:error result)))
+                             (expect (nil? (:result result)))))))
 
-  (it "document tools not available when db is disabled"
-    (with-test-env* {} {:db nil} (fn [env]
-                                   (let [result (#'rlm-core/execute-code env "(search-documents \"x\")")]
-                                     (expect (some? (:error result))))))))
+    (it "document tools not available when db is disabled"
+      (with-test-env* {} {:db nil} (fn [env]
+                                     (let [result (#'rlm-core/execute-code env "(search-documents \"x\")")]
+                                       (expect (some? (:error result)))))))))
 
 (defdescribe inline-cite-test
   (it "CITE accumulates claims in claims-atom"
@@ -1486,8 +1589,8 @@
           cite-fn (#'rlm-tools/make-cite-fn claims-atom)]
       (cite-fn "Test claim" "doc-1" 0 "section-1" "exact quote")
       (expect (= 1 (count @claims-atom)))
-      (expect (= "Test claim" (:claim/text (first @claims-atom))))
-      (expect (= "doc-1" (:claim/document-id (first @claims-atom))))))
+      (expect (= "Test claim" (:text (first @claims-atom))))
+      (expect (= "doc-1" (:document-id (first @claims-atom))))))
 
   (it "CITE return does NOT trigger check-result-for-final"
     (let [claims-atom (atom [])
@@ -1501,16 +1604,16 @@
           cite-fn (#'rlm-tools/make-cite-fn claims-atom)]
       (cite-fn "claim" "doc" "0" "s" "q" "0.9")
       (let [claim (first @claims-atom)]
-        (expect (= 0 (:claim/page claim)))
-        (expect (float? (:claim/confidence claim))))))
+        (expect (= 0 (:page claim)))
+        (expect (float? (:confidence claim))))))
 
   (it "CITE-UNVERIFIED sets low confidence"
     (let [claims-atom (atom [])
           cite-fn (#'rlm-tools/make-cite-unverified-fn claims-atom)]
       (cite-fn "unverified claim")
       (let [claim (first @claims-atom)]
-        (expect (= 0.5 (:claim/confidence claim)))
-        (expect (false? (:claim/verified? claim))))))
+        (expect (= 0.5 (:confidence claim)))
+        (expect (false? (:verified? claim))))))
 
   (it "list-claims returns accumulated claims"
     (let [claims-atom (atom [])
@@ -1564,11 +1667,11 @@
   (it "ingest with extract-entities? returns extraction stats"
     (with-mock-ask! (fn [_router _opts]
                       (make-mock-ask-response
-                        {:entities [{:entity/name "Test Entity"
-                                     :entity/type "party"
-                                     :entity/description "A party"
-                                     :entity/section "s1"
-                                     :entity/page 0}]
+                        {:entities [{:name "Test Entity"
+                                     :type "party"
+                                     :description "A party"
+                                     :section "s1"
+                                     :page 0}]
                          :relationships []}))
       (let [env (sut/create-env test-ingest-router {:db :temp})
             result (sut/ingest-to-env! env [(make-test-single-page-document)] {:extract-entities? true})]
@@ -1586,16 +1689,16 @@
       (cite-unverified-fn "Unverified claim")
       (expect (= 2 (count (list-fn))))
       ;; Verified: high confidence
-      (expect (> (:claim/confidence (first @claims-atom)) 0.9))
+      (expect (> (:confidence (first @claims-atom)) 0.9))
       ;; Unverified: low confidence + verified? false
-      (expect (= 0.5 (:claim/confidence (second @claims-atom))))
-      (expect (false? (:claim/verified? (second @claims-atom))))))
+      (expect (= 0.5 (:confidence (second @claims-atom))))
+      (expect (false? (:verified? (second @claims-atom))))))
 
-  (it "search-documents returns empty results on empty DB via full env"
+  (it "search-documents returns empty markdown on empty DB via full env"
     (with-test-env* {} (fn [env]
                          (let [result (#'rlm-core/execute-code env "(search-documents \"x\" {:in :entities})")]
                            (expect (nil? (:error result)))
-                           (expect (= [] (:result result))))))))
+                           (expect (= "" (:result result))))))))
 
 ;; =============================================================================
 ;; Real LLM Integration Tests for Knowledge Engine Features
@@ -1605,70 +1708,70 @@
   "Creates a 4-page document about TechCorp for testing query planning.
    Contains extractable entities and financial data."
   []
-  {:document/name "techcorp-report"
-   :document/extension "pdf"
-   :document/title "TechCorp Annual Report 2024"
-   :document/pages
-   [{:page/index 0
-     :page/nodes [{:page.node/type :section
-                   :page.node/id "s1"
-                   :page.node/content "Executive Summary"
-                   :page.node/description "Overview of TechCorp's 2024 performance"}
-                  {:page.node/type :paragraph
-                   :page.node/id "p1"
-                   :page.node/parent-id "s1"
-                   :page.node/content "TechCorp achieved record revenue of $500 million in 2024, a 25% increase from the previous year. CEO Jane Smith led the company through significant market expansion."}]}
-    {:page/index 1
-     :page/nodes [{:page.node/type :section
-                   :page.node/id "s2"
-                   :page.node/content "Financial Performance"
-                   :page.node/description "Detailed financial metrics"}
-                  {:page.node/type :paragraph
-                   :page.node/id "p2"
-                   :page.node/parent-id "s2"
-                   :page.node/content "Q1 revenue: $120M. Q2 revenue: $125M. Q3 revenue: $130M. Q4 revenue: $125M. Operating margin improved to 18%."}]}
-    {:page/index 2
-     :page/nodes [{:page.node/type :section
-                   :page.node/id "s3"
-                   :page.node/content "Market Expansion"
-                   :page.node/description "Geographic and product expansion"}
-                  {:page.node/type :paragraph
-                   :page.node/id "p3"
-                   :page.node/parent-id "s3"
-                   :page.node/content "TechCorp expanded into Asian markets in 2024, opening offices in Tokyo, Singapore, and Seoul. Partnership with Samsung announced in Q3."}]}
-    {:page/index 3
-     :page/nodes [{:page.node/type :section
-                   :page.node/id "s4"
-                   :page.node/content "Leadership Team"
-                   :page.node/description "Key executives"}
-                  {:page.node/type :paragraph
-                   :page.node/id "p4"
-                   :page.node/parent-id "s4"
-                   :page.node/content "Jane Smith (CEO), John Doe (CFO), Alice Johnson (CTO). The leadership team has over 50 years of combined industry experience."}]}]
-   :document/toc [{:document.toc/type :toc-entry
-                   :document.toc/id "toc-1"
-                   :document.toc/title "Executive Summary"
-                   :document.toc/target-page 0
-                   :document.toc/target-section-id "s1"
-                   :document.toc/level "l1"}
-                  {:document.toc/type :toc-entry
-                   :document.toc/id "toc-2"
-                   :document.toc/title "Financial Performance"
-                   :document.toc/target-page 1
-                   :document.toc/target-section-id "s2"
-                   :document.toc/level "l1"}
-                  {:document.toc/type :toc-entry
-                   :document.toc/id "toc-3"
-                   :document.toc/title "Market Expansion"
-                   :document.toc/target-page 2
-                   :document.toc/target-section-id "s3"
-                   :document.toc/level "l1"}
-                  {:document.toc/type :toc-entry
-                   :document.toc/id "toc-4"
-                   :document.toc/title "Leadership Team"
-                   :document.toc/target-page 3
-                   :document.toc/target-section-id "s4"
-                   :document.toc/level "l1"}]})
+  {:name "techcorp-report"
+   :extension "pdf"
+   :title "TechCorp Annual Report 2024"
+   :pages
+   [{:index 0
+     :nodes [{:type :section
+              :id "s1"
+              :content "Executive Summary"
+              :description "Overview of TechCorp's 2024 performance"}
+             {:type :paragraph
+              :id "p1"
+              :parent-id "s1"
+              :content "TechCorp achieved record revenue of $500 million in 2024, a 25% increase from the previous year. CEO Jane Smith led the company through significant market expansion."}]}
+    {:index 1
+     :nodes [{:type :section
+              :id "s2"
+              :content "Financial Performance"
+              :description "Detailed financial metrics"}
+             {:type :paragraph
+              :id "p2"
+              :parent-id "s2"
+              :content "Q1 revenue: $120M. Q2 revenue: $125M. Q3 revenue: $130M. Q4 revenue: $125M. Operating margin improved to 18%."}]}
+    {:index 2
+     :nodes [{:type :section
+              :id "s3"
+              :content "Market Expansion"
+              :description "Geographic and product expansion"}
+             {:type :paragraph
+              :id "p3"
+              :parent-id "s3"
+              :content "TechCorp expanded into Asian markets in 2024, opening offices in Tokyo, Singapore, and Seoul. Partnership with Samsung announced in Q3."}]}
+    {:index 3
+     :nodes [{:type :section
+              :id "s4"
+              :content "Leadership Team"
+              :description "Key executives"}
+             {:type :paragraph
+              :id "p4"
+              :parent-id "s4"
+              :content "Jane Smith (CEO), John Doe (CFO), Alice Johnson (CTO). The leadership team has over 50 years of combined industry experience."}]}]
+   :toc [{:type :toc-entry
+          :id "toc-1"
+          :title "Executive Summary"
+          :target-page 0
+          :target-section-id "s1"
+          :level "l1"}
+         {:type :toc-entry
+          :id "toc-2"
+          :title "Financial Performance"
+          :target-page 1
+          :target-section-id "s2"
+          :level "l1"}
+         {:type :toc-entry
+          :id "toc-3"
+          :title "Market Expansion"
+          :target-page 2
+          :target-section-id "s3"
+          :level "l1"}
+         {:type :toc-entry
+          :id "toc-4"
+          :title "Leadership Team"
+          :target-page 3
+          :target-section-id "s4"
+          :level "l1"}]})
 
 (defdescribe knowledge-engine-real-llm-test
   (describe "entity extraction with real LLM"
@@ -1814,30 +1917,32 @@
     (it "finds entries matching title text"
       (let [db-info (#'rlm-db/create-rlm-conn :temp)]
         (try
+          (#'rlm-db/store-document! db-info {:id "doc-1" :name "test-doc"})
           (#'rlm-db/db-store-toc-entry! db-info
-                                        {:document.toc/title "Chapter 1: Compliance"
-                                         :document.toc/level "l1"
-                                         :document.toc/target-page 0}
+                                        {:title "Chapter 1: Compliance"
+                                         :level "l1"
+                                         :target-page 0}
                                         "doc-1")
           (#'rlm-db/db-store-toc-entry! db-info
-                                        {:document.toc/title "Chapter 2: Financial Terms"
-                                         :document.toc/level "l1"
-                                         :document.toc/target-page 1}
+                                        {:title "Chapter 2: Financial Terms"
+                                         :level "l1"
+                                         :target-page 1}
                                         "doc-1")
           (let [results (#'rlm-db/db-search-toc-entries db-info "compliance")]
             (expect (= 1 (count results)))
-            (expect (str/includes? (:document.toc/title (first results)) "Compliance")))
+            (expect (str/includes? (:title (first results)) "Compliance")))
           (finally
             (#'rlm-db/dispose-rlm-conn! db-info)))))
 
     (it "finds entries matching description text"
       (let [db-info (#'rlm-db/create-rlm-conn :temp)]
         (try
+          (#'rlm-db/store-document! db-info {:id "doc-1" :name "test-doc"})
           (#'rlm-db/db-store-toc-entry! db-info
-                                        {:document.toc/title "Appendix A"
-                                         :document.toc/level "l2"
-                                         :document.toc/description "Detailed compliance regulations"
-                                         :document.toc/target-page 5}
+                                        {:title "Appendix A"
+                                         :level "l2"
+                                         :description "Detailed compliance regulations"
+                                         :target-page 5}
                                         "doc-1")
           (let [results (#'rlm-db/db-search-toc-entries db-info "regulations")]
             (expect (= 1 (count results))))
@@ -1847,10 +1952,11 @@
     (it "returns empty for non-matching query"
       (let [db-info (#'rlm-db/create-rlm-conn :temp)]
         (try
+          (#'rlm-db/store-document! db-info {:id "doc-1" :name "test-doc"})
           (#'rlm-db/db-store-toc-entry! db-info
-                                        {:document.toc/title "Introduction"
-                                         :document.toc/level "l1"
-                                         :document.toc/target-page 0}
+                                        {:title "Introduction"
+                                         :level "l1"
+                                         :target-page 0}
                                         "doc-1")
           (let [results (#'rlm-db/db-search-toc-entries db-info "xyznonexistent")]
             (expect (= 0 (count results))))
@@ -1860,15 +1966,16 @@
     (it "falls back to list mode for blank query"
       (let [db-info (#'rlm-db/create-rlm-conn :temp)]
         (try
+          (#'rlm-db/store-document! db-info {:id "doc-1" :name "test-doc"})
           (#'rlm-db/db-store-toc-entry! db-info
-                                        {:document.toc/title "First Entry"
-                                         :document.toc/level "l1"
-                                         :document.toc/target-page 0}
+                                        {:title "First Entry"
+                                         :level "l1"
+                                         :target-page 0}
                                         "doc-1")
           (#'rlm-db/db-store-toc-entry! db-info
-                                        {:document.toc/title "Second Entry"
-                                         :document.toc/level "l1"
-                                         :document.toc/target-page 1}
+                                        {:title "Second Entry"
+                                         :level "l1"
+                                         :target-page 1}
                                         "doc-1")
           (let [results (#'rlm-db/db-search-toc-entries db-info "")]
             (expect (= 2 (count results))))
@@ -1958,7 +2065,7 @@
 
           ;; Mutate corpus via ingestion path: bumps revision and invalidates snapshot cache.
           (sut/ingest-to-env! env [(assoc (make-test-single-page-document)
-                                     :document/name "single-page-extra")])
+                                     :name "single-page-extra")])
 
           ;; Third run with same opts after corpus change: should reset + rerun.
           (sut/query-env-qa! env {:count 2 :batch-size 5 :verify? false})

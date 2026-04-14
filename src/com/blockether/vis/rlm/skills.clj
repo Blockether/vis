@@ -2,7 +2,7 @@
   "SKILL.md discovery, parsing, validation, registry, and SQLite ingestion.
 
    Skills are loaded from filesystem paths AND ingested into SQLite as
-   :document/type :skill documents. The RLM searches skills the same way it
+   :type :skill documents. The RLM searches skills the same way it
    searches any other document — via search-documents + fetch-document-content.
 
    Skill lifecycle:

@@ -425,57 +425,38 @@
    Each page extraction produces local IDs (1, 2, 3...) that collide across pages.
    This function:
    1. Creates a mapping of local-id -> UUID for all nodes on the page
-   2. Updates all :page.node/id and :document.toc/id to use UUIDs
+   2. Updates all node :id values to use UUIDs
    3. Updates all parent-id references to use UUIDs
    4. Updates all target-section-id references to use UUIDs
 
-   Handles both :page.node/* namespace (most nodes) and :document.toc/* namespace (TOC entries).
-
    Params:
-   `page` - Map with :page/index and :page/nodes.
+   `page` - Map with :index and :nodes.
 
    Returns:
    Updated page with all IDs translated to UUIDs."
   [page]
-  (let [nodes (:page/nodes page)
-        node-id-mapping (reduce
-                          (fn [acc node]
-                            (if-let [local-id (:page.node/id node)]
-                              (assoc acc local-id (str (util/uuid)))
-                              acc))
-                          {} nodes)
-        toc-id-mapping (reduce
-                         (fn [acc node]
-                           (if-let [local-id (:document.toc/id node)]
-                             (assoc acc local-id (str (util/uuid)))
-                             acc))
-                         {} nodes)
+  (let [nodes (:nodes page)
+        id-mapping (reduce
+                     (fn [acc node]
+                       (if-let [local-id (:id node)]
+                         (assoc acc local-id (str (util/uuid)))
+                         acc))
+                     {} nodes)
         translated-nodes (mapv
                            (fn [node]
                              (cond-> node
-                               (:page.node/id node)
-                               (assoc :page.node/id (get node-id-mapping (:page.node/id node)))
+                               (:id node)
+                               (assoc :id (get id-mapping (:id node)))
 
-                               (and (:page.node/parent-id node)
-                                 (get node-id-mapping (:page.node/parent-id node)))
-                               (assoc :page.node/parent-id (get node-id-mapping (:page.node/parent-id node)))
+                               (and (:parent-id node)
+                                 (get id-mapping (:parent-id node)))
+                               (assoc :parent-id (get id-mapping (:parent-id node)))
 
-                               (and (:page.node/target-section-id node)
-                                 (get node-id-mapping (:page.node/target-section-id node)))
-                               (assoc :page.node/target-section-id (get node-id-mapping (:page.node/target-section-id node)))
-
-                               (:document.toc/id node)
-                               (assoc :document.toc/id (get toc-id-mapping (:document.toc/id node)))
-
-                               (and (:document.toc/parent-id node)
-                                 (get toc-id-mapping (:document.toc/parent-id node)))
-                               (assoc :document.toc/parent-id (get toc-id-mapping (:document.toc/parent-id node)))
-
-                               (and (:document.toc/target-section-id node)
-                                 (get node-id-mapping (:document.toc/target-section-id node)))
-                               (assoc :document.toc/target-section-id (get node-id-mapping (:document.toc/target-section-id node)))))
+                               (and (:target-section-id node)
+                                 (get id-mapping (:target-section-id node)))
+                               (assoc :target-section-id (get id-mapping (:target-section-id node)))))
                            nodes)]
-    (assoc page :page/nodes translated-nodes)))
+    (assoc page :nodes translated-nodes)))
 
 (defn- translate-all-ids
   "Translates all local node IDs to globally unique UUIDs across all pages.
@@ -495,12 +476,12 @@
 (defn- collect-all-nodes
   "Collects all nodes from all pages into a flat sequence."
   [pages]
-  (mapcat :page/nodes pages))
+  (mapcat :nodes pages))
 
 (defn- has-toc-entries?
   "Returns true if any TocEntry nodes exist in the pages."
   [pages]
-  (boolean (some #(= :toc-entry (:document.toc/type %)) (collect-all-nodes pages))))
+  (boolean (some #(= :toc-entry (:type %)) (collect-all-nodes pages))))
 
 (defn- heading-level->toc-level
   "Converts heading level (h1, h2, etc.) to TOC level (l1, l2, etc.)."
@@ -514,19 +495,19 @@
   (let [all-nodes (vec (collect-all-nodes pages))
         section-headings (reduce
                            (fn [acc node]
-                             (if (and (= :heading (:page.node/type node))
-                                   (:page.node/parent-id node))
-                               (assoc acc (:page.node/parent-id node) node)
+                             (if (and (= :heading (:type node))
+                                   (:parent-id node))
+                               (assoc acc (:parent-id node) node)
                                acc))
                            {}
                            all-nodes)
-        sections (filter #(= :section (:page.node/type %)) all-nodes)
+        sections (filter #(= :section (:type %)) all-nodes)
         section-page-index (reduce
-                             (fn [acc {:keys [page/index page/nodes]}]
+                             (fn [acc {:keys [index nodes]}]
                                (reduce
                                  (fn [acc2 node]
-                                   (if (= :section (:page.node/type node))
-                                     (assoc acc2 (:page.node/id node) index)
+                                   (if (= :section (:type node))
+                                     (assoc acc2 (:id node) index)
                                      acc2))
                                  acc
                                  nodes))
@@ -535,97 +516,176 @@
     (vec
       (keep
         (fn [section]
-          (when-let [heading (get section-headings (:page.node/id section))]
-            {:document.toc/type :toc-entry
-             :document.toc/id (str (util/uuid))
-             :document.toc/parent-id nil
-             :document.toc/title (:page.node/content heading)
-             :document.toc/description (:page.node/description section)
-             :document.toc/target-page (get section-page-index (:page.node/id section))
-             :document.toc/target-section-id (:page.node/id section)
-             :document.toc/level (heading-level->toc-level (:page.node/level heading))}))
+          (when-let [heading (get section-headings (:id section))]
+            {:type :toc-entry
+             :id (str (util/uuid))
+             :parent-id nil
+             :title (:content heading)
+             :description (:description section)
+             :target-page (get section-page-index (:id section))
+             :target-section-id (:id section)
+             :level (heading-level->toc-level (:level heading))}))
         sections))))
 
 (defn- link-toc-entries
   "Links existing TocEntry nodes to matching Section nodes."
   [pages]
-  (let [all-nodes (vec (collect-all-nodes pages))
-        section-by-id (reduce
-                        (fn [acc node]
-                          (if (= :section (:page.node/type node))
-                            (assoc acc (:page.node/id node) node)
-                            acc))
-                        {}
-                        all-nodes)
-        heading->section (reduce
-                           (fn [acc node]
-                             (if (and (= :heading (:page.node/type node))
-                                   (:page.node/content node)
-                                   (:page.node/parent-id node))
-                               (let [normalized (-> (:page.node/content node)
-                                                  str/trim
-                                                  str/lower-case)]
-                                 (assoc acc normalized (:page.node/parent-id node)))
-                               acc))
-                           {}
-                           all-nodes)]
-    (mapv
-      (fn [page]
-        (update page :page/nodes
-          (fn [nodes]
-            (mapv
-              (fn [node]
-                (if (and (= :toc-entry (:document.toc/type node))
-                      (nil? (:document.toc/target-section-id node))
-                      (:document.toc/title node))
-                  (let [normalized-title (-> (:document.toc/title node)
-                                           str/trim
-                                           str/lower-case)
-                        section-id (get heading->section normalized-title)
-                        section (when section-id (get section-by-id section-id))]
-                    (if section-id
-                      (cond-> node
-                        true (assoc :document.toc/target-section-id section-id)
-                        (:page.node/description section) (assoc :document.toc/description (:page.node/description section)))
-                      node))
-                  node))
-              nodes))))
-      pages)))
+  (letfn [(normalize-title [s]
+            (-> (or s "")
+              str/lower-case
+              (str/replace #"[’]" "'")
+              (str/replace #"\.{2,}" " ")
+              (str/replace #"\s+" " ")
+              str/trim))
+          (simplify-title [s]
+            (-> s
+              (str/replace #"[^a-z0-9 ]" "")
+              (str/replace #"\s+" " ")
+              str/trim))
+          (toc-title-candidates [title]
+            (let [full (normalize-title title)
+                  no-page (-> full
+                            (str/replace #"\s+\d+\s*$" "")
+                            str/trim)
+                  simp-full (simplify-title full)
+                  simp-no-page (simplify-title no-page)]
+              (->> [full no-page simp-full simp-no-page]
+                (filter seq)
+                distinct)))]
+    (let [all-nodes (vec (collect-all-nodes pages))
+          section-by-id (reduce
+                          (fn [acc node]
+                            (if (= :section (:type node))
+                              (assoc acc (:id node) node)
+                              acc))
+                          {}
+                          all-nodes)
+          heading->section (reduce
+                             (fn [acc node]
+                               (if (and (= :heading (:type node))
+                                     (:content node)
+                                     (:parent-id node))
+                                 (let [normalized (normalize-title (:content node))
+                                       simplified (simplify-title normalized)]
+                                   (cond-> acc
+                                     (seq normalized) (assoc normalized (:parent-id node))
+                                     (seq simplified) (assoc simplified (:parent-id node))))
+                                 acc))
+                             {}
+                             all-nodes)]
+      (mapv
+        (fn [page]
+          (update page :nodes
+            (fn [nodes]
+              (mapv
+                (fn [node]
+                  (if (and (= :toc-entry (:type node))
+                        (:title node))
+                    (let [section-id (some #(get heading->section %) (toc-title-candidates (:title node)))
+                          section (when section-id (get section-by-id section-id))]
+                      (cond-> (assoc node :target-section-id (or section-id (:target-section-id node)))
+                        (:description section) (assoc :description (:description section))))
+                    node))
+                nodes))))
+        pages))))
 
 (defn- postprocess-toc
   "Post-processes pages to ensure TOC exists and is properly linked."
   [pages]
-  (if (has-toc-entries? pages)
-    (let [linked-pages (link-toc-entries pages)
-          toc-entries (vec (filter #(= :toc-entry (:document.toc/type %))
-                             (collect-all-nodes linked-pages)))
-          pages-without-toc (mapv
-                              (fn [page]
-                                (update page :page/nodes
-                                  (fn [nodes]
-                                    (filterv #(not= :toc-entry (:document.toc/type %)) nodes))))
-                              linked-pages)]
-      (trove/log! {:level :debug :data {:toc-entries (count toc-entries)}
-                   :msg "Linked existing TOC entries to sections"})
-      {:pages pages-without-toc
-       :toc toc-entries})
-    (let [generated-toc (build-toc-from-structure pages)]
-      (trove/log! {:level :debug :data {:generated-entries (count generated-toc)}
-                   :msg "Generated TOC from document structure"})
-      {:pages pages
-       :toc generated-toc})))
+  (letfn [(annotate-toc-page-ranges [toc-entries]
+            (let [indexed (map-indexed vector toc-entries)
+                  entries-with-start (keep (fn [[idx e]]
+                                             (when (nat-int? (:target-page e))
+                                               {:idx idx :start (:target-page e)}))
+                                       indexed)
+                  ranges (reduce
+                           (fn [acc [i {:keys [idx start]}]]
+                             (let [next-start (:start (nth entries-with-start (inc i) nil))
+                                   end-page (when (nat-int? next-start) (dec next-start))]
+                               (assoc acc idx {:start-page-label start
+                                               :end-page-label end-page})))
+                           {}
+                           (map-indexed vector entries-with-start))]
+              (mapv (fn [[idx e]]
+                      (if-let [{:keys [start-page-label end-page-label]} (get ranges idx)]
+                        (cond-> (assoc e :start-page-label start-page-label)
+                          (nat-int? end-page-label) (assoc :end-page-label end-page-label))
+                        e))
+                indexed)))
+          (section-id-by-page-index [pages']
+            (reduce
+              (fn [acc {:keys [index nodes]}]
+                (if-let [section-id (some (fn [n]
+                                            (when (= :section (:type n))
+                                              (:id n)))
+                                      nodes)]
+                  (assoc acc index section-id)
+                  acc))
+              {}
+              pages'))
+          (attach-index-links [toc-entries pages' toc-last-index]
+            (let [page->section (section-id-by-page-index pages')
+                  max-page-index (apply max 0 (map :index pages'))
+                  page-label-offset (if (nat-int? toc-last-index)
+                                      toc-last-index
+                                      0)]
+              (mapv
+                (fn [e]
+                  (if-let [start-label (:start-page-label e)]
+                    (let [raw-start-index (+ page-label-offset start-label)
+                          start-index (when (<= raw-start-index max-page-index) raw-start-index)
+                          raw-end-index (when-let [end-label (:end-page-label e)]
+                                          (+ page-label-offset end-label))
+                          end-index (when (and raw-end-index (<= raw-end-index max-page-index)) raw-end-index)
+                          section-id (get page->section start-index)]
+                      (cond-> e
+                        start-index (assoc :start-page-index start-index
+                                      :target-page-index start-index)
+                        end-index (assoc :end-page-index end-index)
+                        section-id (assoc :target-section-id section-id)))
+                    e))
+                toc-entries)))]
+    (if (has-toc-entries? pages)
+      (let [linked-pages (link-toc-entries pages)
+            toc-last-index (reduce
+                             (fn [mx {:keys [index nodes]}]
+                               (if (some #(= :toc-entry (:type %)) nodes)
+                                 (max mx index)
+                                 mx))
+                             -1
+                             linked-pages)
+            toc-entries (->> (collect-all-nodes linked-pages)
+                          (filter #(= :toc-entry (:type %)))
+                          vec
+                          annotate-toc-page-ranges
+                          (#(attach-index-links % linked-pages toc-last-index)))
+            pages-without-toc (mapv
+                                (fn [page]
+                                  (update page :nodes
+                                    (fn [nodes]
+                                      (filterv #(not= :toc-entry (:type %)) nodes))))
+                                linked-pages)]
+        (trove/log! {:level :debug :data {:toc-entries (count toc-entries)}
+                     :msg "Linked existing TOC entries to sections"})
+        {:pages pages-without-toc
+         :toc toc-entries})
+      (let [generated-toc (build-toc-from-structure pages)]
+        (trove/log! {:level :debug :data {:generated-entries (count generated-toc)}
+                     :msg "Generated TOC from document structure"})
+        {:pages pages
+         :toc (annotate-toc-page-ranges generated-toc)}))))
 
 ;; =============================================================================
 ;; Document Abstract Generation
 ;; =============================================================================
 
 (defn- collect-section-descriptions
-  "Collects all :page.node/description values from Section nodes across all pages."
+  "Collects all :description values from section nodes across all pages."
   [pages]
   (->> pages
-    (mapcat :page/nodes)
-    (filter #(= :section (:page.node/type %)))
-    (keep :page.node/description)
+    (mapcat :nodes)
+    (filter #(= :section (:type %)))
+    (keep :description)
     (filter seq)
     vec))
 
@@ -657,6 +717,7 @@
   [input opts]
   (cond
     (:content-type opts) :string
+    (and (string? input) (supported-extension? input)) :path
     (file-path? input) :path
     :else :string))
 
@@ -741,24 +802,17 @@
 
    Returns:
    Map with:
-     `:document/name` - String. Document name without extension.
-     `:document/title` - String or nil. Document title from metadata.
-     `:document/abstract` - String or nil. Document summary generated from section descriptions.
-     `:document/extension` - String. File extension (pdf, md, txt).
-     `:document/pages` - Vector of page maps with:
-       - `:page/index` - Integer (0-indexed)
-       - `:page/nodes` - Vector of content nodes (heading, paragraph, image, table, etc.)
-     `:document/toc` - Vector of TocEntry nodes (extracted or generated):
-        - `:document.toc/type` - :toc-entry
-        - `:document.toc/id` - UUID string
-        - `:document.toc/title` - Entry title text
-        - `:document.toc/description` - Section description (copied from linked Section)
-        - `:document.toc/target-page` - Page number (0-indexed) or nil
-        - `:document.toc/target-section-id` - UUID of linked Section node or nil
-        - `:document.toc/level` - Nesting level (l1, l2, etc.)
-     `:document/created-at` - Instant. Creation date from metadata or now.
-     `:document/updated-at` - Instant. Modification date from metadata or now.
-     `:document/author` - String or nil. Document author from metadata."
+      `:name` - String. Document name without extension.
+      `:title` - String or nil. Document title from metadata.
+      `:abstract` - String or nil. Document summary generated from section descriptions.
+      `:extension` - String. File extension (pdf, md, txt).
+      `:pages` - Vector of page maps with:
+        - `:index` - Integer (0-indexed)
+        - `:nodes` - Vector of content nodes (heading, paragraph, image, table, etc.)
+      `:toc` - Vector of toc-entry nodes (extracted or generated).
+      `:created-at` - Instant. Creation date from metadata or now.
+      `:updated-at` - Instant. Modification date from metadata or now.
+      `:author` - String or nil. Document author from metadata."
   (fn [_router input & [opts]]
     (detect-input-type input (or opts {}))))
 
@@ -775,7 +829,7 @@
   "Renders each selected PDF page as a full-page PNG into `<output-dir>/page-NNN.png`."
   [file-path pages output-dir]
   (try
-    (let [page-indices (sort (mapv :page/index pages))
+    (let [page-indices (sort (mapv :index pages))
           imgs (pdf/pdf->images file-path {:page-set (set page-indices)})]
       (when-not (.exists (io/file output-dir))
         (.mkdirs (io/file output-dir)))
@@ -791,8 +845,8 @@
                    :msg "Failed to render full-page PNGs"}))))
 
 (defn- write-embedded-image-nodes!
-  "For every :image/:table node that still carries raw `:page.node/image-data`
-   bytes, writes the bytes to `<output-dir>/<node-id>.png`."
+  "For every :image/:table node that still carries raw `:image-data`
+    bytes, writes the bytes to `<output-dir>/<node-id>.png`."
   [pages output-dir]
   (let [dir-file (io/file output-dir)]
     (when-not (.exists dir-file)
@@ -800,19 +854,19 @@
         {:type :svar.pageindex/output-dir-not-found :output-dir output-dir}))
     (mapv
       (fn [page]
-        (update page :page/nodes
+        (update page :nodes
           (fn [nodes]
             (mapv
               (fn [node]
-                (let [img-bytes (:page.node/image-data node)]
-                  (if (and (#{:image :table} (:page.node/type node)) img-bytes)
-                    (let [img-name (str (:page.node/id node) ".png")
+                (let [img-bytes (:image-data node)]
+                  (if (and (#{:image :table} (:type node)) img-bytes)
+                    (let [img-name (str (:id node) ".png")
                           out-file (io/file output-dir img-name)]
                       (with-open [out (io/output-stream out-file)]
                         (.write out ^bytes img-bytes))
                       (-> node
-                        (dissoc :page.node/image-data)
-                        (assoc :page.node/image-path (str "images/" img-name))))
+                        (dissoc :image-data)
+                        (assoc :image-path (str "images/" img-name))))
                     node)))
               nodes))))
       pages)))
@@ -846,7 +900,7 @@
                           (when (:pages opts)
                             (normalize-page-spec (:pages opts) (count page-list-all)))))
         page-list (-> page-list-raw translate-all-ids group-continuations)
-        pages (mapv (fn [p] (update p :page/nodes #(mapv strip-nil-keys %))) page-list)
+        pages (mapv (fn [p] (update p :nodes #(mapv strip-nil-keys %))) page-list)
         ftype (file-type file-path)
         file-metadata (when (= :pdf ftype)
                         (try
@@ -891,22 +945,22 @@
                              nil)))
         final-title (or metadata-title inferred-title)
         now (Instant/now)]
-    (trove/log! {:level :info :data {:document/name doc-name
+    (trove/log! {:level :info :data {:name doc-name
                                      :pages (count pages)
                                      :toc-entries (count toc)
                                      :has-metadata (boolean file-metadata)
                                      :title-inferred (boolean inferred-title)
                                      :has-abstract (boolean document-abstract)}
                  :msg "Text extraction complete"})
-    {:document/name doc-name
-     :document/title final-title
-     :document/abstract document-abstract
-     :document/extension extension
-     :document/pages pages
-     :document/toc toc
-     :document/created-at (or (:created-at file-metadata) now)
-     :document/updated-at (or (:updated-at file-metadata) now)
-     :document/author (:author file-metadata)}))
+    {:name doc-name
+     :title final-title
+     :abstract document-abstract
+     :extension extension
+     :pages pages
+     :toc toc
+     :created-at (or (:created-at file-metadata) now)
+     :updated-at (or (:updated-at file-metadata) now)
+     :author (:author file-metadata)}))
 
 (defmethod build-index :path
   [router file-path & [opts]]
@@ -951,21 +1005,21 @@
           final-title (or doc-title inferred-title)
           extension (name content-type)
           now (Instant/now)]
-      (trove/log! {:level :info :data {:document/name doc-name
+      (trove/log! {:level :info :data {:name doc-name
                                        :pages (count pages)
                                        :toc-entries (count toc)
                                        :title-inferred (boolean inferred-title)
                                        :has-abstract (boolean document-abstract)}
                    :msg "Text extraction complete"})
-      {:document/name doc-name
-       :document/title final-title
-       :document/abstract document-abstract
-       :document/extension extension
-       :document/pages pages
-       :document/toc toc
-       :document/created-at (or created-at now)
-       :document/updated-at (or updated-at now)
-       :document/author doc-author})))
+      {:name doc-name
+       :title final-title
+       :abstract document-abstract
+       :extension extension
+       :pages pages
+       :toc toc
+       :created-at (or created-at now)
+       :updated-at (or updated-at now)
+       :author doc-author})))
 
 ;; =============================================================================
 ;; index! — incremental document indexing
@@ -1202,16 +1256,16 @@
                                    (or (some-> pages-to-process count str) "all")
                                    (count done-page-indices))})
 
-               (let [existing-page-map (into {} (map (fn [p] [(:page/index p) p])
-                                                  (:document/pages existing-document)))
+               (let [existing-page-map (into {} (map (fn [p] [(:index p) p])
+                                                  (:pages existing-document)))
                      page-map-atom (atom (if needs-full-reindex? {} existing-page-map))
-                     toc-atom (atom (or (:document/toc existing-document) []))
-                     metadata-atom (atom (merge {:document/name (fs/strip-ext (fs/file-name abs-path))
-                                                 :document/extension (some-> (fs/extension abs-path) name)}
+                     toc-atom (atom (or (:toc existing-document) []))
+                     metadata-atom (atom (merge {:name (fs/strip-ext (fs/file-name abs-path))
+                                                 :extension (some-> (fs/extension abs-path) name)}
                                            (select-keys existing-document
-                                             [:document/name :document/title :document/abstract
-                                              :document/extension :document/created-at :document/updated-at
-                                              :document/author])))
+                                             [:name :title :abstract
+                                              :extension :created-at :updated-at
+                                              :author])))
                      processed-count (atom 0)
                      errors-count (atom 0)]
 
@@ -1250,14 +1304,14 @@
                                       :page-number page-num}))
                                  (swap! page-map-atom assoc idx page)
                                  (swap! metadata-atom merge
-                                   {:document/name (:doc-name extracted)
-                                    :document/extension (:extension extracted)
+                                   {:name (:doc-name extracted)
+                                    :extension (:extension extracted)
                                     :svar.pageindex/file-metadata (:file-metadata extracted)})
                                  (update-manifest-page! output-path manifest-atom idx
                                    {:status :done
                                     :indexed-at now
                                     :updated-at now
-                                    :nodes (count (:page/nodes page))
+                                    :nodes (count (:nodes page))
                                     :elapsed-ms page-elapsed})
                                  (swap! processed-count inc)
                                  (swap! page-times-atom conj page-elapsed)
@@ -1268,14 +1322,14 @@
                                    (trove/log! {:level :info
                                                 :id :svar.pageindex/indexed-page
                                                 :data {:page-number page-num
-                                                       :nodes (count (:page/nodes page))
+                                                       :nodes (count (:nodes page))
                                                        :elapsed-ms page-elapsed
                                                        :processed processed-so-far
                                                        :remaining remaining
                                                        :eta-ms new-eta-ms
                                                        :errors @errors-count}
                                                 :msg (format "Indexed page %d — %d nodes, %dms (remaining: %d, ETA: %ds)"
-                                                       page-num (count (:page/nodes page)) page-elapsed
+                                                       page-num (count (:nodes page)) page-elapsed
                                                        remaining (quot new-eta-ms 1000))})))
                                (catch Exception e
                                  (let [now (str (Instant/now))
@@ -1301,9 +1355,9 @@
                      (try
                        (doseq [^java.util.concurrent.Future f futures]
                          (try (.get f)
-                              (catch Exception e
-                                (trove/log! {:level :debug :data {:error (ex-message e)}
-                                             :msg "Q-value update failed (non-fatal)"}))))
+                           (catch Exception e
+                             (trove/log! {:level :debug :data {:error (ex-message e)}
+                                          :msg "Q-value update failed (non-fatal)"}))))
                        (finally
                          (.shutdown pool))))
                    (try
@@ -1311,19 +1365,19 @@
                                                               pages (assoc :pages pages)))
                            now (str (Instant/now))]
                        (swap! metadata-atom merge
-                         (select-keys doc [:document/name :document/title :document/abstract
-                                           :document/extension :document/created-at :document/updated-at
-                                           :document/author]))
-                       (when (seq (:document/toc doc))
-                         (reset! toc-atom (:document/toc doc)))
-                       (doseq [p (:document/pages doc)]
-                         (let [idx (:page/index p)]
+                         (select-keys doc [:name :title :abstract
+                                           :extension :created-at :updated-at
+                                           :author]))
+                       (when (seq (:toc doc))
+                         (reset! toc-atom (:toc doc)))
+                       (doseq [p (:pages doc)]
+                         (let [idx (:index p)]
                            (swap! page-map-atom assoc idx p)
                            (update-manifest-page! output-path manifest-atom idx
                              {:status :done
                               :indexed-at now
                               :updated-at now
-                              :nodes (count (:page/nodes p))})
+                              :nodes (count (:nodes p))})
                            (swap! processed-count inc))))
                      (catch Exception e
                        (swap! errors-count inc)
@@ -1338,15 +1392,15 @@
                                         (finalize-pdf-document
                                           router
                                           {:pages final-pages
-                                           :doc-name (or (:document/name @metadata-atom)
+                                           :doc-name (or (:name @metadata-atom)
                                                        (fs/strip-ext (fs/file-name abs-path)))
-                                           :extension (or (:document/extension @metadata-atom)
+                                           :extension (or (:extension @metadata-atom)
                                                         (some-> (fs/extension abs-path) name))
                                            :file-metadata (:svar.pageindex/file-metadata @metadata-atom)}
                                           common-index-opts)
                                         (merge @metadata-atom
-                                          {:document/pages []
-                                           :document/toc @toc-atom}))
+                                          {:pages []
+                                           :toc @toc-atom}))
                        elapsed-ms (- (System/currentTimeMillis) start-time)
                        all-failed? (and (pos? @errors-count) (empty? final-pages))]
                    (when-not all-failed?
@@ -1355,7 +1409,7 @@
                          (trove/log! {:level :error :data {:explanation explanation} :msg "Document failed spec validation"})
                          (anomaly/incorrect! "Document failed spec validation"
                            {:type :rlm/invalid-document
-                            :document/name (:document/name final-document)
+                            :name (:name final-document)
                             :explanation explanation})))
                      (write-document-edn! output-path final-document))
                    (let [final-manifest (cond-> (assoc @manifest-atom
@@ -1367,9 +1421,9 @@
                      (write-manifest! output-path final-manifest)
                      (trove/log! {:level (if all-failed? :warn :info)
                                   :id :svar.pageindex/complete
-                                  :data {:document/name (:document/name final-document)
+                                  :data {:name (:name final-document)
                                          :pages (count final-pages)
-                                         :toc-entries (count (:document/toc final-document))
+                                         :toc-entries (count (:toc final-document))
                                          :output-path output-path
                                          :mode (cond
                                                  force? :forced-full

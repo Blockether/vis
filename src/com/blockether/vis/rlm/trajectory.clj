@@ -31,7 +31,7 @@
   (when (:datasource db-info)
     (let [qref (cond
                  (vector? query-ref) query-ref
-                 (uuid? query-ref) [:entity/id query-ref]
+                 (uuid? query-ref) [:id query-ref]
                  :else nil)]
       (when qref
         (rlm-db/db-list-query-iterations db-info qref)))))
@@ -53,7 +53,7 @@
     (let [iterations (list-iterations db-info query-ref)
           all-code (->> iterations
                      (mapcat (fn [it]
-                               (try (edn/read-string (or (:iteration/code it) "[]"))
+                               (try (edn/read-string (or (:code it) "[]"))
                                     (catch Exception e
                                       (trove/log! {:level :debug :id ::score-query-code-parse-fallback
                                                    :data {:error (ex-message e)}
@@ -61,7 +61,7 @@
                                       []))))
                      (str/join "\n"))
           iter-count (count iterations)
-          error-count (count (filter #(nil? (:iteration/code %)) iterations))
+          error-count (count (filter #(nil? (:code %)) iterations))
           score (atom 0)]
       (when (re-find #"\(def\s+" all-code) (swap! score + 2))
       (when (re-find #"\(sub-rlm-query\s" all-code) (swap! score + 3))
@@ -70,7 +70,7 @@
       (when (and (pos? max-iterations) (< iter-count (/ max-iterations 2))) (swap! score + 2))
       (when (> error-count 2) (swap! score - 2))
       (when-let [last-iter (last iterations)]
-        (when (and (:iteration/answer last-iter) (< (count (:iteration/answer last-iter)) 20))
+        (when (and (:answer last-iter) (< (count (:answer last-iter)) 20))
           (swap! score - 1)))
       @score)))
 
@@ -91,15 +91,15 @@
   (when (:datasource db-info)
     (let [queries (list-queries db-info {:status :success :min-iterations min-iterations})
           hard-filtered (->> queries
-                          (filter #(<= (:query/iterations %)
+                          (filter #(<= (:iterations %)
                                      (* max-iterations max-iteration-ratio)))
-                          (filter #(if-let [es (:query/eval-score %)]
+                          (filter #(if-let [es (:eval-score %)]
                                      (>= es min-eval-score)
                                      true)))
           scored (->> hard-filtered
                    (map (fn [q]
-                          (let [base-score (score-query db-info [:entity/id (:entity/id q)] max-iterations)
-                                eval-bonus (if-let [es (:query/eval-score q)]
+                          (let [base-score (score-query db-info [:id (:id q)] max-iterations)
+                                eval-bonus (if-let [es (:eval-score q)]
                                              (cond (>= es 0.8) 3
                                                    (>= es 0.6) 1
                                                    :else 0)
@@ -118,21 +118,21 @@
   (when (:datasource db-info)
     (let [iterations (list-iterations db-info query-ref)]
       (mapv (fn [it]
-              (cond-> {:code (try (edn/read-string (:iteration/code it))
+              (cond-> {:code (try (edn/read-string (:code it))
                                   (catch Exception e
                                     (trove/log! {:level :debug :id ::reconstruct-code-parse-fallback
                                                  :data {:error (ex-message e)}
                                                  :msg "Iteration code EDN parse failed in reconstruct-conversation"})
                                     []))
-                       :results (try (edn/read-string (:iteration/results it))
+                       :results (try (edn/read-string (:results it))
                                      (catch Exception e
                                        (trove/log! {:level :debug :id ::reconstruct-results-parse-fallback
                                                     :data {:error (ex-message e)}
                                                     :msg "Iteration results EDN parse failed in reconstruct-conversation"})
                                        []))
-                       :duration-ms (:iteration/duration-ms it)}
-                (:iteration/answer it) (assoc :answer (:iteration/answer it))
-                (seq (:iteration/thinking it)) (assoc :thinking (:iteration/thinking it))))
+                       :duration-ms (:duration-ms it)}
+                (:answer it) (assoc :answer (:answer it))
+                (seq (:thinking it)) (assoc :thinking (:thinking it))))
         iterations))))
 
 (defn- format-for-training
@@ -180,16 +180,16 @@
             (throw (ex-info "No queries to export" {:type :trajectory/empty})))
         ;; Look up conversation (parent of query) for system-prompt
         get-system-prompt (fn [q]
-                            (when-let [parent-id (:entity/parent-id q)]
-                              (:conversation/system-prompt
-                               (rlm-db/db-get-conversation db-info [:entity/id parent-id]))))
+                            (when-let [parent-id (:parent-id q)]
+                              (:system-prompt
+                               (rlm-db/db-get-conversation db-info [:id parent-id]))))
         exports (->> queries
                   (keep (fn [q]
-                          (let [qref [:entity/id (:entity/id q)]
+                          (let [qref [:id (:id q)]
                                 iters (seq (reconstruct-conversation db-info qref))]
                             (when iters
                               {:query q
-                               :messages (format-for-training (:query/text q) (get-system-prompt q) iters)}))))
+                               :messages (format-for-training (:text q) (get-system-prompt q) iters)}))))
                   vec)
         _ (when (empty? exports)
             (trove/log! {:level :warn :msg "No reconstructable queries to export"})
@@ -214,7 +214,7 @@
                                (double (/ (reduce + (map #(get-in % [:query :query/score]) exports))
                                          (count exports))))
                   :avg-iterations (when (seq exports)
-                                    (double (/ (reduce + (map #(get-in % [:query :query/iterations]) exports))
+                                    (double (/ (reduce + (map #(get-in % [:query :iterations]) exports))
                                               (count exports))))
                   :timestamp (java.util.Date.)}]
     (spit (str output-dir "/metadata.edn") (pr-str metadata))

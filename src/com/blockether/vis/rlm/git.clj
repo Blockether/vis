@@ -143,37 +143,37 @@
    `document-id` is the repo name used as document source."
   [parsed document-id]
   (let [description (or (:body parsed) (:subject parsed))]
-    (cond-> {:entity/type         :event
-             :entity/name         (:subject parsed)
-             :entity/description  description
-             :entity/document-id  document-id
-             :commit/category     (:category parsed)
-             :commit/sha          (:sha parsed)
-             :commit/date         (:date parsed)}
-      (:ticket-refs parsed)  (assoc :commit/ticket-refs (:ticket-refs parsed))
-      (:file-paths parsed)   (assoc :commit/file-paths (:file-paths parsed))
-      (:prefix parsed)       (assoc :commit/prefix (:prefix parsed))
-      (:scope parsed)        (assoc :commit/scope (:scope parsed))
-      (seq (:parents parsed)) (assoc :commit/parents (vec (:parents parsed)))
-      (:author-email parsed) (assoc :commit/author-email (:author-email parsed)))))
+    (cond-> {:type         :event
+             :name         (:subject parsed)
+             :description  description
+             :document-id  document-id
+             :category     (:category parsed)
+             :sha          (:sha parsed)
+             :date         (:date parsed)}
+      (:ticket-refs parsed)  (assoc :ticket-refs (:ticket-refs parsed))
+      (:file-paths parsed)   (assoc :file-paths (:file-paths parsed))
+      (:prefix parsed)       (assoc :prefix (:prefix parsed))
+      (:scope parsed)        (assoc :scope (:scope parsed))
+      (seq (:parents parsed)) (assoc :parents (vec (:parents parsed)))
+      (:author-email parsed) (assoc :author-email (:author-email parsed)))))
 
 (defn author->person-entity
   "Convert commit author info into a person entity.
    Uses polymorphic attr: person/email for git author email."
   [{:keys [author author-email]} document-id]
-  {:entity/type         :person
-   :entity/name         author
-   :entity/description  (str "Git author: " author " <" author-email ">")
-   :entity/document-id  document-id
-   :person/email        author-email})
+  {:type         :person
+   :name         author
+   :description  (str "Git author: " author " <" author-email ">")
+   :document-id  document-id
+   :email        author-email})
 
 (defn file->file-entity
   "Convert a file path into a file entity."
   [file-path document-id]
-  {:entity/type        :file
-   :entity/name        file-path
-   :entity/description file-path
-   :entity/document-id document-id})
+  {:type        :file
+   :name        file-path
+   :description file-path
+   :document-id document-id})
 
 (defn ingest-commits!
   "Ingest parsed commits into the RLM DB as entities + relationships.
@@ -193,47 +193,67 @@
                        commits)
         person-entities (mapv (fn [[_email commit]]
                                 (assoc (author->person-entity commit document-id)
-                                  :entity/id (java.util.UUID/randomUUID)))
+                                  :id (java.util.UUID/randomUUID)))
                           unique-emails)
         email->id (into {} (map-indexed
-                             (fn [i [email _]] [email (:entity/id (nth person-entities i))])
+                             (fn [i [email _]] [email (:id (nth person-entities i))])
                              unique-emails))
         file-entities (mapv (fn [fp]
                               (assoc (file->file-entity fp document-id)
-                                :entity/id (java.util.UUID/randomUUID)))
+                                :id (java.util.UUID/randomUUID)))
                         unique-paths)
-        path->id (zipmap unique-paths (map :entity/id file-entities))
+        path->id (zipmap unique-paths (map :id file-entities))
         event-entities (mapv (fn [commit]
                                (assoc (commit->entity commit document-id)
-                                 :entity/id (java.util.UUID/randomUUID)))
+                                 :id (java.util.UUID/randomUUID)))
                          commits)
-        sha->event-id (zipmap (map :sha commits) (map :entity/id event-entities))
+        sha->event-id (zipmap (map :sha commits) (map :id event-entities))
         relationships
         (concat
           (for [{:keys [sha author-email]} commits
                 :let [event-id (get sha->event-id sha)
                       person-id (get email->id author-email)]
                 :when (and event-id person-id)]
-            {:relationship/id (java.util.UUID/randomUUID)
-             :relationship/type :related-to
-             :relationship/source-entity-id person-id
-             :relationship/target-entity-id event-id
-             :relationship/description "authored"
-             :relationship/document-id document-id})
+            {:id (java.util.UUID/randomUUID)
+             :type :related-to
+             :source-id person-id
+             :target-id event-id
+             :description "authored"
+             :document-id document-id})
           (for [{:keys [sha file-paths]} commits
                 :let [event-id (get sha->event-id sha)]
                 fp file-paths
                 :let [file-id (get path->id fp)]
                 :when (and event-id file-id)]
-            {:relationship/id (java.util.UUID/randomUUID)
-             :relationship/type :contains
-             :relationship/source-entity-id event-id
-             :relationship/target-entity-id file-id
-             :relationship/description "changed file"
-             :relationship/document-id document-id}))]
+            {:id (java.util.UUID/randomUUID)
+             :type :contains
+             :source-id event-id
+             :target-id file-id
+             :description "changed file"
+             :document-id document-id}))]
     ;; Persist all entities + edges via the SQLite store.
-    (doseq [e (concat person-entities file-entities event-entities)]
+    (doseq [e (concat person-entities file-entities)]
       (rlm-db/store-entity! db-info e))
+    (doseq [{:keys [id] :as e} event-entities]
+      (rlm-db/store-commit-entity! db-info
+        {:entity-id id
+         :entity-cols (cond-> {:id          (rlm-db/->id id)
+                               :type        (rlm-db/->kw (:type e))
+                               :name        (:name e)
+                               :description (:description e)
+                               :document_id (:document-id e)}
+                        (:created-at e) (assoc :created_at (rlm-db/->epoch-ms (:created-at e)))
+                        (:updated-at e) (assoc :updated_at (rlm-db/->epoch-ms (:updated-at e))))
+         :commit-cols   (cond-> {}
+                          (:sha e)          (assoc :sha (:sha e))
+                          (:category e)     (assoc :category (rlm-db/->kw (:category e)))
+                          (:date e)         (assoc :date (:date e))
+                          (:prefix e)       (assoc :prefix (:prefix e))
+                          (:scope e)        (assoc :scope (:scope e))
+                          (:author-email e) (assoc :author_email (:author-email e)))
+         :ticket-refs   (vec (:ticket-refs e))
+         :file-paths    (vec (:file-paths e))
+         :parents       (vec (:parents e))}))
     (doseq [r relationships]
       (rlm-db/store-relationship! db-info r))
     {:events-stored (count event-entities)
@@ -354,7 +374,7 @@
             (.not log-cmd oid)))
         (let [since-instant (when since
                               (try (Instant/parse since)
-                                   (catch Exception _ nil)))
+                                (catch Exception _ nil)))
               since-epoch (when since-instant (.getEpochSecond since-instant))
               iter (.iterator (.call log-cmd))]
           (loop [acc (transient [])

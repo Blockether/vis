@@ -190,7 +190,7 @@ All ordering within a parent is by `:entity/created-at` (no explicit index attri
 - `ingest-git! env {:repo-path path :n 100}` — JGit-backed, attaches `search-commits`/`commit-history`/`file-history`/`blame`/`commit-diff`/`commit-parents`/`commits-by-ticket` to the sandbox. `:repo/name` is unique identity — repeated calls for the same repo dedupe.
 - `dispose-env!` — releases the env handle; on a persistent :db path, the shared SQLite DataSource stays open so sibling envs keep working.
 
-**Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends an `ITERATION_SPEC`-validated JSON response with `:thinking`, `:code` (vec of source strings), and an optional `:final {:answer :confidence :language :sources}` sub-map. When `:final` is set, svar stops iterating and the answer is the RLM result. Observability is via the single `:on-chunk` callback — `{:iteration :thinking :code :final :done?}` — not the old `:hooks` map, which no longer exists.
+**Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, svar stops iterating and the answer is the RLM result. Observability is via the single `:on-chunk` callback — `{:iteration :thinking :code :final :done?}` — not the old `:hooks` map, which no longer exists.
 
 **Web session lifecycle:**
 - `server/create-session!` — opens a named `:conversation` `session:<uuid>` in the shared DB; no per-session directory.
