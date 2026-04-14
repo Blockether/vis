@@ -19,21 +19,21 @@
     (it "single h1 yields one page"
       (let [pages (md/markdown->pages "# Intro\n\nHello world.")]
         (expect (= 1 (count pages)))
-        (expect (= 0 (:page/index (first pages))))
-        (expect (pos? (count (:page/nodes (first pages)))))))
+        (expect (= 0 (:index (first pages))))
+        (expect (pos? (count (:nodes (first pages)))))))
 
     (it "multiple top-level headings yield multiple pages"
       (let [pages (md/markdown->pages "# One\n\nA.\n\n# Two\n\nB.\n\n# Three\n\nC.")]
         (expect (= 3 (count pages)))
-        (expect (= [0 1 2] (mapv :page/index pages)))))
+        (expect (= [0 1 2] (mapv :index pages)))))
 
     (it "nested headings produce nested nodes under a single page"
       (let [pages (md/markdown->pages "# Top\n\n## Sub-a\n\nAlpha.\n\n## Sub-b\n\nBeta.")]
         (expect (= 1 (count pages)))
-        (let [nodes (:page/nodes (first pages))
+        (let [nodes (:nodes (first pages))
               heading-texts (->> nodes
-                              (filter #(= :heading (:page.node/type %)))
-                              (map :page.node/content))]
+                              (filter #(= :heading (:type %)))
+                              (map :content))]
           (expect (some #(= "Top" %) heading-texts))
           (expect (some #(= "Sub-a" %) heading-texts))
           (expect (some #(= "Sub-b" %) heading-texts)))))
@@ -45,8 +45,8 @@
 
     (it "paragraph content preserved as paragraph nodes"
       (let [pages (md/markdown->pages "# H\n\nFirst line.\nSecond line.")
-            nodes (:page/nodes (first pages))
-            paragraphs (filter #(= :paragraph (:page.node/type %)) nodes)]
+            nodes (:nodes (first pages))
+            paragraphs (filter #(= :paragraph (:type %)) nodes)]
         (expect (pos? (count paragraphs)))))))
 
 (defdescribe extraction-strategy-enum-test
@@ -120,7 +120,7 @@
 
 (defdescribe sci-relationship-bindings-test
   (describe "W3 SCI bindings"
-    (it "sci sandbox resolves search-entities, get-entity, list-relationships"
+    (it "sci sandbox resolves search-documents, get-entity, list-relationships"
       (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
                                       :models [{:name "stub" :input-cost 0 :output-cost 0}]}])
             env (sut/create-env router {:db :temp})]
@@ -131,7 +131,7 @@
                             (some? (:val (sci/eval-string+ sci-ctx
                                            (str "(resolve '" sym ")")
                                            {:ns sandbox-ns}))))]
-            (expect (resolved? 'search-entities))
+            (expect (resolved? 'search-documents))
             (expect (resolved? 'get-entity))
             (expect (resolved? 'list-relationships))
             (expect (resolved? 'find-related)))

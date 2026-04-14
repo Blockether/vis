@@ -93,7 +93,7 @@
 
 (def ENTITY_TYPE_VALUES
   "Closed enum of entity types with LLM-friendly descriptions.
-   Used in ENTITY_SPEC for structured extraction and in :entity/type schema field."
+   Used in ENTITY_SPEC for structured extraction and in :type schema field."
   {"concept"      "Named idea, theory, schema, model, defined term, or domain keyword"
    "person"       "Named individual — author, researcher, historical figure, practitioner"
    "technique"    "Method, procedure, algorithm, intervention, protocol, or design pattern"
@@ -111,7 +111,7 @@
 
 (def RELATIONSHIP_TYPE_VALUES
   "Closed enum of relationship types with LLM-friendly descriptions.
-   Used in RELATIONSHIP_SPEC for structured extraction and in :relationship/type schema field."
+   Used in RELATIONSHIP_SPEC for structured extraction and in :type schema field."
   {"defines"      "Source defines, creates, or introduces target"
    "references"   "Source mentions, cites, or refers to target"
    "depends-on"   "Source requires or depends on target to function"
@@ -256,13 +256,13 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
   "Validates a JSON string. Returns nil if valid, error string if broken."
   [s]
   (try (json/read-json (str s)) nil
-       (catch Exception e (str "Invalid JSON: " (ex-message e)))))
+    (catch Exception e (str "Invalid JSON: " (ex-message e)))))
 
 (defn validate-edn
   "Validates an EDN string. Returns nil if valid, error string if broken."
   [s]
   (try (edn/read-string (str s)) nil
-       (catch Exception e (str "Invalid EDN: " (ex-message e)))))
+    (catch Exception e (str "Invalid EDN: " (ex-message e)))))
 
 (defn validate-python
   "Validates Python syntax via python3 compile(). Returns nil if valid."
@@ -346,62 +346,53 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/description "Expected max execution time in ms. SCI is fast: def 100ms, assert 500ms, heavy 2000ms max. DO NOT set >5000."})))
 
-(def ITERATION_SPEC
-  "Spec for each RLM iteration response. Forces structured output from LLM.
-   Used when the provider does NOT have native reasoning (thinking) capability."
-  (spec/spec
-    {:refs [FINAL_SPEC CODE_BLOCK_SPEC]}
-    (spec/field {::spec/name :thinking
-                 ::spec/type :spec.type/string
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Your reasoning: what you observed, what you learned, what to do next"})
-    (spec/field {::spec/name :code
-                 ::spec/type :spec.type/ref
-                 ::spec/target :code_block
-                 ::spec/cardinality :spec.cardinality/many
-                 ::spec/required false
-                 ::spec/description "Code blocks to execute. Each has :expr and :time-ms. CAN combine with :final: code runs first, then final accepted."})
-    (spec/field {::spec/name :next-optimize
-                 ::spec/type :spec.type/keyword
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/required false
-                 ::spec/description "Model preference for next iteration"
-                 ::spec/values {"cost" "Cheap model for simple operations"
-                                "speed" "Fast model for quick tasks"
-                                "intelligence" "Powerful model for hard reasoning"}})
-    (spec/field {::spec/name :final
-                 ::spec/type :spec.type/ref
-                 ::spec/target :final
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/required false
-                 ::spec/description "Final answer. CAN set with :code in same response: code executes first, if all pass final is accepted."})))
+(defn- make-iteration-spec
+  "Builds an iteration response spec.
+   include-thinking? true -> non-reasoning providers.
+   include-thinking? false -> reasoning providers."
+  [{:keys [include-thinking?]}]
+  (let [base-fields [(spec/field {::spec/name :code
+                                  ::spec/type :spec.type/ref
+                                  ::spec/target :code_block
+                                  ::spec/cardinality :spec.cardinality/many
+                                  ::spec/required false
+                                  ::spec/description "Code blocks to execute. Each has :expr and :time-ms. CAN combine with :final: code runs first, then final accepted."})
+                     (spec/field {::spec/name :next-optimize
+                                  ::spec/type :spec.type/keyword
+                                  ::spec/cardinality :spec.cardinality/one
+                                  ::spec/required false
+                                  ::spec/description "Model preference for next iteration"
+                                  ::spec/values {"cost" "Cheap model for simple operations"
+                                                 "speed" "Fast model for quick tasks"
+                                                 "intelligence" "Powerful model for hard reasoning"}})
+                     (spec/field {::spec/name :final
+                                  ::spec/type :spec.type/ref
+                                  ::spec/target :final
+                                  ::spec/cardinality :spec.cardinality/one
+                                  ::spec/required false
+                                  ::spec/description "Final answer. CAN set with :code in same response: code executes first, if all pass final is accepted."})]
+        fields (if include-thinking?
+                 (into [(spec/field {::spec/name :thinking
+                                     ::spec/type :spec.type/string
+                                     ::spec/cardinality :spec.cardinality/one
+                                     ::spec/description "Your reasoning: what you observed, what you learned, what to do next"})]
+                   base-fields)
+                 base-fields)]
+    (apply spec/spec {:refs [FINAL_SPEC CODE_BLOCK_SPEC]} fields)))
 
-(def ITERATION_SPEC_CODE_ONLY
-  "Spec for RLM iteration response when the provider has native reasoning.
-   No 'thinking' field — the model's native reasoning tokens handle that.
-   Saves output tokens by not duplicating reasoning in JSON."
-  (spec/spec
-    {:refs [FINAL_SPEC CODE_BLOCK_SPEC]}
-    (spec/field {::spec/name :code
-                 ::spec/type :spec.type/ref
-                 ::spec/target :code_block
-                 ::spec/cardinality :spec.cardinality/many
-                 ::spec/required false
-                 ::spec/description "Code blocks to execute. Each has :expr and :time-ms. CAN combine with :final: code runs first, then final accepted."})
-    (spec/field {::spec/name :next-optimize
-                 ::spec/type :spec.type/keyword
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/required false
-                 ::spec/description "Model preference for next iteration"
-                 ::spec/values {"cost" "Cheap model for simple operations"
-                                "speed" "Fast model for quick tasks"
-                                "intelligence" "Powerful model for hard reasoning"}})
-    (spec/field {::spec/name :final
-                 ::spec/type :spec.type/ref
-                 ::spec/target :final
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/required false
-                 ::spec/description "Final answer. CAN set with :code in same response: code executes first, if all pass final is accepted."})))
+(def ITERATION_SPEC_BASE
+  "Shared base for all iteration response specs (code/next-optimize/final)."
+  (make-iteration-spec {:include-thinking? false}))
+
+(def ITERATION_SPEC_NON_REASONING
+  "Iteration response spec for non-reasoning providers.
+   Includes explicit :thinking field."
+  (make-iteration-spec {:include-thinking? true}))
+
+(def ITERATION_SPEC_REASONING
+  "Iteration response spec for reasoning-capable providers.
+   Excludes :thinking field to avoid duplicating native reasoning tokens."
+  ITERATION_SPEC_BASE)
 
 (def SUB_RLM_QUERY_SPEC
   "Spec for sub-rlm-query responses. Forces structured output: prose content +
@@ -643,87 +634,39 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
 ;;; Page Extraction Specs (Node-Based Structure)
 ;;; ============================================================================
 
-;; Page number (0-based)
-(s/def :page/index
-  nat-int?)
-
-;; Document node types (keyword values: :section, :heading, :paragraph, etc.)
-(s/def :page.node/type
+(def ^:private CONTENT_NODE_TYPES
   #{:section :heading :paragraph :list-item :image :table :header :footer :metadata})
 
-;; Node unique identifier (string: "1", "2", "3", etc.)
-(s/def :page.node/id
-  string?)
+(defn- valid-content-node-map?
+  [m]
+  (and (map? m)
+    (contains? m :type)
+    (contains? m :id)
+    (contains? CONTENT_NODE_TYPES (:type m))
+    (string? (:id m))
+    (or (not (contains? m :parent-id)) (nil? (:parent-id m)) (string? (:parent-id m)))
+    (or (not (contains? m :level)) (string? (:level m)))
+    (or (not (contains? m :content)) (string? (:content m)))
+    (or (not (contains? m :image-data)) (bytes? (:image-data m)))
+    (or (not (contains? m :description)) (nil? (:description m)) (string? (:description m)))
+    (or (not (contains? m :continuation?)) (boolean? (:continuation? m)))
+    (or (not (contains? m :caption)) (nil? (:caption m)) (string? (:caption m)))
+    (or (not (contains? m :kind)) (string? (:kind m)))
+    (or (not (contains? m :group-id)) (string? (:group-id m)))
+    (or (not (contains? m :bbox))
+      (and (vector? (:bbox m)) (= 4 (count (:bbox m))) (every? int? (:bbox m))))
+    (or (not (contains? m :image-index)) (int? (:image-index m)))))
 
-;; Parent node ID (for hierarchy - null for top-level)
-(s/def :page.node/parent-id
-  (s/nilable string?))
-
-;; Node levels (heading: h1-h6, paragraph: paragraph/citation/code/etc., list: l1-l6)
-(s/def :page.node/level
-  string?)
-
-;; Node text content (text for text nodes)
-(s/def :page.node/content
-  string?)
-
-;; Node image bytes (PNG)
-(s/def :page.node/image-data
-  bytes?)
-
-;; Optional: AI-generated description (for sections, images, tables)
-(s/def :page.node/description
-  (s/nilable string?))
-
-;; Optional: continuation from previous page
-(s/def :page.node/continuation?
-  boolean?)
-
-;; Optional: caption text from document (for images/tables)
-(s/def :page.node/caption
-  (s/nilable string?))
-
-;; Optional: kind of visual element (photo, diagram, chart, data, form, etc.)
-(s/def :page.node/kind
-  string?)
-
-;; Optional: group ID for continuation grouping (shared UUID across pages)
-(s/def :page.node/group-id
-  string?)
-
-;; Optional: bounding box for visual elements [xmin, ymin, xmax, ymax] in pixels (legacy)
-(s/def :page.node/bbox
-  (s/coll-of int? :kind vector? :count 4))
-
-;; Optional: index into PDFBox-extracted embedded images (0-based)
-(s/def :page.node/image-index
-  int?)
-
-;; Single content node within a page (namespaced keys)
-;; Note: :page.node/content holds text for text nodes; visual nodes use :page.node/image-data (bytes)
-(s/def ::content-node
-  (s/keys :req [:page.node/type
-                :page.node/id]
-    :opt [:page.node/parent-id
-          :page.node/level
-          :page.node/content
-          :page.node/image-data
-          :page.node/description
-          :page.node/continuation?
-          :page.node/caption
-          :page.node/kind
-          :page.node/bbox
-          :page.node/image-index
-          :page.node/group-id]))
-
-;; Page nodes: vector of content nodes in reading order
-(s/def :page/nodes
-  (s/coll-of ::content-node :kind vector?))
+(s/def ::content-node valid-content-node-map?)
 
 ;; Page map (extraction result - node-based)
 (s/def ::page
-  (s/keys :req [:page/index
-                :page/nodes]))
+  (s/and map?
+    #(contains? % :index)
+    #(contains? % :nodes)
+    #(nat-int? (:index %))
+    #(vector? (:nodes %))
+    #(every? valid-content-node-map? (:nodes %))))
 
 ;; Page list (vector of pages)
 (s/def ::page-list
@@ -737,100 +680,51 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
 ;;; Document Specs (RLM output)
 ;;; ============================================================================
 
-;; Document name: filename without extension
-(s/def :document/name
-  (s/and string? seq))
-
-;; Document title: extracted from metadata or first heading
-(s/def :document/title
-  (s/nilable string?))
-
-;; Document abstract: LLM-generated summary from section descriptions
-(s/def :document/abstract
-  (s/nilable string?))
-
-;; Document extension: file type (pdf, md, txt)
-(s/def :document/extension
-  (s/and string? #{"pdf" "md" "txt" "docx" "html"}))
-
-;; Document pages: vector of extracted pages
-(s/def :document/pages
-  ::page-list)
+(def ^:private DOCUMENT_EXTENSIONS #{"pdf" "md" "txt" "docx" "html"})
 
 ;;; ============================================================================
 ;;; TOC Entry Specs (document.toc namespace)
 ;;; ============================================================================
 
-;; TOC entry type
-(s/def :document.toc/type
-  #{:toc-entry})
-
-;; TOC entry ID (UUID string)
-(s/def :document.toc/id
-  string?)
-
-;; TOC entry parent ID (nil for root entries)
-(s/def :document.toc/parent-id
-  (s/nilable string?))
-
-;; TOC entry title
-(s/def :document.toc/title
-  string?)
-
-;; TOC entry description (optional, can be nil)
-(s/def :document.toc/description
-  (s/nilable string?))
-
-;; TOC entry target page (0-based index)
-(s/def :document.toc/target-page
-  nat-int?)
-
-;; TOC entry target section ID (UUID string linking to page node).
-;; Nilable because linking happens in post-processing and may not resolve.
-(s/def :document.toc/target-section-id
-  (s/nilable string?))
-
-;; TOC entry level (l1, l2, l3, etc.)
-(s/def :document.toc/level
-  string?)
+(defn- valid-toc-entry?
+  [m]
+  (and (map? m)
+    (= :toc-entry (:type m))
+    (string? (:id m))
+    (string? (:title m))
+    (nat-int? (:target-page m))
+    (string? (:level m))
+    (or (not (contains? m :start-page-label)) (nat-int? (:start-page-label m)))
+    (or (not (contains? m :end-page-label)) (nil? (:end-page-label m)) (nat-int? (:end-page-label m)))
+    (or (not (contains? m :start-page-index)) (nat-int? (:start-page-index m)))
+    (or (not (contains? m :end-page-index)) (nil? (:end-page-index m)) (nat-int? (:end-page-index m)))
+    (or (not (contains? m :target-page-index)) (nat-int? (:target-page-index m)))
+    (or (not (contains? m :parent-id)) (nil? (:parent-id m)) (string? (:parent-id m)))
+    (or (not (contains? m :description)) (nil? (:description m)) (string? (:description m)))
+    (or (not (contains? m :target-section-id)) (nil? (:target-section-id m)) (string? (:target-section-id m)))))
 
 ;; Complete TOC entry
 (s/def ::toc-entry
-  (s/keys :req [:document.toc/type
-                :document.toc/id
-                :document.toc/title
-                :document.toc/target-page
-                :document.toc/level]
-    :opt [:document.toc/parent-id
-          :document.toc/description
-          :document.toc/target-section-id]))
-
-;; Document TOC: vector of TOC entries
-(s/def :document/toc
-  (s/coll-of ::toc-entry :kind vector?))
-
-;; Document timestamps
-(s/def :document/created-at
-  inst?)
-
-(s/def :document/updated-at
-  inst?)
-
-;; Document author
-(s/def :document/author
-  (s/nilable string?))
+  valid-toc-entry?)
 
 ;; Complete RLM document
 (s/def ::document
-  (s/keys :req [:document/name
-                :document/extension
-                :document/pages
-                :document/toc]
-    :opt [:document/title
-          :document/abstract
-          :document/created-at
-          :document/updated-at
-          :document/author]))
+  (s/and map?
+    #(contains? % :name)
+    #(contains? % :extension)
+    #(contains? % :pages)
+    #(contains? % :toc)
+    #(and (string? (:name %)) (seq (:name %)))
+    #(contains? DOCUMENT_EXTENSIONS (:extension %))
+    #(vector? (:pages %))
+    #(every? (fn [page] (s/valid? ::page page)) (:pages %))
+    #(vector? (:toc %))
+    #(every? valid-toc-entry? (:toc %))
+    #(or (not (contains? % :title)) (nil? (:title %)) (string? (:title %)))
+    #(or (not (contains? % :abstract)) (nil? (:abstract %)) (string? (:abstract %)))
+    #(or (not (contains? % :created-at)) (inst? (:created-at %)))
+    #(or (not (contains? % :updated-at)) (inst? (:updated-at %)))
+    #(or (not (contains? % :author)) (nil? (:author %)) (string? (:author %)))))
 
 ;; Vector of documents
 (s/def ::documents

@@ -190,27 +190,27 @@
         body-text (str/trim (str/join "\n" body-lines))
 
         ;; Section node
-        section-node {:page.node/type :section
-                      :page.node/id section-id
-                      :page.node/parent-id parent-section-id
-                      :page.node/description nil}  ;; Could generate with LLM later
+        section-node {:type :section
+                      :id section-id
+                      :parent-id parent-section-id
+                      :description nil}  ;; Could generate with LLM later
 
         ;; Heading node
         heading-level (str "h" (or (:level tree-node) 1))
-        heading-node {:page.node/type :heading
-                      :page.node/id heading-id
-                      :page.node/parent-id section-id
-                      :page.node/level heading-level
-                      :page.node/content (:title tree-node)}
+        heading-node {:type :heading
+                      :id heading-id
+                      :parent-id section-id
+                      :level heading-level
+                      :content (:title tree-node)}
 
         ;; Paragraph node for body text (if any)
         paragraph-nodes (when (seq body-text)
                           (let [para-id (str (swap! id-counter inc))]
-                            [{:page.node/type :paragraph
-                              :page.node/id para-id
-                              :page.node/parent-id section-id
-                              :page.node/level "paragraph"
-                              :page.node/content body-text}]))
+                            [{:type :paragraph
+                              :id para-id
+                              :parent-id section-id
+                              :level "paragraph"
+                              :content body-text}]))
 
         ;; Recursively process children
         child-nodes (mapcat #(tree-node->page-nodes % id-counter section-id)
@@ -288,8 +288,8 @@
    
    Returns:
    Vector of page maps:
-     :page/index - Integer (0-indexed)
-     :page/nodes - Vector of node maps (:page.node/type, :page.node/id, etc.)"
+     :index - Integer (0-indexed)
+     :nodes - Vector of node maps (:type, :id, etc.)"
   [content]
   (trove/log! {:level :info :data {:content-length (count content)}
                :msg "Parsing markdown structure"})
@@ -320,8 +320,8 @@
                              tree-roots))]
             (trove/log! {:level :debug :data {:page page-idx :nodes (count nodes)}
                          :msg "Converted page sections to nodes"})
-            {:page/index page-idx
-             :page/nodes nodes}))
+            {:index page-idx
+             :nodes nodes}))
         page-groups))))
 
 (defn markdown-file->pages

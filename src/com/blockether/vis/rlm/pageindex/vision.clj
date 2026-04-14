@@ -53,9 +53,10 @@ TEXT FIDELITY + ENGLISH TRANSLATION:
 - Do NOT invent or complete missing sentences, expand abbreviations, correct typos, paraphrase, or summarize.
 - If content is cut off at a page boundary, set continuation=true and copy only the visible text as-is; do NOT guess the rest.
 
-VISUAL DETECTION — capture everything you see:
-- Still detect ALL visual elements (Image and Table nodes) that are visible on the page, including tiny icons, logos, headshots, charts, diagrams, photos, signatures, and decorative badges.
-- `description` on Section/Image/Table must describe ONLY what is shown on the page — no speculation, no outside knowledge, no editorializing — but describing what YOU SEE is required, not forbidden.
+VISUAL DETECTION — capture meaningful content visuals only:
+- Detect content-bearing visual elements (figures, diagrams, charts, tables, photos, maps, formulas, signatures) that contribute to document meaning.
+- Ignore decorative or surplus visuals that do not contribute to content (ornamental icons, page flourishes, decorative badges, purely stylistic separators).
+- `description` on Section/Image/Table must describe ONLY what is shown on the page — no speculation, no outside knowledge, no editorializing.
 - If a field is not visible or not applicable, leave it null. Never fabricate values.
 
 NODE TYPES:
@@ -94,14 +95,14 @@ TocEntry - Table of contents entry (ONLY from actual TOC pages in the document)
   CRITICAL: ONLY extract TocEntry from ACTUAL Table of Contents pages you SEE in the document.
   DO NOT infer or generate TOC entries. If there is no TOC page, do not create TocEntry nodes.
 
-Image - ALL visual elements regardless of size (DESCRIPTION IS REQUIRED)
+Image - Content-bearing visual elements (DESCRIPTION IS REQUIRED)
   - id: Unique identifier
   - parent-id: ID of the Section this image belongs to (null for standalone footer/header icons)
   - kind: photo, diagram, chart, logo, icon, illustration, screenshot, map, formula, signature, badge, unknown
   - image-index: Integer index matching an embedded image from the EMBEDDED IMAGES list (null if no match)
   - caption: Text from document caption (null if no caption present)
   - description: REQUIRED - YOUR description of what the image shows
-  NOTE: Detect ALL images including tiny icons, license badges, social media icons in headers/footers
+  NOTE: Ignore decorative images/icons that are not part of document content
 
 Table - Data tables (DESCRIPTION AND CONTENT ARE REQUIRED)
   - id: Unique identifier
@@ -148,10 +149,9 @@ CONTENT RULES:
 7. For Image/Table: set image-index to match the corresponding embedded image from the EMBEDDED IMAGES list (by dimensions and visual content)
 8. Set continuation=true if content continues from previous page
 9. Keep text content exact - no interpretation or summarization
-10. Detect ALL visual elements regardless of size - even tiny icons (20x20 pixels or smaller)
-11. Include footer/header icons, license badges (Creative Commons, etc.), social media icons, decorative icons
-12. Do NOT skip images based on size or perceived importance - capture everything visual
-13. For TocEntry: ONLY extract from actual TOC pages - never infer. Set target-section-id to null always.
+10. Include only content-bearing visuals; exclude decorative/surplus elements
+11. Ignore footer/header ornamentation, branding-only icons, decorative badges, and purely stylistic glyphs
+12. For TocEntry: ONLY extract from actual TOC pages - never infer. Set target-section-id to null always.
 
 EXAMPLE STRUCTURE (flat array with parent-id references):
 [
@@ -641,15 +641,32 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   360000)
 
 (defn- visual-node?
-  "Checks if a node is a visual node (Image or Table) by presence of :page.node/kind field."
+  "Checks if a node is a visual node (Image or Table) by presence of :kind field."
   [node]
-  (some? (:page.node/kind node)))
+  (some? (:kind node)))
+
+(defn- flatten-node-keys
+  "Normalize namespaced node keys to flat keys.
+   Example: :page.node/type -> :type, :document.toc/title -> :title."
+  [node]
+  (reduce-kv
+    (fn [m k v]
+      (assoc m
+        (if (keyword? k) (keyword (name k)) k)
+        v))
+    {}
+    node))
+
+(defn- flatten-nodes
+  "Apply flat-key normalization to all extracted nodes."
+  [nodes]
+  (mapv flatten-node-keys nodes))
 
 (defn- enrich-visual-nodes
   "Enriches visual nodes (images/tables) with extracted image bytes from PDFBox.
 
-   Visual nodes are identified by having :page.node/kind field (Image and Table types).
-   Each visual node may have :page.node/image-index pointing to a PDFBox-extracted image.
+   Visual nodes are identified by having :kind field (Image and Table types).
+   Each visual node may have :image-index pointing to a PDFBox-extracted image.
 
    Params:
    `nodes` - Vector of all node maps.
@@ -657,17 +674,17 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    `page-index` - Integer. The page index (for logging).
 
    Returns:
-   Vector of nodes with :page.node/image-data added for visual elements with valid image-index."
+   Vector of nodes with :image-data added for visual elements with valid image-index."
   [nodes pdf-images page-index]
   (mapv (fn [node]
-          (if-let [img-idx (:page.node/image-index node)]
+          (if-let [img-idx (:image-index node)]
             (if-let [img (get pdf-images img-idx)]
               (do
                 (trove/log! {:level :debug
                              :data {:page page-index :image-index img-idx
                                     :width (:width img) :height (:height img)}
                              :msg "Attached PDFBox image to node"})
-                (assoc node :page.node/image-data (:bytes img)))
+                (assoc node :image-data (:bytes img)))
               (do
                 (trove/log! {:level :warn
                              :data {:page page-index :image-index img-idx
@@ -706,27 +723,27 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    :output argument to llm/eval! for quality assessment.
    
    Params:
-   `page` - Map with :page/nodes.
+   `page` - Map with :nodes.
    
    Returns:
    String. One line per node."
   [page]
-  (->> (:page/nodes page)
+  (->> (:nodes page)
     (map (fn [node]
-           (let [ntype (:page.node/type node)
-                 content (:page.node/content node)
-                 desc (:page.node/description node)]
+           (let [ntype (:type node)
+                 content (:content node)
+                 desc (:description node)]
              (case ntype
                :section (str "[Section] " desc)
-               :heading (str "[Heading " (:page.node/level node) "] " content)
+               :heading (str "[Heading " (:level node) "] " content)
                :paragraph (str "[Paragraph] " (when content (subs content 0 (min 200 (count content)))))
                :list-item (str "[ListItem] " content)
-               :image (str "[Image: " (:page.node/kind node) "] " desc)
-               :table (str "[Table: " (:page.node/kind node) "] " desc)
+               :image (str "[Image: " (:kind node) "] " desc)
+               :table (str "[Table: " (:kind node) "] " desc)
                :header (str "[Header] " content)
                :footer (str "[Footer] " content)
                :metadata (str "[Metadata] " content)
-               :toc-entry (str "[TOC] " (:document.toc/title node))
+               :toc-entry (str "[TOC] " (:title node))
                (str "[" (when ntype (name ntype)) "] " (or content desc ""))))))
     (str/join "\n")))
 
@@ -737,14 +754,14 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    structure, and description quality.
    
    Params:
-   `page` - Map with :page/index and :page/nodes.
+   `page` - Map with :index and :nodes.
    `opts` - Map with :refine-model and :config.
    
    Returns:
    Map with :page-index, :score, :correct?, :summary, :issues."
   [page {:keys [rlm-router]}]
   (let [serialized (serialize-page-for-eval page)
-        page-index (:page/index page)]
+        page-index (:index page)]
     (trove/log! {:level :info :data {:page page-index}
                  :msg "Evaluating page extraction quality"})
     (let [result (llm/eval! rlm-router {:task (str "Extract all visible content from document page " page-index
@@ -782,7 +799,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
      :refine-threshold - Float. Quality threshold.
    
    Returns:
-   Map with :page/index and :page/nodes (enriched with image data)."
+   Map with :index and :nodes (enriched with image data)."
   [^BufferedImage image page-index {:keys [rlm-router objective pdf-images
                                            refine-iterations refine-threshold]
                                     :or {refine-iterations DEFAULT_REFINE_ITERATIONS
@@ -809,7 +826,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                                  :iterations refine-iterations
                                                  :threshold refine-threshold
                                                  :criteria PAGE_EVAL_CRITERIA})
-          raw-nodes (get-in refine-result [:result :nodes] [])
+          raw-nodes (-> (get-in refine-result [:result :nodes] [])
+                      flatten-nodes)
           nodes (enrich-visual-nodes raw-nodes page-pdf-images page-index)]
       (trove/log! {:level :info :data {:page page-index
                                        :nodes (count nodes)
@@ -817,8 +835,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                        :converged? (:converged? refine-result)
                                        :iterations (:iterations-count refine-result)}
                    :msg "Page refinement complete"})
-      {:page/index page-index
-       :page/nodes nodes})))
+      {:index page-index
+       :nodes nodes})))
 
 (defn- refine-page-text
   "Re-extracts text content using llm/refine! for higher quality.
@@ -829,7 +847,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    `opts` - Map with :refine-model, :objective, :config, :refine-iterations, :refine-threshold.
    
    Returns:
-   Map with :page/index and :page/nodes."
+   Map with :index and :nodes."
   [content page-index {:keys [rlm-router objective refine-iterations refine-threshold]
                        :or {refine-iterations DEFAULT_REFINE_ITERATIONS
                             refine-threshold DEFAULT_REFINE_THRESHOLD}}]
@@ -846,14 +864,15 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                                :iterations refine-iterations
                                                :threshold refine-threshold
                                                :criteria PAGE_EVAL_CRITERIA})
-        nodes (get-in refine-result [:result :nodes] [])]
+        nodes (-> (get-in refine-result [:result :nodes] [])
+                flatten-nodes)]
     (trove/log! {:level :info :data {:page page-index
                                      :nodes (count nodes)
                                      :final-score (:final-score refine-result)
                                      :converged? (:converged? refine-result)}
                  :msg "Text refinement complete"})
-    {:page/index page-index
-     :page/nodes nodes}))
+    {:index page-index
+     :nodes nodes}))
 
 (defn- sample-pages
   "Selects page indices for quality evaluation.
@@ -942,8 +961,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
           ;; Parallel refine: re-extract bad pages concurrently
           (if (<= (long parallel-refine) 1)
             (mapv (fn [page]
-                    (if (contains? bad-indices (:page/index page))
-                      (let [idx (:page/index page)
+                    (if (contains? bad-indices (:index page))
+                      (let [idx (:index page)
                             image (nth images idx)
                             rotation (get page-rotations idx 0)
                             rotated-image (if (pos? (long rotation))
@@ -953,7 +972,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                       page))
               pages)
             ;; Parallel: only refine bad pages, preserve good ones in-place
-            (let [bad-page-inputs (filterv #(contains? bad-indices (:page/index %)) pages)
+            (let [bad-page-inputs (filterv #(contains? bad-indices (:index %)) pages)
                   in-ch (async/chan (count bad-page-inputs))
                   out-ch (async/chan (count bad-page-inputs))]
               (async/onto-chan! in-ch bad-page-inputs)
@@ -961,7 +980,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                 parallel-refine
                 out-ch
                 (map (fn [page]
-                       (let [idx (:page/index page)
+                       (let [idx (:index page)
                              image (nth images idx)
                              rotation (get page-rotations idx 0)
                              rotated-image (if (pos? (long rotation))
@@ -971,10 +990,10 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                 in-ch)
               (let [refined-map (loop [m {}]
                                   (if-let [result (async/<!! out-ch)]
-                                    (recur (assoc m (:page/index result) result))
+                                    (recur (assoc m (:index result) result))
                                     m))]
                 (mapv (fn [page]
-                        (get refined-map (:page/index page) page))
+                        (get refined-map (:index page) page))
                   pages)))))))))
 
 (defn- quality-pass-single
@@ -1045,15 +1064,16 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                          :check-context? false
                                          :timeout-ms timeout-ms
                                          :extra-body {:max_tokens 15000}})
-          raw-nodes (get-in response [:result :nodes] [])
+          raw-nodes (-> (get-in response [:result :nodes] [])
+                      flatten-nodes)
           ;; Enrich visual nodes with PDFBox-extracted images by index
           nodes (enrich-visual-nodes raw-nodes page-pdf-images page-index)
         ;; Count elements for logging
-          section-count (count (filter :page.node/description nodes))
-          heading-count (count (filter :page.node/level nodes))
+          section-count (count (filter :description nodes))
+          heading-count (count (filter :level nodes))
           visual-nodes (filter visual-node? nodes)
-          image-count (count (filter #(contains? image-kind-values (:page.node/kind %)) visual-nodes))
-          table-count (count (filter #(contains? table-kind-values (:page.node/kind %)) visual-nodes))]
+          image-count (count (filter #(contains? image-kind-values (:kind %)) visual-nodes))
+          table-count (count (filter #(contains? table-kind-values (:kind %)) visual-nodes))]
       (trove/log! {:level :debug :data {:page page-index
                                         :nodes-count (count nodes)
                                         :sections section-count
@@ -1061,8 +1081,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                         :images image-count
                                         :tables table-count}
                    :msg "Page extraction complete"})
-      {:page/index page-index
-       :page/nodes nodes})))
+      {:index page-index
+       :nodes nodes})))
 
 ;; =============================================================================
 ;; OCR-Based Extraction (Local GLM-OCR via LM Studio + Text LLM for structuring)
@@ -1131,7 +1151,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                          :ocr-ms ocr-ms
                                          :struct-ms struct-ms
                                          :total-ms (+ ocr-ms struct-ms)
-                                         :nodes (count (:page/nodes result))}
+                                         :nodes (count (:nodes result))}
                      :msg "OCR page extraction complete"})
         result))))
 
@@ -1154,8 +1174,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    
    Returns:
    Vector of maps, one per page:
-     `:page/index` - Integer. The page number (0-based).
-     `:page/nodes` - Vector of document nodes (see extract-text-from-image for node structure).
+     `:index` - Integer. The page number (0-based).
+     `:nodes` - Vector of document nodes (see extract-text-from-image for node structure).
    
    Throws:
    Anomaly (fault) if any page fails to extract."
@@ -1280,7 +1300,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                             response-body (assoc :response-body response-body))
                                     :msg "Failed to extract text from page"})
                        ;; Return error as data - we'll check after collection
-                       {:page/index index
+                       {:index index
                         :extraction-error (cond-> {:page index
                                                    :message (ex-message e)
                                                    :type (type e)
@@ -1294,7 +1314,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                         (if-let [result (async/<!! result-chan)]
                           (recur (conj acc result))
                           acc))
-              sorted-results (vec (sort-by :page/index results))
+              sorted-results (vec (sort-by :index results))
               ;; Check for any extraction errors
               errors (filter :extraction-error sorted-results)]
 
@@ -1329,7 +1349,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    `opts` - Map with :model, :objective, :config, :timeout-ms.
    
    Returns:
-   Map with :page/index and :page/nodes."
+   Map with :index and :nodes."
   [content page-index {:keys [rlm-router objective timeout-ms routing]
                        :or {timeout-ms DEFAULT_VISION_TIMEOUT_MS}}]
   (trove/log! {:level :info :data {:page page-index :content-length (count content)
@@ -1345,16 +1365,17 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                                :timeout-ms timeout-ms
                                                :extra-body {:max_tokens 15000}}
                                         routing (assoc :routing routing)))
-        nodes (get-in response [:result :nodes] [])
-        section-count (count (filter :page.node/description nodes))
-        heading-count (count (filter :page.node/level nodes))]
+        nodes (-> (get-in response [:result :nodes] [])
+                flatten-nodes)
+        section-count (count (filter :description nodes))
+        heading-count (count (filter :level nodes))]
     (trove/log! {:level :debug :data {:page page-index
                                       :nodes-count (count nodes)
                                       :sections section-count
                                       :headings heading-count}
                  :msg "Text extraction complete"})
-    {:page/index page-index
-     :page/nodes nodes}))
+    {:index page-index
+     :nodes nodes}))
 
 ;; =============================================================================
 ;; Image File Loading
@@ -1402,8 +1423,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    
    Returns:
    Vector with single map:
-     `:page/index` - Integer. Always 0.
-     `:page/nodes` - Vector of document nodes."
+     `:index` - Integer. Always 0.
+     `:nodes` - Vector of document nodes."
   [file-path {:keys [rlm-router refine?] :as opts}]
   (let [file (File. ^String file-path)]
     (when-not (.exists file)
@@ -1436,8 +1457,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    
    Returns:
    Vector with single map:
-     `:page/index` - Integer. Always 0.
-     `:page/nodes` - Vector of document nodes."
+     `:index` - Integer. Always 0.
+     `:nodes` - Vector of document nodes."
   [file-path {:keys [rlm-router refine?] :as opts}]
   (trove/log! {:level :info :data {:file file-path :has-router (some? rlm-router)}
                :msg "Extracting text from image file"})
@@ -1468,8 +1489,8 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    
    Returns:
    Vector with single map:
-     `:page/index` - Integer. Always 0.
-     `:page/nodes` - Vector of document nodes."
+     `:index` - Integer. Always 0.
+     `:nodes` - Vector of document nodes."
   [content {:keys [rlm-router refine?] :as opts}]
   (trove/log! {:level :info :data {:content-length (count content) :has-router (some? rlm-router)}
                :msg "Extracting content from string"})
@@ -1500,7 +1521,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    to determine the most appropriate title.
    
    Params:
-   `pages` - Vector of page maps with :page/nodes.
+   `pages` - Vector of page maps with :nodes.
    `opts` - Map with:
      `:model` - String. LLM model to use.
      `:config` - Map. LLM config with :api-key, :base-url.
@@ -1511,27 +1532,27 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   [pages {:keys [rlm-router text-model timeout-ms]
           :or {timeout-ms 30000}}]
   (let [;; Collect relevant content for title inference
-        all-nodes (mapcat :page/nodes pages)
+        all-nodes (mapcat :nodes pages)
         ;; Get first few headings
         headings (->> all-nodes
-                   (filter #(= :heading (:page.node/type %)))
+                   (filter #(= :heading (:type %)))
                    (take 5)
-                   (map :page.node/content))
+                   (map :content))
         ;; Get first few section descriptions  
         sections (->> all-nodes
-                   (filter #(= :section (:page.node/type %)))
+                   (filter #(= :section (:type %)))
                    (take 5)
-                   (map :page.node/description))
+                   (map :description))
         ;; Get metadata nodes
         metadata (->> all-nodes
-                   (filter #(= :metadata (:page.node/type %)))
-                   (map :page.node/content))
+                   (filter #(= :metadata (:type %)))
+                   (map :content))
         ;; Get first paragraph
         first-para (->> all-nodes
-                     (filter #(and (= :paragraph (:page.node/type %))
-                                (= "paragraph" (:page.node/level %))))
+                     (filter #(and (= :paragraph (:type %))
+                                (= "paragraph" (:level %))))
                      first
-                     :page.node/content)
+                     :content)
         ;; Build context for LLM
         context (str "Document headings:\n"
                   (str/join "\n" (map #(str "- " %) headings))
