@@ -34,8 +34,8 @@
 ;;     manifest.edn    — per-page progress (for crash-recovery)
 
 (require '[com.blockether.svar.core :as svar]
-         '[com.blockether.vis.rlm :as rlm]
-         '[clojure.edn :as edn])
+  '[com.blockether.vis.rlm :as rlm]
+  '[clojure.edn :as edn])
 
 (def ^:private boolean-flags #{"--force"})
 
@@ -104,7 +104,7 @@
 (case strategy
   :vision (println "Vision model:" model)
   :ocr    (do (println "OCR model:   " ocr-model)
-              (println "OCR endpoint:" ocr-base-url)))
+            (println "OCR endpoint:" ocr-base-url)))
 (println "Text model:  " text-model)
 (println "Parallel:    " parallel)
 (when pages (println "Pages:       " pages))
@@ -131,9 +131,9 @@
 
   (println "=== Done ===")
   (println "Output:      " (:output-path result))
-  (println "Pages:       " (count (:document/pages doc)))
-  (println "TOC entries: " (count (:document/toc doc)))
-  (println "Total nodes: " (reduce + (map #(count (:page/nodes %)) (:document/pages doc))))
+  (println "Pages:       " (count (:pages doc)))
+  (println "TOC entries: " (count (:toc doc)))
+  (println "Total nodes: " (reduce + (map #(count (:nodes %)) (:pages doc))))
   (println (format "Time: %.1fs" elapsed))
   (println)
   (println "Load with:")

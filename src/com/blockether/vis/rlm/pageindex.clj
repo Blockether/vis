@@ -18,27 +18,27 @@
 (defn- visual-node?
   "Returns true if node is a visual element (image or table)."
   [node]
-  (#{:image :table} (:page.node/type node)))
+  (#{:image :table} (:type node)))
 
 (defn- last-visual-of-type
   "Finds the last visual node of the given type on a page."
   [page node-type]
-  (->> (:page/nodes page)
-    (filter #(= node-type (:page.node/type %)))
+  (->> (:nodes page)
+    (filter #(= node-type (:type %)))
     last))
 
 (defn group-continuations
-  "Groups continuation nodes across pages by assigning a shared :page.node/group-id.
+  "Groups continuation nodes across pages by assigning a shared :group-id.
 
    Walks pages in order. When a visual node (image/table) has continuation?=true,
    looks back to the last same-type node on the preceding page and assigns both
    the same group-id UUID. Propagates group-id forward for 3+ page chains.
 
    Params:
-   `pages` - Vector of page maps with :page/nodes (must have UUIDs already).
+   `pages` - Vector of page maps with :nodes (must have UUIDs already).
 
    Returns:
-   Updated pages with :page.node/group-id assigned to grouped nodes."
+   Updated pages with :group-id assigned to grouped nodes."
   [pages]
   (if (< (count pages) 2)
     pages
@@ -46,14 +46,14 @@
           _ (doseq [i (range 1 (count pages))]
               (let [prev-page (nth pages (dec (long i)))
                     curr-page (nth pages i)]
-                (doseq [node (:page/nodes curr-page)]
+                (doseq [node (:nodes curr-page)]
                   (when (and (visual-node? node)
-                          (:page.node/continuation? node))
-                    (let [node-type (:page.node/type node)
+                          (:continuation? node))
+                    (let [node-type (:type node)
                           prev-visual (last-visual-of-type prev-page node-type)]
                       (when prev-visual
-                        (let [prev-id (:page.node/id prev-visual)
-                              curr-id (:page.node/id node)
+                        (let [prev-id (:id prev-visual)
+                              curr-id (:id node)
                               existing-group (get @group-assignments prev-id)
                               group-id (or existing-group (str (util/uuid)))]
                           (swap! group-assignments assoc prev-id group-id)
@@ -62,11 +62,11 @@
       (if (empty? assignments)
         pages
         (mapv (fn [page]
-                (update page :page/nodes
+                (update page :nodes
                   (fn [nodes]
                     (mapv (fn [node]
-                            (if-let [gid (get assignments (:page.node/id node))]
-                              (assoc node :page.node/group-id gid)
+                            (if-let [gid (get assignments (:id node))]
+                              (assoc node :group-id gid)
                               node))
                       nodes))))
           pages)))))
@@ -122,7 +122,7 @@
 
     (integer? pages-spec)
     (do (validate-page-number pages-spec total-page-count)
-        #{(dec pages-spec)})
+      #{(dec pages-spec)})
 
     (vector? pages-spec)
     (if (and (= 2 (count pages-spec))
@@ -135,7 +135,7 @@
 
                   (integer? item)
                   (do (validate-page-number item total-page-count)
-                      (conj acc (dec item)))
+                    (conj acc (dec item)))
 
                   :else
                   (anomaly/incorrect! (str "Invalid element in page spec: " (pr-str item))
@@ -153,11 +153,11 @@
   "Filters a page-list by a set of 0-indexed page indices.
 
    If page-set is nil, returns page-list unchanged (all pages).
-   Otherwise returns only pages whose :page/index is in page-set."
+   Otherwise returns only pages whose :index is in page-set."
   [page-list page-set]
   (if (nil? page-set)
     page-list
-    (filterv #(contains? page-set (:page/index %)) page-list)))
+    (filterv #(contains? page-set (:index %)) page-list)))
 
 ;; =============================================================================
 ;; Public Serialization API
@@ -166,7 +166,7 @@
 (defn write-document-edn!
   "Writes a document to an EDN file, extracting image bytes to separate PNG files.
 
-   Image data (byte arrays) in :page.node/image-data are written as PNG files
+   Image data (byte arrays) in :image-data are written as PNG files
    in an 'images' subdirectory. The EDN stores the relative path instead of bytes.
 
    Instants are serialized as #inst tagged literals (EDN native).
@@ -180,27 +180,27 @@
   [output-dir document]
   (let [dir-file (io/file output-dir)
         images-dir (io/file output-dir "images")
-        doc-with-paths (update document :document/pages
+        doc-with-paths (update document :pages
                          (fn [pages]
                            (mapv (fn [page]
-                                   (update page :page/nodes
+                                   (update page :nodes
                                      (fn [nodes]
                                        (mapv (fn [node]
-                                               (let [img-bytes (:page.node/image-data node)]
+                                               (let [img-bytes (:image-data node)]
                                                  (if (and (bytes? img-bytes)
-                                                       (#{:image :table} (:page.node/type node)))
-                                                   (let [img-name (str (:page.node/id node) ".png")
+                                                       (#{:image :table} (:type node)))
+                                                   (let [img-name (str (:id node) ".png")
                                                          img-path (io/file images-dir img-name)]
                                                      (when-not (.exists images-dir)
                                                        (.mkdirs images-dir))
                                                      (with-open [out (io/output-stream img-path)]
                                                        (.write out ^bytes img-bytes))
                                                      (trove/log! {:level :debug
-                                                                  :data {:node-id (:page.node/id node) :path (str "images/" img-name)}
+                                                                  :data {:node-id (:id node) :path (str "images/" img-name)}
                                                                   :msg "Wrote image file"})
                                                      (-> node
-                                                       (dissoc :page.node/image-data)
-                                                       (assoc :page.node/image-path (str "images/" img-name))))
+                                                       (dissoc :image-data)
+                                                       (assoc :image-path (str "images/" img-name))))
                                                    node)))
                                          nodes))))
                              pages)))
@@ -214,8 +214,8 @@
 (defn read-document-edn
   "Reads a document from an EDN file, resolving image paths back to byte arrays.
 
-   Image paths in :page.node/image-path are read back as byte arrays
-   into :page.node/image-data.
+   Image paths in :image-path are read back as byte arrays
+   into :image-data.
 
    Params:
    `index-dir` - String. Path to the pageindex directory.
@@ -225,27 +225,24 @@
   [index-dir]
   (let [edn-file (io/file index-dir "document.edn")
         doc (fast-edn/read-once edn-file)]
-    (update doc :document/pages
+    (update doc :pages
       (fn [pages]
         (mapv (fn [page]
-                (update page :page/nodes
+                (update page :nodes
                   (fn [nodes]
                     (mapv (fn [node]
-                            (if-let [img-rel-path (:page.node/image-path node)]
+                            (if-let [img-rel-path (:image-path node)]
                               (let [img-file (io/file index-dir img-rel-path)]
                                 (if (.exists img-file)
-                                  (let [img-bytes (let [ba (byte-array (.length img-file))]
-                                                    (with-open [is (java.io.FileInputStream. img-file)]
-                                                      (.read is ba))
-                                                    ba)]
+                                  (let [img-bytes (java.nio.file.Files/readAllBytes (.toPath img-file))]
                                     (-> node
-                                      (dissoc :page.node/image-path)
-                                      (assoc :page.node/image-data img-bytes)))
+                                      (dissoc :image-path)
+                                      (assoc :image-data img-bytes)))
                                   (do
                                     (trove/log! {:level :warn
                                                  :data {:path (str img-file)}
                                                  :msg "Image file not found, skipping"})
-                                    (dissoc node :page.node/image-path))))
+                                    (dissoc node :image-path))))
                               node))
                       nodes))))
           pages)))))
@@ -294,9 +291,9 @@
              :path abs-path
              :explanation explanation})))
       (trove/log! {:level :info :data {:path abs-path
-                                       :document/name (:document/name document)
-                                       :pages (count (:document/pages document))
-                                       :toc-entries (count (:document/toc document))}
+                                       :name (:name document)
+                                       :pages (count (:pages document))
+                                       :toc-entries (count (:toc document))}
                    :msg "Loaded document"})
       document)))
 
@@ -308,9 +305,10 @@
   "Print the TOC as a tree structure."
   [toc]
   (doseq [entry toc]
-    (let [depth (dec (count (str/split (or (:node/structure entry) "1") #"\.")))
+    (let [level (:level entry)
+          depth (max 0 (dec (or (some->> level (re-find #"\d+") parse-long) 1)))
           indent (str/join "" (repeat depth "  "))]
-      (printf "%s%s %s\n" indent (or (:node/structure entry) "?") (:node/title entry)))))
+      (printf "%s%s %s\n" indent (or level "l1") (or (:title entry) "(untitled)")))))
 
 (defn ^:export inspect
   "Load and print a full summary of an indexed document including TOC tree.
@@ -340,28 +338,28 @@
                       {:type :rlm/invalid-document
                        :explanation explanation})))
                 doc-or-path))
-        toc (:document/toc doc)
-        pages (:document/pages doc)]
+        toc (:toc doc)
+        pages (:pages doc)]
     (println "\n=== Document Summary ===")
-    (println "Name:      " (:document/name doc))
-    (println "Title:     " (or (:document/title doc) "(none)"))
-    (println "Extension: " (:document/extension doc))
-    (println "Author:    " (or (:document/author doc) "(none)"))
+    (println "Name:      " (:name doc))
+    (println "Title:     " (or (:title doc) "(none)"))
+    (println "Extension: " (:extension doc))
+    (println "Author:    " (or (:author doc) "(none)"))
     (println "Pages:     " (count pages))
     (println "TOC entries:" (count toc))
-    (println "Created:   " (:document/created-at doc))
-    (println "Updated:   " (:document/updated-at doc))
-    (when (:document/abstract doc)
+    (println "Created:   " (:created-at doc))
+    (println "Updated:   " (:updated-at doc))
+    (when (:abstract doc)
       (println "\n--- Abstract ---")
-      (println (:document/abstract doc)))
+      (println (:abstract doc)))
     (println "\n--- TOC Tree ---")
     (print-toc-tree toc)
     (println)
-    {:document/name (:document/name doc)
-     :document/title (:document/title doc)
+    {:name (:name doc)
+     :title (:title doc)
      :page-count (count pages)
      :toc-count (count toc)
-     :has-abstract (boolean (:document/abstract doc))}))
+     :has-abstract (boolean (:abstract doc))}))
 
 ;; =============================================================================
 ;; index! — incremental document indexing
