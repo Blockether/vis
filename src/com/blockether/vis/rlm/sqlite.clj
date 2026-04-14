@@ -594,26 +594,26 @@
   (first (query! db-info q)))
 
 (defn- entity-ref->id
-  "Lookup ref [:entity/id uuid] → string TEXT id. Tolerant of bare UUID/string."
+  "Lookup ref [:id uuid] → string TEXT id. Tolerant of bare UUID/string."
   [ref]
   (cond
     (nil? ref) nil
-    (and (vector? ref) (= :entity/id (first ref))) (->id (second ref))
+    (and (vector? ref) (= :id (first ref))) (->id (second ref))
     (uuid? ref) (->id ref)
     (string? ref) ref
     :else nil))
 
 (defn- id->entity-ref
-  "string TEXT id → [:entity/id uuid] lookup ref."
+  "string TEXT id → [:id uuid] lookup ref."
   [id]
-  (when id [:entity/id (->uuid id)]))
+  (when id [:id (->uuid id)]))
 
 ;; =============================================================================
 ;; Type-keyword ↔ extension-table mapping
 ;; =============================================================================
 
 (def ^:private TYPE->EXT-TABLE
-  "Maps :entity/type values (keyword) to their extension attrs table.
+  "Maps :type values (keyword) to their extension attrs table.
    Types not in this map have no extension table — only entity row exists."
   {:conversation   :conversation_attrs
    :query          :query_attrs
@@ -651,60 +651,60 @@
 ;; =============================================================================
 ;;
 ;; SQL gives us flat rows with snake_case keys; callers expect namespaced keys
-;; per attribute group (:entity/id, :conversation/env-id, etc.). We rebuild
+;; per attribute group (:id, :env-id, etc.). We rebuild
 ;; that shape here so row projection stays consistent across read paths.
 
 (defn- entity-base
   "Project the core entity columns from a flat row into namespaced keys."
   [row]
   (let [type-kw (->kw-back (:type row))]
-    (cond-> {:entity/id          (->uuid (:id row))
-             :entity/type        type-kw}
-      (some? (:name row))         (assoc :entity/name (:name row))
-      (some? (:description row))  (assoc :entity/description (:description row))
-      (some? (:parent_id row))    (assoc :entity/parent-id (->uuid (:parent_id row)))
-      (some? (:document_id row))  (assoc :entity/document-id (:document_id row))
-      (some? (:page row))         (assoc :entity/page (:page row))
-      (some? (:section row))      (assoc :entity/section (:section row))
-      (some? (:canonical_id row)) (assoc :entity/canonical-id (->uuid (:canonical_id row)))
-      (some? (:created_at row))   (assoc :entity/created-at (->date (:created_at row)))
-      (some? (:updated_at row))   (assoc :entity/updated-at (->date (:updated_at row))))))
+    (cond-> {:id          (->uuid (:id row))
+             :type        type-kw}
+      (some? (:name row))         (assoc :name (:name row))
+      (some? (:description row))  (assoc :description (:description row))
+      (some? (:parent_id row))    (assoc :parent-id (->uuid (:parent_id row)))
+      (some? (:document_id row))  (assoc :document-id (:document_id row))
+      (some? (:page row))         (assoc :page (:page row))
+      (some? (:section row))      (assoc :section (:section row))
+      (some? (:canonical_id row)) (assoc :canonical-id (->uuid (:canonical_id row)))
+      (some? (:created_at row))   (assoc :created-at (->date (:created_at row)))
+      (some? (:updated_at row))   (assoc :updated-at (->date (:updated_at row))))))
 
 (defn- conversation-attrs->ns
   [row]
   (cond-> {}
-    (some? (:env_id row))        (assoc :conversation/env-id (:env_id row))
-    (some? (:name row))          (assoc :conversation/name (:name row))
-    (some? (:system_prompt row)) (assoc :conversation/system-prompt (:system_prompt row))
-    (some? (:model row))         (assoc :conversation/model (:model row))))
+    (some? (:env_id row))        (assoc :env-id (:env_id row))
+    (some? (:name row))          (assoc :name (:name row))
+    (some? (:system_prompt row)) (assoc :system-prompt (:system_prompt row))
+    (some? (:model row))         (assoc :model (:model row))))
 
 (defn- query-attrs->ns
   [row]
   (cond-> {}
-    (some? (:messages row))    (assoc :query/messages (:messages row))
-    (some? (:text row))        (assoc :query/text (:text row))
-    (some? (:answer row))      (assoc :query/answer (:answer row))
-    (some? (:iterations row))  (assoc :query/iterations (:iterations row))
-    (some? (:duration_ms row)) (assoc :query/duration-ms (:duration_ms row))
-    (some? (:status row))      (assoc :query/status (->kw-back (:status row)))
-    (some? (:eval_score row))  (assoc :query/eval-score (float (:eval_score row)))))
+    (some? (:messages row))    (assoc :messages (:messages row))
+    (some? (:text row))        (assoc :text (:text row))
+    (some? (:answer row))      (assoc :answer (:answer row))
+    (some? (:iterations row))  (assoc :iterations (:iterations row))
+    (some? (:duration_ms row)) (assoc :duration-ms (:duration_ms row))
+    (some? (:status row))      (assoc :status (->kw-back (:status row)))
+    (some? (:eval_score row))  (assoc :eval-score (float (:eval_score row)))))
 
 (defn- iteration-attrs->ns
   [row]
   (cond-> {}
-    (some? (:code row))        (assoc :iteration/code (:code row))
-    (some? (:results row))     (assoc :iteration/results (:results row))
-    (some? (:vars row))        (assoc :iteration/vars (:vars row))
-    (some? (:answer row))      (assoc :iteration/answer (:answer row))
-    (some? (:thinking row))    (assoc :iteration/thinking (:thinking row))
-    (some? (:duration_ms row)) (assoc :iteration/duration-ms (:duration_ms row))))
+    (some? (:code row))        (assoc :code (:code row))
+    (some? (:results row))     (assoc :results (:results row))
+    (some? (:vars row))        (assoc :vars (:vars row))
+    (some? (:answer row))      (assoc :answer (:answer row))
+    (some? (:thinking row))    (assoc :thinking (:thinking row))
+    (some? (:duration_ms row)) (assoc :duration-ms (:duration_ms row))))
 
 (defn- iteration-var-attrs->ns
   [row]
   (cond-> {}
-    (some? (:name row))  (assoc :iteration.var/name (:name row))
-    (some? (:value row)) (assoc :iteration.var/value (:value row))
-    (some? (:code row))  (assoc :iteration.var/code (:code row))))
+    (some? (:name row))  (assoc :name (:name row))
+    (some? (:value row)) (assoc :value (:value row))
+    (some? (:code row))  (assoc :code (:code row))))
 
 (defn- ext-attrs->ns [type-kw row]
   (case type-kw
@@ -763,55 +763,54 @@
 ;; =============================================================================
 
 (defn- split-entity-attrs
-  "Splits a legacy-style attrs map (with :entity/* and :conversation/* etc.)
+  "Splits attrs map
    into {:entity-cols {col v} :ext-cols {col v}}.
    Drops keys that don't match any known column."
   [attrs]
-  (let [type-kw (some-> attrs :entity/type)
-        out (atom {:entity-cols {} :ext-cols {}})
-        e   (fn [col v] (swap! out assoc-in [:entity-cols col] v))
-        x   (fn [col v] (swap! out assoc-in [:ext-cols col] v))]
-    (doseq [[k v] attrs]
-      (case k
-        :entity/id          (e :id (->id v))
-        :entity/type        (e :type (->kw v))
-        :entity/name        (e :name v)
-        :entity/description (e :description v)
-        :entity/parent-id   (e :parent_id (->id v))
-        :entity/document-id (e :document_id v)
-        :entity/page        (e :page v)
-        :entity/section     (e :section v)
-        :entity/canonical-id (e :canonical_id (->id v))
-        :entity/created-at  (e :created_at (->epoch-ms v))
-        :entity/updated-at  (e :updated_at (->epoch-ms v))
-
-        :conversation/env-id        (x :env_id v)
-        :conversation/name          (x :name v)
-        :conversation/system-prompt (x :system_prompt v)
-        :conversation/model         (x :model v)
-
-        :query/messages    (x :messages v)
-        :query/text        (x :text v)
-        :query/answer      (x :answer v)
-        :query/iterations  (x :iterations v)
-        :query/duration-ms (x :duration_ms v)
-        :query/status      (x :status (->kw v))
-        :query/eval-score  (x :eval_score (when v (double v)))
-
-        :iteration/code        (x :code v)
-        :iteration/results     (x :results v)
-        :iteration/vars        (x :vars v)
-        :iteration/answer      (x :answer v)
-        :iteration/thinking    (x :thinking v)
-        :iteration/duration-ms (x :duration_ms v)
-
-        :iteration.var/name  (x :name v)
-        :iteration.var/value (x :value v)
-        :iteration.var/code  (x :code v)
-
-        ;; silently drop unknown keys — preserves SQLite's open-attr behavior
-        nil))
-    (assoc @out :type type-kw)))
+  (let [type-kw (some-> attrs :type)
+        entity-cols (cond-> {}
+                      (:id attrs)           (assoc :id (->id (:id attrs)))
+                      (:type attrs)         (assoc :type (->kw (:type attrs)))
+                      (:name attrs)         (assoc :name (:name attrs))
+                      (:description attrs)  (assoc :description (:description attrs))
+                      (:parent-id attrs)    (assoc :parent_id (->id (:parent-id attrs)))
+                      (:document-id attrs)  (assoc :document_id (:document-id attrs))
+                      (some? (:page attrs)) (assoc :page (:page attrs))
+                      (:section attrs)      (assoc :section (:section attrs))
+                      (:canonical-id attrs) (assoc :canonical_id (->id (:canonical-id attrs)))
+                      (:created-at attrs)   (assoc :created_at (->epoch-ms (:created-at attrs)))
+                      (:updated-at attrs)   (assoc :updated_at (->epoch-ms (:updated-at attrs))))
+        ext-cols (case type-kw
+                   :conversation (cond-> {}
+                                   (:env-id attrs)        (assoc :env_id (:env-id attrs))
+                                   (:name attrs)          (assoc :name (:name attrs))
+                                   (:system-prompt attrs) (assoc :system_prompt (:system-prompt attrs))
+                                   (:model attrs)         (assoc :model (:model attrs)))
+                   :query (cond-> {}
+                            (:messages attrs)    (assoc :messages (:messages attrs))
+                            (:text attrs)        (assoc :text (:text attrs))
+                            (:answer attrs)      (assoc :answer (:answer attrs))
+                            (:iterations attrs)  (assoc :iterations (:iterations attrs))
+                            (:duration-ms attrs) (assoc :duration_ms (:duration-ms attrs))
+                            (:status attrs)      (assoc :status (->kw (:status attrs)))
+                            (:eval-score attrs)  (assoc :eval_score (double (:eval-score attrs))))
+                   :iteration (cond-> {}
+                                (:code attrs)        (assoc :code (:code attrs))
+                                (:results attrs)     (assoc :results (:results attrs))
+                                (:vars attrs)        (assoc :vars (:vars attrs))
+                                (:answer attrs)      (assoc :answer (:answer attrs))
+                                (:thinking attrs)    (assoc :thinking (:thinking attrs))
+                                (:duration-ms attrs) (assoc :duration_ms (:duration-ms attrs)))
+                   :iteration-var (cond-> {}
+                                    (:name attrs)  (assoc :name (:name attrs))
+                                    (:value attrs) (assoc :value (:value attrs))
+                                    (:code attrs)  (assoc :code (:code attrs)))
+                   :person (cond-> {}
+                             (:email attrs) (assoc :email (:email attrs)))
+                   {})]
+    {:entity-cols entity-cols
+     :ext-cols ext-cols
+     :type type-kw}))
 
 (defn- upsert-entity-row!
   "Insert-or-replace an entity row. Returns the string id."
@@ -841,40 +840,40 @@
 (defn store-entity!
   "Stores an entity. Mirrors db.clj/store-entity!.
 
-   Generates an :entity/id UUID if absent. Stamps :entity/created-at and
-   :entity/updated-at when missing. Returns the lookup ref [:entity/id uuid].
+   Generates an :id UUID if absent. Stamps :created-at and
+   :updated-at when missing. Returns the lookup ref [:id uuid].
 
    When db-info has no :datasource (legacy nil-db case), returns nil and
    performs no work — matches the old behavior."
   [db-info attrs]
   (when (ds db-info)
-    (let [id (or (:entity/id attrs) (UUID/randomUUID))
+    (let [id (or (:id attrs) (UUID/randomUUID))
           now (Date.)
           attrs+ (cond-> (assoc attrs
-                           :entity/id id
-                           :entity/type (or (:entity/type attrs)
-                                          (throw (ex-info "store-entity! requires :entity/type"
-                                                   {:type :rlm/missing-entity-type :attrs attrs}))))
-                   (not (:entity/created-at attrs)) (assoc :entity/created-at now)
-                   (not (:entity/updated-at attrs)) (assoc :entity/updated-at now))
+                           :id id
+                           :type (or (:type attrs)
+                                   (throw (ex-info "store-entity! requires :type"
+                                            {:type :rlm/missing-entity-type :attrs attrs}))))
+                   (not (:created-at attrs)) (assoc :created-at now)
+                   (not (:updated-at attrs)) (assoc :updated-at now))
           {:keys [entity-cols ext-cols type]} (split-entity-attrs attrs+)]
       (jdbc/with-transaction [tx (ds db-info)]
         (let [tx-info {:datasource tx}]
           (upsert-entity-row! tx-info entity-cols)
           (upsert-ext-row!    tx-info type (->id id) ext-cols)))
-      [:entity/id id])))
+      [:id id])))
 
 (defn update-entity!
-  "Merges attrs onto an existing entity by lookup ref. Stamps :entity/updated-at."
+  "Merges attrs onto an existing entity by lookup ref. Stamps :updated-at."
   [db-info entity-ref attrs]
   (when (ds db-info)
     (let [id (entity-ref->id entity-ref)
           base-row (when id (query-one! db-info {:select [:type] :from :entity :where [:= :id id]}))
           existing-type (->kw-back (:type base-row))
           merged (cond-> attrs
-                   (and existing-type (not (:entity/type attrs))) (assoc :entity/type existing-type)
-                   (not (:entity/updated-at attrs))               (assoc :entity/updated-at (Date.))
-                   true                                           (assoc :entity/id (->uuid id)))
+                   (and existing-type (not (:type attrs))) (assoc :type existing-type)
+                   (not (:updated-at attrs))               (assoc :updated-at (Date.))
+                   true                                           (assoc :id (->uuid id)))
           {:keys [entity-cols ext-cols type]} (split-entity-attrs merged)]
       (when id
         (jdbc/with-transaction [tx (ds db-info)]
@@ -890,7 +889,7 @@
 (defn store-conversation!
   "Stores or retrieves a conversation entity for an env session.
 
-   When :name is supplied, it's stored as :conversation/name (UNIQUE) so
+   When :name is supplied, it's stored as :name (UNIQUE) so
    subsequent calls can look up the conversation in shared-DB scenarios."
   [db-info {:keys [env-id system-prompt model name]}]
   (when (ds db-info)
@@ -899,14 +898,14 @@
                       :from :conversation_attrs
                       :where [:= :env_id env-id]})]
       (if existing
-        [:entity/id (->uuid (:entity_id existing))]
+        [:id (->uuid (:entity_id existing))]
         (store-entity! db-info
-          (cond-> {:entity/type :conversation
-                   :entity/name (or name env-id "session")
-                   :conversation/env-id env-id
-                   :conversation/system-prompt (or system-prompt "")
-                   :conversation/model (or model "")}
-            (string? name) (assoc :conversation/name name)))))))
+          (cond-> {:type :conversation
+                   :name (or name env-id "session")
+                   :env-id env-id
+                   :system-prompt (or system-prompt "")
+                   :model (or model "")}
+            (string? name) (assoc :name name)))))))
 
 (defn db-get-conversation
   "Returns a conversation entity by lookup ref or nil."
@@ -927,7 +926,7 @@
       (id->entity-ref (:id row)))))
 
 (defn db-find-named-conversation-ref
-  "Returns lookup ref for a conversation with the given :conversation/name, or nil."
+  "Returns lookup ref for a conversation with the given :name, or nil."
   [db-info nm]
   (when (and (ds db-info) (string? nm))
     (when-let [row (query-one! db-info
@@ -942,14 +941,14 @@
   (cond
     (nil? selector) nil
     (= :latest selector) (db-find-latest-conversation-ref db-info)
-    (and (vector? selector) (= :entity/id (first selector))) selector
-    (uuid? selector) [:entity/id selector]
+    (and (vector? selector) (= :id (first selector))) selector
+    (uuid? selector) [:id selector]
     (and (map? selector) (string? (:name selector)))
     (db-find-named-conversation-ref db-info (:name selector))
     :else nil))
 
 (defn db-list-conversations-by-prefix
-  "List conversations whose :conversation/name starts with `prefix`.
+  "List conversations whose :name starts with `prefix`.
    Returns [{:id uuid-str :name str :created-at inst} …] ordered by creation."
   [db-info prefix]
   (when (ds db-info)
@@ -961,10 +960,10 @@
                     [:= :e.type "conversation"]
                     [:like :ca.name (str prefix "%")]]
             :order-by [[:e.created_at :asc]]})
-         (mapv (fn [row]
-                 {:id         (:id row)
-                  :name       (:name row)
-                  :created-at (some-> (:created_at row) long (Date.))})))))
+      (mapv (fn [row]
+              {:id         (:id row)
+               :name       (:name row)
+               :created-at (some-> (:created_at row) long (Date.))})))))
 
 (defn delete-entity-tree!
   "Delete an entity and all descendants linked via parent_id.
@@ -978,10 +977,10 @@
                     (if (empty? queue)
                       acc
                       (let [children (->> (query! db-info
-                                           {:select [:id]
-                                            :from :entity
-                                            :where [:in :parent_id queue]})
-                                         (mapv :id))]
+                                            {:select [:id]
+                                             :from :entity
+                                             :where [:in :parent_id queue]})
+                                       (mapv :id))]
                         (recur children (into acc queue)))))]
       (when (seq all-ids)
         ;; Delete in batches — children's attr tables cascade automatically
@@ -999,27 +998,27 @@
   [db-info {:keys [conversation-ref text messages answer iterations duration-ms status eval-score]}]
   (let [parent-id (when conversation-ref (second conversation-ref))]
     (store-entity! db-info
-      (cond-> {:entity/type :query
-               :entity/name (let [t (or text "")]
-                              (subs t 0 (min (count t) 100)))
-               :entity/parent-id parent-id
-               :query/text (or text "")
-               :query/answer (or (when answer (pr-str answer)) "")
-               :query/iterations (or iterations 0)
-               :query/duration-ms (or duration-ms 0)
-               :query/status (or status :unknown)}
-        messages (assoc :query/messages (pr-str messages))
-        eval-score (assoc :query/eval-score (float eval-score))))))
+      (cond-> {:type :query
+               :name (let [t (or text "")]
+                       (subs t 0 (min (count t) 100)))
+               :parent-id parent-id
+               :text (or text "")
+               :answer (or (when answer (pr-str answer)) "")
+               :iterations (or iterations 0)
+               :duration-ms (or duration-ms 0)
+               :status (or status :unknown)}
+        messages (assoc :messages (pr-str messages))
+        eval-score (assoc :eval-score (float eval-score))))))
 
 (defn update-query!
   "Updates a query entity with final outcome."
   [db-info query-ref {:keys [answer iterations duration-ms status eval-score]}]
   (update-entity! db-info query-ref
-    (cond-> {:query/answer (or (when answer (pr-str answer)) "")
-             :query/iterations (or iterations 0)
-             :query/duration-ms (or duration-ms 0)
-             :query/status (or status :unknown)}
-      eval-score (assoc :query/eval-score (float eval-score)))))
+    (cond-> {:answer (or (when answer (pr-str answer)) "")
+             :iterations (or iterations 0)
+             :duration-ms (or duration-ms 0)
+             :status (or status :unknown)}
+      eval-score (assoc :eval-score (float eval-score)))))
 
 ;; =============================================================================
 ;; Iteration + iteration-vars
@@ -1033,28 +1032,27 @@
         executions (or executions [])
         code-strs (mapv :code executions)
         result-strs (mapv #(try (pr-str (:result %))
-                                (catch Exception e
-                                  (trove/log! {:level :warn :data {:error (ex-message e)}
-                                               :msg "Failed to serialize execution result"})
-                                  "???"))
+                             (catch Exception e
+                               (trove/log! {:level :warn :data {:error (ex-message e)}
+                                            :msg "Failed to serialize execution result"})
+                               "???"))
                       executions)
         iter-ref (store-entity! db-info
-                   (cond-> {:entity/type :iteration
-                            :entity/parent-id parent-id
-                            :iteration/code (pr-str code-strs)
-                            :iteration/results (pr-str result-strs)
-                            :iteration/thinking (or thinking "")
-                            :iteration/duration-ms (or duration-ms 0)}
-                     answer (assoc :iteration/answer answer)))]
+                   (cond-> {:type :iteration
+                            :parent-id parent-id
+                            :code (pr-str code-strs)
+                            :results (pr-str result-strs)
+                            :thinking (or thinking "")
+                            :duration-ms (or duration-ms 0)}
+                     answer (assoc :answer answer)))]
     (doseq [{:keys [name value code]} (or vars [])]
       (when name
         (store-entity! db-info
-          {:entity/type :iteration-var
-           :entity/name (str name)
-           :entity/parent-id (second iter-ref)
-           :iteration.var/name (str name)
-           :iteration.var/value (pr-str value)
-           :iteration.var/code (or code "")})))
+          {:type :iteration-var
+           :name (str name)
+           :parent-id (second iter-ref)
+           :value (pr-str value)
+           :code (or code "")})))
     iter-ref))
 
 (defn db-list-iteration-vars
@@ -1104,7 +1102,7 @@
     []))
 
 (defn db-list-final-results
-  "Lists terminal iterations (those with non-nil :iteration/answer).
+  "Lists terminal iterations (those with non-nil :answer).
    Optional :conversation-ref scopes to a single conversation's tree."
   ([db-info] (db-list-final-results db-info {}))
   ([db-info {:keys [conversation-ref]}]
@@ -1168,39 +1166,39 @@
 
 (defn- document-row->ns [row]
   (cond-> {}
-    (some? (:id row))                (assoc :document/id (:id row))
-    (some? (:name row))              (assoc :document/name (:name row))
-    (some? (:type row))              (assoc :document/type (->kw-back (:type row)))
-    (some? (:title row))             (assoc :document/title (:title row))
-    (some? (:abstract row))          (assoc :document/abstract (:abstract row))
-    (some? (:extension row))         (assoc :document/extension (:extension row))
-    (some? (:author row))            (assoc :document/author (:author row))
-    (some? (:page_count row))        (assoc :document/page-count (:page_count row))
-    (some? (:created_at row))        (assoc :document/created-at (->date (:created_at row)))
-    (some? (:updated_at row))        (assoc :document/updated-at (->date (:updated_at row)))
-    (some? (:certainty_alpha row))   (assoc :document/certainty-alpha (:certainty_alpha row))
-    (some? (:certainty_beta row))    (assoc :document/certainty-beta (:certainty_beta row))))
+    (some? (:id row))                (assoc :id (:id row))
+    (some? (:name row))              (assoc :name (:name row))
+    (some? (:type row))              (assoc :type (->kw-back (:type row)))
+    (some? (:title row))             (assoc :title (:title row))
+    (some? (:abstract row))          (assoc :abstract (:abstract row))
+    (some? (:extension row))         (assoc :extension (:extension row))
+    (some? (:author row))            (assoc :author (:author row))
+    (some? (:page_count row))        (assoc :page-count (:page_count row))
+    (some? (:created_at row))        (assoc :created-at (->date (:created_at row)))
+    (some? (:updated_at row))        (assoc :updated-at (->date (:updated_at row)))
+    (some? (:certainty_alpha row))   (assoc :certainty-alpha (:certainty_alpha row))
+    (some? (:certainty_beta row))    (assoc :certainty-beta (:certainty_beta row))))
 
 (defn- doc->cols [doc]
   (let [extract (fn [m]
                   (cond-> {}
-                    (:document/id m)          (assoc :id (:document/id m))
-                    (:document/name m)        (assoc :name (:document/name m))
-                    (:document/type m)        (assoc :type (->kw (:document/type m)))
-                    (:document/title m)       (assoc :title (:document/title m))
-                    (:document/abstract m)    (assoc :abstract (:document/abstract m))
-                    (:document/extension m)   (assoc :extension (:document/extension m))
-                    (:document/author m)      (assoc :author (:document/author m))
-                    (:document/page-count m)  (assoc :page_count (:document/page-count m))
-                    (:document/created-at m)  (assoc :created_at (->epoch-ms (:document/created-at m)))
-                    (:document/updated-at m)  (assoc :updated_at (->epoch-ms (:document/updated-at m)))
-                    (some? (:document/certainty-alpha m)) (assoc :certainty_alpha (double (:document/certainty-alpha m)))
-                    (some? (:document/certainty-beta m))  (assoc :certainty_beta (double (:document/certainty-beta m)))))]
+                    (:id m)          (assoc :id (:id m))
+                    (:name m)        (assoc :name (:name m))
+                    (:type m)        (assoc :type (->kw (:type m)))
+                    (:title m)       (assoc :title (:title m))
+                    (:abstract m)    (assoc :abstract (:abstract m))
+                    (:extension m)   (assoc :extension (:extension m))
+                    (:author m)      (assoc :author (:author m))
+                    (:page-count m)  (assoc :page_count (:page-count m))
+                    (:created-at m)  (assoc :created_at (->epoch-ms (:created-at m)))
+                    (:updated-at m)  (assoc :updated_at (->epoch-ms (:updated-at m)))
+                    (some? (:certainty-alpha m)) (assoc :certainty_alpha (double (:certainty-alpha m)))
+                    (some? (:certainty-beta m))  (assoc :certainty_beta (double (:certainty-beta m)))))]
     (extract doc)))
 
 (defn store-document!
-  "Upsert a document row. Accepts legacy :document/* shape or SQL column shape.
-   Returns the stored row as a namespaced map."
+  "Upsert a document row.
+   Returns the stored row as a flat-key map."
   [db-info doc]
   (when (ds db-info)
     (let [cols (doc->cols doc)]
@@ -1235,14 +1233,14 @@
                    :from :document
                    :limit limit})]
        (mapv (fn [row]
-               (cond-> {:document/id (:id row)
-                        :document/name (:name row)
-                        :document/title (:title row)
-                        :document/extension (:extension row)}
+               (cond-> {:id (:id row)
+                        :name (:name row)
+                        :title (:title row)
+                        :extension (:extension row)}
                  (and (:abstract row) (not= "" (:abstract row)))
-                 (assoc :document/abstract (:abstract row))
+                 (assoc :abstract (:abstract row))
                  include-toc?
-                 (assoc :document/toc (get-document-toc db-info (:id row)))))
+                 (assoc :toc (get-document-toc db-info (:id row)))))
          rows)))))
 
 (defn db-get-document
@@ -1273,14 +1271,14 @@
 
 (defn- page->cols [page]
   (cond-> {}
-    (:page/id page)                        (assoc :id (:page/id page))
-    (:page/document-id page)               (assoc :document_id (:page/document-id page))
-    (some? (:page/index page))             (assoc :idx (:page/index page))
-    (:page/created-at page)                (assoc :created_at (->epoch-ms (:page/created-at page)))
-    (:page/last-accessed page)             (assoc :last_accessed (->epoch-ms (:page/last-accessed page)))
-    (some? (:page/access-count page))      (assoc :access_count (double (:page/access-count page)))
-    (some? (:page/q-value page))           (assoc :q_value (double (:page/q-value page)))
-    (some? (:page/q-update-count page))    (assoc :q_update_count (long (:page/q-update-count page)))))
+    (:id page)                        (assoc :id (:id page))
+    (:document-id page)               (assoc :document_id (:document-id page))
+    (some? (:index page))             (assoc :idx (:index page))
+    (:created-at page)                (assoc :created_at (->epoch-ms (:created-at page)))
+    (:last-accessed page)             (assoc :last_accessed (->epoch-ms (:last-accessed page)))
+    (some? (:access-count page))      (assoc :access_count (double (:access-count page)))
+    (some? (:q-value page))           (assoc :q_value (double (:q-value page)))
+    (some? (:q-update-count page))    (assoc :q_update_count (long (:q-update-count page)))))
 
 (defn store-page!
   [db-info page]
@@ -1354,41 +1352,41 @@
 
 (defn- node-row->ns [row]
   (cond-> {}
-    (:id row)                      (assoc :page.node/id (:id row))
-    (:page_id row)                 (assoc :page.node/page-id (:page_id row))
-    (:document_id row)             (assoc :page.node/document-id (:document_id row))
-    (:local_id row)                (assoc :page.node/local-id (:local_id row))
-    (:type row)                    (assoc :page.node/type (->kw-back (:type row)))
-    (:content row)                 (assoc :page.node/content (:content row))
-    (:description row)             (assoc :page.node/description (:description row))
-    (:level row)                   (assoc :page.node/level (:level row))
-    (:parent_id row)               (assoc :page.node/parent-id (:parent_id row))
-    (:image_data row)              (assoc :page.node/image-data (:image_data row))
-    (some? (:continuation row))    (assoc :page.node/continuation? (not (zero? (long (:continuation row)))))
-    (:caption row)                 (assoc :page.node/caption (:caption row))
-    (:kind row)                    (assoc :page.node/kind (:kind row))
-    (:bbox row)                    (assoc :page.node/bbox (:bbox row))
-    (:group_id row)                (assoc :page.node/group-id (:group_id row))))
+    (:id row)                      (assoc :id (:id row))
+    (:page_id row)                 (assoc :page-id (:page_id row))
+    (:document_id row)             (assoc :document-id (:document_id row))
+    (:local_id row)                (assoc :local-id (:local_id row))
+    (:type row)                    (assoc :type (->kw-back (:type row)))
+    (:content row)                 (assoc :content (:content row))
+    (:description row)             (assoc :description (:description row))
+    (:level row)                   (assoc :level (:level row))
+    (:parent_id row)               (assoc :parent-id (:parent_id row))
+    (:image_data row)              (assoc :image-data (:image_data row))
+    (some? (:continuation row))    (assoc :continuation? (not (zero? (long (:continuation row)))))
+    (:caption row)                 (assoc :caption (:caption row))
+    (:kind row)                    (assoc :kind (:kind row))
+    (:bbox row)                    (assoc :bbox (:bbox row))
+    (:group_id row)                (assoc :group-id (:group_id row))))
 
 (defn- node->cols [node]
   (cond-> {}
-    (:page.node/id node)           (assoc :id (:page.node/id node))
-    (:page.node/page-id node)      (assoc :page_id (:page.node/page-id node))
-    (:page.node/document-id node)  (assoc :document_id (:page.node/document-id node))
-    (:page.node/local-id node)     (assoc :local_id (:page.node/local-id node))
-    (:page.node/type node)         (assoc :type (->kw (:page.node/type node)))
-    (:page.node/content node)      (assoc :content (:page.node/content node))
-    (:page.node/description node)  (assoc :description (:page.node/description node))
-    (:page.node/level node)        (assoc :level (:page.node/level node))
-    (:page.node/parent-id node)    (assoc :parent_id (:page.node/parent-id node))
-    (:page.node/image-data node)   (assoc :image_data (:page.node/image-data node))
-    (some? (:page.node/continuation? node)) (assoc :continuation (if (:page.node/continuation? node) 1 0))
-    (:page.node/caption node)      (assoc :caption (:page.node/caption node))
-    (:page.node/kind node)         (assoc :kind (:page.node/kind node))
-    (:page.node/bbox node)         (assoc :bbox (if (string? (:page.node/bbox node))
-                                                  (:page.node/bbox node)
-                                                  (pr-str (:page.node/bbox node))))
-    (:page.node/group-id node)     (assoc :group_id (:page.node/group-id node))))
+    (:id node)           (assoc :id (:id node))
+    (:page-id node)      (assoc :page_id (:page-id node))
+    (:document-id node)  (assoc :document_id (:document-id node))
+    (:local-id node)     (assoc :local_id (:local-id node))
+    (:type node)         (assoc :type (->kw (:type node)))
+    (:content node)      (assoc :content (:content node))
+    (:description node)  (assoc :description (:description node))
+    (:level node)        (assoc :level (:level node))
+    (:parent-id node)    (assoc :parent_id (:parent-id node))
+    (:image-data node)   (assoc :image_data (:image-data node))
+    (some? (:continuation? node)) (assoc :continuation (if (:continuation? node) 1 0))
+    (:caption node)      (assoc :caption (:caption node))
+    (:kind node)         (assoc :kind (:kind node))
+    (:bbox node)         (assoc :bbox (if (string? (:bbox node))
+                                        (:bbox node)
+                                        (pr-str (:bbox node))))
+    (:group-id node)     (assoc :group_id (:group-id node))))
 
 (defn store-page-node!
   [db-info node]
@@ -1425,8 +1423,8 @@
                (let [truncate (fn [s]
                                 (when s (if (> (count s) 200) (subs s 0 200) s)))]
                  (cond-> (node-row->ns r)
-                   (:content r)     (assoc :page.node/content (truncate (:content r)))
-                   (:description r) (assoc :page.node/description (truncate (:description r))))))
+                   (:content r)     (assoc :content (truncate (:content r)))
+                   (:description r) (assoc :description (truncate (:description r))))))
          rows)))))
 
 ;; =============================================================================
@@ -1437,17 +1435,21 @@
   "Run an FTS5 MATCH against the unified search table, optionally scoped to
    owner_table values. Returns [{:owner_table :owner_id :rank}] ordered by rank."
   [db-info owner-tables match-query {:keys [limit] :or {limit 50}}]
-  (let [q {:select [[:owner_table :owner_table]
-                    [:owner_id :owner_id]
-                    [[:bm25 :search] :rank]]
-           :from :search
-           :where (into [:and [:match :search match-query]]
-                    (when (seq owner-tables)
-                      [[:in :owner_table owner-tables]]))
-           :order-by [[:rank :asc]]
-           :limit limit}]
+  (let [stmt (if (seq owner-tables)
+               (let [placeholders (str/join "," (repeat (count owner-tables) "?"))
+                     sql (str "SELECT owner_table AS owner_table, owner_id AS owner_id, "
+                           "bm25(search) AS rank "
+                           "FROM search "
+                           "WHERE search MATCH ? "
+                           "AND owner_table IN (" placeholders ") "
+                           "ORDER BY rank ASC "
+                           "LIMIT ?")]
+                 (into [sql] (concat [match-query] owner-tables [limit])))
+               ["SELECT owner_table AS owner_table, owner_id AS owner_id, bm25(search) AS rank FROM search WHERE search MATCH ? ORDER BY rank ASC LIMIT ?"
+                match-query
+                limit])]
     (try
-      (query! db-info q)
+      (query! db-info stmt)
       (catch Exception _ []))))
 
 (defn- fts-query-for-substring
@@ -1469,12 +1471,12 @@
 (defn- brevify-node
   "Return brief form with 150-char preview + vitality fields preserved."
   [node]
-  (let [content (or (:page.node/content node) (:page.node/description node) "")
+  (let [content (or (:content node) (:description node) "")
         preview (if (> (count content) 150)
                   (str (subs content 0 150) "...")
                   content)]
     (-> node
-      (dissoc :page.node/content :page.node/description)
+      (dissoc :content :description)
       (assoc :preview preview :content-length (count content)))))
 
 (defn db-search-page-nodes
@@ -1495,8 +1497,8 @@
                              {:select [:*] :from :page_node
                               :where [:in :id ids]})))
                  filtered (->> nodes
-                            (filter #(or (nil? document-id) (= document-id (:page.node/document-id %))))
-                            (filter #(or (nil? type) (= (->kw type) (->kw (:page.node/type %))))))
+                            (filter #(or (nil? document-id) (= document-id (:document-id %))))
+                            (filter #(or (nil? type) (= (->kw type) (->kw (:type %))))))
                  page-v-cache (atom {})
                  cached-v (fn [page-id]
                             (or (get @page-v-cache page-id)
@@ -1504,19 +1506,19 @@
                                 (swap! page-v-cache assoc page-id v)
                                 v)))
                  recent-pages (or (recently-accessed-page-ids db-info) #{})
-                 result-page-ids (distinct (keep :page.node/page-id filtered))
+                 result-page-ids (distinct (keep :page-id filtered))
                  cooc-map (if (and (seq recent-pages) (seq result-page-ids))
                             (try (batch-cooccurrence-boosts db-info result-page-ids recent-pages)
-                                 (catch Exception _ {}))
+                              (catch Exception _ {}))
                             {})
                  total (max 1 (count filtered))
                  ranked (->> filtered
                           (map-indexed
                             (fn [idx node]
-                              (let [pid (:page.node/page-id node)
+                              (let [pid (:page-id node)
                                     pv (cached-v pid)
                                     qv (get-page-q-value db-info pid)
-                                    nv (compute-node-vitality (:score pv) (:page.node/type node) qv)
+                                    nv (compute-node-vitality (:score pv) (:type node) qv)
                                     relevance (- 1.0 (/ (double idx) total))
                                     cooc-bonus (* 0.05 (get cooc-map pid 0.0))
                                     combined (+ (* 0.7 relevance) (* 0.3 (:score nv)) cooc-bonus)]
@@ -1540,7 +1542,7 @@
            all-results (into [] (mapcat identity)
                          (pmap #(db-search-page-nodes db-info % per-q) queries))
            deduped (vals (reduce (fn [acc node]
-                                   (let [id (:page.node/id node)
+                                   (let [id (:id node)
                                          existing (get acc id)]
                                      (if (or (nil? existing)
                                            (> (or (:vitality-score node) 0)
@@ -1559,40 +1561,40 @@
 
 (defn- toc-row->ns [row]
   (cond-> {}
-    (:id row)                 (assoc :document.toc/id (:id row))
-    (:document_id row)        (assoc :document.toc/document-id (:document_id row))
-    (:type row)               (assoc :document.toc/type (->kw-back (:type row)))
-    (:title row)              (assoc :document.toc/title (:title row))
+    (:id row)                 (assoc :id (:id row))
+    (:document_id row)        (assoc :document-id (:document_id row))
+    (:type row)               (assoc :type (->kw-back (:type row)))
+    (:title row)              (assoc :title (:title row))
     (and (:description row)
-      (not= "" (:description row))) (assoc :document.toc/description (:description row))
-    (some? (:target_page row)) (assoc :document.toc/target-page (:target_page row))
-    (:target_section_id row)  (assoc :document.toc/target-section-id (:target_section_id row))
-    (:level row)              (assoc :document.toc/level (:level row))
-    (:parent_id row)          (assoc :document.toc/parent-id (:parent_id row))
-    (some? (:created_at row)) (assoc :document.toc/created-at (->date (:created_at row)))))
+      (not= "" (:description row))) (assoc :description (:description row))
+    (some? (:target_page row)) (assoc :target-page (:target_page row))
+    (:target_section_id row)  (assoc :target-section-id (:target_section_id row))
+    (:level row)              (assoc :level (:level row))
+    (:parent_id row)          (assoc :parent-id (:parent_id row))
+    (some? (:created_at row)) (assoc :created-at (->date (:created_at row)))))
 
 (defn- toc->cols [e]
   (cond-> {}
-    (:document.toc/id e)                 (assoc :id (:document.toc/id e))
-    (:document.toc/document-id e)        (assoc :document_id (:document.toc/document-id e))
-    (:document.toc/type e)               (assoc :type (->kw (:document.toc/type e)))
-    (:document.toc/title e)              (assoc :title (:document.toc/title e))
-    (:document.toc/description e)        (assoc :description (:document.toc/description e))
-    (some? (:document.toc/target-page e)) (assoc :target_page (:document.toc/target-page e))
-    (:document.toc/target-section-id e)  (assoc :target_section_id (:document.toc/target-section-id e))
-    (:document.toc/level e)              (assoc :level (:document.toc/level e))
-    (:document.toc/parent-id e)          (assoc :parent_id (:document.toc/parent-id e))
-    (:document.toc/created-at e)         (assoc :created_at (->epoch-ms (:document.toc/created-at e)))))
+    (:id e)                 (assoc :id (:id e))
+    (:document-id e)        (assoc :document_id (:document-id e))
+    (:type e)               (assoc :type (->kw (:type e)))
+    (:title e)              (assoc :title (:title e))
+    (:description e)        (assoc :description (:description e))
+    (some? (:target-page e)) (assoc :target_page (:target-page e))
+    (:target-section-id e)  (assoc :target_section_id (:target-section-id e))
+    (:level e)              (assoc :level (:level e))
+    (:parent-id e)          (assoc :parent_id (:parent-id e))
+    (:created-at e)         (assoc :created_at (->epoch-ms (:created-at e)))))
 
 (defn db-store-toc-entry!
   ([db-info entry] (db-store-toc-entry! db-info entry "standalone"))
   ([db-info entry doc-id]
    (when (ds db-info)
-     (let [id (or (:document.toc/id entry) (str (util/uuid)))
+     (let [id (or (:id entry) (str (util/uuid)))
            entry-data (-> entry
-                        (assoc :document.toc/id id
-                          :document.toc/document-id doc-id
-                          :document.toc/created-at (Date.)))
+                        (assoc :id id
+                          :document-id doc-id
+                          :created-at (Date.)))
            cols (toc->cols entry-data)]
        (jdbc/execute! (ds db-info)
          (sql/format
@@ -1657,11 +1659,11 @@
                    :order-by [[:name :asc]]
                    :limit limit})]
        (mapv (fn [r] (cond-> (entity-base r)
-                       (some? (:name r))         (assoc :entity/name (:name r))
+                       (some? (:name r))         (assoc :name (:name r))
                        (and (:description r) (not= "" (:description r)))
-                       (assoc :entity/description (:description r))
+                       (assoc :description (:description r))
                        (and (:section r) (not= "" (:section r)))
-                       (assoc :entity/section (:section r))))
+                       (assoc :section (:section r))))
          rows)))))
 
 (defn db-search-entities
@@ -1697,24 +1699,24 @@
                    :from :relationship
                    :where where})]
        (mapv (fn [r]
-               (cond-> {:relationship/id (->uuid (:id r))
-                        :relationship/type (->kw-back (:type r))
-                        :relationship/source-entity-id (->uuid (:source_entity_id r))
-                        :relationship/target-entity-id (->uuid (:target_entity_id r))}
+               (cond-> {:id (->uuid (:id r))
+                        :type (->kw-back (:type r))
+                        :source-id (->uuid (:source_entity_id r))
+                        :target-id (->uuid (:target_entity_id r))}
                  (and (:description r) (not= "" (:description r)))
-                 (assoc :relationship/description (:description r))))
+                 (assoc :description (:description r))))
          rows)))))
 
 (defn store-relationship!
   "Upsert a relationship row."
   [db-info rel]
   (when (ds db-info)
-    (let [row (cond-> {:id (->id (or (:relationship/id rel) (util/uuid)))}
-                (:relationship/type rel)             (assoc :type (->kw (:relationship/type rel)))
-                (:relationship/source-entity-id rel) (assoc :source_entity_id (->id (:relationship/source-entity-id rel)))
-                (:relationship/target-entity-id rel) (assoc :target_entity_id (->id (:relationship/target-entity-id rel)))
-                (:relationship/description rel)      (assoc :description (:relationship/description rel))
-                (:relationship/document-id rel)      (assoc :document_id (:relationship/document-id rel)))]
+    (let [row (cond-> {:id (->id (or (:id rel) (util/uuid)))}
+                (:type rel)             (assoc :type (->kw (:type rel)))
+                (:source-id rel) (assoc :source_entity_id (->id (:source-id rel)))
+                (:target-id rel) (assoc :target_entity_id (->id (:target-id rel)))
+                (:description rel)      (assoc :description (:description rel))
+                (:document-id rel)      (assoc :document_id (:document-id rel)))]
       (jdbc/execute! (ds db-info)
         (sql/format
           {:insert-into :relationship
@@ -1796,7 +1798,7 @@
                              (assoc neighbor :distance (inc distance))))))))))
              (recur @next-level (inc current-depth)))))
        (->> @results
-         (sort-by (juxt :distance :entity/name))
+         (sort-by (juxt :distance :name))
          (take limit)
          vec)))))
 
@@ -1840,13 +1842,13 @@
 
 (defn- repo-row->ns [row]
   (cond-> {}
-    (:name row)             (assoc :repo/name (:name row))
-    (:path row)             (assoc :repo/path (:path row))
-    (:head_sha row)         (assoc :repo/head-sha (:head_sha row))
-    (:head_short row)       (assoc :repo/head-short (:head_short row))
-    (:branch row)           (assoc :repo/branch (:branch row))
-    (some? (:commits_ingested row)) (assoc :repo/commits-ingested (:commits_ingested row))
-    (some? (:ingested_at row)) (assoc :repo/ingested-at (->date (:ingested_at row)))))
+    (:name row)             (assoc :name (:name row))
+    (:path row)             (assoc :path (:path row))
+    (:head_sha row)         (assoc :head-sha (:head_sha row))
+    (:head_short row)       (assoc :head-short (:head_short row))
+    (:branch row)           (assoc :branch (:branch row))
+    (some? (:commits_ingested row)) (assoc :commits-ingested (:commits_ingested row))
+    (some? (:ingested_at row)) (assoc :ingested-at (->date (:ingested_at row)))))
 
 (defn db-list-repos [db-info]
   (when (ds db-info)
@@ -1870,33 +1872,36 @@
   (when (ds db-info)
     (jdbc/with-transaction [tx (ds db-info)]
       (let [tx-info {:datasource tx}]
-        (upsert-entity-row! tx-info entity-cols)
-        (when (seq commit-cols)
-          (jdbc/execute! tx
-            (sql/format
-              {:insert-into :commit_attrs
-               :values [(assoc commit-cols :entity_id entity-id)]
-               :on-conflict [:entity_id]
-               :do-update-set (vec (keys commit-cols))})))
-        (doseq [t (distinct ticket-refs)]
-          (jdbc/execute! tx
-            (sql/format
-              {:insert-into :commit_ticket_ref
-               :values [{:entity_id entity-id :ticket t}]
-               :on-conflict [:entity_id :ticket] :do-nothing true})))
-        (doseq [p (distinct file-paths)]
-          (jdbc/execute! tx
-            (sql/format
-              {:insert-into :commit_file_path
-               :values [{:entity_id entity-id :path p}]
-               :on-conflict [:entity_id :path] :do-nothing true})))
-        (doseq [s (distinct parents)]
-          (jdbc/execute! tx
-            (sql/format
-              {:insert-into :commit_parent
-               :values [{:entity_id entity-id :parent_sha s}]
-               :on-conflict [:entity_id :parent_sha] :do-nothing true})))
-        entity-id))))
+        (let [entity-id' (or entity-id
+                           (:id entity-cols)
+                           (->id (:id entity-cols)))]
+          (upsert-entity-row! tx-info (assoc entity-cols :id entity-id'))
+          (when (seq commit-cols)
+            (jdbc/execute! tx
+              (sql/format
+                {:insert-into :commit_attrs
+                 :values [(assoc commit-cols :entity_id entity-id')]
+                 :on-conflict [:entity_id]
+                 :do-update-set (vec (keys commit-cols))})))
+          (doseq [t (distinct ticket-refs)]
+            (jdbc/execute! tx
+              (sql/format
+                {:insert-into :commit_ticket_ref
+                 :values [{:entity_id entity-id' :ticket t}]
+                 :on-conflict [:entity_id :ticket] :do-nothing true})))
+          (doseq [p (distinct file-paths)]
+            (jdbc/execute! tx
+              (sql/format
+                {:insert-into :commit_file_path
+                 :values [{:entity_id entity-id' :path p}]
+                 :on-conflict [:entity_id :path] :do-nothing true})))
+          (doseq [s (distinct parents)]
+            (jdbc/execute! tx
+              (sql/format
+                {:insert-into :commit_parent
+                 :values [{:entity_id entity-id' :parent_sha s}]
+                 :on-conflict [:entity_id :parent_sha] :do-nothing true})))
+          entity-id')))))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
 (defn- commit-row->ns [row]
@@ -1906,13 +1911,13 @@
                         {:select [:ticket] :from :commit_ticket_ref}))]
     (merge base
       (cond-> {}
-        (:sha row)         (assoc :commit/sha (:sha row))
-        (:category row)    (assoc :commit/category (->kw-back (:category row)))
-        (:date row)        (assoc :commit/date (:date row))
-        (:prefix row)      (assoc :commit/prefix (:prefix row))
-        (:scope row)       (assoc :commit/scope (:scope row))
-        (:author_email row) (assoc :commit/author-email (:author_email row)))
-      {:commit/ticket-refs ticket-refs})))
+        (:sha row)         (assoc :sha (:sha row))
+        (:category row)    (assoc :category (->kw-back (:category row)))
+        (:date row)        (assoc :date (:date row))
+        (:prefix row)      (assoc :prefix (:prefix row))
+        (:scope row)       (assoc :scope (:scope row))
+        (:author_email row) (assoc :author-email (:author_email row)))
+      {:ticket-refs ticket-refs})))
 
 (defn db-search-commits
   ([db-info] (db-search-commits db-info {}))
@@ -1927,7 +1932,7 @@
                    until        (conj [:<= :c.date until]))
            base-sql {:select [[:e.id :eid]
                               [:e.name :e-name] [:e.description :e-desc]
-                              [:e.document_id :doc-id]
+                              [:e.document_id :document_id]
                               [:c.sha :sha] [:c.category :category]
                               [:c.date :date] [:c.prefix :prefix] [:c.scope :scope]
                               [:c.author_email :author_email]]
@@ -1963,22 +1968,22 @@
                         {})]
        (mapv (fn [r]
                (let [eid (:eid r)]
-                 (cond-> {:entity/id (->uuid eid)
-                          :entity/name (:e-name r)
-                          :entity/description (:e-desc r)
-                          :entity/document-id (:doc-id r)
-                          :commit/sha (:sha r)
-                          :commit/category (->kw-back (:category r))
-                          :commit/date (:date r)
-                          :commit/author-email (:author_email r)}
-                   (:prefix r) (assoc :commit/prefix (:prefix r))
-                   (:scope r)  (assoc :commit/scope (:scope r))
+                 (cond-> {:id (->uuid eid)
+                          :name (:e-name r)
+                          :description (:e-desc r)
+                          :document-id (:document_id r)
+                          :sha (:sha r)
+                          :category (->kw-back (:category r))
+                          :date (:date r)
+                          :author-email (:author_email r)}
+                   (:prefix r) (assoc :prefix (:prefix r))
+                   (:scope r)  (assoc :scope (:scope r))
                    (seq (get ticket-map eid))
-                   (assoc :commit/ticket-refs (mapv :ticket (get ticket-map eid)))
+                   (assoc :ticket-refs (mapv :ticket (get ticket-map eid)))
                    (seq (get file-map eid))
-                   (assoc :commit/file-paths (mapv :path (get file-map eid)))
+                   (assoc :file-paths (mapv :path (get file-map eid)))
                    (seq (get parent-map eid))
-                   (assoc :commit/parents (mapv :parent_sha (get parent-map eid))))))
+                   (assoc :parents (mapv :parent_sha (get parent-map eid))))))
          rows)))))
 
 (defn db-commit-by-sha
@@ -2311,11 +2316,11 @@
                                  (->> page-entity-ids
                                    (mapcat #(find-related db-info % {:depth 1 :limit 10}))
                                    (keep (fn [e]
-                                           (when (and (:entity/document-id e) (:entity/page e))
+                                           (when (and (:document-id e) (:page e))
                                              (some-> (query-one! db-info
                                                        {:select [:id] :from :page
-                                                        :where [:and [:= :document_id (:entity/document-id e)]
-                                                                [:= :idx (:entity/page e)]]})
+                                                        :where [:and [:= :document_id (:document-id e)]
+                                                                [:= :idx (:page e)]]})
                                                :id))))
                                    distinct))
              all-connected (->> (concat (or sibling-pids []) (or rel-neighbor-pids []))
@@ -2364,15 +2369,15 @@
             (let [n (clojure.core/name nm)
                   doc-id (str "skill-" n)]
               (store-document! tx-info
-                {:document/id doc-id
-                 :document/name n
-                 :document/type :document.type/skill
-                 :document/title (or (:description skill) n)
-                 :document/abstract (or (:abstract skill) "")
-                 :document/extension "md"
-                 :document/updated-at (Date.)
-                 :document/certainty-alpha 2.0
-                 :document/certainty-beta 1.0})
+                {:id doc-id
+                 :name n
+                 :type :document.type/skill
+                 :title (or (:description skill) n)
+                 :abstract (or (:abstract skill) "")
+                 :extension "md"
+                 :updated-at (Date.)
+                 :certainty-alpha 2.0
+                 :certainty-beta 1.0})
               (jdbc/execute! tx
                 (sql/format
                   {:insert-into :skill_attrs
@@ -2422,7 +2427,7 @@
   (->> (query! db-info
          {:select [:id :name :title :extension :abstract] :from :document})
     (mapv document-row->ns)
-    (sort-by (juxt :document/id :document/name))
+    (sort-by (juxt :id :name))
     vec))
 
 (defn qa-corpus-toc-entries [db-info]
@@ -2430,8 +2435,8 @@
          {:select [:id :document_id :title :level :target_page :target_section_id :description]
           :from :document_toc})
     (mapv toc-row->ns)
-    (sort-by (juxt :document.toc/document-id :document.toc/target-page
-               :document.toc/level :document.toc/title :document.toc/id))
+    (sort-by (juxt :document-id :target-page
+               :level :title :id))
     vec))
 
 (defn qa-corpus-page-nodes [db-info]
@@ -2439,8 +2444,8 @@
          {:select [:id :document_id :page_id :type :local_id :content :description]
           :from :page_node})
     (mapv node-row->ns)
-    (sort-by (juxt :page.node/document-id :page.node/page-id
-               :page.node/local-id :page.node/id))
+    (sort-by (juxt :document-id :page-id
+               :local-id :id))
     vec))
 
 ;; =============================================================================
@@ -2448,39 +2453,39 @@
 ;; =============================================================================
 
 (defn- build-page-entity [page doc-id]
-  (let [page-id (str doc-id "-page-" (:page/index page))
+  (let [page-id (str doc-id "-page-" (:index page))
         now (Date.)]
-    {:entity {:page/id page-id
-              :page/document-id doc-id
-              :page/index (:page/index page)
-              :page/created-at now
-              :page/last-accessed now
-              :page/access-count 1.0}
+    {:entity {:id page-id
+              :document-id doc-id
+              :index (:index page)
+              :created-at now
+              :last-accessed now
+              :access-count 1.0}
      :page-id page-id}))
 
 (defn- build-page-node-entity [node page-id doc-id]
-  (let [node-id (str page-id "-node-" (or (:page.node/id node) (util/uuid)))
-        visual? (#{:image :table} (:page.node/type node))
-        img-bytes (:page.node/image-data node)
+  (let [node-id (str page-id "-node-" (or (:id node) (util/uuid)))
+        visual? (#{:image :table} (:type node))
+        img-bytes (:image-data node)
         too-large? (and visual? img-bytes (> (alength ^bytes img-bytes) 5242880))
         image (when (and visual? img-bytes (not too-large?)) img-bytes)]
     (when too-large?
       (trove/log! {:level :warn :data {:node-id node-id :bytes (alength ^bytes img-bytes)}
                    :msg "Skipping page node image-data (exceeds 5MB)"}))
-    (cond-> {:page.node/id node-id :page.node/page-id page-id
-             :page.node/document-id doc-id :page.node/type (:page.node/type node)}
-      (:page.node/id node)                   (assoc :page.node/local-id (:page.node/id node))
-      (:page.node/parent-id node)            (assoc :page.node/parent-id (:page.node/parent-id node))
-      (:page.node/level node)                (assoc :page.node/level (:page.node/level node))
-      (and (not visual?) (:page.node/content node))
-      (assoc :page.node/content (:page.node/content node))
-      image                                  (assoc :page.node/image-data image)
-      (:page.node/description node)          (assoc :page.node/description (:page.node/description node))
-      (some? (:page.node/continuation? node)) (assoc :page.node/continuation? (:page.node/continuation? node))
-      (:page.node/caption node)              (assoc :page.node/caption (:page.node/caption node))
-      (:page.node/kind node)                 (assoc :page.node/kind (:page.node/kind node))
-      (:page.node/bbox node)                 (assoc :page.node/bbox (pr-str (:page.node/bbox node)))
-      (:page.node/group-id node)             (assoc :page.node/group-id (:page.node/group-id node)))))
+    (cond-> {:id node-id :page-id page-id
+             :document-id doc-id :type (:type node)}
+      (:id node)                   (assoc :local-id (:id node))
+      (:parent-id node)            (assoc :parent-id (:parent-id node))
+      (:level node)                (assoc :level (:level node))
+      (and (not visual?) (:content node))
+      (assoc :content (:content node))
+      image                                  (assoc :image-data image)
+      (:description node)          (assoc :description (:description node))
+      (some? (:continuation? node)) (assoc :continuation? (:continuation? node))
+      (:caption node)              (assoc :caption (:caption node))
+      (:kind node)                 (assoc :kind (:kind node))
+      (:bbox node)                 (assoc :bbox (pr-str (:bbox node)))
+      (:group-id node)             (assoc :group-id (:group-id node)))))
 
 (defn db-store-pageindex-document!
   "Bulk-insert a full PageIndex document: raw → document → pages + nodes → TOC.
@@ -2492,33 +2497,33 @@
         (let [tx-info {:datasource tx}
               _ (store-raw-document! tx-info doc-id (pr-str doc))
               _ (store-document! tx-info
-                  (cond-> {:document/id doc-id
-                           :document/name (:document/name doc)
-                           :document/extension (:document/extension doc)
-                           :document/certainty-alpha 2.0
-                           :document/certainty-beta 1.0}
-                    (:document/title doc)      (assoc :document/title (:document/title doc))
-                    (:document/abstract doc)   (assoc :document/abstract (:document/abstract doc))
-                    (:document/author doc)     (assoc :document/author (:document/author doc))
-                    (:document/created-at doc) (assoc :document/created-at (:document/created-at doc))
-                    (:document/updated-at doc) (assoc :document/updated-at (:document/updated-at doc))))
-              pages (:document/pages doc)
+                  (cond-> {:id doc-id
+                           :name (:name doc)
+                           :extension (:extension doc)
+                           :certainty-alpha 2.0
+                           :certainty-beta 1.0}
+                    (:title doc)      (assoc :title (:title doc))
+                    (:abstract doc)   (assoc :abstract (:abstract doc))
+                    (:author doc)     (assoc :author (:author doc))
+                    (:created-at doc) (assoc :created-at (:created-at doc))
+                    (:updated-at doc) (assoc :updated-at (:updated-at doc))))
+              pages (:pages doc)
               page-count (count pages)
               node-count (atom 0)]
           (doseq [page pages]
             (let [{:keys [entity page-id]} (build-page-entity page doc-id)]
               (store-page! tx-info entity)
-              (doseq [node (:page/nodes page)]
+              (doseq [node (:nodes page)]
                 (when-let [ne (build-page-node-entity node page-id doc-id)]
                   (store-page-node! tx-info ne)
                   (swap! node-count inc)))))
-          (doseq [entry (:document/toc doc)]
-            (let [entry-id (str doc-id "-toc-" (or (:document.toc/id entry) (util/uuid)))]
-              (db-store-toc-entry! tx-info (assoc entry :document.toc/id entry-id) doc-id)))
+          (doseq [entry (:toc doc)]
+            (let [entry-id (str doc-id "-toc-" (or (:id entry) (util/uuid)))]
+              (db-store-toc-entry! tx-info (assoc entry :id entry-id) doc-id)))
           {:document-id doc-id
            :pages-stored page-count
            :nodes-stored @node-count
-           :toc-entries-stored (count (:document/toc doc))})))))
+           :toc-entries-stored (count (:toc doc))})))))
 
 ;; =============================================================================
 ;; Misc helpers consumed by core.clj stats + query.clj refinement
@@ -2572,8 +2577,8 @@
             :from :page_node
             :where [:= :document_id doc-id]
             :order-by [[:page_id :asc]]})
-      (mapv (fn [r] {:page.node/page-id (:page_id r)
-                     :page.node/content (:content r)})))))
+      (mapv (fn [r] {:page-id (:page_id r)
+                     :content (:content r)})))))
 
 (defn db-list-queries
   "List :query entities with optional status/min-iterations/limit filters.
@@ -2594,8 +2599,8 @@
        (fetch-entities db-info ids)))))
 
 (defn db-cited-page-ids
-  "Given a set of cited source-ids (may be :page.node/id, :page/id, or :page.node/document-id),
-   return the distinct :page/id set they resolve to."
+  "Given a set of cited source-ids (may be :id, :id, or :document-id),
+   return the distinct :id set they resolve to."
   [db-info cited-source-ids]
   (when (and (ds db-info) (seq cited-source-ids))
     (set (mapv :page_id
@@ -2612,17 +2617,17 @@
 (defn db-store-claim!
   [db-info claim]
   (when (ds db-info)
-    (let [row (cond-> {:id (->id (or (:claim/id claim) (util/uuid)))}
-                (:claim/text claim)        (assoc :text (:claim/text claim))
-                (:claim/document-id claim) (assoc :document_id (:claim/document-id claim))
-                (some? (:claim/page claim)) (assoc :page (:claim/page claim))
-                (:claim/section claim)     (assoc :section (:claim/section claim))
-                (:claim/quote claim)       (assoc :quote (:claim/quote claim))
-                (some? (:claim/confidence claim)) (assoc :confidence (double (:claim/confidence claim)))
-                (:claim/query-id claim)    (assoc :query_id (->id (:claim/query-id claim)))
-                (some? (:claim/verified? claim))  (assoc :verified (if (:claim/verified? claim) 1 0))
-                (:claim/verification-verdict claim) (assoc :verification_verdict (:claim/verification-verdict claim))
-                (:claim/created-at claim)  (assoc :created_at (->epoch-ms (:claim/created-at claim))))]
+    (let [row (cond-> {:id (->id (or (:id claim) (util/uuid)))}
+                (:text claim)        (assoc :text (:text claim))
+                (:document-id claim) (assoc :document_id (:document-id claim))
+                (some? (:page claim)) (assoc :page (:page claim))
+                (:section claim)     (assoc :section (:section claim))
+                (:quote claim)       (assoc :quote (:quote claim))
+                (some? (:confidence claim)) (assoc :confidence (double (:confidence claim)))
+                (:query-id claim)    (assoc :query_id (->id (:query-id claim)))
+                (some? (:verified? claim))  (assoc :verified (if (:verified? claim) 1 0))
+                (:verification-verdict claim) (assoc :verification_verdict (:verification-verdict claim))
+                (:created-at claim)  (assoc :created_at (->epoch-ms (:created-at claim))))]
       (jdbc/execute! (ds db-info)
         (sql/format {:insert-into :claim :values [row]
                      :on-conflict [:id]
@@ -2642,11 +2647,11 @@
         (if (map? results) results {:pages results})
         sb (StringBuilder.)]
     (when (seq pages)
-      (let [by-page (group-by :page.node/page-id pages)]
+      (let [by-page (group-by :page-id pages)]
         (doseq [[pid nodes] (sort-by key by-page)]
           (.append sb (str "## " (or pid "unknown") "\n"))
           (doseq [n nodes]
-            (let [t (some-> (:page.node/type n) name)
+            (let [t (some-> (:type n) name)
                   zone (some-> (:vitality-zone n) name)
                   preview (or (:preview n) "")]
               (.append sb (str "- **" t "**" (when zone (str " [" zone "]")) " " preview "\n"))))
@@ -2654,15 +2659,15 @@
     (when (seq toc)
       (.append sb "## TOC\n")
       (doseq [e toc]
-        (.append sb (str "- " (or (:document.toc/level e) "") " " (or (:document.toc/title e) "")
-                      (when-let [p (:document.toc/target-page e)] (str " (p." p ")"))
+        (.append sb (str "- " (or (:level e) "") " " (or (:title e) "")
+                      (when-let [p (:target-page e)] (str " (p." p ")"))
                       "\n")))
       (.append sb "\n"))
     (when (seq entities)
       (.append sb "## Entities\n")
       (doseq [e entities]
-        (.append sb (str "- **" (or (:entity/name e) "") "** ("
-                      (some-> (:entity/type e) name) ") "
-                      (str-truncate (or (:entity/description e) "") 80) "\n")))
+        (.append sb (str "- **" (or (:name e) "") "** ("
+                      (some-> (:type e) name) ") "
+                      (str-truncate (or (:description e) "") 80) "\n")))
       (.append sb "\n"))
     (str sb)))

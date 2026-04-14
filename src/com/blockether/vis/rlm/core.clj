@@ -12,7 +12,7 @@
     :refer [make-routed-sub-rlm-query-fn resolve-root-model provider-has-reasoning?]]
    [com.blockether.vis.rlm.schema :as schema
     :refer [ENTITY_EXTRACTION_SPEC ENTITY_EXTRACTION_OBJECTIVE
-            ITERATION_SPEC ITERATION_SPEC_CODE_ONLY
+            ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
             *eval-timeout-ms*
             validate-final bytes->base64 *rlm-ctx*]]
    [com.blockether.vis.rlm.skills :as rlm-skills]
@@ -122,6 +122,33 @@ Pattern: [thing] [action] [reason]. [next step].")
   [status]
   (when status
     (keyword "rlm.status" (name status))))
+
+(def ^:private reasoning-low "low")
+(def ^:private reasoning-medium "medium")
+(def ^:private reasoning-high "high")
+
+(def ^:private reasoning-effort-values
+  #{reasoning-low reasoning-medium reasoning-high})
+
+(defn- normalize-reasoning-effort
+  "Returns normalized reasoning effort string or nil.
+   Accepts string/keyword input."
+  [v]
+  (let [s (cond
+            (keyword? v) (name v)
+            (string? v) (str/lower-case (str/trim v))
+            :else nil)]
+    (when (contains? reasoning-effort-values s)
+      s)))
+
+(defn- reasoning-effort-for-errors
+  "Maps consecutive error count to effective reasoning effort.
+   `base-effort` is the no-error level for iteration start/recovery."
+  [base-effort consecutive-errors]
+  (cond
+    (<= (long consecutive-errors) 0) base-effort
+    (= 1 (long consecutive-errors)) (if (= base-effort reasoning-low) reasoning-medium reasoning-high)
+    :else reasoning-high))
 
 ;; =============================================================================
 ;; RLM Environment
@@ -520,7 +547,7 @@ Search in English. Translate non-EN queries first.
     "
 RESPONSE FORMAT:
 "
-    (spec/spec->prompt (if has-reasoning? ITERATION_SPEC_CODE_ONLY ITERATION_SPEC))
+    (spec/spec->prompt (if has-reasoning? ITERATION_SPEC_REASONING ITERATION_SPEC_NON_REASONING))
     "
 "
     (if has-reasoning?
@@ -578,19 +605,25 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
 
-   Uses ask! with ITERATION_SPEC for provider-enforced JSON structured output.
+   Uses ask! with iteration spec for provider-enforced JSON structured output.
    No regex fallback, no code-level FINAL detection.
 
    Params:
    `rlm-env` - RLM environment map.
    `messages` - Vector of message maps for the LLM.
    `opts` - Map, optional:
-     - :iteration-spec - Spec for ask! (default: ITERATION_SPEC).
-                         When provider has reasoning, pass ITERATION_SPEC_CODE_ONLY.
-     - :on-chunk - Streaming callback function."
-  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration reasoning-effort] :or {iteration-spec ITERATION_SPEC}}]]
+      - :iteration-spec - Spec for ask! (default: ITERATION_SPEC_NON_REASONING).
+                         For reasoning providers, pass ITERATION_SPEC_REASONING.
+      - :on-chunk - Streaming callback function."
+  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration reasoning-effort]
+                        :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [model-name (resolve-root-model (:router rlm-env))
+          effective-reasoning-effort (when (some? reasoning-effort)
+                                       (or (normalize-reasoning-effort reasoning-effort)
+                                         (throw (ex-info "Invalid :reasoning-effort. Expected one of low|medium|high"
+                                                  {:type :rlm/invalid-reasoning-effort
+                                                   :got reasoning-effort}))))
           ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
           ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
                        (llm/ask! (:router rlm-env)
@@ -599,7 +632,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                   :routing (or routing {})
                                   :check-context? false}
                            on-chunk (assoc :on-chunk on-chunk)
-                           reasoning-effort (assoc :extra-body {:reasoning_effort reasoning-effort}))))
+                           effective-reasoning-effort (assoc :extra-body {:reasoning_effort effective-reasoning-effort}))))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           ;; Native reasoning takes priority over spec-parsed thinking
@@ -1119,7 +1152,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                       {:keys [output-spec max-context-tokens custom-docs system-prompt
                               pre-fetched-context query-ref user-messages
                               max-iterations max-consecutive-errors max-restarts
-                              hooks cancel-atom current-iteration-atom]}]
+                              hooks cancel-atom current-iteration-atom
+                              reasoning-default]}]
   (let [max-iterations (or max-iterations 50)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
@@ -1137,6 +1171,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                              (long (* 0.6 (router/context-limit effective-model))))
         ;; Check if root provider has native reasoning (thinking tokens)
         has-reasoning? (boolean (provider-has-reasoning? (:router rlm-env)))
+        base-reasoning-effort (or (normalize-reasoning-effort reasoning-default)
+                                reasoning-low)
         has-docs? (when-let [db (:db-info rlm-env)]
                     (pos? (count (db-list-documents db {:limit 1 :include-toc? false}))))
         doc-summary (when (and has-docs? (:db-info rlm-env))
@@ -1304,10 +1340,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                 (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
                   {:status-id (status->id :error-budget-exhausted)}
                   (finalize-cost))))
-            (let [reasoning-effort (cond
-                                     (zero? consecutive-errors) "low"
-                                     (= 1 consecutive-errors) "medium"
-                                     :else "high")
+            (let [reasoning-effort (when has-reasoning?
+                                     (reasoning-effort-for-errors base-reasoning-effort consecutive-errors))
                   _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-effort})
                   ;; Build single-shot prompt: conversation + journal + execution results + var index
                   var-index-str (get-var-index)
@@ -1341,16 +1375,11 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                                  :tokens nil
                                                  :cost nil
                                                  :done? false}))))
-                  ;; Adaptive reasoning: start low, escalate on errors
-                  reasoning-effort (cond
-                                     (zero? consecutive-errors) "low"
-                                     (= 1 consecutive-errors) "medium"
-                                     :else "high")
                   iteration-result (try
                                      (run-iteration rlm-env effective-messages
                                        (cond-> {:iteration-spec (if has-reasoning?
-                                                                  ITERATION_SPEC_CODE_ONLY
-                                                                  ITERATION_SPEC)
+                                                                  ITERATION_SPEC_REASONING
+                                                                  ITERATION_SPEC_NON_REASONING)
                                                 :iteration iteration
                                                 :reasoning-effort reasoning-effort
                                                 :routing (when prev-optimize {:optimize prev-optimize})}

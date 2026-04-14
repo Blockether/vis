@@ -88,7 +88,7 @@
 (defn- attached-repo-names
   "Read attached :repo entity names from the env's DB. No atoms involved."
   [env]
-  (set (map :repo/name (rlm-db/db-list-repos (:db-info env)))))
+  (set (map :name (rlm-db/db-list-repos (:db-info env)))))
 
 (defdescribe ingest-git-test
   (describe "sut/ingest-git!"
@@ -106,10 +106,10 @@
             (expect (contains? (attached-repo-names env) "svar"))
             (let [repo-meta (rlm-db/db-get-repo-by-name (:db-info env) "svar")]
               (expect (some? repo-meta))
-              (expect (string? (:repo/path repo-meta)))
-              (expect (string? (:repo/head-sha repo-meta)))
-              (expect (= 12 (count (:repo/head-short repo-meta))))
-              (expect (pos? (:repo/commits-ingested repo-meta)))))
+              (expect (string? (:path repo-meta)))
+              (expect (string? (:head-sha repo-meta)))
+              (expect (= 12 (count (:head-short repo-meta))))
+              (expect (pos? (:commits-ingested repo-meta)))))
           (finally (sut/dispose-env! env)))))
 
     (it "throws when :repo-path is missing"
@@ -133,7 +133,7 @@
           (sut/ingest-git! env {:repo-path SVAR_REPO_ROOT :repo-name "svar" :n 10})
           (expect (= #{"svar"} (attached-repo-names env)))
           (let [repo-meta (rlm-db/db-get-repo-by-name (:db-info env) "svar")]
-            (expect (= 10 (:repo/commits-ingested repo-meta))))
+            (expect (= 10 (:commits-ingested repo-meta))))
           (finally (sut/dispose-env! env)))))))
 
 (defdescribe git-sci-bindings-test
@@ -172,7 +172,7 @@
           (let [result (eval-in-sandbox env "(git-search-commits {:limit 10})")]
             (expect (vector? result))
             (expect (pos? (count result)))
-            (expect (every? :commit/sha result)))
+            (expect (every? :sha result)))
           (finally (sut/dispose-env! env)))))
 
     (it "single-repo path-based tools accept relative paths"
@@ -224,7 +224,7 @@
       (with-multi-repo-env
         (fn [env _]
           (let [all (eval-in-sandbox env "(git-search-commits {:limit 100})")
-                docs (set (map :entity/document-id all))]
+                docs (set (map :document-id all))]
             (expect (contains? docs "svar"))
             (expect (contains? docs "tempy"))))))
 
@@ -232,14 +232,14 @@
       (with-multi-repo-env
         (fn [env _]
           (let [result (eval-in-sandbox env "(git-search-commits {:document-id \"svar\" :limit 100})")
-                docs (set (map :entity/document-id result))]
+                docs (set (map :document-id result))]
             (expect (= #{"svar"} docs))))))
 
     (it "git-search-commits scopes to tempy with :document-id"
       (with-multi-repo-env
         (fn [env _]
           (let [result (eval-in-sandbox env "(git-search-commits {:document-id \"tempy\" :limit 100})")
-                docs (set (map :entity/document-id result))]
+                docs (set (map :document-id result))]
             (expect (= #{"tempy"} docs))))))
 
     (it "git-blame with ABSOLUTE path inside svar routes to svar"
@@ -327,12 +327,12 @@
     (it "renders single-repo block with git- prefixed tool list"
       (let [prompt (rlm-core/build-system-prompt
                      {:has-reasoning? false
-                      :git-repos [{:repo/name "myrepo"
-                                   :repo/path "/tmp/fake"
-                                   :repo/head-sha "abc123def456789"
-                                   :repo/head-short "abc123def456"
-                                   :repo/branch "main"
-                                   :repo/commits-ingested 42}]})]
+                      :git-repos [{:name "myrepo"
+                                   :path "/tmp/fake"
+                                   :head-sha "abc123def456789"
+                                   :head-short "abc123def456"
+                                   :branch "main"
+                                   :commits-ingested 42}]})]
         (expect (str/includes? prompt "GIT REPO: myrepo"))
         (expect (str/includes? prompt "/tmp/fake"))
         (expect (str/includes? prompt "abc123def456"))
@@ -347,16 +347,16 @@
     (it "renders multi-repo blocks with absolute-path guidance"
       (let [prompt (rlm-core/build-system-prompt
                      {:has-reasoning? false
-                      :git-repos [{:repo/name "svar"
-                                   :repo/path "/x/svar"
-                                   :repo/head-short "deadbeef0000"
-                                   :repo/branch "main"
-                                   :repo/commits-ingested 290}
-                                  {:repo/name "sqlite-rlm"
-                                   :repo/path "/x/sqlite-rlm"
-                                   :repo/head-short "cafef00d0000"
-                                   :repo/branch "master"
-                                   :repo/commits-ingested 5000}]})]
+                      :git-repos [{:name "svar"
+                                   :path "/x/svar"
+                                   :head-short "deadbeef0000"
+                                   :branch "main"
+                                   :commits-ingested 290}
+                                  {:name "sqlite-rlm"
+                                   :path "/x/sqlite-rlm"
+                                   :head-short "cafef00d0000"
+                                   :branch "master"
+                                   :commits-ingested 5000}]})]
         (expect (str/includes? prompt "GIT REPO: svar"))
         (expect (str/includes? prompt "GIT REPO: sqlite-rlm"))
         (expect (str/includes? prompt "on main"))

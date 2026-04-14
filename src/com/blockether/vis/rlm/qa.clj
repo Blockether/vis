@@ -39,37 +39,37 @@
         docs-section
         (str/join "\n"
           (map (fn [doc]
-                 (str "- " (or (:document/title doc) (:document/name doc))
-                   " (ID: " (:document/id doc) ")"
-                   (when-let [abstract (:document/abstract doc)]
+                 (str "- " (or (:title doc) (:name doc))
+                   " (ID: " (:id doc) ")"
+                   (when-let [abstract (:abstract doc)]
                      (str "\n  Abstract: " (rlm-db/str-truncate abstract 300)))))
             documents))
         ;; Format TOC — indented by level for structure
         toc-section
         (str/join "\n"
           (map (fn [e]
-                 (let [level-num (let [l (:document.toc/level e)]
+                 (let [level-num (let [l (:level e)]
                                    (if (string? l)
                                      (parse-long (re-find #"\d+" (str l)))
                                      (or l 0)))
                        indent (str/join (repeat (min 4 (or level-num 0)) "  "))]
-                   (str indent "- [" (:document.toc/id e) " p" (:document.toc/target-page e) "] "
-                     (:document.toc/title e)
-                     (when-let [desc (:document.toc/description e)]
+                   (str indent "- [" (:id e) " p" (:target-page e) "] "
+                     (:title e)
+                     (when-let [desc (:description e)]
                        (str " — " (rlm-db/str-truncate desc 100))))))
             toc-entries))
         ;; Format page content summaries — grouped by document
         content-section
         (str/join "\n"
           (->> page-nodes
-            (filter #(or (not-empty (:page.node/content %))
-                       (not-empty (:page.node/description %))))
+            (filter #(or (not-empty (:content %))
+                       (not-empty (:description %))))
             (map (fn [node]
-                   (str "  [" (:page.node/document-id node)
-                     " p" (:page.node/page-id node)
-                     " " (name (or (:page.node/type node) :unknown)) "] "
-                     (or (not-empty (:page.node/content node))
-                       (:page.node/description node)))))))]
+                   (str "  [" (:document-id node)
+                     " p" (:page-id node)
+                     " " (name (or (:type node) :unknown)) "] "
+                     (or (not-empty (:content node))
+                       (:description node)))))))]
     (str "You are selecting diverse passages from a document corpus for question-answer generation.
 
 YOUR TASK: Select exactly " count " passages that will serve as source material for generating Q&A pairs.

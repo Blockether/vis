@@ -23,22 +23,22 @@
 (defn- entity->attrs
   [db-info doc-id entity]
   (let [entity-id (util/uuid)
-        entity-name (or (:entity/name entity) (:name entity) "unknown")
-        entity-type (normalize-entity-type (or (:entity/type entity) (:type entity)))
+        entity-name (or (:name entity) (:name entity) "unknown")
+        entity-type (normalize-entity-type (or (:type entity) (:type entity)))
         canonical-id (rlm-db/resolve-canonical-id db-info entity-name entity-type)]
     [entity-name
      entity-id
-     (cond-> {:entity/id entity-id
-              :entity/name entity-name
-              :entity/type entity-type
-              :entity/canonical-id canonical-id
-              :entity/description (or (:entity/description entity) (:description entity) "")
-              :entity/document-id (str doc-id)
-              :entity/created-at (java.util.Date.)}
-       (or (:entity/section entity) (:section entity))
-       (assoc :entity/section (or (:entity/section entity) (:section entity)))
-       (or (:entity/page entity) (:page entity))
-       (assoc :entity/page (long (or (:entity/page entity) (:page entity)))))]))
+     (cond-> {:id entity-id
+              :name entity-name
+              :type entity-type
+              :canonical-id canonical-id
+              :description (or (:description entity) (:description entity) "")
+              :document-id (str doc-id)
+              :created-at (java.util.Date.)}
+       (or (:section entity) (:section entity))
+       (assoc :section (or (:section entity) (:section entity)))
+       (or (:page entity) (:page entity))
+       (assoc :page (long (or (:page entity) (:page entity)))))]))
 
 (defn- store-entities!
   [db-info doc-id entities]
@@ -56,18 +56,18 @@
   [db-info doc-id relationships name->uuid]
   (doseq [rel relationships]
     (try
-      (let [src-name (or (:relationship/source-entity-id rel) (:source rel))
-            tgt-name (or (:relationship/target-entity-id rel) (:target rel))
+      (let [src-name (or (:source-id rel) (:source rel))
+            tgt-name (or (:target-id rel) (:target rel))
             src-id (get name->uuid (some-> src-name str str/lower-case))
             tgt-id (get name->uuid (some-> tgt-name str str/lower-case))]
         (when (and src-id tgt-id)
           (rlm-db/store-relationship! db-info
-            {:relationship/id (util/uuid)
-             :relationship/type (normalize-relationship-type (or (:relationship/type rel) (:type rel)))
-             :relationship/source-entity-id src-id
-             :relationship/target-entity-id tgt-id
-             :relationship/description (or (:relationship/description rel) (:description rel) "")
-             :relationship/document-id (str doc-id)})))
+            {:id (util/uuid)
+             :type (normalize-relationship-type (or (:type rel) (:type rel)))
+             :source-id src-id
+             :target-id tgt-id
+             :description (or (:description rel) (:description rel) "")
+             :document-id (str doc-id)})))
       (catch Exception e
         (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Failed to store relationship"})))))
 
