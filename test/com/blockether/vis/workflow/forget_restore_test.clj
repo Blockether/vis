@@ -1,4 +1,4 @@
-(ns com.blockether.vis.forget-restore-workflow-test
+(ns com.blockether.vis.workflow.forget-restore-test
   "End-to-end workflow test for the :forget iteration-spec field and the
    round-trip with (restore-var …).
 
@@ -91,14 +91,12 @@
       (with-temp-db
         (let [{id :id} (conv/create! :cli {:title "forget live var"})
               env (conv/env-for id)]
-          ;; Seed the sandbox with two defs as if a prior iteration had run.
           (sci/eval-string+ (:sci-ctx env)
             "(def keep-var 99) (def drop-me 42)"
             {:ns (sci/find-ns (:sci-ctx env) 'sandbox)})
           (expect (= #{"keep-var" "drop-me"}
                     (clojure.set/intersection
                       (sandbox-names env) #{"keep-var" "drop-me"})))
-          ;; One iteration: no code, just :forget + final.
           (with-redefs [llm/ask! (scripted-llm
                                    [{:forget ["drop-me"]
                                      :final {:answer "forgotten"
@@ -113,8 +111,6 @@
       (with-temp-db
         (let [{id :id} (conv/create! :cli {:title "forget-preserves-db"})
               env (conv/env-for id)]
-          ;; Turn 1 — two iterations: first defs `memory`, second finals. The
-          ;; :iteration-var snapshot persists `memory` to SQLite.
           (with-redefs [llm/ask! (scripted-llm
                                    [{:code [{:expr "(def memory \"hello\")"
                                              :time-ms 1000}]}
@@ -122,17 +118,12 @@
                                              :confidence "high"}}])]
             (conv/send! id "remember this" {:max-iterations 3}))
           (expect (= "hello" (sandbox-value env 'memory)))
-          ;; Turn 2 — one iteration: forget it + final.
           (with-redefs [llm/ask! (scripted-llm
                                    [{:forget ["memory"]
                                      :final {:answer "forgotten"
                                              :confidence "high"}}])]
             (conv/send! id "drop it" {:max-iterations 1}))
           (expect (nil? (sandbox-value env 'memory)))
-          ;; Turn 3 — two iterations: first calls (restore-var 'memory) to
-          ;; pull it back from the DB into the sandbox, second finals. If
-          ;; :forget had deleted the iteration-var row, restore-var would
-          ;; throw here.
           (with-redefs [llm/ask! (scripted-llm
                                    [{:code [{:expr "(restore-var 'memory)"
                                              :time-ms 1000}]}
@@ -192,4 +183,108 @@
                 (expect (re-find #"FORGOTTEN" (str (:answer result))))
                 (expect (not (contains? names "drop-me"))))
               (finally
-                (rlm/dispose-env! env)))))))))
+                (rlm/dispose-env! env))))))))
+
+;;; ── Auto-forget integration tests ──────────────────────────────────────
+
+  (describe "deterministic auto-forget at query boundary"
+    (it "evicts undocumented vars after they go stale (not touched in 3 queries)"
+      (with-temp-db
+        (let [{id :id} (conv/create! :cli {:title "auto-forget stale"})
+              trivial-final {:final {:answer "ok" :confidence "high"}}]
+          ;; Query 1: define an undocumented scratch var
+          (with-redefs [llm/ask! (scripted-llm
+                                   [{:code [{:expr "(def scratch 42)" :time-ms 100}]}
+                                    {:final {:answer "defined" :confidence "high"}}])]
+            (conv/send! id "define scratch" {:max-iterations 3}))
+          (let [env (conv/env-for id)]
+            (expect (= 42 (sandbox-value env 'scratch))))
+
+          ;; Queries 2, 3, 4: trivial queries that don't touch scratch
+          (dotimes [_ 3]
+            (with-redefs [llm/ask! (scripted-llm [trivial-final])]
+              (conv/send! id "noop" {:max-iterations 1})))
+
+          ;; After query 4: scratch was defined in query 1, which is now
+          ;; 3 queries behind (queries 2, 3, 4 are the recent 3).
+          ;; Auto-forget should have evicted it during query 4's startup.
+          (let [env (conv/env-for id)
+                names (sandbox-names env)]
+            (expect (not (contains? names "scratch"))))
+          (conv/delete! id))))
+
+    (it "preserves documented vars regardless of staleness"
+      (with-temp-db
+        (let [{id :id} (conv/create! :cli {:title "auto-forget preserves docs"})
+              trivial-final {:final {:answer "ok" :confidence "high"}}]
+          ;; Query 1: define a var WITH docstring
+          (with-redefs [llm/ask! (scripted-llm
+                                   [{:code [{:expr "(def config \"app configuration\" {:port 3000})"
+                                             :time-ms 100}]}
+                                    {:final {:answer "defined" :confidence "high"}}])]
+            (conv/send! id "define config" {:max-iterations 3}))
+
+          ;; Queries 2, 3, 4: trivial
+          (dotimes [_ 3]
+            (with-redefs [llm/ask! (scripted-llm [trivial-final])]
+              (conv/send! id "noop" {:max-iterations 1})))
+
+          ;; config should STILL be in the sandbox — it has a docstring
+          (let [env (conv/env-for id)]
+            (expect (= {:port 3000} (sandbox-value env 'config))))
+          (conv/delete! id))))
+
+    (it "auto-forgotten vars can be restored via restore-var"
+      (with-temp-db
+        (let [{id :id} (conv/create! :cli {:title "auto-forget restorable"})
+              trivial-final {:final {:answer "ok" :confidence "high"}}]
+          ;; Query 1: define undocumented var
+          (with-redefs [llm/ask! (scripted-llm
+                                   [{:code [{:expr "(def ephemeral \"hello\")" :time-ms 100}]}
+                                    {:final {:answer "defined" :confidence "high"}}])]
+            (conv/send! id "define ephemeral" {:max-iterations 3}))
+          (let [env (conv/env-for id)]
+            (expect (= "hello" (sandbox-value env 'ephemeral))))
+
+          ;; Queries 2, 3, 4: go stale
+          (dotimes [_ 3]
+            (with-redefs [llm/ask! (scripted-llm [trivial-final])]
+              (conv/send! id "noop" {:max-iterations 1})))
+
+          ;; Verify it's gone
+          (let [env (conv/env-for id)]
+            (expect (nil? (sandbox-value env 'ephemeral))))
+
+          ;; Query 5: restore it
+          (with-redefs [llm/ask! (scripted-llm
+                                   [{:code [{:expr "(restore-var 'ephemeral)" :time-ms 100}]}
+                                    {:final {:answer "restored" :confidence "high"}}])]
+            (conv/send! id "bring it back" {:max-iterations 3}))
+
+          ;; Should be back with original value
+          (let [env (conv/env-for id)]
+            (expect (= "hello" (sandbox-value env 'ephemeral))))
+          (conv/delete! id))))
+
+    (it "does not evict vars defined in recent queries"
+      (with-temp-db
+        (let [{id :id} (conv/create! :cli {:title "auto-forget recent safe"})
+              trivial-final {:final {:answer "ok" :confidence "high"}}]
+          ;; Query 1: trivial
+          (with-redefs [llm/ask! (scripted-llm [trivial-final])]
+            (conv/send! id "noop" {:max-iterations 1}))
+
+          ;; Query 2: define undocumented var
+          (with-redefs [llm/ask! (scripted-llm
+                                   [{:code [{:expr "(def recent-var 77)" :time-ms 100}]}
+                                    {:final {:answer "defined" :confidence "high"}}])]
+            (conv/send! id "define recent-var" {:max-iterations 3}))
+
+          ;; Query 3: trivial — recent-var is only 1 query old, within the 3-query window
+          (with-redefs [llm/ask! (scripted-llm [trivial-final])]
+            (conv/send! id "noop" {:max-iterations 1}))
+
+          ;; recent-var should still be there (defined in query 2, queries 1,2,3 are recent)
+          (let [env (conv/env-for id)]
+            (expect (= 77 (sandbox-value env 'recent-var))))
+          (conv/delete! id))))))
