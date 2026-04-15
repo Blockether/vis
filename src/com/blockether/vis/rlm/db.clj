@@ -76,7 +76,6 @@
 
 (def db-list-conversation-queries  sq/db-list-conversation-queries)
 (def db-list-query-iterations      sq/db-list-query-iterations)
-(def db-list-final-results         sq/db-list-final-results)
 (def db-list-queries               sq/db-list-queries)
 (def db-document-page-nodes-full   sq/db-document-page-nodes-full)
 

@@ -18,9 +18,7 @@
 (def ^:private poll-timeout-seconds 30)
 
 (defn- telegram-system-prompt []
-  (str "You are vis over Telegram. Short replies, minimal markdown.\n\n"
-    (agent/default-system-prompt)
-    (agent/environment-info)))
+  "You are vis over Telegram. Keep replies short and direct. Use minimal markdown.")
 
 (defn- extract-text [msg] (or (:text msg) (:caption msg)))
 
@@ -53,7 +51,9 @@
             (tg/send-chat-action! token chat-id "typing")
             (let [{:keys [id]} (conv/for-telegram-chat! chat-id)
                   result       (conv/send! id text
-                                 {:system-prompt (telegram-system-prompt)})
+                                 {:system-prompt (telegram-system-prompt)
+                                  :max-context-tokens 2200
+                                  :max-iterations 12})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
                   env          (conv/env-for id)
                   model-name   (routing/resolve-root-model (:router env))]

@@ -1,17 +1,21 @@
 (ns com.blockether.vis.rlm.qa
-  "QA generation pipeline — multi-stage Q&A pair generation from ingested documents."
+  "QA generation pipeline — multi-stage Q&A pair generation from ingested documents.
+   Includes crash-resumable manifest state (formerly qa_manifest.clj)."
   (:require
    [clojure.core.async :as async]
+   [clojure.edn :as edn]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.rlm.db :as rlm-db]
-   [com.blockether.vis.rlm.qa-manifest :as qa-manifest]
    [com.blockether.vis.rlm.schema :as schema]
    [com.blockether.svar.internal.util :as util]
    [sci.core :as sci]
    [taoensso.trove :as trove])
   (:import
+   [java.nio.file AtomicMoveNotSupportedException CopyOption Files StandardCopyOption]
+   [java.security MessageDigest]
    [java.time Instant]))
 
 ;; -----------------------------------------------------------------------------
@@ -24,6 +28,197 @@
 (def ^:private CHUNK_SELECTION_SPEC schema/CHUNK_SELECTION_SPEC)
 (def ^:private QUESTIONIFY_SPEC schema/QUESTIONIFY_SPEC)
 (def ^:private VERIFICATION_SPEC schema/VERIFICATION_SPEC)
+
+;; =============================================================================
+;; QA Manifest — crash-resumable state for query-env-qa!
+;; Manages corpus snapshots, content hashing, and manifest persistence.
+;; =============================================================================
+
+(def ^:const QA_MANIFEST_VERSION 2)
+
+;; -----------------------------------------------------------------------------
+;; Hashing helpers
+;; -----------------------------------------------------------------------------
+
+(defn- sha256-hex
+  ^String [^String s]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (.update digest (.getBytes s "UTF-8"))
+    (apply str (map #(format "%02x" %) (.digest digest)))))
+
+(defn- digest-update!
+  [^MessageDigest digest x]
+  (.update digest (.getBytes (pr-str x) "UTF-8"))
+  (.update digest (.getBytes "\n" "UTF-8"))
+  digest)
+
+(defn- digest->sha256
+  ^String [^MessageDigest digest]
+  (str "sha256:" (apply str (map #(format "%02x" %) (.digest digest)))))
+
+;; -----------------------------------------------------------------------------
+;; Corpus snapshot
+;; -----------------------------------------------------------------------------
+
+(defn- qa-corpus-revision
+  [db-info]
+  (long (rlm-db/get-corpus-revision db-info)))
+
+(defn- qa-corpus-documents [db-info] (rlm-db/qa-corpus-documents db-info))
+(defn- qa-corpus-toc-entries [db-info] (rlm-db/qa-corpus-toc-entries db-info))
+(defn- qa-corpus-page-nodes [db-info] (rlm-db/qa-corpus-page-nodes db-info))
+
+(defn- qa-corpus-content-hash
+  [docs toc nodes]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (doseq [doc docs] (digest-update! digest doc))
+    (doseq [entry toc] (digest-update! digest entry))
+    (doseq [node nodes] (digest-update! digest node))
+    (digest->sha256 digest)))
+
+(defn- qa-corpus-cache-hit!
+  [env revision]
+  (let [stats (when-let [corpus-atom (:qa-corpus-atom env)]
+                (:stats (swap! corpus-atom update :stats
+                          #(-> %
+                             (update :hits (fnil inc 0))
+                             (assoc :last-revision revision)))))]
+    (trove/log! {:level :info :id ::qa-corpus-cache-hit
+                 :data {:revision revision
+                        :hits (:hits stats)
+                        :misses (:misses stats)}
+                 :msg "QA corpus snapshot cache hit"})))
+
+(defn- qa-corpus-cache-miss!
+  [env revision digest-ms]
+  (let [stats (when-let [corpus-atom (:qa-corpus-atom env)]
+                (:stats (swap! corpus-atom update :stats
+                          #(-> %
+                             (update :misses (fnil inc 0))
+                             (assoc :last-digest-ms digest-ms)
+                             (assoc :last-revision revision)))))]
+    (trove/log! {:level :info :id ::qa-corpus-cache-miss
+                 :data {:revision revision
+                        :digest-ms digest-ms
+                        :hits (:hits stats)
+                        :misses (:misses stats)}
+                 :msg "QA corpus snapshot cache miss"})))
+
+(defn- compute-qa-corpus-snapshot
+  [db-info revision]
+  (let [docs (qa-corpus-documents db-info)
+        toc (qa-corpus-toc-entries db-info)
+        nodes (qa-corpus-page-nodes db-info)]
+    {:revision revision
+     :document-count (count docs)
+     :toc-count (count toc)
+     :node-count (count nodes)
+     :content-hash (qa-corpus-content-hash docs toc nodes)}))
+
+(defn qa-corpus-snapshot
+  "Returns deterministic corpus stats + content hash for manifest fingerprinting.
+   Hash includes document metadata, TOC entries, and full page-node text payloads."
+  [env db-info]
+  (if-not (:datasource db-info)
+    {:revision 0 :document-count 0 :toc-count 0 :node-count 0 :content-hash "sha256:0"}
+    (let [corpus-atom (:qa-corpus-atom env)
+          revision (qa-corpus-revision db-info)
+          cached (when corpus-atom (:snapshot-cache @corpus-atom))]
+      (if (and cached (= revision (:revision cached)))
+        (do
+          (qa-corpus-cache-hit! env revision)
+          (:snapshot cached))
+        (let [start (System/nanoTime)
+              snapshot (compute-qa-corpus-snapshot db-info revision)
+              digest-ms (/ (- (System/nanoTime) start) 1000000.0)]
+          (when corpus-atom
+            (swap! corpus-atom assoc :snapshot-cache {:revision revision :snapshot snapshot}))
+          (qa-corpus-cache-miss! env revision digest-ms)
+          snapshot)))))
+
+(defn invalidate-qa-corpus-snapshot-cache!
+  "Resets the corpus snapshot cache so the next call recomputes."
+  [env]
+  (when-let [corpus-atom (:qa-corpus-atom env)]
+    (swap! corpus-atom assoc :snapshot-cache nil)))
+
+(defn qa-corpus-snapshot-stats
+  "Returns QA corpus snapshot cache stats for observability.
+   Shape: {:hits N :misses N :last-digest-ms ms|nil :last-revision rev}."
+  [env]
+  (if-let [corpus-atom (:qa-corpus-atom env)]
+    (:stats @corpus-atom)
+    {:hits 0 :misses 0 :last-digest-ms nil :last-revision 0}))
+
+;; -----------------------------------------------------------------------------
+;; Manifest persistence
+;; -----------------------------------------------------------------------------
+
+(defn qa-manifest-fingerprint
+  "Returns a stable fingerprint for query-env-qa! inputs.
+   Includes key generation options + corpus summary so resume only reuses
+   manifest state when run inputs are compatible."
+  [env db-info qa-opts]
+  (let [corpus (qa-corpus-snapshot env db-info)
+        payload {:manifest-version QA_MANIFEST_VERSION
+                 :options qa-opts
+                 :corpus corpus}]
+    (str "sha256:" (sha256-hex (pr-str payload)))))
+
+(defn fresh-qa-manifest
+  "Returns a fresh (empty) manifest map for the given fingerprint."
+  [fingerprint]
+  {:manifest-version QA_MANIFEST_VERSION
+   :fingerprint fingerprint
+   :started-at (str (Instant/now))
+   :completed-at nil
+   :phase1 {:status :pending}
+   :batches {}})
+
+(defn qa-manifest-path
+  "Returns qa-manifest.edn path for a persistent env, or nil for ephemeral envs."
+  [env]
+  (when-let [path (:path (:db-info env))]
+    (str path "/qa-manifest.edn")))
+
+(defn read-qa-manifest
+  "Reads qa-manifest.edn. Returns nil if not found or ephemeral env."
+  [env]
+  (when-let [p (qa-manifest-path env)]
+    (let [f (io/file p)]
+      (when (.exists f)
+        (edn/read-string (slurp f))))))
+
+(def ^:private qa-manifest-write-lock (Object.))
+
+(defn write-qa-manifest!
+  "Writes qa-manifest.edn atomically via temp+move. No-op for ephemeral envs."
+  [env manifest]
+  (when-let [p (qa-manifest-path env)]
+    (locking qa-manifest-write-lock
+      (let [tmp (str p ".tmp")]
+        (spit tmp (pr-str manifest))
+        (try
+          (try
+            (Files/move (.toPath (io/file tmp))
+              (.toPath (io/file p))
+              (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING
+                                      StandardCopyOption/ATOMIC_MOVE]))
+            (catch AtomicMoveNotSupportedException _
+              (Files/move (.toPath (io/file tmp))
+                (.toPath (io/file p))
+                (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+          (when-not (.exists (io/file p))
+            (throw (ex-info "qa-manifest write failed" {:path p})))
+          (catch Exception e
+            (throw (ex-info "Failed to persist qa-manifest.edn"
+                     {:path p :tmp tmp :cause (ex-message e)} e))))))))
+
+(defn update-qa-batch-status!
+  "Updates a single batch's status in the manifest and persists immediately."
+  [env manifest-atom batch-idx status-map]
+  (swap! manifest-atom assoc-in [:batches batch-idx] status-map)
+  (write-qa-manifest! env @manifest-atom))
 
 ;; -----------------------------------------------------------------------------
 ;; Prompt builders
@@ -488,10 +683,10 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                       :k-candidates k-candidates
                       :multi-hop? (boolean multi-hop?)
                       :personas (vec (sort (or personas #{})))}
-         qa-run-fingerprint (qa-manifest/qa-manifest-fingerprint env db-info qa-run-opts)
+         qa-run-fingerprint (qa-manifest-fingerprint env db-info qa-run-opts)
 
           ;; ===== MANIFEST: Check for resumable state =====
-         existing-qa-manifest (qa-manifest/read-qa-manifest env)
+         existing-qa-manifest (read-qa-manifest env)
          manifest-compatible? (= qa-run-fingerprint (:fingerprint existing-qa-manifest))
          manifest-reset? (and existing-qa-manifest (not manifest-compatible?))
          _ (when manifest-reset?
@@ -501,9 +696,9 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                           :msg "Resetting qa-manifest: run inputs changed"}))
          manifest-atom (atom (if manifest-compatible?
                                existing-qa-manifest
-                               (qa-manifest/fresh-qa-manifest qa-run-fingerprint)))
+                               (fresh-qa-manifest qa-run-fingerprint)))
          _ (when (or (nil? existing-qa-manifest) manifest-reset?)
-             (qa-manifest/write-qa-manifest! env @manifest-atom))
+             (write-qa-manifest! env @manifest-atom))
          _ (when (and manifest-compatible? existing-qa-manifest (not (:completed-at existing-qa-manifest)))
              (trove/log! {:level :info :id ::qa-resume
                           :data {:batches-done (->> (:batches existing-qa-manifest)
@@ -516,8 +711,8 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                   (do (trove/log! {:level :info :id ::qa-phase1-cached
                                    :data {:passages (count (get-in @manifest-atom [:phase1 :passages]))}
                                    :msg "Phase 1: Reusing cached passages from manifest"})
-                      {:passages (get-in @manifest-atom [:phase1 :passages])
-                       :trace [] :iterations 0})
+                    {:passages (get-in @manifest-atom [:phase1 :passages])
+                     :trace [] :iterations 0})
                   (do
                     (trove/log! {:level :info :id ::qa-phase1
                                  :data {:target-passages passage-count :target-questions target-count
@@ -539,7 +734,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                                                                  :routing {:optimize :cost}})
                           ps (or (:passages (:result selection-result)) [])]
                       (swap! manifest-atom assoc :phase1 {:status :done :passages ps})
-                      (qa-manifest/write-qa-manifest! env @manifest-atom)
+                      (write-qa-manifest! env @manifest-atom)
                       (trove/log! {:level :info :id ::qa-phase1-done
                                    :data {:passages-selected (count ps)
                                           :model-used effective-selection-model}
@@ -632,12 +827,12 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                             (if (or result (>= attempt max-retries))
                               (let [final-result (or result {:batch-idx batch-idx :questions [] :trace [] :iterations 0})]
                                 ;; Checkpoint batch to manifest
-                                (qa-manifest/update-qa-batch-status! env manifest-atom batch-idx
+                                (update-qa-batch-status! env manifest-atom batch-idx
                                   {:status (if result :done :error)
                                    :questions (:questions final-result)})
                                 final-result)
                               (do (Thread/sleep (* attempt 1000))
-                                  (recur (inc attempt)))))))))
+                                (recur (inc attempt)))))))))
                (async/to-chan! pending-items)))
          _ (when (empty? pending-items) (async/close! result-chan))
          ;; Collect new results + merge cached, sort by batch index
@@ -708,7 +903,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
 
      ;; Mark manifest as completed
      (swap! manifest-atom assoc :completed-at (str (Instant/now)))
-     (qa-manifest/write-qa-manifest! env @manifest-atom)
+     (write-qa-manifest! env @manifest-atom)
 
      {:questions final-questions
       :dropped-questions dropped

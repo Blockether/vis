@@ -162,27 +162,6 @@
                            (let [result (#'rlm-core/execute-code env "(vec (re-seq #\"\\d+\" \"a1b2c3\"))")]
                              (expect (= ["1" "2" "3"] (:result result)))))))))
 
-(defdescribe final-results-scoping-test
-  (it "filters final results by conversation-ref"
-    (let [db-info (#'rlm-db/create-rlm-conn :temp)]
-      (try
-        (let [conv-a (rlm-db/store-conversation! db-info {:system-prompt "" :model "m"})
-              conv-b (rlm-db/store-conversation! db-info {:system-prompt "" :model "m"})
-              query-a (rlm-db/store-query! db-info {:conversation-ref conv-a :text "qa" :status :running})
-              query-b (rlm-db/store-query! db-info {:conversation-ref conv-b :text "qb" :status :running})]
-          (rlm-db/store-iteration! db-info {:query-ref query-a :executions [] :vars [] :answer "answer-a"})
-          (rlm-db/store-iteration! db-info {:query-ref query-b :executions [] :vars [] :answer "answer-b"})
-          (let [a-only (rlm-db/db-list-final-results db-info {:conversation-ref conv-a})
-                b-only (rlm-db/db-list-final-results db-info {:conversation-ref conv-b})
-                all-finals (rlm-db/db-list-final-results db-info)]
-            (expect (= 1 (count a-only)))
-            (expect (= "answer-a" (:answer (first a-only))))
-            (expect (= 1 (count b-only)))
-            (expect (= "answer-b" (:answer (first b-only))))
-            (expect (= 2 (count all-finals)))))
-        (finally
-          (#'rlm-db/dispose-rlm-conn! db-info))))))
-
 (defdescribe continuation-restore-test
   (it "create-env can continue the latest conversation"
     (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"

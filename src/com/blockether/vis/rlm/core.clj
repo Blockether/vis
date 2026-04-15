@@ -19,7 +19,6 @@
    [com.blockether.vis.rlm.tools :refer [create-sci-context realize-value build-var-index]]
    [com.blockether.vis.rlm.paren-repair :as paren-repair]
    [edamame.core :as edamame]
-   [com.blockether.svar.internal.jsonish :as jsonish]
    [com.blockether.svar.internal.spec :as spec]
    [sci.core :as sci]
    [taoensso.trove :as trove]))
@@ -1643,12 +1642,3 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
        :pages-processed (count pages)
        :extraction-errors @errors-atom
        :visual-nodes-scanned @vision-count-atom})))
-
-;; Cyclic dep note: rlm.sub needs iteration-loop at call time. We do NOT
-;; require rlm.sub here — instead, callers (env.clj, query.clj) that already
-;; require rlm.core pass iteration-loop explicitly to make-routed-sub-rlm-query-fn
-;; and run-sub-rlm. Pure dependency injection, no load-time magic.
-
-;; =============================================================================
-;; Public API - Component-Based Architecture
-;; =============================================================================
