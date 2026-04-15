@@ -1,13 +1,13 @@
 (ns com.blockether.vis.web.routes
   "HTTP routing — GET/POST handlers for sessions and queries."
-  (:require [com.blockether.vis.web.presenter :as presenter]
+  (:require [com.blockether.vis.conversations :as conv]
+            [com.blockether.vis.web.presenter :as presenter]
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.time Instant]))
 
 ;; Deferred require to avoid circular dep — server loads first, routes reference it
-(defn- srv [] @(requiring-resolve 'com.blockether.vis.web.server/sessions))
 (defn- srv-live [] @(requiring-resolve 'com.blockether.vis.web.server/live-status))
 (defn- srv-get-session [id] ((requiring-resolve 'com.blockether.vis.web.server/get-session) id))
 (defn- srv-create-session! [n] ((requiring-resolve 'com.blockether.vis.web.server/create-session!) n))
@@ -51,10 +51,10 @@
             id    (when (valid-session-id? id) id)]
         (cond
           (str/ends-with? uri "/context")
-          (if-let [sess (when id (srv-get-session id))]
+          (if-let [_sess (when id (srv-get-session id))]
             ;; Resolved late via requiring-resolve to dodge the server→routes cycle.
-            (let [env          (:env sess)
-                  db-latest    (requiring-resolve 'com.blockether.svar.internal.rlm.db/db-latest-var-registry)
+            (let [env          (conv/env-for id)
+                  db-latest    (requiring-resolve 'com.blockether.vis.rlm.db/db-latest-var-registry)
                   conv-ref     (:conversation-ref env)
                   db-info      (:db-info env)
                   ;; Pull the persisted var registry straight from SQLite — this

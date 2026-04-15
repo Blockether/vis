@@ -64,7 +64,6 @@
 (def store-conversation!              sq/store-conversation!)
 (def db-get-conversation              sq/db-get-conversation)
 (def db-find-latest-conversation-ref  sq/db-find-latest-conversation-ref)
-(def db-find-named-conversation-ref   sq/db-find-named-conversation-ref)
 (def db-resolve-conversation-ref      sq/db-resolve-conversation-ref)
 
 (def store-query!   sq/store-query!)
@@ -73,7 +72,6 @@
 (def store-iteration!        sq/store-iteration!)
 (def db-list-iteration-vars  sq/db-list-iteration-vars)
 
-(def db-list-conversations-by-prefix  sq/db-list-conversations-by-prefix)
 (def delete-entity-tree!               sq/delete-entity-tree!)
 
 (def db-list-conversation-queries  sq/db-list-conversation-queries)

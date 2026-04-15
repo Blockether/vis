@@ -63,10 +63,10 @@
           (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
             (state/dispatch [:set-config c]))))
 
-      ;; Init conversation with config
+      ;; Init conversation with config — fresh :vis conversation each boot.
       (when-let [config (:config @state/app-db)]
-        (let [{:keys [env history]} (chat/make-conversation config)]
-          (state/dispatch [:init-conversation {:env env} history])))
+        (let [{:keys [id history]} (chat/make-conversation config)]
+          (state/dispatch [:init-conversation {:id id} history])))
 
       (loop []
         (let [db    @state/app-db
@@ -98,8 +98,8 @@
                     (do
                       (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                         (state/dispatch [:set-config c])
-                        (let [{:keys [env history]} (chat/make-conversation c)]
-                          (state/dispatch [:init-conversation {:env env} history])))
+                        (let [{:keys [id history]} (chat/make-conversation c)]
+                          (state/dispatch [:init-conversation {:id id} history])))
                       (recur)))
 
                   :show-copy

@@ -186,15 +186,12 @@
         system-prompt (rlm-core/build-system-prompt {:has-reasoning? has-reasoning?
                                                      :skill-registry skill-registry-map})
         resolved-conversation-ref (rlm-db/db-resolve-conversation-ref db-info conversation)
-        conversation-name (when (and (map? conversation) (string? (:name conversation)))
-                            (:name conversation))
         conversation-ref (or resolved-conversation-ref
                            (rlm-db/store-conversation! db-info
-                             {:env-id env-id :model root-model
-                              :system-prompt system-prompt
-                              :name conversation-name}))
+                             {:model root-model
+                              :system-prompt system-prompt}))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (rlm-tools/create-sci-context nil cheap-sub-rlm-query-fn db-info
+        (rlm-tools/create-sci-context cheap-sub-rlm-query-fn db-info
           conversation-ref
           (:custom-bindings @state-atom))
         env {:env-id env-id

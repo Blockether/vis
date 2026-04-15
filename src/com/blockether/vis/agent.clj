@@ -17,12 +17,9 @@
   (:require
    [charred.api :as json]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.svar.internal.rlm :as rlm]
-   [com.blockether.vis.config :as config]
-   [com.blockether.vis.languages.commons.edit :as edit]
-   [com.blockether.vis.languages.commons.list :as list]
-   [com.blockether.vis.languages.commons.read :as read]
-   [com.blockether.vis.languages.commons.write :as write]))
+   [com.blockether.vis.conversations :as conv]
+   [com.blockether.vis.rlm :as rlm]
+   [com.blockether.vis.config :as config]))
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
 
@@ -44,14 +41,10 @@
   (assoc opts :sym sym :fn f))
 
 (def base-tools
-  "Common tools available to every agent: file read/write/edit + directory listing.
-   Shell execution is intentionally NOT in this set — the Telegram bot and any
-   other untrusted caller would otherwise have arbitrary code execution on the
-   host. If an agent truly needs shell, wire a scoped tool at the call site."
-  [read/tool-def
-   write/tool-def
-   edit/tool-def
-   list/tool-def])
+  "Legacy alias for `com.blockether.vis.conversations/base-tools`. Every env
+   opened through `conv/create!` already has these registered — agent-defs
+   only need to declare *extra* tools beyond this set."
+  conv/base-tools)
 
 (defn default-system-prompt
   "Tiny vis-side persona block. svar's own RLM prompt already covers ARCH,
@@ -61,9 +54,10 @@
   []
   "You are a vis agent — senior engineer pair, Clojure SCI sandbox, file tools only.
 
-Cross-query memory: `(def name \"doc\" val)` persists in this conversation; next
-query sees it in <var_index>. If a symbol should exist but isn't there, call
-(restore-var 'name) or (restore-vars ['a 'b]).
+Cross-query memory: only `(def name \"doc\" val)` persists in this conversation; next
+query sees it in <var_index>. Plain final answers do not persist unless you also
+def them. If a symbol should exist but isn't there, call (restore-var 'name) or
+(restore-vars ['a 'b]). Use `:forget` for scratch vars once they stop being useful.
 
 File tools (positional args, never maps): read-file, write-file, edit-file, list-dir.
 No shell, no git CLI, no network. If the user needs a shell command, say so plainly.
@@ -107,7 +101,7 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
             :constants      {}
             :max-iterations 50
             :system-prompt  (or (:system-prompt opts) (default-system-prompt))}
-           (assoc opts :tools all-tools))))
+      (assoc opts :tools all-tools))))
 
 ;;; ── Config Resolution ────────────────────────────────────────────────────
 ;; Delegates to config.clj — single source of truth for config I/O.
@@ -126,12 +120,12 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
         user   (System/getProperty "user.name")
         home   (System/getProperty "user.home")]
     (str "\n<environment>\n"
-         "  Working directory: " cwd "\n"
-         "  Home directory: " home "\n"
-         "  User: " user "\n"
-         "  Platform: " os " (" arch ")\n"
-         "  Shell: " shell "\n"
-         "</environment>")))
+      "  Working directory: " cwd "\n"
+      "  Home directory: " home "\n"
+      "  User: " user "\n"
+      "  Platform: " os " (" arch ")\n"
+      "  Shell: " shell "\n"
+      "</environment>")))
 
 ;;; ── Execution ────────────────────────────────────────────────────────────
 
@@ -151,9 +145,6 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
 
    Options:
    - :system-prompt  — Override agent's system prompt
-   - :context        — Data context for the RLM. String becomes P (the symbolic handle
-                       with get-page/page-count); maps/vectors are bound to `context`
-                       in the SCI sandbox.
    - :spec           — svar output spec for structured responses
    - :model          — Override model (agent-level or per-run)
    - :max-iterations — Override max iterations
@@ -163,68 +154,59 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
    - :verify?        — Enable claim verification (default false)
    - :debug?         — Enable svar debug logging (default false)
    - :config         — Provider config override (skips ~/.vis/config.edn)
-   - :conversation   — Resume a conversation. :latest reopens the most recent, or pass
-                       a [:entity/id uuid] lookup ref."
-  [agent-def prompt & [{:keys [system-prompt context spec model max-iterations on-chunk
-                               verify? debug? config conversation]
+
+   Each call creates a fresh conversation in the `:cli` channel and runs
+   the query against it. The conversation is persisted — it never mixes
+   with the web/TUI sidebar (`:vis`) or Telegram chats (`:telegram`), but
+   you can list past runs with `(conv/by-channel :cli)` and resume one via
+   `conv/send!` against its id. A short title is derived from the first
+   100 characters of the prompt for browsing."
+  [agent-def prompt & [{:keys [system-prompt spec model max-iterations on-chunk
+                               verify? debug? config]
                         :as _opts}]]
-  (let [_cfg    (config/resolve-config config)  ;; ensures a router exists / throws on missing
-        router  (config/get-router)
-        ;; Shared SQLite DB for everything vis does (TUI, web, telegram, CLI).
-        ;; Without `:conversation`, svar creates a fresh conversation scoped to
-        ;; this run. Callers that want to resume pass `:conversation {:name …}`
-        ;; or a [:entity/id uuid] lookup ref.
-        env     (rlm/create-env router
-                  (cond-> {:db config/db-path}
-                    conversation (assoc :conversation conversation)))
-        ;; Register tools
-        env     (reduce (fn [e {:keys [sym fn] :as tool-def}]
-                          (rlm/register-env-fn! e sym fn
-                                                (dissoc tool-def :sym :fn)))
-                        env
-                        (:tools agent-def))
-        ;; Register constants
-        env     (reduce-kv (fn [e sym value]
-                             (rlm/register-env-def! e sym value
-                                                    {:doc (str sym)
-                                                     :returns {:type :any
-                                                               :description (pr-str value)}}))
-                           env
-                           (:constants agent-def))
-        ;; Merge query opts: agent defaults < per-run overrides
-        iters   (or max-iterations (:max-iterations agent-def) 50)
-        mdl     (or model (:model agent-def))
-        q-opts  (cond-> {:max-iterations iters}
-                  context      (assoc :context context)
-                  spec         (assoc :spec spec)
-                  mdl          (assoc :model mdl)
-                  on-chunk     (assoc :on-chunk on-chunk)
-                  verify?      (assoc :verify? true)
-                  debug?       (assoc :debug? true))
-        ;; System prompt: passed as first-class option to query-env!
-        ;; Rendered as <agent_instructions> in the RLM system prompt.
-        raw-sys (or system-prompt (:system-prompt agent-def))
-        sys     (str raw-sys (environment-info))
-        q-opts  (assoc q-opts :system-prompt sys)
-        ;; svar requires a vector of message maps, not a bare string.
-        messages (if (string? prompt) [(llm/user prompt)] prompt)]
+  (let [_cfg      (config/resolve-config config)
+        prompt-s  (if (string? prompt) prompt (pr-str prompt))
+        title     (let [t (clojure.string/trim prompt-s)]
+                    (if (> (count t) 100) (str (subs t 0 97) "…") t))
+        {conv-id :id} (conv/create! :cli {:title title})
+        env       (conv/env-for conv-id)
+        ;; Register agent-def's extra tools + constants on top of conv's base tools
+        _         (doseq [{:keys [sym fn] :as tool-def} (:tools agent-def)]
+                    (rlm/register-env-fn! env sym fn (dissoc tool-def :sym :fn)))
+        _         (doseq [[sym value] (:constants agent-def)]
+                    (rlm/register-env-def! env sym value
+                      {:doc     (str sym)
+                       :returns {:type :any
+                                 :description (pr-str value)}}))
+        iters     (or max-iterations (:max-iterations agent-def) 50)
+        mdl       (or model (:model agent-def))
+        raw-sys   (or system-prompt (:system-prompt agent-def))
+        sys       (str raw-sys (environment-info))
+        q-opts    (cond-> {:max-iterations iters
+                           :system-prompt  sys}
+                    spec     (assoc :spec spec)
+                    mdl      (assoc :model mdl)
+                    on-chunk (assoc :hooks {:on-chunk on-chunk})
+                    verify?  (assoc :verify? true)
+                    debug?   (assoc :debug? true))
+        messages  (if (string? prompt) [(llm/user prompt)] prompt)]
     (try
-      (let [result (rlm/query-env! env messages q-opts)]
-        (cond-> {:answer      (:answer result)
+      (let [result (conv/send! conv-id messages q-opts)]
+        (cond-> {:conv-id     conv-id
+                 :answer      (:answer result)
                  :iterations  (:iterations result)
                  :duration-ms (:duration-ms result)
                  :tokens      (:tokens result)
                  :cost        (:cost result)
                  :trace       (:trace result)}
-          (:status result)    (assoc :status (:status result))
+          (:status result)     (assoc :status (:status result))
           (:confidence result) (assoc :confidence (:confidence result))
-          (:learn result)     (assoc :learn (:learn result))))
+          (:learn result)      (assoc :learn (:learn result))))
       (catch Exception e
-        {:error     (ex-message e)
+        {:conv-id   conv-id
+         :error     (ex-message e)
          :type      (str (type e))
-         :exception e})
-      (finally
-        (rlm/dispose-env! env)))))
+         :exception e}))))
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
 
@@ -234,16 +216,16 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
   [x]
   (cond
     (map? x)     (persistent!
-                  (reduce-kv (fn [m k v]
-                               (if (nil? v)
-                                 m
-                                 (assoc! m
-                                         (cond (keyword? k) (name k)
-                                               (symbol? k)  (str k)
-                                               :else        k)
-                                         (sanitize-for-json v))))
-                             (transient {})
-                             x))
+                   (reduce-kv (fn [m k v]
+                                (if (nil? v)
+                                  m
+                                  (assoc! m
+                                    (cond (keyword? k) (name k)
+                                      (symbol? k)  (str k)
+                                      :else        k)
+                                    (sanitize-for-json v))))
+                     (transient {})
+                     x))
     (coll? x)    (mapv sanitize-for-json x)
     (keyword? x) (name x)
     (symbol? x)  (str x)
@@ -258,5 +240,4 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
   "Convert agent result to a pretty-printed EDN string."
   [result]
   (pr-str result))
-
 

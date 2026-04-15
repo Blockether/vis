@@ -57,7 +57,7 @@
   "Validates inputs, resolves SCI bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
-  (let [{:keys [context spec model max-iterations max-refinements threshold
+  (let [{:keys [spec model max-iterations max-refinements threshold
                 max-context-tokens max-recursion-depth verify? concurrency
                 system-prompt plan? debug? hooks cancel-atom eval-timeout-ms
                 reasoning-default]
@@ -145,7 +145,7 @@
                                      (when val
                                        (rlm-tools/sci-update-binding! sci-ctx sym val))))
           query-start-time       (java.util.Date.)
-          rlm-env                (assoc env :context context :max-iterations-atom max-iterations-atom)
+          rlm-env                (assoc env :max-iterations-atom max-iterations-atom)
           env-id                 (:env-id env)]
       {:cancel-atom            cancel-atom
        :query-str              query-str
@@ -441,9 +441,6 @@
                  [(llm/user \"What is schema therapy?\")]
                  [(llm/user \"Describe this\" (llm/image b64 \"image/png\"))]
    `opts` - Map, optional:
-     - :context - Data to analyze. Per RLM paper: when string, becomes P (the symbolic handle)
-                   with get-page and page-count for programmatic access. Structured data
-                   (maps, vectors) is accessible as `context` variable in SCI.
      - :spec - Output spec for structured answers.
      - :model - Override config's default model.
      - :max-iterations - Max code iterations (default: 50).
@@ -464,8 +461,7 @@
          {:iteration N
           :response \"LLM response text\"
           :executions [{:id 0 :code \"(+ 1 2)\" :result 3 :stdout \"\" :error nil :execution-time-ms 5}
-                       ...]
-          :carry \"accumulated carry text\"}
+                       ...]}
      - :iterations - Number of iterations used.
      - :duration-ms - Query duration in milliseconds.
      - :tokens - Token usage map {:input N :output N :total N}.

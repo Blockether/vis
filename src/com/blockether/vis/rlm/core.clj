@@ -5,7 +5,7 @@
    [com.blockether.svar.internal.router :as router]
    [com.blockether.vis.rlm.db :as rlm-db
     :refer [create-rlm-conn dispose-rlm-conn!
-            db-list-documents db-list-final-results
+            db-list-documents
             db-store-pageindex-document! str-truncate]]
    [com.blockether.vis.rlm.data :as rlm-data]
    [com.blockether.vis.rlm.routing
@@ -90,7 +90,7 @@ Pattern: [thing] [action] [reason]. [next step].")
               (fmt (str "└─ ITER " iteration)
                 (str "blocks=" (:blocks data))
                 (str "errors=" (:errors data))
-                (str "total=" (reduce + 0 (or (:times data) [])) "ms"))
+                (str "total=" (reduce + 0 (map #(or % 0) (or (:times data) []))) "ms"))
 
               :final
               (fmt "│  ══ FINAL"
@@ -158,7 +158,6 @@ Pattern: [thing] [action] [reason]. [next step].")
   "Creates an RLM execution environment (internal use only).
 
    Params:
-   `context-data` - The data context to analyze (can be nil).
    `depth-atom` - Atom tracking recursion depth.
    `router` - Router from llm/make-router. Required.
    `opts` - Map, optional:
@@ -166,11 +165,10 @@ Pattern: [thing] [action] [reason]. [next step].")
      - :documents - Vector of PageIndex documents to preload (stored exactly as-is).
 
    Returns:
-   Map with :sci-ctx, :context, :sub-rlm-query-fn, :locals-atom,
-   :db-info, :router."
-  ([context-data depth-atom router]
-   (create-rlm-env context-data depth-atom router {}))
-  ([context-data depth-atom router {:keys [db documents]}]
+   Map with :sci-ctx, :sub-rlm-query-fn, :db-info, :router."
+  ([depth-atom router]
+   (create-rlm-env depth-atom router {}))
+  ([depth-atom router {:keys [db documents]}]
    (when-not router
      (throw (ex-info "Router is required for RLM environment" {:type :rlm/missing-router})))
    (let [db-info (create-rlm-conn db)
@@ -178,8 +176,8 @@ Pattern: [thing] [action] [reason]. [next step].")
              (doseq [doc documents]
                (db-store-pageindex-document! db-info doc)))
          sub-rlm-query-fn (make-routed-sub-rlm-query-fn {} depth-atom router nil nil)
-         {:keys [sci-ctx sandbox-ns initial-ns-keys]} (create-sci-context context-data sub-rlm-query-fn db-info nil nil)]
-     {:sci-ctx sci-ctx :sandbox-ns sandbox-ns :initial-ns-keys initial-ns-keys :context context-data
+         {:keys [sci-ctx sandbox-ns initial-ns-keys]} (create-sci-context sub-rlm-query-fn db-info nil nil)]
+     {:sci-ctx sci-ctx :sandbox-ns sandbox-ns :initial-ns-keys initial-ns-keys
       :sub-rlm-query-fn sub-rlm-query-fn
       :db-info db-info
       :router router})))
@@ -355,6 +353,16 @@ Pattern: [thing] [action] [reason]. [next step].")
   (let [v (:result answer answer)]
     (if (string? v) v (pr-str v))))
 
+(defn- cleanup-claim-without-forget?
+  "True when the final answer claims vars/index cleanup, but the iteration did
+   not actually emit :forget. Prevents user-facing mutation claims that were
+   never performed by the runtime."
+  [final-answer forget-names]
+  (let [s (str/lower-case (str final-answer))]
+    (and (empty? forget-names)
+      (re-find #"(posprz|sprzat|cleaned up|cleanup|wyrzucon|usun|wywal|removed|forgot|forgotten)" s)
+      (re-find #"(var|vars|zmienn|var_index|<var_index>|index|indeks)" s))))
+
 ;; =============================================================================
 ;; System Prompt
 ;; =============================================================================
@@ -495,10 +503,18 @@ MINDSET:
 
 ARCH:
 - Single-shot iter. State = def'd vars. <var_index> = vars. <execution_results> = last results.
+- Cross-query memory is ONLY def'd vars. Plain final answers do not persist into <var_index>.
 - (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
 - Receipts: full :value, :time-ms per block. >5s = :perf-warning.
 - (def x \"docstring\" val) → docstring in <var_index>. Always include.
-- :final.answer = one token var name → auto-resolved to var value.
+- Use defs for reusable state/cache only. Do NOT create throwaway vars just to pass a final answer.
+- :code ALWAYS executes — even when :final is present. Code runs first, then :final is accepted.
+- When :code + :final in same response: build result in :code (def it), put the VAR NAME as
+  :final.answer. System auto-resolves single-token var names to their runtime value.
+  Example: :code [(def reply (str \"Answer: \" x))], :final {:answer \"reply\"} → user sees the string.
+- When a scratch var is no longer useful, add it to :forget so it stops bloating <var_index>.
+- Never claim cleanup, deletion, forgetting, or any other state mutation unless this iteration actually did it.
+  If you say vars were removed from <var_index>, you MUST emit :forget with those var names in the same response.
 
 GROUNDING:
 - Only tools listed below exist. No shell/git/docker/web/IDE.
@@ -572,17 +588,21 @@ CODE:
   or formatted markdown tables in :code. Those are answers → :final.answer
   with :final.answer-type = text. A bare string literal as :code is the
   smell — if the string is a message to the user, it belongs in :final.
-- You can emit :code AND :final in the SAME iteration. Use that: verify in
-  :code, deliver in :final, done. Don't burn an iteration just to echo.
-- :final.answer is LITERAL text displayed verbatim to the user. It is NOT a
-  template — a bare var name (e.g. `here` in backticks) is NOT substituted
-  with its value. To include a runtime value, build the display string in
-  :code (e.g. (def reply (str \"Path: \" (:path here))) ), then put `reply`'s
-  string value into :final.answer in the same iteration.
+- You can emit :code AND :final in the SAME iteration. ALWAYS do this: compute
+  in :code, deliver in :final. :code runs first → :final sees the results.
+- :final.answer SINGLE-TOKEN VAR RESOLVE: if :final.answer is a single word that
+  matches a var you (def)'d in :code (same iteration or earlier), the system
+  auto-resolves it to the var's runtime value. Use this pattern:
+  :code [(def result (str/join \"\\n\" items))]
+  :final {:answer \"result\"}
+  The user sees the joined string, NOT the word \"result\".
+- Only (def ...) persists. A plain :final answer is returned to the user, but does not become a var unless you explicitly def it.
 - :final.answer MUST contain the real, substantive reply the user will read.
   Never a one-word placeholder like \"listing\", \"result\", \"done\",
   \"ok\", \"output\" standing in for the actual content. If the task is to
   show X, :final.answer contains the formatted X — not the word for it.
+- :forget runs after code execution and removes named vars from the live sandbox. Use it for scratch defs you no longer need.
+- Do not narrate state changes aspirationally. Only report them after the runtime action was emitted in this iteration.
 - Simplest solution. No over-eng. No unused abstractions. No speculative features. No impossible-error handling.
 
 OUTPUT (iterations):
@@ -647,6 +667,9 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           ;; LLM's preference for next iteration's model selection
           next-optimize (when-let [opt (:next-optimize parsed)]
                           (keyword opt))
+          ;; LLM's request to drop named vars from <var_index>.
+          forget-names (vec (keep (fn [n] (when (and n (seq (str n))) (str n)))
+                              (:forget parsed)))
           ;; Token usage from ask! result
           api-usage {:prompt_tokens (get-in ask-result [:tokens :input] 0)
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
@@ -654,13 +677,33 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                      :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}]
       ;; Check for final answer in spec response
       (if-let [final-data (:final parsed)]
-        (let [raw-answer (str (:answer final-data))
-              ;; Single-word :final mechanic — if the answer is one token AND
-              ;; that token is a user-def'd var in the sandbox, substitute the
-              ;; var's full pr-str'd value. Lets the LLM finalize with just
-              ;; `{:final {:answer "reply"}}` after building `reply` in :code,
-              ;; instead of copy-pasting the whole string. If the token is not
-              ;; a var, keep the literal word.
+        (let [answer-type (some-> (:answer-type final-data) keyword)
+              language (when-let [l (:language final-data)] (keyword l))
+              code-answer? (= answer-type :code)
+              clojure? (and code-answer? (or (= language :clojure) (nil? language)))
+              ;; Extract code blocks — must be maps with :expr and :time-ms
+              raw-code (or (:code parsed) [])
+              code-entries (vec (keep (fn [block]
+                                        (when (map? block)
+                                          (let [expr (str (:expr block ""))
+                                                time-ms (:time-ms block)]
+                                            (when-not (str/blank? expr)
+                                              {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
+                                  raw-code))
+              code-blocks (mapv :expr code-entries)
+              ;; Execute code blocks in SCI — ALWAYS when present, regardless of answer-type.
+              ;; MUST run BEFORE single-token :final resolve so freshly-def'd vars are visible.
+              exec-results (when (seq code-blocks)
+                             (mapv (fn [{:keys [expr time-ms]}]
+                                     (execute-code rlm-env expr :timeout-ms time-ms))
+                               code-entries))
+              exec-errors (when exec-results
+                            (seq (filter :error exec-results)))
+              ;; NOW read sandbox — code has executed, (def reply ...) is visible.
+              ;; Single-word :final mechanic: if :answer is one token matching a sandbox var,
+              ;; substitute the var's value. Lets the LLM finalize with `{:final {:answer "reply"}}`
+              ;; after building `reply` in :code, instead of copy-pasting the whole string.
+              raw-answer (str (:answer final-data))
               locals (try (get-locals rlm-env) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
                               (try (symbol? (read-string raw-answer)) (catch Throwable _ false)))
@@ -675,37 +718,11 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                            :else (pr-str v))))))
               raw-answer (or resolved-var-value raw-answer)
               _ (when resolved-var-value
-                  (rlm-debug! {:token raw-answer
+                  (rlm-debug! {:token (str (:answer final-data))
                                :resolved-chars (count resolved-var-value)}
                     "Single-word :final resolved to var value"))
               final-answer (paren-repair/repair-code raw-answer)
               confidence (or (:confidence final-data) :high)
-              ;; Answer-type decides whether SCI execution + syntax validation applies.
-              ;; :answer-type = "text"|"data" → prose / structured data — no code required.
-              ;; :answer-type = "code" → Clojure (by default) unless :language says otherwise.
-              ;; Historical behaviour treated missing :language as Clojure, which forced
-              ;; text-only chat replies to submit code and produced prose-in-:code loops.
-              answer-type (some-> (:answer-type final-data) keyword)
-              language (when-let [l (:language final-data)] (keyword l))
-              code-answer? (= answer-type :code)
-              clojure? (and code-answer? (or (= language :clojure) (nil? language)))
-              ;; Extract code blocks — must be maps with :expr and :time-ms
-              raw-code (or (:code parsed) [])
-              code-entries (vec (keep (fn [block]
-                                        (when (map? block)
-                                          (let [expr (str (:expr block ""))
-                                                time-ms (:time-ms block)]
-                                            (when-not (str/blank? expr)
-                                              {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
-                                  raw-code))
-              code-blocks (mapv :expr code-entries)
-              ;; Execute code blocks in SCI — only for Clojure code answers.
-              exec-results (when (and clojure? (seq code-blocks))
-                             (mapv (fn [{:keys [expr time-ms]}]
-                                     (execute-code rlm-env expr :timeout-ms time-ms))
-                               code-entries))
-              exec-errors (when exec-results
-                            (seq (filter :error exec-results)))
               ;; Only require a self-test when the FINAL answer is Clojure code.
               ;; Text / data answers can finalize on iteration 0 without running code.
               untested? (and clojure? (zero? (or iteration 0)) (empty? code-blocks))
@@ -715,6 +732,8 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                      "You submitted final without running any code. Run the self-test first.")
                                  (when exec-errors
                                    (str "Code errors before final: " (:error (first exec-errors))))
+                                 (when (cleanup-claim-without-forget? final-answer forget-names)
+                                   "You claimed vars/index cleanup in the final answer, but this iteration did not emit :forget. Emit :forget with the concrete var names first, then finalize.")
                                  parse-check
                                  (validate-final {:answer final-answer
                                                   :answer-type (:answer-type final-data)
@@ -730,7 +749,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
           (if validation-error
             (do (rlm-debug! {:final-answer (str-truncate final-answer 200)
                              :validation-error validation-error} "FINAL rejected")
-              {:thinking thinking :next-optimize next-optimize
+              {:thinking thinking :next-optimize next-optimize :forget forget-names
                :executions (or executions
                              [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
                                :error validation-error}])
@@ -742,7 +761,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                         :confidence confidence}
                                  (seq sources) (assoc :sources sources)
                                  (:reasoning final-data) (assoc :reasoning (:reasoning final-data)))]
-              {:thinking thinking :next-optimize next-optimize
+              {:thinking thinking :next-optimize next-optimize :forget forget-names
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
         ;; Normal path: execute code blocks — must be maps with :expr and :time-ms
@@ -1104,49 +1123,25 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                      :code (get sym->code sym)})))))
       vec)))
 
-(defn- build-restore-context
-  "Builds compact query-level restore context for a continued conversation."
-  [db-info conversation-ref]
-  (let [history (when (and db-info conversation-ref)
-                  (rlm-db/db-query-history db-info conversation-ref))
-        recent (take-last 2 history)]
-    (when (seq recent)
-      (str "<restore_context>\n"
-        "Previous conversation detected. Prior vars are NOT auto-loaded. Restore only what you need.\n"
-        "Tools: (session-history), (session-code q), (session-results q), (restore-var 'sym), (restore-vars ['a 'b])\n"
-        "Recent queries:\n"
-        (str/join "\n"
-          (map (fn [{:keys [query-pos text answer-preview key-vars iterations]}]
-                 (str "  [" query-pos "] " (pr-str (str-truncate (or text "") 100))
-                   "\n    final: " (pr-str (or answer-preview ""))
-                   "\n    key-vars: " (pr-str (mapv str key-vars))
-                   "\n    iterations: " iterations))
-            recent))
-        "\n</restore_context>"))))
-
-(defn- rehydrate-final-results!
-  "Injects previous final-result-N vars into SCI context from SQLite.
-   Final results are now terminal iterations (with non-nil :answer).
-   Returns the list of final results for conversation thread rendering."
-  [sci-ctx db-info conversation-ref]
-  (when db-info
-    (let [results (db-list-final-results db-info {:conversation-ref conversation-ref})]
-      (doseq [[idx result] (map-indexed vector results)]
-        (let [var-name (str "final-result-" (inc idx))
-              answer (:answer result)
-              doc-str (str-truncate (or answer "Previous query result") 100)
-              val-map {:answer answer}]
-          (try
-            (let [sandbox-ns (sci/find-ns sci-ctx 'sandbox)]
-              (sci/eval-string+ sci-ctx
-                (str "(def ^{:doc " (pr-str doc-str) "} " var-name " " (pr-str val-map) ")")
-                {:ns sandbox-ns}))
-            (catch Exception e
-              (trove/log! {:level :debug :id ::store-answer-in-sandbox-fallback
-                           :data {:error (ex-message e)}
-                           :msg "Failed to store final-result var in sandbox, skipping"})
-              nil))))
-      results)))
+(defn- forget-vars!
+  "Unmap `names` from the SCI sandbox namespace. Mirrors what the LLM asked
+   for via the `:forget` iteration-spec field — removes the bindings so they
+   stop showing up in <var_index>. The persisted :iteration-var rows in the
+   DB are not touched; `(restore-var 'sym)` can bring one back later."
+  [sci-ctx names]
+  (let [syms (keep (fn [n]
+                     (cond (symbol? n) n
+                       (string? n) (try (symbol n) (catch Throwable _ nil))
+                       :else       nil))
+               names)]
+    (when (seq syms)
+      (try
+        (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
+          (fn [ns-map] (apply dissoc ns-map syms)))
+        (catch Throwable e
+          (trove/log! {:level :debug :id ::forget-vars-failed
+                       :data {:error (ex-message e) :syms (mapv str syms)}
+                       :msg "forget-vars! failed — skipping"}))))))
 
 (defn iteration-loop [rlm-env query
                       {:keys [output-spec max-context-tokens custom-docs system-prompt
@@ -1192,13 +1187,7 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                             :git-repos git-repos
                                             :max-context-tokens max-context-tokens
                                             :skill-registry (when-let [a (:skill-registry-atom rlm-env)] @a)})
-        context-data (:context rlm-env)
-        context-str (pr-str context-data)
-        context-preview (if (> (count context-str) 2000)
-                          (str (subs context-str 0 2000) "\n... [truncated, use code to explore]")
-                          context-str)
-        initial-user-content (str "{:context " (pr-str context-preview)
-                               "\n :requirement " (pr-str query)
+        initial-user-content (str "{:requirement " (pr-str query)
                                (when pre-fetched-context
                                  (str "\n :plan " (pr-str pre-fetched-context)))
                                "}")
@@ -1257,17 +1246,11 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                           (if (= revision current-revision)
                             index
                             (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env)) [:namespaces 'sandbox])
-                                  idx (build-var-index (:sci-ctx rlm-env) (:initial-ns-keys rlm-env) sandbox-map)
+                                  idx (build-var-index (:sci-ctx rlm-env) (:initial-ns-keys rlm-env) sandbox-map
+                                        (:db-info rlm-env) (:conversation-ref rlm-env))
                                   live-rev (:current-revision @var-index-atom)]
                               (swap! var-index-atom assoc :index idx :revision live-rev)
                               idx))))
-        ;; Keep final-result rehydration for backwards-compatible SCI access.
-        prev-final-results (rehydrate-final-results! (:sci-ctx rlm-env)
-                             (:db-info rlm-env)
-                             (:conversation-ref rlm-env))
-        ;; Rehydration mutates SCI vars; mark var-index as stale.
-        _ (swap! var-index-atom update :current-revision inc)
-        restore-context (build-restore-context db-info (:conversation-ref rlm-env))
         on-chunk (:on-chunk hooks)
         on-iteration (:on-iteration hooks)
         on-cancel (:on-cancel hooks)
@@ -1348,7 +1331,6 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                   exec-results-str (format-execution-results prev-executions prev-iteration)
                   journal-str (render-execution-journal journal)
                   iteration-context (str
-                                      (when restore-context (str restore-context "\n"))
                                       (when journal-str (str "\n" journal-str))
                                       (when exec-results-str (str "\n" exec-results-str))
                                       (when var-index-str
@@ -1422,7 +1404,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                     nil -1 journal nil))
                 ;; Normal path — accumulate token usage
                 (let [_ (accumulate-usage! (:api-usage iteration-result))
-                      {:keys [thinking executions final-result next-optimize]} iteration-result
+                      {:keys [thinking executions final-result next-optimize forget]} iteration-result
+                      _ (when (seq forget)
+                          (forget-vars! (:sci-ctx rlm-env) forget)
+                          (swap! var-index-atom update :current-revision inc))
                       vars-snapshot (restorable-var-snapshots rlm-env executions)
                       ;; Store iteration snapshot — exact input/output for fine-tuning
                       _traj-iter (rlm-db/store-iteration! db-info

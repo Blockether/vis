@@ -3,9 +3,8 @@
    State lives in server.clj atoms. Only the executor mutates during query execution.
    Survives page reloads — queries run to completion regardless of client state."
   (:require [com.blockether.vis.agent :as agent]
+            [com.blockether.vis.conversations :as conv]
             [com.blockether.vis.web.server :as server]
-            [com.blockether.svar.internal.llm :as llm]
-            [com.blockether.svar.internal.rlm :as rlm]
             [clojure.core.async :as async]
             [clojure.string :as str])
   (:import [java.time Instant]))
@@ -64,35 +63,34 @@
                                :current (when-not done? label)))))))))
 
 (defn- execute-query!
-  "Run a single query. Updates server state atoms. Guards against deleted sessions."
+  "Run a single query against the conversation id `session-id`. The user
+   message has already been appended by `submit-query!`; we append the
+   assistant reply (or error) on completion. Guards against deleted
+   sessions: skip writes when the conversation no longer exists."
   [{:keys [session-id query]}]
   (swap! in-flight conj session-id)
   (try
-    (if-let [sess (server/get-session session-id)]
+    (if (server/get-session session-id)
       (try
         (let [sys-prompt (str (:system-prompt (agent/agent {:name "web"}))
                               (agent/environment-info))
-              messages   [(llm/user query)]
-              result (rlm/query-env! (:env sess) messages
-                                     {:system-prompt sys-prompt
-                                      :on-chunk (on-chunk-handler session-id)})]
-          ;; Only write back if session still exists (not deleted mid-query)
+              result (conv/send! session-id query
+                                 {:system-prompt sys-prompt
+                                  :hooks {:on-chunk (on-chunk-handler session-id)}})]
           (when (server/get-session session-id)
-            (swap! server/sessions update-in [session-id :messages] conj
-                   {:role :assistant :text (:answer result) :result result
-                    :ts (str (Instant/now))})
-))
+            (server/append-message! session-id
+                                    {:role :assistant :text (:answer result)
+                                     :result result :ts (str (Instant/now))})))
         (catch Exception e
           (println (str "[executor] Error in " session-id ": " (ex-message e)))
           (when (server/get-session session-id)
-            (swap! server/sessions update-in [session-id :messages] conj
-                   {:role :assistant :text (str "Error: " (ex-message e))
-                    :result {:answer (str "Error: " (ex-message e))}
-                    :ts (str (Instant/now))}))))
-      ;; Session not found
+            (server/append-message! session-id
+                                    {:role :assistant
+                                     :text (str "Error: " (ex-message e))
+                                     :result {:answer (str "Error: " (ex-message e))}
+                                     :ts (str (Instant/now))}))))
       (println (str "[executor] Session " session-id " not found, skipping")))
     (finally
-      ;; Always clean up — catches Error/Exception/anything
       (swap! server/live-status dissoc session-id)
       (swap! in-flight disj session-id))))
 
@@ -114,23 +112,21 @@
   (contains? @in-flight session-id))
 
 (defn submit-query!
-  "Submit a query for async execution. Returns immediately.
-   Validates session exists and no query is in-flight."
+  "Submit a query for async execution. Returns immediately. Appends the user
+   message to the cache, kicks off LLM-driven title generation on the first
+   turn, then enqueues the job for the worker pool."
   [session-id query]
-  (when-let [_sess (server/get-session session-id)]
+  (when-let [sess (server/get-session session-id)]
     (if (in-flight? session-id)
       (println (str "[executor] Session " session-id " already in-flight, skipping"))
       (do
-        ;; Add user message immediately
-        (swap! server/sessions update-in [session-id :messages] conj
-               {:role :user :text query :ts (str (Instant/now))})
-        ;; Generate session name from first message
-        (when (= "New Chat" (:name (server/get-session session-id)))
+        (server/append-message! session-id
+                                {:role :user :text query :ts (str (Instant/now))})
+        (when (= "New Chat" (:name sess))
           (async/go
-            (let [title (async/<! (async/thread (server/generate-session-name query)))]
+            (let [title (async/<! (async/thread (server/generate-session-title query)))]
               (when (server/get-session session-id)
-                (swap! server/sessions assoc-in [session-id :name] title)))))
-        ;; Submit to executor
+                (server/set-session-title! session-id title)))))
         (when-let [ch @exec-ch]
           (async/put! ch {:session-id session-id :query query}))))))
 
