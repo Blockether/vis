@@ -42,7 +42,7 @@
 ;;; ── State shape ────────────────────────────────────────────────────────────
 ;;
 ;; {:config     nil              ;; provider config map or nil
-;;  :conv       nil              ;; {:env ...} or nil (RLM environment)
+;;  :conv       nil              ;; {:id conv-id} or nil — handle to the shared conversations cache
 ;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
 ;;  :msg-scroll nil              ;; row offset into bubbles, nil = auto-bottom
 ;;  :input      {:lines [""] :crow 0 :ccol 0}

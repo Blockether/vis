@@ -1,15 +1,12 @@
 (ns com.blockether.vis.tui.chat
-  "Conversation state and LLM integration via svar RLM.
+  "TUI-side projections over the shared conversations API.
 
-   The TUI has one long-lived conversation named `tui:default` inside the
-   shared `~/.vis/vis.mdb` SQLite DB (see `config/db-path`). Telegram
-   chats and web sessions live alongside it under different names
-   (`telegram:*`, `session:*`) — svar resolves them by `:conversation/name`,
-   so the TUI stays isolated from the others despite the shared DB."
-  (:require [com.blockether.vis.config :as config]
-            [com.blockether.svar.internal.llm :as llm]
-            [com.blockether.svar.internal.rlm :as rlm]
-            [com.blockether.svar.internal.rlm.db :as rlm-db]
+   On startup the TUI creates a fresh `:vis` conversation — history starts
+   empty, and the new conversation shows up in the `:vis` channel alongside
+   anything the web server has created. Switching between existing
+   conversations is not wired into the TUI today; we just open a new one
+   each boot."
+  (:require [com.blockether.vis.conversations :as conv]
             [taoensso.telemere :as t]))
 
 (defn user-msg
@@ -24,44 +21,20 @@
   ([text timestamp]
    {:role :assistant :text (if (string? text) text (pr-str text)) :timestamp timestamp}))
 
-(defn- load-history
-  "Load the prior conversation from svar's SQLite DB. Uses the entity model
-   (conversation → query → iteration) via db-query-history. Returns the user/
-   assistant message list in chronological order, or [] on any failure."
-  [env]
-  (try
-    (let [db-info  (:db-info env)
-          conv-ref (:conversation-ref env)
-          history  (when (and db-info conv-ref)
-                     (rlm-db/db-query-history db-info conv-ref))]
-      (vec (mapcat (fn [{:keys [text answer-preview]}]
-                     (cond-> []
-                       (seq text)           (conj (user-msg text))
-                       (seq answer-preview) (conj (assistant-msg answer-preview))))
-                   history)))
-    (catch Exception e
-      (t/log! :warn (str "load-history failed: " (ex-message e)))
-      [])))
-
 (defn make-conversation
-  "Open the TUI's long-lived conversation (name `tui:default`) on the shared
-   `~/.vis/vis.mdb` SQLite DB. First launch creates it; subsequent launches
-   resolve the existing one so message history and var registry persist.
-   `provider-config` is accepted for caller compat — we always route through
-   the shared router from config.clj. Returns {:env env :history [msgs]}."
+  "Create a fresh `:vis` conversation for this TUI session. Returns
+   `{:id conv-id :history []}`. History is empty — we always boot into a
+   new chat. `provider-config` is kept for caller compat."
   [_provider-config]
-  (let [router (config/get-router)
-        env    (rlm/create-env router
-                 {:db config/db-path
-                  :conversation {:name (config/conversation-name :tui)}})
-        history (load-history env)]
-    {:env env :history history}))
+  (let [{:keys [id]} (conv/create! :vis)]
+    {:id id :history []}))
 
 (defn query!
-  "Send query to RLM. Blocking. Returns {:answer str} or {:error str}."
-  [conv text]
+  "Send a user query through the shared conversations cache. Blocking.
+   Returns `{:answer str}` or `{:error str}`."
+  [{:keys [id]} text]
   (try
-    (let [result (rlm/query-env! (:env conv) [(llm/user text)])
+    (let [result (conv/send! id text)
           answer (or (:answer result) "[empty response]")]
       {:answer (if (string? answer) answer (pr-str answer))})
     (catch Exception e
@@ -69,7 +42,8 @@
       {:error (str "error: " (ex-message e))})))
 
 (defn dispose!
-  "Release the RLM env handle. Persistent data in `~/.vis/vis.mdb` stays;
-   svar leaves the shared SQLite conn open for sibling envs."
-  [{:keys [env]}]
-  (rlm/dispose-env! env))
+  "Release the TUI's env handle. Conversation data stays in
+   `~/.vis/vis.mdb` so the web server (same `:vis` channel) can still see
+   it."
+  [{:keys [id]}]
+  (when id (conv/close! id)))

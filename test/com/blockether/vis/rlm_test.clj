@@ -20,36 +20,25 @@
 ;; =============================================================================
 
 (defn- create-test-env
-  "Creates a test RLM environment with optional configuration.
-   
-   Params:
-   `context` - The data context to analyze.
-   `opts` - Map, optional:
-     - :db - nil (no DB), :temp (ephemeral), path string, {:conn c}, {:path p}
-     
-   Returns:
-   RLM environment map."
-  ([context] (create-test-env context {:db :temp}))
-  ([context opts]
+  "Creates a test RLM environment with optional configuration. The leading
+   positional arg is retained for source compatibility with older tests that
+   used to pass a `context` map — it is now ignored, since `:context` was
+   stripped from rlm."
+  ([_context] (create-test-env _context {:db :temp}))
+  ([_context opts]
    (let [opts (if (contains? opts :db) opts (assoc opts :db :temp))
          depth-atom (atom 0)
          test-router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
                                         :models [{:name "gpt-4o"}
                                                  {:name "gpt-4o-mini"}]}])]
-     (#'rlm-core/create-rlm-env context depth-atom test-router opts))))
+     (#'rlm-core/create-rlm-env depth-atom test-router opts))))
 
 (defn- with-test-env*
-  "Creates a test environment, executes f with it, then disposes.
-   
-   Usage:
-   (with-test-env* {:count 42}
-     (fn [env] (#'rlm-core/execute-code env \"(+ 1 2)\")))
-   
-   (with-test-env* {:count 42} {:db nil}
-     (fn [env] (#'rlm-core/execute-code env \"(+ 1 2)\")))"
-  ([context f] (with-test-env* context {} f))
-  ([context opts f]
-   (let [env (create-test-env context opts)]
+  "Creates a test environment, executes f with it, then disposes. The
+   leading positional arg is ignored (see `create-test-env`)."
+  ([_context f] (with-test-env* _context {} f))
+  ([_context opts f]
+   (let [env (create-test-env _context opts)]
      (try
        (f env)
        (finally
@@ -64,15 +53,10 @@
 
 (defdescribe create-rlm-env-test
   (it "creates environment with required keys"
-    (with-test-env* {:data "test"} (fn [env]
-                                     (expect (contains? env :sci-ctx))
-                                     (expect (contains? env :context))
-                                     (expect (contains? env :sub-rlm-query-fn))
-                                     (expect (contains? env :initial-ns-keys)))))
-
-  (it "stores context in environment"
-    (with-test-env* {:users [{:name "Alice"}]} (fn [env]
-                                                 (expect (= {:users [{:name "Alice"}]} (:context env))))))
+    (with-test-env* {} (fn [env]
+                         (expect (contains? env :sci-ctx))
+                         (expect (contains? env :sub-rlm-query-fn))
+                         (expect (contains? env :initial-ns-keys)))))
 
   (it "creates database by default"
     (with-test-env* {} (fn [env]
@@ -166,12 +150,6 @@
                            (expect (some? (:error result)))
                            (expect (nil? (:result result)))))))
 
-  (it "provides access to context"
-    (with-test-env* {:count 5} (fn [env]
-                                 (let [result (#'rlm-core/execute-code env "(:count context)")]
-                                   (expect (= 5 (:result result)))
-                                   (expect (nil? (:error result)))))))
-
   (describe "regex support"
     (it "supports re-find for pattern matching"
       (with-test-env* {} (fn [env]
@@ -188,8 +166,8 @@
   (it "filters final results by conversation-ref"
     (let [db-info (#'rlm-db/create-rlm-conn :temp)]
       (try
-        (let [conv-a (rlm-db/store-conversation! db-info {:env-id "env-a" :system-prompt "" :model "m"})
-              conv-b (rlm-db/store-conversation! db-info {:env-id "env-b" :system-prompt "" :model "m"})
+        (let [conv-a (rlm-db/store-conversation! db-info {:system-prompt "" :model "m"})
+              conv-b (rlm-db/store-conversation! db-info {:system-prompt "" :model "m"})
               query-a (rlm-db/store-query! db-info {:conversation-ref conv-a :text "qa" :status :running})
               query-b (rlm-db/store-query! db-info {:conversation-ref conv-b :text "qb" :status :running})]
           (rlm-db/store-iteration! db-info {:query-ref query-a :executions [] :vars [] :answer "answer-a"})
@@ -222,54 +200,6 @@
         (finally
           (fs/delete-tree dir)))))
 
-  (it "create-env with {:name s} creates a conversation tagged with that name"
-    (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
-                                    :models [{:name "gpt-4o"}]}])
-          dir (str (fs/create-temp-dir {:prefix "rlm-named-"}))]
-      (try
-        (let [env (sut/create-env router {:db dir :conversation {:name "telegram:12345"}})
-              conv-ref (:conversation-ref env)
-              db-info (:db-info env)
-              conv (rlm-db/db-get-conversation db-info conv-ref)]
-          (try
-            (expect (vector? conv-ref))
-            (expect (= "telegram:12345" (:name conv)))
-            (finally
-              (sut/dispose-env! env))))
-        (finally
-          (fs/delete-tree dir)))))
-
-  (it "create-env with same {:name s} in shared DB reuses the same conversation"
-    (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
-                                    :models [{:name "gpt-4o"}]}])
-          dir (str (fs/create-temp-dir {:prefix "rlm-named-shared-"}))]
-      (try
-        (let [env-a (sut/create-env router {:db dir :conversation {:name "session:abc"}})
-              conv-a (:conversation-ref env-a)
-              _ (sut/dispose-env! env-a)
-              env-b (sut/create-env router {:db dir :conversation {:name "session:abc"}})]
-          (try
-            (expect (= conv-a (:conversation-ref env-b)))
-            (finally
-              (sut/dispose-env! env-b))))
-        (finally
-          (fs/delete-tree dir)))))
-
-  (it "create-env with different names in shared DB produces distinct conversations"
-    (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
-                                    :models [{:name "gpt-4o"}]}])
-          dir (str (fs/create-temp-dir {:prefix "rlm-named-distinct-"}))]
-      (try
-        (let [env-a (sut/create-env router {:db dir :conversation {:name "chat:alice"}})
-              env-b (sut/create-env router {:db dir :conversation {:name "chat:bob"}})]
-          (try
-            (expect (not= (:conversation-ref env-a) (:conversation-ref env-b)))
-            (finally
-              (sut/dispose-env! env-a)
-              (sut/dispose-env! env-b))))
-        (finally
-          (fs/delete-tree dir)))))
-
   (it "dispose-env! on one shared-DB env keeps siblings alive (shared datasource not closed)"
     ;; Regression: two envs pointing at the same :db path share one SQLite
     ;; datasource. If dispose-env! closed the shared datasource, the surviving
@@ -279,8 +209,8 @@
                                     :models [{:name "gpt-4o"}]}])
           dir (str (fs/create-temp-dir {:prefix "rlm-shared-dispose-"}))]
       (try
-        (let [env-a (sut/create-env router {:db dir :conversation {:name "chat:alice"}})
-              env-b (sut/create-env router {:db dir :conversation {:name "chat:bob"}})
+        (let [env-a (sut/create-env router {:db dir})
+              env-b (sut/create-env router {:db dir})
               db-info-b (:db-info env-b)]
           (try
             ;; Dispose env-a; env-b must still be able to write/read.
@@ -424,63 +354,11 @@
         (finally
           (sut/dispose-env! env)))))
 
-  (it "query-env! injects restore context for continued conversations"
-    (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
-                                    :models [{:name "gpt-4o"}]}])
-          dir (str (fs/create-temp-dir {:prefix "rlm-restore-prompt-"}))
-          captured (atom nil)]
-      (try
-        (let [env-a (sut/create-env router {:db dir})
-              db-info (:db-info env-a)
-              query-ref (rlm-db/store-query! db-info {:conversation-ref (:conversation-ref env-a)
-                                                      :text "Find anomalies" :status :success :answer [1 2 3]})]
-          (rlm-db/store-iteration! db-info
-            {:query-ref query-ref
-             :executions [{:code "(def anomalies [1 2 3])" :result "ignored"}]
-             :vars [{:name "anomalies" :value [1 2 3] :code "(def anomalies [1 2 3])"}]
-             :thinking ""
-             :duration-ms 0
-             :answer "Found anomalies"})
-          (sut/dispose-env! env-a)
-          (let [env-b (sut/create-env router {:db dir :conversation :latest})]
-            (try
-              (with-redefs [llm/ask! (fn [_router opts]
-                                       (reset! captured (:messages opts))
-                                       {:result {:final {:answer "done" :confidence :high}}
-                                        :tokens {:input 0 :output 0 :reasoning 0 :cached 0 :total 0}
-                                        :cost {:input-cost 0 :output-cost 0 :total-cost 0}})]
-                (sut/query-env! env-b [(llm/user "What next?")] {:max-iterations 1}))
-              (let [joined (pr-str @captured)]
-                (expect (str/includes? joined "<restore_context>"))
-                (expect (str/includes? joined "session-history"))
-                (expect (str/includes? joined "restore-var"))
-                (expect (str/includes? joined "anomalies")))
-              (finally
-                (sut/dispose-env! env-b)))))
-        (finally
-          (fs/delete-tree dir))))))
-
-(it "restore context keeps prior queries even when text repeats"
-  (let [db-info (#'rlm-db/create-rlm-conn :temp)]
-    (try
-      (let [conv-ref (rlm-db/store-conversation! db-info {:env-id "env-repeat" :system-prompt "" :model "m"})
-            query-ref (rlm-db/store-query! db-info {:conversation-ref conv-ref
-                                                    :text "What next?"
-                                                    :status :success
-                                                    :answer {:step 1}})]
-        (rlm-db/store-iteration! db-info
-          {:query-ref query-ref
-           :executions [{:code "(def anomalies [1 2 3])" :result "ignored"}]
-           :vars [{:name "anomalies" :value [1 2 3] :code "(def anomalies [1 2 3])"}]
-           :thinking ""
-           :duration-ms 0
-           :answer "Found anomalies"})
-        (let [restore-context (#'rlm-core/build-restore-context db-info conv-ref)]
-          (expect (string? restore-context))
-          (expect (str/includes? restore-context "[0] \"What next?\""))
-          (expect (str/includes? restore-context "anomalies"))))
-      (finally
-        (#'rlm-db/dispose-rlm-conn! db-info)))))
+  ;; removed: `<restore_context>` tests — the eager block was stripped from
+  ;; the iteration prompt. The LLM now reaches into prior-query state via
+  ;; the on-demand `(session-history)`, `(session-code)`, `(session-results)`,
+  ;; and `(restore-var)` SCI tools instead.
+  )
 
 (it "create-env with :db nil does not expose restore tools"
   (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
@@ -668,8 +546,7 @@
         (with-integration-env*
           (fn [env]
             (let [result (sut/query-env! env [(llm/user "What is the capital of France? Answer with just the city name.")]
-                           {:context "Paris is the capital of France."
-                            :max-iterations 10})]
+                           {:max-iterations 10})]
               (expect (map? result))
               (if (:status result)
                 (expect (= :max-iterations (:status result)))
@@ -684,8 +561,7 @@
         (with-integration-env*
           (fn [env]
             (let [result (sut/query-env! env [(llm/user "What is 2 + 2?")]
-                           {:context "2 + 2 = 4"
-                            :max-iterations 5
+                           {:max-iterations 5
                             :refine? false})]
               (expect (map? result))
               (if (:status result)
@@ -701,9 +577,8 @@
       (when (integration-tests-enabled?)
         (with-integration-env*
           (fn [env]
-            (let [result (sut/query-env! env [(llm/user "What is the value of :count? Use (FINAL answer)")]
-                           {:context {:count 42}
-                            :max-iterations 10
+            (let [result (sut/query-env! env [(llm/user "What is 42?")]
+                           {:max-iterations 10
                             :refine? false})]
               (expect (map? result))
               (if (:status result)
@@ -715,9 +590,8 @@
       (when (integration-tests-enabled?)
         (with-integration-env*
           (fn [env]
-            (let [result (sut/query-env! env [(llm/user "Sum the numbers")]
-                           {:context {:nums [1 2 3 4 5]}
-                            :max-iterations 10
+            (let [result (sut/query-env! env [(llm/user "Sum 1+2+3+4+5")]
+                           {:max-iterations 10
                             :max-refinements 1})]
               (expect (map? result))
               (when-not (:status result)
@@ -978,6 +852,33 @@
                                   :refine? false
                                   :reasoning-default "turbo"}))))
         (expect (= ["low"] @captured))))))
+
+(defdescribe final-mutation-claim-guard-test
+  (it "rejects cleanup claims unless the same iteration emits :forget"
+    (with-test-env* {} (fn [env]
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:final {:answer "Posprzatane, usunalem vars z indexu."
+                                                      :confidence "high"}}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec com.blockether.vis.rlm.schema/ITERATION_SPEC_REASONING})]
+                             (expect (nil? (:final-result result)))
+                             (expect (= [] (:forget result)))
+                             (expect (= 1 (count (:executions result))))
+                             (expect (re-find #":forget" (get-in result [:executions 0 :error])))))))))
+
+(it "allows cleanup claims when :forget is present"
+  (with-test-env* {} (fn [env]
+                       (with-mock-ask! (fn [_router _opts]
+                                         (make-mock-ask-response
+                                           {:forget ["drop-me"]
+                                            :final {:answer "Posprzatane, usunalem vars z indexu."
+                                                    :confidence "high"}}))
+                         (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                        :iteration-spec com.blockether.vis.rlm.schema/ITERATION_SPEC_REASONING})]
+                           (expect (= ["drop-me"] (:forget result)))
+                           (expect (= "Posprzatane, usunalem vars z indexu."
+                                     (get-in result [:final-result :answer :result]))))))))
 
 ;; =============================================================================
 ;; Mock Response Factories (Domain-Specific)

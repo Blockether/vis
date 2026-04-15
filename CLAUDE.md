@@ -112,7 +112,7 @@ All application state lives in `tui/state.clj` using a re-frame dispatch pattern
 **App-db shape:**
 ```clojure
 {:config     nil              ;; provider config map: {:providers [{:id kw :label str :api-base str :api-key? str :model str} ...]}
- :conv       nil              ;; {:env ...} RLM environment
+ :conv       nil              ;; {:id conv-id} — handle into the conversations cache
  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
  :msg-scroll nil              ;; row offset, nil = auto-bottom
  :input      {:lines [] :crow 0 :ccol 0}
@@ -120,81 +120,89 @@ All application state lives in `tui/state.clj` using a re-frame dispatch pattern
  :dialog-open? false}         ;; dialog singleton guard
 ```
 
-### Session Database (SQLite)
+### Conversations (`com.blockether.vis.conversations`)
 
-**ONE SQLite DB for everything.** Path: `~/.vis/vis.db` (`config/db-path`). Every vis entrypoint — TUI chat, web sessions, Telegram chats, CLI `run` — opens the same DB. Each entrypoint owns a distinct `:conversation` inside, addressed by the caller-supplied `:conversation/name`:
+**One module owns env lifecycle for every frontend.** Web + TUI share the `:vis` channel; Telegram has its own `:telegram` channel. Conversation IDs are plain UUIDs — the same `:entity/id` svar uses. No name prefixes, no string lookups.
 
-| Entrypoint | Conversation name | Helper                                  |
-|------------|-------------------|-----------------------------------------|
-| TUI chat   | `tui:default`     | `(config/conversation-name :tui)`       |
-| Web session| `session:<uuid>`  | `(config/conversation-name :session id)`|
-| Telegram   | `telegram:<chat-id>` | `(config/conversation-name :telegram chat-id)` |
-| CLI run    | fresh each call (no name) unless caller passes `:conversation`| — |
+```clojure
+(require '[com.blockether.vis.conversations :as conv])
 
-svar resolves `{:conversation {:name s}}` as lookup-or-create: first call with a name creates the `:conversation` entity; subsequent calls resolve the existing one and rehydrate message history + var registry.
+;; Create / lookup
+(conv/create! :vis)                    ;; new web/TUI conversation
+(conv/create! :vis {:title "…"})
+(conv/by-id conv-id)                   ;; conv map or nil
+(conv/by-channel :vis)                 ;; sidebar / list, recent first
+(conv/for-telegram-chat! chat-id)      ;; find-or-create by chat-id
 
-The SQLite DataSource is process-wide shared, so every env uses one pool. svar's `dispose-env!` leaves the shared DataSource open (`:owned? false`) so disposing one env never breaks sibling envs.
+;; Mutate
+(conv/set-title! conv-id "New title")
+(conv/env-for conv-id)                 ;; raw rlm env (for presenter projections)
 
-**Entity model:**
-- `:conversation` — one per session/chat, holds `:conversation/name` (unique identity, caller-supplied), `:conversation/env-id`, `:conversation/model`, `:conversation/system-prompt`
-- `:query` — one per user turn, parented to `:conversation` via `:entity/parent-id`, holds `:query/text`, `:query/answer`, `:query/status`, `:query/iterations`, `:query/duration-ms`, `:query/messages` (pr-str'd)
-- `:iteration` — one per LLM iteration inside a query, parented to `:query`, holds `:iteration/code` (pr-str'd vec of source strings), `:iteration/results` (pr-str'd vec), `:iteration/thinking`, `:iteration/answer` (present iff this iteration emitted `:final`), `:iteration/duration-ms`
-- `:iteration-var` — one per `(def …)` executed in an iteration, parented to `:iteration`, holds `:iteration.var/name`, `:iteration.var/value` (pr-str'd), `:iteration.var/code`
+;; Turn
+(conv/send! conv-id msgs opts)         ;; locked per conv-id; see docstring for every opt
 
-All ordering within a parent is by `:entity/created-at` (no explicit index attribute). The LLM uses `restore-var`/`restore-vars` SCI tools to rebind prior `:iteration-var`s on demand.
+;; Lifecycle
+(conv/close! conv-id)                  ;; release env handle, keep DB data
+(conv/delete! conv-id)                 ;; close + purge entity tree + sidecar row
+(conv/close-all!)                      ;; process shutdown
+```
+
+### Storage
+
+**ONE SQLite DB for everything.** Path: `~/.vis/vis.mdb` (`config/db-path`). Every frontend opens the same DB; svar's connection pool is shared across envs, so disposing one conversation's env never breaks siblings.
+
+Two layers:
+
+- **rlm layer** — `:conversation` / `:query` / `:iteration` / `:iteration-var` entity tree. Owned by `com.blockether.vis.rlm.*`. `conversation_attrs` holds only `entity_id`, `system_prompt`, `model` — no name, no env_id, no caller-facing lookup keys.
+- **vis sidecar** — `vis_conversation(conversation_id, channel, external_id, title, created_at)`. Keyed by the rlm conversation's entity id. `UNIQUE(channel, external_id)` is how Telegram resolves a chat-id to its conversation. Installed lazily on first access from `com.blockether.vis.conversations.schema`.
+
+**Entity model (unchanged):**
+- `:conversation` — one per chat/session; holds `:conversation/system-prompt`, `:conversation/model`.
+- `:query` — one per user turn, parented to `:conversation`. `:query/text`, `:query/answer`, `:query/status`, `:query/iterations`, `:query/duration-ms`, `:query/messages` (pr-str'd).
+- `:iteration` — one per LLM iteration inside a query. `:iteration/code` (pr-str'd source vec), `:iteration/results`, `:iteration/thinking`, `:iteration/answer` (present iff `:final`), `:iteration/duration-ms`.
+- `:iteration-var` — one per `(def …)` inside an iteration. `:iteration.var/name`, `:iteration.var/value` (pr-str'd), `:iteration.var/code`.
+
+Ordering within a parent is by `:entity/created-at`. `restore-var` / `restore-vars` SCI tools rebind prior `:iteration-var`s on demand.
 
 **Investigating DB state:**
 ```clojure
-(require '[com.blockether.vis.rlm.db :as rlm-db]
+(require '[com.blockether.vis.conversations :as conv]
+         '[com.blockether.vis.rlm.db :as rlm-db]
          '[com.blockether.vis.config :as config])
 
-(let [db-info (rlm-db/create-rlm-conn config/db-path)
-      conv    (rlm-db/db-resolve-conversation-ref db-info {:name "telegram:12345"})]
+;; List vis/telegram conversations
+(conv/by-channel :vis)
+(conv/by-channel :telegram)
 
-  ;; List conversations by prefix
-  (rlm-db/db-list-conversations-by-prefix db-info "session:")
-
-  ;; Compact query summaries for one conversation
-  (rlm-db/db-query-history db-info conv)
-
-  ;; Full iteration entities for one query
-  (let [[q & _] (rlm-db/db-list-conversation-queries db-info conv)]
-    (rlm-db/db-list-query-iterations db-info [:entity/id (:entity/id q)]))
-
-  ;; Latest {sym → {:value :code :query-id :query-ref :iteration-id :created-at}}
-  (rlm-db/db-latest-var-registry db-info conv)
-
-  (rlm-db/dispose-rlm-conn! db-info))
+;; Raw rlm view via the conversation's env
+(let [env      (conv/env-for conv-id)
+      db-info  (:db-info env)
+      conv-ref (:conversation-ref env)]
+  (rlm-db/db-query-history db-info conv-ref)       ;; {:text :answer-preview :iterations :key-vars}
+  (rlm-db/db-list-conversation-queries db-info conv-ref)
+  (rlm-db/db-latest-var-registry db-info conv-ref));; {sym → {:value :code …}}
 ```
 
-**Common DB issues:**
-- `Sessions: 0` on startup — `load-sessions!` prints `[server] Failed to load session <id>: <msg>` when a `:conversation/name` is present but rehydration fails.
-- WAL `.tmp` files — incomplete writes from hard kills. Safe to delete.
+**Key rlm DB functions (`com.blockether.vis.rlm.db`):**
+- `create-rlm-conn` / `dispose-rlm-conn!` — SQLite pool handle open/close.
+- `db-find-latest-conversation-ref` — the most-recent `:conversation` entity.
+- `db-resolve-conversation-ref` — accepts `nil` / `:latest` / uuid / `[:id uuid]`.
+- `db-list-conversation-queries` / `db-list-query-iterations` / `db-list-iteration-vars` — ordered children.
+- `db-query-history` — compact summaries for UI rendering.
+- `db-latest-var-registry` — last-write-wins var map for a conversation.
+- `delete-entity-tree!` — delete an entity and every descendant via parent_id.
 
-**Key DB functions (in `rlm.db` / `rlm.sqlite`):**
-- `rlm-db/db-find-latest-conversation-ref` — lookup ref for the most-recent `:conversation`
-- `rlm-db/db-find-named-conversation-ref` — lookup ref by `:conversation/name` (nil if absent)
-- `rlm-db/db-resolve-conversation-ref` — resolves `:latest`, uuid, lookup ref, or `{:name s}`
-- `rlm-db/db-list-conversations-by-prefix` — list conversations whose name starts with a prefix
-- `rlm-db/db-list-conversation-queries` — ordered `:query` entities under a conversation
-- `rlm-db/db-list-query-iterations` — ordered `:iteration` entities under a query
-- `rlm-db/db-list-iteration-vars` — persisted `:iteration-var` entities
-- `rlm-db/db-query-history` — compact `{:text :answer-preview :iterations :key-vars}` for rendering
-- `rlm-db/db-latest-var-registry` — last-write-wins map of `sym → {:value :code ...}`
-- `rlm-db/delete-entity-tree!` — delete entity + all descendants via parent_id chain
+**rlm entrypoints vis uses (`com.blockether.vis.rlm`):**
+- `create-env router {:db path :conversation selector}` — selector is `nil` | `:latest` | uuid | `[:id uuid]`. Nil creates a fresh conversation; an id-ref resumes an existing one.
+- `register-env-fn!` / `register-env-def!` — wire tools/constants into the SCI sandbox.
+- `query-env! env [(llm/user "...")] opts` — messages must be a vector of message maps. See `conv/send!` docstring for every opt forwarded to `query-env!`.
+- `ingest-git! env {:repo-path path :n 100}` — JGit-backed; attaches `search-commits`/`commit-history`/`file-history`/`blame`/`commit-diff`/`commit-parents`/`commits-by-ticket` to the sandbox. `:repo/name` is unique — repeated calls dedupe.
+- `dispose-env!` — releases the env handle; the shared SQLite DataSource stays open for sibling envs.
 
-**svar RLM entrypoints vis uses (`com.blockether.svar.internal.rlm`):**
-- `create-env router {:db path :conversation selector}` — selector is `:latest` | `{:name s}` | uuid | `[:entity/id uuid]` | nil. `{:name s}` is lookup-or-create — if the conversation exists it's resumed, otherwise a new one is created with that name.
-- `register-env-fn!` / `register-env-def!` — wire tools/constants into the SCI sandbox
-- `query-env! env [(llm/user "...")] opts` — **messages must be a vector of message maps**; `opts` accepts `:system-prompt :context :spec :model :max-iterations :on-chunk :verify? :debug? :eval-timeout-ms`
-- `ingest-git! env {:repo-path path :n 100}` — JGit-backed, attaches `search-commits`/`commit-history`/`file-history`/`blame`/`commit-diff`/`commit-parents`/`commits-by-ticket` to the sandbox. `:repo/name` is unique identity — repeated calls for the same repo dedupe.
-- `dispose-env!` — releases the env handle; on a persistent :db path, the shared SQLite DataSource stays open so sibling envs keep working.
+**Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, iteration stops and the answer is the RLM result. Observability: pass `{:hooks {:on-chunk (fn [{:iteration :thinking :code :final :done?}])}}` to `conv/send!`.
 
-**Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, svar stops iterating and the answer is the RLM result. Observability is via the single `:on-chunk` callback — `{:iteration :thinking :code :final :done?}` — not the old `:hooks` map, which no longer exists.
-
-**Web session lifecycle:**
-- `server/create-session!` — opens a named `:conversation` `session:<uuid>` in the shared DB; no per-session directory.
-- `server/load-sessions!` — on startup, queries every conversation whose `:conversation/name` starts with `session:` via `rlm-db/db-list-conversations-by-prefix` and rehydrates each into an env.
-- `server/load-messages-from-db` — projects `:conversation` → `:query` → `:iteration` into the presenter's `{:role :text :result}` shape; no message entities involved.
-- `server/delete-session!` — disposes env + deletes the conversation's entity tree via `rlm-db/delete-entity-tree!`. Caller (routes) checks in-flight status first.
-- `executor/on-chunk-handler` — maps svar's streaming callback into `server/live-status` so the `/s/:id?check=N` polling endpoint can drive the live trace UI.
+**Frontend wiring:**
+- **TUI** — `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty). Disposal on exit only closes the env; the conversation stays in the `:vis` channel so the web sidebar can see it.
+- **Web** — `/new` → `conv/create! :vis`; URL `/s/<uuid>` is the conv-id directly; the server projects message lists lazily from the entity tree (cached in `server/messages-cache`) and generates a title from the first user message via `server/set-session-title!`. `delete-session!` → `conv/delete!` purges the entity tree + sidecar row. `executor/on-chunk-handler` maps svar's streaming callback into `server/live-status` so the `/s/:id?check=N` polling endpoint drives the live trace UI.
+- **Telegram** — `conv/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conv/send!` with the Telegram persona system prompt.
+- **CLI `agent/run!`** — ephemeral one-shot. Creates a fresh rlm env (no sidecar row) and deletes the conversation entity tree in a `finally` after the query returns — CLI invocations don't accumulate in the `:vis` channel.

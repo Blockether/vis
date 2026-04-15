@@ -305,13 +305,13 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
     (spec/field {::spec/name :answer
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "The final answer"})
+                 ::spec/description "The final answer. SINGLE-TOKEN VAR RESOLVE: if this is a single word matching a var you def'd in :code (same iteration), the system auto-resolves it to the var's runtime value. Example: def result in :code, then :final answer 'result' — user sees the resolved value, not the word. IMPORTANT: plain :final answers do not persist into <var_index>. Only explicit defs persist."})
     (spec/field {::spec/name :answer-type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/description "What kind of answer is this?"
-                 ::spec/values {"code" "Source code (will be validated)"
-                                "text" "Natural language / prose"
+                 ::spec/values {"text" "Natural language / prose (DEFAULT for chat replies)"
+                                "code" "Source code (will be validated)"
                                 "data" "Structured data (EDN, JSON, etc.)"}})
     (spec/field {::spec/name :language
                  ::spec/type :spec.type/keyword
@@ -356,7 +356,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                                   ::spec/target :code_block
                                   ::spec/cardinality :spec.cardinality/many
                                   ::spec/required false
-                                  ::spec/description "Code blocks to execute. Each has :expr and :time-ms. CAN combine with :final: code runs first, then final accepted."})
+                                  ::spec/description "Code blocks to execute. Each has :expr and :time-ms. ALWAYS executes — even with :final. Use pattern: (def result ...) in :code, then :final {:answer \"result\"} to auto-resolve the var. Def only reusable state/cache, not throwaway final-result vars."})
                      (spec/field {::spec/name :next-optimize
                                   ::spec/type :spec.type/keyword
                                   ::spec/cardinality :spec.cardinality/one
@@ -365,12 +365,17 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                                   ::spec/values {"cost" "Cheap model for simple operations"
                                                  "speed" "Fast model for quick tasks"
                                                  "intelligence" "Powerful model for hard reasoning"}})
+                     (spec/field {::spec/name :forget
+                                  ::spec/type :spec.type/string
+                                  ::spec/cardinality :spec.cardinality/many
+                                  ::spec/required false
+                                  ::spec/description "Names of vars to drop from <var_index>. This runs automatically after code execution. Use this when a def has served its purpose and no longer needs to sit in the index — the sandbox binding is unmapped and the var stops consuming prompt tokens. The persisted :iteration-var row in the DB stays, so (restore-var 'sym) can bring it back later if needed."})
                      (spec/field {::spec/name :final
                                   ::spec/type :spec.type/ref
                                   ::spec/target :final
                                   ::spec/cardinality :spec.cardinality/one
                                   ::spec/required false
-                                  ::spec/description "Final answer. CAN set with :code in same response: code executes first, if all pass final is accepted."})]
+                                  ::spec/description "Final answer. PREFERRED: send :code + :final together. :code runs first, :final.answer auto-resolves single-token var names to their runtime value. Only defs persist. Plain final answers do not become vars."})]
         fields (if include-thinking?
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string

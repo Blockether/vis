@@ -550,16 +550,14 @@
   "Creates the SCI sandbox context with all available bindings.
 
    Params:
-   `context-data` - The data context to analyze
    `sub-rlm-query-fn` - Function for simple LLM text queries
    `db-info` - Database info map (can be nil)
    `conversation-ref` - Active conversation lookup ref (can be nil)
    `custom-bindings` - Map of symbol->value for custom bindings (can be nil)"
-  [context-data sub-rlm-query-fn db-info conversation-ref custom-bindings]
+  [sub-rlm-query-fn db-info conversation-ref custom-bindings]
   (let [restore-var-fn (when (and db-info conversation-ref)
                          (make-restore-var-fn db-info conversation-ref))
-        base-bindings {'context context-data
-                       'sub-rlm-query sub-rlm-query-fn
+        base-bindings {'sub-rlm-query sub-rlm-query-fn
                        'spec spec/spec
                        'field spec/field
                        ;; Date helper functions
@@ -807,12 +805,36 @@
    - doc    : from the docstring passed to `(def sym \"doc\" val)`
    - preview: `pr-str` of the value, truncated to MAX_VAR_INDEX_PREVIEW chars.
               The preview is the quick-glance snapshot; for the full value
-              the agent runs the var in :code and reads <execution_results>."
+              the agent runs the var in :code and reads <execution_results>.
+
+   When `db-info` and `conversation-ref` are provided, rows are sorted
+   newest-first by `:iteration-var` `:entity/created-at`; freshly-def'd
+   vars (not yet persisted) sort above any DB-recorded ones. Without
+   those args, rows fall back to alphabetical order. The cap stays at
+   MAX_VAR_INDEX_ROWS, so on long conversations with many persisted
+   defs the LLM sees the most recently touched ones — older defs are
+   listed as an `… N more vars omitted` footer and can be pulled back
+   into view explicitly via `(restore-var 'sym)`."
   ([sci-ctx initial-ns-keys]
-   (build-var-index sci-ctx initial-ns-keys nil))
+   (build-var-index sci-ctx initial-ns-keys nil nil nil))
   ([sci-ctx initial-ns-keys sandbox]
+   (build-var-index sci-ctx initial-ns-keys sandbox nil nil))
+  ([sci-ctx initial-ns-keys sandbox db-info conversation-ref]
    (try
      (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
+           var-registry (when (and db-info conversation-ref)
+                          (try (db/db-latest-var-registry db-info conversation-ref)
+                               (catch Exception _ nil)))
+           recency-of (fn [sym]
+                        (if-let [ts (some-> (get var-registry sym) :created-at)]
+                          (cond (inst? ts) (inst-ms ts)
+                                (integer? ts) (long ts)
+                                :else Long/MAX_VALUE)
+                          ;; Not in DB yet — must be a fresh def in the
+                          ;; current iteration. Rank it above everything
+                          ;; that's been persisted so the LLM always sees
+                          ;; what it just created.
+                          Long/MAX_VALUE))
            var-info (into {}
                       (for [[s v] sandbox-map
                             :when (symbol? s)]
@@ -821,7 +843,7 @@
                             :arglists (:arglists (meta v))}]))
            entries (->> var-info
                      (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
-                     (sort-by key)
+                     (sort-by (fn [[sym _]] [(- (long (recency-of sym))) (str sym)]))
                      (mapv (fn [[sym {:keys [val doc arglists]}]]
                              (let [type-label (cond
                                                 (nil? val) "nil"

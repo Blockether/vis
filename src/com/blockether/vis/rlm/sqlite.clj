@@ -117,8 +117,6 @@
    ;; --- Per-type entity attribute tables ---
    "CREATE TABLE IF NOT EXISTS conversation_attrs (
       entity_id      TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      env_id         TEXT UNIQUE,
-      name           TEXT UNIQUE,
       system_prompt  TEXT,
       model          TEXT
     )"
@@ -627,7 +625,7 @@
 ;; These mirror the SQL column names (snake_case). Conversion to namespaced
 ;; keys happens in row->entity below.
 
-(def ^:private CONVERSATION-COLS [:env_id :name :system_prompt :model])
+(def ^:private CONVERSATION-COLS [:system_prompt :model])
 (def ^:private QUERY-COLS        [:messages :text :answer :iterations :duration_ms :status :eval_score])
 (def ^:private ITERATION-COLS    [:code :results :vars :answer :thinking :duration_ms])
 (def ^:private ITER-VAR-COLS     [:name :value :code])
@@ -673,8 +671,6 @@
 (defn- conversation-attrs->ns
   [row]
   (cond-> {}
-    (some? (:env_id row))        (assoc :env-id (:env_id row))
-    (some? (:name row))          (assoc :name (:name row))
     (some? (:system_prompt row)) (assoc :system-prompt (:system_prompt row))
     (some? (:model row))         (assoc :model (:model row))))
 
@@ -782,8 +778,6 @@
                       (:updated-at attrs)   (assoc :updated_at (->epoch-ms (:updated-at attrs))))
         ext-cols (case type-kw
                    :conversation (cond-> {}
-                                   (:env-id attrs)        (assoc :env_id (:env-id attrs))
-                                   (:name attrs)          (assoc :name (:name attrs))
                                    (:system-prompt attrs) (assoc :system_prompt (:system-prompt attrs))
                                    (:model attrs)         (assoc :model (:model attrs)))
                    :query (cond-> {}
@@ -887,25 +881,15 @@
 ;; =============================================================================
 
 (defn store-conversation!
-  "Stores or retrieves a conversation entity for an env session.
-
-   When :name is supplied, it's stored as :name (UNIQUE) so
-   subsequent calls can look up the conversation in shared-DB scenarios."
-  [db-info {:keys [env-id system-prompt model name]}]
+  "Create a new :conversation entity and return its lookup ref. Callers that
+   want to resume an existing conversation should pass `[:id uuid]` to
+   `db-resolve-conversation-ref` directly instead of calling this."
+  [db-info {:keys [system-prompt model]}]
   (when (ds db-info)
-    (let [existing (query-one! db-info
-                     {:select [:entity_id]
-                      :from :conversation_attrs
-                      :where [:= :env_id env-id]})]
-      (if existing
-        [:id (->uuid (:entity_id existing))]
-        (store-entity! db-info
-          (cond-> {:type :conversation
-                   :name (or name env-id "session")
-                   :env-id env-id
-                   :system-prompt (or system-prompt "")
-                   :model (or model "")}
-            (string? name) (assoc :name name)))))))
+    (store-entity! db-info
+      {:type          :conversation
+       :system-prompt (or system-prompt "")
+       :model         (or model "")})))
 
 (defn db-get-conversation
   "Returns a conversation entity by lookup ref or nil."
@@ -925,45 +909,19 @@
                       :limit 1})]
       (id->entity-ref (:id row)))))
 
-(defn db-find-named-conversation-ref
-  "Returns lookup ref for a conversation with the given :name, or nil."
-  [db-info nm]
-  (when (and (ds db-info) (string? nm))
-    (when-let [row (query-one! db-info
-                     {:select [:entity_id]
-                      :from :conversation_attrs
-                      :where [:= :name nm]})]
-      (id->entity-ref (:entity_id row)))))
-
 (defn db-resolve-conversation-ref
-  "Resolves a conversation selector to a lookup ref. Mirrors db.clj signature."
+  "Resolve a conversation selector to a lookup ref. Accepts:
+     nil              → nil (caller should then create a new conversation)
+     :latest          → the most recent :conversation entity
+     [:id uuid]       → returned unchanged
+     uuid             → wrapped as [:id uuid]"
   [db-info selector]
   (cond
     (nil? selector) nil
     (= :latest selector) (db-find-latest-conversation-ref db-info)
     (and (vector? selector) (= :id (first selector))) selector
     (uuid? selector) [:id selector]
-    (and (map? selector) (string? (:name selector)))
-    (db-find-named-conversation-ref db-info (:name selector))
     :else nil))
-
-(defn db-list-conversations-by-prefix
-  "List conversations whose :name starts with `prefix`.
-   Returns [{:id uuid-str :name str :created-at inst} …] ordered by creation."
-  [db-info prefix]
-  (when (ds db-info)
-    (->> (query! db-info
-           {:select [[:e.id :id] [:ca.name :name] [:e.created_at :created_at]]
-            :from [[:entity :e]]
-            :join [[:conversation_attrs :ca] [:= :ca.entity_id :e.id]]
-            :where [:and
-                    [:= :e.type "conversation"]
-                    [:like :ca.name (str prefix "%")]]
-            :order-by [[:e.created_at :asc]]})
-      (mapv (fn [row]
-              {:id         (:id row)
-               :name       (:name row)
-               :created-at (some-> (:created_at row) long (Date.))})))))
 
 (defn delete-entity-tree!
   "Delete an entity and all descendants linked via parent_id.
