@@ -18,7 +18,6 @@
    [com.blockether.vis.rlm.pageindex.vision :as vision]
    [com.blockether.vis.rlm.query :as rlm-query]
    [com.blockether.vis.rlm.schema :as schema]
-   [com.blockether.vis.rlm.trace :as rlm-trace]
    [com.blockether.vis.rlm.trajectory :as trajectory]
    [com.blockether.vis.rlm.qa :as rlm-qa]
    [com.blockether.svar.internal.util :as util]
@@ -259,22 +258,6 @@
   "Exports filtered trajectories as JSONL for fine-tuning."
   [env output-dir & [opts]]
   (trajectory/export-trajectories! (rlm-env/db-info env) output-dir opts))
-
-;; =============================================================================
-;; Trace Pretty Printing
-;; =============================================================================
-
-(def format-trace
-  "Formats an RLM execution trace into a string. Internal helper."
-  rlm-trace/format-trace)
-
-(def pprint-trace
-  "Pretty-prints an RLM execution trace to stdout for debugging."
-  rlm-trace/pprint-trace)
-
-(def print-trace
-  "Prints an RLM execution trace to stdout. Alias for pprint-trace."
-  rlm-trace/print-trace)
 
 ;; =============================================================================
 ;; QA pipeline — delegated to rlm.qa

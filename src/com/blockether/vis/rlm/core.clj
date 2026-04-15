@@ -1142,6 +1142,55 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                        :data {:error (ex-message e) :syms (mapv str syms)}
                        :msg "forget-vars! failed — skipping"}))))))
 
+;; =============================================================================
+;; Deterministic Auto-Forget
+;; =============================================================================
+
+(def ^:const AUTO_FORGET_STALE_QUERIES
+  "Number of recent queries a var must have been defined/redefined in to survive
+   auto-forget. Vars without a docstring that were last touched more than this
+   many queries ago are automatically removed from the live sandbox at the start
+   of each new query. DB rows are untouched — (restore-var 'sym) can bring them back."
+  3)
+
+(defn auto-forget-candidates
+  "Pure function. Returns the set of sandbox var symbols that should be
+   auto-forgotten at the start of a new query.
+
+   A var is a candidate for auto-forget when ALL of:
+   1. It is a user var (not in `initial-ns-keys`)
+   2. It has NO docstring (runtime SCI meta :doc is nil/blank)
+   3. It was last defined/redefined in a query that is NOT among the
+      `recent-query-ids` (last N queries of this conversation)
+
+   Params:
+   - `sandbox-map`      — SCI sandbox namespace map {symbol → value-or-var}
+   - `initial-ns-keys`  — set of symbols that are built-in tools/helpers
+   - `var-registry`     — result of `db-latest-var-registry`:
+                           {symbol → {:query-id ... :value ... :code ...}}
+   - `recent-query-ids` — set of query UUIDs for the last N queries
+
+   Returns: set of symbols to forget."
+  [sandbox-map initial-ns-keys var-registry recent-query-ids]
+  (let [recent-ids (set recent-query-ids)]
+    (into #{}
+      (filter
+        (fn [sym]
+          (let [v (get sandbox-map sym)
+                doc (:doc (meta v))
+                has-doc? (and doc (not (str/blank? doc)))
+                reg-entry (get var-registry sym)
+                defining-query-id (:query-id reg-entry)]
+            (and
+              ;; Not a built-in
+              (not (contains? initial-ns-keys sym))
+              ;; No docstring — vars with docs are intentionally persisted
+              (not has-doc?)
+              ;; Has a registry entry (was persisted at some point)
+              (some? reg-entry)
+              ;; Was last defined in a query that's NOT recent
+              (not (contains? recent-ids defining-query-id))))))
+      (keys sandbox-map))))
 (defn iteration-loop [rlm-env query
                       {:keys [output-spec max-context-tokens custom-docs system-prompt
                               pre-fetched-context query-ref user-messages
@@ -1199,6 +1248,34 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                              user-messages))
         ;; Store initial messages if history tracking is enabled
         db-info (:db-info rlm-env)
+        ;; ── Auto-forget stale vars ──────────────────────────────────────
+        ;; Deterministic cleanup at query boundary: remove sandbox vars that
+        ;; (a) have no docstring, and (b) were last defined/redefined more
+        ;; than AUTO_FORGET_STALE_QUERIES queries ago. This replaces the
+        ;; unreliable "ask LLM to emit :forget" pattern for scratch vars.
+        ;; DB rows are untouched — (restore-var 'sym) can bring them back.
+        _ (when (and db-info (:conversation-ref rlm-env) (:sci-ctx rlm-env))
+            (try
+              (let [all-queries (sort-by :created-at
+                                  (rlm-db/db-list-conversation-queries db-info (:conversation-ref rlm-env)))
+                    recent-ids (into #{}
+                                 (map :id)
+                                 (take-last AUTO_FORGET_STALE_QUERIES all-queries))
+                    var-registry (rlm-db/db-latest-var-registry db-info (:conversation-ref rlm-env))
+                    sandbox-map (get-in @(:env (:sci-ctx rlm-env)) [:namespaces 'sandbox])
+                    candidates (auto-forget-candidates sandbox-map (:initial-ns-keys rlm-env)
+                                 var-registry recent-ids)]
+                (when (seq candidates)
+                  (trove/log! {:level :info :id ::auto-forget
+                               :data {:forgotten (mapv str candidates) :count (count candidates)}
+                               :msg (str "Auto-forget: evicting " (count candidates) " stale vars without docstrings")})
+                  (forget-vars! (:sci-ctx rlm-env) candidates)
+                  (when-let [via (:var-index-atom rlm-env)]
+                    (swap! via update :current-revision inc))))
+              (catch Exception e
+                (trove/log! {:level :warn :id ::auto-forget-failed
+                             :data {:error (ex-message e)}
+                             :msg "Auto-forget failed — skipping"}))))
         ;; Cost tracking: accumulate token usage across all iterations
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
         accumulate-usage! (fn [api-usage]

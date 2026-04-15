@@ -3,8 +3,8 @@
             [com.blockether.vis.agent :as agent]
             [com.blockether.vis.logging :as logging]
             [com.blockether.vis.telegram.bot :as telegram]
-            [com.blockether.vis.trace :as trace]
-            [com.blockether.vis.tui.screen :as screen]))
+            [com.blockether.vis.tui.screen :as screen]
+            [taoensso.trove :as trove]))
 
 ;;; ── CLI Output ──────────────────────────────────────────────────────────
 
@@ -98,13 +98,6 @@
       (System/exit 0))
     (let [agent-def  (agent/agent {:name (or agent-name "cli")})
           run-opts   (dissoc opts :prompt :json? :edn? :trace? :compact? :agent-name)
-          ;; When --trace, set up live streaming hooks
-          live       (when trace? (trace/live-trace-hooks logging/original-stdout))
-          _          (when (and live (:model run-opts))
-                       (swap! (:state live) assoc :model (:model run-opts)))
-          run-opts   (if live
-                       (assoc run-opts :hooks (:hooks live))
-                       run-opts)
           result     (agent/run! agent-def prompt run-opts)]
       (cond
         json?
@@ -113,29 +106,34 @@
         edn?
         (stdout! (agent/result->edn result))
 
-        ;; --trace: live hooks already streamed iterations, now print summary + answer
+        ;; --trace: log full result via trove
         trace?
-        (do (trace/print-live-summary! logging/original-stdout result (:state live))
-            (when (:error result)
-              (when-let [ex (:exception result)]
-                (stdout! "\nStack trace:")
-                (.printStackTrace ^Throwable ex logging/original-stdout))
-              (shutdown-agents)
-              (System/exit 1)))
+        (do (trove/log! {:level :info :id ::cli-trace
+                         :data (select-keys result [:answer :trace :iterations
+                                                    :duration-ms :tokens :cost
+                                                    :error :type])
+                         :msg "CLI trace result"})
+          (stdout! (str (:answer result)))
+          (when (:error result)
+            (when-let [ex (:exception result)]
+              (stdout! "\nStack trace:")
+              (.printStackTrace ^Throwable ex logging/original-stdout))
+            (shutdown-agents)
+            (System/exit 1)))
 
         (:error result)
         (do (stdout! (str "Error: " (:error result)))
-            (shutdown-agents)
-            (System/exit 1))
+          (shutdown-agents)
+          (System/exit 1))
 
         :else
         (do (stdout! (str (:answer result)))
-            (when (:duration-ms result)
-              (stdout! (str "\n[" (:iterations result) " iterations"
-                            ", " (:duration-ms result) "ms"
-                            (when-let [c (some-> result :cost :total-cost)]
-                              (str ", $" (String/format java.util.Locale/US "%.4f" (into-array Object [(double c)]))))
-                            "]")))))
+          (when (:duration-ms result)
+            (stdout! (str "\n[" (:iterations result) " iterations"
+                       ", " (:duration-ms result) "ms"
+                       (when-let [c (some-> result :cost :total-cost)]
+                         (str ", $" (String/format java.util.Locale/US "%.4f" (into-array Object [(double c)]))))
+                       "]")))))
       (shutdown-agents))))
 
 ;;; ── TUI ─────────────────────────────────────────────────────────────────
@@ -157,7 +155,7 @@
       ;; Explicit run — stdout stays connected, logs go to file only
       (= cmd "run")
       (do (logging/init-cli!)
-          (cli-run! (rest args)))
+        (cli-run! (rest args)))
 
       ;; Help
       (#{"help" "--help" "-h"} cmd)
@@ -166,7 +164,7 @@
       ;; Telegram bot — stdout stays connected for startup logs
       (= cmd "telegram")
       (do (logging/init-cli!)
-          (telegram/-main))
+        (telegram/-main))
 
       ;; TUI chat (explicit or no args)
       (or (nil? cmd) (= cmd "chat"))
@@ -175,4 +173,4 @@
       ;; Unknown subcommand → treat all args as a run prompt
       :else
       (do (logging/init-cli!)
-          (cli-run! args)))))
+        (cli-run! args)))))
