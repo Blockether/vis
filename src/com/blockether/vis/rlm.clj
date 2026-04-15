@@ -21,7 +21,6 @@
    [com.blockether.vis.rlm.trace :as rlm-trace]
    [com.blockether.vis.rlm.trajectory :as trajectory]
    [com.blockether.vis.rlm.qa :as rlm-qa]
-   [com.blockether.vis.rlm.qa-manifest :as rlm-qa-manifest]
    [com.blockether.svar.internal.util :as util]
    [taoensso.trove :as trove])
   (:import
@@ -52,12 +51,12 @@
 
 (defn- invalidate-qa-corpus-snapshot-cache!
   [env]
-  (rlm-qa-manifest/invalidate-qa-corpus-snapshot-cache! env))
+  (rlm-qa/invalidate-qa-corpus-snapshot-cache! env))
 
 (def qa-corpus-snapshot-stats
   "Returns QA corpus snapshot cache stats for observability.
    Shape: {:hits N :misses N :last-digest-ms ms|nil :last-revision rev}."
-  rlm-qa-manifest/qa-corpus-snapshot-stats)
+  rlm-qa/qa-corpus-snapshot-stats)
 
 (defn register-env-fn!
   "Registers a function in the RLM environment's SCI sandbox.
@@ -278,14 +277,14 @@
   rlm-trace/print-trace)
 
 ;; =============================================================================
-;; QA pipeline — delegated to rlm.qa / rlm.qa-manifest
+;; QA pipeline — delegated to rlm.qa
 ;; =============================================================================
 
 ;; Private fn delegates (tests access these via #'sut/...)
 #_{:clj-kondo/ignore [:unused-private-var]}
-(def ^:private qa-corpus-snapshot rlm-qa-manifest/qa-corpus-snapshot)
+(def ^:private qa-corpus-snapshot rlm-qa/qa-corpus-snapshot)
 #_{:clj-kondo/ignore [:unused-private-var]}
-(def ^:private write-qa-manifest! rlm-qa-manifest/write-qa-manifest!)
+(def ^:private write-qa-manifest! rlm-qa/write-qa-manifest!)
 #_{:clj-kondo/ignore [:unused-private-var]}
 (def ^:private compute-distribution rlm-qa/compute-distribution)
 #_{:clj-kondo/ignore [:unused-private-var]}

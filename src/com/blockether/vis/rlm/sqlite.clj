@@ -1059,33 +1059,6 @@
       (fetch-entities db-info ids))
     []))
 
-(defn db-list-final-results
-  "Lists terminal iterations (those with non-nil :answer).
-   Optional :conversation-ref scopes to a single conversation's tree."
-  ([db-info] (db-list-final-results db-info {}))
-  ([db-info {:keys [conversation-ref]}]
-   (if (ds db-info)
-     (let [conv-id (when conversation-ref (entity-ref->id conversation-ref))
-           sql (if conv-id
-                 {:select [:e.id]
-                  :from [[:entity :e]]
-                  :join [[:iteration_attrs :ia] [:= :e.id :ia.entity_id]
-                         [:entity :q] [:= :q.id :e.parent_id]]
-                  :where [:and
-                          [:= :e.type "iteration"]
-                          [:not= :ia.answer nil]
-                          [:= :q.parent_id conv-id]]
-                  :order-by [[:e.created_at :asc] [:e.id :asc]]}
-                 {:select [:e.id]
-                  :from [[:entity :e]]
-                  :join [[:iteration_attrs :ia] [:= :e.id :ia.entity_id]]
-                  :where [:and [:= :e.type "iteration"]
-                          [:not= :ia.answer nil]]
-                  :order-by [[:e.created_at :asc] [:e.id :asc]]})
-           ids (mapv :id (query! db-info sql))]
-       (fetch-entities db-info ids))
-     [])))
-
 ;; =============================================================================
 ;; Corpus revision (rlm_meta)
 ;; =============================================================================
@@ -2378,7 +2351,7 @@
     (util/uuid)))
 
 ;; =============================================================================
-;; QA manifest corpus snapshot helpers (qa_manifest.clj)
+;; QA manifest corpus snapshot helpers (qa.clj)
 ;; =============================================================================
 
 (defn qa-corpus-documents [db-info]

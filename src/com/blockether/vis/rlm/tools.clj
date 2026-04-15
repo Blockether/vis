@@ -784,7 +784,7 @@
 ;; Var Index
 ;; =============================================================================
 
-(def ^:private ^:const MAX_VAR_INDEX_ROWS 40)
+(def ^:private ^:const MAX_VAR_INDEX_ROWS 12)
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 (def ^:private ^:const MAX_VAR_INDEX_PREVIEW 150)
 
@@ -824,12 +824,12 @@
      (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
            var-registry (when (and db-info conversation-ref)
                           (try (db/db-latest-var-registry db-info conversation-ref)
-                               (catch Exception _ nil)))
+                            (catch Exception _ nil)))
            recency-of (fn [sym]
                         (if-let [ts (some-> (get var-registry sym) :created-at)]
                           (cond (inst? ts) (inst-ms ts)
-                                (integer? ts) (long ts)
-                                :else Long/MAX_VALUE)
+                            (integer? ts) (long ts)
+                            :else Long/MAX_VALUE)
                           ;; Not in DB yet — must be a fresh def in the
                           ;; current iteration. Rank it above everything
                           ;; that's been persisted so the LLM always sees
