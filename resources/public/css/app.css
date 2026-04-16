@@ -27,7 +27,8 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--fg);display:fle
 .sheet-item.active{background:var(--user-bg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,0.05)}
 .sheet-item-name{flex:1;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sheet-item-del{color:var(--dim);padding:8px;text-decoration:none;display:flex;align-items:center}
-.sheet-new-btn{display:flex;align-items:center;gap:4px;text-decoration:none;color:var(--accent);font-size:14px;font-weight:600}
+.sheet-new-btn,.sheet-new-btn:link,.sheet-new-btn:visited{display:flex;align-items:center;gap:4px;text-decoration:none;color:#c2410c;font-size:14px;font-weight:700;background:#fef3c7;padding:6px 12px;border-radius:999px;transition:background .15s,color .15s}
+.sheet-new-btn:hover,.sheet-new-btn:active{background:#c2410c;color:#fef3c7}
 .topbar-btn i,.sheet-new-btn i,.sheet-item-del i{width:16px;height:16px}
 .input-bar button i{width:20px;height:20px}
 .main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
