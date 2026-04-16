@@ -272,15 +272,16 @@
 
 (defn- discovery-paths
   "Returns the ordered vec of absolute directory paths to scan for SKILL.md
-   files. Project-local paths come first (win on name collision)."
+   files. Project-only — we intentionally do NOT pull skills from $HOME
+   (e.g. ~/.claude/skills) so nothing from outside the repo can leak into
+   the runtime."
   [{:keys [project-root roots]}]
   (let [proj-root (or project-root (str (fs/cwd)))
         git-root (find-project-root proj-root)
         ;; Resolved at call time so *svar-dir* rebindings propagate.
         project-dirs (mapv #(str (fs/path git-root %)) (project-subpaths))
-        extra-dirs  (mapv #(str (fs/path git-root %)) (or roots []))
-        global-dirs (mapv #(str (fs/path (home) %)) (global-subpaths))]
-    (vec (concat project-dirs extra-dirs global-dirs))))
+        extra-dirs  (mapv #(str (fs/path git-root %)) (or roots []))]
+    (vec (concat project-dirs extra-dirs))))
 
 (defn load-skills
   "Scans all discovery paths, parses SKILL.md files, validates, dedupes by name.
