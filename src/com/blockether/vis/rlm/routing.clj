@@ -2,7 +2,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.rlm.schema :refer [*max-recursion-depth* SUB_RLM_QUERY_SPEC]]
+   [com.blockether.vis.rlm.persistence.schema :refer [*max-recursion-depth* SUB_RLM_QUERY_SPEC]]
    [com.blockether.vis.rlm.sub :as rlm-sub]
    [taoensso.trove :as trove]))
 

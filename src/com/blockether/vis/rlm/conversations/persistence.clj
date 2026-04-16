@@ -1,7 +1,7 @@
 (ns com.blockether.vis.rlm.conversations.persistence
   "Conversation persistence boundary for sidecar metadata and env DB handle."
   (:require [com.blockether.vis.config :as config]
-            [com.blockether.vis.rlm.db :as rlm-db]
+            [com.blockether.vis.rlm.persistence.db :as rlm-db]
             [next.jdbc :as jdbc]
             [next.jdbc.sql :as sql])
   (:import [java.time Instant]))

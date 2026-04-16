@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.sqlite
+(ns com.blockether.vis.rlm.persistence.sqlite
   "SQLite store for RLM. Replaces SQLite.
 
    Schema: 11 entity-side tables + 1 unified FTS5 search virtual table.

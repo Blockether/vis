@@ -12,7 +12,7 @@
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
    [com.blockether.vis.rlm.batch :as batch]
-   [com.blockether.vis.rlm.schema :as schema])
+   [com.blockether.vis.rlm.persistence.schema :as schema])
   (:import
    [java.util.concurrent CountDownLatch Semaphore]))
 

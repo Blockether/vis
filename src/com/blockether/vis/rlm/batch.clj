@@ -8,7 +8,7 @@
    Per-item errors surface as {:error :message :cause} maps — the batch itself
    never throws unless the input is malformed."
   (:require
-   [com.blockether.vis.rlm.schema :as schema]
+   [com.blockether.vis.rlm.persistence.schema :as schema]
    [taoensso.trove :as trove]))
 
 (defn sub-rlm-query-batch

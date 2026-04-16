@@ -3,7 +3,7 @@
   (:require [com.blockether.svar.internal.llm :as llm]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.rlm :as rlm]
-            [com.blockether.vis.rlm.db :as rlm-db]
+            [com.blockether.vis.rlm.persistence.db :as rlm-db]
             [com.blockether.vis.rlm.conversations.persistence :as persistence]
             [com.blockether.vis.rlm.conversations.shared :as shared])
   (:import [java.util UUID]))

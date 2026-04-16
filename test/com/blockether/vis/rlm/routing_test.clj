@@ -6,7 +6,7 @@
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
    [com.blockether.vis.rlm.routing :as routing]
-   [com.blockether.vis.rlm.schema :as schema]))
+   [com.blockether.vis.rlm.persistence.schema :as schema]))
 
 (defn- run-with-depth-tracking
   "Invokes private with-depth-tracking via var deref."

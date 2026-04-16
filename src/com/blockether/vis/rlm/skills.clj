@@ -14,7 +14,7 @@
    [babashka.fs :as fs]
    [clojure.string :as str]
    [clojure.walk :as walk]
-   [com.blockether.vis.rlm.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
    [taoensso.trove :as trove]
    [yamlstar.core :as yaml]))
 

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.git-wiring-test
+(ns com.blockether.vis.rlm.corpus.git-wiring-test
   "Integration tests for W2 — git.clj wired into the RLM runtime.
    Covers (1) single-repo wiring, (2) multi-repo auto-dispatch via path for
    blame/file-history and via SHA for commit-diff, (3) system prompt renders
@@ -23,7 +23,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.rlm :as sut]
    [com.blockether.vis.rlm.core :as rlm-core]
-   [com.blockether.vis.rlm.db :as rlm-db])
+   [com.blockether.vis.rlm.persistence.db :as rlm-db])
   (:import
    [java.io File]
    [java.nio.file Files]

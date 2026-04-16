@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.pageindex
+(ns com.blockether.vis.rlm.corpus.pageindex
   "PageIndex: pure helpers, serialization, load-index and inspect — extracted from rlm.clj."
   (:require
    [babashka.fs :as fs]
@@ -6,7 +6,7 @@
    [clojure.pprint :as pprint]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
-   [com.blockether.vis.rlm.schema :as schema]
+   [com.blockether.vis.rlm.persistence.schema :as schema]
    [com.blockether.svar.internal.util :as util]
    [fast-edn.core :as fast-edn]
    [taoensso.trove :as trove]))

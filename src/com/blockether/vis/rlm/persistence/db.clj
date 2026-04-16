@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.db
+(ns com.blockether.vis.rlm.persistence.db
   "Thin facade over rlm.sqlite — SQLite is gone. Preserves the legacy
    public API (fn names + namespaced return shapes) so callers don't change.
 
@@ -13,7 +13,7 @@
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
-   [com.blockether.vis.rlm.sqlite :as sq]
+   [com.blockether.vis.rlm.persistence.sqlite :as sq]
    [edamame.core :as edamame]))
 
 ;; -----------------------------------------------------------------------------

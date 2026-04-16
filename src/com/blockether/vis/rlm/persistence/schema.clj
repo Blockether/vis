@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.schema
+(ns com.blockether.vis.rlm.persistence.schema
   (:require
    [charred.api :as json]
    [clojure.java.process :as proc]

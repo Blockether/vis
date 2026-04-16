@@ -5,11 +5,11 @@
    [clojure.string :as str]
    #_{:clj-kondo/ignore [:unused-namespace]}
    [clojure.walk :as walk]
-   [com.blockether.vis.rlm.db :as db
+   [com.blockether.vis.rlm.persistence.db :as db
     :refer [db-get-entity db-get-page-node db-get-toc-entry
             db-list-relationships db-search-entities db-search-page-nodes
             db-search-toc-entries record-page-access! str-truncate]]
-   [com.blockether.vis.rlm.git :as rlm-git]
+   [com.blockether.vis.rlm.corpus.git :as rlm-git]
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.svar.internal.util :as util]
    [sci.addons.future :as sci-future]

@@ -3,14 +3,14 @@
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.router :as router]
-   [com.blockether.vis.rlm.db :as rlm-db
+   [com.blockether.vis.rlm.persistence.db :as rlm-db
     :refer [create-rlm-conn dispose-rlm-conn!
             db-list-documents
             db-store-pageindex-document! str-truncate]]
-   [com.blockether.vis.rlm.data :as rlm-data]
+   [com.blockether.vis.rlm.corpus.data :as rlm-data]
    [com.blockether.vis.rlm.routing
     :refer [make-routed-sub-rlm-query-fn resolve-root-model provider-has-reasoning?]]
-   [com.blockether.vis.rlm.schema :as schema
+   [com.blockether.vis.rlm.persistence.schema :as schema
     :refer [ENTITY_EXTRACTION_SPEC ENTITY_EXTRACTION_OBJECTIVE
             ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
             *eval-timeout-ms*

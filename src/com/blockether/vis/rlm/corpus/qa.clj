@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.qa
+(ns com.blockether.vis.rlm.corpus.qa
   "QA generation pipeline — multi-stage Q&A pair generation from ingested documents.
    Includes crash-resumable manifest state (formerly qa_manifest.clj)."
   (:require
@@ -8,8 +8,8 @@
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.rlm.db :as rlm-db]
-   [com.blockether.vis.rlm.schema :as schema]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.schema :as schema]
    [com.blockether.svar.internal.util :as util]
    [sci.core :as sci]
    [taoensso.trove :as trove])

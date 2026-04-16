@@ -5,7 +5,7 @@
    [lazytest.core :refer [defdescribe describe expect it throws?]]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.rlm :as sut]
-   [com.blockether.vis.rlm.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
    [com.blockether.vis.rlm.tools :as rlm-tools]
    [com.blockether.vis.rlm.routing :as rlm-routing]
    [com.blockether.vis.rlm.core :as rlm-core]
@@ -840,7 +840,7 @@
                                              {:answer "Posprzatane, usunalem vars z indexu."
                                               :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
-                                                                          :iteration-spec com.blockether.vis.rlm.schema/ITERATION_SPEC_REASONING})]
+                                                                          :iteration-spec com.blockether.vis.rlm.persistence.schema/ITERATION_SPEC_REASONING})]
                              (expect (nil? (:final-result result)))
                              (expect (= [] (:forget result)))
                              (expect (= 1 (count (:executions result))))
@@ -854,7 +854,7 @@
                                             :answer "Posprzatane, usunalem vars z indexu."
                                             :confidence "high"}))
                          (let [result (#'rlm-core/run-iteration env [] {:iteration 0
-                                                                        :iteration-spec com.blockether.vis.rlm.schema/ITERATION_SPEC_REASONING})]
+                                                                        :iteration-spec com.blockether.vis.rlm.persistence.schema/ITERATION_SPEC_REASONING})]
                            (expect (= ["drop-me"] (:forget result)))
                            (expect (= "Posprzatane, usunalem vars z indexu."
                                      (get-in result [:final-result :answer :result]))))))))

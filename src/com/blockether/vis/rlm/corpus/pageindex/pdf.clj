@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.pageindex.pdf
+(ns com.blockether.vis.rlm.corpus.pageindex.pdf
   "PDF to images conversion and metadata extraction using Apache PDFBox.
    
    Provides:

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.trajectory
+(ns com.blockether.vis.rlm.persistence.trajectory
   "Trajectory collection, filtering, and export for RLM fine-tuning.
    Per Zhang et al. (2025): 1,000 filtered trajectories can improve
    a small model by 28.3% on long-context tasks.
@@ -10,7 +10,7 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.rlm.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
    [taoensso.trove :as trove])
   (:import
    [java.io BufferedWriter FileWriter]))
