@@ -66,16 +66,26 @@
               :else [:pre.exec-data (pr-str clean)])])]))))
 
 (defn- render-iteration [{:keys [iteration thinking executions final? error]}]
-  ;; Skip FINAL iterations entirely — the answer is rendered separately
-  (when-not final?
-    [:div.iteration {:class (when error "iteration-error")}
-     [:div.iter-header (str "Iteration " (inc iteration))
-      (when error [:span.iter-error-tag " ERROR"])]
-     (when error
-       [:div.iter-error (str (:message error) (when (:type error) (str " [" (:type error) "]")))])
-     (when (and thinking (not (str/blank? thinking)))
-       [:div.thinking.md-content thinking])
-     (when (seq executions) (keep render-exec executions))]))
+  (let [has-thinking? (and thinking (not (str/blank? thinking)))
+        has-execs?    (seq executions)]
+    (cond
+      ;; Final iteration: only surface its thinking (answer renders separately).
+      ;; Skip entirely when there's nothing to show.
+      final?
+      (when has-thinking?
+        [:div.iteration.iteration-thinking-only
+         [:div.thinking.md-content thinking]])
+
+      ;; Non-final iteration: header + optional thinking/executions/error.
+      :else
+      [:div.iteration {:class (when error "iteration-error")}
+       [:div.iter-header (str "Iteration " (inc iteration))
+        (when error [:span.iter-error-tag " ERROR"])]
+       (when error
+         [:div.iter-error (str (:message error) (when (:type error) (str " [" (:type error) "]")))])
+       (when has-thinking?
+         [:div.thinking.md-content thinking])
+       (when has-execs? (keep render-exec executions))])))
 
 (defn render-msg [_idx {:keys [role text result]}]
   (case role
