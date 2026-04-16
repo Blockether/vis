@@ -45,10 +45,19 @@
         (println (str "[web] git ingestion skipped (" cwd "): " (ex-message e)))
         nil))))
 
-(defn- safe-read-edn [s fallback]
+(defn- safe-read-edn
+  "Parse `s` as edn. Returns `fallback` when `s` is blank or unparseable."
+  [s fallback]
   (if (and (string? s) (seq s))
     (try (edn/read-string s) (catch Exception _ fallback))
     fallback))
+
+(defn- read-edn-or-raw
+  "Try to parse `s` as edn. Keep the raw string when parsing fails — used for
+   assistant answers that may be prose (plain string) or pr-str'd data (code
+   answers)."
+  [s]
+  (safe-read-edn s s))
 
 (defn- iteration-entity->exec [iter-entity]
   (let [codes   (safe-read-edn (:code iter-entity) [])
@@ -70,11 +79,8 @@
         iterations  (rlm-db/db-list-query-iterations db-info query-ref)
         trace       (vec (map-indexed iteration-entity->trace-entry iterations))
         final-iter  (last (filter :answer iterations))
-        answer      (or (when final-iter
-                          (safe-read-edn (:answer final-iter)
-                            (:answer final-iter)))
-                      (safe-read-edn (:answer query-entity)
-                        (:answer query-entity)))
+        answer      (or (some-> final-iter   :answer read-edn-or-raw)
+                        (some-> query-entity :answer read-edn-or-raw))
         result-map  (cond-> {:trace       trace
                              :iterations  (count iterations)
                              :duration-ms (:duration-ms query-entity)}
