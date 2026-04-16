@@ -52,12 +52,23 @@
     (try (edn/read-string s) (catch Exception _ fallback))
     fallback))
 
-(defn- read-edn-or-raw
-  "Try to parse `s` as edn. Keep the raw string when parsing fails — used for
-   assistant answers that may be prose (plain string) or pr-str'd data (code
-   answers)."
+(defn- edn-data-like?
+  "True when `s` starts with an edn data shape marker. Distinguishes prose
+   answers (stored raw) from code answers (stored via pr-str, always starting
+   with `{`, `[`, `(`, `#` or `\"`)."
   [s]
-  (safe-read-edn s s))
+  (when (and (string? s) (seq s))
+    (boolean (#{\{ \[ \( \# \"} (first (str/triml s))))))
+
+(defn- read-answer
+  "Assistant answers are written by `rlm/answer-str`: prose strings pass
+   through raw, non-strings are pr-str'd. Reverse that here — only edn-parse
+   when the stored string looks like an edn data literal, otherwise return
+   the raw prose."
+  [s]
+  (if (edn-data-like? s)
+    (safe-read-edn s s)
+    s))
 
 (defn- iteration-entity->exec [iter-entity]
   (let [codes   (safe-read-edn (:code iter-entity) [])
@@ -79,8 +90,8 @@
         iterations  (rlm-db/db-list-query-iterations db-info query-ref)
         trace       (vec (map-indexed iteration-entity->trace-entry iterations))
         final-iter  (last (filter :answer iterations))
-        answer      (or (some-> final-iter   :answer read-edn-or-raw)
-                        (some-> query-entity :answer read-edn-or-raw))
+        answer      (or (some-> final-iter   :answer read-answer)
+                        (some-> query-entity :answer read-answer))
         result-map  (cond-> {:trace       trace
                              :iterations  (count iterations)
                              :duration-ms (:duration-ms query-entity)}
