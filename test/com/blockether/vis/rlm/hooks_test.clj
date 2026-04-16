@@ -12,7 +12,7 @@
    [sci.core :as sci]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.rlm :as sut]
-   [com.blockether.vis.rlm.tools :as tools]))
+   [com.blockether.vis.rlm.tools.sci :as tools]))
 
 (defn- stub-router []
   (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"

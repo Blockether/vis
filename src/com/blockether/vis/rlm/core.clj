@@ -16,7 +16,8 @@
             *eval-timeout-ms*
             validate-final bytes->base64 *rlm-ctx*]]
    [com.blockether.vis.rlm.skills :as rlm-skills]
-   [com.blockether.vis.rlm.tools :refer [create-sci-context realize-value build-var-index]]
+   [com.blockether.vis.rlm.tools.sci :refer [create-sci-context build-var-index]]
+   [com.blockether.vis.rlm.tools.shared :refer [realize-value]]
    [com.blockether.vis.rlm.paren-repair :as paren-repair]
    [edamame.core :as edamame]
    [com.blockether.svar.internal.spec :as spec]
