@@ -1,8 +1,8 @@
-(ns com.blockether.vis.rlm.data
+(ns com.blockether.vis.rlm.corpus.data
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.rlm.db :as rlm-db]
-   [com.blockether.vis.rlm.schema :as schema]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.schema :as schema]
    [com.blockether.svar.internal.util :as util]
    [taoensso.trove :as trove]))
 

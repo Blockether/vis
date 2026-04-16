@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.git
+(ns com.blockether.vis.rlm.corpus.git
   "Git ingestion via JGit (pure JVM, no shell-out).
 
    Two-layer design:
@@ -14,7 +14,7 @@
    when a git repo is attached to the env."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.rlm.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
    [taoensso.trove :as trove])
   (:import
    [java.io ByteArrayOutputStream File]

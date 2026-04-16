@@ -1,11 +1,11 @@
-(ns com.blockether.vis.rlm.trajectory-test
+(ns com.blockether.vis.rlm.persistence.trajectory-test
   "Unit tests for trajectory collection, filtering, and JSONL export."
   (:require
    [babashka.fs :as fs]
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis.rlm.db :as rlm-db]
-   [com.blockether.vis.rlm.trajectory :as sut]
+   [com.blockether.vis.rlm.persistence.db :as rlm-db]
+   [com.blockether.vis.rlm.persistence.trajectory :as sut]
    [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
 ;; =============================================================================

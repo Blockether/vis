@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.pageindex.vision
+(ns com.blockether.vis.rlm.corpus.pageindex.vision
   "Vision/LLM-based text extraction from documents.
    
    Provides:
@@ -20,7 +20,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.router :as router]
    [com.blockether.svar.internal.spec :as spec]
-   [com.blockether.vis.rlm.pageindex.pdf :as pdf]
+   [com.blockether.vis.rlm.corpus.pageindex.pdf :as pdf]
    [taoensso.trove :as trove])
   (:import
    [java.awt Color Graphics2D]

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.pageindex-test
+(ns com.blockether.vis.rlm.corpus.pageindex-test
   "Tests for the PageIndex PDF processing module.
    
    Uses example.pdf from resources-test as the test fixture.
@@ -13,10 +13,10 @@
    [clojure.spec.alpha :as s]
    [lazytest.core :refer [defdescribe describe expect it throws?]]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.rlm.pageindex.pdf :as pdf]
+   [com.blockether.vis.rlm.corpus.pageindex.pdf :as pdf]
    [com.blockether.vis.rlm :as pageindex]
-   [com.blockether.vis.rlm.schema :as pageindex-spec]
-   [com.blockether.vis.rlm.pageindex.vision :as vision])
+   [com.blockether.vis.rlm.persistence.schema :as pageindex-spec]
+   [com.blockether.vis.rlm.corpus.pageindex.vision :as vision])
   (:import
    [java.awt.image BufferedImage]))
 
@@ -895,7 +895,7 @@
                       (fn [_ _] fake-pages)
                       com.blockether.vis.rlm/generate-document-abstract
                       (fn [_ _] nil)
-                      com.blockether.vis.rlm.pageindex.vision/infer-document-title
+                      com.blockether.vis.rlm.corpus.pageindex.vision/infer-document-title
                       (fn [_ _] nil)]
           (let [doc (pageindex/build-index nil "resources-test/example.pdf" {:pages [2 4]})]
             (expect (= 3 (count (:pages doc))))
@@ -907,7 +907,7 @@
                       (fn [_ _] fake-pages)
                       com.blockether.vis.rlm/generate-document-abstract
                       (fn [_ _] nil)
-                      com.blockether.vis.rlm.pageindex.vision/infer-document-title
+                      com.blockether.vis.rlm.corpus.pageindex.vision/infer-document-title
                       (fn [_ _] nil)]
           (let [doc (pageindex/build-index nil "resources-test/example.pdf" {:pages 3})]
             (expect (= 1 (count (:pages doc))))
@@ -923,7 +923,7 @@
                       (fn [_ _] fake-pages)
                       com.blockether.vis.rlm/generate-document-abstract
                       (fn [_ _] nil)
-                      com.blockether.vis.rlm.pageindex.vision/infer-document-title
+                      com.blockether.vis.rlm.corpus.pageindex.vision/infer-document-title
                       (fn [_ _] nil)]
           (let [doc (pageindex/build-index nil "resources-test/example.pdf")]
             (expect (= 3 (count (:pages doc))))))))

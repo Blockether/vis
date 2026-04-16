@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.markdown-test
+(ns com.blockether.vis.rlm.corpus.markdown-test
   "Unit tests for the RLM gap-bundle surface: markdown parser,
    :extraction-strategy enum validation, dynamic *eval-timeout-ms* binding,
    and new SCI relationship query tool bindings."
@@ -7,9 +7,9 @@
    [sci.core :as sci]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.rlm :as sut]
-   [com.blockether.vis.rlm.pageindex.markdown :as md]
-   [com.blockether.vis.rlm.pageindex.vision :as vision]
-   [com.blockether.vis.rlm.schema :as schema]))
+   [com.blockether.vis.rlm.corpus.pageindex.markdown :as md]
+   [com.blockether.vis.rlm.corpus.pageindex.vision :as vision]
+   [com.blockether.vis.rlm.persistence.schema :as schema]))
 
 (defdescribe markdown-parser-test
   (describe "markdown->pages"

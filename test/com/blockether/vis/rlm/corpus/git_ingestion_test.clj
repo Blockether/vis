@@ -1,4 +1,4 @@
-(ns com.blockether.vis.rlm.git-ingestion-test
+(ns com.blockether.vis.rlm.corpus.git-ingestion-test
   "Pending SQLite port — original SQLite-based git-ingestion storage tests
    removed during the SQLite cutover. Rewrite against rlm-db/store-commit-entity!
    + rlm-db/db-search-commits when reinstating coverage. Pure parser tests
