@@ -54,9 +54,7 @@ clojure -M:run
 - Use `channel` for `:vis`, `:telegram`, and `:cli`.
 - Use `env` or `runtime env` only for the technical RLM object, never as a user-facing concept.
 
-## Current Refactor Track
-
-Canonical plan: `plans/conversation-web-refactor.md`
+## Namespace Architecture
 
 ### Namespace Layers
 
