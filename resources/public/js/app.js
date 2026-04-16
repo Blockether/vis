@@ -40,7 +40,7 @@ function scrollToBottom(instant) {
   }, 50);
 }
 
-// ── Session sheet ───────────────────────────────────────────────────────
+// ── Conversation sheet ─────────────────────────────────────────────────
 
 function openSheet() {
   document.getElementById('sheet').classList.add('open');
@@ -263,7 +263,7 @@ function copySelected() {
 // ── Context viewer ──────────────────────────────────────────────────────
 
 function showContext() {
-  var sid = chat.dataset.session;
+  var sid = chat.dataset.conversation;
   if (!sid) return;
   var sidebar = document.getElementById('context-sidebar');
   if (!sidebar) return;
@@ -278,7 +278,7 @@ function showContext() {
   } else {
     bg.classList.add('open');
   }
-  fetch('/s/' + sid + '/context')
+  fetch('/conversations/' + sid + '/context')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var html = '';
@@ -348,11 +348,11 @@ function initInfiniteScroll() {
     var lm = document.getElementById('load-more');
     if (!lm) return;
     loadingMore = true;
-    var sid = chat.dataset.session;
+    var sid = chat.dataset.conversation;
     var showing = parseInt(chat.dataset.showing || '8');
     var newOffset = showing + 8;
     var oldH = chat.scrollHeight;
-    fetch('/s/' + sid + '?offset=' + newOffset)
+    fetch('/conversations/' + sid + '?offset=' + newOffset)
       .then(function(r) { return r.text(); })
       .then(function(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -430,7 +430,7 @@ function replaceChat(html) {
       chat.style.opacity = '0';
       chat.innerHTML = nc.innerHTML;
       chat.dataset.total = nc.dataset.total;
-      // Update session title from server response
+      // Update conversation title from server response
       var newTitle = doc.querySelector('.topbar-title');
       var curTitle = document.querySelector('.topbar-title');
       if (newTitle && curTitle) curTitle.textContent = newTitle.textContent;
@@ -568,7 +568,7 @@ function pollForResponse(action, expectedCount) {
 
 // ── Message queue (localStorage) ────────────────────────────────────────
 
-var MSG_QUEUE_KEY = 'vis_msg_queue_' + (chat ? chat.dataset.session : '');
+var MSG_QUEUE_KEY = 'vis_msg_queue_' + (chat ? chat.dataset.conversation : '');
 var queryInFlight = false;
 
 function getQueue() {
