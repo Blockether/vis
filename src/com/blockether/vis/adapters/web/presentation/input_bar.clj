@@ -4,6 +4,6 @@
 (defn render [current-id]
   [:div.input-bar
    [:form#form {:method "POST" :action (str "/conversations/" current-id)}
-    [:input#input {:type "text" :name "q" :placeholder "Message..." :autofocus true :autocomplete "off"}]
+    [:textarea#input {:name "q" :placeholder "Message..." :autofocus true :autocomplete "off" :rows 1}]
     [:button#btn {:type "submit" :disabled true}
      [:i {:data-lucide "arrow-up"}]]]])

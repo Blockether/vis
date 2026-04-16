@@ -646,10 +646,26 @@ function onQueryComplete() {
 
 // ── Form submission ─────────────────────────────────────────────────────
 
+function autoGrowInput() {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+}
+
 function initInput() {
   input.addEventListener('input', function() {
     btn.disabled = !input.value.trim();
+    autoGrowInput();
   });
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      if (!btn.disabled) {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      }
+    }
+  });
+  autoGrowInput();
   input.focus();
 }
 
@@ -659,6 +675,7 @@ function initFormSubmit() {
     var q = input.value.trim();
     if (!q) return;
     input.value = '';
+    autoGrowInput();
     btn.disabled = true;
 
     if (queryInFlight) {
