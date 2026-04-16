@@ -362,6 +362,31 @@ Pattern: [thing] [action] [reason]. [next step].")
       (re-find #"(posprz|sprzat|cleaned up|cleanup|wyrzucon|usun|wywal|removed|forgot|forgotten)" s)
       (re-find #"(var|vars|zmienn|var_index|<var_index>|index|indeks)" s))))
 
+(def ^:private BARE_STRING_RE
+  "Matches a code block that is just a quoted string literal (double-quoted).
+   Allows optional whitespace around it."
+  #"^\s*\"[^\"]*\"\s*$")
+
+(defn bare-string-code-block?
+  "True when a code expression is a bare string literal — prose that the LLM
+   should have put in :answer instead of :code."
+  [expr]
+  (boolean (re-matches BARE_STRING_RE (str expr))))
+
+(def ^:private PLACEHOLDER_WORDS
+  "Single-word placeholders the LLM sometimes emits as :answer instead of
+   the real content. Checked AFTER var-resolve — if the word matches a def, it
+   is resolved and this check never fires."
+  #{"listing" "result" "results" "done" "ok" "output" "ready" "complete"
+    "finished" "listed" "wynik" "gotowe" "zrobione" "wypisane"})
+
+(defn placeholder-final-answer?
+  "True when :answer is a known placeholder word that was NOT resolved
+   to a var (var resolution happens upstream). Returns nil when answer is fine."
+  [raw-answer resolved?]
+  (and (not resolved?)
+    (contains? PLACEHOLDER_WORDS (str/lower-case (str/trim (str raw-answer))))))
+
 ;; =============================================================================
 ;; System Prompt
 ;; =============================================================================
@@ -502,23 +527,16 @@ MINDSET:
 
 ARCH:
 - Single-shot iter. State = def'd vars. <var_index> = vars. <execution_results> = last results.
-- Cross-query memory is ONLY def'd vars. Plain final answers do not persist into <var_index>.
+- Cross-query memory is ONLY def'd vars. Plain final answers do not persist.
 - (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
-- Receipts: full :value, :time-ms per block. >5s = :perf-warning.
-- (def x \"docstring\" val) → docstring in <var_index>. Always include.
-- Use defs for reusable state/cache only. Do NOT create throwaway vars just to pass a final answer.
-- :code ALWAYS executes — even when :final is present. Code runs first, then :final is accepted.
-- When :code + :final in same response: build result in :code (def it), put the VAR NAME as
-  :final.answer. System auto-resolves single-token var names to their runtime value.
-  Example: :code [(def reply (str \"Answer: \" x))], :final {:answer \"reply\"} → user sees the string.
-- When a scratch var is no longer useful, add it to :forget so it stops bloating <var_index>.
-- Never claim cleanup, deletion, forgetting, or any other state mutation unless this iteration actually did it.
-  If you say vars were removed from <var_index>, you MUST emit :forget with those var names in the same response.
+- (def x \"docstring\" val) → docstring in <var_index>. Defs for reusable state only.
+- :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
+- VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
+  Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
+- :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
 
 GROUNDING:
-- Only tools listed below exist. No shell/git/docker/web/IDE.
-- Data in :final MUST come from <execution_results>. Never fabricate.
-- Trust tool output over intuition.
+- Only tools listed exist. Data in :final MUST come from <execution_results>. Never fabricate.
 
 SUB-CALLS:
 - (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).
@@ -569,52 +587,18 @@ RESPONSE FORMAT:
       "JSON only. Native reasoning — omit 'thinking'."
       "JSON with 'thinking' + 'code'.")
     "
-Set 'final' when done: {\"final\": {\"answer\": \"...\", \"confidence\": \"high|medium|low\"}}
+Set final fields when done: {\"answer\": \"...\", \"confidence\": \"high|medium|low\"}
 
 RULES:
-- ALWAYS test. Untested = wrong.
-- No repeat fail → different approach.
-- Combine steps per iter.
+- ALWAYS test. Untested = wrong. No repeat fail → different approach.
 - <var_index>|<context> answers query → finalize now.
+- No prose in :code. Bare string literal = wrong. Prose → :answer with answer-type text.
+- Simplest solution. No over-eng. No unused abstractions.
 
-CODE:
-- Complete evaluable expr per entry. No split.
-- :code is Clojure expressions SCI will eval. Legit uses:
-  (a) call tools / fetch data / transform values
-  (b) test or verify the very snippet that will become your :final.answer
-      (e.g. run the fn once, check the return, THEN set :final with the code)
-- DO NOT put prose, natural-language sentences, Polish/English explanations,
-  or formatted markdown tables in :code. Those are answers → :final.answer
-  with :final.answer-type = text. A bare string literal as :code is the
-  smell — if the string is a message to the user, it belongs in :final.
-- You can emit :code AND :final in the SAME iteration. ALWAYS do this: compute
-  in :code, deliver in :final. :code runs first → :final sees the results.
-- :final.answer SINGLE-TOKEN VAR RESOLVE: if :final.answer is a single word that
-  matches a var you (def)'d in :code (same iteration or earlier), the system
-  auto-resolves it to the var's runtime value. Use this pattern:
-  :code [(def result (str/join \"\\n\" items))]
-  :final {:answer \"result\"}
-  The user sees the joined string, NOT the word \"result\".
-- Only (def ...) persists. A plain :final answer is returned to the user, but does not become a var unless you explicitly def it.
-- :final.answer MUST contain the real, substantive reply the user will read.
-  Never a one-word placeholder like \"listing\", \"result\", \"done\",
-  \"ok\", \"output\" standing in for the actual content. If the task is to
-  show X, :final.answer contains the formatted X — not the word for it.
-- :forget runs after code execution and removes named vars from the live sandbox. Use it for scratch defs you no longer need.
-- Do not narrate state changes aspirationally. Only report them after the runtime action was emitted in this iteration.
-- Simplest solution. No over-eng. No unused abstractions. No speculative features. No impossible-error handling.
-
-OUTPUT (iterations):
-"
-    CAVEMAN_ITERATION_OUTPUT
-    "
-
-FINAL ANSWER (when setting 'final'):
-"
-    FINAL_ANSWER_OUTPUT
-    "
-
-Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
+OUTPUT: "
+    CAVEMAN_ITERATION_OUTPUT " (iterations). "
+    FINAL_ANSWER_OUTPUT " (final answer).
+Answer → top-level final fields when done. No boilerplate.
 "))
 
 ;; =============================================================================
@@ -674,10 +658,10 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
                      :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
                      :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}]
-      ;; Check for final answer in spec response
-      (if-let [final-data (:final parsed)]
-        (let [answer-type (some-> (:answer-type final-data) keyword)
-              language (when-let [l (:language final-data)] (keyword l))
+      ;; Check for final answer in flat spec response
+      (if-let [raw-final-answer (:answer parsed)]
+        (let [answer-type (some-> (:answer-type parsed) keyword)
+              language (when-let [l (:language parsed)] (keyword l))
               code-answer? (= answer-type :code)
               clojure? (and code-answer? (or (= language :clojure) (nil? language)))
               ;; Extract code blocks — must be maps with :expr and :time-ms
@@ -690,19 +674,22 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                               {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
                                   raw-code))
               code-blocks (mapv :expr code-entries)
-              ;; Execute code blocks in SCI — ALWAYS when present, regardless of answer-type.
-              ;; MUST run BEFORE single-token :final resolve so freshly-def'd vars are visible.
+               ;; Execute code blocks in SCI — ALWAYS when present, regardless of answer-type.
+               ;; MUST run BEFORE single-token :answer resolve so freshly-def'd vars are visible.
               exec-results (when (seq code-blocks)
                              (mapv (fn [{:keys [expr time-ms]}]
-                                     (execute-code rlm-env expr :timeout-ms time-ms))
+                                     (if (bare-string-code-block? expr)
+                                       {:result nil :error "Bare string literal in :code. Prose belongs in :answer, not :code."
+                                        :stdout "" :stderr "" :execution-time-ms 0}
+                                       (execute-code rlm-env expr :timeout-ms time-ms)))
                                code-entries))
               exec-errors (when exec-results
                             (seq (filter :error exec-results)))
-              ;; NOW read sandbox — code has executed, (def reply ...) is visible.
-              ;; Single-word :final mechanic: if :answer is one token matching a sandbox var,
-              ;; substitute the var's value. Lets the LLM finalize with `{:final {:answer "reply"}}`
-              ;; after building `reply` in :code, instead of copy-pasting the whole string.
-              raw-answer (str (:answer final-data))
+               ;; NOW read sandbox — code has executed, (def reply ...) is visible.
+               ;; Single-word :answer mechanic: if :answer is one token matching a sandbox var,
+               ;; substitute the var's value. Lets the LLM finalize with `{:answer "reply"}`
+               ;; after building `reply` in :code, instead of copy-pasting the whole string.
+              raw-answer (str raw-final-answer)
               locals (try (get-locals rlm-env) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
                               (try (symbol? (read-string raw-answer)) (catch Throwable _ false)))
@@ -717,11 +704,11 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                            :else (pr-str v))))))
               raw-answer (or resolved-var-value raw-answer)
               _ (when resolved-var-value
-                  (rlm-debug! {:token (str (:answer final-data))
+                  (rlm-debug! {:token (str raw-final-answer)
                                :resolved-chars (count resolved-var-value)}
-                    "Single-word :final resolved to var value"))
+                    "Single-word :answer resolved to var value"))
               final-answer (paren-repair/repair-code raw-answer)
-              confidence (or (:confidence final-data) :high)
+              confidence (or (:confidence parsed) :high)
               ;; Only require a self-test when the FINAL answer is Clojure code.
               ;; Text / data answers can finalize on iteration 0 without running code.
               untested? (and clojure? (zero? (or iteration 0)) (empty? code-blocks))
@@ -733,10 +720,12 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                    (str "Code errors before final: " (:error (first exec-errors))))
                                  (when (cleanup-claim-without-forget? final-answer forget-names)
                                    "You claimed vars/index cleanup in the final answer, but this iteration did not emit :forget. Emit :forget with the concrete var names first, then finalize.")
+                                 (when (placeholder-final-answer? raw-final-answer (some? resolved-var-value))
+                                   (str "Placeholder word '" (str/trim (str raw-final-answer)) "' is not a real answer. Put the actual content in :answer, or def the result and use its var name."))
                                  parse-check
                                  (validate-final {:answer final-answer
-                                                  :answer-type (:answer-type final-data)
-                                                  :language (:language final-data)}))
+                                                  :answer-type (:answer-type parsed)
+                                                  :language (:language parsed)}))
               executions (when exec-results
                            (mapv (fn [idx code result]
                                    {:id idx :code code
@@ -754,12 +743,12 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                :error validation-error}])
                :final-result nil :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})
-            (let [sources (vec (or (:sources final-data) []))
+            (let [sources (vec (or (:sources parsed) []))
                   final-result (cond-> {:final? true
                                         :answer {:result final-answer :type String}
                                         :confidence confidence}
                                  (seq sources) (assoc :sources sources)
-                                 (:reasoning final-data) (assoc :reasoning (:reasoning final-data)))]
+                                 (:reasoning parsed) (assoc :reasoning (:reasoning parsed)))]
               {:thinking thinking :next-optimize next-optimize :forget forget-names
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
@@ -807,14 +796,20 @@ Answer → 'final' when done. Explain only if non-obvious. No boilerplate.
                                         (rlm-stage! :code-exec iteration
                                           {:idx (inc idx) :total total-blocks
                                            :code code :time-ms timeout})
-                                        (let [r (execute-code rlm-env code :timeout-ms timeout)]
-                                          (rlm-stage! :code-result iteration
-                                            {:idx (inc idx) :total total-blocks
-                                             :execution-time-ms (:execution-time-ms r)
-                                             :error (:error r)
-                                             :timeout? (:timeout? r)
-                                             :result (:result r)})
-                                          r))
+                                        (if (bare-string-code-block? code)
+                                          ;; Runtime rejection: prose in :code → error, not execution
+                                          (let [err "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."]
+                                            (rlm-stage! :code-result iteration
+                                              {:idx (inc idx) :total total-blocks :error err})
+                                            {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
+                                          (let [r (execute-code rlm-env code :timeout-ms timeout)]
+                                            (rlm-stage! :code-result iteration
+                                              {:idx (inc idx) :total total-blocks
+                                               :execution-time-ms (:execution-time-ms r)
+                                               :error (:error r)
+                                               :timeout? (:timeout? r)
+                                               :result (:result r)})
+                                            r)))
                                   (range) code-blocks time-limits)
               ;; Combine code blocks with their execution results
               executions (mapv (fn [idx code result]

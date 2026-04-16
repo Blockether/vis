@@ -159,7 +159,6 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
   "Spec for extracted entities."
   (spec/spec
     :entity
-    {::spec/key-ns "entity"}
     (spec/field {::spec/name :name
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
@@ -188,7 +187,6 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
   "Spec for extracted relationships."
   (spec/spec
     :relationship
-    {::spec/key-ns "relationship"}
     (spec/field {::spec/name :source
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
@@ -297,43 +295,6 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
       :text nil
       nil)))
 
-(def FINAL_SPEC
-  "Nested spec for final answer in iteration response."
-  (spec/spec
-    :final
-    {::spec/key-ns "final"}
-    (spec/field {::spec/name :answer
-                 ::spec/type :spec.type/string
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "The final answer. SINGLE-TOKEN VAR RESOLVE: if this is a single word matching a var you def'd in :code (same iteration), the system auto-resolves it to the var's runtime value. Example: def result in :code, then :final answer 'result' — user sees the resolved value, not the word. IMPORTANT: plain :final answers do not persist into <var_index>. Only explicit defs persist."})
-    (spec/field {::spec/name :answer-type
-                 ::spec/type :spec.type/keyword
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "What kind of answer is this?"
-                 ::spec/values {"text" "Natural language / prose (DEFAULT for chat replies)"
-                                "code" "Source code (will be validated)"
-                                "data" "Structured data (EDN, JSON, etc.)"}})
-    (spec/field {::spec/name :language
-                 ::spec/type :spec.type/keyword
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/required false
-                 ::spec/description "Programming language (when answer-type is code)"
-                 ::spec/values {"clojure" "Clojure code"
-                                "python" "Python code"
-                                "json" "JSON data"
-                                "edn" "EDN data"}})
-    (spec/field {::spec/name :confidence
-                 ::spec/type :spec.type/keyword
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Confidence level"
-                 ::spec/values {"high" "Very confident in the answer"
-                                "medium" "Somewhat confident"
-                                "low" "Uncertain, best guess"}})
-    (spec/field {::spec/name :sources
-                 ::spec/type :spec.type/string
-                 ::spec/cardinality :spec.cardinality/many
-                 ::spec/description "IDs of sources used to derive the answer. Include page.node IDs, document IDs, or entity IDs that you fetched/searched and actually used. REQUIRED when you used search-documents or fetch-document-content."})))
-
 (def CODE_BLOCK_SPEC
   "Spec for a single code block with its expected execution time budget."
   (spec/spec :code_block
@@ -344,7 +305,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
     (spec/field {::spec/name :time-ms
                  ::spec/type :spec.type/int
                  ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Expected max execution time in ms. SCI is fast: def 100ms, assert 500ms, heavy 2000ms max. DO NOT set >5000."})))
+                 ::spec/description "Expected max execution time in ms. def 100, assert 500, heavy 2000. Max 5000."})))
 
 (defn- make-iteration-spec
   "Builds an iteration response spec.
@@ -356,7 +317,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                                   ::spec/target :code_block
                                   ::spec/cardinality :spec.cardinality/many
                                   ::spec/required false
-                                  ::spec/description "Code blocks to execute. Each has :expr and :time-ms. ALWAYS executes — even with :final. Use pattern: (def result ...) in :code, then :final {:answer \"result\"} to auto-resolve the var. Def only reusable state/cache, not throwaway final-result vars."})
+                                  ::spec/description "Code blocks to execute. Each has :expr and :time-ms. Always executes, even with :final."})
                      (spec/field {::spec/name :next-optimize
                                   ::spec/type :spec.type/keyword
                                   ::spec/cardinality :spec.cardinality/one
@@ -369,13 +330,42 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                                   ::spec/type :spec.type/string
                                   ::spec/cardinality :spec.cardinality/many
                                   ::spec/required false
-                                  ::spec/description "Names of vars to drop from <var_index>. This runs automatically after code execution. Use this when a def has served its purpose and no longer needs to sit in the index — the sandbox binding is unmapped and the var stops consuming prompt tokens. The persisted :iteration-var row in the DB stays, so (restore-var 'sym) can bring it back later if needed."})
-                     (spec/field {::spec/name :final
-                                  ::spec/type :spec.type/ref
-                                  ::spec/target :final
+                                  ::spec/description "Var names to drop from <var_index>. DB rows stay. Use (restore-var 'sym) to bring them back."})
+                     (spec/field {::spec/name :answer
+                                  ::spec/type :spec.type/string
                                   ::spec/cardinality :spec.cardinality/one
                                   ::spec/required false
-                                  ::spec/description "Final answer. PREFERRED: send :code + :final together. :code runs first, :final.answer auto-resolves single-token var names to their runtime value. Only defs persist. Plain final answers do not become vars."})]
+                                  ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
+                     (spec/field {::spec/name :answer-type
+                                  ::spec/type :spec.type/keyword
+                                  ::spec/cardinality :spec.cardinality/one
+                                  ::spec/required false
+                                  ::spec/description "What kind of answer is this?"
+                                  ::spec/values {"text" "Natural language / prose (DEFAULT for chat replies)"
+                                                 "code" "Source code (will be validated)"
+                                                 "data" "Structured data (EDN, JSON, etc.)"}})
+                     (spec/field {::spec/name :language
+                                  ::spec/type :spec.type/keyword
+                                  ::spec/cardinality :spec.cardinality/one
+                                  ::spec/required false
+                                  ::spec/description "Programming language (when answer-type is code)"
+                                  ::spec/values {"clojure" "Clojure code"
+                                                 "python" "Python code"
+                                                 "json" "JSON data"
+                                                 "edn" "EDN data"}})
+                     (spec/field {::spec/name :confidence
+                                  ::spec/type :spec.type/keyword
+                                  ::spec/cardinality :spec.cardinality/one
+                                  ::spec/required false
+                                  ::spec/description "Confidence level"
+                                  ::spec/values {"high" "Very confident in the answer"
+                                                 "medium" "Somewhat confident"
+                                                 "low" "Uncertain, best guess"}})
+                     (spec/field {::spec/name :sources
+                                  ::spec/type :spec.type/string
+                                  ::spec/cardinality :spec.cardinality/many
+                                  ::spec/required false
+                                  ::spec/description "IDs of sources used (page.node, document, entity). Required when search-documents or fetch-document-content was used."})]
         fields (if include-thinking?
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string
@@ -383,7 +373,7 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
                                      ::spec/description "Your reasoning: what you observed, what you learned, what to do next"})]
                    base-fields)
                  base-fields)]
-    (apply spec/spec {:refs [FINAL_SPEC CODE_BLOCK_SPEC]} fields)))
+    (apply spec/spec {:refs [CODE_BLOCK_SPEC]} fields)))
 
 (def ITERATION_SPEC_BASE
   "Shared base for all iteration response specs (code/next-optimize/final)."
@@ -470,7 +460,6 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
   "Spec for a single generated question-answer pair."
   (spec/spec
     :question
-    {::spec/key-ns "question"}
     (spec/field {::spec/name :question
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
@@ -521,7 +510,6 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
   "Spec for a selected passage from Phase 1."
   (spec/spec
     :passage
-    {::spec/key-ns "passage"}
     (spec/field {::spec/name :document-id
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
@@ -563,7 +551,6 @@ RELATIONSHIP TYPES (pick exactly one per relationship):
   "Spec for a single verification result."
   (spec/spec
     :verification
-    {::spec/key-ns "verification"}
     (spec/field {::spec/name :question-index
                  ::spec/type :spec.type/int
                  ::spec/cardinality :spec.cardinality/one

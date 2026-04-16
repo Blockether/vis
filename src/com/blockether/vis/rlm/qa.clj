@@ -368,7 +368,7 @@ EXAMPLES OF BAD QUESTIONS (DO NOT GENERATE THESE):
   BAD: What is Basel III? (answerable without the document — too generic)
   BAD: According to the text, what is mentioned? (references 'the text')
 
-After generating all Q&A pairs, call (FINAL {:questions [...]}).")))
+Return the generated Q&A pairs as the result array.")))
 
 (defn create-multi-hop-pairs
   "Creates multi-hop passage pairs from selected passages.
@@ -440,7 +440,7 @@ VERDICT CRITERIA:
 - fail: Evidence is fabricated/hallucinated, question is trivially bad, OR answer contradicts evidence
 - needs-revision: Minor issues (e.g., evidence is paraphrased rather than verbatim, but answer is correct)
 
-After verifying all questions, call (FINAL {:verifications [...]}).
+Return the verification results as the result array.
 Each verification must include: question-index, grounded, non-trivial, self-contained, answerable, answer-consistent, verdict, and revision-note (if applicable).")))
 
 ;; -----------------------------------------------------------------------------
@@ -550,7 +550,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                     [(llm/system "You are a question revision engine. Given Q&A pairs with identified issues, fix the problems while preserving the core question intent, answer accuracy, and evidence grounding. Keep the same source-document, source-page, difficulty, and category. Fix only the identified issue.")
                      (llm/user (str "Revise these questions to fix the identified issues:\n\n" revision-descriptions))]
                     :routing {:optimize :cost}})
-          revised (or (:questions (:result result)) [])]
+          revised (:result result)]
       (trove/log! {:level :info :id ::qa-revision
                    :data {:input (count questions)
                           :revised (count revised)}
@@ -732,7 +732,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                                                                  :messages [(llm/system "You are a passage selection engine for Q&A generation. Select diverse passages from the corpus based on the provided structure. Return your selections in the required JSON format.")
                                                                             (llm/user selection-prompt)]
                                                                  :routing {:optimize :cost}})
-                          ps (or (:passages (:result selection-result)) [])]
+                          ps (:result selection-result)]
                       (swap! manifest-atom assoc :phase1 {:status :done :passages ps})
                       (write-qa-manifest! env @manifest-atom)
                       (trove/log! {:level :info :id ::qa-phase1-done
@@ -815,7 +815,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                                                   :max-iterations 20
                                                   :model effective-model})]
                                     {:batch-idx batch-idx
-                                     :questions (or (get-in result [:answer :questions]) [])
+                                     :questions (:answer result)
                                      :trace (:trace result)
                                      :iterations (or (:iterations result) 0)})
                                   (catch Exception e
@@ -859,7 +859,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                                  :debug? debug?
                                  :max-iterations 15
                                  :model effective-model})
-                   verifications (or (get-in ver-result [:answer :verifications]) [])
+                   verifications (:answer ver-result)
                    filtered (filter-verified-questions all-questions verifications)
                    ;; Revision sub-phase: revise needs-revision questions instead of dropping
                    revised (when (seq (:needs-revision filtered))
