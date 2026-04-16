@@ -1439,24 +1439,38 @@ Answer → top-level final fields when done. No boilerplate.
                                                 :routing (when prev-optimize {:optimize prev-optimize})}
                                          iter-on-chunk (assoc :on-chunk iter-on-chunk)))
                                      (catch Exception e
-                                       (let [err-msg (ex-message e)
-                                             err-type (:type (ex-data e))]
+                                       (let [ex-data-map (ex-data e)
+                                             err-msg (ex-message e)
+                                             err-type (:type ex-data-map)
+                                             cause (.getCause ^Throwable e)
+                                             stack (mapv str (take 12 (.getStackTrace ^Throwable e)))
+                                             iter-err {:message err-msg
+                                                       :type err-type
+                                                       :class (.getName (class e))
+                                                       :data (when (seq ex-data-map)
+                                                               (dissoc ex-data-map :type))
+                                                       :cause (when cause
+                                                                {:message (.getMessage ^Throwable cause)
+                                                                 :class (.getName (class cause))})
+                                                       :stack stack}]
                                          (trove/log! {:level :warn
                                                       :data {:iteration iteration :error err-msg :type err-type}
                                                       :msg "RLM iteration failed, feeding error to LLM"})
                                          ;; Return ::iteration-error sentinel — loop will feed error to LLM
-                                         {::iteration-error {:message err-msg :type err-type}})))]
+                                         {::iteration-error iter-err})))]
               (if-let [iter-err (::iteration-error iteration-result)]
                 ;; Error path: feed error back to LLM as user message, let it recover
                 (let [error-feedback (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
                                        "<error>LLM call failed: " (:message iter-err) "</error>\n"
                                        "The previous attempt failed. Adjust your approach or call \final\": {\"answer\": \"your answer\", \"confidence\": \"high\"} with what you have.")
                       trace-entry {:iteration iteration :error iter-err :final? false}]
-                  ;; Store error iteration snapshot
+                  ;; Store error iteration snapshot — full ex-data/type/stack so the UI
+                  ;; (and fine-tuning corpus) can inspect why the iteration blew up.
                   (rlm-db/store-iteration! db-info
                     {:query-ref query-ref
                      :vars []
-                     :executions nil :thinking nil :duration-ms 0})
+                     :executions nil :thinking nil :duration-ms 0
+                     :error iter-err})
                   ;; Global observer hook after store-iteration! (error path)
                   (emit-hook! on-iteration
                     {:iteration iteration

@@ -89,7 +89,25 @@
        [:div.iter-header (str "Iteration " (inc iteration))
         (when error [:span.iter-error-tag " ERROR"])]
        (when error
-         [:div.iter-error (str (:message error) (when (:type error) (str " [" (:type error) "]")))])
+         (let [{:keys [message type class data cause stack]} error]
+           [:div.iter-error
+            [:div.iter-error-headline
+             (str (or message "<no message>")
+               (when type (str " [" type "]")))]
+            (when class
+              [:div.iter-error-class (str class)])
+            (when (seq data)
+              [:details.iter-error-details
+               [:summary "ex-data"]
+               [:pre.iter-error-data (pr-str data)]])
+            (when cause
+              [:details.iter-error-details
+               [:summary (str "cause: " (:class cause))]
+               [:pre.iter-error-data (str (:message cause))]])
+            (when (seq stack)
+              [:details.iter-error-details
+               [:summary "stack"]
+               [:pre.iter-error-data (str/join "\n" stack)]])]))
        (when has-thinking?
          [:div.thinking.md-content thinking])
        (when has-execs? (keep render-exec executions))])))
