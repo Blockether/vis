@@ -78,9 +78,9 @@
                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
                       io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}}}
   :run {:jvm-opts  ["--enable-native-access=ALL-UNNAMED"]
-        :main-opts ["-m" "com.blockether.vis.cli"]}
+        :main-opts ["-m" "com.blockether.vis.adapters.cli"]}
   :web {:jvm-opts  ["--enable-native-access=ALL-UNNAMED"]
-        :main-opts ["-m" "com.blockether.vis.web.server"]}
+        :main-opts ["-m" "com.blockether.vis.adapters.web.app"]}
 
   :test {:extra-paths ["test"]
          :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "1.9.1"}}

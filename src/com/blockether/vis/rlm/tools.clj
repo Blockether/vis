@@ -445,12 +445,12 @@
     []
     (vec @claims-atom)))
 
-(defn make-session-history-fn
-  "Creates session-history for browsing prior query summaries in a conversation."
+(defn make-conversation-history-fn
+  "Creates conversation-history for browsing prior query summaries in a conversation."
   [db-info conversation-ref]
-  (fn session-history
+  (fn conversation-history
     ([]
-     (session-history nil))
+     (conversation-history nil))
     ([n]
      (if db-info
        (let [history (db/db-query-history db-info conversation-ref)
@@ -470,10 +470,10 @@
       (uuid? query-selector) [:id query-selector]
       :else nil)))
 
-(defn make-session-code-fn
-  "Creates session-code for browsing prior query code blocks."
+(defn make-conversation-code-fn
+  "Creates conversation-code for browsing prior query code blocks."
   [db-info conversation-ref]
-  (fn session-code
+  (fn conversation-code
     ([query-selector]
      (if db-info
        (if-let [query-ref (resolve-query-ref db-info conversation-ref query-selector)]
@@ -481,10 +481,10 @@
          [])
        []))))
 
-(defn make-session-results-fn
-  "Creates session-results for browsing prior query results and restorable vars."
+(defn make-conversation-results-fn
+  "Creates conversation-results for browsing prior query results and restorable vars."
   [db-info conversation-ref]
-  (fn session-results
+  (fn conversation-results
     ([query-selector]
      (if db-info
        (if-let [query-ref (resolve-query-ref db-info conversation-ref query-selector)]
@@ -581,9 +581,9 @@
                                                ([entity-id] (when db-info (db-list-relationships db-info entity-id)))
                                                ([entity-id opts] (when db-info (db-list-relationships db-info entity-id opts))))}
                         (and db-info conversation-ref)
-                        (assoc 'session-history (make-session-history-fn db-info conversation-ref)
-                          'session-code (make-session-code-fn db-info conversation-ref)
-                          'session-results (make-session-results-fn db-info conversation-ref))
+                        (assoc 'conversation-history (make-conversation-history-fn db-info conversation-ref)
+                          'conversation-code (make-conversation-code-fn db-info conversation-ref)
+                          'conversation-results (make-conversation-results-fn db-info conversation-ref))
                         restore-var-fn
                         (assoc 'restore-var restore-var-fn
                           'restore-vars (make-restore-vars-fn restore-var-fn))))
@@ -753,9 +753,9 @@
                             ['get-entity "Get a single entity by UUID.\n  (get-entity entity-uuid)  → entity map or nil" '([entity-id])]
                             ['list-relationships "List all relationships where entity is source or target.\n  (list-relationships entity-id)\n  (list-relationships entity-id {:type :depends-on})\n  Returns vector of relationship maps." '([entity-id] [entity-id opts])]
                             ['search-batch "Parallel multi-query search. Returns markdown. Deduplicates, ranks by vitality.\n  (search-batch [\"schemas\" \"modes\" \"treatment\"])\n  (search-batch [\"q1\" \"q2\"] {:top-k 5 :limit 20})" '([queries] [queries opts])]
-                            ['session-history "List prior query summaries in the current conversation.\n  (session-history)\n  (session-history 5) ;; last 5 queries" '([] [n])]
-                            ['session-code "Get prior query code blocks by query position or ref.\n  (session-code 0)\n  (session-code [:id uuid])" '([query-selector])]
-                            ['session-results "Get prior query execution results and restorable vars.\n  (session-results 0)" '([query-selector])]
+                            ['conversation-history "List prior query summaries in the current conversation.\n  (conversation-history)\n  (conversation-history 5) ;; last 5 queries" '([] [n])]
+                            ['conversation-code "Get prior query code blocks by query position or ref.\n  (conversation-code 0)\n  (conversation-code [:id uuid])" '([query-selector])]
+                            ['conversation-results "Get prior query execution results and restorable vars.\n  (conversation-results 0)" '([query-selector])]
                             ['restore-var "Restore a persisted data var from a prior iteration, binding it in the sandbox.\n  (restore-var 'anomalies)  ;; binds anomalies and returns its value\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([sym] [sym opts])]
                             ['restore-vars "Batch restore persisted data vars, binding each success in the sandbox.\n  (restore-vars ['a 'b])  ;; returns {a val-a, b {:error {...}}} on partial failure\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([syms] [syms opts])]
                             ;; Git — conditionally usable; always bound when DB exists,

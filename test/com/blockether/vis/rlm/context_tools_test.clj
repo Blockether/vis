@@ -202,3 +202,58 @@
               candidates (core/auto-forget-candidates smap (:initial-ns-keys ctx)
                            registry recent)]
           (expect (not (contains? candidates 'helper))))))))
+
+(defdescribe bare-string-code-block-test
+  (describe "bare-string-code-block?"
+    (it "detects simple quoted string"
+      (expect (true? (core/bare-string-code-block? "\"hello world\""))))
+
+    (it "detects string with whitespace around"
+      (expect (true? (core/bare-string-code-block? "  \"some prose\"  "))))
+
+    (it "rejects function call"
+      (expect (false? (core/bare-string-code-block? "(println \"hello\")"))))
+
+    (it "rejects def expression"
+      (expect (false? (core/bare-string-code-block? "(def x \"hello\")"))))
+
+    (it "rejects plain symbol"
+      (expect (false? (core/bare-string-code-block? "x"))))
+
+    (it "rejects empty string"
+      (expect (false? (core/bare-string-code-block? ""))))
+
+    (it "rejects string with code after it"
+      (expect (false? (core/bare-string-code-block? "\"hello\" (+ 1 2)"))))
+
+    (it "rejects multiline code"
+      (expect (false? (core/bare-string-code-block? "(let [x 1]\n  x)"))))))
+
+(defdescribe placeholder-final-answer-test
+  (describe "placeholder-final-answer?"
+    (it "detects 'done' as placeholder"
+      (expect (true? (core/placeholder-final-answer? "done" false))))
+
+    (it "detects 'result' as placeholder"
+      (expect (true? (core/placeholder-final-answer? "result" false))))
+
+    (it "detects 'ok' as placeholder"
+      (expect (true? (core/placeholder-final-answer? "ok" false))))
+
+    (it "detects 'gotowe' (Polish) as placeholder"
+      (expect (true? (core/placeholder-final-answer? "gotowe" false))))
+
+    (it "case insensitive"
+      (expect (true? (core/placeholder-final-answer? "DONE" false))))
+
+    (it "trims whitespace"
+      (expect (true? (core/placeholder-final-answer? "  result  " false))))
+
+    (it "allows placeholder when var was resolved"
+      (expect (not (core/placeholder-final-answer? "result" true))))
+
+    (it "allows real answer text"
+      (expect (not (core/placeholder-final-answer? "The sum of 2 and 3 is 5" false))))
+
+    (it "allows multi-word answers"
+      (expect (not (core/placeholder-final-answer? "here are the results" false))))))
