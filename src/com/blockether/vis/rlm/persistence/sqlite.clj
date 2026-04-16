@@ -85,413 +85,27 @@
   (when v (Date. (long v))))
 
 ;; =============================================================================
-;; DDL — Schema
+;; Schema install — delegated to Flyway (see resources/db/migration/V*.sql)
 ;; =============================================================================
 
-(def ^:private DDL
-  "All CREATE statements. Order matters: parent tables before child tables.
-   IF NOT EXISTS makes this idempotent — safe to run on existing dbs."
-  ["PRAGMA foreign_keys = ON"
-
-   ;; --- Core unified entity table ---
-   "CREATE TABLE IF NOT EXISTS entity (
-      id            TEXT PRIMARY KEY NOT NULL,
-      type          TEXT NOT NULL,
-      name          TEXT,
-      description   TEXT,
-      parent_id     TEXT,
-      document_id   TEXT,
-      page          INTEGER,
-      section       TEXT,
-      canonical_id  TEXT,
-      created_at    INTEGER,
-      updated_at    INTEGER
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_entity_type          ON entity(type)"
-   "CREATE INDEX IF NOT EXISTS idx_entity_parent        ON entity(parent_id)"
-   "CREATE INDEX IF NOT EXISTS idx_entity_document      ON entity(document_id)"
-   "CREATE INDEX IF NOT EXISTS idx_entity_canonical     ON entity(canonical_id)"
-   "CREATE INDEX IF NOT EXISTS idx_entity_type_doc_page ON entity(type, document_id, page)"
-   "CREATE INDEX IF NOT EXISTS idx_entity_created       ON entity(created_at)"
-
-   ;; --- Per-type entity attribute tables ---
-   "CREATE TABLE IF NOT EXISTS conversation_attrs (
-      entity_id      TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      system_prompt  TEXT,
-      model          TEXT
-    )"
-
-   "CREATE TABLE IF NOT EXISTS query_attrs (
-      entity_id        TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      messages         TEXT,
-      text             TEXT,
-      answer           TEXT,
-      iterations       INTEGER,
-      duration_ms      INTEGER,
-      status           TEXT,
-      eval_score       REAL,
-      model            TEXT,
-      input_tokens     INTEGER,
-      output_tokens    INTEGER,
-      reasoning_tokens INTEGER,
-      cached_tokens    INTEGER,
-      total_cost       REAL
-    )"
-
-   "CREATE TABLE IF NOT EXISTS iteration_attrs (
-      entity_id    TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      code         TEXT,
-      results      TEXT,
-      vars         TEXT,
-      answer       TEXT,
-      thinking     TEXT,
-      duration_ms  INTEGER
-    )"
-
-   "CREATE TABLE IF NOT EXISTS iteration_var_attrs (
-      entity_id    TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      name         TEXT,
-      value        TEXT,
-      code         TEXT
-    )"
-
-   "CREATE TABLE IF NOT EXISTS repo_attrs (
-      entity_id         TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      name              TEXT UNIQUE NOT NULL,
-      path              TEXT,
-      head_sha          TEXT,
-      head_short        TEXT,
-      branch            TEXT,
-      commits_ingested  INTEGER,
-      ingested_at       INTEGER
-    )"
-
-   "CREATE TABLE IF NOT EXISTS commit_attrs (
-      entity_id      TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      category       TEXT,
-      sha            TEXT,
-      date           TEXT,
-      prefix         TEXT,
-      scope          TEXT,
-      author_email   TEXT
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_commit_sha   ON commit_attrs(sha)"
-   "CREATE INDEX IF NOT EXISTS idx_commit_date  ON commit_attrs(date)"
-   "CREATE INDEX IF NOT EXISTS idx_commit_email ON commit_attrs(author_email)"
-
-   "CREATE TABLE IF NOT EXISTS commit_ticket_ref (
-      entity_id    TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      ticket       TEXT NOT NULL,
-      PRIMARY KEY (entity_id, ticket)
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_commit_ticket ON commit_ticket_ref(ticket)"
-
-   "CREATE TABLE IF NOT EXISTS commit_file_path (
-      entity_id    TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      path         TEXT NOT NULL,
-      PRIMARY KEY (entity_id, path)
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_commit_path ON commit_file_path(path)"
-
-   "CREATE TABLE IF NOT EXISTS commit_parent (
-      entity_id    TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      parent_sha   TEXT NOT NULL,
-      PRIMARY KEY (entity_id, parent_sha)
-    )"
-
-   "CREATE TABLE IF NOT EXISTS person_attrs (
-      entity_id    TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      email        TEXT
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_person_email ON person_attrs(email)"
-
-   ;; --- Non-entity data ---
-   "CREATE TABLE IF NOT EXISTS document (
-      id                TEXT PRIMARY KEY NOT NULL,
-      name              TEXT,
-      type              TEXT,
-      title             TEXT,
-      abstract          TEXT,
-      extension         TEXT,
-      author            TEXT,
-      page_count        INTEGER,
-      created_at        INTEGER,
-      updated_at        INTEGER,
-      certainty_alpha   REAL,
-      certainty_beta    REAL
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_document_type ON document(type)"
-
-   "CREATE TABLE IF NOT EXISTS skill_attrs (
-      document_id   TEXT PRIMARY KEY NOT NULL REFERENCES document(id) ON DELETE CASCADE,
-      body          TEXT,
-      source_path   TEXT,
-      agent_config  TEXT,
-      requires      TEXT,
-      version       TEXT,
-      content_hash  TEXT
-    )"
-
-   "CREATE TABLE IF NOT EXISTS page (
-      id               TEXT PRIMARY KEY NOT NULL,
-      document_id      TEXT REFERENCES document(id) ON DELETE CASCADE,
-      idx              INTEGER,
-      created_at       INTEGER,
-      last_accessed    INTEGER,
-      access_count     REAL,
-      q_value          REAL,
-      q_update_count   INTEGER
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_page_document      ON page(document_id)"
-   "CREATE INDEX IF NOT EXISTS idx_page_doc_idx       ON page(document_id, idx)"
-   "CREATE INDEX IF NOT EXISTS idx_page_last_accessed ON page(last_accessed)"
-
-   "CREATE TABLE IF NOT EXISTS page_node (
-      id               TEXT PRIMARY KEY NOT NULL,
-      page_id          TEXT REFERENCES page(id) ON DELETE CASCADE,
-      document_id      TEXT,
-      local_id         TEXT,
-      type             TEXT,
-      content          TEXT,
-      description      TEXT,
-      level            TEXT,
-      parent_id        TEXT,
-      image_data       BLOB,
-      continuation     INTEGER,
-      caption          TEXT,
-      kind             TEXT,
-      bbox             TEXT,
-      group_id         TEXT
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_node_page     ON page_node(page_id)"
-   "CREATE INDEX IF NOT EXISTS idx_node_document ON page_node(document_id)"
-   "CREATE INDEX IF NOT EXISTS idx_node_type     ON page_node(type)"
-
-   "CREATE TABLE IF NOT EXISTS document_toc (
-      id                  TEXT PRIMARY KEY NOT NULL,
-      document_id         TEXT REFERENCES document(id) ON DELETE CASCADE,
-      type                TEXT,
-      title               TEXT,
-      description         TEXT,
-      target_page         INTEGER,
-      target_section_id   TEXT,
-      level               TEXT,
-      parent_id           TEXT,
-      created_at          INTEGER
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_toc_document ON document_toc(document_id)"
-
-   "CREATE TABLE IF NOT EXISTS page_cooccurrence (
-      id           TEXT PRIMARY KEY NOT NULL,
-      page_a       TEXT NOT NULL,
-      page_b       TEXT NOT NULL,
-      strength     REAL,
-      last_seen    INTEGER
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_cooc_a ON page_cooccurrence(page_a)"
-   "CREATE INDEX IF NOT EXISTS idx_cooc_b ON page_cooccurrence(page_b)"
-
-   "CREATE TABLE IF NOT EXISTS relationship (
-      id                  TEXT PRIMARY KEY NOT NULL,
-      type                TEXT NOT NULL,
-      source_entity_id    TEXT,
-      target_entity_id    TEXT,
-      description         TEXT,
-      document_id         TEXT
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_rel_source ON relationship(source_entity_id)"
-   "CREATE INDEX IF NOT EXISTS idx_rel_target ON relationship(target_entity_id)"
-   "CREATE INDEX IF NOT EXISTS idx_rel_type   ON relationship(type)"
-
-   "CREATE TABLE IF NOT EXISTS claim (
-      id                      TEXT PRIMARY KEY NOT NULL,
-      text                    TEXT,
-      document_id             TEXT,
-      page                    INTEGER,
-      section                 TEXT,
-      quote                   TEXT,
-      confidence              REAL,
-      query_id                TEXT,
-      verified                INTEGER,
-      verification_verdict    TEXT,
-      created_at              INTEGER
-    )"
-   "CREATE INDEX IF NOT EXISTS idx_claim_document ON claim(document_id)"
-   "CREATE INDEX IF NOT EXISTS idx_claim_query    ON claim(query_id)"
-
-   "CREATE TABLE IF NOT EXISTS raw_document (
-      id        TEXT PRIMARY KEY NOT NULL,
-      content   TEXT
-    )"
-
-   "CREATE TABLE IF NOT EXISTS rlm_meta (
-      id                TEXT PRIMARY KEY NOT NULL,
-      corpus_revision   INTEGER,
-      updated_at        INTEGER
-    )"
-
-   ;; =========================================================================
-   ;; FTS5 unified search index
-   ;; =========================================================================
-   ;; One virtual table indexes ALL text columns from ALL source tables.
-   ;; Maintained via per-source triggers below. Query via:
-   ;;   SELECT owner_table, owner_id, snippet(...), bm25(search) AS rank
-   ;;   FROM search WHERE search MATCH ? ORDER BY rank LIMIT ?
-   ;;
-   ;; UNINDEXED columns don't bloat the FTS index; they're for filtering/joins.
-   "CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
-      owner_table  UNINDEXED,
-      owner_id     UNINDEXED,
-      field        UNINDEXED,
-      text,
-      tokenize='porter unicode61 remove_diacritics 2'
-    )"
-
-   ;; --- Triggers: keep `search` in sync with source tables ---
-   ;; Pattern per source: AI inserts non-empty fields; AU deletes prior + re-INS;
-   ;; AD deletes all rows for that owner_id.
-   ;;
-   ;; document → indexes title, abstract
-   "CREATE TRIGGER IF NOT EXISTS trg_document_ai
-    AFTER INSERT ON document BEGIN
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document', new.id, 'title', new.title WHERE new.title IS NOT NULL AND new.title <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document', new.id, 'abstract', new.abstract WHERE new.abstract IS NOT NULL AND new.abstract <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_document_au
-    AFTER UPDATE ON document BEGIN
-      DELETE FROM search WHERE owner_table='document' AND owner_id=old.id;
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document', new.id, 'title', new.title WHERE new.title IS NOT NULL AND new.title <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document', new.id, 'abstract', new.abstract WHERE new.abstract IS NOT NULL AND new.abstract <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_document_ad
-    AFTER DELETE ON document BEGIN
-      DELETE FROM search WHERE owner_table='document' AND owner_id=old.id;
-    END"
-
-   ;; skill_attrs → indexes body
-   "CREATE TRIGGER IF NOT EXISTS trg_skill_ai
-    AFTER INSERT ON skill_attrs BEGIN
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'skill', new.document_id, 'body', new.body WHERE new.body IS NOT NULL AND new.body <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_skill_au
-    AFTER UPDATE ON skill_attrs BEGIN
-      DELETE FROM search WHERE owner_table='skill' AND owner_id=old.document_id;
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'skill', new.document_id, 'body', new.body WHERE new.body IS NOT NULL AND new.body <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_skill_ad
-    AFTER DELETE ON skill_attrs BEGIN
-      DELETE FROM search WHERE owner_table='skill' AND owner_id=old.document_id;
-    END"
-
-   ;; page_node → indexes content, description
-   "CREATE TRIGGER IF NOT EXISTS trg_page_node_ai
-    AFTER INSERT ON page_node BEGIN
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'page_node', new.id, 'content', new.content WHERE new.content IS NOT NULL AND new.content <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'page_node', new.id, 'description', new.description WHERE new.description IS NOT NULL AND new.description <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_page_node_au
-    AFTER UPDATE ON page_node BEGIN
-      DELETE FROM search WHERE owner_table='page_node' AND owner_id=old.id;
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'page_node', new.id, 'content', new.content WHERE new.content IS NOT NULL AND new.content <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'page_node', new.id, 'description', new.description WHERE new.description IS NOT NULL AND new.description <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_page_node_ad
-    AFTER DELETE ON page_node BEGIN
-      DELETE FROM search WHERE owner_table='page_node' AND owner_id=old.id;
-    END"
-
-   ;; document_toc → indexes title, description
-   "CREATE TRIGGER IF NOT EXISTS trg_toc_ai
-    AFTER INSERT ON document_toc BEGIN
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document_toc', new.id, 'title', new.title WHERE new.title IS NOT NULL AND new.title <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document_toc', new.id, 'description', new.description WHERE new.description IS NOT NULL AND new.description <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_toc_au
-    AFTER UPDATE ON document_toc BEGIN
-      DELETE FROM search WHERE owner_table='document_toc' AND owner_id=old.id;
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document_toc', new.id, 'title', new.title WHERE new.title IS NOT NULL AND new.title <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'document_toc', new.id, 'description', new.description WHERE new.description IS NOT NULL AND new.description <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_toc_ad
-    AFTER DELETE ON document_toc BEGIN
-      DELETE FROM search WHERE owner_table='document_toc' AND owner_id=old.id;
-    END"
-
-   ;; entity → indexes name, description
-   "CREATE TRIGGER IF NOT EXISTS trg_entity_ai
-    AFTER INSERT ON entity BEGIN
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'entity', new.id, 'name', new.name WHERE new.name IS NOT NULL AND new.name <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'entity', new.id, 'description', new.description WHERE new.description IS NOT NULL AND new.description <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_entity_au
-    AFTER UPDATE ON entity BEGIN
-      DELETE FROM search WHERE owner_table='entity' AND owner_id=old.id;
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'entity', new.id, 'name', new.name WHERE new.name IS NOT NULL AND new.name <> '';
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'entity', new.id, 'description', new.description WHERE new.description IS NOT NULL AND new.description <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_entity_ad
-    AFTER DELETE ON entity BEGIN
-      DELETE FROM search WHERE owner_table='entity' AND owner_id=old.id;
-    END"
-
-   ;; query_attrs → indexes text
-   "CREATE TRIGGER IF NOT EXISTS trg_query_ai
-    AFTER INSERT ON query_attrs BEGIN
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'query', new.entity_id, 'text', new.text WHERE new.text IS NOT NULL AND new.text <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_query_au
-    AFTER UPDATE ON query_attrs BEGIN
-      DELETE FROM search WHERE owner_table='query' AND owner_id=old.entity_id;
-      INSERT INTO search(owner_table, owner_id, field, text)
-        SELECT 'query', new.entity_id, 'text', new.text WHERE new.text IS NOT NULL AND new.text <> '';
-    END"
-   "CREATE TRIGGER IF NOT EXISTS trg_query_ad
-    AFTER DELETE ON query_attrs BEGIN
-      DELETE FROM search WHERE owner_table='query' AND owner_id=old.entity_id;
-    END"])
-
-(def ^:private COLUMN-MIGRATIONS
-  "Idempotent `ALTER TABLE ... ADD COLUMN` statements applied after DDL.
-   SQLite has no `ADD COLUMN IF NOT EXISTS`, so we run them inside a try
-   that swallows the `duplicate column` error when the column is already
-   present from a fresh CREATE TABLE."
-  ["ALTER TABLE query_attrs ADD COLUMN model            TEXT"
-   "ALTER TABLE query_attrs ADD COLUMN input_tokens     INTEGER"
-   "ALTER TABLE query_attrs ADD COLUMN output_tokens    INTEGER"
-   "ALTER TABLE query_attrs ADD COLUMN reasoning_tokens INTEGER"
-   "ALTER TABLE query_attrs ADD COLUMN cached_tokens    INTEGER"
-   "ALTER TABLE query_attrs ADD COLUMN total_cost       REAL"])
-
 (defn install-schema!
-  "Idempotently installs the RLM schema on `ds`. Returns the datasource."
+  "Runs Flyway migrations under `resources/db/migration/` against `ds`.
+
+   Every migration (V1__*.sql, V2__*.sql, ...) is applied exactly once;
+   Flyway tracks state in `flyway_schema_history` inside the same DB.
+   Returns the datasource so callers can keep their existing chain."
   [^DataSource ds]
-  (with-open [conn (jdbc/get-connection ds)]
-    (doseq [stmt DDL]
-      (jdbc/execute! conn [stmt]))
-    (doseq [stmt COLUMN-MIGRATIONS]
-      (try (jdbc/execute! conn [stmt])
-        (catch Exception e
-          (when-not (re-find #"duplicate column name" (str (ex-message e)))
-            (throw e))))))
+  (let [flyway (-> (org.flywaydb.core.Flyway/configure)
+                 (.dataSource ds)
+                 (.locations (into-array String ["classpath:db/migration"]))
+                 (.baselineOnMigrate true)
+                 (.baselineVersion "0")
+                 ;; SQLite FTS5 virtual tables + triggers mix transactional
+                 ;; and non-transactional statements in the same script;
+                 ;; flip :mixed on so Flyway runs them all.
+                 (.mixed true)
+                 (.load))]
+    (.migrate flyway))
   ds)
 
 ;; =============================================================================
@@ -651,7 +265,7 @@
 (def ^:private CONVERSATION-COLS [:system_prompt :model])
 (def ^:private QUERY-COLS        [:messages :text :answer :iterations :duration_ms :status :eval_score
                                   :model :input_tokens :output_tokens :reasoning_tokens :cached_tokens :total_cost])
-(def ^:private ITERATION-COLS    [:code :results :vars :answer :thinking :duration_ms])
+(def ^:private ITERATION-COLS    [:code :results :vars :answer :thinking :error :duration_ms])
 (def ^:private ITER-VAR-COLS     [:name :value :code])
 (def ^:private REPO-COLS         [:name :path :head_sha :head_short :branch :commits_ingested :ingested_at])
 (def ^:private COMMIT-COLS       [:category :sha :date :prefix :scope :author_email])
@@ -723,6 +337,7 @@
     (some? (:vars row))        (assoc :vars (:vars row))
     (some? (:answer row))      (assoc :answer (:answer row))
     (some? (:thinking row))    (assoc :thinking (:thinking row))
+    (some? (:error row))       (assoc :error (:error row))
     (some? (:duration_ms row)) (assoc :duration-ms (:duration_ms row))))
 
 (defn- iteration-var-attrs->ns
@@ -1022,7 +637,7 @@
 (defn store-iteration!
   "Stores an iteration entity linked to a query via parent-id, plus child
    iteration-var entities for any restorable vars."
-  [db-info {:keys [query-ref executions thinking answer duration-ms vars]}]
+  [db-info {:keys [query-ref executions thinking answer duration-ms vars error]}]
   (let [parent-id (when query-ref (second query-ref))
         executions (or executions [])
         code-strs (mapv :code executions)
@@ -1039,7 +654,8 @@
                             :results (pr-str result-strs)
                             :thinking (or thinking "")
                             :duration-ms (or duration-ms 0)}
-                     answer (assoc :answer answer)))]
+                     answer (assoc :answer answer)
+                     error  (assoc :error (pr-str error))))]
     (doseq [{:keys [name value code]} (or vars [])]
       (when name
         (store-entity! db-info

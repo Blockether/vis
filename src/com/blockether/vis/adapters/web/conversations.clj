@@ -80,10 +80,12 @@
       (concat results (repeat nil)))))
 
 (defn- iteration-entity->trace-entry [idx iter-entity]
-  (cond-> {:iteration  idx
-           :thinking   (:thinking iter-entity)
-           :executions (iteration-entity->exec iter-entity)}
-    (some? (:answer iter-entity)) (assoc :final? true)))
+  (let [err (some-> (:error iter-entity) (safe-read-edn nil))]
+    (cond-> {:iteration  idx
+             :thinking   (:thinking iter-entity)
+             :executions (iteration-entity->exec iter-entity)}
+      (some? (:answer iter-entity)) (assoc :final? true)
+      err (assoc :error err))))
 
 (defn- query-entity->message-pair [db-info query-entity]
   (let [query-ref   [:id (:id query-entity)]
