@@ -837,8 +837,8 @@
     (with-test-env* {} (fn [env]
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
-                                             {:final {:answer "Posprzatane, usunalem vars z indexu."
-                                                      :confidence "high"}}))
+                                             {:answer "Posprzatane, usunalem vars z indexu."
+                                              :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec com.blockether.vis.rlm.schema/ITERATION_SPEC_REASONING})]
                              (expect (nil? (:final-result result)))
@@ -851,8 +851,8 @@
                        (with-mock-ask! (fn [_router _opts]
                                          (make-mock-ask-response
                                            {:forget ["drop-me"]
-                                            :final {:answer "Posprzatane, usunalem vars z indexu."
-                                                    :confidence "high"}}))
+                                            :answer "Posprzatane, usunalem vars z indexu."
+                                            :confidence "high"}))
                          (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                         :iteration-spec com.blockether.vis.rlm.schema/ITERATION_SPEC_REASONING})]
                            (expect (= ["drop-me"] (:forget result)))
@@ -2088,7 +2088,7 @@
         (expect (str/includes? prompt "Introduction"))
         (expect (str/includes? prompt "evidence-span"))
         (expect (str/includes? prompt "VERBATIM"))
-        (expect (str/includes? prompt "FINAL"))))
+        (expect (str/includes? prompt "result array"))))
     (it "includes persona instruction when provided"
       (let [passages [{:document-id "doc1" :page 0
                        :section-title "Intro"
@@ -2131,7 +2131,7 @@
         (expect (str/includes? prompt "SELF-CONTAINED"))
         (expect (str/includes? prompt "ANSWERABLE"))
         (expect (str/includes? prompt "ANSWER-CONSISTENT"))
-        (expect (str/includes? prompt "FINAL"))))))
+        (expect (str/includes? prompt "result array"))))))
 
 (defdescribe save-qa-test
   (describe "save-qa!"

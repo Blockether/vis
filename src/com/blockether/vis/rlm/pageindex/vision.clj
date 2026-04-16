@@ -291,7 +291,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
    Other nodes reference sections via parent-id to establish hierarchy."
   (spec/spec
     :section
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -315,7 +314,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for heading nodes. Headings belong to sections via parent-id."
   (spec/spec
     :heading
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -344,7 +342,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for paragraph/text content nodes."
   (spec/spec
     :paragraph
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -378,7 +375,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for list item nodes."
   (spec/spec
     :list-item
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -412,7 +408,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for table of contents entry nodes (document-level, not page-level)."
   (spec/spec
     :toc-entry
-    {::spec/key-ns "document.toc"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -456,7 +451,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for image nodes. Description is REQUIRED, caption is optional."
   (spec/spec
     :image
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -500,7 +494,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for table nodes. Description is REQUIRED, caption is optional."
   (spec/spec
     :table
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -548,7 +541,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for page header nodes."
   (spec/spec
     :header
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -567,7 +559,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for page footer nodes."
   (spec/spec
     :footer
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -586,7 +577,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Spec for document metadata nodes."
   (spec/spec
     :metadata
-    {::spec/key-ns "page.node"}
     (spec/field {::spec/name :type
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
@@ -644,23 +634,6 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
   "Checks if a node is a visual node (Image or Table) by presence of :kind field."
   [node]
   (some? (:kind node)))
-
-(defn- flatten-node-keys
-  "Normalize namespaced node keys to flat keys.
-   Example: :page.node/type -> :type, :document.toc/title -> :title."
-  [node]
-  (reduce-kv
-    (fn [m k v]
-      (assoc m
-        (if (keyword? k) (keyword (name k)) k)
-        v))
-    {}
-    node))
-
-(defn- flatten-nodes
-  "Apply flat-key normalization to all extracted nodes."
-  [nodes]
-  (mapv flatten-node-keys nodes))
 
 (defn- enrich-visual-nodes
   "Enriches visual nodes (images/tables) with extracted image bytes from PDFBox.
@@ -826,8 +799,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                                  :iterations refine-iterations
                                                  :threshold refine-threshold
                                                  :criteria PAGE_EVAL_CRITERIA})
-          raw-nodes (-> (get-in refine-result [:result :nodes] [])
-                      flatten-nodes)
+          raw-nodes (vec (get-in refine-result [:result :nodes] []))
           nodes (enrich-visual-nodes raw-nodes page-pdf-images page-index)]
       (trove/log! {:level :info :data {:page page-index
                                        :nodes (count nodes)
@@ -864,8 +836,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                                :iterations refine-iterations
                                                :threshold refine-threshold
                                                :criteria PAGE_EVAL_CRITERIA})
-        nodes (-> (get-in refine-result [:result :nodes] [])
-                flatten-nodes)]
+        nodes (vec (get-in refine-result [:result :nodes] []))]
     (trove/log! {:level :info :data {:page page-index
                                      :nodes (count nodes)
                                      :final-score (:final-score refine-result)
@@ -1064,8 +1035,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                          :check-context? false
                                          :timeout-ms timeout-ms
                                          :extra-body {:max_tokens 15000}})
-          raw-nodes (-> (get-in response [:result :nodes] [])
-                      flatten-nodes)
+          raw-nodes (vec (get-in response [:result :nodes] []))
           ;; Enrich visual nodes with PDFBox-extracted images by index
           nodes (enrich-visual-nodes raw-nodes page-pdf-images page-index)
         ;; Count elements for logging
@@ -1365,8 +1335,7 @@ The target-section-id is ALWAYS null - linking happens in post-processing, not d
                                                :timeout-ms timeout-ms
                                                :extra-body {:max_tokens 15000}}
                                         routing (assoc :routing routing)))
-        nodes (-> (get-in response [:result :nodes] [])
-                flatten-nodes)
+        nodes (vec (get-in response [:result :nodes] []))
         section-count (count (filter :description nodes))
         heading-count (count (filter :level nodes))]
     (trove/log! {:level :debug :data {:page page-index
