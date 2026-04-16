@@ -65,8 +65,15 @@
               (string? clean) clean
               :else [:pre.exec-data (pr-str clean)])])]))))
 
+(defn- normalize-thinking
+  "Trim + collapse runs of 3+ newlines down to a single paragraph break so
+   marked.js doesn't stretch reasoning over huge vertical gaps."
+  [s]
+  (some-> s str/trim (str/replace #"\n{3,}" "\n\n")))
+
 (defn- render-iteration [{:keys [iteration thinking executions final? error]}]
-  (let [has-thinking? (and thinking (not (str/blank? thinking)))
+  (let [thinking      (normalize-thinking thinking)
+        has-thinking? (not (str/blank? thinking))
         has-execs?    (seq executions)]
     (cond
       ;; Final iteration: only surface its thinking (answer renders separately).

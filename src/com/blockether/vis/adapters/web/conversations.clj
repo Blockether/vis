@@ -92,10 +92,24 @@
         final-iter  (last (filter :answer iterations))
         answer      (or (some-> final-iter   :answer read-answer)
                         (some-> query-entity :answer read-answer))
+        tokens      (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} query-entity]
+                      (when (or input-tokens output-tokens reasoning-tokens cached-tokens)
+                        (cond-> {}
+                          input-tokens     (assoc :input     input-tokens)
+                          output-tokens    (assoc :output    output-tokens)
+                          reasoning-tokens (assoc :reasoning reasoning-tokens)
+                          cached-tokens    (assoc :cached    cached-tokens))))
+        cost        (let [{:keys [total-cost model]} query-entity]
+                      (when (or total-cost model)
+                        (cond-> {}
+                          total-cost (assoc :total-cost total-cost)
+                          model      (assoc :model      model))))
         result-map  (cond-> {:trace       trace
                              :iterations  (count iterations)
                              :duration-ms (:duration-ms query-entity)}
-                      answer (assoc :answer answer))]
+                      answer (assoc :answer answer)
+                      tokens (assoc :tokens tokens)
+                      cost   (assoc :cost   cost))]
     [{:role :user :text (or (:text query-entity) "")}
      {:role :assistant
       :text (when (string? answer) answer)
