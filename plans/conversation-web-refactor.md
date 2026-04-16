@@ -17,27 +17,30 @@
 - moved TUI surface to `adapters/tui/*`
 - moved Telegram surface to `adapters/telegram/*`
 - moved CLI entrypoint to `adapters/cli.clj`
+- folded `agent.clj` into CLI — top-level file deleted
 - split conversation ownership into:
   - `rlm/conversations/shared.clj`
   - `rlm/conversations/core.clj`
   - `rlm/conversations/persistence.clj`
 - deleted top-level `conversations.clj` and `conversations/schema.clj`
 - removed `requiring-resolve` wiring from web adapter path
-
-### Remaining (high-value next slices)
-
-- fold `agent.clj` into CLI-owned code (or delete after call sites are moved)
-- continue runtime module moves:
+- moved runtime persistence modules:
   - `rlm/db.clj` -> `rlm/persistence/db.clj`
   - `rlm/sqlite.clj` -> `rlm/persistence/sqlite.clj`
   - `rlm/schema.clj` -> `rlm/persistence/schema.clj`
   - `rlm/trajectory.clj` -> `rlm/persistence/trajectory.clj`
-- continue corpus module moves:
+- moved corpus modules:
   - `rlm/git.clj` -> `rlm/corpus/git.clj`
   - `rlm/pageindex*.clj` -> `rlm/corpus/pageindex*`
   - `rlm/qa.clj` -> `rlm/corpus/qa.clj`
   - `rlm/data.clj` -> `rlm/corpus/data.clj`
-- split `rlm/tools.clj` into `rlm/tools/*` modules
+- split `rlm/tools.clj` into `rlm/tools/*`:
+  - `rlm/tools/shared.clj` — helpers, EXTRA_BINDINGS, date + document helpers, document/citation tool factories
+  - `rlm/tools/conversation.clj` — conversation-history / conversation-code / conversation-results factories
+  - `rlm/tools/restore.clj` — restore-var / restore-vars factories
+  - `rlm/tools/git.clj` — git-* SCI bindings + JGit wrappers
+  - `rlm/tools/sci.clj` — SCI sandbox creation, var-index, hook system
+- swept CLAUDE.md + plan so namespace paths match 1:1 with reality
 
 ## Ubiquitous Language
 
@@ -254,8 +257,6 @@ Pure rendering only.
 
 ## Migration Map
 
-- `src/com/blockether/vis/rlm/core.clj` -> `src/com/blockether/vis/rlm/shared.clj`
-- `src/com/blockether/vis/rlm/query.clj` -> `src/com/blockether/vis/rlm/core.clj`
 - `src/com/blockether/vis/conversations.clj` -> split into:
   `src/com/blockether/vis/rlm/conversations/shared.clj`
   `src/com/blockether/vis/rlm/conversations/core.clj`

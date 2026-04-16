@@ -106,7 +106,7 @@ Canonical plan: `plans/conversation-web-refactor.md`
 - Prefer functional ownership over historical placement: shared vs core vs persistence vs presentation vs adapters, inside the correct bounded context.
 - Put reusable functions in `*.shared`, orchestration in `*.core`, storage in `*.persistence*`, rendering in `*.presentation*`, and external surfaces in `adapters.*`.
 - Use `core.clj` as the default application/use-case namespace in each bounded context.
-- Do not turn `rlm.core` or `rlm.tools` into dumping grounds for unrelated behavior.
+- Do not turn `rlm.core` or `rlm.tools.*` into dumping grounds for unrelated behavior.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
 - Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. Prefer folding it into `adapters.cli` or deleting it once callers are simplified.
 - Do not keep long-term adapter code at the product root once the bounded-context APIs are ready for an `adapters/*` move.
@@ -236,7 +236,7 @@ Ordering within a parent is by `:entity/created-at`. `restore-var` / `restore-va
 **Investigating DB state:**
 ```clojure
 (require '[com.blockether.vis.rlm.conversations.core :as conversations]
-         '[com.blockether.vis.rlm.db :as rlm-db]
+         '[com.blockether.vis.rlm.persistence.db :as rlm-db]
          '[com.blockether.vis.config :as config])
 
 ;; List vis/telegram conversations
@@ -252,7 +252,7 @@ Ordering within a parent is by `:entity/created-at`. `restore-var` / `restore-va
   (rlm-db/db-latest-var-registry db-info conv-ref));; {sym → {:value :code …}}
 ```
 
-**Key rlm DB functions (`com.blockether.vis.rlm.db`):**
+**Key rlm DB functions (`com.blockether.vis.rlm.persistence.db`):**
 - `create-rlm-conn` / `dispose-rlm-conn!` — SQLite pool handle open/close.
 - `db-find-latest-conversation-ref` — the most-recent `:conversation` entity.
 - `db-resolve-conversation-ref` — accepts `nil` / `:latest` / uuid / `[:id uuid]`.
