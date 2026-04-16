@@ -122,14 +122,20 @@
     )"
 
    "CREATE TABLE IF NOT EXISTS query_attrs (
-      entity_id    TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
-      messages     TEXT,
-      text         TEXT,
-      answer       TEXT,
-      iterations   INTEGER,
-      duration_ms  INTEGER,
-      status       TEXT,
-      eval_score   REAL
+      entity_id        TEXT PRIMARY KEY NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
+      messages         TEXT,
+      text             TEXT,
+      answer           TEXT,
+      iterations       INTEGER,
+      duration_ms      INTEGER,
+      status           TEXT,
+      eval_score       REAL,
+      model            TEXT,
+      input_tokens     INTEGER,
+      output_tokens    INTEGER,
+      reasoning_tokens INTEGER,
+      cached_tokens    INTEGER,
+      total_cost       REAL
     )"
 
    "CREATE TABLE IF NOT EXISTS iteration_attrs (
@@ -463,12 +469,29 @@
       DELETE FROM search WHERE owner_table='query' AND owner_id=old.entity_id;
     END"])
 
+(def ^:private COLUMN-MIGRATIONS
+  "Idempotent `ALTER TABLE ... ADD COLUMN` statements applied after DDL.
+   SQLite has no `ADD COLUMN IF NOT EXISTS`, so we run them inside a try
+   that swallows the `duplicate column` error when the column is already
+   present from a fresh CREATE TABLE."
+  ["ALTER TABLE query_attrs ADD COLUMN model            TEXT"
+   "ALTER TABLE query_attrs ADD COLUMN input_tokens     INTEGER"
+   "ALTER TABLE query_attrs ADD COLUMN output_tokens    INTEGER"
+   "ALTER TABLE query_attrs ADD COLUMN reasoning_tokens INTEGER"
+   "ALTER TABLE query_attrs ADD COLUMN cached_tokens    INTEGER"
+   "ALTER TABLE query_attrs ADD COLUMN total_cost       REAL"])
+
 (defn install-schema!
   "Idempotently installs the RLM schema on `ds`. Returns the datasource."
   [^DataSource ds]
   (with-open [conn (jdbc/get-connection ds)]
     (doseq [stmt DDL]
-      (jdbc/execute! conn [stmt])))
+      (jdbc/execute! conn [stmt]))
+    (doseq [stmt COLUMN-MIGRATIONS]
+      (try (jdbc/execute! conn [stmt])
+        (catch Exception e
+          (when-not (re-find #"duplicate column name" (str (ex-message e)))
+            (throw e))))))
   ds)
 
 ;; =============================================================================
@@ -626,7 +649,8 @@
 ;; keys happens in row->entity below.
 
 (def ^:private CONVERSATION-COLS [:system_prompt :model])
-(def ^:private QUERY-COLS        [:messages :text :answer :iterations :duration_ms :status :eval_score])
+(def ^:private QUERY-COLS        [:messages :text :answer :iterations :duration_ms :status :eval_score
+                                  :model :input_tokens :output_tokens :reasoning_tokens :cached_tokens :total_cost])
 (def ^:private ITERATION-COLS    [:code :results :vars :answer :thinking :duration_ms])
 (def ^:private ITER-VAR-COLS     [:name :value :code])
 (def ^:private REPO-COLS         [:name :path :head_sha :head_short :branch :commits_ingested :ingested_at])
@@ -677,13 +701,19 @@
 (defn- query-attrs->ns
   [row]
   (cond-> {}
-    (some? (:messages row))    (assoc :messages (:messages row))
-    (some? (:text row))        (assoc :text (:text row))
-    (some? (:answer row))      (assoc :answer (:answer row))
-    (some? (:iterations row))  (assoc :iterations (:iterations row))
-    (some? (:duration_ms row)) (assoc :duration-ms (:duration_ms row))
-    (some? (:status row))      (assoc :status (->kw-back (:status row)))
-    (some? (:eval_score row))  (assoc :eval-score (float (:eval_score row)))))
+    (some? (:messages row))         (assoc :messages (:messages row))
+    (some? (:text row))             (assoc :text (:text row))
+    (some? (:answer row))           (assoc :answer (:answer row))
+    (some? (:iterations row))       (assoc :iterations (:iterations row))
+    (some? (:duration_ms row))      (assoc :duration-ms (:duration_ms row))
+    (some? (:status row))           (assoc :status (->kw-back (:status row)))
+    (some? (:eval_score row))       (assoc :eval-score (float (:eval_score row)))
+    (some? (:model row))            (assoc :model (:model row))
+    (some? (:input_tokens row))     (assoc :input-tokens (:input_tokens row))
+    (some? (:output_tokens row))    (assoc :output-tokens (:output_tokens row))
+    (some? (:reasoning_tokens row)) (assoc :reasoning-tokens (:reasoning_tokens row))
+    (some? (:cached_tokens row))    (assoc :cached-tokens (:cached_tokens row))
+    (some? (:total_cost row))       (assoc :total-cost (:total_cost row))))
 
 (defn- iteration-attrs->ns
   [row]
@@ -969,14 +999,21 @@
         eval-score (assoc :eval-score (float eval-score))))))
 
 (defn update-query!
-  "Updates a query entity with final outcome."
-  [db-info query-ref {:keys [answer iterations duration-ms status eval-score]}]
+  "Updates a query entity with final outcome, including optional cost/token
+   metadata so the UI can reconstruct meta lines after a restart."
+  [db-info query-ref {:keys [answer iterations duration-ms status eval-score tokens cost]}]
   (update-entity! db-info query-ref
     (cond-> {:answer (or (when answer (pr-str answer)) "")
              :iterations (or iterations 0)
              :duration-ms (or duration-ms 0)
              :status (or status :unknown)}
-      eval-score (assoc :eval-score (float eval-score)))))
+      eval-score             (assoc :eval-score (float eval-score))
+      (:input tokens)        (assoc :input-tokens     (long (:input tokens)))
+      (:output tokens)       (assoc :output-tokens    (long (:output tokens)))
+      (:reasoning tokens)    (assoc :reasoning-tokens (long (:reasoning tokens)))
+      (:cached tokens)       (assoc :cached-tokens    (long (:cached tokens)))
+      (:total-cost cost)     (assoc :total-cost       (double (:total-cost cost)))
+      (:model cost)          (assoc :model            (str (:model cost))))))
 
 ;; =============================================================================
 ;; Iteration + iteration-vars

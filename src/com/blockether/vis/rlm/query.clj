@@ -363,7 +363,9 @@
             {:answer      (:result answer answer)
              :iterations  iterations
              :duration-ms duration-ms
-             :status      status})
+             :status      status
+             :tokens      @total-tokens-atom
+             :cost        @total-cost-atom})
           (catch Exception e
             (trove/log! {:level :warn :data {:error (ex-message e)}
                          :msg   "Failed to update query (max iterations)"})))
@@ -399,7 +401,9 @@
              :iterations  iterations
              :duration-ms duration-ms
              :status      :success
-             :eval-score  eval-scores})
+             :eval-score  eval-scores
+             :tokens      @total-tokens-atom
+             :cost        @total-cost-atom})
           (catch Exception e
             (trove/log! {:level :warn :data {:error (ex-message e)}
                          :msg   "Failed to update query (success)"})))
