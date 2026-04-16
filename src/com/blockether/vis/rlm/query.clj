@@ -13,7 +13,8 @@
    [com.blockether.vis.rlm.routing :as rlm-routing]
    [com.blockether.vis.rlm.persistence.schema :as schema]
    [com.blockether.vis.rlm.skills :as rlm-skills]
-   [com.blockether.vis.rlm.tools :as rlm-tools]
+   [com.blockether.vis.rlm.tools.sci :as rlm-tools]
+   [com.blockether.vis.rlm.tools.shared :as rlm-tools-shared]
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.svar.internal.util :as util]
    [taoensso.trove :as trove]))
@@ -100,9 +101,9 @@
           claims-atom            (when verify? (atom []))
           current-iteration-atom (atom 0)
           cite-bindings          (when verify?
-                                   {'CITE            (rlm-tools/make-cite-fn claims-atom)
-                                    'CITE-UNVERIFIED (rlm-tools/make-cite-unverified-fn claims-atom)
-                                    'list-claims     (rlm-tools/make-list-claims-fn claims-atom)})
+                                   {'CITE            (rlm-tools-shared/make-cite-fn claims-atom)
+                                    'CITE-UNVERIFIED (rlm-tools-shared/make-cite-unverified-fn claims-atom)
+                                    'list-claims     (rlm-tools-shared/make-list-claims-fn claims-atom)})
           cite-docs              (when verify?
                                    [{:type :fn   :sym 'CITE
                                      :doc  "(CITE claim-text document-id page section quote) or (CITE claim-text document-id page section quote confidence) - Cite a claim with source evidence. Returns {:cited true :claim-id uuid :claim-text text}"}

@@ -6,7 +6,8 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.rlm :as sut]
    [com.blockether.vis.rlm.persistence.db :as rlm-db]
-   [com.blockether.vis.rlm.tools :as rlm-tools]
+   [com.blockether.vis.rlm.tools.shared :as rlm-tools]
+   [com.blockether.vis.rlm.tools.restore :as rlm-tools-restore]
    [com.blockether.vis.rlm.routing :as rlm-routing]
    [com.blockether.vis.rlm.core :as rlm-core]
    [com.blockether.svar.core :as svar])
@@ -279,7 +280,7 @@
                                                       :executions [{:code "(def latest 42)" :result "ignored"}]
                                                       :vars [{:name "latest" :value 42 :code "(def latest 42)"}]
                                                       :thinking "" :duration-ms 0})
-                  restore-var-fn (rlm-tools/make-restore-var-fn (:db-info env) conv-ref)]
+                  restore-var-fn (rlm-tools-restore/make-restore-var-fn (:db-info env) conv-ref)]
               (expect (= [1 2 3] (restore-var-fn 'anomalies)))
               (expect (throws? clojure.lang.ExceptionInfo
                         #(restore-var-fn 'anomalies {:max-scan-queries 1}))))

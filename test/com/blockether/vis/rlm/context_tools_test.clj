@@ -4,7 +4,7 @@
    [lazytest.core :refer [defdescribe describe expect it]]
    [sci.core :as sci]
    [com.blockether.vis.rlm.core :as core]
-   [com.blockether.vis.rlm.tools :as tools]))
+   [com.blockether.vis.rlm.tools.sci :as tools]))
 
 (defn- make-ctx
   "Create a sci context for testing."

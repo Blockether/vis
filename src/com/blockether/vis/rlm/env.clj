@@ -19,7 +19,7 @@
    [com.blockether.vis.rlm.persistence.db :as rlm-db]
    [com.blockether.vis.rlm.routing :as rlm-routing]
    [com.blockether.vis.rlm.skills :as rlm-skills]
-   [com.blockether.vis.rlm.tools :as rlm-tools]
+   [com.blockether.vis.rlm.tools.sci :as rlm-tools]
    [com.blockether.svar.internal.util :as util]))
 
 ;; =============================================================================
