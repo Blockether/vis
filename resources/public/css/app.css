@@ -1,5 +1,18 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,500;0,600;1,400&display=swap');
-:root{--bg:#fdf4e5;--fg:#2d2a26;--accent:#785a32;--dim:#a0927e;--user-bg:#e6dcc8;--ai-bg:#f5f0e6;--border:#c8b89a;--code-bg:#f0ebe0;--font-text:'Source Serif 4',Georgia,serif;--font-ui:'Inter',-apple-system,system-ui,sans-serif;--font-mono:'Fira Code',var(--font-mono)}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-Medium.ttf') format('truetype');font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-SemiBold.ttf') format('truetype');font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-Bold.ttf') format('truetype');font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-Italic.ttf') format('truetype');font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-MediumItalic.ttf') format('truetype');font-weight:500;font-style:italic;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-SemiBoldItalic.ttf') format('truetype');font-weight:600;font-style:italic;font-display:swap}
+@font-face{font-family:'Writer';src:url('/fonts/Writer-BoldItalic.ttf') format('truetype');font-weight:700;font-style:italic;font-display:swap}
+@font-face{font-family:'Fira Code';src:url('/fonts/FiraCode-Light.ttf') format('truetype');font-weight:300;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Code';src:url('/fonts/FiraCode-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Code';src:url('/fonts/FiraCode-Medium.ttf') format('truetype');font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Code';src:url('/fonts/FiraCode-SemiBold.ttf') format('truetype');font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Code';src:url('/fonts/FiraCode-Bold.ttf') format('truetype');font-weight:700;font-style:normal;font-display:swap}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root{--bg:#fdf4e5;--fg:#2d2a26;--accent:#785a32;--dim:#a0927e;--user-bg:#e6dcc8;--ai-bg:#f5f0e6;--border:#c8b89a;--code-bg:#f0ebe0;--font-text:'Writer',monospace;--font-ui:'Inter',-apple-system,system-ui,sans-serif;--font-mono:'Fira Code',monospace}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:text;user-select:text}
 html{touch-action:manipulation;-ms-touch-action:manipulation}
 body{touch-action:manipulation}
@@ -54,9 +67,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--fg);display:fle
 .iter-error-details{margin-top:4px}
 .iter-error-details summary{cursor:pointer;font-size:11px;font-weight:600;color:#8b2e2e;letter-spacing:.3px;user-select:none}
 .iter-error-data{font-family:var(--font-mono);font-size:11px;color:#3d2f18;background:rgba(0,0,0,0.04);padding:6px 8px;border-radius:4px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
-.iter-header{font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px;opacity:.8}
+.iter-header{font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px;opacity:.8;padding-left:15px}
 .final{color:#4a8;font-weight:800}
-.thinking{font-family:var(--font-text);font-size:13.5px;color:#3d2f18;margin-bottom:4px;padding:8px 12px;background:rgba(120,90,50,0.09);border-left:3px solid #785a32;border-radius:6px;line-height:1.55;word-break:break-word;overflow-wrap:break-word;opacity:.92}
+.thinking{font-family:var(--font-text);font-size:13.5px;color:#3d2f18;margin-bottom:4px;padding:8px 12px;background:rgba(120,90,50,0.09);border-left:3px solid #785a32;border-radius:6px;line-height:1.55;word-break:break-word;overflow-wrap:break-word;opacity:.92;position:relative}
+.thinking::before{content:'Thinking';display:block;font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;opacity:.7;font-family:var(--font-ui);font-style:normal}
 .thinking p{margin:0;font-style:italic}
 .thinking p + p{margin-top:.5em}
 .exec{margin:4px 0;padding:6px 10px;background:var(--code-bg);border-radius:8px;border:1px solid rgba(0,0,0,0.04)}
@@ -127,9 +141,15 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--fg);display:fle
 .tool-diff-hunk{color:var(--accent);font-weight:600;background:rgba(0,0,0,0.03)}
 .answer{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-family:var(--font-text);font-size:15px;line-height:1.7}
 .meta{margin-top:8px;font-size:10px;color:var(--dim);letter-spacing:.2px}
-.md-content h1,.md-content h2,.md-content h3{margin:4px 0 6px}
-.md-content p{margin:2px 0}
-.md-content ul,.md-content ol{margin:2px 0 2px 20px}
+.md-content h1,.md-content h2,.md-content h3{margin:10px 0 6px}
+.md-content p{margin:6px 0}
+.md-content ul,.md-content ol{margin:6px 0 12px;padding-left:26px}
+.md-content li{margin:4px 0}
+.md-content li::marker{color:var(--accent);font-weight:600}
+.md-content ul + p,.md-content ol + p{margin-top:10px}
+.md-content p + p{margin-top:12px}
+.md-content > :first-child{margin-top:0}
+.md-content > :last-child{margin-bottom:0}
 .md-content table{width:100%;border-collapse:collapse;margin:6px 0;font-size:13px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
 .md-content thead{background:rgba(0,0,0,0.04)}
 .md-content th{font-weight:600;text-align:left;padding:6px 10px;border-bottom:2px solid var(--border);font-size:12px;color:var(--accent);letter-spacing:.2px}
@@ -140,6 +160,15 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--fg);display:fle
 .md-content code{font-family:var(--font-mono);font-size:.9em;padding:1px 4px;background:var(--code-bg);border-radius:3px}
 .md-content pre{margin:6px 0;padding:8px;background:var(--code-bg);color:var(--fg);border-radius:6px;overflow-x:auto;border:1px solid var(--border);font-size:12px}
 .md-content pre code{background:none;padding:0;color:inherit}
+/* Thinking-scoped overrides — must come AFTER .md-content rules so the italic
+   prose aesthetic wins over the regular markdown styling (same specificity). */
+.thinking.md-content li,.thinking.md-content li p,.thinking.md-content li code{font-style:italic}
+.thinking.md-content ul,.thinking.md-content ol{margin:10px 0;padding-left:0;list-style-position:inside}
+.thinking.md-content li{margin:4px 0;padding-left:0}
+.thinking.md-content li::marker{color:#8a6d3f;font-weight:500;font-style:italic}
+.thinking.md-content p + ul,.thinking.md-content p + ol{margin-top:8px}
+.thinking.md-content ul + p,.thinking.md-content ol + p{margin-top:10px}
+.thinking.md-content p + p{margin-top:.5em}
 /* hljs light/creamy overrides */
 .hljs{background:var(--code-bg)!important;color:var(--fg)!important}
 .hljs-keyword,.hljs-selector-tag{color:#785a32}
@@ -151,9 +180,9 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--fg);display:fle
 .hljs-symbol,.hljs-bullet{color:#785a32}
 .hljs-meta,.hljs-doctag{color:var(--dim)}
 .input-bar{padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--border);box-shadow:0 -2px 8px rgba(0,0,0,0.04)}
-.input-bar form{display:flex;gap:8px}
-.input-bar input{flex:1;padding:12px 16px;font-size:16px;border:2px solid var(--border);border-radius:24px;background:#fff;color:var(--fg);outline:none;-webkit-appearance:none}
-.input-bar input:focus{border-color:var(--accent)}
+.input-bar form{display:flex;gap:8px;align-items:flex-end}
+.input-bar textarea,.input-bar input{flex:1;padding:10px 16px;font-size:16px;border:2px solid var(--border);border-radius:22px;background:#fff;color:var(--fg);outline:none;-webkit-appearance:none;font-family:inherit;line-height:1.25;resize:none;min-height:44px;max-height:200px;overflow-y:auto;display:block}
+.input-bar textarea:focus,.input-bar input:focus{border-color:var(--accent)}
 .input-bar button{width:44px;height:44px;border-radius:50%;background:var(--accent);color:var(--bg);border:none;font-size:20px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .2s}
 .input-bar button:active{background:#5a4228;transform:scale(0.92)}
 button:disabled{opacity:.4;cursor:default;transform:none}
