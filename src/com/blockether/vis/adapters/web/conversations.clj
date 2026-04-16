@@ -51,8 +51,8 @@
     fallback))
 
 (defn- iteration-entity->exec [iter-entity]
-  (let [codes   (safe-read-edn (:iteration/code iter-entity) [])
-        results (safe-read-edn (:iteration/results iter-entity) [])]
+  (let [codes   (safe-read-edn (:code iter-entity) [])
+        results (safe-read-edn (:results iter-entity) [])]
     (mapv (fn [code result]
             {:code   code
              :result (safe-read-edn result result)})
@@ -61,25 +61,25 @@
 
 (defn- iteration-entity->trace-entry [idx iter-entity]
   (cond-> {:iteration  idx
-           :thinking   (:iteration/thinking iter-entity)
+           :thinking   (:thinking iter-entity)
            :executions (iteration-entity->exec iter-entity)}
-    (some? (:iteration/answer iter-entity)) (assoc :final? true)))
+    (some? (:answer iter-entity)) (assoc :final? true)))
 
 (defn- query-entity->message-pair [db-info query-entity]
   (let [query-ref   [:id (:id query-entity)]
         iterations  (rlm-db/db-list-query-iterations db-info query-ref)
         trace       (vec (map-indexed iteration-entity->trace-entry iterations))
-        final-iter  (last (filter :iteration/answer iterations))
+        final-iter  (last (filter :answer iterations))
         answer      (or (when final-iter
-                          (safe-read-edn (:iteration/answer final-iter)
-                            (:iteration/answer final-iter)))
-                      (safe-read-edn (:query/answer query-entity)
-                        (:query/answer query-entity)))
+                          (safe-read-edn (:answer final-iter)
+                            (:answer final-iter)))
+                      (safe-read-edn (:answer query-entity)
+                        (:answer query-entity)))
         result-map  (cond-> {:trace       trace
                              :iterations  (count iterations)
-                             :duration-ms (:query/duration-ms query-entity)}
+                             :duration-ms (:duration-ms query-entity)}
                       answer (assoc :answer answer))]
-    [{:role :user :text (or (:query/text query-entity) "")}
+    [{:role :user :text (or (:text query-entity) "")}
      {:role :assistant
       :text (when (string? answer) answer)
       :result result-map}]))
