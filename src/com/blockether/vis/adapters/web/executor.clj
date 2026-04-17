@@ -2,7 +2,8 @@
   "Async query executor — runs RLM queries on core.async thread pool.
    State lives in web conversations atoms. Only the executor mutates during query execution.
    Survives page reloads — queries run to completion regardless of client state."
-  (:require [com.blockether.vis.rlm.conversations.core :as conversations]
+  (:require [com.blockether.svar.internal.llm :as llm]
+            [com.blockether.vis.loop.conversations.core :as conversations]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
             [clojure.core.async :as async]
             [clojure.string :as str])
@@ -24,7 +25,7 @@
 
 (defn- first-symbol
   "Extract the leading symbol name from a Clojure expression string, for live-status
-   labels like 'Iteration … → read-file'. Returns nil if it can't find one."
+    labels like 'Iteration … → read-file'. Returns nil if it can't find one."
   [code]
   (when code
     (let [t (str/trim code)
@@ -32,14 +33,25 @@
           nm (first (str/split b #"[\s\)\(\"']" 2))]
       (when (and nm (not (str/blank? nm))) nm))))
 
+(defn- streamed-code->expr
+  "Normalize streamed code entries to raw expr strings.
+   RLM partial chunks may carry either plain strings or {:expr ...} blocks."
+  [entry]
+  (cond
+    (string? entry) entry
+    (map? entry) (let [expr (:expr entry)]
+                   (when (string? expr) expr))
+    :else nil))
+
 (defn- on-chunk-handler
   "Build the :on-chunk callback svar now uses (post-:hooks refactor). svar calls it
-   during streaming with {:iteration :thinking :code :final :done?} and once with
-   :done? true when an iteration finalizes. We project each call into the web
-   live-status atom so the /check polling endpoint can stream UI updates."
+    during streaming with {:iteration :thinking :code :final :done?} and once with
+    :done? true when an iteration finalizes. We project each call into the web
+    live-status atom so the /check polling endpoint can stream UI updates."
   [conversation-id]
   (fn [{:keys [iteration thinking code final done?]}]
-    (let [code-vec (when (sequential? code) (vec code))
+    (let [code-vec (when (sequential? code)
+                     (vec (keep streamed-code->expr code)))
           first-code (first (filter identity code-vec))
           label (cond
                   done?                     "Finalizing…"
@@ -65,6 +77,19 @@
                 :iterations iters'
                 :current (when-not done? label)))))))))
 
+(defn- msgs->llm
+  "Convert cached web messages into the llm message vector the RLM expects.
+   Drops empty/nil text so prior assistant errors don't poison the context."
+  [msgs]
+  (into []
+    (keep (fn [{:keys [role text]}]
+            (when (and (string? text) (not (str/blank? text)))
+              (case role
+                :user (llm/user text)
+                :assistant (llm/assistant text)
+                nil))))
+    msgs))
+
 (defn- execute-query!
   "Run a single query against the conversation id `conversation-id`. The user
    message has already been appended by `submit-query!`; we append the
@@ -73,11 +98,13 @@
   [{:keys [conversation-id query]}]
   (swap! in-flight conj conversation-id)
   (try
-    (if (web-conversations/get-conversation conversation-id)
+    (if-let [conv (web-conversations/get-conversation conversation-id)]
       (try
-        (let [result (conversations/send! conversation-id query
-                       {:system-prompt (web-system-prompt)
-                        :hooks {:on-chunk (on-chunk-handler conversation-id)}})]
+        (let [history (msgs->llm (:messages conv))
+              msgs    (if (seq history) history [(llm/user query)])
+              result  (conversations/send! conversation-id msgs
+                        {:system-prompt (web-system-prompt)
+                         :hooks {:on-chunk (on-chunk-handler conversation-id)}})]
           (when (web-conversations/get-conversation conversation-id)
             (web-conversations/append-message! conversation-id
               {:role :assistant :text (:answer result)

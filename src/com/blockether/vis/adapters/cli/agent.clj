@@ -8,18 +8,17 @@
      (def reviewer (agent {:name \"reviewer\"
                            :system-prompt \"You are a senior Clojure engineer.\"
                            :tools [(tool 'read-file slurp
-                                    {:doc \"Read file contents\"
-                                     :params [{:name \"path\" :type :string}]
-                                     :returns {:type :string}})]}))
+                                      {:doc \"Read file contents\"})]}))
      (run! reviewer \"Review auth.clj\")
      ;; => {:answer \"...\" :iterations 5 :duration-ms 2340 :tokens {...} :cost {...}}"
   (:refer-clojure :exclude [agent run!])
   (:require
    [charred.api :as json]
+   [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.rlm.conversations.core :as conversations]
-   [com.blockether.vis.rlm.conversations.shared :as shared]
-   [com.blockether.vis.rlm :as rlm]
+   [com.blockether.vis.loop.conversations.core :as conversations]
+   [com.blockether.vis.loop.conversations.shared :as shared]
+   [com.blockether.vis.core :as core]
    [com.blockether.vis.config :as config]))
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
@@ -30,19 +29,16 @@
    Params:
    - sym  — Symbol name for the tool in the RLM SCI sandbox
    - f    — Implementation function
-   - opts — Map with :doc, :params, :returns, :examples
+   - opts — Map with :doc, :arglists, :validate-input, :validate-output, :examples
 
    Example:
-     (tool 'read-file slurp
-       {:doc \"Read a file from disk\"
-        :params [{:name \"path\" :type :string :required true
-                  :description \"Absolute file path\"}]
-        :returns {:type :string :description \"File contents\"}})"
+      (tool 'read-file slurp
+         {:doc \"Read a file from disk\"})"
   [sym f opts]
   (assoc opts :sym sym :fn f))
 
 (def base-tools
-  "Legacy alias for `com.blockether.vis.rlm.conversations.shared/base-tools`. Every env
+  "Alias for `com.blockether.vis.loop.conversations.shared/base-tools`. Every env
    opened through `conversations/create!` already has these registered — agent-defs
    only need to declare *extra* tools beyond this set."
   shared/base-tools)
@@ -61,6 +57,9 @@ def them. If a symbol should exist but isn't there, call (restore-var 'name) or
 (restore-vars ['a 'b]). Use `:forget` for scratch vars once they stop being useful.
 
 File tools (positional args, never maps): read-file, write-file, edit-file, list-dir.
+edit-file expects one patch string in OpenAI envelope format:
+*** Begin Patch / *** Update|Add|Delete File / *** End Patch.
+Update hunks must use strict headers: @@ -a[,b] +c[,d] @@.
 No shell, no git CLI, no network. If the user needs a shell command, say so plainly.
 
 Iteration budget: (request-more-iterations N) when you know the task will need more.")
@@ -167,18 +166,16 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
                         :as _opts}]]
   (let [_cfg      (config/resolve-config config)
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
-        title     (let [t (clojure.string/trim prompt-s)]
+        title     (let [t (str/trim prompt-s)]
                     (if (> (count t) 100) (str (subs t 0 97) "…") t))
         {conv-id :id} (conversations/create! :cli {:title title})
         env       (conversations/env-for conv-id)
         ;; Register agent-def's extra tools + constants on top of conv's base tools
         _         (doseq [{:keys [sym fn] :as tool-def} (:tools agent-def)]
-                    (rlm/register-env-fn! env sym fn (dissoc tool-def :sym :fn)))
+                    (core/register-env-fn! env sym fn (dissoc tool-def :sym :fn)))
         _         (doseq [[sym value] (:constants agent-def)]
-                    (rlm/register-env-def! env sym value
-                      {:doc     (str sym)
-                       :returns {:type :any
-                                 :description (pr-str value)}}))
+                    (core/register-env-def! env sym value
+                      {:doc (str sym)}))
         iters     (or max-iterations (:max-iterations agent-def) 50)
         mdl       (or model (:model agent-def))
         raw-sys   (or system-prompt (:system-prompt agent-def))

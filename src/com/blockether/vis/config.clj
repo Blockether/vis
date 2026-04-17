@@ -1,11 +1,13 @@
 (ns com.blockether.vis.config
-  "Shared config I/O, provider presets, and svar-native data helpers.
+  "Shared config I/O, provider presets, logging bootstrap, and svar-native data helpers.
    Single source of truth for ~/.vis/config.edn reading/writing.
    Used by both agent.clj (programmatic) and provider.clj (TUI)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.svar.internal.llm :as llm]))
+            [com.blockether.vis.loop.redact :as redact]
+            [taoensso.telemere :as t])
+  (:import [java.io FileInputStream FileOutputStream]))
 
 ;;; ── Paths ───────────────────────────────────────────────────────────────
 
@@ -17,6 +19,73 @@
 ;; per-entrypoint dirs (~/.vis/sessions/<uuid>/, ~/.vis/telegram/<chat-id>/,
 ;; ~/.vis/agents/<name>/, ~/.vis/rlm/) — all collapsed here.
 (def db-path (str config-dir "/vis.mdb"))
+
+;; Logging path shared by TUI, CLI, Telegram, and web.
+(def ^:private log-path (str config-dir "/vis.log"))
+
+;; Open /dev/tty directly for Lanterna — independent of System/out.
+;; Delayed so non-TUI entrypoints do not fail at class-load time.
+(def tty-in  (delay (FileInputStream.  "/dev/tty")))
+(def tty-out (delay (FileOutputStream. "/dev/tty")))
+
+;; Capture original stdout before redirection. CLI prints user-facing output here.
+(def original-stdout System/out)
+
+(defn init!
+  "Redirect System/out and System/err to log file. Lanterna uses tty-in/tty-out."
+  []
+  (let [dir (io/file config-dir)]
+    (when-not (.exists dir) (.mkdirs dir)))
+
+  (let [raw-out    (FileOutputStream. log-path true)
+        log-stream (redact/redacting-print-stream raw-out)]
+    (System/setOut log-stream)
+    (System/setErr log-stream))
+
+  (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
+  (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
+
+  (t/remove-handler! :default/console)
+  (let [default-fmt (t/format-signal-fn {})]
+    (t/add-handler! :file/vis
+      (t/handler:file {:path              log-path
+                       :interval          :monthly
+                       :max-file-size     4000000
+                       :max-num-parts     8
+                       :max-num-intervals 6
+                       :output-fn         (fn [signal] (redact/redact (default-fmt signal)))})))
+
+  (t/call-on-shutdown! (fn [] (t/stop-handlers!))))
+
+(defn init-cli!
+  "Logging init for CLI and non-TUI commands.
+   Redirects System.out/System.err and Clojure *out*/*err* to log file."
+  []
+  (let [dir (io/file config-dir)]
+    (when-not (.exists dir) (.mkdirs dir)))
+
+  (let [raw-out    (FileOutputStream. log-path true)
+        log-stream (redact/redacting-print-stream raw-out)]
+    (System/setOut log-stream)
+    (System/setErr log-stream))
+
+  (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
+  (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
+
+  (t/remove-handler! :default/console)
+  (let [default-fmt (t/format-signal-fn {})]
+    (t/add-handler! :file/vis
+      (t/handler:file {:path              log-path
+                       :interval          :monthly
+                       :max-file-size     4000000
+                       :max-num-parts     8
+                       :max-num-intervals 6
+                       :output-fn         (fn [signal] (redact/redact (default-fmt signal)))}))))
+
+(defn shutdown!
+  "Flush and stop all handlers. Call after screen stops."
+  []
+  (t/stop-handlers!))
 
 ;;; ── Provider presets ────────────────────────────────────────────────────
 
@@ -63,14 +132,14 @@
   "Human-readable label for a provider ID. Never stored in config."
   [pid]
   (or (:label (provider-template pid))
-      (some-> pid name str/capitalize)
-      "Provider"))
+    (some-> pid name str/capitalize)
+    "Provider"))
 
 (defn provider-base-url
   "Resolve base-url for a provider, falling back to preset."
   [provider]
   (or (:base-url provider)
-      (:base-url (provider-template (:id provider)))))
+    (:base-url (provider-template (:id provider)))))
 
 ;;; ── Svar-native data helpers ────────────────────────────────────────────
 
@@ -119,8 +188,8 @@
           (try (let [raw (edn/read-string (slurp f))]
                  (when (and (map? raw) (vector? (:providers raw)))
                    raw))
-               (catch Exception _ nil)))
-        (blockether-env-config))))
+            (catch Exception _ nil)))
+      (blockether-env-config))))
 
 (defn save-config!
   "Save svar-native config to ~/.vis/config.edn."
@@ -133,35 +202,10 @@
   "Resolve provider config in svar-native syntax.
    Checks: explicit config → ~/.vis/config.edn → BLOCKETHER_* env vars.
    Throws when nothing is available."
-  [explicit-config]
-  (or explicit-config
-      (load-config)
-      (throw (ex-info (str "No provider config. Create ~/.vis/config.edn "
-                           "(see SAMPLE_CONFIG.edn) or set BLOCKETHER_OPENAI_API_KEY env var.")
-                      {}))))
-
-;;; ── Shared Router ──────────────────────────────────────────────────────
-
-(defonce ^:private router-atom (atom nil))
-
-(defn get-router
-  "Get or create the shared LLM router. Singleton — reused across all components."
-  []
-  (or @router-atom
-      (let [cfg (resolve-config nil)
-            r   (llm/make-router (:providers cfg))]
-        (reset! router-atom r)
-        r)))
-
-(defn reset-router!
-  "Reset the shared router (e.g. after config change)."
-  []
-  (reset! router-atom nil))
-
-;;; ── Convenience LLM calls ──────────────────────────────────────────────
-
-(defn ask!
-  "Structured LLM call via shared router. Convenience wrapper around svar ask!.
-   opts: :messages, :spec, :prefer (:cost/:speed/:intelligence), :capabilities"
-  [opts]
-  (llm/ask! (assoc opts :router (get-router))))
+  ([] (resolve-config nil))
+  ([explicit-config]
+   (or explicit-config
+     (load-config)
+     (throw (ex-info (str "No provider config. Create ~/.vis/config.edn "
+                       "(see SAMPLE_CONFIG.edn) or set BLOCKETHER_OPENAI_API_KEY env var.")
+              {})))))

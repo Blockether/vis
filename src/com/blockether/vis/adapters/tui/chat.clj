@@ -6,7 +6,7 @@
    anything the web server has created. Switching between existing
    conversations is not wired into the TUI today; we just open a new one
    each boot."
-  (:require [com.blockether.vis.rlm.conversations.core :as conversations]
+  (:require [com.blockether.vis.loop.conversations.core :as conversations]
             [taoensso.telemere :as t]))
 
 (defn user-msg

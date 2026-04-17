@@ -9,10 +9,10 @@
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.rlm :as rlm]
-   [com.blockether.vis.rlm.query :as rlm-query]
-   [com.blockether.vis.rlm.db :as rlm-db]
-   [com.blockether.vis.rlm.trajectory :as trajectory]
+   [com.blockether.vis.core :as rlm]
+   [com.blockether.vis.loop.query.core :as rlm-query]
+   [com.blockether.vis.loop.storage.db :as rlm-db]
+   [com.blockether.vis.loop.storage.trajectory :as trajectory]
    [taoensso.trove :as trove])
   (:import
    (java.nio.file Files)
@@ -81,7 +81,7 @@
                                    (-> q
                                      (dissoc :query/conversation)
                                      (assoc :conversation conv
-                                            :iterations (mapv #(dissoc % :iteration/query) iters)))))
+                                       :iterations (mapv #(dissoc % :iteration/query) iters)))))
                            queries)]
             (spit edn-path (pr-str enriched))
             edn-path))))))
@@ -121,7 +121,7 @@
     (llm/reset-provider! router (:id p)))
   (let [edn-path (trajectory-edn-path bench model run-ts task-id)
         db-path  (trajectory-temp-db-path task-id)
-         env      (rlm/create-env router {:db db-path})
+        env      (rlm/create-env router {:db db-path})
         start    (System/currentTimeMillis)]
     (try
       (let [result   (rlm-query/query-env! env [(llm/user (prompt-fn task))]
@@ -174,8 +174,8 @@
         duration  (- (System/currentTimeMillis) start)]
     (if (not finished?)
       (do (.destroyForcibly proc)
-          (future-cancel output-future)
-          {:output nil :duration-ms duration :timed-out? true})
+        (future-cancel output-future)
+        {:output nil :duration-ms duration :timed-out? true})
       {:output      (deref output-future 5000 "")
        :duration-ms duration
        :timed-out?  false})))
@@ -330,22 +330,22 @@
                       (fn [[idx item]]
                         (future
                           (let [eval-result (try
-                                             (eval-fn item)
-                                             (catch Throwable e
-                                               (trove/log! {:level :warn :id ::bench-error
-                                                            :data {:idx idx
-                                                                   :item (select-keys item [:id :title :task_id :instance_id])
-                                                                   :error (ex-message e)}
-                                                            :msg "Evaluation failed"})
-                                               {:error (ex-message e) :correct? false :duration-ms 0}))]
+                                              (eval-fn item)
+                                              (catch Throwable e
+                                                (trove/log! {:level :warn :id ::bench-error
+                                                             :data {:idx idx
+                                                                    :item (select-keys item [:id :title :task_id :instance_id])
+                                                                    :error (ex-message e)}
+                                                             :msg "Evaluation failed"})
+                                                {:error (ex-message e) :correct? false :duration-ms 0}))]
                             [(inc idx) item eval-result])))
                       batch)]
         (doseq [[f [idx orig-item]] (map vector futures batch)]
           (let [[q-num item eval-result] (or (deref f problem-timeout-ms nil)
-                                             (do (trove/log! {:level :warn :id ::task-timeout
-                                                              :data {:idx idx :item (select-keys orig-item [:id :title :task_id :instance_id])}
-                                                              :msg "Task timed out (10 min)"})
-                                                 [(inc idx) orig-item {:error "Task timeout (10 min)" :correct? false :duration-ms 0}]))
+                                           (do (trove/log! {:level :warn :id ::task-timeout
+                                                            :data {:idx idx :item (select-keys orig-item [:id :title :task_id :instance_id])}
+                                                            :msg "Task timed out (10 min)"})
+                                             [(inc idx) orig-item {:error "Task timeout (10 min)" :correct? false :duration-ms 0}]))
                 correct?   (boolean (:correct? eval-result))
                 error?     (boolean (:error eval-result))
                 result-rec (result-fn q-num item eval-result)]

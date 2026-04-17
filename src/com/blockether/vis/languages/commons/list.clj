@@ -2,6 +2,7 @@
   "Base LIST tool for RLM agents.
    Lists directory contents with metadata (type, size, permissions, modified).
    Supports glob filtering, depth control, and configurable limits."
+  (:require [com.blockether.vis.loop.sci.tool :as sci-tool])
   (:import [java.io File]
            [java.nio.file Files Path FileSystems LinkOption]
            [java.nio.file.attribute PosixFilePermissions]
@@ -31,13 +32,13 @@
   (let [children (try (.listFiles f) (catch SecurityException _ nil))]
     (if children
       (reduce + 0 (map (fn [^File child]
-                          (try
-                            (if (and (.isDirectory child)
-                                     (not (Files/isSymbolicLink (.toPath child))))
-                              (dir-size child)
-                              (.length child))
-                            (catch Exception _ 0)))
-                       children))
+                         (try
+                           (if (and (.isDirectory child)
+                                 (not (Files/isSymbolicLink (.toPath child))))
+                             (dir-size child)
+                             (.length child))
+                           (catch Exception _ 0)))
+                    children))
       0)))
 
 (defn- file-entry
@@ -50,8 +51,8 @@
         modified (try (str (Instant/ofEpochMilli (.lastModified f))) (catch Exception _ nil))]
     (cond-> {:name (.getName f)
              :type (cond symlink? "symlink"
-                         dir?     "directory"
-                         :else    "file")
+                     dir?     "directory"
+                     :else    "file")
              :size (if dir? (dir-size f) (.length f))}
       perms    (assoc :permissions perms)
       modified (assoc :modified modified))))
@@ -96,10 +97,10 @@
                      (throw (ex-info (str "Path not found: " path) {:path path :error :not-found})))
          _         (when-not (.isDirectory dir)
                      (throw (ex-info (str "Not a directory (is a file): " path ". Use read-file instead.")
-                                     {:path path :error :not-directory})))
+                              {:path path :error :not-directory})))
          ;; Auto-recurse deep when globstar is used without explicit depth
          depth     (max 0 (or depth
-                              (if (and glob (.contains ^String glob "**")) 20 1)))
+                            (if (and glob (.contains ^String glob "**")) 20 1)))
          max-entries (or limit default-max-entries)]
 
      (letfn [(collect [^File d current-depth]
@@ -116,12 +117,12 @@
                                                  (assoc entry :name (str rel)))
                                                entry)]
                                    (if (and (.isDirectory f)
-                                            (not (Files/isSymbolicLink (.toPath f)))
-                                            (< current-depth depth))
+                                         (not (Files/isSymbolicLink (.toPath f)))
+                                         (< current-depth depth))
                                      (cons entry (collect f (inc current-depth)))
                                      [entry]))
                                  (catch Exception _ nil)))
-                             children)))))]
+                       children)))))]
 
        (let [all-entries (collect dir 1)
              filtered    (if glob
@@ -135,19 +136,51 @@
           :total     total
           :truncated truncated?})))))
 
+(defn- validate-list-input
+  [{:keys [args]}]
+  (let [[path _glob depth limit & extra] args]
+    (when (seq extra)
+      (throw (ex-info "list-dir expects 1-4 positional args: (list-dir path [glob-or-opts] [depth] [limit])"
+               {:type :tool/invalid-input :tool 'list-dir :args args})))
+    (when-not (string? path)
+      (throw (ex-info "list-dir path must be a string"
+               {:type :tool/invalid-input :tool 'list-dir :got path :got-type (type path)})))
+    (when (and (some? depth) (not (integer? depth)))
+      (throw (ex-info "list-dir depth must be an integer when provided"
+               {:type :tool/invalid-input :tool 'list-dir :depth depth :got-type (type depth)})))
+    (when (and (some? limit) (not (integer? limit)))
+      (throw (ex-info "list-dir limit must be an integer when provided"
+               {:type :tool/invalid-input :tool 'list-dir :limit limit :got-type (type limit)})))
+    {:args (vec args)}))
+
+(defn- validate-list-output
+  [{:keys [result]}]
+  (when-not (map? result)
+    (throw (ex-info "list-dir must return a map"
+             {:type :tool/invalid-output :tool 'list-dir :got-type (type result)})))
+  (when-not (string? (:path result))
+    (throw (ex-info "list-dir output :path must be a string"
+             {:type :tool/invalid-output :tool 'list-dir :result result})))
+  (when-not (vector? (:entries result))
+    (throw (ex-info "list-dir output :entries must be a vector"
+             {:type :tool/invalid-output :tool 'list-dir :result result})))
+  (when-not (integer? (:total result))
+    (throw (ex-info "list-dir output :total must be an int"
+             {:type :tool/invalid-output :tool 'list-dir :result result})))
+  (when-not (boolean? (:truncated result))
+    (throw (ex-info "list-dir output :truncated must be a boolean"
+             {:type :tool/invalid-output :tool 'list-dir :result result})))
+  {:result result})
+
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
 (def tool-def
-  {:sym 'list-dir
-   :fn  list-dir
-   :doc "List directory contents with type, size, permissions, and modified timestamp. Supports glob filtering (including **/*.clj globstar), recursive depth, and configurable result limits."
-   :params [{:name "path" :type :string :required true
-             :description "Directory path to list"}
-            {:name "glob" :type :string :required false
-             :description "Glob pattern to filter entries (e.g. \"*.clj\", \"**/*.clj\", \"*.{clj,edn}\"). Globstar ** auto-sets depth=20."}
-            {:name "depth" :type :int :required false
-             :description "Max recursion depth (default 1 = flat listing, 0 = dir info only with no entries)"}
-            {:name "limit" :type :int :required false
-             :description "Max entries to return (default 1000). Use to control output size for large directories."}]
-   :returns {:type :map
-             :description "{:path str :entries [{:name str :type str :size int :permissions str :modified str}] :total int :truncated bool}"}})
+  (sci-tool/make-tool-def
+    'list-dir
+    list-dir
+    {:doc (:doc (meta #'list-dir))
+     :arglists (:arglists (meta #'list-dir))
+     :validate-input validate-list-input
+     :validate-output validate-list-output
+     :examples ["(list-dir \"src\")"
+                "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"]}))

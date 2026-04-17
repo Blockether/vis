@@ -88,7 +88,6 @@
       ;; Vec of [key action] pairs — render keys in italic
       (and (vector? hint) (seq hint) (vector? (first hint)))
       (let [labels    (mapv (fn [[k a]] (str k " " a)) hint)
-            positions (p/space-between labels text-w)
             ;; Walk through the laid-out string to find each key's position
             ;; Simpler: compute column offsets from space-between math
             n         (count labels)

@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.adapters.tui.chat :as chat]
             [com.blockether.vis.config :as config]
-            [com.blockether.vis.logging :as logging]
             [com.blockether.vis.adapters.tui.dialogs :as dlg]
             [com.blockether.vis.adapters.tui.input :as input]
             [com.blockether.vis.adapters.tui.provider :as provider]
@@ -51,7 +50,7 @@
   (when-let [c (config/load-config)]
     (state/dispatch [:set-config c]))
 
-  (let [terminal (UnixTerminal. @logging/tty-in @logging/tty-out (Charset/defaultCharset))
+  (let [terminal (UnixTerminal. @config/tty-in @config/tty-out (Charset/defaultCharset))
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)

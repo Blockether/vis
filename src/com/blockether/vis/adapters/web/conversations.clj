@@ -3,10 +3,10 @@
 
    Owns sidebar/page projections, message cache hydration from RLM DB,
    title generation, and context payload shaping for the web adapter."
-  (:require [com.blockether.vis.config :as config]
-            [com.blockether.vis.rlm.conversations.core :as conversations]
-            [com.blockether.vis.rlm :as rlm]
-            [com.blockether.vis.rlm.persistence.db :as rlm-db]
+  (:require [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.core :as core]
+            [com.blockether.vis.loop.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.storage.db :as rlm-db]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
@@ -20,7 +20,7 @@
   "Generate a short title (<= 5 words) from the first user message."
   [first-message]
   (try
-    (let [result (config/ask!
+    (let [result (rlm-routing/ask!
                    {:messages [{:role "system" :content "Generate a short title (max 5 words) for this chat. Reply with ONLY the title."}
                                {:role "user" :content first-message}]
                     :spec {:title {:type :string :description "Short chat title, max 5 words, no quotes or markup"}}
@@ -39,7 +39,7 @@
   [env]
   (let [cwd (System/getProperty "user.dir")]
     (try
-      (rlm/ingest-git! env {:repo-path cwd :n 500})
+      (core/ingest-git! env {:repo-path cwd :n 500})
       (println (str "[web] ingested git history from " cwd))
       (catch Exception e
         (println (str "[web] git ingestion skipped (" cwd "): " (ex-message e)))
@@ -93,7 +93,7 @@
         trace       (vec (map-indexed iteration-entity->trace-entry iterations))
         final-iter  (last (filter :answer iterations))
         answer      (or (some-> final-iter   :answer read-answer)
-                        (some-> query-entity :answer read-answer))
+                      (some-> query-entity :answer read-answer))
         tokens      (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} query-entity]
                       (when (or input-tokens output-tokens reasoning-tokens cached-tokens)
                         (cond-> {}
