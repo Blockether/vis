@@ -3,8 +3,7 @@
 ;; Usage: clojure -M scripts/test_ocr_ask.clj
 
 (require '[com.blockether.svar.core :as svar]
-         '[com.blockether.svar.internal.rlm.pageindex.vision :as vision]
-         '[com.blockether.svar.internal.rlm.pageindex.pdf :as pdf])
+         '[com.blockether.vis.loop.knowledge.pageindex.vision :as vision])
 
 (def api-key  (System/getenv "BLOCKETHER_OPENAI_API_KEY"))
 (def base-url (System/getenv "BLOCKETHER_OPENAI_BASE_URL"))
