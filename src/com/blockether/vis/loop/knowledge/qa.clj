@@ -8,7 +8,7 @@
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.shared :as vis-shared]
+   [com.blockether.vis.loop.runtime.shared :as rt-shared]
    [com.blockether.vis.loop.storage.db :as rlm-db]
    [com.blockether.vis.loop.storage.schema :as schema]
    [com.blockether.svar.internal.util :as util]
@@ -238,7 +238,7 @@
                  (str "- " (or (:title doc) (:name doc))
                    " (ID: " (:id doc) ")"
                    (when-let [abstract (:abstract doc)]
-                     (str "\n  Abstract: " (vis-shared/truncate abstract 300)))))
+                     (str "\n  Abstract: " (rt-shared/truncate abstract 300)))))
             documents))
         ;; Format TOC — indented by level for structure
         toc-section
@@ -252,7 +252,7 @@
                    (str indent "- [" (:id e) " p" (:target-page e) "] "
                      (:title e)
                      (when-let [desc (:description e)]
-                       (str " — " (vis-shared/truncate desc 100))))))
+                       (str " — " (rt-shared/truncate desc 100))))))
             toc-entries))
         ;; Format page content summaries — grouped by document
         content-section
@@ -408,7 +408,7 @@ Return the generated Q&A pairs as the result array.")))
               (str "QUESTION " i " (index " i "):\n"
                 "  Q: " (:question q) "\n"
                 "  A: " (:answer q) "\n"
-                "  Evidence: " (vis-shared/truncate (or (:evidence-span q) "") 200) "\n"
+                "  Evidence: " (rt-shared/truncate (or (:evidence-span q) "") 200) "\n"
                 "  Source: " (:source-document q) " page " (:source-page q)))
             questions))]
     (str "You are a quality auditor verifying question-answer pairs against source documents.
@@ -541,7 +541,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                 (str "QUESTION " i ":\n"
                   "  Q: " (:question q) "\n"
                   "  A: " (:answer q) "\n"
-                  "  Evidence: " (vis-shared/truncate (or (:evidence-span q) "") 200) "\n"
+                  "  Evidence: " (rt-shared/truncate (or (:evidence-span q) "") 200) "\n"
                   "  Source: " (:source-document q) " page " (:source-page q) "\n"
                   "  Issue: " (or (:revision-note q) "Minor quality issue")))
               questions))
@@ -573,7 +573,7 @@ Each verification must include: question-index, grounded, non-trivial, self-cont
                       (when-not (= :pass verdict)
                         (trove/log! {:level :debug :id ::qa-filter
                                      :data {:index i :verdict verdict :note (:revision-note v)
-                                            :question (vis-shared/truncate (:question q) 100)}
+                                            :question (rt-shared/truncate (:question q) 100)}
                                      :msg "Question failed verification"}))
                       {:question q :verification v
                        :passed? (= :pass verdict)

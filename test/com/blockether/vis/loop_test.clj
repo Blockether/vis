@@ -7,9 +7,9 @@
    [com.blockether.vis.core :as sut]
    [com.blockether.vis.loop.storage.schema :as schema]
    [com.blockether.vis.loop.storage.db :as rlm-db]
-   [com.blockether.vis.loop.sci.shared :as rlm-tools]
-   [com.blockether.vis.loop.sci.restore :as rlm-tools-restore]
-   [com.blockether.vis.loop.query.routing :as rlm-routing]
+   [com.blockether.vis.loop.runtime.shared :as rlm-tools]
+   [com.blockether.vis.loop.runtime.tools.core :as rlm-tools-core]
+   [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
    [com.blockether.vis.loop.core :as rlm-core]
    [com.blockether.svar.core :as svar])
   (:import
@@ -281,7 +281,7 @@
                                                       :executions [{:code "(def latest 42)" :result "ignored"}]
                                                       :vars [{:name "latest" :value 42 :code "(def latest 42)"}]
                                                       :thinking "" :duration-ms 0})
-                  restore-var-fn (rlm-tools-restore/make-restore-var-fn (:db-info env) conv-ref)]
+                  restore-var-fn (rlm-tools-core/make-restore-var-fn (:db-info env) conv-ref)]
               (expect (= [1 2 3] (restore-var-fn 'anomalies)))
               (expect (throws? clojure.lang.ExceptionInfo
                         #(restore-var-fn 'anomalies {:max-scan-queries 1}))))
@@ -1284,45 +1284,6 @@
                                      (let [result (#'rlm-core/execute-code env "(search-documents \"x\")")]
                                        (expect (some? (:error result)))))))))
 
-(defdescribe inline-cite-test
-  (it "CITE accumulates claims in claims-atom"
-    (let [claims-atom (atom [])
-          cite-fn (#'rlm-tools/make-cite-fn claims-atom)]
-      (cite-fn "Test claim" "doc-1" 0 "section-1" "exact quote")
-      (expect (= 1 (count @claims-atom)))
-      (expect (= "Test claim" (:text (first @claims-atom))))
-      (expect (= "doc-1" (:document-id (first @claims-atom))))))
-
-  (it "CITE return does NOT trigger check-result-for-final"
-    (let [claims-atom (atom [])
-          cite-fn (#'rlm-tools/make-cite-fn claims-atom)
-          result (cite-fn "claim" "doc" 0 "s" "q")]
-      (expect (nil? (:rlm/final result)))
-      (expect (true? (:cited result)))))
-
-  (it "CITE coerces types defensively"
-    (let [claims-atom (atom [])
-          cite-fn (#'rlm-tools/make-cite-fn claims-atom)]
-      (cite-fn "claim" "doc" "0" "s" "q" "0.9")
-      (let [claim (first @claims-atom)]
-        (expect (= 0 (:page claim)))
-        (expect (float? (:confidence claim))))))
-
-  (it "CITE-UNVERIFIED sets low confidence"
-    (let [claims-atom (atom [])
-          cite-fn (#'rlm-tools/make-cite-unverified-fn claims-atom)]
-      (cite-fn "unverified claim")
-      (let [claim (first @claims-atom)]
-        (expect (= 0.5 (:confidence claim)))
-        (expect (false? (:verified? claim))))))
-
-  (it "list-claims returns accumulated claims"
-    (let [claims-atom (atom [])
-          cite-fn (#'rlm-tools/make-cite-fn claims-atom)
-          list-fn (#'rlm-tools/make-list-claims-fn claims-atom)]
-      (cite-fn "c1" "d1" 0 "s1" "q1")
-      (cite-fn "c2" "d2" 1 "s2" "q2")
-      (expect (= 2 (count (list-fn)))))))
 
 ;; =============================================================================
 ;; Knowledge Engine Integration Tests
@@ -1372,21 +1333,6 @@
       (expect (= 1 (count result)))
       (expect (contains? (first result) :pages-stored))
       (expect (contains? (first result) :nodes-stored))))
-
-  (it "CITE functions compose in full lifecycle"
-    (let [claims-atom (atom [])
-          cite-fn (#'rlm-tools/make-cite-fn claims-atom)
-          cite-unverified-fn (#'rlm-tools/make-cite-unverified-fn claims-atom)
-          list-fn (#'rlm-tools/make-list-claims-fn claims-atom)]
-      ;; Accumulate mixed claim types
-      (cite-fn "Verified claim" "doc-1" 0 "s1" "exact quote" 0.95)
-      (cite-unverified-fn "Unverified claim")
-      (expect (= 2 (count (list-fn))))
-      ;; Verified: high confidence
-      (expect (> (:confidence (first @claims-atom)) 0.9))
-      ;; Unverified: low confidence + verified? false
-      (expect (= 0.5 (:confidence (second @claims-atom))))
-      (expect (false? (:verified? (second @claims-atom))))))
 
   (it "search-documents returns empty markdown on empty DB via full env"
     (with-test-env* {} (fn [env]
@@ -1516,39 +1462,6 @@
             ;; Consensus efficiency: trivial query should finish within max-iterations
                                    (expect (<= (:iterations result) 25))))))))
 
-  (describe "CITE verification with real LLM"
-    (it "verifies claims when verify? is true"
-      (when (integration-tests-enabled?)
-        (with-integration-env* (fn [env]
-          ;; Ingest document with extractable facts
-                                 (sut/ingest-to-env! env [(make-test-multi-page-document)])
-                                 (let [result (sut/query-env! env [(llm/user "What was the 2024 revenue and who is the CEO? Cite your sources.")]
-                                                {:verify? true
-                                                 :refine? false
-                                                 :max-iterations 25})]
-                                   (expect (map? result))
-                                   (expect (some? (:answer result)))
-            ;; Should have verified-claims key
-                                   (expect (contains? result :verified-claims))
-                                   (expect (vector? (:verified-claims result)))
-            ;; Consensus efficiency: medium query with citations should finish within max-iterations
-                                   (expect (<= (:iterations result) 25)))))))
-
-    (it "returns empty verified-claims when no CITE called"
-      (when (integration-tests-enabled?)
-        (with-integration-env* (fn [env]
-          ;; Ingest a simple document, then ask a trivial question that doesn't need citations
-                                 (sut/ingest-to-env! env [(make-test-single-page-document)])
-                                 (let [result (sut/query-env! env [(llm/user "What is the title of the document?")]
-                                                {:verify? true
-                                                 :refine? false
-                                                 :max-iterations 10})]
-            ;; Should have verified-claims key (even if empty)
-                                   (expect (contains? result :verified-claims))
-                                   (expect (vector? (:verified-claims result)))
-            ;; Consensus efficiency: trivial query with verify should finish within max-iterations
-                                   (expect (<= (:iterations result) 10))))))))
-
   (describe "full knowledge engine pipeline"
     (it "ingest then query with all flags"
       (when (integration-tests-enabled?)
@@ -1560,8 +1473,7 @@
             ;; Step 2: Query with all knowledge engine flags enabled
                                    (let [query-result (sut/query-env! env
                                                         [(llm/user "Who is the CEO and what market expansion happened in 2024?")]
-                                                        {:verify? true
-                                                         :refine? false
+                                                        {:refine? false
                                                          :max-iterations 25})]
               ;; Should have answer unless the live model exhausted its budget
                                      (if (:status query-result)
@@ -1570,8 +1482,6 @@
                                          (expect (some? (:answer query-result)))
                                           ;; Live models may phrase or summarize differently; require non-empty answer.
                                          (expect (pos? (count (str (:answer query-result)))))))
-              ;; Should have verified-claims structure
-                                     (expect (contains? query-result :verified-claims))
               ;; Consensus efficiency: complex query with all flags should finish within max-iterations
                                      (expect (<= (:iterations query-result) 25))))))))
 
@@ -1741,11 +1651,11 @@
                                         :trace []
                                         :iterations 1})]
           ;; First run: should execute generation and create manifest.
-          (sut/query-env-qa! env {:count 2 :batch-size 5 :verify? false})
+          (sut/qa-generate! env {:count 2 :batch-size 5 :verify? false})
           (expect (= 1 @query-calls))
 
           ;; Second run with same opts: should reuse cached batch and skip query-env!.
-          (sut/query-env-qa! env {:count 2 :batch-size 5 :verify? false})
+          (sut/qa-generate! env {:count 2 :batch-size 5 :verify? false})
           (expect (= 1 @query-calls))
 
           ;; Mutate corpus via ingestion path: bumps revision and invalidates snapshot cache.
@@ -1753,11 +1663,11 @@
                                      :name "single-page-extra")])
 
           ;; Third run with same opts after corpus change: should reset + rerun.
-          (sut/query-env-qa! env {:count 2 :batch-size 5 :verify? false})
+          (sut/qa-generate! env {:count 2 :batch-size 5 :verify? false})
           (expect (= 2 @query-calls))
 
           ;; Fourth run with changed opts: fingerprint mismatch should reset + rerun.
-          (sut/query-env-qa! env {:count 3 :batch-size 5 :verify? false})
+          (sut/qa-generate! env {:count 3 :batch-size 5 :verify? false})
           (expect (= 3 @query-calls)))
         (finally
           (sut/dispose-env! env)
@@ -1950,7 +1860,7 @@
                             :duplicates-removed 0 :final-count 1
                             :by-difficulty {:understand 1} :by-category {:factual 1}}}
             path (str dir "/test-output")
-            saved (sut/save-qa! result path {:formats #{:edn}})]
+            saved (sut/qa-save-results! result path {:formats #{:edn}})]
         (expect (= 1 (count (:files saved))))
         (expect (str/ends-with? (first (:files saved)) ".edn"))
         (let [data (read-string (slurp (first (:files saved))))]
@@ -1969,7 +1879,7 @@
                             :duplicates-removed 0 :final-count 1
                             :by-difficulty {:analyze 1} :by-category {:inferential 1}}}
             path (str dir "/test-output")
-            saved (sut/save-qa! result path {:formats #{:markdown}})]
+            saved (sut/qa-save-results! result path {:formats #{:markdown}})]
         (expect (= 1 (count (:files saved))))
         (expect (str/ends-with? (first (:files saved)) ".md"))
         (let [content (slurp (first (:files saved)))]
@@ -1985,5 +1895,5 @@
                             :duplicates-removed 0 :final-count 0
                             :by-difficulty {} :by-category {}}}
             path (str dir "/test-output")
-            saved (sut/save-qa! result path)]
+            saved (sut/qa-save-results! result path)]
         (expect (= 2 (count (:files saved))))))))

@@ -14,7 +14,7 @@
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
-   [com.blockether.vis.shared :as vis-shared]
+   [com.blockether.vis.loop.runtime.shared :as rt-shared]
    [com.blockether.vis.loop.storage.sqlite :as sq]
    [edamame.core :as edamame]))
 
@@ -111,7 +111,7 @@
             (let [qref [:id (:id query)]
                   iterations (db-list-query-iterations db-info qref)
                   key-vars (->> iterations (mapcat iteration->defined-symbols) distinct vec)
-                  answer-preview (vis-shared/truncate
+                  answer-preview (rt-shared/truncate
                                    (or (some-> (:answer query) (read-edn-safe nil) str)
                                      (:answer query)
                                      (some-> iterations last :answer)
@@ -256,7 +256,6 @@
 ;; Claims (citation verification)
 ;; -----------------------------------------------------------------------------
 
-(def db-store-claim!       sq/db-store-claim!)
 (def db-cited-page-ids     sq/db-cited-page-ids)
 
 ;; -----------------------------------------------------------------------------

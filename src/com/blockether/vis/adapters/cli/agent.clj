@@ -151,7 +151,6 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
    - :on-chunk       — Streaming callback fn. Receives {:iteration :thinking :code
                        :final :done?} on each partial chunk and once with :done? true
                        when the iteration produces a final answer.
-   - :verify?        — Enable claim verification (default false)
    - :debug?         — Enable svar debug logging (default false)
    - :config         — Provider config override (skips ~/.vis/config.edn)
 
@@ -162,7 +161,7 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
    `conversations/send!` against its id. A short title is derived from the first
    100 characters of the prompt for browsing."
   [agent-def prompt & [{:keys [system-prompt spec model max-iterations on-chunk
-                               verify? debug? config]
+                               debug? config]
                         :as _opts}]]
   (let [_cfg      (config/resolve-config config)
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
@@ -185,7 +184,6 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
                     spec     (assoc :spec spec)
                     mdl      (assoc :model mdl)
                     on-chunk (assoc :hooks {:on-chunk on-chunk})
-                    verify?  (assoc :verify? true)
                     debug?   (assoc :debug? true))
         messages  (if (string? prompt) [(llm/user prompt)] prompt)]
     (try

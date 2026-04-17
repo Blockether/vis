@@ -3,7 +3,7 @@
   (:require [com.blockether.svar.internal.llm :as llm]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.core :as core]
-            [com.blockether.vis.loop.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.loop.storage.db :as rlm-db]
             [com.blockether.vis.loop.conversations.persistence :as persistence]
             [com.blockether.vis.loop.conversations.shared :as shared])

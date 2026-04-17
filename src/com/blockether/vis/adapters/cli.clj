@@ -6,7 +6,7 @@
             [com.blockether.vis.config :as config]
             [com.blockether.vis.adapters.telegram.bot :as telegram]
             [com.blockether.vis.core :as core]
-            [com.blockether.vis.loop.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.adapters.tui.screen :as screen]
             [taoensso.trove :as trove]))
 
@@ -29,7 +29,6 @@
      --edn                output EDN
      --trace              show full execution trace
      --debug              enable svar debug logging
-     --verify             enable claim verification
      --model MODEL        override LLM model
      --max-iterations N   override iteration budget
      --name NAME          agent name (affects storage path)
@@ -50,7 +49,6 @@
           "--trace"          (recur more (assoc opts :trace? true) prompt-parts)
           ("--help" "-h")    (assoc opts :help? true :prompt "")
           "--debug"          (recur more (assoc opts :debug? true) prompt-parts)
-          "--verify"         (recur more (assoc opts :verify? true) prompt-parts)
           "--model"          (recur (next more) (assoc opts :model (first more)) prompt-parts)
           "--max-iterations" (recur (next more)
                                (assoc opts
@@ -74,6 +72,7 @@
   (println "  vis run \"prompt\"     Run a one-shot agent query")
   (println "  vis index FILE       Build/update a .pageindex directory")
   (println "  vis qa INDEX_PATH    Generate QA pairs from an indexed document")
+  (println "  vis web [PORT]       Start web server (default port 3000)")
   (println "  vis telegram         Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)")
   (println "  vis help             Show this help")
   (println)
@@ -87,7 +86,6 @@
   (stdout! "  --edn               Output result as EDN")
   (stdout! "  --trace             Show full execution trace")
   (stdout! "  --debug             Enable debug logging")
-  (stdout! "  --verify            Enable claim verification")
   (stdout! "  --model MODEL       Override LLM model")
   (stdout! "  --max-iterations N  Override iteration budget (default 50, min 1)")
   (stdout! "  --name NAME         Agent name (affects storage path)")
@@ -116,8 +114,6 @@
   (stdout! "Flags:")
   (stdout! "  --count N            Target number of Q&A pairs (default 10)")
   (stdout! "  --model MODEL        Override generation model")
-  (stdout! "  --verify             Enable verification (default)")
-  (stdout! "  --no-verify          Disable verification")
   (stdout! "  --output PATH        Save Q&A to PATH.edn and PATH.md")
   (stdout! "  --json               Output full result as JSON")
   (stdout! "  --edn                Output full result as EDN")
@@ -167,8 +163,6 @@
           ("--help" "-h") (assoc opts :help? true)
           "--json"        (recur more (assoc opts :json? true))
           "--edn"         (recur more (assoc opts :edn? true))
-          "--verify"      (recur more (assoc opts :verify? true))
-          "--no-verify"   (recur more (assoc opts :verify? false))
           "--count"       (recur (next more) (assoc opts :count (parse-long (first more))
                                                :count-raw (first more)
                                                :count-provided? true))
@@ -228,7 +222,7 @@
         (shutdown-agents)
         (System/exit 1)))
     (let [router (rlm-routing/get-router)
-          result (core/index! file-path
+          result (core/pageindex-build-and-write! file-path
                    (cond-> {:router router}
                      output (assoc :output output)
                      force? (assoc :force? true)
@@ -243,7 +237,7 @@
 
 (defn- cli-qa!
   [args]
-  (let [{:keys [help? index-path count verify? model output json? edn?]
+  (let [{:keys [help? index-path count model output json? edn?]
          :as opts} (parse-qa-args args)]
     (when help?
       (print-qa-usage!)
@@ -258,14 +252,13 @@
     (let [router (rlm-routing/get-router)
           env    (core/create-env router {:db config/db-path})]
       (try
-        (let [doc      (core/load-index index-path)
+        (let [doc      (core/pageindex-load index-path)
               _        (core/ingest-to-env! env [doc])
               qa-opts  (cond-> {}
                          count         (assoc :count count)
-                         (some? verify?) (assoc :verify? verify?)
                          model         (assoc :model model))
-              result   (core/query-env-qa! env qa-opts)
-              saved    (when output (core/save-qa! result output))
+              result   (core/qa-generate! env qa-opts)
+              saved    (when output (core/qa-save-results! result output))
               payload  (cond-> result
                          (seq (:files saved)) (assoc :saved-files (:files saved)))]
           (cond
@@ -382,6 +375,12 @@
       ;; Help
       (#{"help" "--help" "-h"} cmd)
       (print-help!)
+
+      ;; Web server
+      (= cmd "web")
+      (do (config/init-cli!)
+        (require 'com.blockether.vis.adapters.web.app)
+        (apply (resolve 'com.blockether.vis.adapters.web.app/-main) (rest args)))
 
       ;; Telegram bot — stdout stays connected for startup logs
       (= cmd "telegram")

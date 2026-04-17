@@ -7,9 +7,9 @@
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.loop.conversations.core`."
   (:require [com.blockether.vis.loop.conversations.core :as conversations]
-            [com.blockether.vis.loop.query.routing :as routing]
+            [com.blockether.vis.loop.runtime.query.routing :as routing]
             [com.blockether.vis.adapters.telegram.api :as tg]
-            [com.blockether.vis.shared :as shared]))
+))
 
 (defonce ^:private running? (atom false))
 (defonce ^:private poll-thread (atom nil))
@@ -107,8 +107,10 @@
     (println "Telegram bot stopped.")))
 
 (defn -main [& _]
-  (shared/add-shutdown-hook! (fn []
-                               (println "Shutting down Telegram bot…")
-                               (stop!)))
+  (.addShutdownHook (Runtime/getRuntime)
+    (Thread. ^Runnable (fn []
+                         (println "Shutting down Telegram bot…")
+                         (stop!))
+      "vis-telegram-shutdown"))
   (start!)
   @(promise))

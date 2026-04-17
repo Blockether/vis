@@ -21,7 +21,7 @@
    [babashka.fs :as fs]
    [clojure.edn :as edn]
    [clojure.string :as str]
-   [com.blockether.vis.shared :as vis-shared]
+   [com.blockether.vis.loop.runtime.shared :as rt-shared]
    [com.blockether.svar.internal.util :as util]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
@@ -2050,6 +2050,6 @@
       (doseq [e entities]
         (.append sb (str "- **" (or (:name e) "") "** ("
                       (some-> (:type e) name) ") "
-                      (vis-shared/truncate (or (:description e) "") 80) "\n")))
+                      (rt-shared/truncate (or (:description e) "") 80) "\n")))
       (.append sb "\n"))
     (str sb)))

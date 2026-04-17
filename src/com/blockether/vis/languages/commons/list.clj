@@ -2,7 +2,7 @@
   "Base LIST tool for RLM agents.
    Lists directory contents with metadata (type, size, permissions, modified).
    Supports glob filtering, depth control, and configurable limits."
-  (:require [com.blockether.vis.loop.sci.tool :as sci-tool])
+  (:require [com.blockether.vis.loop.tool :as sci-tool])
   (:import [java.io File]
            [java.nio.file Files Path FileSystems LinkOption]
            [java.nio.file.attribute PosixFilePermissions]

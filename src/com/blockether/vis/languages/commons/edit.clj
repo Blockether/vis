@@ -3,7 +3,7 @@
    Applies OpenAI-style multi-file patch envelopes."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.loop.sci.tool :as sci-tool])
+            [com.blockether.vis.loop.tool :as sci-tool])
   (:import [com.github.difflib DiffUtils UnifiedDiffUtils]))
 
 ;;; ── Safety ─────────────────────────────────────────────────────────────

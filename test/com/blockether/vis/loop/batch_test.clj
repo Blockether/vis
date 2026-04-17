@@ -11,7 +11,7 @@
    - Batch never throws (including non-Exception Throwable)"
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
-   [com.blockether.vis.loop.query.core :as query]
+   [com.blockether.vis.loop.runtime.query.core :as query]
    [com.blockether.vis.loop.storage.schema :as schema])
   (:import
    [java.util.concurrent CountDownLatch Semaphore]))
