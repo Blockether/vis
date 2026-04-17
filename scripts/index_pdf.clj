@@ -27,14 +27,14 @@
 ;;   # OCR (two-pass, local OCR + remote text LLM — much faster):
 ;;   clojure -M scripts/index_pdf.clj --strategy ocr --ocr-model glm-ocr --limit 10
 ;;
-;; Indexes a PDF via vis's PageIndex (rlm/index!) and writes:
+;; Indexes a PDF via vis's PageIndex (vis/pageindex-build-and-write!) and writes:
 ;;   <name>.pageindex/
 ;;     document.edn    — structured pages, nodes, TOC
 ;;     images/         — extracted page PNGs
 ;;     manifest.edn    — per-page progress (for crash-recovery)
 
 (require '[com.blockether.svar.core :as svar]
-  '[com.blockether.vis.rlm :as rlm]
+  '[com.blockether.vis.core :as vis]
   '[clojure.edn :as edn])
 
 (def ^:private boolean-flags #{"--force"})
@@ -125,7 +125,7 @@
                (= :ocr strategy)    (assoc :ocr-model ocr-model)
                pages                (assoc :pages pages)
                force?               (assoc :force? true))
-      result (rlm/index! pdf-path opts)
+      result (vis/pageindex-build-and-write! pdf-path opts)
       doc    (:document result)
       elapsed (/ (- (System/currentTimeMillis) start) 1000.0)]
 
@@ -137,7 +137,8 @@
   (println (format "Time: %.1fs" elapsed))
   (println)
   (println "Load with:")
-  (println (str "  (rlm/load-index \"" (:output-path result) "\")"))
+  (println (str "  (vis/pageindex-load \"" (:output-path result) "\")")
+  )
   (when (pos? (:errors-count result 0))
     (println)
     (println "!! " (:errors-count result) " page(s) errored. Re-run the same command to retry just those pages.")
