@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.sci.runtime
+(ns com.blockether.vis.loop.runtime.core
   "SCI sandbox construction + var-index + hook system. This is the runtime
    wiring layer for rlm.sci:
 
@@ -10,19 +10,16 @@
      etc.) — per-tool :before / :wrap / :after chains plus global
      observer hooks fired by the query loop."
   (:require
-   #_{:clj-kondo/ignore [:unused-namespace]}
-   [clojure.set :as set]
+   [clojure.set]
    [clojure.string :as str]
-   #_{:clj-kondo/ignore [:unused-namespace]}
-   [clojure.walk :as walk]
+   [clojure.walk]
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.vis.loop.storage.db :as db]
-   [com.blockether.vis.shared :as vis-shared]
-   [com.blockether.vis.loop.sci.tool :as sci-tool]
-   [com.blockether.vis.loop.sci.conversation :as sci-conv]
-   [com.blockether.vis.loop.sci.git :as sci-git]
-   [com.blockether.vis.loop.sci.restore :as sci-restore]
-   [com.blockether.vis.loop.sci.shared :as sci-shared
+
+   [com.blockether.vis.loop.tool :as sci-tool]
+   [com.blockether.vis.loop.runtime.tools.core :as sci-tools]
+   [com.blockether.vis.loop.runtime.tools.git :as sci-git]
+   [com.blockether.vis.loop.runtime.shared :as sci-shared
     :refer [EXTRA_BINDINGS ns->sci-map]]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
@@ -55,7 +52,7 @@
    `custom-bindings` - Map of symbol->value for custom bindings (can be nil)"
   [sub-rlm-query-fn db-info conversation-ref custom-bindings]
   (let [restore-var-fn (when (and db-info conversation-ref)
-                         (sci-restore/make-restore-var-fn db-info conversation-ref))
+                         (sci-tools/make-restore-var-fn db-info conversation-ref))
         base-bindings {'sub-rlm-query sub-rlm-query-fn
                        'spec spec/spec
                        'field spec/field
@@ -66,18 +63,18 @@
                        'today-str sci-shared/today-str}
         db-bindings (when db-info
                       (cond->
-                        {'search-documents (sci-shared/make-search-documents-fn db-info)
-                         'fetch-document-content (sci-shared/make-fetch-document-content-fn db-info)
+                        {'search-documents (sci-tools/make-search-documents-fn db-info)
+                         'fetch-document-content (sci-tools/make-fetch-document-content-fn db-info)
                          'search-batch (fn search-batch
-                                         ([queries] (when db-info (sci-shared/format-docs (db/db-search-batch db-info queries))))
-                                         ([queries opts] (when db-info (sci-shared/format-docs (db/db-search-batch db-info queries opts)))))}
+                                         ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
+                                         ([queries opts] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries opts)))))}
                         (and db-info conversation-ref)
-                        (assoc 'conversation-history (sci-conv/make-conversation-history-fn db-info conversation-ref)
-                          'conversation-code (sci-conv/make-conversation-code-fn db-info conversation-ref)
-                          'conversation-results (sci-conv/make-conversation-results-fn db-info conversation-ref))
+                        (assoc 'conversation-history (sci-tools/make-conversation-history-fn db-info conversation-ref)
+                          'conversation-code (sci-tools/make-conversation-code-fn db-info conversation-ref)
+                          'conversation-results (sci-tools/make-conversation-results-fn db-info conversation-ref))
                         restore-var-fn
                         (assoc 'restore-var restore-var-fn
-                          'restore-vars (sci-restore/make-restore-vars-fn restore-var-fn))))
+                          'restore-vars (sci-tools/make-restore-vars-fn restore-var-fn))))
         git-bindings (when db-info
                        (sci-git/make-git-sci-bindings db-info))
         all-bindings (merge EXTRA_BINDINGS base-bindings db-bindings
@@ -349,11 +346,11 @@
                                               (str n " items")))
                                           :else "—")
                                    preview (cond
-                                             persisted? (vis-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
+                                             persisted? (sci-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
                                              (fn? val) "—"
-                                             :else (vis-shared/truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))]
+                                             :else (sci-shared/truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))]
                                {:name (str sym) :type type-label :size size
-                                :doc (if doc (vis-shared/truncate doc 80) "—")
+                                :doc (if doc (sci-shared/truncate doc 80) "—")
                                 :preview preview}))))]
        (when (seq entries)
          (let [visible (vec (take MAX_VAR_INDEX_ROWS entries))

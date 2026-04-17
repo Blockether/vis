@@ -6,7 +6,7 @@
    deadline propagation, and deadline-exceeded detection."
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
-   [com.blockether.vis.loop.query.core :as query])
+   [com.blockether.vis.loop.runtime.query.core :as query])
   (:import
    [java.time Instant]
    [java.util.concurrent CountDownLatch CyclicBarrier TimeUnit]))

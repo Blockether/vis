@@ -1,45 +1,35 @@
 (ns com.blockether.vis.loop.core
   (:require
    [clojure.string :as str]
+   [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.router :as router]
-   [com.blockether.vis.shared :as vis-shared]
+   [com.blockether.svar.internal.util :as util]
+
    [com.blockether.vis.loop.storage.db :as rlm-db
     :refer [create-rlm-conn dispose-rlm-conn!
             db-list-documents
             db-store-pageindex-document!]]
-   [com.blockether.vis.loop.query.routing
+   [com.blockether.vis.loop.runtime.query.routing
     :refer [make-routed-sub-rlm-query-fn resolve-root-model provider-has-reasoning?]]
    [com.blockether.vis.loop.storage.schema :as schema
     :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
             *eval-timeout-ms*
             validate-final bytes->base64 *rlm-ctx*]]
    [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
-   [com.blockether.vis.loop.sci.runtime :refer [create-sci-context build-var-index]]
-   [com.blockether.vis.loop.sci.shared :refer [realize-value]]
-   [com.blockether.vis.loop.sci.form-repair :as form-repair]
+   [com.blockether.vis.loop.knowledge.entity :as rlm-entity]
+   [com.blockether.vis.loop.runtime.prompt :as prompt]
+   [com.blockether.vis.loop.runtime.core :as rlm-tools
+    :refer [create-sci-context build-var-index]]
+   [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
+   [com.blockether.vis.loop.tool :as sci-tool]
+   [com.blockether.vis.loop.runtime.form-repair :as form-repair]
    [edamame.core :as edamame]
-   [com.blockether.svar.internal.spec :as spec]
    [sci.core :as sci]
    [taoensso.trove :as trove]))
 
-(declare build-system-prompt run-iteration format-executions)
+(declare build-system-prompt run-iteration format-executions iteration-loop)
 
-(def ^:private ENTITY_EXTRACTION_SPEC
-  {:entities {:type :array}
-   :relationships {:type :array}})
-
-(def ^:private ENTITY_EXTRACTION_OBJECTIVE
-  "Extract entities and relationships from the provided content.")
-
-(def ^:private CAVEMAN_ITERATION_OUTPUT
-  "Caveman mode for iterations. Drop: articles, filler, hedging, conjunctions.
-Fragments OK. → for causality. One word when enough. Tech terms exact. Code unchanged.
-Pattern: [thing] [action] [reason]. [next step].")
-
-(def ^:private FINAL_ANSWER_OUTPUT
-  "Normal English. Clear, direct sentences. No AI filler (no \"As an AI\", \"I believe\",
-\"In conclusion\"). No hedging. Factual. Technical terms exact.")
 
 (defn rlm-debug!
   "Logs at :info level only when :rlm-debug? is true in *rlm-ctx*.
@@ -83,14 +73,14 @@ Pattern: [thing] [action] [reason]. [next step].")
               :code-result
               (fmt (str "│  ◀ EXEC [" (:idx data) "/" (:total data) "]")
                 (str (:execution-time-ms data) "ms")
-                (when (:error data) (str "ERROR: " (vis-shared/truncate (str/replace (str (:error data)) #"\s+" " ") 80)))
+                (when (:error data) (str "ERROR: " (truncate (str/replace (str (:error data)) #"\s+" " ") 80)))
                 (when (:timeout? data) "TIMEOUT")
                 (when (and (not (:error data)) (not (:timeout? data)))
                   (let [r (:result data)]
                     (cond
                       (nil? r) "result=✓"
                       (fn? r) "result=fn"
-                      :else (str "result=" (vis-shared/truncate (str/replace (pr-str r) #"\s+" " ") 80))))))
+                      :else (str "result=" (truncate (str/replace (pr-str r) #"\s+" " ") 80))))))
 
               :iter-end
               (fmt (str "└─ ITER " iteration)
@@ -208,6 +198,170 @@ Pattern: [thing] [action] [reason]. [next step].")
                    :data {:error (ex-message e)}
                    :msg "Failed to read sandbox locals, returning empty map"})
       {})))
+
+;; =============================================================================
+;; Public env API
+;; =============================================================================
+
+(defn db-info
+  "Current db-info map for env. Nil-safe."
+  [env]
+  (:db-info env))
+
+(defn custom-bindings
+  "Current custom SCI bindings {sym -> value}."
+  [env]
+  (some-> (:state-atom env) deref :custom-bindings))
+
+(defn custom-docs
+  "Current custom doc entries (vec of tool-defs)."
+  [env]
+  (some-> (:state-atom env) deref :custom-docs))
+
+(defn create-env
+  "Creates an RLM environment (component) for document ingestion and querying.
+
+   The environment holds:
+   - In-memory store for documents and conversation history
+   - LLM configuration for queries
+   - SCI sandbox context with custom bindings
+
+   Params:
+   router - Required. Router from llm/make-router, pre-built.
+   opts - Map with :db and optional :conversation.
+   :db accepted forms:
+     nil               - no DB (SCI-only execution)
+     :temp             - ephemeral SQLite DB
+     path string       - persistent SQLite DB at path
+     {:path p}         - persistent SQLite DB at path
+     {:datasource ds}  - caller-owned DataSource (not closed on dispose)
+
+   Returns:
+   RLM environment map (component). Pass to register-env-fn!, register-env-def!, ingest-to-env!, query-env!, dispose-env!."
+  [router {:keys [db conversation]}]
+  (when-not router
+    (anomaly/incorrect! "Missing router" {:type :rlm/missing-router}))
+  (let [depth-atom (atom 0)
+        tool-registry-atom (atom {})
+        db-info (create-rlm-conn db)
+        var-index-atom (atom {:index nil :revision -1 :current-revision 0})
+        qa-corpus-atom (atom {:snapshot-cache nil
+                              :stats {:hits 0 :misses 0
+                                      :last-digest-ms nil
+                                      :last-revision 0}})
+        skill-registry-map (rlm-skills/load-skills {})
+        _ (when db-info
+            (rlm-skills/ingest-skills! db-info skill-registry-map))
+        state-atom (atom {:custom-bindings {}
+                          :custom-docs []
+                          :skill-registry skill-registry-map
+                          :rlm-env nil
+                          :conversation-ref nil})
+        rlm-env-atom (atom nil)
+        skill-registry-atom (atom skill-registry-map)
+        sub-rlm-query-fn (make-routed-sub-rlm-query-fn
+                           {} depth-atom router skill-registry-atom rlm-env-atom
+                           iteration-loop)
+        cheap-sub-rlm-query-fn (make-routed-sub-rlm-query-fn
+                                 {:optimize :cost} depth-atom router skill-registry-atom rlm-env-atom
+                                 iteration-loop)
+        env-id (str (util/uuid))
+        root-model (or (resolve-root-model router) "unknown")
+        has-reasoning? (boolean (provider-has-reasoning? router))
+        system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
+                                            :skill-registry skill-registry-map})
+        resolved-conversation-ref (rlm-db/db-resolve-conversation-ref db-info conversation)
+        conversation-ref (or resolved-conversation-ref
+                           (rlm-db/store-conversation! db-info
+                             {:model root-model
+                              :system-prompt system-prompt}))
+        {:keys [sci-ctx sandbox-ns initial-ns-keys]}
+        (create-sci-context cheap-sub-rlm-query-fn db-info
+          conversation-ref
+          (:custom-bindings @state-atom))
+        env {:env-id env-id
+             :conversation-ref conversation-ref
+             :depth-atom depth-atom
+             :tool-registry-atom tool-registry-atom
+             :db-info db-info
+             :var-index-atom var-index-atom
+             :qa-corpus-atom qa-corpus-atom
+             :state-atom state-atom
+             :skill-registry-atom skill-registry-atom
+             :sci-ctx sci-ctx
+             :sandbox-ns sandbox-ns
+             :initial-ns-keys initial-ns-keys
+             :router router
+             :sub-rlm-query-fn sub-rlm-query-fn
+             :cheap-sub-rlm-query-fn cheap-sub-rlm-query-fn}]
+    (reset! rlm-env-atom env)
+    (swap! state-atom assoc :rlm-env env :conversation-ref conversation-ref)
+    env))
+
+(defn dispose-env!
+  "Disposes an RLM environment and releases resources.
+
+   For persistent DBs (created with :path), data is preserved.
+   For disposable DBs, all data is deleted."
+  [env]
+  (when-let [db-info (:db-info env)]
+    (dispose-rlm-conn! db-info)))
+
+(defn register-env-fn!
+  "Registers a function in the RLM environment's SCI sandbox."
+  [env sym f tool-def]
+  (when-not (:state-atom env)
+    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
+  (when-not (symbol? sym)
+    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
+  (when-not (fn? f)
+    (anomaly/incorrect! "f must be a function" {:type :rlm/invalid-fn}))
+  (when-not (map? tool-def)
+    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
+  (let [canonical-tool-def (sci-tool/make-tool-def sym f tool-def)]
+    (rlm-tools/register-tool-def! (:tool-registry-atom env) sym canonical-tool-def)
+    (when-let [sci-ctx (:sci-ctx env)]
+      (rlm-tools/sci-update-binding! sci-ctx sym
+        (rlm-tools/wrap-tool-for-sci env sym f (:tool-registry-atom env))))
+    (swap! (:state-atom env) update :custom-docs conj (dissoc canonical-tool-def :fn)))
+  env)
+
+(defn register-env-def!
+  "Registers a constant/value in the RLM environment's SCI sandbox."
+  [env sym value tool-def]
+  (when-not (:state-atom env)
+    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
+  (when-not (symbol? sym)
+    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
+  (when-not (map? tool-def)
+    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
+  (swap! (:state-atom env) update :custom-bindings assoc sym value)
+  (when-let [sci-ctx (:sci-ctx env)]
+    (rlm-tools/sci-update-binding! sci-ctx sym value))
+  (swap! (:state-atom env) update :custom-docs conj (assoc tool-def :type :def :sym sym))
+  env)
+
+(defn register-hook!
+  "Attach a hook to an existing tool's chain."
+  [env sym {:keys [stage id fn]}]
+  (rlm-tools/register-tool-def! (:tool-registry-atom env) sym
+    {stage [{:id id :fn fn}]})
+  env)
+
+(defn unregister-hook!
+  "Remove a per-tool hook entry by :id."
+  [env sym stage id]
+  (rlm-tools/unregister-hook! (:tool-registry-atom env) sym stage id))
+
+(defn list-tool-hooks
+  "Return hook chains registered for `sym`, or nil when missing."
+  [env sym]
+  (rlm-tools/list-tool-hooks (:tool-registry-atom env) sym))
+
+(defn list-registered-tools
+  "Return a vec of {:sym :hook-counts} maps for registered tools."
+  [env]
+  (rlm-tools/list-registered-tools (:tool-registry-atom env)))
 
 ;; =============================================================================
 ;; Code Execution
@@ -395,218 +549,16 @@ Pattern: [thing] [action] [reason]. [next step].")
     (contains? PLACEHOLDER_WORDS (str/lower-case (str/trim (str raw-answer))))))
 
 ;; =============================================================================
-;; System Prompt
+;; System Prompt — delegates to loop.runtime.prompt
 ;; =============================================================================
 
-(defn- format-param
-  "Formats a single parameter for the system prompt."
-  [{:keys [name type required description default]}]
-  (str "      " name " - " (clojure.core/name (or type :any))
-    (when-not (true? required) " (optional)")
-    (when (some? default) (str ", default: " (pr-str default)))
-    (when description (str " — " description))))
+(def format-custom-docs prompt/format-custom-docs)
 
-(defn- format-tool-doc
-  "Formats a tool doc entry for the system prompt."
-  [{:keys [type sym doc params returns examples]}]
-  (str "  <" (clojure.core/name type) " name=\"" sym "\">\n"
-    (when doc (str "    " doc "\n"))
-    (when (seq params)
-      (str "    Parameters:\n"
-        (str/join "\n" (map format-param params)) "\n"))
-    (when returns
-      (str "    Returns: " (clojure.core/name (or (:type returns) :any))
-        (when (:description returns) (str " — " (:description returns)))
-        "\n"))
-    (when (seq examples)
-      (str "    Examples:\n"
-        (str/join "\n" (map #(str "      " %) examples)) "\n"))
-    "  </" (clojure.core/name type) ">"))
+(def build-document-summary prompt/build-document-summary)
 
-(defn- format-custom-docs
-  "Formats custom docs for the system prompt."
-  [custom-docs]
-  (when (seq custom-docs)
-    (str "\n<custom_tools>\n"
-      (str/join "\n" (map format-tool-doc custom-docs))
-      "\n</custom_tools>\n")))
 
-(defn build-document-summary
-  "Builds a compact summary of available documents for the system prompt.
-   Returns nil if no documents are loaded.
 
-   Params:
-   `db-info` - Map with :conn key.
-
-   Returns string like:
-   \"3 documents, 142 pages, 87 entities (person: 23, org: 15, ...)
-    Documents:
-      [doc-1] Annual Report 2024 (pdf, 48 pages)
-      [doc-2] API Reference (html, 12 pages)
-      [doc-3] Meeting Notes (md, 82 pages)\""
-  [db-info]
-  (when (:datasource db-info)
-    (let [docs (rlm-db/db-list-documents db-info {:include-toc? false})
-          page-counts (when (seq docs)
-                        (into {}
-                          (for [doc docs]
-                            [(:id doc)
-                             (rlm-db/db-count-document-pages db-info (:id doc))])))
-          total-pages (reduce + 0 (vals page-counts))
-          types-map (rlm-db/db-entity-type-counts db-info)
-          total-entities (reduce + 0 (vals types-map))
-          entity-stats {:total total-entities :types types-map}]
-      (when (seq docs)
-        (str (count docs) " documents, " total-pages " pages"
-          (when (pos? total-entities)
-            (str ", " total-entities " entities ("
-              (str/join ", " (map (fn [[t c]] (str (name t) ": " c))
-                               (take 5 (sort-by val > (:types entity-stats)))))
-              ")"))
-          "\nDocuments:\n"
-          (str/join "\n"
-            (map (fn [doc]
-                   (let [id (:id doc)
-                         title (or (:title doc) (:name doc) id)
-                         ext (:extension doc)
-                         pages (get page-counts id 0)]
-                     (str "  [" id "] " title
-                       (when ext (str " (" ext ")"))
-                       ", " pages " pages")))
-              (sort-by :id docs))))))))
-
-(defn- format-git-context
-  "Render the GIT REPO context block(s) for the system prompt. Caveman style.
-   Multi-repo aware: emits one `GIT REPO: <name>` block per attached repo,
-   then a single shared tool list.
-
-   `git-repos` is a vec of `:repo/*` entity maps (from db-list-repos) or nil.
-   Returns nil when the vec is nil or empty."
-  [git-repos]
-  (when (seq git-repos)
-    (let [multi? (> (count git-repos) 1)
-          blocks (for [rm (sort-by :name git-repos)
-                       :let [{:keys [name path head-short branch commits-ingested]} rm]]
-                   (str "
-GIT REPO: " name " (" path ")
-  head: " (or head-short "?") (when branch (str " on " branch)) "
-  commits ingested: " (or commits-ingested 0)))
-          tools (if multi?
-                  "
-Git tools this session — all prefixed `git-`. JGit-side tools auto-dispatch:
-  path-based (git-blame, git-file-history) → pass ABSOLUTE path inside target repo's worktree
-  sha-based  (git-commit-diff) → pass SHA; refs like HEAD are ambiguous, forbidden
-  (git-search-commits {:category :bug :document-id \"<name>\" ...})
-  (git-commit-history {:limit 20 :document-id \"<name>\"})
-  (git-commits-by-ticket \"SVAR-42\")
-  (git-commit-parents \"abc123def456\")
-  (git-file-history \"/abs/path/to/file.clj\" {:n 10})
-  (git-blame \"/abs/path/to/file.clj\" 42 58)
-  (git-commit-diff \"abc123def456\")
-"
-                  "
-Git tools available this session — all prefixed `git-`:
-  (git-search-commits {:category :bug :since \"2025-06-01\" :path \"src/\" ...})
-  (git-commit-history {:limit 20})
-  (git-commits-by-ticket \"SVAR-42\")
-  (git-commit-parents \"HEAD\")
-  (git-file-history \"src/foo.clj\")
-  (git-blame \"src/foo.clj\" 42 58)
-  (git-commit-diff \"HEAD\")
-")]
-      (str (str/join "\n" blocks) "\n" tools))))
-
-(defn build-system-prompt
-  "Builds the system prompt — compact, token-efficient.
-   All tool documentation is discoverable via (doc fn-name) in SCI.
-
-   `git-repos` is a vec of `:repo/*` entity maps (from rlm.db/db-list-repos)
-   or nil/empty."
-  [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary system-prompt git-repos skill-registry]}]
-  (str
-    "Clojure SCI agent. Write, exec, iterate.
-
-MINDSET:
-- Reasoning: 2-5 lines max. No monologues.
-- Code tasks: CODE IT. Don't mentally simulate. Sandbox is here. Code + test + :final in one shot.
-- Text/Q&A tasks: fetch data with tools, then :final.
-- Asserts: ALWAYS (assert expr \"message\"). Bare asserts = useless errors.
-
-ARCH:
-- Single-shot iter. State = def'd vars. <var_index> = vars. <execution_results> = last results.
-- Cross-query memory is ONLY def'd vars. Plain final answers do not persist.
-- (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
-- (def x \"docstring\" val) → docstring in <var_index>. Defs for reusable state only.
-- :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
-- VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
-  Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
-- :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
-
-GROUNDING:
-- Only tools listed exist. Data in :final MUST come from <execution_results>. Never fabricate.
-
-SUB-CALLS:
-- (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).
-
-PERF:
-- SCI is FAST. def=100ms, assert=500ms, heavy=2000ms max. No 5000+ budgets.
-- COMPUTE, DON'T SCAN. Never drop-while millions. Compute start from n directly.
-- Separate def from tests. One block = one concern. Vars persist across blocks.
-
-CLJ:
-- letfn for recursion. (let [f (fn [] (f))] ...) → BROKEN. Use letfn.
-- iterate = ONE arg. Destructure: (fn [[a b]] ...) not (fn [a b] ...).
-- Prefer (fn [x] ...) over #(). Nested #() = illegal.
-- Eager > lazy: mapv filterv reduce into.
-- Quote lists: '(1 2 3). Complete expr per block. No fragments.
-"
-    (rlm-skills/skills-manifest-block skill-registry)
-    (format-git-context git-repos)
-    (when (and has-documents? document-summary)
-      (str
-        "
-DOCUMENTS: " document-summary "
-
-Doc tools (2 fns):
-1. (search-documents \"q\") → markdown string
-   (search-documents \"q\" {:in :pages})  — narrow to :pages|:toc|:entities
-   (search-documents \"q\" {:top-k 20 :document-id \"doc-1\"})
-2. (fetch-document-content ref) → full content:
-   [:node/id \"id\"] → page text
-   [:doc/id \"id\"] → vec of ~4K char pages
-   [:toc/id \"id\"] → TOC desc
-   [:id \"id\"] → {:entity {...} :relationships [...]} 
-(def pages (fetch-document-content [:doc/id \"doc-1\"]))
-Search in English. Translate non-EN queries first.
-"))
-    (when system-prompt
-      (str "\nINSTRUCTIONS:\n" system-prompt "\n"))
-    (format-custom-docs custom-docs)
-    (when output-spec
-      (str "\nOUTPUT SCHEMA:\n" (spec/spec->prompt output-spec) "\n"))
-    "
-RESPONSE FORMAT:
-"
-    (spec/spec->prompt (if has-reasoning? ITERATION_SPEC_REASONING ITERATION_SPEC_NON_REASONING))
-    "
-"
-    (if has-reasoning?
-      "JSON only. Native reasoning — omit 'thinking'."
-      "JSON with 'thinking' + 'code'.")
-    "
-Set final fields when done: {\"answer\": \"...\", \"confidence\": \"high|medium|low\"}
-
-RULES:
-- ALWAYS test. Untested = wrong. No repeat fail → different approach.
-- <var_index>|<context> answers query → finalize now.
-- No prose in :code. Bare string literal = wrong. Prose → :answer with answer-type text.
-- Simplest solution. No over-eng. No unused abstractions.
-
-OUTPUT: "
-    CAVEMAN_ITERATION_OUTPUT " (iterations). "
-    FINAL_ANSWER_OUTPUT " (final answer).
-Answer → top-level final fields when done. No boilerplate.
-"))
+(def build-system-prompt prompt/build-system-prompt)
 
 ;; =============================================================================
 ;; Iteration Loop
@@ -742,7 +694,7 @@ Answer → top-level final fields when done. No boilerplate.
                                     :repaired? (:repaired? result)})
                              (range) code-blocks exec-results))]
           (if validation-error
-            (do (rlm-debug! {:final-answer (vis-shared/truncate final-answer 200)
+            (do (rlm-debug! {:final-answer (truncate final-answer 200)
                              :validation-error validation-error} "FINAL rejected")
               {:thinking thinking :next-optimize next-optimize :forget forget-names
                :executions (or executions
@@ -983,7 +935,7 @@ Answer → top-level final fields when done. No boilerplate.
                   stdout-part (when-not (str/blank? stdout)
                                 (str " :stdout " (pr-str stdout)))
                   stderr-part (when-not (str/blank? stderr)
-                                (str " :stderr " (pr-str (vis-shared/truncate stderr EXECUTION_STDERR_CHARS))))
+                                (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
                   time-ms (or execution-time-ms 0)
                   slow? (> time-ms SLOW_EXECUTION_MS)
                   time-part (str " :time-ms " time-ms
@@ -991,7 +943,7 @@ Answer → top-level final fields when done. No boilerplate.
                                 " :perf-warning \"SLOW — optimize algorithm, avoid brute-force, reduce input size\""))
                   result-info (cond
                                 error
-                                (str "{:success? false :error " (pr-str (vis-shared/truncate error 400)) time-part "}")
+                                (str "{:success? false :error " (pr-str (truncate error 400)) time-part "}")
 
                                 (fn? result)
                                 (str "{:success? false :error \"Result is a function, not a value\"" time-part "}")
@@ -1000,7 +952,7 @@ Answer → top-level final fields when done. No boilerplate.
                                 (let [^clojure.lang.Var var-obj result
                                       var-name (name (.sym var-obj))
                                       bound (realize-value (.getRawRoot var-obj))
-                                      value-str (vis-shared/truncate (pr-str bound) EXECUTION_SAFETY_CAP_CHARS)]
+                                      value-str (truncate (pr-str bound) EXECUTION_SAFETY_CAP_CHARS)]
                                   (str "{:success? true :result-kind :var"
                                     " :var-name " (pr-str var-name)
                                     " :value-type " (type-label-of bound)
@@ -1012,7 +964,7 @@ Answer → top-level final fields when done. No boilerplate.
 
                                 :else
                                 (let [v (realize-value result)
-                                      value-str (vis-shared/truncate (pr-str v) EXECUTION_SAFETY_CAP_CHARS)]
+                                      value-str (truncate (pr-str v) EXECUTION_SAFETY_CAP_CHARS)]
                                   (str "{:success? true :result-type " (type-label-of v)
                                     (size-suffix v)
                                     " :value " value-str
@@ -1031,7 +983,7 @@ Answer → top-level final fields when done. No boilerplate.
   "Formats a single journal entry as text."
   [{:keys [iteration thinking var-names]}]
   (str "[iteration-" (inc iteration) "] "
-    (when thinking (vis-shared/truncate thinking 300))
+    (when thinking (truncate thinking 300))
     (when (seq var-names)
       (str "\n    vars: " (str/join ", " var-names)))))
 
@@ -1292,7 +1244,7 @@ Answer → top-level final fields when done. No boilerplate.
         ;; Repetition detection: track individual call→result pairs across iterations
         call-counts-atom (atom {})  ;; {[code result-str] count}
         detect-repetition (fn [executions]
-                            (let [pairs (mapv (fn [e] [(:code e) (vis-shared/truncate (str (:result e)) 200)]) executions)
+                            (let [pairs (mapv (fn [e] [(:code e) (truncate (str (:result e)) 200)]) executions)
                                   counts (swap! call-counts-atom
                                            (fn [m] (reduce (fn [acc p] (update acc p (fnil inc 0))) m pairs)))
                                   repeated (->> pairs
@@ -1300,7 +1252,7 @@ Answer → top-level final fields when done. No boilerplate.
                                              (map first))]
                               (when (seq repeated)
                                 (str "\n\n⚠ REPETITION DETECTED: These calls have been executed 3+ times with the SAME results:\n"
-                                  (str/join "\n" (map #(str "  - " (vis-shared/truncate (str %) 80)) (distinct repeated)))
+                                  (str/join "\n" (map #(str "  - " (truncate (str %) 80)) (distinct repeated)))
                                   "\nRepeating the same action will NOT produce different results. "
                                   "You MUST try a DIFFERENT approach, or call \final\": {\"answer\": \"your answer\", \"confidence\": \"high\"} with what you have."))))
         finalize-cost (fn []
@@ -1532,7 +1484,7 @@ Answer → top-level final fields when done. No boilerplate.
                                    :final? (boolean final-result)}]
                   (if final-result
                     (do (rlm-stage! :final iteration
-                          {:answer (vis-shared/truncate (answer-str (:answer final-result)) 200)
+                          {:answer (truncate (answer-str (:answer final-result)) 200)
                            :confidence (:confidence final-result)
                            :iterations (inc iteration)})
                       (rlm-stage! :iter-end iteration
@@ -1563,7 +1515,7 @@ Answer → top-level final fields when done. No boilerplate.
                       ;; Retry immediately with a nudge — this doesn't waste an iteration slot.
                       (let [_ (rlm-stage! :empty iteration {})
                             nudge (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
-                                    "{:requirement " (pr-str (vis-shared/truncate query 200)) "}\n"
+                                    "{:requirement " (pr-str (truncate query 200)) "}\n"
                                     "⚠ EMPTY — no code executed. You MUST include code. "
                                     (if has-reasoning?
                                       "Respond with code or set final to finish."
@@ -1584,7 +1536,7 @@ Answer → top-level final fields when done. No boilerplate.
                       ;; Normal iteration with executions
                       (let [exec-feedback (format-executions executions)
                             iteration-header (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
-                                               "{:requirement " (pr-str (vis-shared/truncate query 200)) "}")
+                                               "{:requirement " (pr-str (truncate query 200)) "}")
                             repetition-warning (detect-repetition executions)
                             remaining-iters (- (effective-max-iterations) (inc iteration))
                             budget-warning (when (<= remaining-iters 5)
@@ -1614,123 +1566,10 @@ Answer → top-level final fields when done. No boilerplate.
                             (conj journal journal-entry) next-optimize))))))))))))))
 
 ;; =============================================================================
-;; Entity Extraction Functions
+;; Entity Extraction — delegates to loop.knowledge.entity
 ;; =============================================================================
 
-(defn extract-entities-from-page!
-  "Extracts entities from a page's text nodes using LLM.
+(def extract-entities-from-page! rlm-entity/extract-entities-from-page!)
+(def extract-entities-from-visual-node! rlm-entity/extract-entities-from-visual-node!)
+(def extract-entities-from-document! rlm-entity/extract-entities-from-document!)
 
-   Params:
-   `text-content` - String. Combined text from page nodes.
-   `rlm-router` - Router from llm/make-router.
-
-   Returns:
-   Map with :entities and :relationships keys (empty if extraction fails)."
-  [text-content rlm-router]
-  (try
-    (let [truncated (if (> (count text-content) 8000) (subs text-content 0 8000) text-content)
-          response (llm/ask! rlm-router {:spec ENTITY_EXTRACTION_SPEC
-                                         :messages [(llm/system ENTITY_EXTRACTION_OBJECTIVE)
-                                                    (llm/user truncated)]
-                                         :routing {:optimize :cost}})]
-      (or (:result response) {:entities [] :relationships []}))
-    (catch Exception e
-      (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Entity extraction failed for page"})
-      {:entities [] :relationships []})))
-
-(defn extract-entities-from-visual-node!
-  "Extracts entities from a visual node (image/table) using vision or text.
-
-   Params:
-   `node` - Map. Page node with :type, :image-data, :description.
-   `rlm-router` - Router from llm/make-router.
-
-   Returns:
-   Map with :entities and :relationships keys (empty if extraction fails)."
-  [node rlm-router]
-  (try
-    (let [image-data (:image-data node)
-          description (:description node)]
-      (cond
-        ;; Has image data - use vision
-        image-data
-        (let [b64 (bytes->base64 image-data)
-              response (llm/ask! rlm-router {:spec ENTITY_EXTRACTION_SPEC
-                                             :messages [(llm/system ENTITY_EXTRACTION_OBJECTIVE)
-                                                        (llm/user (or description "Extract entities from this image")
-                                                          (llm/image b64 "image/png"))]
-                                             :routing {:optimize :cost}})]
-          (or (:result response) {:entities [] :relationships []}))
-        ;; Has description only - text extraction
-        description
-        (let [response (llm/ask! rlm-router {:spec ENTITY_EXTRACTION_SPEC
-                                             :messages [(llm/system ENTITY_EXTRACTION_OBJECTIVE)
-                                                        (llm/user description)]
-                                             :routing {:optimize :cost}})]
-          (or (:result response) {:entities [] :relationships []}))
-        ;; Neither - skip
-        :else
-        (do (trove/log! {:level :warn :msg "Visual node has no image-data or description, skipping"})
-          {:entities [] :relationships []})))
-    (catch Exception e
-      (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Visual node extraction failed"})
-      {:entities [] :relationships []})))
-
-(defn extract-entities-from-document!
-  "Extracts entities from all pages of a document.
-
-   Params:
-   `db-info` - Map. Database info with :store key.
-   `document` - Map. PageIndex document.
-   `rlm-router` - Router from llm/make-router.
-   `opts` - Map. Options with :max-extraction-pages, :max-vision-rescan-nodes.
-
-   Returns:
-   Map with extraction statistics: :entities-extracted, :relationships-extracted,
-   :pages-processed, :extraction-errors, :visual-nodes-scanned."
-  [db-info document rlm-router opts]
-  (let [max-pages (or (:max-extraction-pages opts) 50)
-        max-vision (or (:max-vision-rescan-nodes opts) 10)
-        pages (take max-pages (:pages document))
-        doc-id (:id document (:name document))
-        entities-atom (atom [])
-        relationships-atom (atom [])
-        errors-atom (atom 0)
-        vision-count-atom (atom 0)]
-    ;; Process each page
-    (doseq [page pages]
-      (let [nodes (:nodes page)
-            text-nodes (filter #(not (#{:image :table} (:type %))) nodes)
-            visual-nodes (filter #(#{:image :table} (:type %)) nodes)]
-        ;; Extract from text
-        (when (seq text-nodes)
-          (let [text (str/join "\n" (keep :content text-nodes))]
-            (when (not (str/blank? text))
-              (try
-                (let [result (extract-entities-from-page! text rlm-router)]
-                  (swap! entities-atom into (:entities result))
-                  (swap! relationships-atom into (:relationships result)))
-                (catch Exception e
-                  (trove/log! {:level :warn :data {:page (:index page) :error (ex-message e)}
-                               :msg "Entity extraction failed for page"})
-                  (swap! errors-atom inc))))))
-        ;; Extract from visual nodes (capped)
-        (doseq [vnode visual-nodes]
-          (when (< @vision-count-atom max-vision)
-            (try
-              (let [result (extract-entities-from-visual-node! vnode rlm-router)]
-                (swap! vision-count-atom inc)
-                (swap! entities-atom into (:entities result))
-                (swap! relationships-atom into (:relationships result)))
-              (catch Exception e
-                (trove/log! {:level :warn :data {:node-type (:type vnode) :error (ex-message e)}
-                             :msg "Entity extraction failed for visual node"})
-                (swap! errors-atom inc)))))))
-    ;; Persist extraction results (entity + relationship transactions)
-    (let [entities @entities-atom
-          relationships @relationships-atom]
-      {:entities-extracted (count entities)
-       :relationships-extracted (count relationships)
-       :pages-processed (count pages)
-       :extraction-errors @errors-atom
-       :visual-nodes-scanned @vision-count-atom})))

@@ -5,7 +5,7 @@
    title generation, and context payload shaping for the web adapter."
   (:require [com.blockether.vis.loop.conversations.core :as conversations]
             [com.blockether.vis.core :as core]
-            [com.blockether.vis.loop.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.loop.storage.db :as rlm-db]
             [clojure.edn :as edn]
             [clojure.string :as str]))

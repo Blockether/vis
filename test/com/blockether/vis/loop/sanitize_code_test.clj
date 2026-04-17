@@ -2,7 +2,7 @@
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
    [sci.core :as sci]
-   [com.blockether.vis.loop.sci.form-repair :as form-repair]))
+   [com.blockether.vis.loop.runtime.form-repair :as form-repair]))
 
 (def sanitize-code form-repair/repair-code)
 

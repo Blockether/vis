@@ -15,6 +15,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.loop.knowledge.pageindex.pdf :as pdf]
    [com.blockether.vis.core :as pageindex]
+   [com.blockether.vis.loop.knowledge.pageindex :as rlm-pageindex]
    [com.blockether.vis.loop.storage.schema :as pageindex-spec]
    [com.blockether.vis.loop.knowledge.pageindex.vision :as vision])
   (:import
@@ -297,7 +298,7 @@
     (it "throws for non-existent file"
       ;; Test via the build-index error path - file exists check
       (expect (throws? clojure.lang.ExceptionInfo
-                #(pageindex/build-index (make-test-router) "non-existent.pdf"))))))
+                #(pageindex/pageindex-build (make-test-router) "non-existent.pdf"))))))
 
 ;; =============================================================================
 ;; Integration Tests (Requires LLM - marked for conditional execution)
@@ -318,7 +319,7 @@
   (describe "build-index for example.pdf"
     (it "produces valid document structure (when LLM available)"
       (when-let [router (make-integration-router)]
-        (let [doc (pageindex/build-index router TEST_PDF_PATH)]
+        (let [doc (pageindex/pageindex-build router TEST_PDF_PATH)]
           ;; Check required fields
           (expect (= "example" (:name doc)))
           (expect (= "pdf" (:extension doc)))
@@ -345,10 +346,10 @@
     (it "index! saves and load-index reads back (when LLM available)"
       (when-let [router (make-integration-router)]
         (let [output-path "resources-test/example-generated.pageindex"
-              result (pageindex/index! TEST_PDF_PATH
+              result (pageindex/pageindex-build-and-write! TEST_PDF_PATH
                        {:router router
                         :output output-path})
-              loaded (pageindex/load-index output-path)]
+              loaded (pageindex/pageindex-load output-path)]
           (try
             ;; Check result structure
             (expect (some? (:document result)))
@@ -374,7 +375,7 @@
   (describe "load saved index"
     (it "loads fixture index when available"
       (when (fs/exists? TEST_FIXTURE_PATH)
-        (let [doc (pageindex/load-index TEST_FIXTURE_PATH)]
+        (let [doc (pageindex/pageindex-load TEST_FIXTURE_PATH)]
           (expect (= "example" (:name doc)))
           (expect (pageindex-spec/valid-document? doc)))))))
 
@@ -392,10 +393,10 @@
                                   :image-data (byte-array [1 2 3])
                                   :description "diagram"}]}]]
         (try
-          (with-redefs [com.blockether.vis.core/extract-text (fn [_ _] fake-pages)
-                        com.blockether.vis.core/generate-document-abstract (fn [_ _] nil)
+          (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text (fn [_ _] fake-pages)
+                        com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract (fn [_ _] nil)
                         vision/infer-document-title (fn [_ _] nil)]
-            (let [doc (pageindex/build-index nil TEST_PDF_PATH {:output-dir (str output-dir)})
+            (let [doc (pageindex/pageindex-build nil TEST_PDF_PATH {:output-dir (str output-dir)})
                   node-id (get-in doc [:pages 0 :nodes 0 :id])
                   img-path (fs/path output-dir (str node-id ".png"))]
               (expect (fs/exists? img-path))))
@@ -409,10 +410,10 @@
                                   :id "img-1"
                                   :image-data (byte-array [9 9 9])
                                   :description "diagram"}]}]]
-        (with-redefs [com.blockether.vis.core/extract-text (fn [_ _] fake-pages)
-                      com.blockether.vis.core/generate-document-abstract (fn [_ _] nil)
+        (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text (fn [_ _] fake-pages)
+                      com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract (fn [_ _] nil)
                       vision/infer-document-title (fn [_ _] nil)]
-          (let [doc (pageindex/build-index nil TEST_PDF_PATH)
+          (let [doc (pageindex/pageindex-build nil TEST_PDF_PATH)
                 img-bytes (get-in doc [:pages 0 :nodes 0 :image-data])]
             (expect (bytes? img-bytes)))))))
 
@@ -423,9 +424,9 @@
                                 :nodes [{:type :paragraph
                                          :id "p1"
                                          :content "hello"}]}])
-                    com.blockether.vis.core/generate-document-abstract (fn [_ _] nil)
+                    com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract (fn [_ _] nil)
                     vision/infer-document-title (fn [_ _] nil)]
-        (let [doc (pageindex/build-index nil "Hello" {:content-type :txt
+        (let [doc (pageindex/pageindex-build nil "Hello" {:content-type :txt
                                                       :doc-name "sample"
                                                       :output-dir "missing"})]
           (expect (= "sample" (:name doc))))))))
@@ -454,10 +455,10 @@
                                   :bbox [10 20 300 200]
                                   :description "A table showing names and ages"
                                   :content ascii-table}]}]]
-        (with-redefs [com.blockether.vis.core/extract-text (fn [_ _] fake-pages)
-                      com.blockether.vis.core/generate-document-abstract (fn [_ _] nil)
+        (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text (fn [_ _] fake-pages)
+                      com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract (fn [_ _] nil)
                       vision/infer-document-title (fn [_ _] nil)]
-          (let [doc (pageindex/build-index nil TEST_PDF_PATH)
+          (let [doc (pageindex/pageindex-build nil TEST_PDF_PATH)
                 table-node (->> (get-in doc [:pages 0 :nodes])
                              (filter #(= :table (:type %)))
                              first)]
@@ -491,8 +492,8 @@
                              :bbox [0 0 100 100]
                              :description "Test"
                              :content ascii-table}]}]
-            translated (pageindex/group-continuations
-                         (#'com.blockether.vis.core/translate-all-ids pages))
+            translated (pageindex/pageindex-group-continuations
+                         (#'com.blockether.vis.loop.knowledge.pageindex/translate-all-ids pages))
             table-node (first (:nodes (first translated)))]
         (expect (= ascii-table (:content table-node)))
                   ;; ID should be translated to UUID
@@ -520,7 +521,7 @@
   [base-name]
   (let [path (cambridge-fixture-path base-name)]
     (when (fs/exists? path)
-      (pageindex/load-index path))))
+      (pageindex/pageindex-load path))))
 
 (defn- all-nodes
   "Extracts all page nodes from a document."
@@ -782,70 +783,70 @@
 (defdescribe normalize-page-spec-test
   (describe "happy paths"
     (it "nil returns nil (all pages)"
-      (expect (nil? (pageindex/normalize-page-spec nil 10))))
+      (expect (nil? (pageindex/pageindex-normalize-page-spec nil 10))))
 
     (it "single integer converts 1-indexed to 0-indexed"
-      (expect (= #{2} (pageindex/normalize-page-spec 3 10))))
+      (expect (= #{2} (pageindex/pageindex-normalize-page-spec 3 10))))
 
     (it "first page"
-      (expect (= #{0} (pageindex/normalize-page-spec 1 10))))
+      (expect (= #{0} (pageindex/pageindex-normalize-page-spec 1 10))))
 
     (it "last page"
-      (expect (= #{9} (pageindex/normalize-page-spec 10 10))))
+      (expect (= #{9} (pageindex/pageindex-normalize-page-spec 10 10))))
 
     (it "range vector expands to 0-indexed set"
-      (expect (= #{0 1 2} (pageindex/normalize-page-spec [1 3] 10))))
+      (expect (= #{0 1 2} (pageindex/pageindex-normalize-page-spec [1 3] 10))))
 
     (it "single-element range where start equals end"
-      (expect (= #{4} (pageindex/normalize-page-spec [5 5] 10))))
+      (expect (= #{4} (pageindex/pageindex-normalize-page-spec [5 5] 10))))
 
     (it "mixed vector of ranges and singles"
       (expect (= #{0 1 2 4 6 7 8 9}
-                (pageindex/normalize-page-spec [[1 3] 5 [7 10]] 10))))
+                (pageindex/pageindex-normalize-page-spec [[1 3] 5 [7 10]] 10))))
 
     (it "multiple disjoint ranges"
       (expect (= #{0 1 3 4}
-                (pageindex/normalize-page-spec [[1 2] [4 5]] 10))))
+                (pageindex/pageindex-normalize-page-spec [[1 2] [4 5]] 10))))
 
     (it "full range covering all pages"
       (expect (= #{0 1 2 3 4 5 6 7 8 9}
-                (pageindex/normalize-page-spec [1 10] 10)))))
+                (pageindex/pageindex-normalize-page-spec [1 10] 10)))))
 
   (describe "validation errors"
     (it "page number 0 throws invalid-page-spec"
       (expect (throws-with-type?
                 :svar.pageindex/invalid-page-spec
-                #(pageindex/normalize-page-spec 0 10))))
+                #(pageindex/pageindex-normalize-page-spec 0 10))))
 
     (it "negative page number throws invalid-page-spec"
       (expect (throws-with-type?
                 :svar.pageindex/invalid-page-spec
-                #(pageindex/normalize-page-spec -1 10))))
+                #(pageindex/pageindex-normalize-page-spec -1 10))))
 
     (it "page beyond total throws page-out-of-bounds"
       (expect (throws-with-type?
                 :svar.pageindex/page-out-of-bounds
-                #(pageindex/normalize-page-spec 11 10))))
+                #(pageindex/pageindex-normalize-page-spec 11 10))))
 
     (it "reversed range throws invalid-page-range"
       (expect (throws-with-type?
                 :svar.pageindex/invalid-page-range
-                #(pageindex/normalize-page-spec [5 3] 10))))
+                #(pageindex/pageindex-normalize-page-spec [5 3] 10))))
 
     (it "out-of-bounds page in mixed vector throws page-out-of-bounds"
       (expect (throws-with-type?
                 :svar.pageindex/page-out-of-bounds
-                #(pageindex/normalize-page-spec [[1 3] 15] 10))))
+                #(pageindex/pageindex-normalize-page-spec [[1 3] 15] 10))))
 
     (it "string input throws invalid-page-spec"
       (expect (throws-with-type?
                 :svar.pageindex/invalid-page-spec
-                #(pageindex/normalize-page-spec "foo" 10))))
+                #(pageindex/pageindex-normalize-page-spec "foo" 10))))
 
     (it "non-integer in range throws invalid-page-spec"
       (expect (throws-with-type?
                 :svar.pageindex/invalid-page-spec
-                #(pageindex/normalize-page-spec [1 "foo"] 10))))))
+                #(pageindex/pageindex-normalize-page-spec [1 "foo"] 10))))))
 
 (def ^:private sample-pages
   "Sample page-list for filter-pages tests."
@@ -859,25 +860,25 @@
   (describe "page filtering"
     (it "nil page-set returns all pages"
       (expect (= sample-pages
-                (pageindex/filter-pages sample-pages nil))))
+                (pageindex/pageindex-filter-pages sample-pages nil))))
 
     (it "single page set returns matching page"
       (expect (= [(first sample-pages)]
-                (pageindex/filter-pages sample-pages #{0}))))
+                (pageindex/pageindex-filter-pages sample-pages #{0}))))
 
     (it "multiple pages in set returns matching pages in order"
       (expect (= [(nth sample-pages 0)
                   (nth sample-pages 2)
                   (nth sample-pages 4)]
-                (pageindex/filter-pages sample-pages #{0 2 4}))))
+                (pageindex/pageindex-filter-pages sample-pages #{0 2 4}))))
 
     (it "empty set returns empty vector"
       (expect (= []
-                (pageindex/filter-pages sample-pages #{}))))
+                (pageindex/pageindex-filter-pages sample-pages #{}))))
 
     (it "empty page-list returns empty vector"
       (expect (= []
-                (pageindex/filter-pages [] #{0 1}))))))
+                (pageindex/pageindex-filter-pages [] #{0 1}))))))
 
 ;; =============================================================================
 ;; build-index :path with :pages option (TDD)
@@ -891,25 +892,25 @@
       (let [fake-pages [{:index 1 :nodes [{:type :paragraph :id "p1" :content "Page 1"}]}
                         {:index 2 :nodes [{:type :paragraph :id "p2" :content "Page 2"}]}
                         {:index 3 :nodes [{:type :paragraph :id "p3" :content "Page 3"}]}]]
-        (with-redefs [com.blockether.vis.core/extract-text
+        (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text
                       (fn [_ _] fake-pages)
-                      com.blockether.vis.core/generate-document-abstract
+                      com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract
                       (fn [_ _] nil)
                       com.blockether.vis.loop.knowledge.pageindex.vision/infer-document-title
                       (fn [_ _] nil)]
-          (let [doc (pageindex/build-index nil "resources-test/example.pdf" {:pages [2 4]})]
+          (let [doc (pageindex/pageindex-build nil "resources-test/example.pdf" {:pages [2 4]})]
             (expect (= 3 (count (:pages doc))))
             (expect (= [1 2 3] (mapv :index (:pages doc))))))))
 
     (it "single page integer works"
       (let [fake-pages [{:index 2 :nodes [{:type :paragraph :id "p2" :content "Page 2"}]}]]
-        (with-redefs [com.blockether.vis.core/extract-text
+        (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text
                       (fn [_ _] fake-pages)
-                      com.blockether.vis.core/generate-document-abstract
+                      com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract
                       (fn [_ _] nil)
                       com.blockether.vis.loop.knowledge.pageindex.vision/infer-document-title
                       (fn [_ _] nil)]
-          (let [doc (pageindex/build-index nil "resources-test/example.pdf" {:pages 3})]
+          (let [doc (pageindex/pageindex-build nil "resources-test/example.pdf" {:pages 3})]
             (expect (= 1 (count (:pages doc))))
             (expect (= [2] (mapv :index (:pages doc))))))))
 
@@ -919,26 +920,26 @@
                                                :id (str "p" i)
                                                :content (str "Page " i)}]})
                          (range 3))]
-        (with-redefs [com.blockether.vis.core/extract-text
+        (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text
                       (fn [_ _] fake-pages)
-                      com.blockether.vis.core/generate-document-abstract
+                      com.blockether.vis.loop.knowledge.pageindex/generate-document-abstract
                       (fn [_ _] nil)
                       com.blockether.vis.loop.knowledge.pageindex.vision/infer-document-title
                       (fn [_ _] nil)]
-          (let [doc (pageindex/build-index nil "resources-test/example.pdf")]
+          (let [doc (pageindex/pageindex-build nil "resources-test/example.pdf")]
             (expect (= 3 (count (:pages doc))))))))
 
     (it "out-of-bounds pages raises at vision layer"
       ;; With the vision-layer-filters-PDFs invariant, build-index no longer
       ;; validates :pages against the file's true length. The vision extractor
       ;; is responsible for raising if requested pages exceed the document.
-      (with-redefs [com.blockether.vis.core/extract-text
+      (with-redefs [com.blockether.vis.loop.knowledge.pageindex/extract-text
                     (fn [_ opts]
                       (throw (ex-info "page index out of range"
                                {:type :svar.pageindex/pages-out-of-range
                                 :pages (:pages opts)})))]
         (expect (throws? clojure.lang.ExceptionInfo
-                  #(pageindex/build-index nil "resources-test/example.pdf" {:pages 5})))))))
+                  #(pageindex/pageindex-build nil "resources-test/example.pdf" {:pages 5})))))))
 
 (defdescribe extract-text-from-pdf-page-set-test
   (describe "extract-text-from-pdf with :page-set"

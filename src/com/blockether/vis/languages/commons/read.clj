@@ -4,7 +4,7 @@
    Returns content with line numbers for precise referencing."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.loop.sci.tool :as sci-tool]))
+            [com.blockether.vis.loop.tool :as sci-tool]))
 
 ;;; ── Safety ─────────────────────────────────────────────────────────────
 

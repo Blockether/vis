@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.sci.form-repair
+(ns com.blockether.vis.loop.runtime.form-repair
   "Delimiter and form repair for LLM-generated Clojure code.
 
    Inspired by clojure-mcp-light by Bruce Hauman (MIT licensed):

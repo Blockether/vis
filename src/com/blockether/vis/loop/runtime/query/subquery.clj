@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.query.subquery
+(ns com.blockether.vis.loop.runtime.query.subquery
   "Sub-RLM iterated execution. Wraps iteration-loop with a constructed system
    prompt (from skill bodies) and delegates to the parent env's SCI ctx.
    Shared sandbox — sub-RLM defs are visible to the parent."

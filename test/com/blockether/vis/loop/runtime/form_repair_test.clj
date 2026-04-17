@@ -1,7 +1,7 @@
-(ns com.blockether.vis.loop.sci.form-repair-test
+(ns com.blockether.vis.loop.runtime.form-repair-test
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
-   [com.blockether.vis.loop.sci.form-repair :as sut]))
+   [com.blockether.vis.loop.runtime.form-repair :as sut]))
 
 (defdescribe repair-code-test
 

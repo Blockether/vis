@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.query.core
+(ns com.blockether.vis.loop.runtime.query.core
   "query-env! orchestration: context prep, iteration, refinement, Q-value updates, finalization."
   (:require
    [clojure.set :as set]
@@ -7,12 +7,10 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.loop.core :as rlm-core]
    [com.blockether.vis.loop.storage.db :as rlm-db]
-   [com.blockether.vis.loop.env :as rlm-env]
-   [com.blockether.vis.loop.query.routing :as rlm-routing]
+   [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
    [com.blockether.vis.loop.storage.schema :as schema]
    [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
-   [com.blockether.vis.loop.sci.runtime :as rlm-tools]
-   [com.blockether.vis.loop.sci.shared :as rlm-tools-shared]
+   [com.blockether.vis.loop.runtime.core :as rlm-tools]
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.svar.internal.util :as util]
    [taoensso.trove :as trove])
@@ -194,15 +192,13 @@
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec model max-iterations max-refinements threshold
-                max-context-tokens max-recursion-depth verify? concurrency
-                system-prompt plan? debug? hooks cancel-atom eval-timeout-ms
+                max-context-tokens max-recursion-depth concurrency
+                system-prompt debug? hooks cancel-atom eval-timeout-ms
                 reasoning-default]
          :or   {max-iterations      schema/MAX_ITERATIONS
                 max-refinements     1
                 threshold           0.8
                 max-recursion-depth schema/DEFAULT_RECURSION_DEPTH
-                verify?             false
-                plan?               false
                 debug?              false}} opts]
     (when-not (:db-info env)
       (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
@@ -231,23 +227,9 @@
                                    {:optimize :cost} depth-atom rlm-router
                                    (:skill-registry-atom env) (atom env)
                                    rlm-core/iteration-loop)
-          custom-bindings        (rlm-env/custom-bindings env)
-          custom-docs            (rlm-env/custom-docs env)
-          claims-atom            (when verify? (atom []))
+          custom-bindings        (rlm-core/custom-bindings env)
+          custom-docs            (rlm-core/custom-docs env)
           current-iteration-atom (atom 0)
-          cite-bindings          (when verify?
-                                   {'CITE            (rlm-tools-shared/make-cite-fn claims-atom)
-                                    'CITE-UNVERIFIED (rlm-tools-shared/make-cite-unverified-fn claims-atom)
-                                    'list-claims     (rlm-tools-shared/make-list-claims-fn claims-atom)})
-          cite-docs              (when verify?
-                                   [{:type :fn   :sym 'CITE
-                                     :doc  "(CITE claim-text document-id page section quote) or (CITE claim-text document-id page section quote confidence) - Cite a claim with source evidence. Returns {:cited true :claim-id uuid :claim-text text}"}
-                                    {:type :fn   :sym 'CITE-UNVERIFIED
-                                     :doc  "(CITE-UNVERIFIED claim-text) - Record a claim without source verification. Lower confidence."}
-                                    {:type :fn   :sym 'list-claims
-                                     :doc  "(list-claims) - List all claims cited so far in this query."}
-                                    {:type :note :sym 'CITE-PRIORITY
-                                     :doc  "CITE is OPTIONAL. ALWAYS call (FINAL answer) as soon as you have the answer. Only use CITE BEFORE calling FINAL if the query explicitly asks for citations. Do NOT delay FINAL to gather citations."}])
           max-iterations-atom    (atom max-iterations)
           budget-bindings        {'request-more-iterations
                                   (fn [n]
@@ -275,7 +257,7 @@
                                        (rlm-tools/sci-update-binding! sci-ctx sym
                                          (rlm-tools/wrap-tool-for-sci env sym fn tool-registry-atom query-ctx)))))
           _                      (let [per-query (merge {'sub-rlm-query cheap-sub-rlm-fn}
-                                                   budget-bindings cite-bindings
+                                                   budget-bindings
                                                    (or custom-bindings {}) sub-rlm-query-overrides)]
                                    (doseq [[sym val] per-query]
                                      (when val
@@ -289,24 +271,19 @@
        :root-model             root-model
        :db-info                db-info
        :custom-docs            custom-docs
-       :claims-atom            claims-atom
        :current-iteration-atom current-iteration-atom
-       :cite-docs              cite-docs
        :max-iterations-atom    max-iterations-atom
        :query-start-time       query-start-time
        :rlm-env                rlm-env
        :env-id                 env-id
        :spec                   spec
-       :model                  model
        :max-iterations         max-iterations
        :max-refinements        max-refinements
        :threshold              threshold
        :max-context-tokens     max-context-tokens
        :max-recursion-depth    max-recursion-depth
-       :verify?                verify?
        :concurrency            concurrency
        :system-prompt          system-prompt
-       :plan?                  plan?
        :debug?                 debug?
        :hooks                  hooks
        :eval-timeout-ms        eval-timeout-ms
@@ -318,33 +295,25 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- run-iteration-phase
-  "Runs the optional planning phase then the main iteration loop.
+  "Runs the main iteration loop.
    Returns iteration-result, query-ref, cost atoms, and merge-cost! fn."
-  [{:keys [rlm-router rlm-env query-str messages spec max-iterations
-           max-context-tokens custom-docs cite-docs system-prompt
-           current-iteration-atom hooks cancel-atom plan? db-info
+  [{:keys [rlm-env query-str messages spec max-iterations
+           max-context-tokens custom-docs system-prompt
+           current-iteration-atom hooks cancel-atom db-info
            reasoning-default]}]
   (let [query-ref        (rlm-db/store-query! db-info
                            {:conversation-ref (:conversation-ref rlm-env)
                             :text             query-str
                             :messages         messages
                             :status           :running})
-        plan-result      (when plan?
-                           (llm/ask! rlm-router
-                             {:messages [(llm/system "You are a planning assistant. Given a query and available document tools, outline a clear 3-5 step approach to answer the query. Be specific about which tools to use and in what order. Do NOT write code — just describe the strategy.")
-                                         (llm/user (str "Query: " query-str))]
-                              :routing  {:optimize :intelligence}}))
-        plan-context     (when-let [plan (:result plan-result)]
-                           (str "<plan>\n" plan "\n</plan>"))
         iteration-result (rlm-core/iteration-loop rlm-env query-str
                            {:max-iterations         max-iterations
                             :query-ref              query-ref
                             :output-spec            spec
                             :max-context-tokens     max-context-tokens
-                            :custom-docs            (into (or custom-docs []) cite-docs)
+                            :custom-docs            custom-docs
                             :system-prompt          system-prompt
                             :reasoning-default      reasoning-default
-                            :pre-fetched-context    plan-context
                             :user-messages          messages
                             :current-iteration-atom current-iteration-atom
                             :hooks                  hooks
@@ -364,8 +333,6 @@
                                 (fn [acc]
                                   (merge-with + (select-keys acc [:input-cost :output-cost :total-cost])
                                     (select-keys extra-cost [:input-cost :output-cost :total-cost]))))))]
-    (when plan-result
-      (merge-cost! (:tokens plan-result) (:cost plan-result)))
     {:iteration-result  iteration-result
      :query-ref         query-ref
      :total-tokens-atom total-tokens-atom
@@ -483,7 +450,7 @@
 
 (defn- finalize-query-result
   "Persists claims, updates DB query record, emits debug log, builds result map."
-  [{:keys [db-info verify? claims-atom]}
+  [{:keys [db-info]}
    {:keys [query-ref start-time iterations status status-id trace locals
            answer raw-answer final-answer eval-scores refinement-count
            confidence sources reasoning total-tokens-atom total-cost-atom]}]
@@ -513,20 +480,9 @@
                  :duration-ms duration-ms
                  :tokens      @total-tokens-atom
                  :cost        @total-cost-atom}
-          (some? locals) (assoc :locals locals)
-          verify?        (assoc :verified-claims (vec @claims-atom))))
+          (some? locals) (assoc :locals locals)))
       ;; success path
       (do
-        (when (and verify? (seq @claims-atom))
-          (let [query-id (util/uuid)]
-            (doseq [claim @claims-atom]
-              (try
-                (rlm-db/db-store-claim! db-info
-                  (merge claim {:id        (util/uuid)
-                                :query-id  query-id
-                                :verified? (boolean (get claim :verified? true))}))
-                (catch Exception e
-                  (trove/log! {:level :warn :data {:error (ex-message e)} :msg "Failed to store claim"}))))))
         (rlm-core/rlm-stage! :query-end 0
           {:duration-ms duration-ms :iterations iterations
            :cost (str (:total-cost @total-cost-atom))})
@@ -553,8 +509,7 @@
                  :cost             @total-cost-atom}
           (some? confidence) (assoc :confidence confidence)
           (seq sources)      (assoc :sources sources)
-          (some? reasoning)  (assoc :reasoning reasoning)
-          verify?            (assoc :verified-claims (vec @claims-atom)))))))
+          (some? reasoning)  (assoc :reasoning reasoning))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Public entry point
@@ -586,7 +541,6 @@
      - :max-iterations - Max code iterations (default: 50).
      - :max-refinements - Max refine iterations (default: 1).
      - :threshold - Min eval score 0.0-1.0 for refinement early stop (default: 0.8).
-     - :verify? - Enable claim verification with citations (default: false).
       - :max-context-tokens - Token budget for context.
       - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
         code execution, LLM responses at :info level with :rlm-phase context.
@@ -610,7 +564,6 @@
      - :refinement-count - Number of refinement iterations performed.
      - :confidence - Confidence level (:high/:medium/:low) from final iteration.
      - :sources - Vector of source IDs cited in the answer.
-     - :verified-claims - Verified claims (only when :verify? true).
       - :reasoning - String summary of how the answer was derived (from LLM's FINAL call).
       - :status - Only present on failure, e.g. :max-iterations."
   ([env messages]
@@ -655,12 +608,9 @@
              ;; failure - update Q with low reward, no refinement
              (do
                (update-q-values!
-                 {:db-info        db-info
-                  :query-start-time    query-start-time
-                  :max-iterations-atom max-iterations-atom}
-                 {:sources    sources :eval-scores nil :confidence confidence
-                  :iterations iterations :max-iterations max-iterations
-                  :status     status})
+                 {:db-info          db-info
+                  :query-start-time query-start-time}
+                 {:status status})
                (finalize-query-result
                  ctx
                  {:query-ref         query-ref
@@ -671,13 +621,6 @@
                   :trace             trace
                   :locals            locals
                   :answer            iter-answer
-                  :raw-answer        nil
-                  :final-answer      nil
-                  :eval-scores       nil
-                  :refinement-count  nil
-                  :confidence        confidence
-                  :sources           sources
-                  :reasoning         reasoning
                   :total-tokens-atom total-tokens-atom
                   :total-cost-atom   total-cost-atom}))
              ;; success - refine first so eval-scores feed Q-reward
@@ -688,22 +631,17 @@
                            eval-scores
                            refinement-count]} refine-result]
                (update-q-values!
-                 {:db-info        db-info
+                 {:db-info             db-info
                   :query-start-time    query-start-time
                   :max-iterations-atom max-iterations-atom}
                  {:sources    sources :eval-scores eval-scores :confidence confidence
-                  :iterations iterations :max-iterations max-iterations
-                  :status     nil})
+                  :iterations iterations :max-iterations max-iterations})
                (finalize-query-result
                  ctx
                  {:query-ref         query-ref
                   :start-time        start-time
                   :iterations        iterations
-                  :status            nil
-                  :status-id         nil
                   :trace             trace
-                  :locals            nil
-                  :answer            iter-answer
                   :raw-answer        answer-value
                   :final-answer      answer
                   :eval-scores       eval-scores

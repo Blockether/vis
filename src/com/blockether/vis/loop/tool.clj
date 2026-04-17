@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.sci.tool
+(ns com.blockether.vis.loop.tool
   "Tool definition helpers shared by tool producers and SCI runtime code."
   (:require [clojure.string :as str]))
 

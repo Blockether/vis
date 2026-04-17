@@ -1,11 +1,11 @@
-(ns com.blockether.vis.loop.query.routing-test
+(ns com.blockether.vis.loop.runtime.query.routing-test
   "Tests for sub-rlm-query routing — depth tracking, concurrency safety.
 
    Critical: the depth check must be atomic. Without CAS-style swap!,
    concurrent sub-rlm-query-batch calls could race past *max-recursion-depth*."
   (:require
    [lazytest.core :refer [defdescribe describe expect it]]
-   [com.blockether.vis.loop.query.routing :as routing]
+   [com.blockether.vis.loop.runtime.query.routing :as routing]
    [com.blockether.vis.loop.storage.schema :as schema]))
 
 (defn- run-with-depth-tracking

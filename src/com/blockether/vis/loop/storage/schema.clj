@@ -4,7 +4,7 @@
    [clojure.java.process :as proc]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
-   [com.blockether.vis.loop.sci.form-repair :as form-repair]
+   [com.blockether.vis.loop.runtime.form-repair :as form-repair]
    [com.blockether.svar.internal.spec :as spec]
    [fast-edn.core :as edn])
   (:import

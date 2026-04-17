@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.query.routing
+(ns com.blockether.vis.loop.runtime.query.routing
   "Unified RLM routing module.
 
    Owns both router lifecycle (shared singleton) and sub-query routing policy."
@@ -7,7 +7,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.config :as config]
    [com.blockether.vis.loop.storage.schema :refer [*max-recursion-depth* SUB_RLM_QUERY_SPEC]]
-   [com.blockether.vis.loop.query.subquery :as rlm-sub]
+   [com.blockether.vis.loop.runtime.query.subquery :as rlm-sub]
    [taoensso.trove :as trove]))
 
 (defonce ^:private router-atom (atom nil))
