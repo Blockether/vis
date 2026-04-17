@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.skills
+(ns com.blockether.vis.loop.knowledge.skills
   "SKILL.md discovery, parsing, validation, registry, and SQLite ingestion.
 
    Skills are loaded from filesystem paths AND ingested into SQLite as

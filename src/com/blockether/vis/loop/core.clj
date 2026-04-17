@@ -14,7 +14,7 @@
     :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
             *eval-timeout-ms*
             validate-final bytes->base64 *rlm-ctx*]]
-   [com.blockether.vis.loop.skills :as rlm-skills]
+   [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
    [com.blockether.vis.loop.sci.runtime :refer [create-sci-context build-var-index]]
    [com.blockether.vis.loop.sci.shared :refer [realize-value]]
    [com.blockether.vis.loop.sci.form-repair :as form-repair]

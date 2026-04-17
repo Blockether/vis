@@ -1,11 +1,11 @@
-(ns com.blockether.vis.loop.skills-test
+(ns com.blockether.vis.loop.knowledge.skills-test
   "Unit tests for skills.clj — validation, parsing, discovery, collision
    resolution, *svar-dir* rebinding, file writing, and load-skills integration."
   (:require
    [babashka.fs :as fs]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]
-   [com.blockether.vis.loop.skills :as skills]))
+   [com.blockether.vis.loop.knowledge.skills :as skills]))
 
 ;; =============================================================================
 ;; Helpers

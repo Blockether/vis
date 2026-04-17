@@ -5,7 +5,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.loop.redact :as redact]
+            [com.blockether.vis.loop.observability.redact :as redact]
             [taoensso.telemere :as t])
   (:import [java.io FileInputStream FileOutputStream]))
 

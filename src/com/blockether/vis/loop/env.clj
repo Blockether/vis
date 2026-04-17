@@ -18,7 +18,7 @@
    [com.blockether.vis.loop.core :as rlm-core]
    [com.blockether.vis.loop.storage.db :as rlm-db]
    [com.blockether.vis.loop.query.routing :as rlm-routing]
-   [com.blockether.vis.loop.skills :as rlm-skills]
+   [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
    [com.blockether.vis.loop.sci.tool :as sci-tool]
    [com.blockether.vis.loop.sci.runtime :as rlm-tools]
    [com.blockether.svar.internal.util :as util]))
