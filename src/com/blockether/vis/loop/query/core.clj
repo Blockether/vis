@@ -10,7 +10,7 @@
    [com.blockether.vis.loop.env :as rlm-env]
    [com.blockether.vis.loop.query.routing :as rlm-routing]
    [com.blockether.vis.loop.storage.schema :as schema]
-   [com.blockether.vis.loop.skills :as rlm-skills]
+   [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
    [com.blockether.vis.loop.sci.runtime :as rlm-tools]
    [com.blockether.vis.loop.sci.shared :as rlm-tools-shared]
    [com.blockether.svar.internal.spec :as spec]

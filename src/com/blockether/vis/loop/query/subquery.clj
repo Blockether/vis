@@ -5,7 +5,7 @@
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
-   [com.blockether.vis.loop.skills :as rlm-skills]
+   [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
    [taoensso.trove :as trove]))
 
 (defn- auto-refine-async!
