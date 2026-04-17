@@ -5,11 +5,11 @@
    Each Telegram chat maps to a `:telegram` conversation via
    `conversations/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
-   conversation's lock in `com.blockether.vis.rlm.conversations.core`."
-  (:require [com.blockether.vis.rlm.conversations.core :as conversations]
-            [com.blockether.vis.rlm.routing :as routing]
+   conversation's lock in `com.blockether.vis.loop.conversations.core`."
+  (:require [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.loop.query.routing :as routing]
             [com.blockether.vis.adapters.telegram.api :as tg]
-            [com.blockether.vis.utils :as utils]))
+            [com.blockether.vis.shared :as shared]))
 
 (defonce ^:private running? (atom false))
 (defonce ^:private poll-thread (atom nil))
@@ -107,8 +107,8 @@
     (println "Telegram bot stopped.")))
 
 (defn -main [& _]
-  (utils/add-shutdown-hook! (fn []
-                              (println "Shutting down Telegram bot…")
-                              (stop!)))
+  (shared/add-shutdown-hook! (fn []
+                               (println "Shutting down Telegram bot…")
+                               (stop!)))
   (start!)
   @(promise))

@@ -8,11 +8,13 @@
    model, but every other layer (SQLite, SCI sandbox, iteration-var
    persistence) runs for real."
   (:require [babashka.fs :as fs]
+            [clojure.set :as set]
             [lazytest.core :refer [defdescribe describe expect it]]
             [com.blockether.svar.internal.llm :as llm]
             [com.blockether.vis.config :as config]
-            [com.blockether.vis.rlm.conversations.core :as conversations]
-            [com.blockether.vis.rlm :as rlm]
+            [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.loop.core :as rlm-core]
+            [com.blockether.vis.core :as rlm]
             [sci.core :as sci]))
 
 ;;; ── Helpers ─────────────────────────────────────────────────────────────
@@ -95,7 +97,7 @@
             "(def keep-var 99) (def drop-me 42)"
             {:ns (sci/find-ns (:sci-ctx env) 'sandbox)})
           (expect (= #{"keep-var" "drop-me"}
-                    (clojure.set/intersection
+                    (set/intersection
                       (sandbox-names env) #{"keep-var" "drop-me"})))
           (with-redefs [llm/ask! (scripted-llm
                                    [{:forget ["drop-me"]
@@ -174,7 +176,7 @@
           (let [router (llm/make-router integration-providers)
                 env (rlm/create-env router {:db config/db-path})]
             (try
-              (#'com.blockether.vis.rlm.core/execute-code env "(def drop-me 42)")
+              (#'rlm-core/execute-code env "(def drop-me 42)")
               (let [result (rlm/query-env! env [(llm/user "Forget variable drop-me, then reply with exactly FORGOTTEN.")]
                              {:max-iterations 4
                               :refine? false

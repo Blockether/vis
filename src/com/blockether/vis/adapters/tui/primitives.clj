@@ -209,13 +209,12 @@
             base       (max 0 (quot total-gaps slots))
             unit-gap   (apply str (repeat base \space))
             ;; Build: gap item gap | gap item gap | ...
-            parts      (mapcat (fn [item] [unit-gap item unit-gap]) items)]
-        (let [result (apply str parts)
-              len    (count result)]
-          (cond
-            (= len w) result
-            (< len w) (str result (apply str (repeat (- w len) \space)))
-            :else     (subs result 0 w)))))))
+            parts      (mapcat (fn [item] [unit-gap item unit-gap]) items)
+            result     (apply str parts)]
+        (cond
+          (= (count result) w) result
+          (< (count result) w) (str result (apply str (repeat (- w (count result)) \space)))
+          :else                (subs result 0 w))))))
 
 (defn v-center-offset
   "Compute vertical offset to center `content-h` rows within `container-h` rows."

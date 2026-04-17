@@ -21,14 +21,12 @@ CREATE TABLE entity (
   document_id   TEXT,
   page          INTEGER,
   section       TEXT,
-  canonical_id  TEXT,
   created_at    INTEGER,
   updated_at    INTEGER
 );
 CREATE INDEX idx_entity_type          ON entity(type);
 CREATE INDEX idx_entity_parent        ON entity(parent_id);
 CREATE INDEX idx_entity_document      ON entity(document_id);
-CREATE INDEX idx_entity_canonical     ON entity(canonical_id);
 CREATE INDEX idx_entity_type_doc_page ON entity(type, document_id, page);
 CREATE INDEX idx_entity_created       ON entity(created_at);
 
@@ -214,18 +212,6 @@ CREATE TABLE page_cooccurrence (
 CREATE INDEX idx_cooc_a ON page_cooccurrence(page_a);
 CREATE INDEX idx_cooc_b ON page_cooccurrence(page_b);
 
-CREATE TABLE relationship (
-  id                  TEXT PRIMARY KEY NOT NULL,
-  type                TEXT NOT NULL,
-  source_entity_id    TEXT,
-  target_entity_id    TEXT,
-  description         TEXT,
-  document_id         TEXT
-);
-CREATE INDEX idx_rel_source ON relationship(source_entity_id);
-CREATE INDEX idx_rel_target ON relationship(target_entity_id);
-CREATE INDEX idx_rel_type   ON relationship(type);
-
 CREATE TABLE claim (
   id                      TEXT PRIMARY KEY NOT NULL,
   text                    TEXT,
@@ -252,6 +238,21 @@ CREATE TABLE rlm_meta (
   corpus_revision   INTEGER,
   updated_at        INTEGER
 );
+
+-- -----------------------------------------------------------------------------
+-- vis sidecar conversations metadata
+-- -----------------------------------------------------------------------------
+CREATE TABLE vis_conversation (
+  conversation_id TEXT PRIMARY KEY NOT NULL,
+  channel         TEXT NOT NULL,
+  external_id     TEXT,
+  title           TEXT,
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX idx_vis_conv_channel ON vis_conversation(channel, created_at DESC);
+CREATE UNIQUE INDEX uniq_vis_conv_external
+  ON vis_conversation(channel, external_id)
+  WHERE external_id IS NOT NULL;
 
 -- =============================================================================
 -- FTS5 unified search index

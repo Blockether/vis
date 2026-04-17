@@ -84,6 +84,10 @@
          [:div.thinking.md-content thinking]])
 
       ;; Non-final iteration: header + optional thinking/executions/error.
+      ;; Skip entirely when the iteration produced nothing we care to show.
+      (not (or has-thinking? has-execs? error))
+      nil
+
       :else
       [:div.iteration {:class (when error "iteration-error")}
        [:div.iter-header (str "Iteration " (inc iteration))
