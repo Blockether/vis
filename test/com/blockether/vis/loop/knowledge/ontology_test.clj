@@ -212,12 +212,13 @@
         (expect (= activation (:activation-fn tool-def)))
         (expect (= 'my-tool (:sym tool-def)))))
 
-    (it "tool without activation-fn has nil activation-fn"
+    (it "tool without explicit activation-fn defaults to (constantly true)"
       (let [tool-def (com.blockether.vis.loop.tool/make-tool-def
                        'plain-tool
                        (fn [x] x)
                        {:doc "plain tool"})]
-        (expect (nil? (:activation-fn tool-def)))))
+        (expect (fn? (:activation-fn tool-def)))
+        (expect (true? ((:activation-fn tool-def) {})))))
 
     (it "activation-fn receives env and controls binding"
       (h/with-temp-env

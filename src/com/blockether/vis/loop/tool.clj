@@ -64,6 +64,7 @@
         :arglists normalized-arglists
         :validate-input (or (:validate-input tool-def) default-validate-input)
         :validate-output (or (:validate-output tool-def) default-validate-output)
+        :activation-fn (or (:activation-fn tool-def) (constantly true))
         :examples (vec examples)))))
 
 (defn assert-fn-tool-def!
@@ -96,6 +97,9 @@
                 (every? non-blank-string? examples))
       (throw (ex-info "tool-def :examples must be a non-empty vector of non-blank strings"
                {:type :rlm/invalid-tool-def :field :examples :tool-def (dissoc tool-def :fn)})))
+    (when-not (fn? (:activation-fn tool-def))
+      (throw (ex-info "tool-def :activation-fn must be a function (fn [env] -> boolean)"
+               {:type :rlm/invalid-tool-def :field :activation-fn :tool-def (dissoc tool-def :fn)})))
     tool-def))
 
 (defn maybe-assert-fn-tool-def!
