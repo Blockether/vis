@@ -7,6 +7,7 @@
    conversations is not wired into the TUI today; we just open a new one
    each boot."
   (:require [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.loop.conversations.shared :as conv-shared]
             [taoensso.telemere :as t]))
 
 (defn user-msg
@@ -39,7 +40,7 @@
       {:answer (if (string? answer) answer (pr-str answer))})
     (catch Exception e
       (t/log! :error (str "Query failed: " (ex-message e)))
-      {:error (str "error: " (ex-message e))})))
+      {:error (conv-shared/error->user-message e)})))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in

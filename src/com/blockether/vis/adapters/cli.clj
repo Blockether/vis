@@ -418,6 +418,14 @@
               ;; Environment summary
               (stdout! "  Environment")
               (stdout! "  ───────────")
+              (stdout! (str "  OS:           " (System/getProperty "os.name") " " (System/getProperty "os.arch")))
+              (stdout! (str "  Java:         " (System/getProperty "java.version") " (" (System/getProperty "java.vendor") ")"))
+              (stdout! (str "  Clojure:      " (clojure-version)))
+              (stdout! (str "  Memory:       " (let [rt (Runtime/getRuntime)
+                                                     used (- (.totalMemory rt) (.freeMemory rt))
+                                                     max  (.maxMemory rt)
+                                                     mb   (fn [b] (format "%.0fMB" (/ (double b) 1048576)))]
+                                                 (str (mb used) " / " (mb max)))))
               (stdout! (str "  DB path:      " (or (:path db-info) "none")))
               (stdout! (str "  Documents:    " (count docs)
                         (when (seq docs)

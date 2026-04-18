@@ -200,7 +200,7 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
           (:learn result)      (assoc :learn (:learn result))))
       (catch Exception e
         {:conv-id   conv-id
-         :error     (ex-message e)
+         :error     (shared/error->user-message e)
          :type      (str (type e))
          :exception e}))))
 
