@@ -1,7 +1,7 @@
 (ns com.blockether.vis.loop.storage.db
-  "Public persistence contract over rlm.persistence.sqlite.
-   Preserves stable fn names + namespaced return shapes so callers across
-   adapters and runtime modules can depend on one boundary.
+  "Public persistence contract over the SQLite store. Preserves stable fn
+   names + namespaced return shapes so callers across adapters and runtime
+   modules can depend on one boundary.
 
    db-info map layout:
      {:datasource javax.sql.DataSource
@@ -9,13 +9,18 @@
       :owned?      bool
       :mode        :temp|:persistent|:external}
 
-   Connection open/close is delegated to rlm.sqlite/open-store + close-store.
-   All data operations route through rlm.sqlite."
+   Delegates to the sqlite.* domain namespaces."
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
    [com.blockether.vis.loop.runtime.shared :as rt-shared]
-   [com.blockether.vis.loop.storage.sqlite :as sq]
+   [com.blockether.vis.loop.storage.sqlite.concept-graph :as cg]
+   [com.blockether.vis.loop.storage.sqlite.conversations :as conv]
+   [com.blockether.vis.loop.storage.sqlite.core :as core]
+   [com.blockether.vis.loop.storage.sqlite.corpus :as corpus]
+   [com.blockether.vis.loop.storage.sqlite.git :as git]
+   [com.blockether.vis.loop.storage.sqlite.search :as search]
+   [com.blockether.vis.loop.storage.sqlite.vitality :as vit]
    [edamame.core :as edamame]))
 
 ;; -----------------------------------------------------------------------------
@@ -25,9 +30,9 @@
 (defn str-lower [s] (when s (str/lower-case s)))
 (defn str-includes? [s substr] (when s (str/includes? s substr)))
 
-(def ->id sq/->id)
-(def ->kw sq/->kw)
-(def ->epoch-ms sq/->epoch-ms)
+(def ->id core/->id)
+(def ->kw core/->kw)
+(def ->epoch-ms core/->epoch-ms)
 
 (defn- read-edn-safe [s fallback]
   (if (or (nil? s) (= "" s))
@@ -40,45 +45,44 @@
 ;; -----------------------------------------------------------------------------
 
 (def create-rlm-conn
-  "Open a SQLite RLM store. Drop-in replacement for the legacy SQLite
-   constructor. See rlm.sqlite/open-store for db-spec forms."
-  sq/open-store)
+  "Open a SQLite RLM store. See sqlite.core/open-store for db-spec forms."
+  core/open-store)
 
 (def dispose-rlm-conn!
-  "Close an RLM store. Idempotent. See rlm.sqlite/close-store."
-  sq/close-store)
+  "Close an RLM store. Idempotent. See sqlite.core/close-store."
+  core/close-store)
 
 ;; -----------------------------------------------------------------------------
 ;; Corpus metadata
 ;; -----------------------------------------------------------------------------
 
-(def get-corpus-revision    sq/get-corpus-revision)
-(def bump-corpus-revision!  sq/bump-corpus-revision!)
+(def get-corpus-revision    corpus/get-corpus-revision)
+(def bump-corpus-revision!  corpus/bump-corpus-revision!)
 
 ;; -----------------------------------------------------------------------------
 ;; Entity / Conversation / Query / Iteration
 ;; -----------------------------------------------------------------------------
 
-(def store-entity!     sq/store-entity!)
-(def update-entity!    sq/update-entity!)
+(def store-entity!     core/store-entity!)
+(def update-entity!    core/update-entity!)
 
-(def store-conversation!              sq/store-conversation!)
-(def db-get-conversation              sq/db-get-conversation)
-(def db-find-latest-conversation-ref  sq/db-find-latest-conversation-ref)
-(def db-resolve-conversation-ref      sq/db-resolve-conversation-ref)
+(def store-conversation!              conv/store-conversation!)
+(def db-get-conversation              conv/db-get-conversation)
+(def db-find-latest-conversation-ref  conv/db-find-latest-conversation-ref)
+(def db-resolve-conversation-ref      conv/db-resolve-conversation-ref)
 
-(def store-query!   sq/store-query!)
-(def update-query!  sq/update-query!)
+(def store-query!   conv/store-query!)
+(def update-query!  conv/update-query!)
 
-(def store-iteration!        sq/store-iteration!)
-(def db-list-iteration-vars  sq/db-list-iteration-vars)
+(def store-iteration!        conv/store-iteration!)
+(def db-list-iteration-vars  conv/db-list-iteration-vars)
 
-(def delete-entity-tree!               sq/delete-entity-tree!)
+(def delete-entity-tree!               core/delete-entity-tree!)
 
-(def db-list-conversation-queries  sq/db-list-conversation-queries)
-(def db-list-query-iterations      sq/db-list-query-iterations)
-(def db-list-queries               sq/db-list-queries)
-(def db-document-page-nodes-full   sq/db-document-page-nodes-full)
+(def db-list-conversation-queries  conv/db-list-conversation-queries)
+(def db-list-query-iterations      conv/db-list-query-iterations)
+(def db-list-queries               corpus/db-list-queries)
+(def db-document-page-nodes-full   corpus/db-document-page-nodes-full)
 
 ;; -----------------------------------------------------------------------------
 ;; Derived views over conversations / queries / iterations
@@ -184,92 +188,113 @@
 ;; Documents + TOC + raw documents
 ;; -----------------------------------------------------------------------------
 
-(def db-list-documents             sq/db-list-documents)
-(def db-get-document               sq/db-get-document)
-(def store-document!               sq/store-document!)
-(def db-store-pageindex-document!  sq/db-store-pageindex-document!)
+(def db-list-documents             corpus/db-list-documents)
+(def db-get-document               corpus/db-get-document)
+(def store-document!               corpus/store-document!)
+(def db-store-pageindex-document!  corpus/db-store-pageindex-document!)
 
-(def db-store-toc-entry!    sq/db-store-toc-entry!)
-(def db-search-toc-entries  sq/db-search-toc-entries)
-(def db-get-toc-entry       sq/db-get-toc-entry)
-(def db-list-toc-entries    sq/db-list-toc-entries)
+(def db-store-toc-entry!    corpus/db-store-toc-entry!)
+(def db-search-toc-entries  search/db-search-toc-entries)
+(def db-get-toc-entry       corpus/db-get-toc-entry)
+(def db-list-toc-entries    corpus/db-list-toc-entries)
 
 ;; -----------------------------------------------------------------------------
 ;; Pages + page nodes (search / list / get)
 ;; -----------------------------------------------------------------------------
 
-(def db-get-page-node        sq/db-get-page-node)
-(def db-list-page-nodes      sq/db-list-page-nodes)
-(def db-search-page-nodes    sq/db-search-page-nodes)
-(def db-search-batch         sq/db-search-batch)
+(def db-get-page-node        corpus/db-get-page-node)
+(def db-list-page-nodes      corpus/db-list-page-nodes)
+(def db-search-page-nodes    search/db-search-page-nodes)
+(def db-search-batch         search/db-search-batch)
 
 ;; -----------------------------------------------------------------------------
 ;; Git / repos / commits
 ;; -----------------------------------------------------------------------------
 
-(def db-store-repo!        sq/db-store-repo!)
-(def db-list-repos         sq/db-list-repos)
-(def db-get-repo-by-name   sq/db-get-repo-by-name)
+(def db-store-repo!        git/db-store-repo!)
+(def db-list-repos         git/db-list-repos)
+(def db-get-repo-by-name   git/db-get-repo-by-name)
 
-(def db-search-commits     sq/db-search-commits)
-(def db-commit-by-sha      sq/db-commit-by-sha)
-(def store-commit-entity!  sq/store-commit-entity!)
+(def db-search-commits     git/db-search-commits)
+(def db-commit-by-sha      git/db-commit-by-sha)
+(def store-commit-entity!  git/store-commit-entity!)
 
 ;; -----------------------------------------------------------------------------
 ;; Vitality / Q-values / Cooccurrence
 ;; -----------------------------------------------------------------------------
 
-(def vitality-zone          sq/vitality-zone)
-(def compute-page-vitality  sq/compute-page-vitality)
-(def compute-node-vitality  sq/compute-node-vitality)
-(def get-page-vitality      sq/get-page-vitality)
+(def vitality-zone          vit/vitality-zone)
+(def compute-page-vitality  vit/compute-page-vitality)
+(def compute-node-vitality  vit/compute-node-vitality)
+(def get-page-vitality      vit/get-page-vitality)
 
-(def get-page-q-value       sq/get-page-q-value)
-(def pages-accessed-since   sq/pages-accessed-since)
-(def finalize-q-updates!    sq/finalize-q-updates!)
+(def get-page-q-value       corpus/get-page-q-value)
+(def pages-accessed-since   corpus/pages-accessed-since)
+(def finalize-q-updates!    corpus/finalize-q-updates!)
 
-(def record-page-access!     sq/record-page-access!)
+(def record-page-access!     vit/record-page-access!)
 
-(def record-cooccurrence!        sq/record-cooccurrence!)
-(def record-cooccurrences!       sq/record-cooccurrences!)
-(def batch-cooccurrence-boosts   sq/batch-cooccurrence-boosts)
-(def get-cooccurrence-boost      sq/get-cooccurrence-boost)
-(def recently-accessed-page-ids  sq/recently-accessed-page-ids)
+(def record-cooccurrence!        vit/record-cooccurrence!)
+(def record-cooccurrences!       vit/record-cooccurrences!)
+(def batch-cooccurrence-boosts   vit/batch-cooccurrence-boosts)
+(def get-cooccurrence-boost      vit/get-cooccurrence-boost)
+(def recently-accessed-page-ids  vit/recently-accessed-page-ids)
 
 ;; -----------------------------------------------------------------------------
 ;; Document certainty (Bayesian)
 ;; -----------------------------------------------------------------------------
 
-(def document-certainty           sq/document-certainty)
-(def record-document-access!      sq/record-document-access!)
-(def decay-document-certainty!    sq/decay-document-certainty!)
-(def reindex-certainty-jump!      sq/reindex-certainty-jump!)
+(def document-certainty           vit/document-certainty)
+(def record-document-access!      vit/record-document-access!)
+(def decay-document-certainty!    vit/decay-document-certainty!)
+(def reindex-certainty-jump!      vit/reindex-certainty-jump!)
 
 ;; -----------------------------------------------------------------------------
 ;; Skills
 ;; -----------------------------------------------------------------------------
 
-(def ingest-skills!        sq/ingest-skills!)
-(def delete-skill-entity!  sq/delete-skill-entity!)
+(def ingest-skills!        corpus/ingest-skills!)
+(def delete-skill-entity!  corpus/delete-skill-entity!)
 
 ;; -----------------------------------------------------------------------------
 ;; Claims (citation verification)
 ;; -----------------------------------------------------------------------------
 
-(def db-cited-page-ids     sq/db-cited-page-ids)
+(def db-cited-page-ids     corpus/db-cited-page-ids)
 
 ;; -----------------------------------------------------------------------------
 ;; Refinement / stats helpers consumed by core.clj + query.clj
 ;; -----------------------------------------------------------------------------
 
-(def db-stored-docs-for-refinement  sq/db-stored-docs-for-refinement)
-(def db-count-document-pages        sq/db-count-document-pages)
-(def db-entity-type-counts          sq/db-entity-type-counts)
+(def db-stored-docs-for-refinement  corpus/db-stored-docs-for-refinement)
+(def db-count-document-pages        corpus/db-count-document-pages)
+(def db-entity-type-counts          corpus/db-entity-type-counts)
 
 ;; -----------------------------------------------------------------------------
 ;; QA manifest corpus helpers
 ;; -----------------------------------------------------------------------------
 
-(def qa-corpus-documents    sq/qa-corpus-documents)
-(def qa-corpus-toc-entries  sq/qa-corpus-toc-entries)
-(def qa-corpus-page-nodes   sq/qa-corpus-page-nodes)
+(def qa-corpus-documents    corpus/qa-corpus-documents)
+(def qa-corpus-toc-entries  corpus/qa-corpus-toc-entries)
+(def qa-corpus-page-nodes   corpus/qa-corpus-page-nodes)
+
+;; -----------------------------------------------------------------------------
+;; Concept graph
+;; -----------------------------------------------------------------------------
+
+(def clear-concept-graph!     cg/clear-concept-graph!)
+(def store-concept!           cg/store-concept!)
+(def store-concept-alias!     cg/store-concept-alias!)
+(def store-concept-source!    cg/store-concept-source!)
+(def store-concept-edge!      cg/store-concept-edge!)
+(def list-concepts            cg/list-concepts)
+(def list-concept-aliases     cg/list-concept-aliases)
+(def list-concept-sources     cg/list-concept-sources)
+(def list-concept-edges       cg/list-concept-edges)
+(def load-full-concept-graph  cg/load-full-concept-graph)
+(def store-page-concept!      cg/store-page-concept!)
+(def list-page-concepts       cg/list-page-concepts)
+(def clear-page-concepts!     cg/clear-page-concepts!)
+(def update-page-content-sha! cg/update-page-content-sha!)
+(def set-concept-status!      cg/set-concept-status!)
+(def update-concept!          cg/update-concept!)

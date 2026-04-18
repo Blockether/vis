@@ -19,6 +19,7 @@
    [com.blockether.vis.loop.tool :as sci-tool]
    [com.blockether.vis.loop.runtime.tools.core :as sci-tools]
    [com.blockether.vis.loop.runtime.tools.git :as sci-git]
+   [com.blockether.vis.loop.knowledge.ontology :as ontology]
    [com.blockether.vis.loop.runtime.shared :as sci-shared
     :refer [EXTRA_BINDINGS ns->sci-map]]
    [sci.addons.future :as sci-future]
@@ -77,8 +78,10 @@
                           'restore-vars (sci-tools/make-restore-vars-fn restore-var-fn))))
         git-bindings (when db-info
                        (sci-git/make-git-sci-bindings db-info))
+        concept-bindings (when db-info
+                           (ontology/make-concept-graph-bindings db-info))
         all-bindings (merge EXTRA_BINDINGS base-bindings db-bindings
-                       git-bindings
+                       git-bindings concept-bindings
                        (or custom-bindings {}))
         str-ns  (sci/create-ns 'clojure.string nil)
         set-ns  (sci/create-ns 'clojure.set nil)
