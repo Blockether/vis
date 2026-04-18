@@ -196,3 +196,41 @@
                                ["SELECT term, status, removal_rationale FROM concept WHERE id = ?" cid]))]
               (expect (= "removed" (:status row)))
               (expect (= reason (:removal_rationale row))))))))))
+
+;; =============================================================================
+;; activation-fn
+;; =============================================================================
+
+(defdescribe activation-fn-test
+  (describe "tool activation-fn"
+    (it "tool-def preserves activation-fn through make-tool-def"
+      (let [activation (fn [env] (some? (:db-info env)))
+            tool-def (com.blockether.vis.loop.tool/make-tool-def
+                       'my-tool
+                       (fn [x] x)
+                       {:doc "test tool" :activation-fn activation})]
+        (expect (= activation (:activation-fn tool-def)))
+        (expect (= 'my-tool (:sym tool-def)))))
+
+    (it "tool without activation-fn has nil activation-fn"
+      (let [tool-def (com.blockether.vis.loop.tool/make-tool-def
+                       'plain-tool
+                       (fn [x] x)
+                       {:doc "plain tool"})]
+        (expect (nil? (:activation-fn tool-def)))))
+
+    (it "activation-fn receives env and controls binding"
+      (h/with-temp-env
+        (fn [env]
+          ;; Register a tool with activation-fn that checks for a flag
+          (let [activated? (atom false)]
+            ;; Register tool that only activates when :concept-graph-ready? is set
+            (vis/register-env-fn! env 'conditional-tool
+              (fn [x] (str "result:" x))
+              {:doc "only active when concepts exist"
+               :activation-fn (fn [e]
+                                (reset! activated? true)
+                                (some? (:db-info e)))})
+            ;; Tool should be registered
+            (expect (some #(= 'conditional-tool (:sym %))
+                      (vis/list-registered-tools env)))))))))

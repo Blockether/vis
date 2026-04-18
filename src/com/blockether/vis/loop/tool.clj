@@ -43,7 +43,12 @@
   "Return a canonical function tool-def with all required keys populated.
 
    Required canonical keys:
-   - :sym, :fn, :type, :doc, :arglists, :validate-input, :validate-output, :examples"
+   - :sym, :fn, :type, :doc, :arglists, :validate-input, :validate-output, :examples
+
+   Optional keys:
+   - :activation-fn — `(fn [env] bool)`. When present, the tool is only bound
+     in the sandbox if `(activation-fn env)` returns truthy at query time.
+     Receives the full env map (db-info, router, state-atom, etc.)."
   [sym f tool-def]
   (let [fn-meta (meta f)
         inferred-doc (:doc fn-meta)
