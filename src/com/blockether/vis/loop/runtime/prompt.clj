@@ -120,6 +120,8 @@ Git tools available this session — all prefixed `git-`:
   [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary system-prompt git-repos skill-registry concept-graph-prompt]}]
   (str
     "Clojure SCI agent. Write, exec, iterate.
+Current date (server local time): " (.toString (java.time.LocalDate/now)) "
+
 
 MINDSET:
 - Reasoning: 2-5 lines max. No monologues.

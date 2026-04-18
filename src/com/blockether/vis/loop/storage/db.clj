@@ -202,6 +202,7 @@
 
 (def db-store-repo!        git/db-store-repo!)
 (def db-list-repos         git/db-list-repos)
+(def db-repo-stats         git/db-repo-stats)
 (def db-get-repo-by-name   git/db-get-repo-by-name)
 
 (def db-search-commits     git/db-search-commits)

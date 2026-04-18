@@ -1,13 +1,11 @@
 (ns com.blockether.vis.loop.runtime.tool-diagnostics
-  "Tool diagnostics: timing for activation, load, and execution.
+  "Tool diagnostics: timing for activation and execution.
    Cross-conversation — stored in a process-global atom, not per-env."
   (:require [clojure.string :as str]))
 
-;; Process-global tool diagnostics. Survives across conversations.
 (defonce ^:private diagnostics (atom {}))
 
 (defn record-activation-check!
-  "Record how long an activation-fn took to evaluate."
   [sym active? elapsed-ns]
   (swap! diagnostics update sym
     (fn [d]
@@ -17,7 +15,6 @@
                :last-active? active?)))))
 
 (defn record-execution!
-  "Record a tool execution timing."
   [sym elapsed-ns error?]
   (swap! diagnostics update sym
     (fn [d]
@@ -29,38 +26,27 @@
             error? (update :errors (fnil inc 0))
             (not error?) (update :total-execution-ns (fnil + 0) elapsed-ns)))))))
 
-(defn get-diagnostics
-  "Returns diagnostics map: {sym -> {:sym :activation-checks :executions ...}}"
-  []
-  @diagnostics)
-
+(defn get-diagnostics [] @diagnostics)
 (defn reset-diagnostics! [] (reset! diagnostics {}))
 
-(defn format-table
-  "Format diagnostics as a table string.
-   Returns a string with aligned columns."
-  []
-  (let [data (sort-by (comp str key) @diagnostics)
-        fmt-ns (fn [ns] (when ns (format "%.2fms" (/ (double ns) 1e6))))
-        rows (mapv (fn [[sym d]]
-                     [(str sym)
-                      (str (:activation-checks d 0))
-                      (or (fmt-ns (:last-activation-ns d)) "—")
-                      (if (:last-active? d) "✓" "✗")
-                      (str (:executions d 0))
-                      (or (fmt-ns (:last-execution-ns d)) "—")
-                      (str (:errors d 0))])
-               data)
-        header ["Tool" "Activ#" "ActTime" "Active?" "Exec#" "ExecTime" "Errors"]
-        all-rows (cons header rows)
-        widths (reduce (fn [ws row]
-                         (mapv (fn [w cell] (max w (count cell))) ws row))
-                 (vec (repeat (count header) 0))
-                 all-rows)
-        pad (fn [s w] (str s (apply str (repeat (- w (count s)) " "))))
-        sep (str/join " | " (map #(apply str (repeat % "-")) widths))]
-    (str/join "\n"
-      (concat
-        [(str/join " | " (map pad header widths))
-         sep]
-        (map #(str/join " | " (map pad % widths)) rows)))))
+(defn format-doctor-report
+  "Format a human-readable doctor report from tool registry + diagnostics.
+   `tools` is a seq of {:sym :group :activation-doc :active? :activation-ms}."
+  [tools]
+  (let [sb       (StringBuilder.)
+        by-group (group-by :group tools)
+        sorted   (sort-by key by-group)]
+    (doseq [[group group-tools] sorted]
+      (.append sb (str "\n  " (or group "Other") "\n"))
+      (.append sb (str "  " (apply str (repeat (count (or group "Other")) "─")) "\n"))
+      (doseq [t (sort-by :sym group-tools)]
+        (let [icon   (if (:active? t) "✓" "✗")
+              sym    (str (:sym t))
+              pad    (apply str (repeat (max 1 (- 30 (count sym))) " "))
+              reason (if (:active? t)
+                       (str "active")
+                       (str "inactive — " (or (:activation-doc t) "activation-fn returned false")))
+              timing (when (:activation-ms t)
+                       (format " (%.2fms)" (double (:activation-ms t))))]
+          (.append sb (str "  " icon " " sym pad reason (or timing "") "\n")))))
+    (str sb)))

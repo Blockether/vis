@@ -1434,22 +1434,34 @@
                                        (let [ex-data-map (ex-data e)
                                              err-msg (ex-message e)
                                              err-type (:type ex-data-map)
-                                             cause (.getCause ^Throwable e)
-                                             stack (mapv str (take 12 (.getStackTrace ^Throwable e)))
-                                             iter-err {:message err-msg
-                                                       :type err-type
-                                                       :class (.getName (class e))
-                                                       :data (when (seq ex-data-map)
-                                                               (dissoc ex-data-map :type))
-                                                       :cause (when cause
-                                                                {:message (.getMessage ^Throwable cause)
-                                                                 :class (.getName (class cause))})
-                                                       :stack stack}]
-                                         (trove/log! {:level :warn
-                                                      :data {:iteration iteration :error err-msg :type err-type}
-                                                      :msg "RLM iteration failed, feeding error to LLM"})
-                                         ;; Return ::iteration-error sentinel — loop will feed error to LLM
-                                         {::iteration-error iter-err})))]
+                                             ;; Infrastructure errors (provider down, auth failures) are NOT
+                                             ;; recoverable by the LLM — re-throw immediately instead of
+                                             ;; burning iterations feeding the error back to a dead provider.
+                                             infra-error? (contains? #{:svar.llm/all-providers-exhausted
+                                                                       :svar.llm/circuit-open
+                                                                       :svar.llm/provider-exhausted}
+                                                            err-type)]
+                                         (when infra-error?
+                                           (trove/log! {:level :error
+                                                        :data {:iteration iteration :error err-msg :type err-type}
+                                                        :msg "Provider infrastructure error — aborting iteration loop"})
+                                           (throw e))
+                                         (let [cause (.getCause ^Throwable e)
+                                               stack (mapv str (take 12 (.getStackTrace ^Throwable e)))
+                                               iter-err {:message err-msg
+                                                         :type err-type
+                                                         :class (.getName (class e))
+                                                         :data (when (seq ex-data-map)
+                                                                 (dissoc ex-data-map :type))
+                                                         :cause (when cause
+                                                                  {:message (.getMessage ^Throwable cause)
+                                                                   :class (.getName (class cause))})
+                                                         :stack stack}]
+                                           (trove/log! {:level :warn
+                                                        :data {:iteration iteration :error err-msg :type err-type}
+                                                        :msg "RLM iteration failed, feeding error to LLM"})
+                                           ;; Return ::iteration-error sentinel — loop will feed error to LLM
+                                           {::iteration-error iter-err}))))]
               (if-let [iter-err (::iteration-error iteration-result)]
                 ;; Error path: feed error back to LLM as user message, let it recover
                 (let [error-feedback (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"

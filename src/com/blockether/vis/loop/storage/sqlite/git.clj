@@ -176,3 +176,16 @@
   [db-info sha]
   (when (and (core/ds db-info) (seq sha))
     (first (db-search-commits db-info {:sha sha}))))
+
+(defn db-repo-stats
+  "Return stats for all repos: {:total-commits N :unique-authors N :repos [{...}]}."
+  [db-info]
+  (when (core/ds db-info)
+    (let [repos   (db-list-repos db-info)
+          commits (core/query-one! db-info
+                    ["SELECT COUNT(*) as cnt FROM commit_attrs"])
+          authors (core/query-one! db-info
+                    ["SELECT COUNT(DISTINCT author_email) as cnt FROM commit_attrs"])]
+      {:repos          repos
+       :total-commits  (or (:cnt commits) 0)
+       :unique-authors (or (:cnt authors) 0)})))

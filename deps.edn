@@ -1,95 +1,101 @@
-{:paths ["src" "resources"]
+{:paths                                                                      ["src" "resources"]
 
  :deps
- {org.clojure/clojure              {:mvn/version "1.12.4"}
-  hiccup/hiccup                    {:mvn/version "2.0.0"}
+ {org.clojure/clojure                       {:mvn/version "1.12.4"}
+  hiccup/hiccup                             {:mvn/version "2.0.0"}
   ;; LLM structured output (local clone for context management improvements)
-  com.blockether/svar              {:local/root "../svar"}
+  com.blockether/svar                       {:mvn/version "0.3.0"}
   ;; Anomaly - standardized error categories (used by RLM)
-  com.blockether/anomaly           {:mvn/version "1.0.1"}
+  com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)
-  com.blockether/spel              {:mvn/version "0.7.7"}
+  com.blockether/spel                       {:mvn/version "0.9.5"}
   ;; Ring — Jetty adapter
-  ring/ring-jetty-adapter          {:mvn/version "1.15.3"}
+  ring/ring-jetty-adapter                   {:mvn/version "1.15.4"}
   ;; Reitit — data-driven router
-  metosin/reitit-ring              {:mvn/version "0.7.2"}
+  metosin/reitit-ring                       {:mvn/version "0.10.1"}
   ;; nREPL — embedded in dev + prod
-  nrepl/nrepl                      {:mvn/version "1.6.0"}
+  nrepl/nrepl                               {:mvn/version "1.7.0"}
   ;; Structural code editing — clojure-mcp (form editing core only)
-  io.github.bhauman/clojure-mcp   {:git/tag "v0.3.1" :git/sha "81005ce"
-                                   :exclusions [io.modelcontextprotocol.sdk/mcp
-                                                dev.langchain4j/langchain4j
-                                                dev.langchain4j/langchain4j-open-ai
-                                                dev.langchain4j/langchain4j-anthropic
-                                                dev.langchain4j/langchain4j-google-ai-gemini
-                                                org.apache.tika/tika-core
-                                                pogonos/pogonos
-                                                org.clojure/tools.cli
-                                                org.clj-commons/pretty
-                                                com.taoensso/timbre
-                                                org.slf4j/slf4j-nop]}
+  io.github.bhauman/clojure-mcp             {:git/tag              "v0.3.1"
+                                             :git/sha    "81005ce"
+                                             :exclusions [io.modelcontextprotocol.sdk/mcp
+                                                          dev.langchain4j/langchain4j
+                                                          dev.langchain4j/langchain4j-open-ai
+                                                          dev.langchain4j/langchain4j-anthropic
+                                                          dev.langchain4j/langchain4j-google-ai-gemini
+                                                          org.apache.tika/tika-core
+                                                          pogonos/pogonos
+                                                          org.clojure/tools.cli
+                                                          org.clj-commons/pretty
+                                                          com.taoensso/timbre
+                                                          org.slf4j/slf4j-nop]}
   ;; Structured logging — telemere for vis, trove for RLM
-  com.taoensso/telemere            {:mvn/version "1.2.1"}
-  com.taoensso/telemere-slf4j      {:mvn/version "1.2.1"}
-  com.taoensso/trove               {:mvn/version "1.1.0"}
+  com.taoensso/telemere                     {:mvn/version "1.2.1"}
+  com.taoensso/telemere-slf4j               {:mvn/version "1.2.1"}
+  com.taoensso/trove                        {:mvn/version "1.1.0"}
   ;; Fast EDN parsing
-  io.github.tonsky/fast-edn        {:mvn/version "1.1.3"}
+  io.github.tonsky/fast-edn                 {:mvn/version "1.1.3"}
   ;; i18n — pluralization and translations
-  tongue/tongue                     {:mvn/version "0.4.4"}
+  tongue/tongue                             {:mvn/version "0.4.4"}
   ;; Dependency injection
-  org.clojars.darkleaf/di           {:mvn/version "3.6.0"}
+  org.clojars.darkleaf/di                   {:mvn/version "3.6.0"}
   ;; Terminal UI
-  com.googlecode.lanterna/lanterna  {:mvn/version "3.1.5"}
+  com.googlecode.lanterna/lanterna          {:mvn/version "3.1.5"}
   ;; JSON serialization (CLI output, agent results)
-  com.cnuernber/charred             {:mvn/version "1.038"}
+  com.cnuernber/charred                     {:mvn/version "1.038"}
   ;; Line-by-line diff (unified diff format for edit/write tool rendering)
-  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.15"}
+  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.16"}
   ;; ---- RLM stack (moved from svar) ----
   ;; Filesystem utilities
-  babashka/fs                      {:mvn/version "0.5.32"}
+  babashka/fs                               {:mvn/version "0.5.32"}
   ;; SCI - Small Clojure Interpreter (RLM sandbox)
-  org.babashka/sci                 {:mvn/version "0.12.51"}
+  org.babashka/sci                          {:mvn/version "0.12.51"}
   ;; HTTP client (pageindex vision calls etc.)
-  org.babashka/http-client         {:mvn/version "0.4.23"}
+  org.babashka/http-client                  {:mvn/version "0.4.23"}
   ;; zprint - pretty printer (RLM sandbox)
-  zprint/zprint                    {:mvn/version "1.3.0"}
+  zprint/zprint                             {:mvn/version "1.3.0"}
   ;; Token counting
-  com.knuddels/jtokkit             {:mvn/version "1.1.0"}
+  com.knuddels/jtokkit                      {:mvn/version "1.1.0"}
   ;; Edamame — edn/clj reader (richer than clojure.edn)
-  borkdude/edamame                 {:mvn/version "1.4.28"}
+  borkdude/edamame                          {:mvn/version "1.5.39"}
   ;; SQLite + JDBC
-  org.xerial/sqlite-jdbc           {:mvn/version "3.46.1.3"}
-  com.github.seancorfield/next.jdbc {:mvn/version "1.3.939"}
-  com.github.seancorfield/honeysql {:mvn/version "2.6.1203"}
+  org.xerial/sqlite-jdbc                    {:mvn/version "3.53.0.0"}
+  com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1093"}
+  com.github.seancorfield/honeysql          {:mvn/version "2.7.1368"}
   ;; Flyway — versioned SQL migrations. SQLite support lives in the
   ;; flyway-database-nc-sqlite module (split out from core in 10.x+).
-  org.flywaydb/flyway-core                {:mvn/version "12.4.0"}
-  org.flywaydb/flyway-database-nc-sqlite  {:mvn/version "12.4.0"}
+  org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
+  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}
   ;; PDFBox — PDF processing (pageindex)
-  org.apache.pdfbox/pdfbox         {:mvn/version "3.0.7"}
+  org.apache.pdfbox/pdfbox                  {:mvn/version "3.0.7"}
   ;; core.async — parallel processing (pageindex)
-  org.clojure/core.async           {:mvn/version "1.9.865"}
+  org.clojure/core.async                    {:mvn/version "1.9.865"}
   ;; lazytest — exposed in RLM SCI sandbox
-  io.github.noahtheduke/lazytest   {:mvn/version "1.9.1"}
+  io.github.noahtheduke/lazytest            {:mvn/version "2.0.0"}
   ;; JGit — pure-JVM git library (RLM git ingestion)
-  org.eclipse.jgit/org.eclipse.jgit {:mvn/version "6.10.0.202406032230-r"}
+  org.eclipse.jgit/org.eclipse.jgit         {:mvn/version "7.6.0.202603022253-r"}
   ;; yamlstar — YAML 1.2 loader (SKILL.md frontmatter)
-  org.yamlstar/yamlstar            {:mvn/version "0.1.3"}}
+  org.yamlstar/yamlstar                     {:mvn/version "0.1.3"}}
 
  :aliases
- {:dev {:extra-paths ["dev"]
-        :extra-deps  {cider/cider-nrepl            {:mvn/version "0.58.0"}
-                      io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
-                      io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}}}
-  :run {:jvm-opts  ["--enable-native-access=ALL-UNNAMED"]
-        :main-opts ["-m" "com.blockether.vis.adapters.cli"]}
-  :web {:jvm-opts  ["--enable-native-access=ALL-UNNAMED"]
-        :main-opts ["-m" "com.blockether.vis.adapters.web.app"]}
+ {:dev   {:extra-paths  ["dev"]
+          :extra-deps {cider/cider-nrepl             {:mvn/version "0.59.0"}
+                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
+                       io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}}}
 
-  :test {:extra-paths ["test"]
-         :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "1.9.1"}}
-         :main-opts ["-m" "lazytest.main"]}
+  :run   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
+          :main-opts ["-m" "com.blockether.vis.adapters.cli"]}
+
+  :web   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
+          :main-opts ["-m" "com.blockether.vis.adapters.web.app"]}
+
+  :test  {:extra-paths ["test"]
+          :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+          :main-opts  ["-m" "lazytest.main"]}
 
   :bench {:extra-paths ["bench"]
-          :jvm-opts ["-Xmx8g"]
-          :main-opts ["-m" "com.blockether.vis.bench.runner"]}}}
+          :jvm-opts    ["-Xmx8g"]
+          :main-opts   ["-m" "com.blockether.vis.bench.runner"]}
+
+  :antq  {:deps  {com.github.liquidz/antq {:mvn/version "RELEASE"}}
+          :main-opts ["-m" "antq.core"]}}}

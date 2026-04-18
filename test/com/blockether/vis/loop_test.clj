@@ -498,11 +498,11 @@
 ;; =============================================================================
 
 (def ^:private test-providers
-  "LLM providers for integration tests."
-  [{:id :openai
-    :api-key (System/getenv "OPENAI_API_KEY")
-    :base-url (or (System/getenv "OPENAI_BASE_URL")
-                "https://api.openai.com/v1")
+  "LLM providers for integration tests. Uses blockether proxy."
+  [{:id :blockether
+    :api-key (System/getenv "BLOCKETHER_OPENAI_API_KEY")
+    :base-url (or (System/getenv "BLOCKETHER_OPENAI_BASE_URL")
+                "https://llm.blockether.com/v1")
     :models [{:name "gpt-4o"}
              {:name "gpt-4o-mini"}]}])
 
@@ -513,7 +513,7 @@
 
 (defn- integration-tests-enabled?
   "Returns true if LLM integration tests should run.
-   Checks if test-providers has a valid API key from environment."
+   Checks if blockether provider has a valid API key."
   []
   (some? (:api-key (first test-providers))))
 
