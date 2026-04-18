@@ -12,12 +12,14 @@
    - Git ingestion
    - Query execution
    - QA pipeline
+   - Concept graph / ontology
    - PageIndex"
   (:require
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.vis.loop.core :as loop-core]
    [com.blockether.vis.loop.storage.db :as rlm-db]
    [com.blockether.vis.loop.knowledge.git :as rlm-git]
+   [com.blockether.vis.loop.knowledge.ontology :as ontology]
    [com.blockether.vis.loop.knowledge.pageindex :as rlm-pageindex]
    [com.blockether.vis.loop.runtime.query.core :as rlm-query]
    [com.blockether.vis.loop.tool :as tool]
@@ -436,6 +438,74 @@
   "Build a TOC-based chunk selection prompt for QA generation.
    Used in tests and advanced QA workflows."
   rlm-qa/build-toc-based-selection-prompt)
+
+;; =============================================================================
+;; Concept graph / ontology
+;; =============================================================================
+
+;; --- Phase 1: Per-page concept extraction (call during/after ingestion) ---
+
+#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
+(def extract-page-concepts!
+  "Extract concepts from a single page's content at index time.
+   Grounded to actual page/node IDs with content SHA for change detection.
+
+   `(extract-page-concepts! router db-info doc-id page-id node-id content)`
+
+   Persists to page_concept table. Returns count of concepts extracted."
+  ontology/extract-page-concepts!)
+
+;; --- Phase 2: Cross-document bridge building ---
+
+(defn build-concept-graph!
+  "Build a cross-document concept graph from grounded page concepts.
+
+   Reads page_concept rows (extracted at index time), cross-links across
+   documents, persists to concept/concept_edge tables.
+   Preserves user_edited concepts — rebuild won't overwrite them.
+
+   `env`  — RLM environment with documents ingested.
+   `opts` — Optional map (reserved for future options).
+
+   Returns:
+   {:concepts-stored N :edges-stored N :ambiguities N :user-preserved N}"
+  ([env] (build-concept-graph! env {}))
+  ([env opts] (ontology/build-concept-graph! env opts)))
+
+;; --- User refinement ---
+
+(defn set-concept-status!
+  "Mark a concept as 'active', 'removed', or 'user_edited'.
+   Removed concepts disappear from prompt and tools.
+   User-edited concepts survive rebuild."
+  [env concept-id status]
+  (rlm-db/set-concept-status! (:db-info env) concept-id status))
+
+(defn update-concept!
+  "Update a concept's definition/group and mark as user_edited.
+   Survives rebuild — won't be overwritten by build-concept-graph!."
+  [env concept-id updates]
+  (rlm-db/update-concept! (:db-info env) concept-id updates))
+
+;; --- Read-only access ---
+
+#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
+(def concept-graph-for-prompt
+  "Format the concept graph as a compact system prompt section.
+   Returns a string for injection into the system prompt, or nil if empty."
+  ontology/concept-graph-for-prompt)
+
+#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
+(def concept-graph->markdown
+  "Render a concept graph as DDD ubiquitous language markdown (read-only).
+   Does NOT write to disk — returns the markdown string."
+  ontology/concept-graph->markdown)
+
+#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
+(def load-full-concept-graph
+  "Load the complete concept graph from DB.
+   Returns {:concepts [...] :edges [...]}, each concept with :aliases and :sources."
+  rlm-db/load-full-concept-graph)
 
 ;; =============================================================================
 ;; PageIndex

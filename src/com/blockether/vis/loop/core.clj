@@ -18,6 +18,7 @@
             validate-final bytes->base64 *rlm-ctx*]]
    [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
    [com.blockether.vis.loop.knowledge.entity :as rlm-entity]
+   [com.blockether.vis.loop.knowledge.ontology :as ontology]
    [com.blockether.vis.loop.runtime.prompt :as prompt]
    [com.blockether.vis.loop.runtime.core :as rlm-tools
     :refer [create-sci-context build-var-index]]
@@ -1180,6 +1181,8 @@
         ;; system prompt.
         git-repos (when-let [db (:db-info rlm-env)]
                     (rlm-db/db-list-repos db))
+        concept-prompt (when-let [db (:db-info rlm-env)]
+                         (ontology/concept-graph-for-prompt db))
         system-prompt (build-system-prompt {:output-spec output-spec
                                             :custom-docs custom-docs
                                             :has-documents? has-docs?
@@ -1187,6 +1190,7 @@
                                             :has-reasoning? has-reasoning?
                                             :system-prompt system-prompt
                                             :git-repos git-repos
+                                            :concept-graph-prompt concept-prompt
                                             :max-context-tokens max-context-tokens
                                             :skill-registry (when-let [a (:skill-registry-atom rlm-env)] @a)})
         initial-user-content (str "{:requirement " (pr-str query)

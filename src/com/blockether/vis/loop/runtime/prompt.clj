@@ -117,7 +117,7 @@ Git tools available this session — all prefixed `git-`:
 
 (defn build-system-prompt
   "Builds the system prompt — compact, token-efficient."
-  [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary system-prompt git-repos skill-registry]}]
+  [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary system-prompt git-repos skill-registry concept-graph-prompt]}]
   (str
     "Clojure SCI agent. Write, exec, iterate.
 
@@ -174,6 +174,13 @@ Doc tools (2 fns):
 (def pages (fetch-document-content [:doc/id \"doc-1\"]))
 Search in English. Translate non-EN queries first.
 "))
+    (str
+      (when concept-graph-prompt
+        (str "\n" concept-graph-prompt "\n"))
+      "
+Concept navigation (cross-document ontology):
+- (concept-info \"Term\") → definition, aliases, sources (go-to-definition)
+")
     (when system-prompt
       (str "\nINSTRUCTIONS:\n" system-prompt "\n"))
     (format-custom-docs custom-docs)
