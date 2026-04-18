@@ -200,7 +200,7 @@
                                   ::spec/type :spec.type/string
                                   ::spec/cardinality :spec.cardinality/one
                                   ::spec/required false
-                                  ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
+                                  ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Use {{var}} for inline interpolation, e.g. \"Here is the result: {{summary}}\". Send with any needed :code. :code runs first."})
                      (spec/field {::spec/name :answer-type
                                   ::spec/type :spec.type/keyword
                                   ::spec/cardinality :spec.cardinality/one

@@ -2,18 +2,17 @@
   "SCI sandbox construction + var-index + hook system. This is the runtime
    wiring layer for rlm.sci:
 
-   * `sci-update-binding!` / `create-sci-context` — build and mutate the
+   * `sci-update-binding!` / `create-sci-context` - build and mutate the
      sandbox where user code runs.
-   * `build-var-index` — compact table describing user-def'd vars, shown
+   * `build-var-index` - compact table describing user-def'd vars, shown
      to the LLM between iterations.
    * Hook system (`execute-tool`, `wrap-tool-for-sci`, `register-tool-def!`,
-     etc.) — per-tool :before / :wrap / :after chains plus global
+     etc.) - per-tool :before / :wrap / :after chains plus global
      observer hooks fired by the query loop."
   (:require
    [clojure.set]
    [clojure.string :as str]
    [clojure.walk]
-   [com.blockether.svar.internal.spec :as spec]
    [com.blockether.vis.loop.storage.db :as db]
 
    [com.blockether.vis.loop.tool :as sci-tool]
@@ -22,6 +21,7 @@
    [com.blockether.vis.loop.knowledge.ontology :as ontology]
    [com.blockether.vis.loop.runtime.shared :as sci-shared
     :refer [EXTRA_BINDINGS ns->sci-map]]
+   [com.blockether.vis.loop.runtime.tool-diagnostics :as tool-diag]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
    [taoensso.trove :as trove]))
@@ -51,37 +51,14 @@
    `db-info` - Database info map (can be nil)
    `conversation-ref` - Active conversation lookup ref (can be nil)
    `custom-bindings` - Map of symbol->value for custom bindings (can be nil)"
-  [sub-rlm-query-fn db-info conversation-ref custom-bindings]
-  (let [restore-var-fn (when (and db-info conversation-ref)
-                         (sci-tools/make-restore-var-fn db-info conversation-ref))
-        base-bindings {'sub-rlm-query sub-rlm-query-fn
-                       'spec spec/spec
-                       'field spec/field
+  [sub-rlm-query-fn _db-info _conversation-ref custom-bindings]
+  (let [base-bindings {'sub-rlm-query sub-rlm-query-fn
                        'parse-date sci-shared/parse-date 'date-before? sci-shared/date-before?
                        'date-after? sci-shared/date-after?
                        'days-between sci-shared/days-between 'date-plus-days sci-shared/date-plus-days
                        'date-minus-days sci-shared/date-minus-days 'date-format sci-shared/date-format
                        'today-str sci-shared/today-str}
-        db-bindings (when db-info
-                      (cond->
-                        {'search-documents (sci-tools/make-search-documents-fn db-info)
-                         'fetch-document-content (sci-tools/make-fetch-document-content-fn db-info)
-                         'search-batch (fn search-batch
-                                         ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
-                                         ([queries opts] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries opts)))))}
-                        (and db-info conversation-ref)
-                        (assoc 'conversation-history (sci-tools/make-conversation-history-fn db-info conversation-ref)
-                          'conversation-code (sci-tools/make-conversation-code-fn db-info conversation-ref)
-                          'conversation-results (sci-tools/make-conversation-results-fn db-info conversation-ref))
-                        restore-var-fn
-                        (assoc 'restore-var restore-var-fn
-                          'restore-vars (sci-tools/make-restore-vars-fn restore-var-fn))))
-        git-bindings (when db-info
-                       (sci-git/make-git-sci-bindings db-info))
-        concept-bindings (when db-info
-                           (ontology/make-concept-graph-bindings db-info))
-        all-bindings (merge EXTRA_BINDINGS base-bindings db-bindings
-                       git-bindings concept-bindings
+        all-bindings (merge EXTRA_BINDINGS base-bindings
                        (or custom-bindings {}))
         str-ns  (sci/create-ns 'clojure.string nil)
         set-ns  (sci/create-ns 'clojure.set nil)
@@ -204,33 +181,9 @@
                                                        intern
                                                        sh
                                                        *in* *out* *err* *command-line-args*]}))]
-    (when restore-var-fn
-      (let [binding-restore-var (fn binding-restore-var
-                                  ([sym] (binding-restore-var sym {}))
-                                  ([sym opts]
-                                   (let [val (restore-var-fn sym opts)]
-                                     (sci-update-binding! sci-ctx sym val)
-                                     val)))
-            binding-restore-vars (fn binding-restore-vars
-                                   ([syms]
-                                    (binding-restore-vars syms {}))
-                                   ([syms opts]
-                                    (into {}
-                                      (map (fn [sym]
-                                             (try
-                                               [sym (binding-restore-var sym opts)]
-                                               (catch Exception e
-                                                 [sym {:error {:type (:type (ex-data e))
-                                                               :symbol sym
-                                                               :message (ex-message e)}}]))))
-                                      syms)))]
-        (sci-update-binding! sci-ctx 'restore-var binding-restore-var)
-        (sci-update-binding! sci-ctx 'restore-vars binding-restore-vars)))
     (doseq [[sym doc args] [['sub-rlm-query "Ask a sub-LLM anything. Returns text or structured data." '([prompt] [prompt {:spec spec}])]
                             ['sub-rlm-query-batch "Parallel batch of LLM sub-calls. Returns vector of results." '([[prompt1 prompt2 ...]])]
                             ['request-more-iterations "Request n more iterations. Returns {:granted n :new-budget N}." '([n])]
-                            ['spec "Create a structured output spec." '([& fields])]
-                            ['field "Create a spec field." '([& kvs])]
                             ['context "The data context passed to query-env!." nil]
                             ['parse-date "Parse ISO date string to LocalDate." '([s])]
                             ['today-str "Today as ISO-8601 string." '([])]
@@ -242,7 +195,7 @@
                             ['conversation-results "Get prior query execution results and restorable vars.\n  (conversation-results 0)" '([query-selector])]
                             ['restore-var "Restore a persisted data var from a prior iteration, binding it in the sandbox.\n  (restore-var 'anomalies)  ;; binds anomalies and returns its value\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([sym] [sym opts])]
                             ['restore-vars "Batch restore persisted data vars, binding each success in the sandbox.\n  (restore-vars ['a 'b])  ;; returns {a val-a, b {:error {...}}} on partial failure\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([syms] [syms opts])]
-                            ['git-search-commits "Query ingested git commits. All filters optional, AND semantics. Cross-repo — pass :document-id to scope.\n  (git-search-commits {:category :bug :since \"2025-06-01\" :path \"src/\" :author-email \"a@x\" :ticket \"SVAR-42\" :limit 20})" '([] [opts])]
+                            ['git-search-commits "Query ingested git commits. All filters optional, AND semantics. Cross-repo - pass :document-id to scope.\n  (git-search-commits {:category :bug :since \"2025-06-01\" :path \"src/\" :author-email \"a@x\" :ticket \"SVAR-42\" :limit 20})" '([] [opts])]
                             ['git-commit-history "Recent commits across all ingested repos.\n  (git-commit-history {:limit 20})" '([] [opts])]
                             ['git-commits-by-ticket "Commits that reference a ticket.\n  (git-commits-by-ticket \"SVAR-42\")" '([ticket-ref])]
                             ['git-commit-parents "Parent SHAs of a commit (DB-backed, reads :parents).\n  (git-commit-parents \"abc123\")" '([sha])]
@@ -263,6 +216,113 @@
 ;; Var Index
 ;; =============================================================================
 
+;; =============================================================================
+;; Built-in tool registration (all go through register-tool-def! with activation-fns)
+;; =============================================================================
+
+(declare execute-tool register-tool-def! wrap-tool-for-sci)
+
+(defn register-builtin-tools!
+  "Register all built-in tools on an env via register-tool-def! + sci-update-binding!.
+   Called once after env construction. Every tool gets an activation-fn
+   that checks real DB state."
+  [env]
+  (let [db-info          (:db-info env)
+        conversation-ref (:conversation-ref env)
+        registry         (:tool-registry-atom env)
+        sci-ctx          (:sci-ctx env)
+        has-db?          (boolean db-info)
+        has-conv?        (and has-db? (some? conversation-ref))
+        register!        (fn [sym f tool-def]
+                           (let [canonical (sci-tool/make-tool-def sym f tool-def)]
+                             (register-tool-def! registry sym canonical)
+                             (when sci-ctx
+                               (sci-update-binding! sci-ctx sym
+                                 (wrap-tool-for-sci env sym f registry)))))]
+    ;; --- Document tools (active when DB has documents) ---
+    (when has-db?
+      (let [has-docs? (fn [env] (boolean (seq (db/db-list-documents (:db-info env)))))
+            search-fn (sci-tools/make-search-documents-fn db-info)
+            fetch-fn  (sci-tools/make-fetch-document-content-fn db-info)]
+        (register! 'search-documents search-fn
+          {:doc "(search-documents \"query\") or (search-documents \"query\" {:in :pages :top-k 20})"
+           :activation-fn has-docs?})
+        (register! 'fetch-document-content fetch-fn
+          {:doc "(fetch-document-content [:node/id \"id\"]) or [:doc/id \"id\"] or [:toc/id \"id\"]"
+           :activation-fn has-docs?})
+        (register! 'search-batch
+          (fn search-batch
+            ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
+            ([queries opts] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries opts)))))
+          {:doc "(search-batch [\"q1\" \"q2\"]) — batch search across pages and TOC"
+           :activation-fn has-docs?})))
+    ;; --- Conversation history tools (active when conversation exists) ---
+    (when has-conv?
+      (let [has-history? (fn [env] (boolean (:conversation-ref env)))]
+        (register! 'conversation-history
+          (sci-tools/make-conversation-history-fn db-info conversation-ref)
+          {:doc "(conversation-history) or (conversation-history n) — prior query summaries"
+           :activation-fn has-history?})
+        (register! 'conversation-code
+          (sci-tools/make-conversation-code-fn db-info conversation-ref)
+          {:doc "(conversation-code query-selector) — prior query code blocks"
+           :activation-fn has-history?})
+        (register! 'conversation-results
+          (sci-tools/make-conversation-results-fn db-info conversation-ref)
+          {:doc "(conversation-results query-selector) — prior query results"
+           :activation-fn has-history?})))
+    ;; --- Restore tools (active when conversation has prior queries) ---
+    ;; Special: restore-var also rebinds the value into the SCI sandbox.
+    (when has-conv?
+      (let [raw-restore-fn (sci-tools/make-restore-var-fn db-info conversation-ref)
+            binding-restore-var (fn binding-restore-var
+                                  ([sym] (binding-restore-var sym {}))
+                                  ([sym opts]
+                                   (let [val (raw-restore-fn sym opts)]
+                                     (sci-update-binding! sci-ctx sym val)
+                                     val)))
+            binding-restore-vars (fn binding-restore-vars
+                                   ([syms] (binding-restore-vars syms {}))
+                                   ([syms opts]
+                                    (into {}
+                                      (map (fn [sym]
+                                             (try [sym (binding-restore-var sym opts)]
+                                               (catch Exception e
+                                                 [sym {:error {:type (:type (ex-data e))
+                                                               :symbol sym
+                                                               :message (ex-message e)}}]))))
+                                      syms)))
+            has-vars? (fn [env]
+                        (boolean (seq (db/db-latest-var-registry
+                                        (:db-info env) (:conversation-ref env) {}))))]
+        (register! 'restore-var binding-restore-var
+          {:doc "(restore-var 'sym) — fetch + rebind persisted var from prior iterations"
+           :activation-fn has-vars?})
+        (register! 'restore-vars binding-restore-vars
+          {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
+           :activation-fn has-vars?})))
+    ;; --- Git tools (active when repos are attached) ---
+    (when has-db?
+      (let [has-repos? (fn [env] (boolean (seq (db/db-list-repos (:db-info env)))))
+            git-binds  (sci-git/make-git-sci-bindings db-info)]
+        (doseq [[sym f] git-binds]
+          (register! sym f
+            {:doc (str "(" sym " ...) — git tool")
+             :activation-fn has-repos?}))))
+    ;; --- Concept tools (active when concepts exist — cross-conversation) ---
+    (when has-db?
+      (let [has-concepts? (fn [env] (boolean (seq (db/list-concepts (:db-info env)))))
+            concept-binds (ontology/make-concept-graph-bindings db-info)]
+        (doseq [[sym f] concept-binds]
+          (register! sym f
+            {:doc (str "(" sym " ...) — concept graph tool")
+             :activation-fn has-concepts?}))))
+    ;; Update initial-ns-keys so get-locals excludes built-in tools
+    (when sci-ctx
+      (let [current-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)"
+                                            {:ns (:sandbox-ns env (get-in @(:env sci-ctx) [:namespaces 'sandbox]))}))))]
+        (assoc env :initial-ns-keys current-keys)))))
+
 (def ^:private ^:const MAX_VAR_INDEX_ROWS 12)
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 (def ^:private ^:const MAX_VAR_INDEX_PREVIEW 150)
@@ -280,7 +340,7 @@
    Filters out initial bindings (tools, helpers) using initial-ns-keys.
    Returns nil if no user vars exist.
 
-   Row format: `name | type | size | doc — preview`
+   Row format: `name | type | size | doc - preview`
    When `db-info` and `conversation-ref` are provided, rows are sorted
    newest-first by `:iteration-var` `:entity/created-at`; freshly-def'd
    vars (not yet persisted) sort above any DB-recorded ones."
@@ -313,7 +373,7 @@
                                             (not (contains? live-info sym))
                                             (not (contains? initial-ns-keys sym)))]
                                 [sym {:val ::persisted
-                                      :doc (str "persisted — (restore-var '" sym ") to load")
+                                      :doc (str "persisted - (restore-var '" sym ") to load")
                                       :persisted-preview (or value "")}])))
            var-info (merge persisted-info live-info)
            entries (->> var-info
@@ -338,7 +398,7 @@
                                                 :else (.getSimpleName (class val)))
                                    size (cond
                                           persisted? (str (count persisted-preview) " chars")
-                                          (nil? val) "—"
+                                          (nil? val) "-"
                                           (string? val) (str (count val) " chars")
                                           (or (map? val) (vector? val) (set? val))
                                           (str (count val) " items")
@@ -347,13 +407,13 @@
                                             (if (= n MAX_VAR_INDEX_COUNT)
                                               (str MAX_VAR_INDEX_COUNT "+ items")
                                               (str n " items")))
-                                          :else "—")
+                                          :else "-")
                                    preview (cond
                                              persisted? (sci-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
-                                             (fn? val) "—"
+                                             (fn? val) "-"
                                              :else (sci-shared/truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))]
                                {:name (str sym) :type type-label :size size
-                                :doc (if doc (sci-shared/truncate doc 80) "—")
+                                :doc (if doc (sci-shared/truncate doc 80) "-")
                                 :preview preview}))))]
        (when (seq entries)
          (let [visible (vec (take MAX_VAR_INDEX_ROWS entries))
@@ -374,7 +434,7 @@
      (catch Exception _ nil))))
 
 ;; =============================================================================
-;; Hook System v3 — per-tool + global hooks with policy/observation split
+;; Hook System v3 - per-tool + global hooks with policy/observation split
 ;; =============================================================================
 ;;
 ;; Per-tool hooks form three chains: :before / :wrap / :after.
@@ -407,7 +467,7 @@
            :error-id default-id
            :message (str err)}))
 
-(declare execute-tool)
+
 
 (defn- gen-anon-id
   [stage]
@@ -423,7 +483,7 @@
     (update entry :id #(or % (gen-anon-id stage)))
 
     :else
-    (throw (ex-info (str "Invalid hook entry for :" (name stage) " — "
+    (throw (ex-info (str "Invalid hook entry for :" (name stage) " - "
                       "must be a fn or {:id :fn} map")
              {:type :rlm/invalid-hook-entry :stage stage :entry entry}))))
 
@@ -557,7 +617,7 @@
                   :sym sym}))))
     (let [tool-def (get @tool-registry-atom sym)]
       (when-not tool-def
-        (throw (ex-info (str "Unknown tool for :invoke — " sym " not registered")
+        (throw (ex-info (str "Unknown tool for :invoke - " sym " not registered")
                  {:type :rlm/unknown-invoke-tool :sym sym})))
       (let [child-ctx (-> parent-query-ctx
                         (assoc :hooks nil
@@ -662,7 +722,9 @@
           (catch Throwable t
             (trove/log! {:level :warn
                          :data {:error (ex-message t)}
-                         :msg ":on-tool-completed observer threw; ignoring"}))))
+                         :msg ":on-tool-completed observer threw; ignoring"})))) 
+      ;; Record execution diagnostics
+      (tool-diag/record-execution! sym (long (* duration-ms 1e6)) (boolean (:error final-outcome)))
       final-outcome)))
 
 (defn wrap-tool-for-sci

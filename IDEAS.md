@@ -35,8 +35,3 @@
   - per-query override in options
   - optional parent-suggested strategy from the model/tool call context
 - Goal: make sub-query execution intentional and controllable instead of globally fixed.
-
-## 4) Patch engine strictness follow-ups
-
-- Done: strict hunk header format + range/body count validation are implemented.
-- Follow-up idea: include richer diagnostics in mismatch errors (header values, computed counts, and hunk preview) to speed up troubleshooting.
