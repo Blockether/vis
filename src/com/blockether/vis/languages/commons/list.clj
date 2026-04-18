@@ -182,5 +182,7 @@
      :arglists (:arglists (meta #'list-dir))
      :validate-input validate-list-input
      :validate-output validate-list-output
+     :activation-fn (constantly true)
      :examples ["(list-dir \"src\")"
                 "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"]}))
+

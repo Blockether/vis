@@ -515,4 +515,6 @@
      :arglists (:arglists (meta #'edit-file))
      :validate-input validate-edit-input
      :validate-output validate-edit-output
+     :activation-fn (constantly true)
      :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"]}))
+

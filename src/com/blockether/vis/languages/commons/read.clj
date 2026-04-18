@@ -129,5 +129,7 @@
      :arglists (:arglists (meta #'read-file))
      :validate-input validate-read-input
      :validate-output validate-read-output
+     :activation-fn (constantly true)
      :examples ["(read-file \"/path/to/file.clj\")"
                 "(read-file \"/path/to/file.clj\" 40 30)"]}))
+
