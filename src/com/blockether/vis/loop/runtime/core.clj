@@ -13,6 +13,8 @@
    [clojure.set]
    [clojure.string :as str]
    [clojure.walk]
+   [clojure+.core]
+   [clojure+.walk]
    [com.blockether.vis.loop.storage.db :as db]
 
    [com.blockether.vis.loop.tool :as sci-tool]
@@ -63,13 +65,26 @@
         str-ns  (sci/create-ns 'clojure.string nil)
         set-ns  (sci/create-ns 'clojure.set nil)
         walk-ns (sci/create-ns 'clojure.walk nil)
+        plus-ns (sci/create-ns 'clojure+.core nil)
         zp-resolve (fn [sym] (deref (requiring-resolve (symbol "zprint.core" (str sym)))))
         lt-resolve (fn [sym] (deref (requiring-resolve (symbol "lazytest.core" (str sym)))))
         sandbox-ns (sci/create-ns 'sandbox nil)
-        sci-ctx (sci/init (sci-future/install {:namespaces {'sandbox all-bindings
+        sci-ctx (sci/init (sci-future/install {:namespaces {'sandbox (merge all-bindings
+                                                                      {'cond+ (sci/copy-var clojure+.core/cond+ sandbox-ns)
+                                                                       'if+ (sci/new-var 'if+
+                                                                              (fn [_ _ bindings then & [else]]
+                                                                                (list 'let [(first bindings) (second bindings)]
+                                                                                  (list 'if (first bindings) then else)))
+                                                                              {:macro true})
+                                                                       'when+ (sci/new-var 'when+
+                                                                                (fn [_ _ bindings & body]
+                                                                                  (list 'let [(first bindings) (second bindings)]
+                                                                                    (cons 'when (cons (first bindings) body))))
+                                                                                {:macro true})})
                                                             'clojure.string (sci/copy-ns clojure.string str-ns)
                                                             'clojure.set (sci/copy-ns clojure.set set-ns)
-                                                            'clojure.walk (sci/copy-ns clojure.walk walk-ns)
+                                                            'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
+                                                            'clojure+.core (sci/copy-ns clojure+.core plus-ns)
                                                             'fast-edn.core (ns->sci-map 'fast-edn.core)
                                                             'clojure.edn (ns->sci-map 'fast-edn.core)
                                                             'zprint.core {'zprint-str (zp-resolve 'zprint-str)
@@ -89,6 +104,10 @@
                                                             'clojure.test {'is (lt-resolve 'expect-fn)
                                                                            'throws? (lt-resolve 'throws?)}
                                                             'charred.api (ns->sci-map 'charred.api)}
+                                               :readers {'p (fn [form]
+                                                               (list 'do
+                                                                 (list 'println (str "#p " (pr-str form) " =>") (list 'pr-str form))
+                                                                 form))}
                                                :ns-aliases {'str 'clojure.string
                                                             'edn 'fast-edn.core
                                                             'zp 'zprint.core
@@ -98,7 +117,8 @@
                                                             'walk 'clojure.walk
                                                             'json 'charred.api
                                                             'lt 'lazytest.core
-                                                            'test 'clojure.test}
+                                                            'test 'clojure.test
+                                                            'c+ 'clojure+.core}
                                                :classes {'java.lang.Character Character
                                                          'java.lang.Math Math
                                                          'java.lang.String String
@@ -195,6 +215,8 @@
                             ['conversation-results "Get prior query execution results and restorable vars.\n  (conversation-results 0)" '([query-selector])]
                             ['restore-var "Restore a persisted data var from a prior iteration, binding it in the sandbox.\n  (restore-var 'anomalies)  ;; binds anomalies and returns its value\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([sym] [sym opts])]
                             ['restore-vars "Batch restore persisted data vars, binding each success in the sandbox.\n  (restore-vars ['a 'b])  ;; returns {a val-a, b {:error {...}}} on partial failure\n  Opts: {:max-scan-queries N} limits lookup to recent queries." '([syms] [syms opts])]
+                            ['var-history "All persisted versions of a var, oldest first.\n  (var-history 'anomalies)\n  Returns [{:version 1 :value <val> :code \"(def ...)\" :created-at #inst}]" '([sym])]
+                            ['var-diff "Diff between two versions of a var. Dispatch by type:\n  Collections → structural editscript diff\n  Strings → unified line diff\n  Numbers → delta with pct-change\n  Others → simple replacement\n  (var-diff 'anomalies 1 3)\n  Returns {:from-version 1 :to-version 3 :type :structural|:string-diff|:number-delta|:replacement ...}" '([sym from-version to-version])]
                             ['git-search-commits "Query ingested git commits. All filters optional, AND semantics. Cross-repo - pass :document-id to scope.\n  (git-search-commits {:category :bug :since \"2025-06-01\" :path \"src/\" :author-email \"a@x\" :ticket \"SVAR-42\" :limit 20})" '([] [opts])]
                             ['git-commit-history "Recent commits across all ingested repos.\n  (git-commit-history {:limit 20})" '([] [opts])]
                             ['git-commits-by-ticket "Commits that reference a ticket.\n  (git-commits-by-ticket \"SVAR-42\")" '([ticket-ref])]
@@ -208,6 +230,7 @@
             (when args (str " :arglists (quote " (pr-str args) ")"))
             "} " sym " " sym ")")
           {:ns sandbox-ns})))
+
     {:sci-ctx sci-ctx
      :sandbox-ns sandbox-ns
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
@@ -307,6 +330,16 @@
         (register! 'restore-vars binding-restore-vars
           {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
            :group "Conversation" :activation-doc "no persisted vars from prior queries"
+           :activation-fn has-vars?})
+        (register! 'var-history
+          (sci-tools/make-var-history-fn db-info conversation-ref)
+          {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}"
+           :group "Conversation" :activation-doc "no persisted vars from prior queries"
+           :activation-fn has-vars?})
+        (register! 'var-diff
+          (sci-tools/make-var-diff-fn db-info conversation-ref)
+          {:doc "(var-diff 'sym 1 3) — structural diff between two versions. Returns {:edits [...] :edit-count N}"
+           :group "Conversation" :activation-doc "no persisted vars from prior queries"
            :activation-fn has-vars?})))
     ;; --- Git tools (active when repos are attached) ---
     (when has-db?
@@ -374,7 +407,8 @@
                              :when (symbol? s)]
                          [s {:val (if (instance? clojure.lang.IDeref v) @v v)
                              :doc (:doc (meta v))
-                             :arglists (:arglists (meta v))}]))
+                             :arglists (:arglists (meta v))
+                             :version (get-in var-registry [s :version] 1)}]))
            persisted-info (when var-registry
                             (into {}
                               (for [[sym {:keys [value]}] var-registry
@@ -386,7 +420,10 @@
                                       :persisted-preview (or value "")}])))
            var-info (merge persisted-info live-info)
            entries (->> var-info
-                     (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
+                     (remove (fn [[sym _]]
+                               (or (contains? initial-ns-keys sym)
+                                   ;; Hide auto-injected *earmuffed* vars (*query*, *reasoning*)
+                                   (let [n (name sym)] (and (str/starts-with? n "*") (str/ends-with? n "*"))))))
                      (sort-by (fn [[sym _]] [(- (long (recency-of sym))) (str sym)]))
                      (mapv (fn [[sym {:keys [val doc arglists persisted-preview]}]]
                              (let [persisted? (= val ::persisted)
@@ -420,22 +457,25 @@
                                    preview (cond
                                              persisted? (sci-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
                                              (fn? val) "-"
-                                             :else (sci-shared/truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))]
-                               {:name (str sym) :type type-label :size size
+                                             :else (sci-shared/truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))
+                                   version (get-in var-info [sym :version] 1)
+                                   ver-str (str version)]
+                               {:name (str sym) :ver ver-str :type type-label :size size
                                 :doc (if doc (sci-shared/truncate doc 80) "-")
                                 :preview preview}))))]
        (when (seq entries)
          (let [visible (vec (take MAX_VAR_INDEX_ROWS entries))
                omitted (- (count entries) (count visible))
                max-name (max 4 (apply max (map #(count (:name %)) visible)))
+               max-ver  (max 3 (apply max (map #(count (:ver %)) visible)))
                max-type (max 4 (apply max (map #(count (:type %)) visible)))
                max-size (max 4 (apply max (map #(count (:size %)) visible)))
+               max-doc  (max 3 (apply max (map #(count (:doc %)) visible)))
                pad (fn [s n] (str s (apply str (repeat (max 0 (- n (count s))) \space))))
-               header (str "  " (pad "name" max-name) " | " (pad "type" max-type) " | " (pad "size" max-size) " | doc / preview")
-               sep (str "  " (apply str (repeat max-name \-)) "-+-" (apply str (repeat max-type \-)) "-+-" (apply str (repeat max-size \-)) "-+------------------")
-               rows (mapcat (fn [{:keys [name type size doc preview]}]
-                              [(str "  " (pad name max-name) " | " (pad type max-type) " | " (pad size max-size) " | " doc)
-                               (str "  " (pad "" max-name) " | " (pad "" max-type) " | " (pad "" max-size) " | preview: " preview)])
+               header (str "  " (pad "name" max-name) " | " (pad "ver" max-ver) " | " (pad "type" max-type) " | " (pad "size" max-size) " | " (pad "doc" max-doc) " | preview")
+               sep (str "  " (apply str (repeat max-name \-)) "-+-" (apply str (repeat max-ver \-)) "-+-" (apply str (repeat max-type \-)) "-+-" (apply str (repeat max-size \-)) "-+-" (apply str (repeat max-doc \-)) "-+---------")
+               rows (mapv (fn [{:keys [name ver type size doc preview]}]
+                            (str "  " (pad name max-name) " | " (pad ver max-ver) " | " (pad type max-type) " | " (pad size max-size) " | " (pad doc max-doc) " | " preview))
                       visible)
                footer (when (pos? omitted)
                         (str "  ... " omitted " more vars omitted"))]

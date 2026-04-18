@@ -75,13 +75,18 @@
   ;; JGit — pure-JVM git library (RLM git ingestion)
   org.eclipse.jgit/org.eclipse.jgit         {:mvn/version "7.6.0.202603022253-r"}
   ;; yamlstar — YAML 1.2 loader (SKILL.md frontmatter)
-  org.yamlstar/yamlstar                     {:mvn/version "0.1.3"}}
+  org.yamlstar/yamlstar                     {:mvn/version "0.1.3"}
+  ;; clojure+ — cond+/if+/when+ macros + enhanced walk (SCI sandbox)
+  io.github.tonsky/clojure-plus             {:mvn/version "1.7.2"}
+  ;; jmustache — Mustache templating (RLM answer interpolation)
+  com.samskivert/jmustache                  {:mvn/version "1.16"}
+  ;; editscript — structural diff for Clojure data (var version diffs)
+  juji/editscript                           {:mvn/version "0.6.4"}}
 
  :aliases
  {:dev   {:extra-paths  ["dev"]
           :extra-deps {cider/cider-nrepl             {:mvn/version "0.59.0"}
-                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
-                       io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}}}
+                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}}}
 
   :run   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts ["-m" "com.blockether.vis.adapters.cli"]}

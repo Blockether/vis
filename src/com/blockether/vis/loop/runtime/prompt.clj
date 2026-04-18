@@ -136,16 +136,26 @@ ARCH:
 - Cross-query memory is ONLY def'd vars. Plain final answers do not persist.
 - (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
 - (def x \"docstring\" val) → docstring in <var_index>. Defs for reusable state only.
+- VAR REUSE: ALWAYS redef existing vars instead of creating new names for the same concept.
+  Check <var_index> first. (def file-list ...) again, NOT (def files ...). Vars show (vN) when updated.
+- STORE RESULTS: Always (def answer-name result) to persist computed answers.
+  Plain :final text does NOT persist across queries. Only def'd vars survive.
+  (var-history 'x) → all versions. (var-diff 'x 1 3) → structural diff (collections only).
 - :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
 - VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
   Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
-- TEMPLATE RESOLVE: {{var}} in :answer → interpolated with var value.
-  Example: :code [(def total 42)], :answer \"The total is {{total}}\" → user sees \"The total is 42\".
+- MUSTACHE: :answer-type mustache-text or mustache-markdown to render :answer as Mustache.
+  Sandbox vars = context. {{var}}, {{#list}}..{{/list}}, {{^val}}..{{/val}}, {{.}}, {{list.size}}.
+  NO pipe filters. NO {{#each}} → use {{#list}} directly.
+  mustache-text = plain text. mustache-markdown = Markdown output.
+  Example: :code [(def items [{:n \"A\"} {:n \"B\"}])],
+           :answer \"{{items.size}} items:\\n{{#items}}• {{n}}\\n{{/items}}\", :answer-type mustache-text.
+  Missing vars → rejected. Define all referenced vars in :code first.
 - :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
 
 GROUNDING:
 - Only tools listed exist. Data in :final MUST come from <execution_results>. Never fabricate.
-- {{var}} in :answer is resolved at runtime. Use it to embed computed values in prose answers.
+- :answer-type mustache-text|mustache-markdown → Mustache-rendered. All referenced vars MUST be def'd.
 
 SUB-CALLS:
 - (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).
@@ -205,12 +215,12 @@ RESPONSE FORMAT:
       "JSON only. Native reasoning — omit 'thinking'."
       "JSON with 'thinking' + 'code'.")
     "
-Set final fields when done: {\"answer\": \"...\", \"confidence\": \"high|medium|low\"}
+Set final fields when done: {\"answer\": \"...\", \"answer-type\": \"mustache-text\", \"confidence\": \"high|medium|low\"}
 
 RULES:
 - ALWAYS test. Untested = wrong. No repeat fail → different approach.
 - <var_index>|<context> answers query → finalize now.
-- No prose in :code. Bare string literal = wrong. Prose → :answer with answer-type text.
+- No prose in :code. Bare string literal = wrong. Prose → :answer with mustache-text or mustache-markdown.
 - Simplest solution. No over-eng. No unused abstractions.
 
 OUTPUT: "

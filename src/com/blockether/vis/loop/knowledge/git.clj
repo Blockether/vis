@@ -178,12 +178,15 @@
   "Ingest parsed commits into the RLM DB as entities.
    Commits → event entities. Authors → person entities. Files → file entities.
    Linkage data is stored in commit attrs tables (ticket refs/file paths/parents).
-   Deduplicates people by email, files by path.
+   Deduplicates people by email, files by path, commits by SHA.
    Builds all entities, single batch transact per phase.
 
    Returns {:events-stored :people-stored :files-stored}."
   [db-info commits {:keys [repo-name]}]
-  (let [document-id (or repo-name "git")
+  (let [;; Skip commits already in DB (by SHA) to avoid duplicates across re-ingestions
+        existing-shas (rlm-db/db-commit-shas db-info)
+        commits (vec (remove #(contains? existing-shas (:sha %)) commits))
+        document-id (or repo-name "git")
         unique-emails (into {}
                         (comp (map (juxt :author-email identity)) (distinct))
                         commits)

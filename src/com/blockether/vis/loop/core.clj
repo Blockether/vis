@@ -24,13 +24,11 @@
     :refer [create-sci-context build-var-index]]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
    [com.blockether.vis.loop.tool :as sci-tool]
+   [com.blockether.vis.loop.mustache :as mustache]
    [com.blockether.vis.loop.runtime.form-repair :as form-repair]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.trove :as trove]))
-
-(declare build-system-prompt run-iteration format-executions iteration-loop)
-
 
 (defn rlm-debug!
   "Logs at :info level only when :rlm-debug? is true in *rlm-ctx*.
@@ -223,155 +221,6 @@
   "Current custom doc entries (vec of tool-defs)."
   [env]
   (some-> (:state-atom env) deref :custom-docs))
-
-(defn create-env
-  "Creates an RLM environment (component) for document ingestion and querying.
-
-   The environment holds:
-   - In-memory store for documents and conversation history
-   - LLM configuration for queries
-   - SCI sandbox context with custom bindings
-
-   Params:
-   router - Required. Router from llm/make-router, pre-built.
-   opts - Map with :db and optional :conversation.
-   :db accepted forms:
-     nil               - no DB (SCI-only execution)
-     :temp             - ephemeral SQLite DB
-     path string       - persistent SQLite DB at path
-     {:path p}         - persistent SQLite DB at path
-     {:datasource ds}  - caller-owned DataSource (not closed on dispose)
-
-   Returns:
-   RLM environment map (component). Pass to register-env-fn!, register-env-def!, ingest-to-env!, query-env!, dispose-env!."
-  [router {:keys [db conversation]}]
-  (when-not router
-    (anomaly/incorrect! "Missing router" {:type :rlm/missing-router}))
-  (let [depth-atom (atom 0)
-        tool-registry-atom (atom {})
-        db-info (create-rlm-conn db)
-        var-index-atom (atom {:index nil :revision -1 :current-revision 0})
-        qa-corpus-atom (atom {:snapshot-cache nil
-                              :stats {:hits 0 :misses 0
-                                      :last-digest-ms nil
-                                      :last-revision 0}})
-        skill-registry-map (rlm-skills/load-skills {})
-        _ (when db-info
-            (rlm-skills/ingest-skills! db-info skill-registry-map))
-        state-atom (atom {:custom-bindings {}
-                          :custom-docs []
-                          :skill-registry skill-registry-map
-                          :rlm-env nil
-                          :conversation-ref nil})
-        rlm-env-atom (atom nil)
-        skill-registry-atom (atom skill-registry-map)
-        sub-rlm-query-fn (make-routed-sub-rlm-query-fn
-                           {} depth-atom router skill-registry-atom rlm-env-atom
-                           iteration-loop)
-        cheap-sub-rlm-query-fn (make-routed-sub-rlm-query-fn
-                                 {:optimize :cost} depth-atom router skill-registry-atom rlm-env-atom
-                                 iteration-loop)
-        env-id (str (util/uuid))
-        root-model (or (resolve-root-model router) "unknown")
-        has-reasoning? (boolean (provider-has-reasoning? router))
-        system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
-                                            :skill-registry skill-registry-map})
-        resolved-conversation-ref (rlm-db/db-resolve-conversation-ref db-info conversation)
-        conversation-ref (or resolved-conversation-ref
-                           (rlm-db/store-conversation! db-info
-                             {:model root-model
-                              :system-prompt system-prompt}))
-        {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (create-sci-context cheap-sub-rlm-query-fn db-info
-          conversation-ref
-          (:custom-bindings @state-atom))
-        env {:env-id env-id
-             :conversation-ref conversation-ref
-             :depth-atom depth-atom
-             :tool-registry-atom tool-registry-atom
-             :db-info db-info
-             :var-index-atom var-index-atom
-             :qa-corpus-atom qa-corpus-atom
-             :state-atom state-atom
-             :skill-registry-atom skill-registry-atom
-             :sci-ctx sci-ctx
-             :sandbox-ns sandbox-ns
-             :initial-ns-keys initial-ns-keys
-             :router router
-             :sub-rlm-query-fn sub-rlm-query-fn
-             :cheap-sub-rlm-query-fn cheap-sub-rlm-query-fn}]
-    (reset! rlm-env-atom env)
-    (swap! state-atom assoc :rlm-env env :conversation-ref conversation-ref)
-    ;; Register all built-in tools with proper activation-fns
-    (let [env (or (rlm-tools/register-builtin-tools! env) env)]
-      (reset! rlm-env-atom env)
-      env)))
-
-(defn dispose-env!
-  "Disposes an RLM environment and releases resources.
-
-   For persistent DBs (created with :path), data is preserved.
-   For disposable DBs, all data is deleted."
-  [env]
-  (when-let [db-info (:db-info env)]
-    (dispose-rlm-conn! db-info)))
-
-(defn register-env-fn!
-  "Registers a function in the RLM environment's SCI sandbox."
-  [env sym f tool-def]
-  (when-not (:state-atom env)
-    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
-  (when-not (symbol? sym)
-    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
-  (when-not (fn? f)
-    (anomaly/incorrect! "f must be a function" {:type :rlm/invalid-fn}))
-  (when-not (map? tool-def)
-    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
-  (let [canonical-tool-def (sci-tool/make-tool-def sym f tool-def)]
-    (rlm-tools/register-tool-def! (:tool-registry-atom env) sym canonical-tool-def)
-    (when-let [sci-ctx (:sci-ctx env)]
-      (rlm-tools/sci-update-binding! sci-ctx sym
-        (rlm-tools/wrap-tool-for-sci env sym f (:tool-registry-atom env))))
-    (swap! (:state-atom env) update :custom-docs conj (dissoc canonical-tool-def :fn)))
-  env)
-
-(defn register-env-def!
-  "Registers a constant/value in the RLM environment's SCI sandbox."
-  [env sym value tool-def]
-  (when-not (:state-atom env)
-    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
-  (when-not (symbol? sym)
-    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
-  (when-not (map? tool-def)
-    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
-  (swap! (:state-atom env) update :custom-bindings assoc sym value)
-  (when-let [sci-ctx (:sci-ctx env)]
-    (rlm-tools/sci-update-binding! sci-ctx sym value))
-  (swap! (:state-atom env) update :custom-docs conj (assoc tool-def :type :def :sym sym))
-  env)
-
-(defn register-hook!
-  "Attach a hook to an existing tool's chain."
-  [env sym {:keys [stage id fn]}]
-  (rlm-tools/register-tool-def! (:tool-registry-atom env) sym
-    {stage [{:id id :fn fn}]})
-  env)
-
-(defn unregister-hook!
-  "Remove a per-tool hook entry by :id."
-  [env sym stage id]
-  (rlm-tools/unregister-hook! (:tool-registry-atom env) sym stage id))
-
-(defn list-tool-hooks
-  "Return hook chains registered for `sym`, or nil when missing."
-  [env sym]
-  (rlm-tools/list-tool-hooks (:tool-registry-atom env) sym))
-
-(defn list-registered-tools
-  "Return a vec of {:sym :hook-counts} maps for registered tools."
-  [env]
-  (rlm-tools/list-registered-tools (:tool-registry-atom env)))
-
 ;; =============================================================================
 ;; Code Execution
 ;; =============================================================================
@@ -629,9 +478,6 @@
       ;; Check for final answer in flat spec response
       (if-let [raw-final-answer (:answer parsed)]
         (let [answer-type (some-> (:answer-type parsed) keyword)
-              language (when-let [l (:language parsed)] (keyword l))
-              code-answer? (= answer-type :code)
-              clojure? (and code-answer? (or (= language :clojure) (nil? language)))
               ;; Extract code blocks — must be maps with :expr and :time-ms
               raw-code (or (:code parsed) [])
               code-entries (vec (keep (fn [block]
@@ -657,8 +503,8 @@
                ;; Var-resolve mechanic (two modes):
                ;; 1. Single-word: :answer is one token matching a sandbox var → substitute entirely.
                ;;    e.g. {:answer "reply"} → var value of `reply`.
-               ;; 2. Template: :answer contains {{var}} placeholders → interpolate each.
-               ;;    e.g. {:answer "Result: {{summary}}"} → "Result: <value of summary>".
+               ;; 2. Mustache template: :answer contains {{var}} / {{#list}}...{{/list}} etc.
+               ;;    Full Mustache via jmustache. Sandbox vars are the data context.
               raw-answer (str raw-final-answer)
               locals (try (get-locals rlm-env) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
@@ -672,22 +518,20 @@
                                          (cond
                                            (string? v) v
                                            :else (pr-str v))))))
-              ;; Template interpolation: replace {{var}} with sandbox values
-              template-resolved? (and (not resolved-var-value)
-                                   (re-find #"\{\{[\w'\-?!*+]+\}\}" raw-answer))
-              template-answer (when template-resolved?
-                                (let [result (str/replace raw-answer #"\{\{([\w'\-?!*+]+)\}\}"
-                                               (fn [[match var-name]]
-                                                 (let [sym (symbol var-name)
-                                                       resolved (get locals sym)]
-                                                   (if (some? resolved)
-                                                     (let [v (if (instance? clojure.lang.IDeref resolved)
-                                                               @resolved resolved)]
-                                                       (cond
-                                                         (string? v) v
-                                                         :else (pr-str v)))
-                                                     match))))]
-                                  (when (not= result raw-answer) result)))
+              ;; Mustache template rendering via jmustache.
+              ;; Clojure maps work natively — no conversion needed.
+              ;; Missing vars → jmustache throws → validation error fed back to LLM.
+              mustache-detected? (and (not resolved-var-value)
+                                   (some? answer-type))
+              mustache-result (when mustache-detected?
+                                (try
+                                  (let [result (mustache/render raw-answer locals)]
+                                    {:answer (when (not= result raw-answer) result)})
+                                  (catch Exception e
+                                    {:error (str "Mustache error: " (.getMessage e)
+                                              ". Define all referenced vars in :code first.")})))
+              template-answer (:answer mustache-result)
+              mustache-missing (:error mustache-result)
               raw-answer (or resolved-var-value template-answer raw-answer)
               _ (when resolved-var-value
                   (rlm-debug! {:token (str raw-final-answer)
@@ -696,26 +540,18 @@
               _ (when template-answer
                   (rlm-debug! {:template (str raw-final-answer)
                                :resolved-chars (count template-answer)}
-                    "Template :answer interpolated with var values"))
-              final-answer (form-repair/repair-code raw-answer)
+                    "Mustache template rendered"))
+              final-answer raw-answer
               confidence (or (:confidence parsed) :high)
-              ;; Only require a self-test when the FINAL answer is Clojure code.
-              ;; Text / data answers can finalize on iteration 0 without running code.
-              untested? (and clojure? (zero? (or iteration 0)) (empty? code-blocks))
-              parse-check (when clojure?
-                            (parse-clojure-syntax final-answer))
-              validation-error (or (when untested?
-                                     "You submitted final without running any code. Run the self-test first.")
+              validation-error (or (when-not answer-type
+                                     ":answer-type is required with :answer. Set mustache-text or mustache-markdown.")
                                  (when exec-errors
                                    (str "Code errors before final: " (:error (first exec-errors))))
                                  (when (cleanup-claim-without-forget? final-answer forget-names)
                                    "You claimed vars/index cleanup in the final answer, but this iteration did not emit :forget. Emit :forget with the concrete var names first, then finalize.")
                                  (when (placeholder-final-answer? raw-final-answer (or (some? resolved-var-value) (some? template-answer)))
                                    (str "Placeholder word '" (str/trim (str raw-final-answer)) "' is not a real answer. Put the actual content in :answer, or def the result and use its var name."))
-                                 parse-check
-                                 (validate-final {:answer final-answer
-                                                  :answer-type (:answer-type parsed)
-                                                  :language (:language parsed)}))
+                                 mustache-missing)
               executions (when exec-results
                            (mapv (fn [idx code result]
                                    {:id idx :code code
@@ -1169,6 +1005,8 @@
             (and
               ;; Not a built-in
               (not (contains? initial-ns-keys sym))
+              ;; Not an auto-injected *earmuffed* var (*query*, *reasoning*)
+              (not (let [n (name sym)] (and (str/starts-with? n "*") (str/ends-with? n "*"))))
               ;; No docstring — vars with docs are intentionally persisted
               (not has-doc?)
               ;; Has a registry entry (was persisted at some point)
@@ -1326,6 +1164,9 @@
                            (trove/log! {:level :warn :data {:error (ex-message e)}
                                         :msg log-msg})))))]
     ;; query-start is logged in query.clj — don't duplicate
+    ;; Auto-bind *query* into the SCI sandbox so the LLM (and var-history)
+    ;; can always see the current user query. Updated once per query.
+    (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*query* query)
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [iteration 0 messages initial-messages trace [] consecutive-errors 0 restarts 0
              prev-executions nil prev-iteration -1
@@ -1498,7 +1339,20 @@
                       _ (when (seq forget)
                           (forget-vars! (:sci-ctx rlm-env) forget)
                           (swap! var-index-atom update :current-revision inc))
+                      ;; Auto-bind *reasoning* into the SCI sandbox after every iteration.
+                      ;; The LLM (and var-history) can inspect prior reasoning via (var-history '*reasoning*).
+                      _ (when (seq thinking)
+                          (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*reasoning* thinking))
                       vars-snapshot (restorable-var-snapshots rlm-env executions)
+                      ;; Inject auto-vars (*query*, *reasoning*) into the persisted snapshot
+                      ;; so var-history can track them across queries and iterations.
+                      vars-snapshot (cond-> vars-snapshot
+                                      ;; Persist *query* on the FIRST iteration only (once per query)
+                                      (zero? iteration)
+                                      (conj {:name "*query*" :value query :code "(auto-injected)"})
+                                      ;; Persist *reasoning* whenever thinking is present
+                                      (seq thinking)
+                                      (conj {:name "*reasoning*" :value thinking :code "(auto-injected)"}))
                       ;; Store iteration snapshot — exact input/output for fine-tuning
                       _traj-iter (rlm-db/store-iteration! db-info
                                    {:query-ref query-ref
@@ -1610,6 +1464,159 @@
                             restarts
                             executions iteration
                             (conj journal journal-entry) next-optimize))))))))))))))
+
+;; =============================================================================
+;; Public API — environment lifecycle, tool registration
+;; =============================================================================
+;; Placed after iteration-loop so all internal fns are resolved without declare.
+
+(defn create-env
+  "Creates an RLM environment (component) for document ingestion and querying.
+
+   The environment holds:
+   - In-memory store for documents and conversation history
+   - LLM configuration for queries
+   - SCI sandbox context with custom bindings
+
+   Params:
+   router - Required. Router from llm/make-router, pre-built.
+   opts - Map with :db and optional :conversation.
+   :db accepted forms:
+     nil               - no DB (SCI-only execution)
+     :temp             - ephemeral SQLite DB
+     path string       - persistent SQLite DB at path
+     {:path p}         - persistent SQLite DB at path
+     {:datasource ds}  - caller-owned DataSource (not closed on dispose)
+
+   Returns:
+   RLM environment map (component). Pass to register-env-fn!, register-env-def!, ingest-to-env!, query-env!, dispose-env!."
+  [router {:keys [db conversation]}]
+  (when-not router
+    (anomaly/incorrect! "Missing router" {:type :rlm/missing-router}))
+  (let [depth-atom (atom 0)
+        tool-registry-atom (atom {})
+        db-info (create-rlm-conn db)
+        var-index-atom (atom {:index nil :revision -1 :current-revision 0})
+        qa-corpus-atom (atom {:snapshot-cache nil
+                              :stats {:hits 0 :misses 0
+                                      :last-digest-ms nil
+                                      :last-revision 0}})
+        skill-registry-map (rlm-skills/load-skills {})
+        _ (when db-info
+            (rlm-skills/ingest-skills! db-info skill-registry-map))
+        state-atom (atom {:custom-bindings {}
+                          :custom-docs []
+                          :skill-registry skill-registry-map
+                          :rlm-env nil
+                          :conversation-ref nil})
+        rlm-env-atom (atom nil)
+        skill-registry-atom (atom skill-registry-map)
+        sub-rlm-query-fn (make-routed-sub-rlm-query-fn
+                           {} depth-atom router skill-registry-atom rlm-env-atom
+                           iteration-loop)
+        cheap-sub-rlm-query-fn (make-routed-sub-rlm-query-fn
+                                 {:optimize :cost} depth-atom router skill-registry-atom rlm-env-atom
+                                 iteration-loop)
+        env-id (str (util/uuid))
+        root-model (or (resolve-root-model router) "unknown")
+        has-reasoning? (boolean (provider-has-reasoning? router))
+        system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
+                                            :skill-registry skill-registry-map})
+        resolved-conversation-ref (rlm-db/db-resolve-conversation-ref db-info conversation)
+        conversation-ref (or resolved-conversation-ref
+                           (rlm-db/store-conversation! db-info
+                             {:model root-model
+                              :system-prompt system-prompt}))
+        {:keys [sci-ctx sandbox-ns initial-ns-keys]}
+        (create-sci-context cheap-sub-rlm-query-fn db-info
+          conversation-ref
+          (:custom-bindings @state-atom))
+        env {:env-id env-id
+             :conversation-ref conversation-ref
+             :depth-atom depth-atom
+             :tool-registry-atom tool-registry-atom
+             :db-info db-info
+             :var-index-atom var-index-atom
+             :qa-corpus-atom qa-corpus-atom
+             :state-atom state-atom
+             :skill-registry-atom skill-registry-atom
+             :sci-ctx sci-ctx
+             :sandbox-ns sandbox-ns
+             :initial-ns-keys initial-ns-keys
+             :router router
+             :sub-rlm-query-fn sub-rlm-query-fn
+             :cheap-sub-rlm-query-fn cheap-sub-rlm-query-fn}]
+    (reset! rlm-env-atom env)
+    (swap! state-atom assoc :rlm-env env :conversation-ref conversation-ref)
+    ;; Register all built-in tools with proper activation-fns
+    (let [env (or (rlm-tools/register-builtin-tools! env) env)]
+      (reset! rlm-env-atom env)
+      env)))
+
+(defn dispose-env!
+  "Disposes an RLM environment and releases resources.
+
+   For persistent DBs (created with :path), data is preserved.
+   For disposable DBs, all data is deleted."
+  [env]
+  (when-let [db-info (:db-info env)]
+    (dispose-rlm-conn! db-info)))
+
+(defn register-env-fn!
+  "Registers a function in the RLM environment's SCI sandbox."
+  [env sym f tool-def]
+  (when-not (:state-atom env)
+    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
+  (when-not (symbol? sym)
+    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
+  (when-not (fn? f)
+    (anomaly/incorrect! "f must be a function" {:type :rlm/invalid-fn}))
+  (when-not (map? tool-def)
+    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
+  (let [canonical-tool-def (sci-tool/make-tool-def sym f tool-def)]
+    (rlm-tools/register-tool-def! (:tool-registry-atom env) sym canonical-tool-def)
+    (when-let [sci-ctx (:sci-ctx env)]
+      (rlm-tools/sci-update-binding! sci-ctx sym
+        (rlm-tools/wrap-tool-for-sci env sym f (:tool-registry-atom env))))
+    (swap! (:state-atom env) update :custom-docs conj (dissoc canonical-tool-def :fn)))
+  env)
+
+(defn register-env-def!
+  "Registers a constant/value in the RLM environment's SCI sandbox."
+  [env sym value tool-def]
+  (when-not (:state-atom env)
+    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
+  (when-not (symbol? sym)
+    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
+  (when-not (map? tool-def)
+    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
+  (swap! (:state-atom env) update :custom-bindings assoc sym value)
+  (when-let [sci-ctx (:sci-ctx env)]
+    (rlm-tools/sci-update-binding! sci-ctx sym value))
+  (swap! (:state-atom env) update :custom-docs conj (assoc tool-def :type :def :sym sym))
+  env)
+
+(defn register-hook!
+  "Attach a hook to an existing tool's chain."
+  [env sym {:keys [stage id fn]}]
+  (rlm-tools/register-tool-def! (:tool-registry-atom env) sym
+    {stage [{:id id :fn fn}]})
+  env)
+
+(defn unregister-hook!
+  "Remove a per-tool hook entry by :id."
+  [env sym stage id]
+  (rlm-tools/unregister-hook! (:tool-registry-atom env) sym stage id))
+
+(defn list-tool-hooks
+  "Return hook chains registered for `sym`, or nil when missing."
+  [env sym]
+  (rlm-tools/list-tool-hooks (:tool-registry-atom env) sym))
+
+(defn list-registered-tools
+  "Return a vec of {:sym :hook-counts} maps for registered tools."
+  [env]
+  (rlm-tools/list-registered-tools (:tool-registry-atom env)))
 
 ;; =============================================================================
 ;; Entity Extraction — delegates to loop.knowledge.entity

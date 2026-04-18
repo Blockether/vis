@@ -7,6 +7,8 @@
             [com.blockether.vis.adapters.telegram.bot :as telegram]
             [com.blockether.vis.core :as core]
             [com.blockether.vis.loop.storage.db :as rlm-db]
+            [com.blockether.vis.loop.conversations.shared :as conv-shared]
+            [next.jdbc.sql]
             [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.adapters.tui.screen :as screen]
             [taoensso.trove :as trove]))
@@ -434,12 +436,31 @@
                         (when (seq concepts)
                           (let [groups (group-by :group_name concepts)]
                             (str " in " (count groups) " groups")))))
+              ;; Conversations — use env's own DB connection
+              (let [active-envs (count @conv-shared/cache)
+                    sidecar-ds  (some-> db-info :datasource)
+                    count-ch    (fn [ch]
+                                  (try
+                                    (when sidecar-ds
+                                      (count (next.jdbc.sql/find-by-keys sidecar-ds :vis_conversation
+                                               {:channel (name ch)} {})))
+                                    (catch Exception _ 0)))
+                    vis-n  (or (count-ch :vis) 0)
+                    cli-n  (or (count-ch :cli) 0)
+                    tg-n   (or (count-ch :telegram) 0)
+                    total  (+ vis-n cli-n tg-n)]
+                (stdout! (str "  Conversations:  " total
+                          " (" vis-n " vis, " cli-n " cli, " tg-n " telegram)"
+                          " — " active-envs " active in memory")))
               (if-let [{:keys [repos total-commits unique-authors]} repo-stats]
                 (if (seq repos)
-                  (do
+                  (let [indexed-total (reduce + 0 (keep :commits-ingested repos))
+                        orphans (- total-commits indexed-total)]
                     (stdout! (str "  Git:          " (count repos) " repo(s), "
-                              total-commits " commits, "
-                              unique-authors " authors"))
+                              total-commits " commits"
+                              (when (pos? orphans)
+                                (str " (" orphans " not indexed)"))
+                              ", " unique-authors " authors"))
                     (doseq [r repos]
                       (stdout! (str "                └ " (:name r)
                                 " [" (or (:branch r) "?") "]"

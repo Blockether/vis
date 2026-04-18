@@ -299,15 +299,22 @@
         {:type :rlm/not-a-git-repo :repo-path resolved-path}))
     (try
       (let [db-info (loop-core/db-info env)
+            ;; Incremental: use stored head-sha as since-sha when caller didn't specify one
+            prev-repo (when-not since-sha
+                        (rlm-db/db-get-repo-by-name db-info resolved-name))
+            effective-since-sha (or since-sha (:head-sha prev-repo))
             commits (rlm-git/read-commits repo
                       (cond-> {:n n}
-                        since     (assoc :since since)
-                        since-sha (assoc :since-sha since-sha)
-                        path      (assoc :path path)
-                        author    (assoc :author author)))
+                        since              (assoc :since since)
+                        effective-since-sha (assoc :since-sha effective-since-sha)
+                        path               (assoc :path path)
+                        author             (assoc :author author)))
             ingest-result (rlm-git/ingest-commits! db-info commits {:repo-name resolved-name})
             head (rlm-git/head-info repo)
-            commits-ingested (:events-stored ingest-result)]
+            ;; Total commits for this repo in DB (lightweight SHA-only count)
+            total-in-db (count (rlm-db/db-commit-shas db-info))
+            prev-count (or (:commits-ingested prev-repo) 0)
+            commits-ingested (max total-in-db (+ prev-count (:events-stored ingest-result)))]
         (rlm-db/db-store-repo! db-info
           {:name resolved-name
            :path resolved-path

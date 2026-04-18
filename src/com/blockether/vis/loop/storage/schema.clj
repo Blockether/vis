@@ -200,24 +200,14 @@
                                   ::spec/type :spec.type/string
                                   ::spec/cardinality :spec.cardinality/one
                                   ::spec/required false
-                                  ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Use {{var}} for inline interpolation, e.g. \"Here is the result: {{summary}}\". Send with any needed :code. :code runs first."})
+                                  ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
                      (spec/field {::spec/name :answer-type
                                   ::spec/type :spec.type/keyword
                                   ::spec/cardinality :spec.cardinality/one
-                                  ::spec/required false
-                                  ::spec/description "What kind of answer is this?"
-                                  ::spec/values {"text" "Natural language / prose (DEFAULT for chat replies)"
-                                                 "code" "Source code (will be validated)"
-                                                 "data" "Structured data (EDN, JSON, etc.)"}})
-                     (spec/field {::spec/name :language
-                                  ::spec/type :spec.type/keyword
-                                  ::spec/cardinality :spec.cardinality/one
-                                  ::spec/required false
-                                  ::spec/description "Programming language (when answer-type is code)"
-                                  ::spec/values {"clojure" "Clojure code"
-                                                 "python" "Python code"
-                                                 "json" "JSON data"
-                                                 "edn" "EDN data"}})
+                                  ::spec/required true
+                                  ::spec/description "REQUIRED with :answer. How to render the answer."
+                                  ::spec/values {"mustache-text" "Mustache-rendered plain text. Sandbox vars = context. {{var}}, {{#list}}..{{/list}}, {{^val}}..{{/val}}, {{list.size}}, {{.}}. All referenced vars must be def'd."
+                                                 "mustache-markdown" "Mustache-rendered Markdown. Same template features but rendered as Markdown in the UI."}})
                      (spec/field {::spec/name :confidence
                                   ::spec/type :spec.type/keyword
                                   ::spec/cardinality :spec.cardinality/one
