@@ -12,7 +12,6 @@
    Delegates to the sqlite.* domain namespaces."
   (:require
    [clojure.edn :as edn]
-   [clojure.string :as str]
    [com.blockether.vis.loop.runtime.shared :as rt-shared]
    [com.blockether.vis.loop.storage.sqlite.concept-graph :as cg]
    [com.blockether.vis.loop.storage.sqlite.conversations :as conv]
@@ -22,13 +21,6 @@
    [com.blockether.vis.loop.storage.sqlite.search :as search]
    [com.blockether.vis.loop.storage.sqlite.vitality :as vit]
    [edamame.core :as edamame]))
-
-;; -----------------------------------------------------------------------------
-;; Small string utilities
-;; -----------------------------------------------------------------------------
-
-(defn str-lower [s] (when s (str/lower-case s)))
-(defn str-includes? [s substr] (when s (str/includes? s substr)))
 
 (def ->id core/->id)
 (def ->kw core/->kw)
@@ -64,11 +56,9 @@
 ;; -----------------------------------------------------------------------------
 
 (def store-entity!     core/store-entity!)
-(def update-entity!    core/update-entity!)
 
 (def store-conversation!              conv/store-conversation!)
 (def db-get-conversation              conv/db-get-conversation)
-(def db-find-latest-conversation-ref  conv/db-find-latest-conversation-ref)
 (def db-resolve-conversation-ref      conv/db-resolve-conversation-ref)
 
 (def store-query!   conv/store-query!)
@@ -189,7 +179,6 @@
 ;; -----------------------------------------------------------------------------
 
 (def db-list-documents             corpus/db-list-documents)
-(def db-get-document               corpus/db-get-document)
 (def store-document!               corpus/store-document!)
 (def db-store-pageindex-document!  corpus/db-store-pageindex-document!)
 
@@ -223,9 +212,6 @@
 ;; Vitality / Q-values / Cooccurrence
 ;; -----------------------------------------------------------------------------
 
-(def vitality-zone          vit/vitality-zone)
-(def compute-page-vitality  vit/compute-page-vitality)
-(def compute-node-vitality  vit/compute-node-vitality)
 (def get-page-vitality      vit/get-page-vitality)
 
 (def get-page-q-value       corpus/get-page-q-value)
@@ -294,7 +280,6 @@
 (def load-full-concept-graph  cg/load-full-concept-graph)
 (def store-page-concept!      cg/store-page-concept!)
 (def list-page-concepts       cg/list-page-concepts)
-(def clear-page-concepts!          cg/clear-page-concepts!)
 (def clear-page-concepts-for-page! cg/clear-page-concepts-for-page!)
 (def get-page-content-sha    cg/get-page-content-sha)
 (def update-page-content-sha! cg/update-page-content-sha!)

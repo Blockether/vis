@@ -516,6 +516,20 @@
   rlm-db/load-full-concept-graph)
 
 ;; =============================================================================
+;; Tool diagnostics
+;; =============================================================================
+
+#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
+(def tool-diagnostics
+  "Returns tool diagnostics map: {sym -> {:activation-checks :executions :last-active? ...}}"
+  (deref #'com.blockether.vis.loop.runtime.tool-diagnostics/get-diagnostics))
+
+#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
+(def tool-diagnostics-table
+  "Returns formatted table string of all tool diagnostics."
+  (deref #'com.blockether.vis.loop.runtime.tool-diagnostics/format-table))
+
+;; =============================================================================
 ;; PageIndex
 ;; =============================================================================
 

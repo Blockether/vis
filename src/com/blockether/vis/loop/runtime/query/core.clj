@@ -11,6 +11,7 @@
    [com.blockether.vis.loop.storage.schema :as schema]
    [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
    [com.blockether.vis.loop.runtime.core :as rlm-tools]
+   [com.blockether.vis.loop.runtime.tool-diagnostics :as tool-diag]
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.svar.internal.util :as util]
    [taoensso.trove :as trove])
@@ -254,12 +255,14 @@
           _                      (when (and sci-ctx tool-registry-atom)
                                    (doseq [[sym {:keys [fn activation-fn]}] @tool-registry-atom]
                                      (when fn
-                                       (if (activation-fn env)
-                                         ;; Tool active — bind it
-                                         (rlm-tools/sci-update-binding! sci-ctx sym
-                                           (rlm-tools/wrap-tool-for-sci env sym fn tool-registry-atom query-ctx))
-                                         ;; Tool inactive — unbind it
-                                         (rlm-tools/sci-update-binding! sci-ctx sym nil)))))
+                                       (let [t0      (System/nanoTime)
+                                             active? (boolean (activation-fn env))
+                                             elapsed (- (System/nanoTime) t0)]
+                                         (tool-diag/record-activation-check! sym active? elapsed)
+                                         (if active?
+                                           (rlm-tools/sci-update-binding! sci-ctx sym
+                                             (rlm-tools/wrap-tool-for-sci env sym fn tool-registry-atom query-ctx))
+                                           (rlm-tools/sci-update-binding! sci-ctx sym nil))))))
           _                      (let [per-query (merge {'sub-rlm-query cheap-sub-rlm-fn}
                                                    budget-bindings
                                                    (or custom-bindings {}) sub-rlm-query-overrides)]

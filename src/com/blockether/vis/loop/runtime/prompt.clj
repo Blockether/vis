@@ -135,10 +135,13 @@ ARCH:
 - :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
 - VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
   Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
+- TEMPLATE RESOLVE: {{var}} in :answer → interpolated with var value.
+  Example: :code [(def total 42)], :answer \"The total is {{total}}\" → user sees \"The total is 42\".
 - :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
 
 GROUNDING:
 - Only tools listed exist. Data in :final MUST come from <execution_results>. Never fabricate.
+- {{var}} in :answer is resolved at runtime. Use it to embed computed values in prose answers.
 
 SUB-CALLS:
 - (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).

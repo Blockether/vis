@@ -106,10 +106,11 @@
 
 (defn db-search-commits
   ([db-info] (db-search-commits db-info {}))
-  ([db-info {:keys [category since until ticket path author-email document-id limit]
+  ([db-info {:keys [sha category since until ticket path author-email document-id limit]
              :or {limit 50}}]
    (when (core/ds db-info)
      (let [where (cond-> [:and [:= :e.type "event"] [:is-not :c.sha nil]]
+                   sha          (conj [:= :c.sha sha])
                    category     (conj [:= :c.category (core/->kw category)])
                    document-id  (conj [:= :e.document_id document-id])
                    author-email (conj [:= :c.author_email author-email])
@@ -174,4 +175,4 @@
 (defn db-commit-by-sha
   [db-info sha]
   (when (and (core/ds db-info) (seq sha))
-    (first (db-search-commits db-info {}))))
+    (first (db-search-commits db-info {:sha sha}))))

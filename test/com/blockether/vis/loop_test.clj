@@ -438,7 +438,13 @@
   (it "includes iteration output guidance"
     (let [prompt (#'rlm-core/build-system-prompt {})]
       (expect (str/includes? prompt "OUTPUT"))
-      (expect (str/includes? prompt "Pattern:")))))
+      (expect (str/includes? prompt "Pattern:"))))
+
+  (it "documents {{var}} template resolve in ARCH and GROUNDING"
+    (let [prompt (#'rlm-core/build-system-prompt {})]
+      (expect (str/includes? prompt "TEMPLATE RESOLVE"))
+      (expect (str/includes? prompt "{{var}}"))
+      (expect (re-find #"\{\{\w+\}\}.*interpolated" prompt)))))
 
 ;; =============================================================================
 ;; System Prompt Tests
@@ -860,6 +866,143 @@
                            (expect (= ["drop-me"] (:forget result)))
                            (expect (= "Posprzatane, usunalem vars z indexu."
                                      (get-in result [:final-result :answer :result]))))))))
+
+;; =============================================================================
+;; Var Resolve & Template Interpolation Tests
+;; =============================================================================
+
+(defdescribe var-resolve-single-word-test
+  (it "resolves single-word :answer to a string var value"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def reply \"Hello from var\")")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "reply"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "Hello from var"
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "resolves single-word :answer to a non-string var via pr-str"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def data {:a 1 :b 2})")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "data"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= (pr-str {:a 1 :b 2})
+                                       (get-in result [:final-result :answer :result])))))))))
+
+(defdescribe template-resolve-test
+  (it "interpolates {{var}} placeholders with string var values"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def city \"Warsaw\")")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "The capital is {{city}}."
+                                              :answer-type "text"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "The capital is Warsaw."
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "interpolates multiple {{var}} placeholders"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def name' \"Alice\")")
+                         (#'rlm-core/execute-code env "(def count' 42)")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "{{name'}} found {{count'}} items."
+                                              :answer-type "text"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             ;; count' is a long, not string, so pr-str'd
+                             (expect (= "Alice found 42 items."
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "leaves unresolved {{var}} placeholders intact"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def known \"yes\")")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "Known: {{known}}, Unknown: {{missing}}"
+                                              :answer-type "text"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "Known: yes, Unknown: {{missing}}"
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "prefers single-word resolve over template resolve"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def answer \"Full resolved value\")")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "answer"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             ;; Single-word resolve wins — not treated as template
+                             (expect (= "Full resolved value"
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "does NOT resolve when no {{}} present — plain string passthrough"
+    (with-test-env* {} (fn [env]
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "Just a plain answer with no templates."
+                                              :answer-type "text"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "Just a plain answer with no templates."
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "interpolates {{var}} with code blocks that define vars"
+    (with-test-env* {} (fn [env]
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:code [{:expr "(def total (+ 10 20 30))" :time-ms 100}
+                                                     {:expr "(assert (= 60 total))" :time-ms 500}]
+                                              :answer "The sum is {{total}}."
+                                              :answer-type "text"
+                                              :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "The sum is 60."
+                                       (get-in result [:final-result :answer :result])))))))))
+
+;; =============================================================================
+;; Template Resolve Integration Tests (real LLM)
+;; =============================================================================
+
+(defdescribe template-resolve-integration-test
+  (it "LLM uses {{var}} template to format a computed answer"
+    (when (integration-tests-enabled?)
+      (with-integration-env*
+        (fn [env]
+          (let [result (sut/query-env! env
+                         [(llm/user "Define a var called `greeting` with the value \"Cześć\", then answer using the template: \"The greeting is {{greeting}}\". Use answer-type text.")]
+                         {:max-iterations 10
+                          :refine? false})]
+            (expect (map? result))
+            (when-not (:status result)
+              (expect (some? (:answer result)))
+              ;; The answer should contain the resolved greeting
+              (expect (re-find #"Cze[sś][cć]" (str (:answer result)))))))))))
 
 ;; =============================================================================
 ;; Mock Response Factories (Domain-Specific)

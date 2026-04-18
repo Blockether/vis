@@ -74,6 +74,7 @@
   (println "  vis qa INDEX_PATH    Generate QA pairs from an indexed document")
   (println "  vis web [PORT]       Start web server (default port 3000)")
   (println "  vis telegram         Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)")
+  (println "  vis doctor           Show tool registration diagnostics")
   (println "  vis help             Show this help")
   (println)
   (println "Run `vis run --help`, `vis index --help`, or `vis qa --help` for options."))
@@ -386,6 +387,25 @@
       (= cmd "telegram")
       (do (config/init-cli!)
         (telegram/-main))
+
+      ;; Doctor — tool registration diagnostics
+      (= cmd "doctor")
+      (do (config/init-cli!)
+        (let [env (core/create-env (rlm-routing/get-router) {:db config/db-path})]
+          (try
+            ;; Run a trivial query to trigger activation checks
+            (stdout! "vis doctor — tool diagnostics")
+            (stdout! "")
+            (let [tools   (core/list-registered-tools env)
+                  table   ((requiring-resolve 'com.blockether.vis.loop.runtime.tool-diagnostics/format-table))]
+              (stdout! (str "Registered tools: " (count tools)))
+              (stdout! "")
+              (stdout! table)
+              (stdout! "")
+              (stdout! "Status legend: Active? ✓=yes ✗=no  ActTime=activation-fn duration"))
+            (finally
+              (core/dispose-env! env)
+              (shutdown-agents)))))
 
       ;; TUI chat (explicit or no args)
       (or (nil? cmd) (= cmd "chat"))

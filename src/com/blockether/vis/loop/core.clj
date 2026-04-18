@@ -173,11 +173,16 @@
              (doseq [doc documents]
                (db-store-pageindex-document! db-info doc)))
          sub-rlm-query-fn (make-routed-sub-rlm-query-fn {} depth-atom router nil nil)
-         {:keys [sci-ctx sandbox-ns initial-ns-keys]} (create-sci-context sub-rlm-query-fn db-info nil nil)]
-     {:sci-ctx sci-ctx :sandbox-ns sandbox-ns :initial-ns-keys initial-ns-keys
-      :sub-rlm-query-fn sub-rlm-query-fn
-      :db-info db-info
-      :router router})))
+         {:keys [sci-ctx sandbox-ns initial-ns-keys]} (create-sci-context sub-rlm-query-fn db-info nil nil)
+         tool-registry-atom (atom {})
+         state-atom (atom {:custom-bindings {} :custom-docs []})
+         env {:sci-ctx sci-ctx :sandbox-ns sandbox-ns :initial-ns-keys initial-ns-keys
+              :sub-rlm-query-fn sub-rlm-query-fn
+              :tool-registry-atom tool-registry-atom
+              :state-atom state-atom
+              :db-info db-info
+              :router router}]
+     (or (rlm-tools/register-builtin-tools! env) env))))
 
 (defn dispose-rlm-env! [{:keys [db-info]}]
   (when db-info (dispose-rlm-conn! db-info)))
@@ -297,7 +302,10 @@
              :cheap-sub-rlm-query-fn cheap-sub-rlm-query-fn}]
     (reset! rlm-env-atom env)
     (swap! state-atom assoc :rlm-env env :conversation-ref conversation-ref)
-    env))
+    ;; Register all built-in tools with proper activation-fns
+    (let [env (or (rlm-tools/register-builtin-tools! env) env)]
+      (reset! rlm-env-atom env)
+      env)))
 
 (defn dispose-env!
   "Disposes an RLM environment and releases resources.
@@ -646,9 +654,11 @@
               exec-errors (when exec-results
                             (seq (filter :error exec-results)))
                ;; NOW read sandbox — code has executed, (def reply ...) is visible.
-               ;; Single-word :answer mechanic: if :answer is one token matching a sandbox var,
-               ;; substitute the var's value. Lets the LLM finalize with `{:answer "reply"}`
-               ;; after building `reply` in :code, instead of copy-pasting the whole string.
+               ;; Var-resolve mechanic (two modes):
+               ;; 1. Single-word: :answer is one token matching a sandbox var → substitute entirely.
+               ;;    e.g. {:answer "reply"} → var value of `reply`.
+               ;; 2. Template: :answer contains {{var}} placeholders → interpolate each.
+               ;;    e.g. {:answer "Result: {{summary}}"} → "Result: <value of summary>".
               raw-answer (str raw-final-answer)
               locals (try (get-locals rlm-env) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
@@ -662,11 +672,31 @@
                                          (cond
                                            (string? v) v
                                            :else (pr-str v))))))
-              raw-answer (or resolved-var-value raw-answer)
+              ;; Template interpolation: replace {{var}} with sandbox values
+              template-resolved? (and (not resolved-var-value)
+                                   (re-find #"\{\{[\w'\-?!*+]+\}\}" raw-answer))
+              template-answer (when template-resolved?
+                                (let [result (str/replace raw-answer #"\{\{([\w'\-?!*+]+)\}\}"
+                                               (fn [[match var-name]]
+                                                 (let [sym (symbol var-name)
+                                                       resolved (get locals sym)]
+                                                   (if (some? resolved)
+                                                     (let [v (if (instance? clojure.lang.IDeref resolved)
+                                                               @resolved resolved)]
+                                                       (cond
+                                                         (string? v) v
+                                                         :else (pr-str v)))
+                                                     match))))]
+                                  (when (not= result raw-answer) result)))
+              raw-answer (or resolved-var-value template-answer raw-answer)
               _ (when resolved-var-value
                   (rlm-debug! {:token (str raw-final-answer)
                                :resolved-chars (count resolved-var-value)}
                     "Single-word :answer resolved to var value"))
+              _ (when template-answer
+                  (rlm-debug! {:template (str raw-final-answer)
+                               :resolved-chars (count template-answer)}
+                    "Template :answer interpolated with var values"))
               final-answer (form-repair/repair-code raw-answer)
               confidence (or (:confidence parsed) :high)
               ;; Only require a self-test when the FINAL answer is Clojure code.
@@ -680,7 +710,7 @@
                                    (str "Code errors before final: " (:error (first exec-errors))))
                                  (when (cleanup-claim-without-forget? final-answer forget-names)
                                    "You claimed vars/index cleanup in the final answer, but this iteration did not emit :forget. Emit :forget with the concrete var names first, then finalize.")
-                                 (when (placeholder-final-answer? raw-final-answer (some? resolved-var-value))
+                                 (when (placeholder-final-answer? raw-final-answer (or (some? resolved-var-value) (some? template-answer)))
                                    (str "Placeholder word '" (str/trim (str raw-final-answer)) "' is not a real answer. Put the actual content in :answer, or def the result and use its var name."))
                                  parse-check
                                  (validate-final {:answer final-answer
