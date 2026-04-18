@@ -160,12 +160,15 @@
                  (reduce (fn [m iter]
                            (reduce (fn [m2 {:keys [name value code]}]
                                      (if name
-                                       (assoc m2 (symbol name)
-                                         {:value value :code code
-                                          :query-id (:id query)
-                                          :query-ref qref
-                                          :iteration-id (:id iter)
-                                          :created-at (:created-at iter)})
+                                       (let [sym (symbol name)
+                                             prev-version (get-in m2 [sym :version] 0)]
+                                         (assoc m2 sym
+                                           {:value value :code code
+                                            :query-id (:id query)
+                                            :query-ref qref
+                                            :iteration-id (:id iter)
+                                            :created-at (:created-at iter)
+                                            :version (inc prev-version)}))
                                        m2))
                              m
                              (db-list-iteration-vars db-info [:id (:id iter)])))
@@ -173,6 +176,37 @@
                    (db-list-query-iterations db-info qref))))
        {}
        queries))))
+
+(defn diffable-value?
+  "True when `v` is a collection type where editscript produces a useful
+   structural diff (maps, vectors, sets, lists).  Primitives (strings,
+   numbers, keywords, booleans, nil) yield only whole-value replacement
+   so they are NOT diffable."
+  [v]
+  (or (map? v) (vector? v) (set? v) (sequential? v)))
+
+(defn db-var-history
+  "Returns all versions of a named var across a conversation, oldest first.
+   Each entry: {:version N :value <edn> :code str :diffable? bool
+                :query-id uuid :created-at inst}."
+  [db-info conversation-ref var-sym]
+  (let [var-name (str var-sym)
+        queries  (sort-by :created-at (db-list-conversation-queries db-info conversation-ref))]
+    (->> queries
+      (mapcat (fn [query]
+                (let [qref [:id (:id query)]]
+                  (->> (db-list-query-iterations db-info qref)
+                    (mapcat (fn [iter]
+                              (->> (db-list-iteration-vars db-info [:id (:id iter)])
+                                (filter #(= (:name %) var-name))
+                                (map (fn [{:keys [value code]}]
+                                       {:query-id   (:id query)
+                                        :created-at (:created-at iter)
+                                        :value      value
+                                        :code       code
+                                        :diffable?  (diffable-value? value)})))))))))
+      (map-indexed (fn [i entry] (assoc entry :version (inc i))))
+      vec)))
 
 ;; -----------------------------------------------------------------------------
 ;; Documents + TOC + raw documents
@@ -206,6 +240,7 @@
 (def db-get-repo-by-name   git/db-get-repo-by-name)
 
 (def db-search-commits     git/db-search-commits)
+(def db-commit-shas        git/db-commit-shas)
 (def db-commit-by-sha      git/db-commit-by-sha)
 (def store-commit-entity!  git/store-commit-entity!)
 

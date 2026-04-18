@@ -4,13 +4,16 @@
    Contains:
    - Document tools: search-documents, fetch-document-content, format-docs
    - History tools: conversation-history, conversation-code, conversation-results
-   - Restore tools: restore-var, restore-vars"
+   - Restore tools: restore-var, restore-vars
+   - Var history tools: var-history, var-diff"
   (:require
    [clojure.string :as str]
    [com.blockether.vis.loop.storage.db :as db
     :refer [db-get-page-node db-get-toc-entry
             db-search-page-nodes
-            db-search-toc-entries record-page-access!]]))
+            db-search-toc-entries record-page-access!]]
+   [editscript.core :as es])
+  (:import [com.github.difflib DiffUtils UnifiedDiffUtils]))
 
 ;; =============================================================================
 ;; Document tools
@@ -204,3 +207,105 @@
                                 :symbol sym
                                 :message (ex-message e)}}]))))
        syms))))
+
+;; =============================================================================
+;; Var history + diff tools
+;; =============================================================================
+
+(defn make-var-history-fn
+  "Creates var-history: returns all persisted versions of a var, oldest first.
+   Each entry: {:version N :value <val> :code str :created-at inst}."
+  [db-info conversation-ref]
+  (fn var-history [sym]
+    (let [sym (if (symbol? sym) sym (symbol (str sym)))]
+      (if (and db-info conversation-ref)
+        (let [entries (db/db-var-history db-info conversation-ref sym)]
+          (if (seq entries)
+            entries
+            (throw (ex-info (str "No history found for " sym)
+                     {:type :rlm/var-history-empty :symbol sym}))))
+        (throw (ex-info "No DB available for var-history" {:type :rlm/no-db}))))))
+
+(defn- editscript->summary
+  "Converts an editscript diff to a compact summary vec of op maps."
+  [script]
+  (mapv (fn [[path op val]]
+          (case op
+            :+ {:op :added   :path path :value val}
+            :- {:op :removed :path path}
+            :r {:op :changed :path path :value val}))
+    (es/get-edits script)))
+
+(defn- diff-strings
+  "Line-level unified diff between two strings using java-diff-utils."
+  [a b]
+  (let [old-lines (vec (str/split-lines (str a)))
+        new-lines (vec (str/split-lines (str b)))
+        patch     (DiffUtils/diff old-lines new-lines)
+        unified   (vec (UnifiedDiffUtils/generateUnifiedDiff
+                         "v-from" "v-to" old-lines patch 3))]
+    {:type       :string-diff
+     :unified    (str/join "\n" unified)
+     :edit-count (count (.getDeltas patch))}))
+
+(defn- diff-numbers
+  "Delta diff between two numbers."
+  [a b]
+  (let [delta (- (double b) (double a))]
+    {:type       :number-delta
+     :from       a
+     :to         b
+     :delta      delta
+     :pct-change (when-not (zero? (double a))
+                   (* 100.0 (/ delta (double a))))}))
+
+(defn- diff-values
+  "Dispatch diff by value type. Collections → editscript structural diff.
+   Strings → unified line diff. Numbers → delta. Others → simple replacement."
+  [from to]
+  (cond
+    ;; Both collections → structural editscript diff
+    (and (db/diffable-value? from) (db/diffable-value? to))
+    (let [script (es/diff from to)]
+      {:type       :structural
+       :edit-count (es/edit-distance script)
+       :edits      (editscript->summary script)})
+
+    ;; Both strings → line-level unified diff
+    (and (string? from) (string? to))
+    (diff-strings from to)
+
+    ;; Both numbers → delta
+    (and (number? from) (number? to))
+    (diff-numbers from to)
+
+    ;; Everything else (keywords, booleans, mixed types) → replacement
+    :else
+    {:type :replacement
+     :from from
+     :to   to}))
+
+(defn make-var-diff-fn
+  "Creates var-diff: diff between two versions of a var.
+   (var-diff 'x 1 3) — diff version 1 → 3.
+   Collections → structural (editscript). Strings → unified line diff.
+   Numbers → delta. Others → replacement.
+   Returns {:from-version N :to-version M :type :structural|:string-diff|:number-delta|:replacement ...}."
+  [db-info conversation-ref]
+  (fn var-diff
+    ([sym v1 v2]
+     (let [sym (if (symbol? sym) sym (symbol (str sym)))
+           history (db/db-var-history db-info conversation-ref sym)]
+       (when (empty? history)
+         (throw (ex-info (str "No history found for " sym)
+                  {:type :rlm/var-history-empty :symbol sym})))
+       (let [get-ver (fn [v]
+                       (or (some #(when (= (:version %) v) %) history)
+                         (throw (ex-info (str "Version " v " not found for " sym
+                                           ". Available: " (mapv :version history))
+                                  {:type :rlm/var-version-missing :symbol sym :version v}))))
+             entry-from (get-ver v1)
+             entry-to   (get-ver v2)]
+         (merge {:from-version v1 :to-version v2}
+           (diff-values (:value entry-from) (:value entry-to))))))))
+

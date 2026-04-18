@@ -405,6 +405,34 @@
 ;; Build System Prompt Tests
 ;; =============================================================================
 
+(defdescribe clojure-plus-sci-test
+  (it "cond+ works unqualified with :let bindings"
+    (with-test-env* {} {:db nil} (fn [env]
+                                   (expect (= "big" (:result (#'rlm-core/execute-code env "(cond+ :let [x 10] (> x 5) \"big\" :else \"small\")"))))
+                                   (expect (nil? (:error (#'rlm-core/execute-code env "(cond+ :let [x 10] (> x 5) \"big\" :else \"small\")")))))))
+
+  (it "if+ works unqualified — binds on truthy"
+    (with-test-env* {} {:db nil} (fn [env]
+                                   (expect (= "got 42" (:result (#'rlm-core/execute-code env "(if+ [x (first [42])] (str \"got \" x) \"nope\")"))))
+                                   (expect (= "nope" (:result (#'rlm-core/execute-code env "(if+ [x (first [])] (str \"got \" x) \"nope\")")))))))
+
+  (it "when+ works unqualified — binds on truthy, returns nil on falsy"
+    (with-test-env* {} {:db nil} (fn [env]
+                                   (expect (= "val=99" (:result (#'rlm-core/execute-code env "(when+ [x (first [99])] (str \"val=\" x))"))))
+                                   (expect (nil? (:result (#'rlm-core/execute-code env "(when+ [x nil] \"nope\")")))))))  
+
+  (it "#p reader tag prints and returns value"
+    (with-test-env* {} {:db nil} (fn [env]
+                                   (let [r (#'rlm-core/execute-code env "#p (+ 1 2)")]
+                                     (expect (= 3 (:result r)))
+                                     (expect (re-find #"#p \\(\\+ 1 2\\)" (:stdout r)))))))
+
+  (it "pretty-prints Instant via clojure+.print (JVM-level)"
+    (with-test-env* {} {:db nil} (fn [env]
+                                   (let [r (#'rlm-core/execute-code env "(pr-str (java.time.Instant/now))")]
+                                     (expect (nil? (:error r)))
+                                     (expect (re-find #"#instant" (:result r))))))))
+
 (defdescribe build-system-prompt-test
   (it "includes basic environment info"
     (let [prompt (#'rlm-core/build-system-prompt {})]
@@ -440,11 +468,13 @@
       (expect (str/includes? prompt "OUTPUT"))
       (expect (str/includes? prompt "Pattern:"))))
 
-  (it "documents {{var}} template resolve in ARCH and GROUNDING"
+  (it "documents Mustache template support in ARCH and GROUNDING"
     (let [prompt (#'rlm-core/build-system-prompt {})]
-      (expect (str/includes? prompt "TEMPLATE RESOLVE"))
-      (expect (str/includes? prompt "{{var}}"))
-      (expect (re-find #"\{\{\w+\}\}.*interpolated" prompt)))))
+      (expect (str/includes? prompt "MUSTACHE"))
+      (expect (str/includes? prompt "mustache-text"))
+      (expect (str/includes? prompt "mustache-markdown"))
+      (expect (str/includes? prompt "{{#"))
+      (expect (str/includes? prompt "{{^")))))
 
 ;; =============================================================================
 ;; System Prompt Tests
@@ -846,7 +876,7 @@
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "Posprzatane, usunalem vars z indexu."
-                                              :confidence "high"}))
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (nil? (:final-result result)))
@@ -860,7 +890,7 @@
                                          (make-mock-ask-response
                                            {:forget ["drop-me"]
                                             :answer "Posprzatane, usunalem vars z indexu."
-                                            :confidence "high"}))
+                                            :answer-type "mustache-text" :confidence "high"}))
                          (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                         :iteration-spec schema/ITERATION_SPEC_REASONING})]
                            (expect (= ["drop-me"] (:forget result)))
@@ -878,7 +908,7 @@
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "reply"
-                                              :confidence "high"}))
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))
@@ -891,7 +921,7 @@
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "data"
-                                              :confidence "high"}))
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))
@@ -905,8 +935,8 @@
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "The capital is {{city}}."
-                                              :answer-type "text"
-                                              :confidence "high"}))
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))
@@ -915,33 +945,45 @@
 
   (it "interpolates multiple {{var}} placeholders"
     (with-test-env* {} (fn [env]
-                         (#'rlm-core/execute-code env "(def name' \"Alice\")")
-                         (#'rlm-core/execute-code env "(def count' 42)")
+                         (#'rlm-core/execute-code env "(def user-name \"Alice\")")
+                         (#'rlm-core/execute-code env "(def total 42)")
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
-                                             {:answer "{{name'}} found {{count'}} items."
-                                              :answer-type "text"
-                                              :confidence "high"}))
+                                             {:answer "{{user-name}} found {{total}} items."
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))
-                             ;; count' is a long, not string, so pr-str'd
                              (expect (= "Alice found 42 items."
                                        (get-in result [:final-result :answer :result]))))))))
 
-  (it "leaves unresolved {{var}} placeholders intact"
+  (it "rejects final when Mustache template references undefined vars"
     (with-test-env* {} (fn [env]
                          (#'rlm-core/execute-code env "(def known \"yes\")")
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "Known: {{known}}, Unknown: {{missing}}"
-                                              :answer-type "text"
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             ;; Missing var → final rejected, error fed back to LLM
+                             (expect (nil? (:final-result result)))
+                             (expect (re-find #"missing"
+                                       (get-in result [:executions 0 :error]))))))))
+
+  (it "rejects final when answer-type is missing"
+    (with-test-env* {} (fn [env]
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "Hello"
                                               :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
-                             (expect (some? (:final-result result)))
-                             (expect (= "Known: yes, Unknown: {{missing}}"
-                                       (get-in result [:final-result :answer :result]))))))))
+                             (expect (nil? (:final-result result)))
+                             (expect (re-find #"answer-type is required"
+                                       (get-in result [:executions 0 :error]))))))))
 
   (it "prefers single-word resolve over template resolve"
     (with-test-env* {} (fn [env]
@@ -949,7 +991,7 @@
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "answer"
-                                              :confidence "high"}))
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))
@@ -962,12 +1004,54 @@
                          (with-mock-ask! (fn [_router _opts]
                                            (make-mock-ask-response
                                              {:answer "Just a plain answer with no templates."
-                                              :answer-type "text"
-                                              :confidence "high"}))
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))
                              (expect (= "Just a plain answer with no templates."
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "renders Mustache {{#section}} iteration over collections"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def items [{:name \"A\"} {:name \"B\"} {:name \"C\"}])")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "Items:\n{{#items}}- {{name}}\n{{/items}}"
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "Items:\n- A\n- B\n- C\n"
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "renders {{list.size}} for collection length"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def files [\"a.clj\" \"b.clj\" \"c.clj\"])")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "{{files.size}} files:\n{{#files}}• {{.}}\n{{/files}}"
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "3 files:\n• a.clj\n• b.clj\n• c.clj\n"
+                                       (get-in result [:final-result :answer :result]))))))))
+
+  (it "renders Mustache {{^inverted}} sections for falsy values"
+    (with-test-env* {} (fn [env]
+                         (#'rlm-core/execute-code env "(def found false)")
+                         (with-mock-ask! (fn [_router _opts]
+                                           (make-mock-ask-response
+                                             {:answer "{{#found}}Found it{{/found}}{{^found}}Not found{{/found}}"
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
+                           (let [result (#'rlm-core/run-iteration env [] {:iteration 0
+                                                                          :iteration-spec schema/ITERATION_SPEC_REASONING})]
+                             (expect (some? (:final-result result)))
+                             (expect (= "Not found"
                                        (get-in result [:final-result :answer :result]))))))))
 
   (it "interpolates {{var}} with code blocks that define vars"
@@ -977,8 +1061,8 @@
                                              {:code [{:expr "(def total (+ 10 20 30))" :time-ms 100}
                                                      {:expr "(assert (= 60 total))" :time-ms 500}]
                                               :answer "The sum is {{total}}."
-                                              :answer-type "text"
-                                              :confidence "high"}))
+                                              
+                                              :answer-type "mustache-text" :confidence "high"}))
                            (let [result (#'rlm-core/run-iteration env [] {:iteration 0
                                                                           :iteration-spec schema/ITERATION_SPEC_REASONING})]
                              (expect (some? (:final-result result)))

@@ -172,6 +172,16 @@
                    (assoc :parents (mapv :parent_sha (get parent-map eid))))))
          rows)))))
 
+(defn db-commit-shas
+  "Return the set of all commit SHAs in the DB. Lightweight — no joins."
+  [db-info]
+  (if (core/ds db-info)
+    (into #{}
+      (map :sha)
+      (core/query! db-info
+        {:select [:sha] :from :commit_attrs}))
+    #{}))
+
 (defn db-commit-by-sha
   [db-info sha]
   (when (and (core/ds db-info) (seq sha))

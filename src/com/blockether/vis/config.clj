@@ -5,9 +5,17 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure+.error]
+            [clojure+.print]
             [com.blockether.vis.loop.observability.redact :as redact]
             [taoensso.telemere :as t])
   (:import [java.io FileInputStream FileOutputStream]))
+
+;;; ── Version ─────────────────────────────────────────────────────────────
+
+(def version
+  "Vis version string, read from resources/vis-version.txt at compile time."
+  (-> (io/resource "vis-version.txt") slurp str/trim))
 
 ;;; ── Paths ───────────────────────────────────────────────────────────────
 
@@ -34,6 +42,8 @@
 (defn init!
   "Redirect System/out and System/err to log file. Lanterna uses tty-in/tty-out."
   []
+  (clojure+.print/install!)
+  (clojure+.error/install!)
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
 
@@ -61,6 +71,8 @@
   "Logging init for CLI and non-TUI commands.
    Redirects System.out/System.err and Clojure *out*/*err* to log file."
   []
+  (clojure+.print/install!)
+  (clojure+.error/install!)
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
 
