@@ -2,6 +2,7 @@
   "Concept graph persistence: concepts, aliases, sources, and directed
    relationship edges."
   (:require
+   [clojure.string :as str]
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.loop.storage.sqlite.core :as core]
    [honey.sql :as sql]
@@ -177,13 +178,21 @@
 ;; =============================================================================
 
 (defn set-concept-status!
-  "Set a concept's status: 'active', 'removed', or 'user_edited'."
-  [db-info concept-id status]
-  (when (core/ds db-info)
-    (jdbc/execute! (core/ds db-info)
-      (sql/format {:update :concept
-                   :set {:status status}
-                   :where [:= :id (core/->id concept-id)]}))))
+  "Set a concept's status: 'active', 'removed', or 'user_edited'.
+   Removal requires a rationale — pass it as the third arg."
+  ([db-info concept-id status]
+   (set-concept-status! db-info concept-id status nil))
+  ([db-info concept-id status rationale]
+   (when (and (= "removed" status) (or (nil? rationale) (str/blank? rationale)))
+     (throw (ex-info "Removal requires a rationale. Why is this concept being removed?"
+              {:type :rlm/removal-rationale-required :concept-id concept-id})))
+   (when (core/ds db-info)
+     (jdbc/execute! (core/ds db-info)
+       (sql/format {:update :concept
+                    :set (cond-> {:status status}
+                           (= "removed" status) (assoc :removal_rationale rationale)
+                           (= "active" status)  (assoc :removal_rationale nil))
+                    :where [:= :id (core/->id concept-id)]})))))
 
 (defn update-concept!
   "Update a concept's definition/group and mark as user_edited."

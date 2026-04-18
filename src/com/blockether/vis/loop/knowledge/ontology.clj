@@ -156,31 +156,24 @@ Output 15-50 canonical concepts. Be opinionated — pick the BEST term.")
   "Write the merged concept graph to the DB.
    Clears existing auto-generated concepts but preserves user_edited ones."
   [db-info merged-graph page-concepts]
-  ;; Delete only auto-generated concepts (status=active), keep user_edited
-  (let [existing (db/list-concepts db-info)
-        user-edited (set (map :id (filter #(= "user_edited" (:status %)) existing)))]
-    ;; Clear non-user-edited concepts and their dependents
-    (doseq [c existing
-            :when (not (user-edited (:id c)))]
-      (db/set-concept-status! db-info (:id c) "removed"))
-    ;; Actually delete removed
-    (when-let [ds (:datasource (:db-info db-info))]
-      ;; Just clear and rebuild non-user-edited
-      nil))
-  ;; Simpler: clear all non-user-edited, re-insert
+  ;; Collect user_edited concepts to preserve, then clear auto-generated
   (let [existing    (db/list-concepts db-info)
-        user-terms  (set (map :term (filter #(= "user_edited" (:status %)) existing)))
+        user-edited (filter #(= "user_edited" (:status %)) existing)
+        user-terms  (set (map :term user-edited))
         concept-ids (atom {})]
-    ;; Keep user_edited concepts in the map
-    (doseq [c existing
-            :when (= "user_edited" (:status c))]
+    ;; Preserve user_edited in the lookup map
+    (doseq [c user-edited]
       (swap! concept-ids assoc (:term c) (:id c)))
-    ;; Clear auto-generated
-    (doseq [c existing
-            :when (not= "user_edited" (:status c))]
-      ;; Delete via cascade
-      (when (db/set-concept-status! db-info (:id c) "removed")
-        nil))
+    ;; Clear auto-generated concepts (cascade deletes aliases/sources/edges)
+    (db/clear-concept-graph! db-info)  ;; deletes ALL, so re-insert user_edited
+    ;; Re-insert user_edited concepts
+    (doseq [c user-edited]
+      (let [cid (db/store-concept! db-info
+                  {:id         (:id c)
+                   :term       (:term c)
+                   :definition (:definition c)
+                   :group-name (:group_name c)})]
+        (db/set-concept-status! db-info cid "user_edited")))
     ;; Store new concepts (skip user_edited terms)
     (doseq [c (:concepts merged-graph)
             :when (not (user-terms (:term c)))]
@@ -329,7 +322,27 @@ Output 15-50 canonical concepts. Be opinionated — pick the BEST term.")
                                  (cond-> {:document-id (:document_id s)}
                                    (:page_index s) (assoc :page (:page_index s))
                                    (:excerpt s)    (assoc :excerpt (:excerpt s))))
-                            (db/list-concept-sources db-info cid))}))))}))
+                            (db/list-concept-sources db-info cid))}))))
+
+     'remove-concept
+     (fn remove-concept [term rationale]
+       (let [concepts (db/list-concepts db-info)
+             match    (first (filter #(= (:term %) term) concepts))]
+         (if match
+           (do (db/set-concept-status! db-info (:id match) "removed" rationale)
+             {:removed term :rationale rationale})
+           (throw (ex-info (str "No concept found: " term)
+                    {:type :rlm/concept-not-found :term term})))))
+
+     'edit-concept
+     (fn edit-concept [term updates]
+       (let [concepts (db/list-concepts db-info)
+             match    (first (filter #(= (:term %) term) concepts))]
+         (if match
+           (do (db/update-concept! db-info (:id match) updates)
+             {:edited term :updates updates})
+           (throw (ex-info (str "No concept found: " term)
+                    {:type :rlm/concept-not-found :term term})))))}))
 
 ;; =============================================================================
 ;; Public API

@@ -180,6 +180,8 @@ Search in English. Translate non-EN queries first.
       "
 Concept navigation (cross-document ontology):
 - (concept-info \"Term\") → definition, aliases, sources (go-to-definition)
+- (remove-concept \"Term\" \"rationale why\") → removes concept (rationale REQUIRED)
+- (edit-concept \"Term\" {:definition \"new def\"}) → updates concept (survives rebuild)
 ")
     (when system-prompt
       (str "\nINSTRUCTIONS:\n" system-prompt "\n"))

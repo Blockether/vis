@@ -477,9 +477,17 @@
 (defn set-concept-status!
   "Mark a concept as 'active', 'removed', or 'user_edited'.
    Removed concepts disappear from prompt and tools.
-   User-edited concepts survive rebuild."
-  [env concept-id status]
-  (rlm-db/set-concept-status! (:db-info env) concept-id status))
+   User-edited concepts survive rebuild.
+   Removal REQUIRES a rationale — why is this concept being removed?
+
+   `env`        — RLM environment.
+   `concept-id` — Concept ID string.
+   `status`     — 'active', 'removed', or 'user_edited'.
+   `rationale`  — Required when status is 'removed'. Why this concept doesn't belong."
+  ([env concept-id status]
+   (rlm-db/set-concept-status! (:db-info env) concept-id status))
+  ([env concept-id status rationale]
+   (rlm-db/set-concept-status! (:db-info env) concept-id status rationale)))
 
 (defn update-concept!
   "Update a concept's definition/group and mark as user_edited.
