@@ -252,10 +252,14 @@
           tool-registry-atom     (:tool-registry-atom env)
           query-ctx              {:hooks hooks :iteration-atom current-iteration-atom}
           _                      (when (and sci-ctx tool-registry-atom)
-                                   (doseq [[sym {:keys [fn]}] @tool-registry-atom]
+                                   (doseq [[sym {:keys [fn activation-fn] :as tool-def}] @tool-registry-atom]
                                      (when fn
-                                       (rlm-tools/sci-update-binding! sci-ctx sym
-                                         (rlm-tools/wrap-tool-for-sci env sym fn tool-registry-atom query-ctx)))))
+                                       (if (and activation-fn (not (activation-fn env)))
+                                         ;; Tool inactive for this query — unbind it
+                                         (rlm-tools/sci-update-binding! sci-ctx sym nil)
+                                         ;; Tool active — bind it
+                                         (rlm-tools/sci-update-binding! sci-ctx sym
+                                           (rlm-tools/wrap-tool-for-sci env sym fn tool-registry-atom query-ctx))))))
           _                      (let [per-query (merge {'sub-rlm-query cheap-sub-rlm-fn}
                                                    budget-bindings
                                                    (or custom-bindings {}) sub-rlm-query-overrides)]
