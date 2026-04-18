@@ -98,6 +98,7 @@
      :validate-input validate-write-input
      :validate-output validate-write-output
      :activation-fn (constantly true)
+     :group "Filesystem" :activation-doc "always active"
      :examples ["(write-file \"/tmp/notes.txt\" \"hello\\nworld\")"
                 "(write-file \"src/foo.clj\" \"(ns foo)\\n(def x 1)\")"]}))
 

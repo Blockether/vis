@@ -183,6 +183,7 @@
      :validate-input validate-list-input
      :validate-output validate-list-output
      :activation-fn (constantly true)
+     :group "Filesystem" :activation-doc "always active"
      :examples ["(list-dir \"src\")"
                 "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"]}))
 

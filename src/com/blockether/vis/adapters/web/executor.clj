@@ -90,6 +90,24 @@
                 nil))))
     msgs))
 
+(defn- error->user-message
+  "Map exception to a human-readable error message for the web UI."
+  [^Exception e]
+  (let [ex-type (:type (ex-data e))
+        msg (ex-message e)]
+    (case ex-type
+      :svar.llm/all-providers-exhausted
+      "LLM provider is currently unavailable. Please try again in a few minutes."
+
+      :svar.llm/circuit-open
+      "LLM provider circuit breaker is open — too many recent failures. Please wait a moment."
+
+      :svar.llm/provider-exhausted
+      "LLM provider exhausted all retry attempts. The service may be down."
+
+      ;; default
+      (str "Error: " msg))))
+
 (defn- execute-query!
   "Run a single query against the conversation id `conversation-id`. The user
    message has already been appended by `submit-query!`; we append the
@@ -110,13 +128,14 @@
               {:role :assistant :text (:answer result)
                :result result :ts (str (Instant/now))})))
         (catch Exception e
-          (println (str "[executor] Error in " conversation-id ": " (ex-message e)))
-          (when (web-conversations/get-conversation conversation-id)
-            (web-conversations/append-message! conversation-id
-              {:role :assistant
-               :text (str "Error: " (ex-message e))
-               :result {:answer (str "Error: " (ex-message e))}
-               :ts (str (Instant/now))}))))
+          (let [user-msg (error->user-message e)]
+            (println (str "[executor] Error in " conversation-id ": " (ex-message e)))
+            (when (web-conversations/get-conversation conversation-id)
+              (web-conversations/append-message! conversation-id
+                {:role :assistant
+                 :text user-msg
+                 :result {:answer user-msg}
+                 :ts (str (Instant/now))})))))
       (println (str "[executor] Conversation " conversation-id " not found, skipping")))
     (finally
       (swap! web-conversations/live-status dissoc conversation-id)

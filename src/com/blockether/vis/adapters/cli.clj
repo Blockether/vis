@@ -6,6 +6,7 @@
             [com.blockether.vis.config :as config]
             [com.blockether.vis.adapters.telegram.bot :as telegram]
             [com.blockether.vis.core :as core]
+            [com.blockether.vis.loop.storage.db :as rlm-db]
             [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.adapters.tui.screen :as screen]
             [taoensso.trove :as trove]))
@@ -393,16 +394,55 @@
       (do (config/init-cli!)
         (let [env (core/create-env (rlm-routing/get-router) {:db config/db-path})]
           (try
-            ;; Run a trivial query to trigger activation checks
-            (stdout! "vis doctor — tool diagnostics")
-            (stdout! "")
-            (let [tools   (core/list-registered-tools env)
-                  table   ((requiring-resolve 'com.blockether.vis.loop.runtime.tool-diagnostics/format-table))]
-              (stdout! (str "Registered tools: " (count tools)))
+            (let [db-info  (:db-info env)
+                  registry @(:tool-registry-atom env)
+                  tools    (mapv (fn [[sym {:keys [activation-fn group activation-doc]}]]
+                                   (let [t0      (System/nanoTime)
+                                         active? (boolean (when activation-fn (activation-fn env)))
+                                         elapsed (- (System/nanoTime) t0)]
+                                     {:sym           (str sym)
+                                      :group         (or group "Other")
+                                      :active?       active?
+                                      :activation-ms (/ (double elapsed) 1e6)
+                                      :activation-doc activation-doc}))
+                             registry)
+                  report   ((requiring-resolve
+                              'com.blockether.vis.loop.runtime.tool-diagnostics/format-doctor-report)
+                             tools)
+                  ;; DB stats
+                  docs     (when db-info (rlm-db/db-list-documents db-info))
+                  repo-stats (when db-info (rlm-db/db-repo-stats db-info))
+                  concepts   (when db-info (rlm-db/list-concepts db-info))]
+              (stdout! "vis doctor")
               (stdout! "")
-              (stdout! table)
-              (stdout! "")
-              (stdout! "Status legend: Active? ✓=yes ✗=no  ActTime=activation-fn duration"))
+              ;; Environment summary
+              (stdout! "  Environment")
+              (stdout! "  ───────────")
+              (stdout! (str "  DB path:      " (or (:path db-info) "none")))
+              (stdout! (str "  Documents:    " (count docs)
+                        (when (seq docs)
+                          (str " (" (str/join ", " (map :name docs)) ")"))))
+              (stdout! (str "  Concepts:     " (count concepts)
+                        (when (seq concepts)
+                          (let [groups (group-by :group_name concepts)]
+                            (str " in " (count groups) " groups")))))
+              (if-let [{:keys [repos total-commits unique-authors]} repo-stats]
+                (if (seq repos)
+                  (do
+                    (stdout! (str "  Git:          " (count repos) " repo(s), "
+                              total-commits " commits, "
+                              unique-authors " authors"))
+                    (doseq [r repos]
+                      (stdout! (str "                └ " (:name r)
+                                " [" (or (:branch r) "?") "]"
+                                (when (:commits-ingested r)
+                                  (str " " (:commits-ingested r) " commits"))
+                                " " (:path r)))))
+                  (stdout! "  Git:          none"))
+                (stdout! "  Git:          none"))
+              ;; Tools
+              (stdout! (str "\n" (count tools) " tools registered"))
+              (stdout! report))
             (finally
               (core/dispose-env! env)
               (shutdown-agents)))))

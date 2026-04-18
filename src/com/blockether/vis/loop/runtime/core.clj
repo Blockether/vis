@@ -246,15 +246,18 @@
             fetch-fn  (sci-tools/make-fetch-document-content-fn db-info)]
         (register! 'search-documents search-fn
           {:doc "(search-documents \"query\") or (search-documents \"query\" {:in :pages :top-k 20})"
+           :group "Documents" :activation-doc "no documents ingested"
            :activation-fn has-docs?})
         (register! 'fetch-document-content fetch-fn
           {:doc "(fetch-document-content [:node/id \"id\"]) or [:doc/id \"id\"] or [:toc/id \"id\"]"
+           :group "Documents" :activation-doc "no documents ingested"
            :activation-fn has-docs?})
         (register! 'search-batch
           (fn search-batch
             ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
             ([queries opts] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries opts)))))
           {:doc "(search-batch [\"q1\" \"q2\"]) — batch search across pages and TOC"
+           :group "Documents" :activation-doc "no documents ingested"
            :activation-fn has-docs?})))
     ;; --- Conversation history tools (active when conversation exists) ---
     (when has-conv?
@@ -262,14 +265,17 @@
         (register! 'conversation-history
           (sci-tools/make-conversation-history-fn db-info conversation-ref)
           {:doc "(conversation-history) or (conversation-history n) — prior query summaries"
+           :group "Conversation" :activation-doc "no active conversation"
            :activation-fn has-history?})
         (register! 'conversation-code
           (sci-tools/make-conversation-code-fn db-info conversation-ref)
           {:doc "(conversation-code query-selector) — prior query code blocks"
+           :group "Conversation" :activation-doc "no active conversation"
            :activation-fn has-history?})
         (register! 'conversation-results
           (sci-tools/make-conversation-results-fn db-info conversation-ref)
           {:doc "(conversation-results query-selector) — prior query results"
+           :group "Conversation" :activation-doc "no active conversation"
            :activation-fn has-history?})))
     ;; --- Restore tools (active when conversation has prior queries) ---
     ;; Special: restore-var also rebinds the value into the SCI sandbox.
@@ -293,13 +299,14 @@
                                                                :message (ex-message e)}}]))))
                                       syms)))
             has-vars? (fn [env]
-                        (boolean (seq (db/db-latest-var-registry
-                                        (:db-info env) (:conversation-ref env) {}))))]
+                        (boolean (:conversation-ref env)))]
         (register! 'restore-var binding-restore-var
           {:doc "(restore-var 'sym) — fetch + rebind persisted var from prior iterations"
+           :group "Conversation" :activation-doc "no persisted vars from prior queries"
            :activation-fn has-vars?})
         (register! 'restore-vars binding-restore-vars
           {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
+           :group "Conversation" :activation-doc "no persisted vars from prior queries"
            :activation-fn has-vars?})))
     ;; --- Git tools (active when repos are attached) ---
     (when has-db?
@@ -308,6 +315,7 @@
         (doseq [[sym f] git-binds]
           (register! sym f
             {:doc (str "(" sym " ...) — git tool")
+             :group "Git" :activation-doc "no git repos attached"
              :activation-fn has-repos?}))))
     ;; --- Concept tools (active when concepts exist — cross-conversation) ---
     (when has-db?
@@ -316,6 +324,7 @@
         (doseq [[sym f] concept-binds]
           (register! sym f
             {:doc (str "(" sym " ...) — concept graph tool")
+             :group "Concepts" :activation-doc "no concepts extracted yet"
              :activation-fn has-concepts?}))))
     ;; Update initial-ns-keys so get-locals excludes built-in tools
     (when sci-ctx
