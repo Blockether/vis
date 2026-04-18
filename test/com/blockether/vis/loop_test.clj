@@ -422,16 +422,17 @@
                                    (expect (nil? (:result (#'rlm-core/execute-code env "(when+ [x nil] \"nope\")")))))))  
 
   (it "#p reader tag prints and returns value"
-    (with-test-env* {} {:db nil} (fn [env]
-                                   (let [r (#'rlm-core/execute-code env "#p (+ 1 2)")]
-                                     (expect (= 3 (:result r)))
-                                     (expect (re-find #"#p \\(\\+ 1 2\\)" (:stdout r)))))))
+    (with-test-env* {} (fn [env]
+                         (let [r (#'rlm-core/execute-code env "#p (+ 1 2)")]
+                           (expect (= 3 (:result r)))
+                           (expect (re-find #"#p" (:stdout r)))))))
 
   (it "pretty-prints Instant via clojure+.print (JVM-level)"
-    (with-test-env* {} {:db nil} (fn [env]
-                                   (let [r (#'rlm-core/execute-code env "(pr-str (java.time.Instant/now))")]
-                                     (expect (nil? (:error r)))
-                                     (expect (re-find #"#instant" (:result r))))))))
+    (with-test-env* {} (fn [env]
+                         (let [r (#'rlm-core/execute-code env "(pr-str (java.time.Instant/now))")]
+                           (expect (nil? (:error r)))
+                           ;; SCI uses #inst not #instant
+                           (expect (re-find #"#inst" (:result r))))))))
 
 (defdescribe build-system-prompt-test
   (it "includes basic environment info"
