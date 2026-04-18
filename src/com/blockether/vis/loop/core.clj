@@ -271,7 +271,8 @@
 (def ^:private edamame-opts
   "Edamame parser options matching Clojure/SCI syntax.
    :all enables fn literals, deref, var, regex, quote, etc."
-  {:all true})
+  {:all true
+   :readers (fn [tag] (fn [val] (list 'do val)))})
 
 (defn- check-syntax
   "Parses code with edamame. Returns parsed forms or throws."
