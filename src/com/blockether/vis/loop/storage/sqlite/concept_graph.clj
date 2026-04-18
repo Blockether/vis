@@ -164,6 +164,24 @@
        (sql/format (cond-> {:delete-from :page_concept}
                      document-id (assoc :where [:= :document_id (core/->id document-id)])))))))
 
+(defn clear-page-concepts-for-page!
+  "Delete page concepts for a specific page."
+  [db-info page-id]
+  (when (core/ds db-info)
+    (jdbc/execute! (core/ds db-info)
+      (sql/format {:delete-from :page_concept
+                   :where [:= :page_id (core/->id page-id)]}))))
+
+(defn get-page-content-sha
+  "Get the content_sha for a page. Returns nil if not set."
+  [db-info page-id]
+  (when (core/ds db-info)
+    (:content_sha
+      (core/query-one! db-info
+        (sql/format {:select [:content_sha]
+                     :from :page
+                     :where [:= :id (core/->id page-id)]})))))
+
 (defn update-page-content-sha!
   "Set the content_sha for a page."
   [db-info page-id sha]

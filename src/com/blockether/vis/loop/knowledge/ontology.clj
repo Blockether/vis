@@ -62,39 +62,49 @@
    Returns count of concepts extracted."
   [rlm-router db-info document-id page-id node-id page-content]
   (when (and rlm-router (not (str/blank? page-content)))
-    (let [sha (content-sha page-content)
-          truncated (if (> (count page-content) 6000)
-                      (subs page-content 0 6000) page-content)]
-      (try
-        (let [response (llm/ask! rlm-router
-                         {:spec     PAGE_CONCEPTS_SPEC
-                          :messages [(llm/system
-                                       "Extract key domain concepts from this page content.
+    (let [sha        (content-sha page-content)
+          stored-sha (db/get-page-content-sha db-info page-id)]
+      (if (= sha stored-sha)
+        ;; Content unchanged — skip extraction
+        (do (trove/log! {:level :debug
+                         :data {:page-id page-id :sha sha}
+                         :msg "Page unchanged, skipping concept extraction"})
+          :unchanged)
+        ;; Content changed or new — extract concepts
+        (let [truncated (if (> (count page-content) 6000)
+                          (subs page-content 0 6000) page-content)]
+          (try
+            (let [response (llm/ask! rlm-router
+                             {:spec     PAGE_CONCEPTS_SPEC
+                              :messages [(llm/system
+                                           "Extract key domain concepts from this page content.
 For each concept: term (canonical name), definition (ONE sentence),
 group (cluster like 'Core Theory', 'Assessment', 'Treatment'),
 excerpt (short grounding quote from the text).
 Only domain-specific terms. Skip generic words. 3-10 concepts max.")
-                                    (llm/user truncated)]
-                          :routing  {:optimize :cost}})
-              concepts (or (:concepts (:result response)) [])]
-          ;; Store page SHA for change detection
-          (db/update-page-content-sha! db-info page-id sha)
-          ;; Store each concept
-          (doseq [c concepts]
-            (db/store-page-concept! db-info
-              {:document-id document-id
-               :page-id     page-id
-               :node-id     node-id
-               :term        (:term c)
-               :definition  (:definition c)
-               :excerpt     (:excerpt c)
-               :page-sha    sha}))
-          (count concepts))
-        (catch Exception e
-          (trove/log! {:level :warn
-                       :data {:page-id page-id :error (ex-message e)}
-                       :msg "Page concept extraction failed"})
-          0)))))
+                                        (llm/user truncated)]
+                              :routing  {:optimize :cost}})
+                  concepts (or (:concepts (:result response)) [])]
+              ;; Clear old page concepts for this page before re-inserting
+              (db/clear-page-concepts-for-page! db-info page-id)
+              ;; Store page SHA
+              (db/update-page-content-sha! db-info page-id sha)
+              ;; Store concepts
+              (doseq [c concepts]
+                (db/store-page-concept! db-info
+                  {:document-id document-id
+                   :page-id     page-id
+                   :node-id     node-id
+                   :term        (:term c)
+                   :definition  (:definition c)
+                   :excerpt     (:excerpt c)
+                   :page-sha    sha}))
+              (count concepts))
+            (catch Exception e
+              (trove/log! {:level :warn
+                           :data {:page-id page-id :error (ex-message e)}
+                           :msg "Page concept extraction failed"})
+              0)))))))
 
 ;; =============================================================================
 ;; Phase 2: Cross-document linking (bridge time)
