@@ -7,9 +7,9 @@
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.loop.conversations.core`."
   (:require [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.loop.conversations.shared :as conv-shared]
             [com.blockether.vis.loop.runtime.query.routing :as routing]
-            [com.blockether.vis.adapters.telegram.api :as tg]
-))
+            [com.blockether.vis.adapters.telegram.api :as tg]))
 
 (defonce ^:private running? (atom false))
 (defonce ^:private poll-thread (atom nil))
@@ -62,7 +62,7 @@
               (println (str "[telegram] error handling msg from " sender
                          " in chat " chat-id ": " (ex-message e)))
               (try (tg/send-message! token chat-id
-                     (str "⚠️ Error: " (ex-message e)))
+                     (str "⚠️ " (conv-shared/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]

@@ -30,3 +30,22 @@
   [id env]
   (swap! cache assoc id {:env env :lock (Object.)})
   env)
+
+(defn error->user-message
+  "Map an exception from `conversations/send!` to a human-readable string.
+   Infrastructure errors get friendly phrasing; everything else passes through
+   as-is. Used by every adapter — only the final presentation differs."
+  [^Throwable e]
+  (let [ex-type (:type (ex-data e))]
+    (case ex-type
+      :svar.llm/all-providers-exhausted
+      "LLM provider is currently unavailable. Please try again in a few minutes."
+
+      :svar.llm/circuit-open
+      "LLM provider circuit breaker is open — too many recent failures. Please wait a moment."
+
+      :svar.llm/provider-exhausted
+      "LLM provider exhausted all retry attempts. The service may be down."
+
+      ;; default
+      (str "Error: " (ex-message e)))))
