@@ -79,7 +79,8 @@
       (expect (= 120000 schema/DEFAULT_EVAL_TIMEOUT_MS)))
 
     (it "MIN and MAX bounds are defined"
-      (expect (= 1000 schema/MIN_EVAL_TIMEOUT_MS))
+      ;; MIN was raised to 3000 ms — below ~1 s filesystem tools timed out.
+      (expect (= 3000 schema/MIN_EVAL_TIMEOUT_MS))
       (expect (= (* 30 60 1000) schema/MAX_EVAL_TIMEOUT_MS)))))
 
 (defdescribe eval-timeout-clamping-test

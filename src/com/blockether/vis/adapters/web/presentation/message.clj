@@ -58,7 +58,11 @@
                 repaired? (conj [:span.exec-chip.exec-chip-repaired "auto-repaired"])
                 (and time-ms (not timeout?)) (conj [:span.exec-chip.exec-chip-time (fmt-exec-time time-ms)]))]
     (when (seq chips)
-      [:div.exec-meta chips])))
+      ;; Splat chips as children, not as a single nested vector —
+      ;; hiccup's `[:div.foo chips]` where chips is a vec-of-hiccup
+      ;; tries to treat the inner vec's first element as a tag and
+      ;; throws `... is not a valid element name`.
+      (into [:div.exec-meta] chips))))
 
 (defn- render-exec-streams
   "Render stdout/stderr (if present). Separate from :result because these
