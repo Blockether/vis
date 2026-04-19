@@ -3,10 +3,8 @@
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
   hiccup/hiccup                             {:mvn/version "2.0.0"}
-  ;; LLM structured output — local dep while reasoning-param translation lands.
-  ;; Flip back to `{:mvn/version "0.4.0"}` once svar is released with the
-  ;; router/reasoning-extra-body changes.
-  com.blockether/svar                       {:local/root "../svar"}
+  ;; LLM structured output
+  com.blockether/svar                       {:mvn/version "0.3.1"}
   ;; Anomaly - standardized error categories (used by RLM)
   com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)
