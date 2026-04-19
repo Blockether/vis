@@ -1758,6 +1758,15 @@
                        ;; last-iteration nudge here — otherwise a stubborn
                        ;; model can spend its final slot on another empty
                        ;; response and the loop terminates silently.
+                       ;;
+                       ;; NB: no `store-iteration!` here — the unconditional
+                       ;; write at line ~1698 above already persisted this
+                       ;; iteration (with `:executions []` and the
+                       ;; vars-snapshot including `*reasoning*`). A second
+                       ;; write would produce a ghost row with the same
+                       ;; timestamp, same thinking, `:executions nil`, and
+                       ;; no vars — which is exactly what the DB showed
+                       ;; for conversation 33b6d8ae… pre-fix.
                        (let [_ (rlm-stage! :empty iteration {})
                              current-max (effective-max-iterations)
                              remaining-iters (- current-max (inc iteration))
@@ -1772,11 +1781,6 @@
                                        (str "\n[SYSTEM_NUDGE] ‼ THIS IS YOUR LAST ITERATION ‼ "
                                          "Emit :final NOW or call (request-more-iterations N) — "
                                          "the loop terminates after this turn.")))]
-                        ;; Store empty iteration snapshot
-                        (rlm-db/store-iteration! db-info
-                          {:query-ref query-ref
-                           :vars []
-                           :executions nil :thinking thinking :duration-ms (or (:duration-ms iteration-result) 0)})
                         (recur (inc iteration) ;; still increment to prevent infinite loop
                           (conj messages
                             {:role "assistant" :content (or thinking "[empty]")}
