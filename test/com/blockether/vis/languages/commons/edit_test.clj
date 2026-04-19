@@ -293,4 +293,44 @@
                     "*** End Patch")
             result (sut/edit-file patch)]
         (expect (= "one\nTWO\nthree\nfour\nFIVE" (read-file a)))
-        (expect (= 2 (:total-hunks result)))))))
+        (expect (= 2 (:total-hunks result)))))
+
+    (it "tolerates blank separator lines between hunks"
+      ;; Regression: git/diff tools (and agents) routinely emit a blank
+      ;; line between hunks. The parser used to throw on the first blank,
+      ;; killing any multi-hunk patch. Blanks inside a section are
+      ;; cosmetic — skip them silently.
+      (let [dir (tmp-dir)
+            a (write-file! (file-in dir "a.txt") "one\ntwo\nthree\nfour\nfive")
+            patch (str "*** Begin Patch\n"
+                    "*** Update File: " (.getAbsolutePath a) "\n"
+                    "@@ -1,2 +1,2 @@\n"
+                    " one\n"
+                    "-two\n"
+                    "+TWO\n"
+                    "\n"
+                    "@@ -4,2 +4,2 @@\n"
+                    " four\n"
+                    "-five\n"
+                    "+FIVE\n"
+                    "*** End Patch")
+            result (sut/edit-file patch)]
+        (expect (= "one\nTWO\nthree\nfour\nFIVE" (read-file a)))
+        (expect (= 2 (:total-hunks result)))))
+
+    (it "tolerates the `\\ No newline at end of file` marker"
+      ;; Another common unified-diff artifact. It's informational — no ops
+      ;; implied — so skip it instead of blowing up.
+      (let [dir (tmp-dir)
+            a (write-file! (file-in dir "a.txt") "one\ntwo")
+            patch (str "*** Begin Patch\n"
+                    "*** Update File: " (.getAbsolutePath a) "\n"
+                    "@@ -1,2 +1,2 @@\n"
+                    " one\n"
+                    "-two\n"
+                    "+TWO\n"
+                    "\\ No newline at end of file\n"
+                    "*** End Patch")
+            result (sut/edit-file patch)]
+        (expect (= "one\nTWO" (read-file a)))
+        (expect (= 1 (:total-hunks result)))))))

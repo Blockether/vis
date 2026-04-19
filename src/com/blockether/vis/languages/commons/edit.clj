@@ -57,23 +57,32 @@
     p))
 
 (defn- parse-hunk-op
+  "Parse one hunk body line. Every line MUST start with one of:
+     ' '  → context (kept verbatim on both sides)
+     '+'  → addition (appears only on new side)
+     '-'  → removal  (appears only on old side)
+   Any other leading character is rejected with enough ex-data to locate
+   the offender — path, hunk index, 0-based line number, and the raw line
+   itself. Callers strip blank separator lines upstream, so by the time we
+   get here an empty line IS a real error and stays loud."
   [line file-path hunk-index line-no]
-  (when (empty? line)
-    (throw (ex-info "Hunk line must start with one of: space, +, -"
-             {:type :tool/invalid-input :tool 'edit-file :path file-path :hunk-index hunk-index :line-no line-no})))
-  (let [ch (.charAt ^String line 0)
-        txt (subs line 1)]
-    (case ch
-      \space [:context txt]
-      \+     [:add txt]
-      \-     [:remove txt]
-      (throw (ex-info "Hunk line must start with one of: space, +, -"
-               {:type :tool/invalid-input
-                :tool 'edit-file
-                :path file-path
-                :hunk-index hunk-index
-                :line-no line-no
-                :line line})))))
+  (let [err (fn []
+              (throw (ex-info "edit-file: hunk line must start with space, '+' or '-'"
+                       {:type       :tool/invalid-input
+                        :tool       'edit-file
+                        :path       file-path
+                        :hunk-index hunk-index
+                        :line-no    line-no
+                        :line       line})))]
+    (if (empty? line)
+      (err)
+      (let [ch  (.charAt ^String line 0)
+            txt (subs line 1)]
+        (case ch
+          \space [:context txt]
+          \+     [:add txt]
+          \-     [:remove txt]
+          (err))))))
 
 (def ^:private hunk-header-re
   "Strict unified-diff style hunk header.
@@ -133,9 +142,14 @@
         [{:type :update :path path :move-to move-to :hunks hunks} idx]
         (let [line (nth lines idx)]
           (cond
-            (str/blank? line)
-            (throw (ex-info "Unexpected empty line in update section. Use prefixed hunk lines (+, -, or space)."
-                     {:type :tool/invalid-input :tool 'edit-file :path path :line-no idx}))
+            ;; Blank lines between hunks are cosmetic separators. Agents (and
+            ;; diff tools) routinely emit them and the old code threw on the
+            ;; very first one, killing multi-hunk patches. Skip silently.
+            ;; Also skip the unified-diff `\ No newline at end of file`
+            ;; marker — purely informational, no ops implied.
+            (or (str/blank? line)
+              (= line "\\ No newline at end of file"))
+            (recur (inc idx) hunks hunk-index)
 
             (or (starts-with? line "*** Add File: ")
               (starts-with? line "*** Delete File: ")
@@ -150,15 +164,25 @@
                     (if (>= j n)
                       [ops j]
                       (let [ln (nth lines j)]
-                        (if (or (re-matches hunk-header-re ln)
-                              (starts-with? ln "*** Add File: ")
-                              (starts-with? ln "*** Delete File: ")
-                              (starts-with? ln "*** Update File: ")
-                              (= ln "*** End Patch"))
+                        (cond
+                          ;; Blank line or `\ No newline` marker terminates
+                          ;; the hunk body — caller resumes the outer loop
+                          ;; which skips it.
+                          (or (str/blank? ln)
+                            (= ln "\\ No newline at end of file"))
                           [ops j]
+
+                          (or (re-matches hunk-header-re ln)
+                            (starts-with? ln "*** Add File: ")
+                            (starts-with? ln "*** Delete File: ")
+                            (starts-with? ln "*** Update File: ")
+                            (= ln "*** End Patch"))
+                          [ops j]
+
+                          :else
                           (recur (inc j) (conj ops (parse-hunk-op ln path hunk-index j)))))))]
               (when (empty? ops)
-                (throw (ex-info "Hunk must contain operations"
+                (throw (ex-info "edit-file: hunk has no operations"
                          {:type :tool/invalid-input :tool 'edit-file :path path :hunk-index hunk-index})))
               (validate-hunk-ranges! ops line path hunk-index)
               (recur next-idx
@@ -166,7 +190,7 @@
                 (inc hunk-index)))
 
             :else
-            (throw (ex-info "Update section expects strict hunk headers: @@ -a[,b] +c[,d] @@"
+            (throw (ex-info "edit-file: update section expects strict hunk headers: @@ -a[,b] +c[,d] @@"
                      {:type :tool/invalid-input :tool 'edit-file :path path :line-no idx :line line}))))))))
 
 (defn- parse-patch

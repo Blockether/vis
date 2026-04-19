@@ -154,7 +154,8 @@
      or a Java regex literal (`#\"...\"`) whose source string is re-compiled
      under the re2j engine. re2j syntax: RE2 flavor — no backreferences, no
      PCRE lookarounds; everything else works.
-   - path    — Root directory (defaults to current working directory).
+   - path    — Root directory OR a single file (defaults to current working
+     directory). When a file, grep scans just that one file — no walk.
    - opts    — Map of options:
        :glob              — Glob pattern for candidate files. When absent,
                             every file under `path` is scanned.
@@ -173,10 +174,12 @@
                             merge with — the default.
 
    Returns a map:
-   - :path       — Canonical root directory path.
+   - :path       — Canonical root path (file or directory).
+   - :mode       — :directory or :file (which branch was taken).
    - :pattern    — The pattern source that was searched.
-   - :matches    — Vector of {:path rel-str :line int :text str}.
-   - :files      — Number of files scanned.
+   - :matches    — Vector of {:path rel-str :line int :text str}. In :file
+                   mode the `:path` of each match is the file's basename.
+   - :files      — Number of files scanned (always 1 in :file mode).
    - :truncated? — true when global cap was hit."
   ([pattern] (grep pattern "." nil))
   ([pattern path] (grep pattern path nil))
@@ -191,11 +194,7 @@
                  ignore-dirs default-ignore-dirs}} (or opts {})
          root (io/file (or path "."))
          _    (when-not (.exists root)
-                (throw (ex-info (str "Path not found: " path)
-                         {:type :tool/invalid-input :tool 'grep :path path})))
-         _    (when-not (.isDirectory root)
-                (throw (ex-info (str "grep path must be a directory: " path
-                                  ". Use read-file to search inside a single file.")
+                (throw (ex-info "grep: path not found"
                          {:type :tool/invalid-input :tool 'grep :path path})))
          ;; `:literal? true` forces Pattern.quote() — caller wants a plain
          ;; text match, no regex interpretation. Otherwise `->re2j` tries
@@ -211,24 +210,36 @@
                     :source pre-source}
                    (->re2j pattern case-insensitive?))
          pat  (:pattern coerced)
-         ;; Default: walk every file under `root` to the given depth. Only
-         ;; pass `glob` down when the caller wants it — list-dir's glob
-         ;; matcher treats `**/*` as "must contain a /" which drops root-level
-         ;; files like README.md. Leaving `glob` nil matches everything.
-         listing (list-cmd/list-dir (.getCanonicalPath root)
-                   (cond-> {:depth depth :limit 5000
-                            :ignore-dirs ignore-dirs}
-                     glob (assoc :glob glob)))
-         files (->> (:entries listing)
-                 (filter #(= "file" (:type %)))
-                 (map #(io/file (.getCanonicalPath root) (:name %))))
+         ;; Dual-mode: if `path` is a single file, just scan that one file
+         ;; and return a `{:path :mode :file :matches …}` map. This used to
+         ;; throw — forcing the agent to switch tools mid-thought. Accepting
+         ;; a file path is strictly more useful: agent says "grep X in Y",
+         ;; works regardless of whether Y is a dir or a file.
+         file-mode?  (.isFile root)
+         files (if file-mode?
+                 [root]
+                 ;; Default: walk every file under `root` to the given depth.
+                 ;; Only pass `glob` down when the caller wants it — list-dir's
+                 ;; glob matcher treats `**/*` as "must contain a /" which
+                 ;; drops root-level files like README.md. Leaving `glob` nil
+                 ;; matches everything.
+                 (let [listing (list-cmd/list-dir (.getCanonicalPath root)
+                                 (cond-> {:depth depth :limit 5000
+                                          :ignore-dirs ignore-dirs}
+                                   glob (assoc :glob glob)))]
+                   (->> (:entries listing)
+                     (filter #(= "file" (:type %)))
+                     (map #(io/file (.getCanonicalPath root) (:name %))))))
+         rel-for (fn [^File f]
+                   (if file-mode?
+                     (.getName f)
+                     (str (.relativize (.toPath root) (.toPath f)))))
          all-matches
          (persistent!
            (reduce (fn [acc ^File f]
                      (if (>= (count acc) max-matches)
                        (reduced acc)
-                       (let [rel (str (.relativize (.toPath root) (.toPath f)))
-                             hits (scan-file f pat rel max-line-chars)]
+                       (let [hits (scan-file f pat (rel-for f) max-line-chars)]
                          (reduce (fn [a hit]
                                    (if (>= (count a) max-matches)
                                      (reduced a)
@@ -239,6 +250,7 @@
              files))
          truncated? (>= (count all-matches) max-matches)]
      (cond-> {:path       (.getCanonicalPath root)
+              :mode       (if file-mode? :file :directory)
               :pattern    (.pattern ^Pattern pat)
               :matches    all-matches
               :files      (count files)
