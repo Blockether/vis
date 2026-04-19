@@ -257,3 +257,36 @@
 
     (it "allows multi-word answers"
       (expect (not (core/placeholder-final-answer? "here are the results" false))))))
+
+(defdescribe bare-data-literal-code-block-test
+  (describe "bare-data-literal-code-block?"
+    (it "detects bare map literal"
+      (expect (true? (core/bare-data-literal-code-block? "{:path \"/tmp\" :matches []}"))))
+
+    (it "detects bare vector literal"
+      (expect (true? (core/bare-data-literal-code-block? "[1 2 3]"))))
+
+    (it "detects quoted data literal"
+      (expect (true? (core/bare-data-literal-code-block? "'{:a 1}"))))
+
+    (it "allows plain symbol lookup"
+      (expect (false? (core/bare-data-literal-code-block? "hits"))))
+
+    (it "allows executable forms"
+      (expect (false? (core/bare-data-literal-code-block? "(def hits {:path \"/tmp\"})"))))))
+
+(defdescribe literal-code-block-error-test
+  (describe "literal-code-block-error"
+    (it "allows raw data literals — they're self-evaluating Clojure and agents use them to push state into <journal>"
+      (expect (nil? (core/literal-code-block-error "{:path \"/tmp\" :matches []}")))
+      (expect (nil? (core/literal-code-block-error "[1 2 3]")))
+      (expect (nil? (core/literal-code-block-error "'{:a 1}")))
+      (expect (nil? (core/literal-code-block-error ":status")))
+      (expect (nil? (core/literal-code-block-error "42"))))
+
+    (it "still blocks bare string prose — that's the LLM trying to answer through :code"
+      (expect (= "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."
+                (core/literal-code-block-error "\"hello there\""))))
+
+    (it "returns nil for real code"
+      (expect (nil? (core/literal-code-block-error "(def hits {:path \"/tmp\"})"))))))

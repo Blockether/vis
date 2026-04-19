@@ -149,8 +149,9 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
    - :model          — Override model (agent-level or per-run)
    - :max-iterations — Override max iterations
    - :on-chunk       — Streaming callback fn. Receives {:iteration :thinking :code
-                       :final :done?} on each partial chunk and once with :done? true
-                       when the iteration produces a final answer.
+                        :final :done? :timeline}. `:timeline` is the shared
+                        adapter-agnostic projection from
+                        `conversations.shared/make-on-chunk-projector`.
    - :debug?         — Enable svar debug logging (default false)
    - :config         — Provider config override (skips ~/.vis/config.edn)
 
@@ -179,12 +180,17 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
         mdl       (or model (:model agent-def))
         raw-sys   (or system-prompt (:system-prompt agent-def))
         sys       (str raw-sys (environment-info))
+        projector (when on-chunk
+                    (shared/make-on-chunk-projector))
+        on-chunk* (when on-chunk
+                    (fn [chunk]
+                      (on-chunk (assoc chunk :timeline (projector chunk)))))
         q-opts    (cond-> {:max-iterations iters
-                           :system-prompt  sys}
-                    spec     (assoc :spec spec)
-                    mdl      (assoc :model mdl)
-                    on-chunk (assoc :hooks {:on-chunk on-chunk})
-                    debug?   (assoc :debug? true))
+                            :system-prompt  sys}
+                     spec     (assoc :spec spec)
+                     mdl      (assoc :model mdl)
+                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})
+                     debug?   (assoc :debug? true))
         messages  (if (string? prompt) [(llm/user prompt)] prompt)]
     (try
       (let [result (conversations/send! conv-id messages q-opts)]

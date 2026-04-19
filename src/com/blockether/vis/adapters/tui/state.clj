@@ -2,7 +2,8 @@
   "Re-frame-like state management for the TUI.
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [com.blockether.vis.adapters.tui.chat :as chat]
-            [com.blockether.vis.adapters.tui.input :as input]))
+            [com.blockether.vis.adapters.tui.input :as input]
+            [com.blockether.vis.loop.conversations.shared :as conv-shared]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -118,43 +119,11 @@
              :query-start-ms (System/currentTimeMillis)))
      :fx [[:rlm-query (:conv db) text]]}))
 
-(defn- streamed-code->str
-  "Normalise a streamed :code entry into a display string. svar can stream
-   raw strings OR maps like `{:expr \"(foo)\" :time-ms …}` depending on how
-   far the iteration has progressed. Returns nil for shapes we don't render."
-  [entry]
-  (cond
-    (string? entry) entry
-    (map? entry)    (let [expr (:expr entry)]
-                      (when (string? expr) expr))
-    :else           nil))
-
-(defn- update-iteration-entry
-  "Merge a chunk into the `:iterations` vector, preserving previously
-   streamed fields when the new chunk arrives with nils (matches the web
-   on-chunk-handler's defensive merge). The `:thinking` field is ignored —
-   the TUI no longer renders it; see `adapters/tui/render.clj`."
-  [iters {:keys [iteration code final done?]}]
-  (let [new-code (when (sequential? code)
-                   (vec (keep streamed-code->str code)))
-        existing (get iters iteration)
-        merged   {:iteration  iteration
-                  :code       (if (and (empty? new-code) existing)
-                                (:code existing)
-                                (or new-code []))
-                  :final?     (or (boolean final)
-                                (:final? existing)
-                                (boolean done?))}]
-    (cond
-      (< iteration (count iters)) (assoc iters iteration merged)
-      (= iteration (count iters)) (conj iters merged)
-      :else                       (conj iters merged))))
-
-(reg-event-db :iteration-chunk
-  (fn [db [_ chunk]]
+(reg-event-db :set-progress-iterations
+  (fn [db [_ iterations]]
     (if-not (:loading? db)
       db
-      (update-in db [:progress :iterations] update-iteration-entry chunk))))
+      (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
   (fn [db [_ answer]]
@@ -173,9 +142,10 @@
 (reg-fx :rlm-query
   (fn [conv text]
     (future
-      (let [on-chunk (fn [chunk]
-                       (try (dispatch [:iteration-chunk chunk])
-                         (catch Throwable _ nil)))
+      (let [on-chunk (conv-shared/make-on-chunk-projector
+                       {:on-update (fn [timeline _chunk]
+                                     (try (dispatch [:set-progress-iterations timeline])
+                                       (catch Throwable _ nil)))})
             result   (chat/query! conv text {:on-chunk on-chunk})]
         (if (:error result)
           (dispatch [:message-received (:error result)])

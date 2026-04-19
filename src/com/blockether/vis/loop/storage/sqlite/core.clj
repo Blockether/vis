@@ -370,29 +370,45 @@
 
 (defn fetch-entities
   "Pull multiple entities by string TEXT ids, joined with per-type ext attrs.
-   Single query per type — used to materialize lists efficiently."
+   Single query per type — used to materialize lists efficiently.
+
+   Preserves the order of `entity-ids` in the returned vector. Callers
+   (e.g. `db-list-conversation-queries`) pre-sort ids by `created_at` and
+   rely on this function to not scramble that order. SQLite's
+   `WHERE id IN (...)` returns rows in undefined order (usually rowid,
+   which is NOT insertion order for TEXT-id tables after VACUUM / multi-
+   threaded inserts), which used to manifest as conversations replaying
+   with turn 2 before turn 1 after a web restart — i.e. the previously
+   correct message history got reshuffled, then re-persisted into the
+   next turn's `query_attrs.messages` permanently."
   [db-info entity-ids]
   (when (seq entity-ids)
     (let [bases (query! db-info
                   {:select [:*] :from :entity
                    :where [:in :id entity-ids]})
-          by-type (group-by #(->kw-back (:type %)) bases)]
-      (vec
-        (mapcat (fn [[type-kw rows]]
-                  (let [ids (mapv :id rows)
-                        ext-tbl (TYPE->EXT-TABLE type-kw)
-                        ext-rows (when (and ext-tbl (seq ids))
-                                   (query! db-info
-                                     {:select (cons :entity_id (ext-cols-for type-kw))
-                                      :from ext-tbl
-                                      :where [:in :entity_id ids]}))
-                        ext-by-id (into {} (map (fn [r] [(:entity_id r) r])) ext-rows)]
-                    (mapv (fn [base]
-                            (merge (entity-base base)
-                              (when-let [ext (get ext-by-id (:id base))]
-                                (ext-attrs->ns type-kw ext))))
-                      rows)))
-          by-type)))))
+          by-type (group-by #(->kw-back (:type %)) bases)
+          ;; Materialize each row with its merged ext-attrs, keyed by id.
+          id->materialized
+          (into {}
+            (mapcat (fn [[type-kw rows]]
+                      (let [ids (mapv :id rows)
+                            ext-tbl (TYPE->EXT-TABLE type-kw)
+                            ext-rows (when (and ext-tbl (seq ids))
+                                       (query! db-info
+                                         {:select (cons :entity_id (ext-cols-for type-kw))
+                                          :from ext-tbl
+                                          :where [:in :entity_id ids]}))
+                            ext-by-id (into {} (map (fn [r] [(:entity_id r) r])) ext-rows)]
+                        (map (fn [base]
+                               [(:id base)
+                                (merge (entity-base base)
+                                  (when-let [ext (get ext-by-id (:id base))]
+                                    (ext-attrs->ns type-kw ext)))])
+                          rows))))
+            by-type)]
+      ;; Walk `entity-ids` in the caller-supplied order so the output
+      ;; matches the ORDER BY from the calling query.
+      (into [] (keep id->materialized) entity-ids))))
 
 ;; =============================================================================
 ;; Entity store / update — generic

@@ -476,7 +476,10 @@
   (it "includes iteration output guidance"
     (let [prompt (#'rlm-core/build-system-prompt {})]
       (expect (str/includes? prompt "OUTPUT"))
-      (expect (str/includes? prompt "Pattern:"))))
+      ;; The caveman/iteration voice hint lives inside a merged
+      ;; OUTPUT_STYLE_GUIDE block now (was a separate CAVEMAN_ITERATION_OUTPUT
+      ;; const). Look for the pattern template instead of the label.
+      (expect (str/includes? prompt "[thing] [action] [reason]"))))
 
   (it "documents Mustache template support in ARCH and GROUNDING"
     (let [prompt (#'rlm-core/build-system-prompt {})]
@@ -508,30 +511,46 @@
 ;; =============================================================================
 
 (defdescribe format-executions-test
-  (it "formats successful results as EDN"
+  (it "renders the value after `→` for successes"
+    ;; Minimal format (2026-04): `<code> → <value>`, no `:ok` / `:success?`
+    ;; wrapper — the value itself carries enough signal.
     (let [results [{:id 1 :code "(+ 1 41)" :result 42 :stdout "" :error nil}]
           formatted (#'rlm-core/format-executions results)]
-      (expect (str/includes? formatted ":ok"))
-      (expect (str/includes? formatted "42"))))
+      (expect (str/includes? formatted "(+ 1 41) → 42"))
+      (expect (not (str/includes? formatted ":ok")))
+      (expect (not (str/includes? formatted ":success?")))))
 
-  (it "formats errors as EDN"
+  (it "marks errors with `ERROR:` prefix"
     (let [results [{:id 1 :code "(/ 1 0)" :result nil :stdout "" :error "Division by zero"}]
           formatted (#'rlm-core/format-executions results)]
-      (expect (str/includes? formatted ":error"))
+      (expect (str/includes? formatted "ERROR:"))
       (expect (str/includes? formatted "Division by zero"))))
 
-  (it "includes stdout when present"
+  (it "appends :stdout only when non-empty"
     (let [results [{:id 1 :code "(println \"Hello\")" :result nil :stdout "Hello\n" :error nil}]
           formatted (#'rlm-core/format-executions results)]
       (expect (str/includes? formatted ":stdout"))
       (expect (str/includes? formatted "Hello"))))
 
-  (it "formats multiple results"
+  (it "formats multiple results on separate lines"
     (let [results [{:id 1 :code "(+ 0 1)" :result 1 :stdout "" :error nil}
                    {:id 2 :code "(+ 1 1)" :result 2 :stdout "" :error nil}]
           formatted (#'rlm-core/format-executions results)]
-      (expect (str/includes? formatted "1"))
-      (expect (str/includes? formatted "2")))))
+      (expect (str/includes? formatted "(+ 0 1) → 1"))
+      (expect (str/includes? formatted "(+ 1 1) → 2"))))
+
+  (it "omits :time-ms noise for fast ops"
+    ;; Only the SLOW-suffix survives; routine sub-ms timing is pure bloat.
+    (let [results [{:id 1 :code "(+ 1 1)" :result 2 :execution-time-ms 0 :error nil}]
+          formatted (#'rlm-core/format-executions results)]
+      (expect (not (str/includes? formatted ":time-ms")))
+      (expect (not (str/includes? formatted "SLOW")))))
+
+  (it "adds (Xms SLOW) suffix when over SLOW_EXECUTION_MS"
+    (let [results [{:id 1 :code "(slow)" :result :done :execution-time-ms 9999 :error nil}]
+          formatted (#'rlm-core/format-executions results)]
+      (expect (str/includes? formatted "SLOW"))
+      (expect (str/includes? formatted "9999ms")))))
 
 ;; =============================================================================
 ;; Integration Tests (real LLM calls)

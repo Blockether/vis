@@ -10,6 +10,7 @@
             [com.blockether.vis.loop.conversations.shared :as conv-shared]
             [next.jdbc.sql]
             [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.tool-diagnostics :as tool-diag]
             [com.blockether.vis.adapters.tui.screen :as screen]
             [taoensso.trove :as trove]))
 
@@ -398,9 +399,18 @@
           (try
             (let [db-info  (:db-info env)
                   registry @(:tool-registry-atom env)
+                  ;; Run one fresh activation pass so the doctor report
+                  ;; reflects CURRENT truth, not whatever state the last
+                  ;; query left in the diagnostics atom. Exceptions from a
+                  ;; buggy activation-fn are swallowed here and surfaced
+                  ;; inline as "inactive" — the doctor exists precisely to
+                  ;; let you spot such tools, not to crash on them.
                   tools    (mapv (fn [[sym {:keys [activation-fn group activation-doc]}]]
                                    (let [t0      (System/nanoTime)
-                                         active? (boolean (when activation-fn (activation-fn env)))
+                                         active? (boolean
+                                                   (try
+                                                     (when activation-fn (activation-fn env))
+                                                     (catch Throwable _ false)))
                                          elapsed (- (System/nanoTime) t0)]
                                      {:sym           (str sym)
                                       :group         (or group "Other")
@@ -408,9 +418,7 @@
                                       :activation-ms (/ (double elapsed) 1e6)
                                       :activation-doc activation-doc}))
                              registry)
-                  report   ((requiring-resolve
-                              'com.blockether.vis.loop.runtime.tool-diagnostics/format-doctor-report)
-                             tools)
+                  report   (tool-diag/format-doctor-report tools)
                   ;; DB stats
                   docs     (when db-info (rlm-db/db-list-documents db-info))
                   repo-stats (when db-info (rlm-db/db-repo-stats db-info))
@@ -469,8 +477,12 @@
                                 " " (:path r)))))
                   (stdout! "  Git:          none"))
                 (stdout! "  Git:          none"))
-              ;; Tools
-              (stdout! (str "\n" (count tools) " tools registered"))
+              ;; Tools — headline plus grouped breakdown. `summary-line`
+              ;; folds in execution counters from the diagnostics atom
+              ;; (populated by real queries in this process); the grouped
+              ;; body shows the fresh activation pass merged with any
+              ;; accumulated execution stats.
+              (stdout! (str "\n" (tool-diag/summary-line tools)))
               (stdout! report))
             (finally
               (core/dispose-env! env)

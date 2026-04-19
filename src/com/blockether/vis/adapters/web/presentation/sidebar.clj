@@ -1,10 +1,11 @@
 (ns com.blockether.vis.adapters.web.presentation.sidebar
-  "Context viewer sidebar — shows agent memory: context, learnings, variables.")
+  "Context viewer sidebar — shows the conversation's context: user-defined
+   variables and (collapsed) agent-loop SYSTEM variables.")
 
 (defn render []
   [:div#context-sidebar.sidebar
    [:div.sidebar-header
-    [:span "Agent Memory"]
+    [:span "Context"]
     [:button.sidebar-close {:onclick "closeContext()"}
      [:i {:data-lucide "x"}]]]
    [:div#sidebar-content.sidebar-content

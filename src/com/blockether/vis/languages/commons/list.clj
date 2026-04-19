@@ -80,19 +80,27 @@
    - glob  — Glob pattern to filter entries (string, optional, e.g. \"*.clj\", \"**/*.clj\")
    - depth — Max depth to recurse (int, optional, default 1 = flat listing, 0 = dir info only)
    - limit — Max entries to return (int, optional, default 1000)
+   - ignore-dirs — Set of directory names to prune during recursion (pre-filter,
+                   never descended into). Applies by exact segment name — so
+                   `#{\".git\" \"node_modules\"}` prunes every `.git`/`node_modules`
+                   anywhere in the tree. Defaults to nil (no pruning) so plain
+                   `list-dir` stays literal. Callers like `grep` inject a
+                   sensible junk-dir default.
 
    Returns a map:
    - :path      — Canonical directory path
    - :entries   — Vector of {:name str :type str :size int :permissions str :modified str}
    - :total     — Total count of entries (before truncation)
    - :truncated — true if results were truncated to limit"
-  ([path] (list-dir path nil nil nil))
+  ([path] (list-dir path nil nil nil nil))
   ([path glob-or-opts]
    (if (map? glob-or-opts)
-     (list-dir path (:glob glob-or-opts) (:depth glob-or-opts) (:limit glob-or-opts))
-     (list-dir path glob-or-opts nil nil)))
-  ([path glob depth] (list-dir path glob depth nil))
-  ([path glob depth limit]
+     (list-dir path (:glob glob-or-opts) (:depth glob-or-opts) (:limit glob-or-opts)
+       (:ignore-dirs glob-or-opts))
+     (list-dir path glob-or-opts nil nil nil)))
+  ([path glob depth] (list-dir path glob depth nil nil))
+  ([path glob depth limit] (list-dir path glob depth limit nil))
+  ([path glob depth limit ignore-dirs]
    (let [dir       (File. ^String path)
          _         (when-not (.exists dir)
                      (throw (ex-info (str "Path not found: " path) {:path path :error :not-found})))
@@ -102,9 +110,12 @@
          ;; Auto-recurse deep when globstar is used without explicit depth
          depth     (max 0 (or depth
                             (if (and glob (.contains ^String glob "**")) 20 1)))
-         max-entries (or limit default-max-entries)]
+         max-entries (or limit default-max-entries)
+         ignore-set (when (seq ignore-dirs) (set ignore-dirs))]
 
-     (letfn [(collect [^File d current-depth]
+     (letfn [(ignored-dir? [^File f]
+               (and ignore-set (contains? ignore-set (.getName f))))
+             (collect [^File d current-depth]
                (when (and (pos? depth) (<= current-depth depth))
                  (let [children (try
                                   (sort-by #(.getName ^File %) (.listFiles d))
@@ -112,16 +123,26 @@
                    (when children
                      (mapcat (fn [^File f]
                                (try
-                                 (let [entry (file-entry f)
-                                       entry (if (> current-depth 1)
-                                               (let [rel (.relativize (.toPath dir) (.toPath f))]
-                                                 (assoc entry :name (str rel)))
-                                               entry)]
-                                   (if (and (.isDirectory f)
-                                         (not (Files/isSymbolicLink (.toPath f)))
-                                         (< current-depth depth))
-                                     (cons entry (collect f (inc current-depth)))
-                                     [entry]))
+                                 (cond
+                                   ;; Prune ignored dirs pre-descent. Their entries
+                                   ;; are omitted entirely — not even a stub row —
+                                   ;; because huge trees like `.m2` or `node_modules`
+                                   ;; would otherwise burn the entry budget before
+                                   ;; we ever reach the source files.
+                                   (and (.isDirectory f) (ignored-dir? f))
+                                   nil
+
+                                   :else
+                                   (let [entry (file-entry f)
+                                         entry (if (> current-depth 1)
+                                                 (let [rel (.relativize (.toPath dir) (.toPath f))]
+                                                   (assoc entry :name (str rel)))
+                                                 entry)]
+                                     (if (and (.isDirectory f)
+                                           (not (Files/isSymbolicLink (.toPath f)))
+                                           (< current-depth depth))
+                                       (cons entry (collect f (inc current-depth)))
+                                       [entry])))
                                  (catch Exception _ nil)))
                        children)))))]
 
@@ -207,20 +228,5 @@
      :group "filesystem" :activation-doc "always active"
      :examples ["(list-dir \"src\")"
                 "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"]
-     :prompt "List files and subdirectories under a path, with optional glob filter.
-
-Args: path (string, required), opts (map, optional).
-Opts:
-  :glob              — recursive glob like \"**/*.clj\" (matches nested files).
-                       Omit for a single-level listing.
-  :depth             — max recursion depth when using :glob (default: unbounded).
-  :limit             — hard cap on entries returned (default: 500).
-  :include-hidden?   — include dotfiles (default: false).
-
-Returns lines with file type + size + name. Use for:
-  - \"What's in this project?\" before read-file.
-  - Scoping a grep: list-dir first to confirm paths exist.
-  - Counting files matching a pattern before batch-processing.
-
-Prefer a single call with a precise :glob over many separate list-dir calls."}))
+     :prompt "List entries (type + size + name) under a path. `:glob \"**/*.clj\"` for recursive filter; omit for flat listing. One call with precise `:glob` > many calls."}))
 

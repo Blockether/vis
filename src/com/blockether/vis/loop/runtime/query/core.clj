@@ -193,12 +193,12 @@
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec model max-iterations max-refinements threshold
-                max-context-tokens max-recursion-depth concurrency
-                system-prompt debug? hooks cancel-atom eval-timeout-ms
-                reasoning-default routing]
-         :or   {max-iterations      schema/MAX_ITERATIONS
-                max-refinements     1
-                threshold           0.8
+                 max-context-tokens max-recursion-depth concurrency
+                 system-prompt debug? hooks cancel-atom eval-timeout-ms
+                 reasoning-default routing]
+          :or   {max-iterations      schema/MAX_ITERATIONS
+                 max-refinements     1
+                 threshold           0.8
                 max-recursion-depth schema/DEFAULT_RECURSION_DEPTH
                 debug?              false}} opts]
     (when-not (:db-info env)
@@ -212,14 +212,46 @@
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
     (let [cancel-atom            (or cancel-atom (atom false))
-          query-str              (str/join "\n"
-                                   (keep (fn [m]
-                                           (let [c (:content m)]
-                                             (cond
-                                               (string? c)     c
-                                               (sequential? c) (str/join " " (keep #(when (= "text" (:type %)) (:text %)) c))
-                                               :else           nil)))
-                                     messages))
+          ;; `query-str` = ONLY the current turn's user message.
+          ;;
+          ;; Prior behavior joined every message's :content (including
+          ;; previous turns' user msgs + assistant answers + system!) into
+          ;; one growing blob. That corrupted three things at once:
+          ;;   1. `query_attrs.text` / `.name` stored the entire transcript
+          ;;      for every turn — the sidebar showed "Siema\nSiema!\n…".
+          ;;   2. `*query*` SYSTEM var (bound from this same string) grew
+          ;;      with each turn instead of reflecting the current ask.
+          ;;   3. The synthetic `{:requirement …}` frame the LLM sees
+          ;;      restated the whole conversation as the "requirement".
+          ;;
+          ;; Conversation history still reaches the model via the `messages`
+          ;; vector itself (passed through to the LLM call unmodified).
+          ;; `query-str` is ONLY the current turn — one ask, one value.
+          extract-text           (fn [c]
+                                   (cond
+                                     (string? c)     c
+                                     (sequential? c) (str/join " "
+                                                       (keep #(when (= "text" (:type %)) (:text %)) c))
+                                     :else           nil))
+          ;; Locate the LAST user message once. It's both the source of
+          ;; `query-str` (the `{:requirement ...}` payload for iteration 0)
+          ;; AND the boundary between history and the current turn:
+          ;; everything BEFORE its index is prior conversation history,
+          ;; which `iteration-loop` replays as `:history-messages`.
+          last-user-idx          (->> (map-indexed vector messages)
+                                   reverse
+                                   (some (fn [[i m]]
+                                           (when (contains? #{"user" :user} (:role m))
+                                             i))))
+          last-user-msg          (when last-user-idx (nth messages last-user-idx))
+          query-str              (or (some-> last-user-msg :content extract-text)
+                                   ;; Fallback: no :user role found (malformed caller) —
+                                   ;; use the last message's text. Better than an empty query.
+                                   (some-> messages last :content extract-text)
+                                   "")
+          history-messages       (if last-user-idx
+                                   (vec (take last-user-idx messages))
+                                   (vec messages))
           rlm-router             (:router env)
           root-model             (or (when rlm-router (rlm-routing/resolve-root-model rlm-router)) model)
           depth-atom             (atom 0)
@@ -268,28 +300,41 @@
                                    ;; invokes it anyway from prior training, it gets SCI's
                                    ;; own `Unable to resolve symbol: search-documents` — the
                                    ;; right signal: "this tool isn't part of this session".
-                                   (doseq [[sym tool-def] @tool-registry-atom]
-                                     (let [tool-fn       (:fn tool-def)
-                                           activation-fn (:activation-fn tool-def)]
-                                       (when tool-fn
-                                         (let [t0      (System/nanoTime)
-                                               active? (boolean (activation-fn env))
-                                               elapsed (- (System/nanoTime) t0)]
-                                           (tool-diag/record-activation-check! sym active? elapsed)
-                                           (if active?
-                                             (rlm-tools/sci-update-binding! sci-ctx sym
-                                               (rlm-tools/wrap-tool-for-sci env sym tool-fn tool-registry-atom query-ctx))
-                                             ;; Dissoc the symbol from the sandbox namespace.
-                                             ;; Safe if the symbol was never bound: swap! on
-                                             ;; a missing key is a no-op.
-                                             (swap! (:env sci-ctx) update-in
-                                               [:namespaces 'sandbox] dissoc sym)))))))
+                                    (doseq [[sym tool-def] @tool-registry-atom]
+                                      (let [tool-fn       (:fn tool-def)
+                                            activation-fn (:activation-fn tool-def)]
+                                        (when tool-fn
+                                          ;; Wrap the activation-fn call in try/catch: a buggy
+                                          ;; activation predicate must not abort the whole query.
+                                          ;; Treat any throw as "inactive" so the tool simply
+                                          ;; disappears from the sandbox — the error is recorded
+                                          ;; in diagnostics and surfaces via `vis doctor`.
+                                          (let [t0      (System/nanoTime)
+                                                [active? activation-error]
+                                                (try
+                                                  [(boolean (activation-fn env)) nil]
+                                                  (catch Throwable t
+                                                    [false t]))
+                                                elapsed (- (System/nanoTime) t0)]
+                                            (if activation-error
+                                              (tool-diag/record-activation-error! sym activation-error elapsed)
+                                              (tool-diag/record-activation-check! sym active? elapsed))
+                                            (if active?
+                                              (rlm-tools/sci-update-binding! sci-ctx sym
+                                                (rlm-tools/wrap-tool-for-sci env sym tool-fn tool-registry-atom query-ctx))
+                                              ;; Dissoc the symbol from the sandbox namespace.
+                                              ;; Safe if the symbol was never bound: swap! on
+                                              ;; a missing key is a no-op.
+                                              (swap! (:env sci-ctx) update-in
+                                                [:namespaces 'sandbox] dissoc sym)))))))
+          _                      (rlm-tools/bump-var-index! env)
           _                      (let [per-query (merge {'sub-rlm-query sub-rlm-fn}
                                                    budget-bindings
                                                    (or custom-bindings {}) sub-rlm-query-overrides)]
                                    (doseq [[sym val] per-query]
                                      (when val
                                        (rlm-tools/sci-update-binding! sci-ctx sym val))))
+          _                      (rlm-tools/bump-var-index! env)
           query-start-time       (java.util.Date.)
           rlm-env                (assoc env :max-iterations-atom max-iterations-atom)
           env-id                 (:env-id env)]
@@ -313,11 +358,12 @@
        :concurrency            concurrency
        :system-prompt          system-prompt
        :debug?                 debug?
-       :hooks                  hooks
-       :eval-timeout-ms        eval-timeout-ms
-       :reasoning-default      reasoning-default
-       :routing                routing
-       :messages               messages})))
+        :hooks                  hooks
+        :eval-timeout-ms        eval-timeout-ms
+        :reasoning-default      reasoning-default
+        :routing                routing
+        :messages               messages
+        :history-messages       history-messages})))
 
 ;; -----------------------------------------------------------------------------
 ;; Phase 2 - Run iteration phase
@@ -326,10 +372,10 @@
 (defn- run-iteration-phase
   "Runs the main iteration loop.
    Returns iteration-result, query-ref, cost atoms, and merge-cost! fn."
-  [{:keys [rlm-env query-str messages spec max-iterations
-           max-context-tokens custom-docs system-prompt
-           current-iteration-atom hooks cancel-atom db-info
-           reasoning-default routing]}]
+   [{:keys [rlm-env query-str messages history-messages spec max-iterations
+            max-context-tokens custom-docs system-prompt
+            current-iteration-atom hooks cancel-atom db-info
+            reasoning-default routing]}]
   (let [query-ref        (rlm-db/store-query! db-info
                            {:conversation-ref (:conversation-ref rlm-env)
                             :text             query-str
@@ -343,7 +389,7 @@
                                     :custom-docs            custom-docs
                                     :system-prompt          system-prompt
                                     :reasoning-default      reasoning-default
-                                    :user-messages          messages
+                                    :history-messages       history-messages
                                     :current-iteration-atom current-iteration-atom
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
@@ -479,12 +525,21 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- finalize-query-result
-  "Persists claims, updates DB query record, emits debug log, builds result map."
-  [{:keys [db-info]}
+  "Persists claims, updates DB query record, emits debug log, builds result map.
+
+   `:model` is attached to the persisted cost map so the web footer can
+   render `model · N iter · duration · tokens · $total` after a restart.
+   The iteration layer's cost map only carries `:input-cost/:output-cost/:total-cost`;
+   we stitch the router-resolved `root-model` in here so it lands in
+   `query_attrs.model`."
+  [{:keys [db-info root-model]}
    {:keys [query-ref start-time iterations status status-id trace locals
            answer raw-answer final-answer eval-scores refinement-count
            confidence sources reasoning total-tokens-atom total-cost-atom]}]
-  (let [duration-ms (util/elapsed-since start-time)]
+  (let [duration-ms (util/elapsed-since start-time)
+        cost-with-model (cond-> @total-cost-atom
+                          (and root-model (not (:model @total-cost-atom)))
+                          (assoc :model (str root-model)))]
     (if status
       ;; failure path — surface the fallback answer (built by the loop for
       ;; :max-iterations / :error-budget-exhausted) to the caller. Leaving
@@ -501,7 +556,7 @@
                :duration-ms duration-ms
                :status      status
                :tokens      @total-tokens-atom
-               :cost        @total-cost-atom})
+               :cost        cost-with-model})
             (catch Exception e
               (trove/log! {:level :warn :data {:error (ex-message e)}
                            :msg   "Failed to update query (max iterations)"})))
@@ -513,13 +568,13 @@
                    :iterations  iterations
                    :duration-ms duration-ms
                    :tokens      @total-tokens-atom
-                   :cost        @total-cost-atom}
+                   :cost        cost-with-model}
             (some? locals) (assoc :locals locals))))
       ;; success path
       (do
         (rlm-core/rlm-stage! :query-end 0
           {:duration-ms duration-ms :iterations iterations
-           :cost (str (:total-cost @total-cost-atom))})
+           :cost (str (:total-cost cost-with-model))})
         (try
           (rlm-db/update-query! db-info query-ref
             {:answer      final-answer
@@ -528,7 +583,7 @@
              :status      :success
              :eval-score  eval-scores
              :tokens      @total-tokens-atom
-             :cost        @total-cost-atom})
+             :cost        cost-with-model})
           (catch Exception e
             (trove/log! {:level :warn :data {:error (ex-message e)}
                          :msg   "Failed to update query (success)"})))
@@ -540,7 +595,7 @@
                  :iterations       iterations
                  :duration-ms      duration-ms
                  :tokens           @total-tokens-atom
-                 :cost             @total-cost-atom}
+                 :cost             cost-with-model}
           (some? confidence) (assoc :confidence confidence)
           (seq sources)      (assoc :sources sources)
           (some? reasoning)  (assoc :reasoning reasoning))))))

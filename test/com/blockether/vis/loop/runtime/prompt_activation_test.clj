@@ -113,12 +113,16 @@
     (it "renders sub-rlm-query even with no registered tools"
       (let [p (build {:env {} :tool-defs []})]
         (expect (str/includes? p "<tool name=\"sub-rlm-query\""))
-        (expect (str/includes? p "Spawn a sub-query"))))
+        ;; Wording was tightened for token budget — the phrase "sub-query"
+        ;; still appears in the rewritten prompt.
+        (expect (str/includes? p "sub-query"))))
 
     (it "renders request-more-iterations with its prompt"
       (let [p (build {:env {} :tool-defs []})]
         (expect (str/includes? p "<tool name=\"request-more-iterations\""))
-        (expect (str/includes? p "Extend the current turn's iteration budget."))))
+        ;; Prompt wording was compacted; anchor on the key phrase that
+        ;; encodes the same behavior contract.
+        (expect (str/includes? p "Extend iteration budget by `n`"))))
 
     (it "registry entries win over ambient entries for the same :sym"
       ;; Prevents a caller from accidentally overriding `sub-rlm-query`

@@ -279,50 +279,43 @@ function showContext() {
   fetch('/conversations/' + sid + '/context')
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      window.__varIndex = {};
+      var userVars   = (data.variables && data.variables.length) ? data.variables : [];
+      var systemVars = (data['system-variables'] && data['system-variables'].length) ? data['system-variables'] : [];
+      userVars.concat(systemVars).forEach(function(v) { window.__varIndex[v.name] = v; });
+
+      function renderVarCard(v) {
+        var versionCount = (v.versions && v.versions.length) || v.version || 1;
+        var label = v['display-name'] || v.name;
+        var s = '';
+        s += '<div class="ctx-card ctx-var' + (v['system?'] ? ' ctx-var-system' : '') + '" onclick="openVarHistory(\'' + escHtml(v.name) + '\')">';
+        s += '<div class="ctx-var-header">';
+        s += '<span class="ctx-var-name">' + escHtml(label) + '</span>';
+        s += '<span class="ctx-var-type">' + escHtml(v.type || '?') + '</span>';
+        if (versionCount > 1) s += '<span class="ctx-var-versions">v' + versionCount + '</span>';
+        s += '</div>';
+        s += '<span class="ctx-var-value">' + escHtml((v.value || '').substring(0, 200)) + ((v.value || '').length > 200 ? '…' : '') + '</span>';
+        s += '</div>';
+        return s;
+      }
+
       var html = '';
-      // Context section
-      if (data.context && data.context.length > 0) {
+      // User-defined variables — primary section, always expanded.
+      if (userVars.length > 0) {
         html += '<div class="ctx-section">';
-        html += '<div class="ctx-section-header"><i data-lucide="layers"></i> Context <span class="ctx-count">' + data.context.length + '</span></div>';
-        data.context.forEach(function(item, i) {
-          html += '<div class="ctx-card"><span class="ctx-idx">' + i + '</span>';
-          html += '<span class="ctx-text">' + escHtml(String(item)) + '</span></div>';
-        });
+        html += '<div class="ctx-section-header"><i data-lucide="variable"></i> Variables <span class="ctx-count">' + userVars.length + '</span></div>';
+        userVars.forEach(function(v) { html += renderVarCard(v); });
         html += '</div>';
       }
-      // Learnings section
-      if (data.learnings && data.learnings.length > 0) {
-        html += '<div class="ctx-section">';
-        html += '<div class="ctx-section-header"><i data-lucide="lightbulb"></i> Learnings <span class="ctx-count">' + data.learnings.length + '</span></div>';
-        data.learnings.forEach(function(l, i) {
-          var p = l.priority || 'medium';
-          html += '<div class="ctx-card ctx-learning"><span class="ctx-priority ctx-p-' + escHtml(p) + '">' + escHtml(p) + '</span>';
-          html += '<span class="ctx-text">' + escHtml(l.text) + '</span></div>';
-        });
-        html += '</div>';
+      // SYSTEM variables — agent-loop bookkeeping (*query*, *reasoning*, *answer*),
+      // collapsed by default so user vars stay visible.
+      if (systemVars.length > 0) {
+        html += '<details class="ctx-section ctx-section-system">';
+        html += '<summary class="ctx-section-header"><i data-lucide="cpu"></i> System <span class="ctx-count">' + systemVars.length + '</span></summary>';
+        systemVars.forEach(function(v) { html += renderVarCard(v); });
+        html += '</details>';
       }
-      // Variables section — Portal-style var list; click to inspect versions
-      if (data.variables && data.variables.length > 0) {
-        window.__varIndex = {};
-        data.variables.forEach(function(v) { window.__varIndex[v.name] = v; });
-        html += '<div class="ctx-section">';
-        html += '<div class="ctx-section-header"><i data-lucide="variable"></i> Variables <span class="ctx-count">' + data.variables.length + '</span></div>';
-        data.variables.forEach(function(v) {
-          var versionCount = (v.versions && v.versions.length) || v.version || 1;
-          html += '<div class="ctx-card ctx-var" onclick="openVarHistory(\'' + escHtml(v.name) + '\')">';
-          html += '<div class="ctx-var-header">';
-          html += '<span class="ctx-var-name">' + escHtml(v.name) + '</span>';
-          html += '<span class="ctx-var-type">' + escHtml(v.type || '?') + '</span>';
-          if (versionCount > 1) {
-            html += '<span class="ctx-var-versions">v' + versionCount + '</span>';
-          }
-          html += '</div>';
-          html += '<span class="ctx-var-value">' + escHtml((v.value || '').substring(0, 200)) + ((v.value || '').length > 200 ? '…' : '') + '</span>';
-          html += '</div>';
-        });
-        html += '</div>';
-      }
-      if (!html) html = '<div class="ctx-empty">Nothing here yet. Variables and notes will appear as the agent works.</div>';
+      if (!html) html = '<div class="ctx-empty">Nothing here yet. Variables will appear as the agent works.</div>';
       if (typeof lucide !== 'undefined') setTimeout(function() { lucide.createIcons(); }, 50);
       document.getElementById('sidebar-content').innerHTML = html;
     })
@@ -332,6 +325,8 @@ function showContext() {
 function openVarHistory(varName) {
   var v = (window.__varIndex || {})[varName];
   if (!v) return;
+  var isSystemVar = !!v['system?'];
+  var titleLabel = v['display-name'] || v.name;
   var sidebar = document.getElementById('context-sidebar');
   if (!sidebar) return;
   var panel = document.getElementById('var-history-panel');
@@ -350,7 +345,7 @@ function openVarHistory(varName) {
   var html = '';
   html += '<div class="var-history-header">';
   html += '<button class="var-history-back" onclick="closeVarHistory()" title="Back to variables"><i data-lucide="arrow-left"></i></button>';
-  html += '<span class="var-history-title">' + escHtml(v.name) + '</span>';
+  html += '<span class="var-history-title">' + escHtml(titleLabel) + '</span>';
   html += '<span class="var-history-count">' + versions.length + ' version' + (versions.length === 1 ? '' : 's') + '</span>';
   html += '</div>';
   html += '<div class="var-history-body">';
@@ -363,11 +358,11 @@ function openVarHistory(varName) {
     if (ver.type) html += '<span class="var-version-type">' + escHtml(ver.type) + '</span>';
     html += '</div>';
     html += '<div class="var-version-body">';
-    if (ver.code) {
+    if (ver.code && !isSystemVar) {
       html += '<div class="var-version-label">source</div>';
       html += '<pre class="var-version-code">' + escHtml(ver.code) + '</pre>';
     }
-    html += '<div class="var-version-label">value</div>';
+    if (!isSystemVar) html += '<div class="var-version-label">value</div>';
     html += '<pre class="var-version-preview">' + escHtml(ver.preview || '') + '</pre>';
     html += '</div></div>';
   });
@@ -410,8 +405,12 @@ function initInfiniteScroll() {
     if (!lm) return;
     loadingMore = true;
     var sid = chat.dataset.conversation;
-    var showing = parseInt(chat.dataset.showing || '8');
-    var newOffset = showing + 8;
+    var pageSize = parseInt(chat.dataset.pageSize || '8');
+    var showing = parseInt(chat.dataset.showing || String(pageSize));
+    // Next fetch advances by one page. `data-showing` now tracks the ACTUAL
+    // number of messages rendered, so after loading we'll have exactly
+    // `showing + pageSize` visible and the next scroll-up advances again.
+    var newOffset = showing + pageSize;
     var oldH = chat.scrollHeight;
     fetch('/conversations/' + sid + '?offset=' + newOffset)
       .then(function(r) { return r.text(); })
@@ -421,6 +420,7 @@ function initInfiniteScroll() {
         if (nc) {
           chat.innerHTML = nc.innerHTML;
           chat.dataset.showing = nc.dataset.showing;
+          chat.dataset.total = nc.dataset.total;
           chat.scrollTop = chat.scrollHeight - oldH;
           renderMarkdown();
           initIcons();
@@ -442,7 +442,7 @@ function appendUserBubble(text) {
   var d = document.createElement('div');
   d.className = 'msg user-msg';
   d.innerHTML = '<div class="bubble user-bubble">' +
-    text.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
+    '<span>' + text.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</span></div>';
   getChatInner().appendChild(d);
 }
 
@@ -450,7 +450,7 @@ function appendThinkingBubble() {
   var d = document.createElement('div');
   d.className = 'msg ai-msg';
   d.id = 'thinking-msg';
-  d.innerHTML = '<div class="bubble ai-bubble" style="color:var(--dim)">' +
+  d.innerHTML = '<div class="bubble ai-bubble thinking-bubble" style="color:var(--dim)">' +
     '<div id="live-trace"></div>' +
     '<span class="thinking-dots">Thinking<span>.</span><span>.</span><span>.</span></span></div>';
   getChatInner().appendChild(d);
@@ -491,10 +491,10 @@ function replaceChat(html) {
       chat.style.opacity = '0';
       chat.innerHTML = nc.innerHTML;
       chat.dataset.total = nc.dataset.total;
-      // Update conversation title from server response
-      var newTitle = doc.querySelector('.topbar-title');
-      var curTitle = document.querySelector('.topbar-title');
-      if (newTitle && curTitle) curTitle.textContent = newTitle.textContent;
+      // Topbar title AND every sheet row are kept in sync from the same
+      // parsed document — so a rename on the server shows up in BOTH
+      // the header and the bottom-sheet list on the very next response.
+      syncConversationList(doc);
       // Enable select/copy button if messages are now present
       var selectBtn = document.getElementById('select-btn');
       if (selectBtn && nc.children.length > 0) {
@@ -595,24 +595,27 @@ function pollForResponse(action, expectedCount) {
         } else {
           // Render live trace iterations
           var liveEl = document.getElementById('live-trace');
+          var traceHtml = '';
           if (liveEl && data.iterations && data.iterations.length > 0) {
-            liveEl.innerHTML = renderLiveTrace(data.iterations);
+            traceHtml = renderLiveTrace(data.iterations);
+            liveEl.innerHTML = traceHtml;
             renderMarkdown();
             if (data.iterations.length > lastIterCount) {
               scrollToBottom();
               lastIterCount = data.iterations.length;
             }
           }
-          // Update status text — hide when final
+          // Dots stay visible as the ONLY in-flight indicator until
+          // `replaceChat` swaps in the real response. The only time we
+          // hide them is when live-trace already shows iteration cards
+          // — then the dots would just be noise next to concrete steps.
           var dots = document.querySelector('.thinking-dots');
           if (dots) {
-            var hasFinal = data.iterations && data.iterations.some(function(it) { return it["final?"]; });
-            if (hasFinal) {
+            var hasVisibleTrace = traceHtml && traceHtml.length > 0;
+            if (hasVisibleTrace) {
               dots.style.display = 'none';
-            } else if (data.status) {
-              dots.textContent = data.status;
-            } else if (data.iterations && data.iterations.length > 0) {
-              dots.textContent = 'Working…';
+            } else {
+              dots.style.display = '';
             }
           }
         }
@@ -669,6 +672,39 @@ function sendMessage(q) {
 
 var titlePoll = null;
 
+// Sync the topbar title AND every sheet row's name from a parsed HTML
+// document. Called from both `replaceChat` (post-query) and the auto-title
+// poll, so any rename / new-chat / deletion that landed server-side
+// propagates into BOTH places the title appears in the DOM. Previously
+// only the topbar was patched, leaving the bottom-sheet list stuck on
+// "New Chat" until the user navigated away.
+function syncConversationList(doc) {
+  if (!doc) return false;
+  var changed = false;
+  // Topbar — single element, by class.
+  var newTitle = doc.querySelector('.topbar-title');
+  var curTitle = document.querySelector('.topbar-title');
+  if (newTitle && curTitle && newTitle.textContent !== curTitle.textContent) {
+    curTitle.textContent = newTitle.textContent;
+    changed = true;
+  }
+  // Sheet list — one row per conversation, matched by data-id.
+  var newItems = doc.querySelectorAll('.sheet-item[data-id]');
+  newItems.forEach(function(newItem) {
+    var id = newItem.getAttribute('data-id');
+    if (!id) return;
+    var curItem = document.querySelector('.sheet-item[data-id="' + id + '"]');
+    if (!curItem) return;
+    var newName = newItem.querySelector('.sheet-item-name');
+    var curName = curItem.querySelector('.sheet-item-name');
+    if (newName && curName && newName.textContent !== curName.textContent) {
+      curName.textContent = newName.textContent;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function refreshTitle() {
   if (titlePoll) clearInterval(titlePoll);
   var curTitle = document.querySelector('.topbar-title');
@@ -684,7 +720,9 @@ function refreshTitle() {
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var newTitle = doc.querySelector('.topbar-title');
         if (newTitle && newTitle.textContent !== original) {
-          curTitle.textContent = newTitle.textContent;
+          // syncConversationList patches BOTH the topbar and every sheet
+          // row, so the bottom sheet stays in step with the topbar.
+          syncConversationList(doc);
           clearInterval(titlePoll);
           titlePoll = null;
         }

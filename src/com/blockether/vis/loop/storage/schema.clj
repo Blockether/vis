@@ -36,8 +36,11 @@
   120000)
 
 (def MIN_EVAL_TIMEOUT_MS
-  "Floor for :eval-timeout-ms. Below this SCI has no chance to boot."
-  1000)
+  "Floor for :eval-timeout-ms. 3 s gives filesystem tools (grep, list-dir)
+   headroom on medium-sized repos. Below ~1 s nearly every grep timed out
+   at the race boundary; 3 s leaves comfortable margin without masking
+   genuine infinite loops."
+  3000)
 
 (def MAX_EVAL_TIMEOUT_MS
   "Hard ceiling for :eval-timeout-ms to prevent runaway SCI futures.
@@ -192,23 +195,24 @@
 
    The two dials are orthogonal: `:model :cost :reasoning :deep` is a valid
    combination that asks for the cheapest model at maximum depth."
+  ;; Values-only enums — svar 0.3.2+ emits them as an inline type union
+  ;; (`"cost" or "speed" or "intelligence"`) without a per-value comment
+  ;; block. The STEERING section in `runtime.prompt` already explains
+  ;; when to reach for each value, so re-iterating the descriptions in
+  ;; the JSON schema would just burn tokens.
   (spec/spec :next_turn
     (spec/field {::spec/name :model
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/required false
                  ::spec/description "Model class to use on the next iteration"
-                 ::spec/values {"cost" "Cheap model for simple operations"
-                                "speed" "Fast model for quick tasks"
-                                "intelligence" "Powerful model for hard reasoning"}})
+                 ::spec/values ["cost" "speed" "intelligence"]})
     (spec/field {::spec/name :reasoning
                  ::spec/type :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/required false
                  ::spec/description "Thinking depth for the next iteration"
-                 ::spec/values {"quick"    "Short CoT, minimal reasoning tokens — for simple lookups/formatting"
-                                "balanced" "Moderate reasoning — default for most turns"
-                                "deep"     "Deep reasoning with large thinking budget — for hard analysis"}})))
+                 ::spec/values ["quick" "balanced" "deep"]})))
 
 (defn- make-iteration-spec
   "Builds an iteration response spec.
@@ -244,21 +248,23 @@
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
                                           ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
+                             ;; Values-only enum (svar 0.3.2+). Mustache
+                             ;; semantics are documented once in the ARCH
+                             ;; section of `runtime.prompt`; no need to
+                             ;; re-paste them per iteration into the JSON
+                             ;; schema.
                              (spec/field {::spec/name :answer-type
                                           ::spec/type :spec.type/keyword
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required true
-                                          ::spec/description "REQUIRED with :answer. How to render the answer."
-                                          ::spec/values {"mustache-text" "Mustache-rendered plain text. Sandbox vars = context. {{var}}, {{#list}}..{{/list}}, {{^val}}..{{/val}}, {{list.size}}, {{.}}. All referenced vars must be def'd."
-                                                         "mustache-markdown" "Mustache-rendered Markdown. Same template features but rendered as Markdown in the UI."}})
+                                          ::spec/description "REQUIRED with :answer. How to render the answer (see ARCH / MUSTACHE)."
+                                          ::spec/values ["mustache-text" "mustache-markdown"]})
                              (spec/field {::spec/name :confidence
                                           ::spec/type :spec.type/keyword
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
                                           ::spec/description "Confidence level"
-                                          ::spec/values {"high" "Very confident in the answer"
-                                                         "medium" "Somewhat confident"
-                                                         "low" "Uncertain, best guess"}})]
+                                          ::spec/values ["high" "medium" "low"]})]
                       ;; :sources only shows up when document-retrieval tools
                       ;; are actually callable this turn. Otherwise the LLM
                       ;; would be told to cite sources it cannot fetch.

@@ -192,30 +192,53 @@
 
 ;;; ── edit-file ─────────────────────────────────────────────────────────
 
+(defn- edit-action-icon [action]
+  (case action
+    :add     "file-plus"
+    :delete  "file-minus"
+    :move    "file-symlink"
+    :update  "file-pen-line"
+    "file-pen-line"))
+
+(defn- edit-action-label [action hunks]
+  (case action
+    :add    "CREATED"
+    :delete "DELETED"
+    :move   "MOVED"
+    :update (str hunks " hunk" (when (not= hunks 1) "s"))
+    (name action)))
+
+(defn- render-edit-file-entry
+  "Render one entry from edit-file's :files vector."
+  [{:keys [action path hunks diff]}]
+  [:div.tool-edit-file-entry
+   [:div.tool-header
+    [:i {:data-lucide (edit-action-icon action)}]
+    [:span.tool-path path]
+    [:span.tool-badge
+     {:class (case action
+               :add    "tool-badge-created"
+               :delete "tool-badge-deleted"
+               "tool-badge-modified")}
+     (edit-action-label action hunks)]]
+   (when (and (= action :update) (seq diff))
+     (render-unified-diff diff))])
+
 (defn render-edit-file [result code]
   (let [code-path (second (re-find #"\"([^\"]+)\"" (str code)))]
     (cond
-      (and (map? result) (:path result))
-      (let [{:keys [path replacements diff]} result]
+      ;; Canonical shape: {:files [...] :total-files :total-hunks}
+      (and (map? result) (vector? (:files result)))
+      (let [{:keys [files total-files total-hunks]} result
+            multi? (> (count files) 1)]
         [:div.tool-edit-file
-         [:div.tool-header
-          [:i {:data-lucide "file-pen-line"}]
-          [:span.tool-path path]
-          [:span.tool-badge.tool-badge-modified
-           (str replacements " replacement" (when (> replacements 1) "s"))]]
-         ;; Unified diff from java-diff-utils
-         (if (seq diff)
-           (render-unified-diff diff)
-           [:div.tool-diff
-            [:pre.tool-diff-content
-             [:span.tool-diff-ctx "  (no diff available)\n"]]])])
-
-      (map? result)
-      [:div.tool-edit-file
-       [:div.tool-header
-        [:i {:data-lucide "file-pen-line"}]
-        [:span (or (:path result) "edit-file")]
-        [:span.tool-count (pr-str result)]]]
+         (when multi?
+           [:div.tool-header.tool-edit-file-summary
+            [:i {:data-lucide "file-pen-line"}]
+            [:span.tool-path (str total-files " file" (when (not= total-files 1) "s"))]
+            [:span.tool-badge.tool-badge-modified
+             (str total-hunks " hunk" (when (not= total-hunks 1) "s"))]])
+         (for [f files] (render-edit-file-entry f))])
 
       ;; nil result (def wrapper)
       (and (nil? result) code-path)

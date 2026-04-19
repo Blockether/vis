@@ -24,7 +24,10 @@
 ;;; ── Defaults ──────────────────────────────────────────────────────────
 
 (def ^:private default-max-matches
-  "Global cap on returned matches across the whole grep call."
+  "Soft default cap on returned matches across the whole grep call.
+   The LLM is expected to set `:max-matches` explicitly when the default
+   isn't right — larger for broad audits, smaller for peek-only searches.
+   500 is a safe starting point for code search in a mid-sized repo."
   500)
 
 (def ^:private default-max-line-chars
@@ -36,6 +39,19 @@
   "Skip any file larger than this (2 MB). Keeps grep snappy and prevents the
    LLM from accidentally slurping a 500MB core.basis or index file."
   (* 2 1024 1024))
+
+(def default-ignore-dirs
+  "Directory names pruned by default. Pass `:ignore-dirs` to override
+   (empty set disables). Matched by exact segment name anywhere in the tree."
+  #{".git" ".hg" ".svn"
+    ".cache" ".cpcache" ".gitlibs" ".m2" ".shadow-cljs"
+    ".clj-kondo" ".lsp" ".calva" "target"
+    "node_modules" ".next" ".nuxt" ".turbo" ".yarn" ".pnpm-store"
+    "__pycache__" ".venv" "venv" ".tox" ".mypy_cache" ".pytest_cache" ".ruff_cache"
+    ".idea" ".vscode"
+    "coverage" ".nyc_output"
+    ".terraform" ".vercel" ".netlify"
+    "DerivedData" "Pods"})
 
 ;;; ── Pattern coercion ──────────────────────────────────────────────────
 
@@ -56,20 +72,47 @@
 
 (defn- ->re2j
   "Coerce `p` to a `com.google.re2j.Pattern`. `case-insensitive?` toggles
-   `(?i)` mode at compile-time."
-  ^Pattern [p case-insensitive?]
-  (let [src (pattern-source p)
-        flags (if case-insensitive? Pattern/CASE_INSENSITIVE 0)]
+   `(?i)` mode at compile-time.
+
+   Returns `{:pattern <Pattern> :mode :regex|:literal-fallback :source <str>}`
+   so callers can report which interpretation actually ran.
+
+   Forgiveness: when `p` is a string AND regex compile fails, we quote the
+   string and retry as a literal-match pattern. A real `#\"...\"` literal
+   bypasses the fallback — the caller clearly meant regex, so compile
+   errors surface as thrown ex-infos. Same for `:literal? true` opt
+   (coming from the caller, not handled here — `grep` inlines that)."
+  [p case-insensitive?]
+  (let [src   (pattern-source p)
+        flags (if case-insensitive? Pattern/CASE_INSENSITIVE 0)
+        is-string-pattern? (string? p)]
     (try
-      (Pattern/compile ^String src ^int flags)
+      {:pattern (Pattern/compile ^String src ^int flags)
+       :mode    :regex
+       :source  src}
       (catch Exception e
-        ;; Surface compile errors inside an ex-info so the RLM error-hint path
-        ;; can feed them back to the LLM as actionable feedback.
-        (throw (ex-info (str "grep pattern failed to compile: " (ex-message e))
-                 {:type :tool/invalid-input :tool 'grep
-                  :pattern src
-                  :case-insensitive? case-insensitive?}
-                 e))))))
+        (if is-string-pattern?
+          ;; String pattern with a regex compile error — user likely meant
+          ;; literal text (e.g. `"*query*"`, `"foo(bar)"`). Retry as
+          ;; Pattern.quote()'d literal and flag the fallback so the tool's
+          ;; output teaches the LLM what happened.
+          (let [quoted (Pattern/quote src)]
+            (try
+              {:pattern (Pattern/compile ^String quoted ^int flags)
+               :mode    :literal-fallback
+               :source  src}
+              (catch Exception e2
+                (throw (ex-info (str "grep pattern failed to compile as regex AND as literal: "
+                                  (ex-message e2))
+                         {:type :tool/invalid-input :tool 'grep
+                          :pattern src
+                          :case-insensitive? case-insensitive?}
+                         e2)))))
+          (throw (ex-info (str "grep pattern failed to compile: " (ex-message e))
+                   {:type :tool/invalid-input :tool 'grep
+                    :pattern src
+                    :case-insensitive? case-insensitive?}
+                   e)))))))
 
 (defn- clip
   "Clip a line to `n` chars, appending ' …' if the line was truncated."
@@ -117,8 +160,17 @@
                             every file under `path` is scanned.
        :depth             — Max recursion depth. Defaults to 20.
        :case-insensitive? — Toggle `(?i)` flag. Defaults to false.
-       :max-matches       — Hard cap on returned matches (global). Default 500.
+       :max-matches       — Global cap on returned matches. The LLM is
+                            expected to set this explicitly (larger for
+                            broad audits, smaller for peek searches).
+                            Defaults to 500.
        :max-line-chars    — Per-line char cap before truncation. Default 400.
+       :ignore-dirs       — Directory-name set to prune during the walk.
+                            Defaults to `default-ignore-dirs` (VCS, build
+                            caches, node_modules, venvs, IDE state, etc.).
+                            Pass an empty set `#{}` to disable pruning
+                            entirely. Pass a custom set to replace — not
+                            merge with — the default.
 
    Returns a map:
    - :path       — Canonical root directory path.
@@ -129,11 +181,14 @@
   ([pattern] (grep pattern "." nil))
   ([pattern path] (grep pattern path nil))
   ([pattern path opts]
-   (let [{:keys [glob depth case-insensitive? max-matches max-line-chars]
+   (let [{:keys [glob depth case-insensitive? max-matches max-line-chars literal?
+                 ignore-dirs]
           :or   {depth 20
                  case-insensitive? false
                  max-matches default-max-matches
-                 max-line-chars default-max-line-chars}} (or opts {})
+                 max-line-chars default-max-line-chars
+                 literal? false
+                 ignore-dirs default-ignore-dirs}} (or opts {})
          root (io/file (or path "."))
          _    (when-not (.exists root)
                 (throw (ex-info (str "Path not found: " path)
@@ -142,13 +197,27 @@
                 (throw (ex-info (str "grep path must be a directory: " path
                                   ". Use read-file to search inside a single file.")
                          {:type :tool/invalid-input :tool 'grep :path path})))
-         pat  (->re2j pattern case-insensitive?)
+         ;; `:literal? true` forces Pattern.quote() — caller wants a plain
+         ;; text match, no regex interpretation. Otherwise `->re2j` tries
+         ;; regex first and falls back to literal for compile errors on
+         ;; string inputs. Fallback is reported as `:mode :literal-fallback`
+         ;; on the output so the LLM learns.
+         pre-source (pattern-source pattern)
+         coerced (if literal?
+                   {:pattern (Pattern/compile
+                               (Pattern/quote pre-source)
+                               (if case-insensitive? Pattern/CASE_INSENSITIVE 0))
+                    :mode :literal-forced
+                    :source pre-source}
+                   (->re2j pattern case-insensitive?))
+         pat  (:pattern coerced)
          ;; Default: walk every file under `root` to the given depth. Only
          ;; pass `glob` down when the caller wants it — list-dir's glob
          ;; matcher treats `**/*` as "must contain a /" which drops root-level
          ;; files like README.md. Leaving `glob` nil matches everything.
          listing (list-cmd/list-dir (.getCanonicalPath root)
-                   (cond-> {:depth depth :limit 5000}
+                   (cond-> {:depth depth :limit 5000
+                            :ignore-dirs ignore-dirs}
                      glob (assoc :glob glob)))
          files (->> (:entries listing)
                  (filter #(= "file" (:type %)))
@@ -169,11 +238,16 @@
              (transient [])
              files))
          truncated? (>= (count all-matches) max-matches)]
-     {:path       (.getCanonicalPath root)
-      :pattern    (.pattern pat)
-      :matches    all-matches
-      :files      (count files)
-      :truncated? truncated?})))
+     (cond-> {:path       (.getCanonicalPath root)
+              :pattern    (.pattern ^Pattern pat)
+              :matches    all-matches
+              :files      (count files)
+              :truncated? truncated?}
+       ;; Surface the pattern mode when it's NOT plain regex so the LLM
+       ;; knows whether its regex was honored or silently literalized.
+       (not= :regex (:mode coerced))
+       (assoc :pattern-mode (:mode coerced)
+         :pattern-source (:source coerced))))))
 
 ;;; ── Validators ────────────────────────────────────────────────────────
 
@@ -223,24 +297,20 @@
      :group "filesystem" :activation-doc "always active"
      :examples ["(grep \"HITL\" \"src\")"
                 "(grep \"approval|confirm\" \"src\" {:glob \"**/*.clj\" :case-insensitive? true})"
-                "(grep #\"\\bhuman-in-the-loop\\b\" \"src\" {:max-matches 50})"]
-     :prompt "Recursively search files for a regex pattern. First stop for
-\"where is X used?\", \"who touches this function?\", \"find all callers\".
+                "(grep \"*query*\" \"src\" {:literal? true})"
+                "(grep #\"\\bhuman-in-the-loop\\b\" \"src\" {:max-matches 50})"
+                "(grep \"[TODO]\" \".\" {:literal? true})"
+                "(grep \"password\" \".\" {:ignore-dirs #{}})  ;; disable pruning when you NEED the caches"
+                "(grep \"FIXME\" \"src\" {:max-matches 2000})  ;; broad audit, override default cap"]
+     :prompt "Recursively search files for a pattern. First stop for \"where is X used?\", \"who touches this function?\", \"find all callers\".
 
-Args: pattern (string OR java.util.regex.Pattern, required),
-      path (string, required — directory to search),
-      opts (map, optional).
+Pattern modes:
+- String pattern is tried as regex; if it fails to compile, grep retries as literal text and marks `:pattern-mode :literal-fallback` in the output.
+- `#\"...\"` pattern is always regex; compile errors throw.
+- Pass `{:literal? true}` when you want exact text containing regex metacharacters (`* + ? ( ) [ ] { } | ^ $ . \\`). Always use literal mode for user-supplied text — most users don't mean regex.
 
-Opts:
-  :glob               — glob pattern for files to include (e.g. \"**/*.clj\").
-  :case-insensitive?  — ignore case (default: false).
-  :max-matches        — cap on returned hits (default: 200).
-  :context-lines      — lines of context around each match (default: 0).
+Defaults you should consciously override:
+- `:max-matches` defaults to 500. That's fine for a focused lookup; bump it when you're auditing (`:max-matches 2000+`), lower it when you only need a first sighting (`:max-matches 20`). Don't assume 500 is always right — tune per task.
+- `:ignore-dirs` prunes junk directories (VCS, build caches, node_modules, venvs, IDE state, coverage, OS metadata) BEFORE they're ever walked. Pass `{:ignore-dirs #{}}` to search caches too, or a custom set to replace the default.
 
-Returns lines formatted `path:line: content`. String patterns are compiled
-as regex — escape regex metacharacters if you want literal matching.
-
-Prefer ONE grep with a precise alternation (`\"foo|bar|baz\"`) over three
-separate greps. Prefer a glob-scoped grep (`{:glob \"**/*.clj\"}`) over
-walking the whole repo. PATHS MUST BE STRINGS — passing a java.nio Path
-from elsewhere throws `'other' is different type of Path`."}))
+Prefer one grep with an alternation (`\"foo|bar|baz\"`) over three separate greps. Narrow with `:glob \"**/*.clj\"` instead of walking the whole repo."}))

@@ -4,7 +4,7 @@
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
   hiccup/hiccup                             {:mvn/version "2.0.0"}
   ;; LLM structured output
-  com.blockether/svar                       {:mvn/version "0.3.1"}
+  com.blockether/svar                       {:mvn/version "0.3.2"}
   ;; Anomaly - standardized error categories (used by RLM)
   com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)

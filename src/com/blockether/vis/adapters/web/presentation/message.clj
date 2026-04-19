@@ -30,15 +30,47 @@
 (defn- exec-badge [code]
   (when code
     (let [t (str/trim code)
-          b (if (str/starts-with? t "(") (subs t 1) t)
-          first-sym (first (str/split b #"[\s\)\(\"']" 2))]
-      ;; If wrapped in (def name (tool ...)), extract the inner tool name
-      (if (= first-sym "def")
-        (when-let [inner (second (re-find #"\(def\s+\S+\s+\((\S+)" t))]
-          inner)
-        first-sym))))
+          list-form? (str/starts-with? t "(")]
+      (when list-form?
+        (let [b (subs t 1)
+              first-sym (first (str/split b #"[\s\)\(\"']" 2))]
+          ;; If wrapped in (def name (tool ...)), extract the inner tool name
+          (if (= first-sym "def")
+            (when-let [inner (second (re-find #"\(def\s+\S+\s+\((\S+)" t))]
+              inner)
+            first-sym))))))
 
-(defn- render-exec [{:keys [code result error stdout]}]
+(defn- fmt-exec-time
+  "Short human label for per-exec elapsed time."
+  [ms]
+  (when (number? ms)
+    (cond
+      (< ms 1000) (str (long ms) "ms")
+      :else       (String/format Locale/US "%.2fs" (into-array Object [(double (/ ms 1000.0))])))))
+
+(defn- render-exec-meta
+  "Row of per-execution metadata chips (timeout badge, elapsed, auto-repair).
+   Rendered at the top-right of every non-final exec card so the user knows
+   which calls were slow, timed out, or got patched up."
+  [{:keys [timeout? repaired? time-ms]}]
+  (let [chips (cond-> []
+                timeout?  (conj [:span.exec-chip.exec-chip-timeout "timeout"])
+                repaired? (conj [:span.exec-chip.exec-chip-repaired "auto-repaired"])
+                (and time-ms (not timeout?)) (conj [:span.exec-chip.exec-chip-time (fmt-exec-time time-ms)]))]
+    (when (seq chips)
+      [:div.exec-meta chips])))
+
+(defn- render-exec-streams
+  "Render stdout/stderr (if present). Separate from :result because these
+   are side-effects the tool/code emitted independently of its return value."
+  [{:keys [stdout stderr]}]
+  (list
+    (when (and stdout (not (str/blank? stdout)))
+      [:div.exec-stdout stdout])
+    (when (and stderr (not (str/blank? stderr)))
+      [:div.exec-stderr stderr])))
+
+(defn- render-exec [{:keys [code result error stdout stderr timeout?] :as exec}]
   (let [clean     (clean-result result)
         is-final? (and (map? result) (:rlm/final result))
         badge     (exec-badge code)]
@@ -46,66 +78,157 @@
       is-final? nil
       error
       [:div.exec.exec-errored
-       (when code [:div.exec-code code])
-       [:div.exec-error (str error)]]
+       (render-exec-meta exec)
+       (when code [:details.exec-code-toggle
+                   [:summary.exec-code-summary [:code (or badge "code")]]
+                   [:pre.exec-code-full code]])
+       (render-exec-streams exec)
+       [:div.exec-error {:class (when timeout? "exec-error-timeout")} (str error)]]
       :else
       (or
-        ;; Try tool-specific renderer first
+        ;; Tool-specific renderer — shows the pretty tool output AND a
+        ;; click-to-expand `source` toggle below it with the exact SCI
+        ;; expression that produced the result. Answers "what code ran to
+        ;; produce this?" without bloating the main view.
         (when badge
           (when-let [rendered (tool-render/render-tool badge clean code)]
-            [:div.exec rendered]))
-        ;; Fallback to default rendering
+            [:div.exec
+             (render-exec-meta exec)
+             rendered
+             (render-exec-streams exec)
+             (when code
+               [:details.exec-code-toggle
+                [:summary.exec-code-summary "source"]
+                [:pre.exec-code-full code]])]))
+        ;; Fallback — no tool-specific renderer. Show the raw code + result.
         [:div.exec
-         [:div.exec-code code]
-         (when (and stdout (not (str/blank? stdout)))
-           [:div.exec-stdout stdout])
+         (render-exec-meta exec)
+         (when code [:pre.exec-code code])
+         (render-exec-streams exec)
          (when-not (nil? clean)
            [:div.exec-result
             (cond
               (string? clean) clean
               :else [:pre.exec-data (pr-str clean)])])]))))
 
+(defn- system-var?
+  "Agent-loop SYSTEM vars are rebound every iteration regardless of what
+   the LLM wrote, so surfacing them in the per-iteration var list makes
+   every card look like it wrote the same three vars. They get their own
+   collapsed sub-section instead."
+  [var-name]
+  (let [n (str var-name)]
+    (or (= n "*query*") (= n "*reasoning*") (= n "*answer*"))))
+
+(defn- markdown-system-var?
+  [var-name]
+  (let [n (str var-name)]
+    (or (= n "*query*") (= n "*reasoning*") (= n "*answer*"))))
+
+(defn- display-var-name
+  [name]
+  (case (str name)
+    "*query*" "query"
+    "*reasoning*" "thinking"
+    "*answer*" "answer"
+    (str name)))
+
+(defn- render-var-delta [{:keys [version prev-version prev-preview]}]
+  (when (and (number? version) (number? prev-version))
+    [:div.var-delta
+     [:span.var-delta-chip (str "v" prev-version " -> v" version)]
+     (when (and prev-preview (not (str/blank? prev-preview)))
+       [:span.var-delta-from
+        [:span.var-delta-from-label "was"]
+        [:code prev-preview]])]))
+
+(defn- render-one-var-row [{:keys [name type preview code] :as v}]
+  (let [is-system? (system-var? name)]
+    [:details.var-row-details
+     [:summary.var-row
+      [:span.var-td-name
+       [:code (display-var-name name)]
+       (when (number? (:version v))
+         [:span.var-version-chip (str "v" (:version v))])]
+      [:span.var-td-type [:span.var-type-chip type]]
+      [:span.var-td-preview [:code preview]]]
+     [:div.var-row-expanded
+      (render-var-delta v)
+      (when (and code (not is-system?))
+        [:div
+         [:div.var-row-label "source"]
+         [:pre.var-row-code code]])
+      [:div.var-row-label "value"]
+      (if (markdown-system-var? name)
+        [:div {:class (str "var-row-value-md md-content"
+                      (when (= (str name) "*reasoning*") " var-row-value-thinking"))}
+         preview]
+        [:pre.var-row-value preview])]]))
+
 (defn- render-vars-table
   "Portal-style compact table listing vars (re)defined in this iteration.
-   Columns: name · type · preview. Skipped when no vars were written."
+   Columns: name · type · preview. Each row is a <details> → click to
+   reveal the `(def …)` source + full pr-str preview.
+
+   SYSTEM vars (`*query*`, `*reasoning*`, `*answer*`) are rebound by the
+   agent loop every iteration and would otherwise dominate the table.
+   They render inside a second `<details>` that stays closed by default."
   [vars]
-  (when (seq vars)
-    [:table.var-table
-     [:thead
-      [:tr
-       [:th.var-th-name "var"]
-       [:th.var-th-type "type"]
-       [:th.var-th-preview "preview"]]]
-     [:tbody
-      (for [{:keys [name type preview]} vars]
-        [:tr.var-row
-         [:td.var-td-name [:code name]]
-         [:td.var-td-type [:span.var-type-chip type]]
-         [:td.var-td-preview [:code preview]]])]]))
+  (let [user-vars (remove #(system-var? (:name %)) vars)]
+    (when (seq user-vars)
+      [:div.var-table-wrap
+       [:div.var-table-section
+        [:div.var-table-header
+         [:span.var-th-name "var"]
+         [:span.var-th-type "type"]
+         [:span.var-th-preview "preview"]]
+        [:div.var-table-body
+         (for [v user-vars] (render-one-var-row v))]]])))
+
+(defn- render-thinking
+  "Render per-iteration reasoning inline (always visible) at the top of
+   the iteration card when present."
+  [thinking]
+  (let [t (some-> thinking str/trim)]
+    (when-not (str/blank? t)
+      [:div.iter-thinking
+       [:div.iter-thinking-summary
+        [:span.iter-thinking-label "THINKING"]]
+       [:div.iter-thinking-body.md-content t]])))
 
 (defn- render-iteration
-  "Render one iteration row.
+  "Render one iteration card.
 
-   Distilled to essentials: ITER N header + optional status badge +
-   code/result rows per execution + var writes table + error banner.
+   Header + reasoning (collapsible) + per-exec cards (each with an
+   expandable `source` toggle) + var-writes table (each row expandable
+   to show `(def …)` source + full value; system vars hidden in a
+   secondary collapsed group). The final answer still renders once
+   below the trace via `render-msg`.
 
-   The LLM's `:thinking` narrative is intentionally NOT shown — it used to
-   render as a \"Thinking\"-labeled callout that felt like the system prompt
-   was drifting turn-to-turn. The main chat now shows only WHAT the model
-   did (code) and WHAT came back (result). The full thinking log still lives
-   in the query entity tree for anyone who wants to dig."
-  [{:keys [iteration executions final? error vars]}]
-  (let [has-execs? (seq executions)
-        has-vars?  (seq vars)]
-    (when (or has-execs? error has-vars?)
-      [:div.iteration {:class (str/join " "
-                                (cond-> []
-                                  error (conj "iteration-error")
-                                  final? (conj "iteration-final-ok")))}
-       [:div.iter-header
-        (str "Iteration " (inc iteration))
-        (when final? [:span.iter-final-tag " FINAL"])
-        (when error [:span.iter-error-tag " ERROR"])]
+   `solo?` unwraps visual chrome for the single-iteration case: no
+   iteration wrapper card, no ITERATION header — the contents flow
+   directly inside the assistant bubble, because an explicit
+   “Iteration 1” badge for a turn that only ever had one iteration
+   is just noise."
+  ([iter] (render-iteration iter false))
+  ([{:keys [iteration thinking executions final? error vars]} solo?]
+  (let [has-execs?    (seq executions)
+        has-vars?     (seq vars)
+        has-thinking? (and thinking (not (str/blank? (str thinking))))]
+    (when (or has-execs? error has-vars? has-thinking?)
+      [(if solo? :div.iteration-solo :div.iteration)
+       {:class (str/join " "
+                 (cond-> []
+                   error  (conj "iteration-error")
+                   final? (conj "iteration-final-ok")))}
+       (when-not solo?
+         [:div.iter-header
+          [:span.iter-title (str "ITERATION " (inc iteration))]
+          (when final? [:span.iter-final-tag " FINAL"])
+          (when error [:span.iter-error-tag " ERROR"])])
+       (when (and solo? error)
+         [:div.iter-header
+          [:span.iter-error-tag "ERROR"]])
        (when error
          (let [{:keys [message type class data cause stack]} error]
            [:div.iter-error
@@ -126,8 +249,13 @@
               [:details.iter-error-details
                [:summary "stack"]
                [:pre.iter-error-data (str/join "\n" stack)]])]))
-       (when has-execs? (keep render-exec executions))
-       (render-vars-table vars)])))
+       (render-thinking thinking)
+       (when has-execs?
+         [:div
+          [:div.iter-section-title
+           (str "EXECUTION" (when (> (count executions) 1) "S"))]
+          (keep render-exec executions)])
+       (render-vars-table vars)]))))
 
 (defn- has-final-answer?
   "True when the result has a non-blank :answer AND a :final? iteration
@@ -141,13 +269,14 @@
       (not (str/blank? s)))))
 
 (defn- trace-summary-label
-  "Short `N steps · M tool calls` label for the collapsed reasoning toggle."
+  "Short summary for collapsed trace under a final answer."
   [trace]
-  (let [steps (count (remove :final? trace))
+  (let [steps (count trace)
         calls (reduce + 0 (map (fn [t] (count (:executions t))) trace))]
-    (str steps " step" (when (not= 1 steps) "s")
+    (str "Execution trace · "
+      steps " iteration" (when (not= 1 steps) "s")
       (when (pos? calls)
-        (str " · " calls " tool call" (when (not= 1 calls) "s"))))))
+        (str " · " calls " code call" (when (not= 1 calls) "s"))))))
 
 (defn- status-banner
   "Visible banner when a turn ended on a non-:success status. Without this,
@@ -173,22 +302,15 @@
   (case role
     :user [:div.msg.user-msg [:div.bubble.user-bubble [:span text]]]
     :assistant
-    (let [trace        (:trace result)
-          final-ready? (has-final-answer? result)]
+    (let [trace (:trace result)]
       [:div.msg.ai-msg
        [:div.bubble.ai-bubble
         (status-banner (:status result))
-        ;; Reasoning trace — collapsed by default when a final answer exists,
-        ;; so the user sees the answer first and can expand to inspect steps.
+        ;; Always render full iteration cards inline (no collapsed summary,
+        ;; no chevron gate) so users see the whole execution trace directly.
         (when (seq trace)
-          (if final-ready?
-            [:details.trace-details
-             [:summary.trace-summary
-              [:i {:data-lucide "chevron-right"}]
-              [:span.trace-summary-label
-               (str "Reasoning — " (trace-summary-label trace))]]
-             [:div.trace-body (map render-iteration trace)]]
-            (map render-iteration trace)))
+          (let [solo? (= 1 (count trace))]
+            (map #(render-iteration % solo?) trace)))
         ;; Final answer — unchanged prose rendering path.
         (when-let [a (:answer result)]
           (let [v (if (map? a) (:result a) a)
@@ -196,8 +318,12 @@
                       (sequential? v) (str/join "\n" (map str v))
                       :else           (pr-str v))
                 cleaned (-> raw str/trim (str/replace #"\n{3,}" "\n\n"))]
-            (when-not (str/blank? cleaned)
-              [:div.answer.md-content cleaned])))
+             (when-not (str/blank? cleaned)
+               [:div.final-answer
+                [:div.final-answer-head
+                 [:span.final-answer-marker "final"]
+                 [:span.final-answer-label "answer"]]
+                [:div.answer.md-content cleaned]])))
         (let [{:keys [iterations duration-ms tokens cost]} result]
           [:div.meta
            (str/join " · "
