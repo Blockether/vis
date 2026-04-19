@@ -12,8 +12,9 @@
 
 (def MAX_ITERATIONS
   "Default iteration budget before forcing termination.
-   The LLM can extend this at runtime via (request-more-iterations n)."
-  50)
+   Kept deliberately tight — the LLM must justify its budget. It can extend
+   this at runtime via (request-more-iterations n) up to MAX_ITERATION_CAP."
+  10)
 
 (def MAX_ITERATION_CAP
   "Absolute ceiling for iterations. No amount of request-more-iterations

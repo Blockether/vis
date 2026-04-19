@@ -28,15 +28,36 @@
   (or (.doResizeIfNecessary screen)
     (.getTerminalSize screen)))
 
+(defn- messages-with-progress
+  "When the RLM is mid-query, replace the assistant placeholder bubble's
+   text with a live per-iteration progress timeline built from
+   `progress`. The placeholder is always the last message in the vec (added
+   by the :send-message handler). On non-loading frames, returns messages
+   unchanged.
+
+   This keeps the renderer pure — it never sees the progress atom, only a
+   derived `:text` field on the last bubble."
+  [messages progress loading? bubble-w]
+  (if (and loading? (seq messages))
+    (let [last-idx (dec (count messages))
+          last-msg (get messages last-idx)]
+      (if (= :assistant (:role last-msg))
+        (assoc messages last-idx
+          (assoc last-msg :text (render/progress->text progress bubble-w)))
+        messages))
+    messages))
+
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box."
-  [screen g cols rows {:keys [messages msg-scroll input]}]
+  [screen g cols rows {:keys [messages msg-scroll input progress loading?]}]
   (let [input-box-h (+ input-height 2)
         input-top   (- rows input-box-h)
         msg-top     0
-        msg-bottom  input-top]
+        msg-bottom  input-top
+        bubble-w    (- cols 4)
+        effective-messages (messages-with-progress messages progress loading? bubble-w)]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g messages msg-top msg-bottom cols msg-scroll)
+    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll)
     (let [[cx cy] (render/draw-input-box! g input input-top input-height cols hint)]
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (.refresh screen Screen$RefreshType/DELTA)))
@@ -75,7 +96,12 @@
               g     (.newTextGraphics screen)
               bubble-w (- cols 4)
               inner-h  (- (- rows (+ input-height 2)) 0 1)
-              total-h  (render/total-messages-height (:messages db) bubble-w)]
+              ;; Scroll math must account for the (possibly expanded)
+              ;; progress placeholder — otherwise mid-stream the bubble
+              ;; grows off-screen and the user can't scroll down to it.
+              displayed-messages (messages-with-progress
+                                   (:messages db) (:progress db) (:loading? db) bubble-w)
+              total-h  (render/total-messages-height displayed-messages bubble-w)]
 
           (render-frame! screen g cols rows db)
 

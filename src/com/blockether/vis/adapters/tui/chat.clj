@@ -32,15 +32,24 @@
 
 (defn query!
   "Send a user query through the shared conversations cache. Blocking.
-   Returns `{:answer str}` or `{:error str}`."
-  [{:keys [id]} text]
-  (try
-    (let [result (conversations/send! id text)
-          answer (or (:answer result) "[empty response]")]
-      {:answer (if (string? answer) answer (pr-str answer))})
-    (catch Exception e
-      (t/log! :error (str "Query failed: " (ex-message e)))
-      {:error (conv-shared/error->user-message e)})))
+   Returns `{:answer str}` or `{:error str}`.
+
+   `opts` may contain:
+     :on-chunk — fn receiving `{:iteration :thinking :code :final :done?}`
+                 on every streaming chunk from the RLM. The TUI uses this
+                 to project a live per-iteration progress timeline into
+                 the assistant placeholder bubble."
+  ([conv text] (query! conv text {}))
+  ([{:keys [id]} text {:keys [on-chunk]}]
+   (try
+     (let [send-opts (cond-> {}
+                       on-chunk (assoc :hooks {:on-chunk on-chunk}))
+           result (conversations/send! id text send-opts)
+           answer (or (:answer result) "[empty response]")]
+       {:answer (if (string? answer) answer (pr-str answer))})
+     (catch Exception e
+       (t/log! :error (str "Query failed: " (ex-message e)))
+       {:error (conv-shared/error->user-message e)}))))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in

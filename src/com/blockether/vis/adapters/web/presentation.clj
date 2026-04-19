@@ -9,6 +9,27 @@
 
 (def ^:const page-size 8)
 
+(defn not-found-page []
+  (str
+    "<!DOCTYPE html>"
+    (h/html
+      [:html {:lang "en"}
+       [:head
+        [:meta {:charset "utf-8"}]
+        [:meta {:name "viewport" :content "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
+        [:title "vis — not found"]
+        [:link {:rel "stylesheet" :href "/css/app.css"}]
+        [:script {:src "https://unpkg.com/lucide@latest"}]]
+       [:body
+        [:div.main
+         [:div#chat.chat
+          [:div.chat-inner
+           [:div.not-found
+            [:div.not-found-icon [:i {:data-lucide "message-circle-off"}]]
+            [:h2.not-found-title "Conversation not found"]
+            [:p.not-found-body "This conversation may have been deleted or never existed."]
+            [:a.not-found-link {:href "/"} "Go to your latest chat"]]]]]]])))
+
 (defn page [current-id conversations messages & [{:keys [offset]}]]
   (str
     "<!DOCTYPE html>"

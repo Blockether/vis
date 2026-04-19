@@ -1042,7 +1042,7 @@
                               max-iterations max-consecutive-errors max-restarts
                               hooks cancel-atom current-iteration-atom
                               reasoning-default routing]}]
-  (let [max-iterations (or max-iterations 50)
+  (let [max-iterations (or max-iterations schema/MAX_ITERATIONS)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
         ;; Adaptive budget: if rlm-env has a max-iterations-atom (set by query-env!),
@@ -1280,24 +1280,39 @@
                   effective-messages (cond-> base-messages
                                        (not (str/blank? iteration-context))
                                        (conj {:role "user" :content iteration-context}))
-                  iter-on-chunk (when on-chunk
-                                  (fn [{:keys [result reasoning tokens cost done?]}]
-                                    (if done?
-                                      (on-chunk {:iteration iteration
-                                                 :thinking nil
-                                                 :code nil
-                                                 :final nil
-                                                 :tokens tokens
-                                                 :cost cost
-                                                 :done? true})
-                                      (on-chunk {:iteration iteration
-                                                 :thinking (or reasoning (:thinking result))
-                                                 :code (when-let [c (:code result)]
-                                                         (if (sequential? c) (vec c) nil))
-                                                 :final nil
-                                                 :tokens nil
-                                                 :cost nil
-                                                 :done? false}))))
+                   ;; Carry the latest non-nil thinking/code across chunks so
+                   ;; the terminal `:done? true` chunk doesn't blank them out.
+                   ;; svar streams partial results, then fires one final done=true
+                   ;; with tokens/cost but no payload — downstream consumers
+                   ;; (e.g. web live-status) overwrote the streamed thinking
+                   ;; with nil and the UI lost it. Hold onto the last seen
+                   ;; values in a closed-over atom and re-emit them on done.
+                   chunk-state (atom {:thinking nil :code nil})
+                   iter-on-chunk (when on-chunk
+                                   (fn [{:keys [result reasoning tokens cost done?]}]
+                                     (let [streamed-thinking (or reasoning (:thinking result))
+                                           streamed-code (when-let [c (:code result)]
+                                                           (when (sequential? c) (vec c)))
+                                           state (swap! chunk-state
+                                                   (fn [s]
+                                                     (cond-> s
+                                                       (some? streamed-thinking) (assoc :thinking streamed-thinking)
+                                                       (some? streamed-code)     (assoc :code streamed-code))))]
+                                       (if done?
+                                         (on-chunk {:iteration iteration
+                                                    :thinking (:thinking state)
+                                                    :code (:code state)
+                                                    :final nil
+                                                    :tokens tokens
+                                                    :cost cost
+                                                    :done? true})
+                                         (on-chunk {:iteration iteration
+                                                    :thinking (:thinking state)
+                                                    :code (:code state)
+                                                    :final nil
+                                                    :tokens nil
+                                                    :cost nil
+                                                    :done? false})))))
                    ;; Effective routing = caller's base `:routing` + LLM's
                    ;; `:next.model` override on `:optimize`. Caller's other
                    ;; routing keys (`:provider`, `:model`, etc.) survive.
@@ -1468,16 +1483,27 @@
                                (:sources final-result)   (assoc :sources (:sources final-result))
                                (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
                         (finalize-cost)))
-                    (if (empty? executions)
-                      ;; Empty iteration: DON'T increment iteration counter, DON'T add to trace.
-                      ;; Retry immediately with a nudge — this doesn't waste an iteration slot.
-                      (let [_ (rlm-stage! :empty iteration {})
-                            nudge (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
-                                    "{:requirement " (pr-str (truncate query 200)) "}\n"
-                                    "⚠ EMPTY — no code executed. You MUST include code. "
-                                    (if has-reasoning?
-                                      "Respond with code or set final to finish."
-                                      "Respond with thinking + code, or set final to finish."))]
+                     (if (empty? executions)
+                       ;; Empty iteration: the iteration counter still
+                       ;; advances (see `(recur (inc iteration) …)` below)
+                       ;; so the budget IS being consumed. Include the same
+                       ;; last-iteration nudge here — otherwise a stubborn
+                       ;; model can spend its final slot on another empty
+                       ;; response and the loop terminates silently.
+                       (let [_ (rlm-stage! :empty iteration {})
+                             current-max (effective-max-iterations)
+                             remaining-iters (- current-max (inc iteration))
+                             last-iter? (zero? remaining-iters)
+                             nudge (str "[Iteration " (inc iteration) "/" current-max "]\n"
+                                     "{:requirement " (pr-str (truncate query 200)) "}\n"
+                                     "⚠ EMPTY — no code executed. You MUST include code. "
+                                     (if has-reasoning?
+                                       "Respond with code or set final to finish."
+                                       "Respond with thinking + code, or set final to finish.")
+                                     (when last-iter?
+                                       (str "\n[SYSTEM_NUDGE] ‼ THIS IS YOUR LAST ITERATION ‼ "
+                                         "Emit :final NOW or call (request-more-iterations N) — "
+                                         "the loop terminates after this turn.")))]
                         ;; Store empty iteration snapshot
                         (rlm-db/store-iteration! db-info
                           {:query-ref query-ref
@@ -1491,19 +1517,36 @@
                           (inc consecutive-errors)
                           restarts
                           nil -1 next-model next-reasoning))
-                      ;; Normal iteration with executions
-                      (let [exec-feedback (format-executions executions)
-                            iteration-header (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
-                                               "{:requirement " (pr-str (truncate query 200)) "}")
-                            repetition-warning (detect-repetition executions)
-                            remaining-iters (- (effective-max-iterations) (inc iteration))
-                            budget-warning (when (<= remaining-iters 5)
-                                             (str "\n[SYSTEM_NUDGE] Only " remaining-iters " iterations left! "
-                                               "Set final NOW with what you have. DO NOT start new explorations."))
-                            force-final-nudge (when (> iteration 20)
-                                                (str "\n[SYSTEM_NUDGE] You have been running for " (inc iteration) " iterations. "
-                                                  "STOP exploring. Set final IMMEDIATELY with your current findings."))
-                            user-feedback (str iteration-header "\n" exec-feedback repetition-warning budget-warning force-final-nudge)]
+                       ;; Normal iteration with executions
+                       (let [exec-feedback (format-executions executions)
+                             current-max (effective-max-iterations)
+                             iteration-header (str "[Iteration " (inc iteration) "/" current-max "]\n"
+                                                "{:requirement " (pr-str (truncate query 200)) "}")
+                             repetition-warning (detect-repetition executions)
+                             remaining-iters (- current-max (inc iteration))
+                             ;; Budget-warning scales with the current budget (max/3, min 1).
+                             ;; With max=10 → nudge from iter 7 onward. With max=50 → from iter 34.
+                             ;; Keeps the nudge proportional for short budgets AND big ones.
+                             warn-threshold (max 1 (long (/ current-max 3)))
+                             budget-warning (when (and (<= remaining-iters warn-threshold)
+                                                    (pos? remaining-iters))
+                                              (str "\n[SYSTEM_NUDGE] Only " remaining-iters
+                                                " iteration" (when (not= 1 remaining-iters) "s")
+                                                " left! Set final NOW with what you have. "
+                                                "DO NOT start new explorations. "
+                                                "If you genuinely need more, call "
+                                                "(request-more-iterations N) this iteration."))
+                             ;; Last-iteration nudge — unambiguous, no mistaking it for a soft warning.
+                             ;; Fires when this is the FINAL iteration the loop will run (remaining = 0).
+                             last-iteration-nudge (when (zero? remaining-iters)
+                                                    (str "\n[SYSTEM_NUDGE] ‼ THIS IS YOUR LAST ITERATION ‼ "
+                                                      "You MUST set :final on this turn — the loop will terminate "
+                                                      "after this response with no further chances. "
+                                                      "If the answer is genuinely incomplete and more work is required, "
+                                                      "call (request-more-iterations N) NOW to extend the budget; "
+                                                      "otherwise emit :final with your best current answer."))
+                             user-feedback (str iteration-header "\n" exec-feedback
+                                             repetition-warning budget-warning last-iteration-nudge)]
                         (rlm-stage! :iter-end iteration
                           {:blocks (count executions)
                            :errors (count (filter :error executions))

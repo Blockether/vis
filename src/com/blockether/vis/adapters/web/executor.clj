@@ -65,10 +65,23 @@
         (fn [ls]
           (let [conv-state (or (get ls conversation-id) {})
                 iters-so-far (or (:iterations conv-state) [])
+                ;; Defensive: if the terminal done? chunk arrives with a
+                ;; nil/empty payload, keep whatever was already streamed for
+                ;; this iteration. Two layers of protection (the other is in
+                ;; loop/core.clj's iter-on-chunk) — if either one regresses,
+                ;; the UI still shows the reasoning/code it saw mid-stream.
+                existing (get iters-so-far iteration)
+                merged-thinking (if (and (nil? thinking) existing)
+                                  (:thinking existing)
+                                  thinking)
+                merged-executions (let [new-execs (mapv (fn [c] {:code c}) (or code-vec []))]
+                                    (if (and (empty? new-execs) existing)
+                                      (:executions existing)
+                                      new-execs))
                 entry {:iteration iteration
-                       :thinking  thinking
-                       :final?    (boolean final)
-                       :executions (mapv (fn [c] {:code c}) (or code-vec []))}
+                       :thinking  merged-thinking
+                       :final?    (or (boolean final) (:final? existing))
+                       :executions merged-executions}
                 iters' (cond
                          (< iteration (count iters-so-far)) (assoc iters-so-far iteration entry)
                          (= iteration (count iters-so-far)) (conj iters-so-far entry)

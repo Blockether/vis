@@ -75,7 +75,9 @@
                 {:status 200
                  :headers {"Content-Type" "text/html; charset=utf-8"}
                  :body (presentation/page id (web-conversations/conversations-list) (:messages conv) {:offset (or offset presentation/page-size)})}))
-            {:status 302 :headers {"Location" "/"}})))
+            {:status 404
+                 :headers {"Content-Type" "text/html; charset=utf-8"}
+                 :body (presentation/not-found-page)})))
 
       ;; POST /conversations/:id → async query
       (and (= meth :post) (str/starts-with? uri "/conversations/"))

@@ -99,7 +99,7 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
     (merge {:name           agent-name
             :tools          all-tools
             :constants      {}
-            :max-iterations 50
+            :max-iterations core/MAX_ITERATIONS
             :system-prompt  (or (:system-prompt opts) (default-system-prompt))}
       (assoc opts :tools all-tools))))
 
@@ -175,7 +175,7 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
         _         (doseq [[sym value] (:constants agent-def)]
                     (core/register-env-def! env sym value
                       {:doc (str sym)}))
-        iters     (or max-iterations (:max-iterations agent-def) 50)
+        iters     (or max-iterations (:max-iterations agent-def) core/MAX_ITERATIONS)
         mdl       (or model (:model agent-def))
         raw-sys   (or system-prompt (:system-prompt agent-def))
         sys       (str raw-sys (environment-info))
