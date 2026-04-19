@@ -130,7 +130,24 @@
      :validate-input validate-read-input
      :validate-output validate-read-output
      :activation-fn (constantly true)
-     :group "Filesystem" :activation-doc "always active"
+     :group "filesystem" :activation-doc "always active"
      :examples ["(read-file \"/path/to/file.clj\")"
-                "(read-file \"/path/to/file.clj\" 40 30)"]}))
+                "(read-file \"/path/to/file.clj\" 1 500)"]
+     :prompt "Read a file from disk, optionally slicing by line range.
+
+Returns numbered lines formatted `\"1\\t(ns foo)\\n2\\t(:require ...)\"` plus
+a trailing `[lines N-M of TOTAL]` footer. Line numbers are 1-based.
+
+Args: path (string, required), offset (int, optional, default 1),
+limit (int, optional, default: whole file). offset/limit are POSITIONAL —
+passing a map throws. Both must be integers >= 1 when provided.
+
+READ LARGE CHUNKS. Prefer `(read-file path)` or `(read-file path 1 500)`
+over a 30-line window. Re-reading the same file to grow your window is
+wasted work — the file usually fits in context. Use offset+limit only
+when the file is genuinely huge (>10MB) or you need a specific region
+you located earlier (e.g. via grep).
+
+After reading, (def content (read-file ...)) so subsequent iterations
+can reference it without refetching."}))
 

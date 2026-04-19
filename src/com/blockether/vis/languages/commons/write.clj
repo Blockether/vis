@@ -132,7 +132,20 @@
      :validate-output validate-write-output
      :format-result format-write-result
      :activation-fn (constantly true)
-     :group "Filesystem" :activation-doc "always active"
+     :group "filesystem" :activation-doc "always active"
      :examples ["(write-file \"/tmp/notes.txt\" \"hello\\nworld\")"
-                "(write-file \"src/foo.clj\" \"(ns foo)\\n(def x 1)\")"]}))
+                "(write-file \"src/foo.clj\" \"(ns foo)\\n(def x 1)\")"]
+     :prompt "Write a FULL file to disk (creates parent dirs, overwrites existing).
+
+Use this for:
+  - Creating new files from scratch.
+  - Replacing an entire file when most of the content is changing.
+
+DO NOT use this for small, localized edits — reach for `edit-file` instead.
+Rewriting a 500-line file to fix one typo wastes tokens and risks
+clobbering concurrent changes. Rule of thumb: if you'd copy-paste more than
+you'd change, use write-file; otherwise use edit-file.
+
+Args: path (string, required), content (string, required).
+Returns a rendered summary with a preview and a CREATED/MODIFIED badge."}))
 

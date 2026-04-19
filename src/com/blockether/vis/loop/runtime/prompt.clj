@@ -1,9 +1,17 @@
 (ns com.blockether.vis.loop.runtime.prompt
-  "System prompt construction for the RLM iteration loop."
+  "System prompt construction for the RLM iteration loop.
+
+   The system prompt itself is FIXED: MINDSET / SYMBOLIC REASONING / CONTEXT
+   MODEL / ARCH / STEERING / GROUNDING / PERF / CLJ / RESPONSE FORMAT.
+   It contains no tool-specific copy.
+
+   Tool documentation is data-driven via `render-active-tools`: every tool
+   in the registry (plus AMBIENT_TOOL_DEFS) contributes its own `:prompt`
+   block ONLY when its `:activation-fn` returns truthy for the live env.
+   Tool authors own their prompt copy; this namespace just assembles."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.spec :as spec]
-   [com.blockether.vis.loop.storage.db :as rlm-db]
    [com.blockether.vis.loop.storage.schema
     :refer [iteration-spec
             ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING]]
@@ -17,161 +25,227 @@ Pattern: [thing] [action] [reason]. [next step].")
   "Normal English. Clear, direct sentences. No AI filler (no \"As an AI\", \"I believe\",
 \"In conclusion\"). No hedging. Factual. Technical terms exact. Concise but complete. Prefer tables and lists over prose.")
 
-(defn- format-param
-  [{:keys [name type required description default]}]
-  (str "      " name " - " (clojure.core/name (or type :any))
-    (when-not (true? required) " (optional)")
-    (when (some? default) (str ", default: " (pr-str default)))
-    (when description (str " — " description))))
-
-(defn- format-tool-doc
-  [{:keys [type sym doc params returns examples]}]
-  (str "  <" (clojure.core/name type) " name=\"" sym "\">\n"
+(defn- render-constant
+  "Render a single `:type :def` constant registered via register-env-def!.
+   Constants are literal bindings (no activation, no callable), so the
+   block is minimal: symbol + one-line doc + example if provided."
+  [{:keys [sym doc examples]}]
+  (str "  <constant name=\"" sym "\">\n"
     (when doc (str "    " doc "\n"))
-    (when (seq params)
-      (str "    Parameters:\n"
-        (str/join "\n" (map format-param params)) "\n"))
-    (when returns
-      (str "    Returns: " (clojure.core/name (or (:type returns) :any))
-        (when (:description returns) (str " — " (:description returns)))
-        "\n"))
     (when (seq examples)
       (str "    Examples:\n"
         (str/join "\n" (map #(str "      " %) examples)) "\n"))
-    "  </" (clojure.core/name type) ">"))
+    "  </constant>"))
 
-(defn format-custom-docs
-  "Formats custom docs for the system prompt."
+(defn render-constants
+  "Render `:type :def` constants into a <constants> block.
+
+   Tools (`:type :fn`) flow through `render-active-tools` + the `<tools>`
+   block — they carry `:prompt` / activation. This block is reserved for
+   constants registered via `register-env-def!` which don't have
+   activation semantics and aren't callable."
   [custom-docs]
-  (when (seq custom-docs)
-    (str "\n<custom_tools>\n"
-      (str/join "\n" (map format-tool-doc custom-docs))
-      "\n</custom_tools>\n")))
+  (let [defs (filter #(= :def (:type %)) custom-docs)]
+    (when (seq defs)
+      (str "\n<constants>\n"
+        (str/join "\n" (map render-constant defs))
+        "\n</constants>\n"))))
 
-(defn build-document-summary
-  "Builds a compact summary of available documents for the system prompt."
-  [db-info]
-  (when (:datasource db-info)
-    (let [docs (rlm-db/db-list-documents db-info {:include-toc? false})
-          page-counts (when (seq docs)
-                        (into {}
-                          (for [doc docs]
-                            [(:id doc)
-                             (rlm-db/db-count-document-pages db-info (:id doc))])))
-          total-pages (reduce + 0 (vals page-counts))
-          types-map (rlm-db/db-entity-type-counts db-info)
-          total-entities (reduce + 0 (vals types-map))
-          entity-stats {:total total-entities :types types-map}]
-      (when (seq docs)
-        (str (count docs) " documents, " total-pages " pages"
-          (when (pos? total-entities)
-            (str ", " total-entities " entities ("
-              (str/join ", " (map (fn [[t c]] (str (name t) ": " c))
-                               (take 5 (sort-by val > (:types entity-stats)))))
-              ")"))
-          "\nDocuments:\n"
-          (str/join "\n"
-            (map (fn [doc]
-                   (let [id (:id doc)
-                         title (or (:title doc) (:name doc) id)
-                         ext (:extension doc)
-                         pages (get page-counts id 0)]
-                     (str "  [" id "] " title
-                       (when ext (str " (" ext ")"))
-                       ", " pages " pages")))
-              (sort-by :id docs))))))))
+;; =============================================================================
+;; Ambient tool-defs — always active, bound per-query via sci-update-binding!
+;; =============================================================================
+;;
+;; These don't live in `tool-registry-atom` because they're constructed per-query
+;; (e.g. request-more-iterations closes over the per-query max-iterations-atom).
+;; Their prompt-level docs belong in the <tools> block, though, so we carry a
+;; static list of prompt-only tool-defs here and merge it in at render time.
 
-(defn- format-git-context
-  [git-repos]
-  (when (seq git-repos)
-    (let [multi? (> (count git-repos) 1)
-          blocks (for [rm (sort-by :name git-repos)
-                       :let [{:keys [name path head-short branch commits-ingested]} rm]]
-                   (str "
-GIT REPO: " name " (" path ")
-  head: " (or head-short "?") (when branch (str " on " branch)) "
-  commits ingested: " (or commits-ingested 0)))
-          tools (if multi?
-                  "
-Git tools this session — all prefixed `git-`. JGit-side tools auto-dispatch:
-  path-based (git-blame, git-file-history) → pass ABSOLUTE path inside target repo's worktree
-  sha-based  (git-commit-diff) → pass SHA; refs like HEAD are ambiguous, forbidden
-  (git-search-commits {:category :bug :document-id \"<name>\" ...})
-  (git-commit-history {:limit 20 :document-id \"<name>\"})
-  (git-commits-by-ticket \"SVAR-42\")
-  (git-commit-parents \"abc123def456\")
-  (git-file-history \"/abs/path/to/file.clj\" {:n 10})
-  (git-blame \"/abs/path/to/file.clj\" 42 58)
-  (git-commit-diff \"abc123def456\")
-"
-                  "
-Git tools available this session — all prefixed `git-`:
-  (git-search-commits {:category :bug :since \"2025-06-01\" :path \"src/\" ...})
-  (git-commit-history {:limit 20})
-  (git-commits-by-ticket \"SVAR-42\")
-  (git-commit-parents \"HEAD\")
-  (git-file-history \"src/foo.clj\")
-  (git-blame \"src/foo.clj\" 42 58)
-  (git-commit-diff \"HEAD\")
-")]
-      (str (str/join "\n" blocks) "\n" tools))))
+(def ^:private AMBIENT_TOOL_DEFS
+  [{:sym 'sub-rlm-query
+    :group "meta"
+    :arglists '([prompt] [prompt opts])
+    :activation-fn (constantly true)
+    :examples ["(sub-rlm-query \"Summarize src/foo.clj in one sentence\")"
+               "(sub-rlm-query \"cheap lookup\" {:routing {:optimize :cost}})"
+               "(sub-rlm-query \"hard derivation\" {:routing {:optimize :intelligence} :reasoning :deep})"
+               "(sub-rlm-query \"multi-step\" {:max-iter 5})"]
+    :prompt "Spawn a sub-query against a (possibly different) model. Returns a string
+answer synchronously.
 
-(defn- history-decision-block
-  "Builds the \"BEFORE WRITING CODE, DECIDE\" list, including ONLY the tools
-   that are actually active in the current env. If no history tools are
-   active (e.g. a fresh env with no conversation), returns nil so the
-   whole block is elided instead of listing dead tool names."
-  [{:keys [has-conversation?]}]
-  (when has-conversation?
-    (str "\nBEFORE WRITING CODE, DECIDE:
-- Do I need older reasoning from this turn?     → (var-history '*reasoning*) — every iteration's thinking.
-- Do I need results from an earlier iteration?  → (conversation-results [:id query-id]) or check <var_index>.
-- Do I need an earlier QUERY in this convo?     → (conversation-history) then (conversation-code …) or (conversation-results …).
-- Do I need an older *answer*?                  → (var-history '*answer*) — every prior turn's final answer.
-- Do I need a prior value of a var?             → (var-history 'sym) / (var-diff 'sym v1 v2).
-- Do I need to restore a persisted var?         → (restore-var 'sym).
-Don't speculate about past state — pull it. Don't re-derive what you can look up.\n")))
+Args: prompt (string, required), opts (map, optional).
+Opts:
+  :routing   — `{:optimize :cost | :speed | :intelligence}`. Default: same
+               model as the current turn.
+  :reasoning — `:normal | :deep` when the target model supports reasoning.
+  :max-iter  — multi-iteration budget for the sub-query (default 1 — single-shot).
 
-(defn- arch-history-tools-line
-  "The `(var-history 'x) / (var-diff 'x 1 3)` ARCH bullet references tools
-   that only exist when the env has a conversation. Elide when inactive."
-  [{:keys [has-conversation?]}]
-  (when has-conversation?
-    "\n  (var-history 'x) → all versions. (var-diff 'x 1 3) → structural diff (collections only)."))
+Use for: cheap lookups inside a hard turn (`:cost`), isolated hard
+derivations inside an easy turn (`:intelligence :deep`), or farming out
+a sub-problem that doesn't need the full outer context. Do NOT use for
+work that could be done inline with code."}
 
-(defn- concept-navigation-block
-  "Concept-graph navigation tools are only bound when the DB holds
-   extracted concepts. Without concepts, listing them would point at
-   nil bindings and waste tokens."
-  [{:keys [has-concepts? concept-graph-prompt]}]
-  (when has-concepts?
-    (str (when concept-graph-prompt (str "\n" concept-graph-prompt "\n"))
-      "
-Concept navigation (cross-document ontology):
-- (concept-info \"Term\") → definition, aliases, sources (go-to-definition)
-- (remove-concept \"Term\" \"rationale why\") → removes concept (rationale REQUIRED)
-- (edit-concept \"Term\" {:definition \"new def\"}) → updates concept (survives rebuild)
-")))
+   {:sym 'sub-rlm-query-batch
+    :group "meta"
+    :arglists '([items])
+    :activation-fn (constantly true)
+    :examples ["(sub-rlm-query-batch [{:prompt \"q1\"} {:prompt \"q2\"}])"
+               "(sub-rlm-query-batch [{:prompt \"cheap\" :routing {:optimize :cost}} {:prompt \"hard\" :reasoning :deep}])"]
+    :prompt "Run many independent sub-queries in parallel. Takes a vector of
+`{:prompt ... (opts)}` maps, returns a vector of answer strings in the
+same order.
+
+Use when you have independent sub-tasks you'd otherwise fire with
+multiple sub-rlm-query calls. The batch variant parallelizes across
+provider connections."}
+
+   {:sym 'request-more-iterations
+    :group "meta"
+    :arglists '([n])
+    :activation-fn (constantly true)
+    :examples ["(request-more-iterations 10)"
+               "(request-more-iterations 50)"]
+    :prompt "Extend the current turn's iteration budget.
+
+Args: n (positive int) — how many EXTRA iterations to grant. Max 50 per
+request, hard ceiling 500 total. Returns `{:granted k :new-budget M :cap C}`.
+
+Call this AS SOON as you realize the turn needs more steps — don't wait
+for the last iteration; the cap terminates before you get another chance.
+Only extend when you have a concrete plan for the extra turns; don't
+request speculatively. Default budget (10) is plenty for most tasks."}])
+
+;; =============================================================================
+;; Activation-aware tool prompt rendering
+;; =============================================================================
+;;
+;; Every tool can carry a `:prompt` (string or fn of env). When the tool's
+;; activation-fn returns truthy for the current env, its prompt is rendered
+;; into the <tools> block. This replaces the hardcoded per-feature blocks
+;; (git, documents, history, concepts) with data-driven injection:
+;; tool authors own their own prompt copy, and the system prompt just asks
+;; "which tools are active right now?"
+
+(defn- trim-prompt
+  "Trim leading/trailing blanks and collapse >2 consecutive blank lines.
+   Keeps per-tool prompts visually consistent even when authors double-space."
+  [s]
+  (when (string? s)
+    (-> s
+      str/trim
+      (str/replace #"\n{3,}" "\n\n"))))
+
+(defn- resolve-tool-prompt
+  "Resolve (:prompt tool-def) to a trimmed string or nil.
+
+   Accepts either shape so callers can pass raw prompt-only tool-defs
+   (e.g. AMBIENT_TOOL_DEFS) without routing through `make-tool-def`:
+   - string → used as-is.
+   - fn     → invoked with `env`."
+  [env tool-def]
+  (let [p (:prompt tool-def)]
+    (cond
+      (string? p) (trim-prompt p)
+      (fn? p)     (try (trim-prompt (p env)) (catch Throwable _ nil))
+      :else       nil)))
+
+(defn- active-tool?
+  "True when the tool's activation-fn returns truthy for env. Missing
+   activation-fn is treated as always-active (matches make-tool-def default)."
+  [env tool-def]
+  (let [af (:activation-fn tool-def)]
+    (or (nil? af) (boolean (try (af env) (catch Throwable _ false))))))
+
+(defn- format-tool-signature
+  "Render a compact `(sym arg1 arg2)` hint from :arglists. Picks the LONGEST
+   arity so the LLM sees every positional arg (incl. optional trailing ones).
+   `[& args]`-only fns render as `(sym & args)`."
+  [sym arglists]
+  (let [al   (->> arglists (sort-by count >) first)
+        args (when (seq al)
+               (->> al
+                 (map str)
+                 (str/join " ")))]
+    (str "(" sym (when-not (str/blank? args) (str " " args)) ")")))
+
+(defn- render-one-tool
+  "Render a single tool as a <tool> block. `:prompt` carries the rich
+   guidance; `:examples` / signature fall through as auxiliary hints."
+  [env {:keys [sym group examples arglists] :as tool-def}]
+  (let [prompt   (resolve-tool-prompt env tool-def)
+        sig-line (format-tool-signature sym arglists)]
+    (when (or prompt (seq examples))
+      (str "<tool name=\"" sym "\""
+        (when group (str " group=\"" group "\""))
+        ">\n"
+        "  <signature>" sig-line "</signature>\n"
+        (when prompt
+          (str "  <prompt>\n"
+            (->> (str/split-lines prompt)
+              (map #(str "    " %))
+              (str/join "\n"))
+            "\n  </prompt>\n"))
+        (when (seq examples)
+          (str "  <examples>\n"
+            (->> examples
+              (map #(str "    " %))
+              (str/join "\n"))
+            "\n  </examples>\n"))
+        "</tool>"))))
+
+(defn- group-label
+  "Group sort key: missing/blank groups sort to the end under `misc`."
+  [group]
+  (if (str/blank? group) "misc" group))
+
+(defn render-active-tools
+  "Render every tool in `tool-defs` whose activation-fn passes for `env`
+   into a single <tools> block, grouped by :group. Returns nil when no
+   tool is active — the caller should elide the block entirely.
+
+   Preconditions:
+   - `tool-defs` is a seq of canonical tool-defs (each with :sym, :activation-fn,
+     optionally :prompt / :group / :examples / :arglists).
+   - `env` is the live RLM env; :activation-fn and :prompt both receive it."
+  [env tool-defs]
+  (when (seq tool-defs)
+    (let [active  (filter #(active-tool? env %) tool-defs)
+          with-bodies (keep #(when-let [body (render-one-tool env %)]
+                               [(group-label (:group %)) (:sym %) body])
+                        active)]
+      (when (seq with-bodies)
+        (let [by-group (group-by first with-bodies)
+              groups   (sort (keys by-group))]
+          (str "\n<tools>\n"
+            (str/join "\n"
+              (for [g groups
+                    :let [entries (->> (get by-group g)
+                                    (sort-by second)
+                                    (map #(nth % 2)))]]
+                (str "<group name=\"" g "\">\n"
+                  (str/join "\n" entries)
+                  "\n</group>")))
+            "\n</tools>\n"))))))
 
 (defn build-system-prompt
   "Builds the system prompt — compact, token-efficient.
 
-   Every tool reference is ACTIVATION-GATED: if a tool's activation-fn would
-   return false for the current env, the corresponding prompt block is
-   elided. This keeps `build-system-prompt` in lockstep with the per-turn
-   activation check in `runtime.query.core/prepare-query-context`.
+   Tool documentation is fully DATA-DRIVEN: every tool in `:tool-defs`
+   whose `:activation-fn` returns truthy for `:env` contributes its
+   `:prompt` into the rendered `<tools>` block. The system prompt itself
+   carries no tool-specific copy — it's just agent-contract text
+   (MINDSET / CONTEXT / ARCH / CLJ / RESPONSE FORMAT).
 
-   Required opts:
-     :has-documents?    — DB has ≥1 document
-     :has-conversation? — env has a conversation-ref (→ history/restore/var tools)
-     :has-concepts?     — DB has ≥1 concept
-     :git-repos         — non-nil seq means ≥1 repo attached
-
-   Keeping these flags in sync with `register-builtin-tools!` is the one
-   invariant this module depends on."
-  [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary
-           system-prompt git-repos skill-registry concept-graph-prompt
-           has-conversation? has-concepts?]
+   Opts:
+     :env              — live RLM env; required for tool rendering.
+     :tool-defs        — canonical tool-defs from (:tool-registry-atom env).
+     :has-reasoning?   — provider reasoning support (drives iteration-spec).
+     :has-documents?   — drives iteration-spec :sources field.
+     :output-spec      — optional caller-provided output schema.
+     :system-prompt    — optional caller-provided INSTRUCTIONS block.
+     :skill-registry   — skills manifest (still a hardcoded block).
+     :custom-docs      — `:type :def` constants from register-env-def!."
+  [{:keys [output-spec custom-docs has-reasoning? has-documents?
+           system-prompt skill-registry env tool-defs]
     :as opts}]
   (str
     "Clojure SCI agent. Write, exec, iterate.
@@ -186,6 +260,18 @@ MINDSET:
 - Text/Q&A tasks: fetch data with tools, then :final.
 - Asserts: ALWAYS (assert expr \"message\"). Bare asserts = useless errors.
 
+SYMBOLIC REASONING — prefer data and predicates over prose:
+- Model the problem as DATA first: sets, maps, vectors, relations. Prose is a last resort.
+- Def NAMED FACTS as you observe them: (def fact-1 {:file path :line 42 :claim \"grep uses String paths\"}).
+- Grow a fact set incrementally: (def facts (conj (or facts #{}) fact-1 fact-2)).
+- Write PREDICATES instead of narrating. (def valid? (fn [x] (and (map? x) (:path x)))).
+- Verify claims with clojure.core: (every? pred xs), (some pred xs), (= expected actual), (filter pred xs).
+- Use SET OPERATIONS for whole-collection reasoning: clojure.set/intersection, /difference, /union, /select.
+- Use DESTRUCTURING to pattern-match shapes. A mismatch is a fact, not a failure — def it and move on.
+- When stuck, derive the MINIMAL concrete example as data, solve it there, then generalize with (mapv f xs).
+- When a hypothesis fails (assert), FORK: def a new hypothesis, don't re-run the disproved one.
+- When the journal shows a large value, REFERENCE IT BY VAR NAME next iteration — don't re-fetch.
+
 CONTEXT MODEL — the prompt is FIXED size; you PULL what you need:
 - <journal>         — previous iteration's execution results (ONLY the previous one).
 - <var_index>       — every def'd var, including SYSTEM vars (marked `(SYSTEM, …) …` in the doc column).
@@ -194,10 +280,8 @@ CONTEXT MODEL — the prompt is FIXED size; you PULL what you need:
     *query*         current user query (this turn).
     *reasoning*     YOUR thinking from the previous iteration.
     *answer*        final answer from the previous turn in this conversation.
-- Everything older is ON-DEMAND via tools below. Nothing else accumulates.
-"
-    (history-decision-block opts)
-    "
+- Everything older is ON-DEMAND via tools in <tools>. Nothing else accumulates.
+
 ARCH:
 - Single-shot iter. State = def'd vars. <var_index> = vars. <journal> = last iteration's results.
 - Cross-query memory is ONLY def'd vars. Plain final answers do not persist.
@@ -206,9 +290,17 @@ ARCH:
 - VAR REUSE: ALWAYS redef existing vars instead of creating new names for the same concept.
   Check <var_index> first. (def file-list ...) again, NOT (def files ...). Vars show (vN) when updated.
 - STORE RESULTS: Always (def answer-name result) to persist computed answers.
-  Plain :final text does NOT persist across queries. Only def'd vars survive."
-    (arch-history-tools-line opts)
-    "
+  Plain :final text does NOT persist across queries. Only def'd vars survive.
+- BATCH WORK: :code is an array — emit MANY blocks per iteration when work is independent.
+  Prefer one iteration with [(def a ...) (def b ...) (def c ...) (analyze a b c)] over three
+  iterations. Each iteration costs a full round-trip; batching saves tokens and latency.
+  Split into multiple iterations only when later blocks depend on results from earlier ones.
+- READ LARGER: when reading files, pull big chunks, not tiny slices. Prefer (read-file path)
+  or (read-file path {:offset 1 :limit 500}) over 30-line windows. Re-reading the same file
+  to grow your window is wasteful — the file fits in context, just fetch enough the first time.
+- ITERATION BUDGET: default cap is 10 iterations. When the prompt shows a <budget> warning,
+  either finalize with a partial answer or extend via `request-more-iterations` (see <tools>).
+  Don't silently run off the end — that yields an empty bubble.
 - :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
 - VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
   Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
@@ -234,21 +326,9 @@ STEERING (optional :next map for the NEXT turn — omit entirely for the default
   cheapest model'. Keep the pair empty unless you actually want to change something.
 
 GROUNDING:
-- Only tools listed exist. Data in :final MUST come from <journal> or values you explicitly pulled via history/var tools this turn. Never fabricate.
+- Only tools listed in <tools> exist. Data in :final MUST come from <journal>, <var_index>, or
+  values you explicitly pulled via a tool this turn. Never fabricate.
 - :answer-type mustache-text|mustache-markdown → Mustache-rendered. All referenced vars MUST be def'd.
-
-SUB-CALLS:
-- (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).
-- Second arg is an opts map; use it to steer cost/quality per sub-call:
-  (sub-rlm-query \"q\" {:routing {:optimize :cost}}) — cheapest model for trivial lookups
-  (sub-rlm-query \"q\" {:routing {:optimize :speed}}) — fastest model for quick answers
-  (sub-rlm-query \"q\" {:routing {:optimize :intelligence}}) — strongest model for hard reasoning
-  (sub-rlm-query \"q\" {:reasoning :deep}) — enable deep thinking when the root model supports it
-  (sub-rlm-query \"q\" {:max-iter 5}) — multi-iteration sub-query (default 1, single-shot)
-- Default (no opts) uses the same model as the main turn. Only steer when the
-  sub-task clearly differs in difficulty from the outer one — e.g. a one-liner
-  lookup inside a hard reasoning turn is `:cost`; a tricky derivation inside
-  an easy turn is `:intelligence :deep`.
 
 PERF:
 - SCI is FAST. def=100ms, assert=500ms, heavy=2000ms max. No 5000+ budgets.
@@ -263,28 +343,19 @@ CLJ:
 - Quote lists: '(1 2 3). Complete expr per block. No fragments.
 "
     (rlm-skills/skills-manifest-block skill-registry)
-    (format-git-context git-repos)
-    (when (and has-documents? document-summary)
-      (str
-        "
-DOCUMENTS: " document-summary "
-
-Doc tools (2 fns):
-1. (search-documents \"q\") → markdown string
-   (search-documents \"q\" {:in :pages})  — narrow to :pages|:toc|:entities
-   (search-documents \"q\" {:top-k 20 :document-id \"doc-1\"})
-2. (fetch-document-content ref) → full content:
-   [:node/id \"id\"] → page text
-   [:doc/id \"id\"] → vec of ~4K char pages
-   [:toc/id \"id\"] → TOC desc
-   [:id \"id\"] → {:entity {...} :relationships [...]} 
-(def pages (fetch-document-content [:doc/id \"doc-1\"]))
-Search in English. Translate non-EN queries first.
-"))
-    (concept-navigation-block opts)
     (when system-prompt
       (str "\nINSTRUCTIONS:\n" system-prompt "\n"))
-    (format-custom-docs custom-docs)
+    ;; Data-driven tool prompts: every active tool contributes its own
+    ;; :prompt block. Tools whose activation-fn returns false are elided.
+    ;; Ambient tools (`sub-rlm-query`, `request-more-iterations`, ...) are
+    ;; always-on and contributed from AMBIENT_TOOL_DEFS, merged with the
+    ;; registry entries. Dedup by :sym, registry wins (it has the live :fn).
+    (when env
+      (let [by-sym (into {}
+                     (map (fn [t] [(:sym t) t]))
+                     (concat AMBIENT_TOOL_DEFS tool-defs))]
+        (render-active-tools env (vals by-sym))))
+    (render-constants custom-docs)
     (when output-spec
       (str "\nOUTPUT SCHEMA:\n" (spec/spec->prompt output-spec) "\n"))
     "

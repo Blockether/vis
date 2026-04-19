@@ -26,9 +26,9 @@
           [:div.chat-inner
            [:div.not-found
             [:div.not-found-icon [:i {:data-lucide "message-circle-off"}]]
-            [:h2.not-found-title "Conversation not found"]
-            [:p.not-found-body "This conversation may have been deleted or never existed."]
-            [:a.not-found-link {:href "/"} "Go to your latest chat"]]]]]]])))
+            [:h2.not-found-title "This conversation doesn't exist"]
+            [:p.not-found-body "It may have been deleted, or the link might be outdated."]
+            [:a.not-found-link {:href "/"} "Open latest chat"]]]]]]])))
 
 (defn page [current-id conversations messages & [{:keys [offset]}]]
   (str

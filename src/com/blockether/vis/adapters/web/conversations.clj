@@ -16,6 +16,14 @@
 ;; conv-id -> {:current str? :iterations [...]} (streamed by executor)
 (defonce live-status (atom {}))
 
+;; Tracks conversation-ids where we've already ingested git history this
+;; process lifetime. Without this, every page view that missed the messages
+;; cache re-ingested the whole repo — slow on big repos, noisy in logs,
+;; and redundant because `core/ingest-git!` already dedupes by :repo/name
+;; in the DB. This atom just dedupes the WORK (file walking + parsing)
+;; upstream.
+(defonce ^:private git-ingested (atom #{}))
+
 (defn generate-conversation-title
   "Generate a short title (<= 5 words) from the first user message."
   [first-message]
@@ -36,14 +44,22 @@
         first-message))))
 
 (defn- maybe-ingest-git!
-  [env]
-  (let [cwd (System/getProperty "user.dir")]
-    (try
-      (core/ingest-git! env {:repo-path cwd :n 500})
-      (println (str "[web] ingested git history from " cwd))
-      (catch Exception e
-        (println (str "[web] git ingestion skipped (" cwd "): " (ex-message e)))
-        nil))))
+  "Ingest the current project's git history into the conversation's env.
+   No-ops after the first call for a given conversation in this process —
+   the underlying core/ingest-git! dedupes by :repo/name in the DB anyway,
+   but re-walking the repo every page view wastes wall time and fills the
+   log with noise."
+  [env conversation-id]
+  (when-not (contains? @git-ingested conversation-id)
+    (let [cwd (System/getProperty "user.dir")]
+      (try
+        (core/ingest-git! env {:repo-path cwd :n 500})
+        (swap! git-ingested conj conversation-id)
+        (println (str "[web] ingested git history from " cwd
+                   " (conv " (subs (str conversation-id) 0 (min 8 (count (str conversation-id)))) ")"))
+        (catch Exception e
+          (println (str "[web] git ingestion skipped (" cwd "): " (ex-message e)))
+          nil)))))
 
 (defn- safe-read-edn
   "Parse `s` as edn. Returns `fallback` when `s` is blank or unparseable."
@@ -79,18 +95,69 @@
       codes
       (concat results (repeat nil)))))
 
-(defn- iteration-entity->trace-entry [idx iter-entity]
+(defn- type-label
+  "Short human label for a value's type. Mirrors `context-payload`'s
+   cond chain so iteration cards and sidebar cards agree."
+  [value]
+  (cond
+    (nil? value)        "nil"
+    (map? value)        "map"
+    (vector? value)     "vector"
+    (set? value)        "set"
+    (sequential? value) "seq"
+    (string? value)     "string"
+    (integer? value)    "int"
+    (float? value)      "float"
+    (boolean? value)    "bool"
+    (keyword? value)    "keyword"
+    :else (try (.getSimpleName (class value)) (catch Throwable _ "?"))))
+
+(defn- truncate-str
+  "Trim `s` to at most `n` chars, appending `…` on overflow."
+  [s n]
+  (let [s (str s)]
+    (if (> (count s) n) (str (subs s 0 (max 0 (- n 1))) "…") s)))
+
+(defn- value->preview
+  "Render a var's value as a human-friendly preview for the iteration card.
+   Strings pass through raw (newlines preserved); other values pr-str so
+   maps/vecs/seqs are readable. Truncated at 400 chars — the CSS gives the
+   preview cell max-height with scroll, so we can afford a roomier window."
+  [value]
+  (let [raw (cond
+              (string? value) value
+              :else           (pr-str value))]
+    (truncate-str raw 400)))
+
+(defn- iteration-entity->vars
+  "Project the vars written in this iteration into a compact table shape
+   the frontend can render without re-parsing values."
+  [db-info iter-entity]
+  (try
+    (let [rows (rlm-db/db-list-iteration-vars db-info [:id (:id iter-entity)])]
+      (into []
+        (keep (fn [{:keys [name value code]}]
+                (when name
+                  {:name    name
+                   :type    (type-label value)
+                   :preview (value->preview value)
+                   :code    code})))
+        rows))
+    (catch Exception _ [])))
+
+(defn- iteration-entity->trace-entry [db-info idx iter-entity]
   (let [err (some-> (:error iter-entity) (safe-read-edn nil))]
     (cond-> {:iteration  idx
              :thinking   (:thinking iter-entity)
-             :executions (iteration-entity->exec iter-entity)}
+             :executions (iteration-entity->exec iter-entity)
+             :vars       (iteration-entity->vars db-info iter-entity)}
       (some? (:answer iter-entity)) (assoc :final? true)
       err (assoc :error err))))
 
 (defn- query-entity->message-pair [db-info query-entity]
   (let [query-ref   [:id (:id query-entity)]
         iterations  (rlm-db/db-list-query-iterations db-info query-ref)
-        trace       (vec (map-indexed iteration-entity->trace-entry iterations))
+        trace       (vec (map-indexed #(iteration-entity->trace-entry db-info %1 %2) iterations))
         final-iter  (last (filter :answer iterations))
         answer      (or (some-> final-iter   :answer read-answer)
                       (some-> query-entity :answer read-answer))
@@ -106,12 +173,17 @@
                         (cond-> {}
                           total-cost (assoc :total-cost total-cost)
                           model      (assoc :model      model))))
+        status      (:status query-entity)
         result-map  (cond-> {:trace       trace
                              :iterations  (count iterations)
                              :duration-ms (:duration-ms query-entity)}
                       answer (assoc :answer answer)
                       tokens (assoc :tokens tokens)
-                      cost   (assoc :cost   cost))]
+                      cost   (assoc :cost   cost)
+                      ;; Forward non-:success statuses so the UI can badge
+                      ;; max-iterations / error-budget-exhausted turns.
+                      (and status (not= status :success))
+                      (assoc :status status))]
     [{:role :user :text (or (:text query-entity) "")}
      {:role :assistant
       :text (when (string? answer) answer)
@@ -131,7 +203,7 @@
   [conversation-id]
   (or (get @messages-cache conversation-id)
     (let [env  (conversations/env-for conversation-id)
-          _    (maybe-ingest-git! env)
+          _    (maybe-ingest-git! env conversation-id)
           msgs (load-messages-from-db env)]
       (swap! messages-cache
         (fn [m]
@@ -163,7 +235,8 @@
   [conversation-id]
   (conversations/delete! conversation-id)
   (swap! messages-cache dissoc conversation-id)
-  (swap! live-status dissoc conversation-id))
+  (swap! live-status dissoc conversation-id)
+  (swap! git-ingested disj conversation-id))
 
 (defn conversations-list
   []
@@ -173,6 +246,20 @@
 (defn set-conversation-title!
   [conversation-id title]
   (conversations/set-title! conversation-id title))
+
+(defn- var-version-entries
+  "Fetch every historical write of `sym` in this conversation, oldest → newest,
+   shaped for the sidebar. Preview uses 200 chars to match the flat-list limit."
+  [db-info conv-ref sym]
+  (try
+    (->> (rlm-db/db-var-history db-info conv-ref sym)
+      (mapv (fn [{:keys [version value code created-at]}]
+              {:version    version
+               :type       (type-label value)
+               :preview    (truncate-str (pr-str value) 200)
+               :code       code
+               :created-at (str created-at)})))
+    (catch Exception _ [])))
 
 (defn context-payload
   [conversation-id]
@@ -186,22 +273,13 @@
           vars         (when (seq var-registry)
                          (->> var-registry
                            (sort-by first)
-                           (mapv (fn [[sym {:keys [value code]}]]
-                                   (let [s (pr-str value)]
-                                     {:name  (str sym)
-                                      :value (if (> (count s) 200) (str (subs s 0 197) "...") s)
-                                      :code  code
-                                      :type  (cond
-                                               (nil? value) "nil"
-                                               (map? value) "map"
-                                               (vector? value) "vector"
-                                               (set? value) "set"
-                                               (sequential? value) "seq"
-                                               (string? value) "string"
-                                               (integer? value) "int"
-                                               (float? value) "float"
-                                               (boolean? value) "bool"
-                                               (keyword? value) "keyword"
-                                               :else (.getSimpleName (class value)))})))))]
+                           (mapv (fn [[sym {:keys [value code version]}]]
+                                   (let [versions (var-version-entries db-info conv-ref sym)]
+                                     {:name     (str sym)
+                                      :value    (truncate-str (pr-str value) 200)
+                                      :code     code
+                                      :type     (type-label value)
+                                      :version  (or version (count versions))
+                                      :versions versions})))))]
       (cond-> {:context [] :learnings []}
         (seq vars) (assoc :variables vars)))))

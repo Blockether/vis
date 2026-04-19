@@ -412,40 +412,104 @@
             fetch-fn  (sci-tools/make-fetch-document-content-fn db-info)]
         (register! 'search-documents search-fn
           {:doc "(search-documents \"query\") or (search-documents \"query\" {:in :pages :top-k 20})"
-           :group "Documents" :activation-doc "no documents ingested"
-           :activation-fn has-docs?})
+           :group "documents" :activation-doc "no documents ingested"
+           :activation-fn has-docs?
+           :examples ["(search-documents \"neural network\")"
+                      "(search-documents \"RLHF\" {:in :pages :top-k 20})"
+                      "(search-documents \"alignment\" {:document-id \"doc-1\"})"]
+           :prompt (fn [env]
+                     (str "Full-text search across ingested documents. First stop for \"what do my docs say about X?\".\n"
+                       "\n"
+                       "Args: query (string, required), opts (map, optional).\n"
+                       "Opts:\n"
+                       "  :in           — narrow scope: :pages | :toc | :entities (default: all).\n"
+                       "  :top-k        — max hits (default: 10).\n"
+                       "  :document-id  — restrict to one document by its :doc/id.\n"
+                       "\n"
+                       "Returns a markdown-formatted list of hits with ids suitable for\n"
+                       "fetch-document-content. Search in English — translate non-EN queries first.\n"
+                       "\n"
+                       (let [n (try (count (db/db-list-documents (:db-info env))) (catch Throwable _ 0))]
+                         (str "Currently " n " document" (when (not= 1 n) "s") " ingested."))))})
         (register! 'fetch-document-content fetch-fn
           {:doc "(fetch-document-content [:node/id \"id\"]) or [:doc/id \"id\"] or [:toc/id \"id\"]"
-           :group "Documents" :activation-doc "no documents ingested"
-           :activation-fn has-docs?})
+           :group "documents" :activation-doc "no documents ingested"
+           :activation-fn has-docs?
+           :examples ["(fetch-document-content [:node/id \"page-42\"])"
+                      "(fetch-document-content [:doc/id \"doc-1\"])"
+                      "(fetch-document-content [:toc/id \"toc-3\"])"]
+           :prompt "Fetch the raw content behind a search hit. Use after `search-documents`
+to pull the full text of a promising page.
+
+Takes one positional `ref` argument — a 2-vector identifying what to load:
+  [:node/id \"id\"] → full page text as a single string.
+  [:doc/id \"id\"]  → vector of ~4K-char pages (whole document).
+  [:toc/id \"id\"]  → TOC description for that section.
+  [:id \"id\"]       → generic entity: {:entity {...} :relationships [...]}.
+
+Common pattern: (def pages (fetch-document-content [:doc/id \"doc-1\"])) then
+slice/iterate `pages` on subsequent iterations."})
         (register! 'search-batch
           (fn search-batch
             ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
             ([queries opts] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries opts)))))
           {:doc "(search-batch [\"q1\" \"q2\"]) — batch search across pages and TOC"
-           :group "Documents" :activation-doc "no documents ingested"
-           :activation-fn has-docs?})))
+           :group "documents" :activation-doc "no documents ingested"
+           :activation-fn has-docs?
+           :examples ["(search-batch [\"neural\" \"RLHF\" \"alignment\"])"
+                      "(search-batch [\"q1\" \"q2\"] {:top-k-per-query 5})"]
+           :prompt "Batch variant of search-documents: run multiple queries in one call.
+
+Takes a vector of query strings and returns a merged, deduplicated hit list.
+Prefer batch when the task wants evidence across several terms — saves
+round-trips. Use search-documents for a single term."})))
     ;; --- Conversation history tools (active when conversation exists) ---
     (when has-conv?
       (let [has-history? (fn [env] (boolean (:conversation-ref env)))]
         (register! 'conversation-history
           (sci-tools/make-conversation-history-fn db-info conversation-ref)
           {:doc "(conversation-history) or (conversation-history n) — prior query summaries"
-           :group "Conversation" :activation-doc "no active conversation"
+           :group "conversation" :activation-doc "no active conversation"
            :activation-fn has-history?
-           :format-result fmt/format-conversation-history})
+           :examples ["(conversation-history)"
+                      "(conversation-history 5)"]
+           :format-result fmt/format-conversation-history
+           :prompt "Summaries of PREVIOUS user queries in this conversation (this turn not included).
+Use when the current <journal> can't answer because the answer came from
+a prior turn. Without args, returns all prior turns; with n, only the last n.
+
+Each summary includes the query text, a short answer preview, iteration
+count, and the key vars that got def'd. Use this to decide whether to
+call conversation-code / conversation-results / restore-var for details."})
         (register! 'conversation-code
           (sci-tools/make-conversation-code-fn db-info conversation-ref)
           {:doc "(conversation-code query-selector) — prior query code blocks"
-           :group "Conversation" :activation-doc "no active conversation"
+           :group "conversation" :activation-doc "no active conversation"
            :activation-fn has-history?
-           :format-result fmt/format-conversation-code})
+           :examples ["(conversation-code :last)"
+                      "(conversation-code {:index 0})"]
+           :format-result fmt/format-conversation-code
+           :prompt "Fetch the CODE BLOCKS executed in a previous turn. Takes a selector:
+  :last            — most recent prior turn.
+  {:index N}       — zero-based index into conversation-history.
+  {:query-id \"id\"} — specific query entity id.
+
+Use when you need to see HOW a previous answer was computed so you can
+extend or fix it. Pair with conversation-results for the values."})
         (register! 'conversation-results
           (sci-tools/make-conversation-results-fn db-info conversation-ref)
           {:doc "(conversation-results query-selector) — prior query results"
-           :group "Conversation" :activation-doc "no active conversation"
+           :group "conversation" :activation-doc "no active conversation"
            :activation-fn has-history?
-           :format-result fmt/format-conversation-results})))
+           :examples ["(conversation-results :last)"
+                      "(conversation-results {:index 1})"]
+           :format-result fmt/format-conversation-results
+           :prompt "Fetch the VALUES produced by a previous turn's iterations. Same selector
+grammar as conversation-code: `:last | {:index N} | {:query-id \"id\"}`.
+
+Prefer var-history / restore-var when you just need one var — they're
+more direct. conversation-results is for \"show me everything that turn
+computed\" diagnostics."})))
     ;; --- Restore tools (active when conversation has prior queries) ---
     ;; Special: restore-var also rebinds the value into the SCI sandbox.
     (when has-conv?
@@ -471,25 +535,57 @@
                         (boolean (:conversation-ref env)))]
         (register! 'restore-var binding-restore-var
           {:doc "(restore-var 'sym) — fetch + rebind persisted var from prior iterations"
-           :group "Conversation" :activation-doc "no persisted vars from prior queries"
-           :activation-fn has-vars?})
+           :group "conversation" :activation-doc "no persisted vars from prior queries"
+           :activation-fn has-vars?
+           :examples ["(restore-var 'docs)"
+                      "(restore-var 'docs {:version 2})"]
+           :prompt "Pull a var from an earlier turn INTO the current SCI sandbox.
+
+Takes a quoted symbol. Rebinds the var to its latest value so subsequent
+iterations can reference it without a fresh compute. With {:version N},
+restores a specific historical version (see var-history for the list).
+
+Use when the current task builds on something a previous turn def'd.
+Cheaper than recomputing; exact, not summarized."})
         (register! 'restore-vars binding-restore-vars
           {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
-           :group "Conversation" :activation-doc "no persisted vars from prior queries"
+           :group "conversation" :activation-doc "no persisted vars from prior queries"
            :activation-fn has-vars?
-           :format-result fmt/format-restore-vars})
+           :examples ["(restore-vars ['docs 'hits 'analysis])"
+                      "(restore-vars ['x 'y] {:version 1})"]
+           :format-result fmt/format-restore-vars
+           :prompt "Batch restore of multiple vars in one call. Returns a map of
+`sym → value` (or `sym → {:error ...}` for missing vars).
+
+Prefer this over many `restore-var` calls when you know upfront what you need."})
         (register! 'var-history
           (sci-tools/make-var-history-fn db-info conversation-ref)
           {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}"
-           :group "Conversation" :activation-doc "no persisted vars from prior queries"
+           :group "conversation" :activation-doc "no persisted vars from prior queries"
            :activation-fn has-vars?
-           :format-result fmt/format-var-history})
+           :examples ["(var-history 'hits)"
+                      "(var-history '*reasoning*)"]
+           :format-result fmt/format-var-history
+           :prompt "List every version of a var across this conversation, oldest first.
+
+Each entry: {:version N :value <pr-str'd> :code <source> :created-at <ts>}.
+Use before restore-var when you need a specific historical version, or
+to audit how a value evolved (e.g. `*reasoning*` across iterations)."})
         (register! 'var-diff
           (sci-tools/make-var-diff-fn db-info conversation-ref)
           {:doc "(var-diff 'sym 1 3) — structural diff between two versions. Returns {:edits [...] :edit-count N}"
-           :group "Conversation" :activation-doc "no persisted vars from prior queries"
+           :group "conversation" :activation-doc "no persisted vars from prior queries"
            :activation-fn has-vars?
-           :format-result fmt/format-var-diff})))
+           :examples ["(var-diff 'state 1 3)"
+                      "(var-diff 'plan :prev :latest)"]
+           :format-result fmt/format-var-diff
+           :prompt "Structural diff between two versions of a var.
+
+Args: sym (quoted), v-old, v-new — version numbers OR `:prev` / `:latest`.
+Returns `{:edits [...] :edit-count N}` describing every path that changed.
+
+Use to answer \"what changed between iter X and Y?\" without re-reading
+two giant values. Cheap on big maps/vecs."})))
     ;; --- Git tools (active when repos are attached) ---
     (when has-db?
       (let [has-repos?    (fn [env] (boolean (seq (db/db-list-repos (:db-info env)))))
@@ -505,12 +601,57 @@
                               git-file-history     fmt/format-commit-list
                               git-commit-parents   fmt/format-commit-parents
                               git-blame            fmt/format-blame
-                              nil))]
+                              nil))
+            ;; Each git tool carries its own short prompt AND a header line
+            ;; listing currently-attached repos so the LLM knows which repo
+            ;; names / paths to pass as the optional `opts`.
+            repo-summary-fn (fn [env]
+                              (let [repos (try (db/db-list-repos (:db-info env))
+                                            (catch Throwable _ []))]
+                                (if (seq repos)
+                                  (str "Attached repo"
+                                    (when (not= 1 (count repos)) "s") ":\n"
+                                    (->> repos
+                                      (map (fn [{:keys [name path branch head-short commits-ingested]}]
+                                             (str "  - " name " (" branch " @ " head-short
+                                               ", " commits-ingested " commits) "
+                                               "at " path)))
+                                      (str/join "\n")))
+                                  "No repos attached right now.")))
+            tool-prompts {'git-search-commits
+                          "Full-text search across commit messages. Returns a commit list.
+Prefer ONE search with an alternation (`\"HITL|approval|confirm\"`) over
+multiple searches. Use `:author`, `:since`, `:until` opts to narrow."
+                          'git-commit-history
+                          "Linear commit history for a repo (or a path within it). Without args,
+returns recent commits on current branch; `{:path \"src/foo.clj\" :n 20}`
+narrows to a file."
+                          'git-commits-by-ticket
+                          "Find every commit mentioning a ticket id / key. Useful when the user
+references JIRA/issue numbers and you want the related history."
+                          'git-commit-parents
+                          "Parents of a given commit (by SHA or short SHA). Essential for
+reasoning about merges — a merge commit has 2+ parents."
+                          'git-file-history
+                          "History of commits touching a specific file path. Pair with git-blame
+for \"when and why did this line appear?\" investigations."
+                          'git-blame
+                          "Line-by-line authorship for a file at a given range. Args: path,
+from-line, to-line. Use to answer \"who last touched line N?\"."
+                          'git-commit-diff
+                          "Full diff for a single commit. Args: SHA (or short SHA). Returns
+patch text; parse or scan it for the relevant hunks."}]
         (doseq [[sym f] git-binds]
           (register! sym f
             (cond-> {:doc (str "(" sym " ...) — git tool")
-                     :group "Git" :activation-doc "no git repos attached"
-                     :activation-fn has-repos?}
+                     :group "git" :activation-doc "no git repos attached"
+                     :activation-fn has-repos?
+                     :prompt (fn [env]
+                               (str (get tool-prompts sym "Git tool.")
+                                 "\n\n"
+                                 (repo-summary-fn env)
+                                 "\n\n"
+                                 "NOTE: repo paths must be ABSOLUTE strings in any :path opt."))}
               (git-formatter sym) (assoc :format-result (git-formatter sym)))))))
     ;; --- Concept tools (active when concepts exist — cross-conversation) ---
     (when has-db?
@@ -521,12 +662,33 @@
                                   concept-info    fmt/format-concept-info
                                   remove-concept  fmt/format-concept-mutation
                                   edit-concept    fmt/format-concept-mutation
-                                  nil))]
+                                  nil))
+            concept-prompts {'concept-info
+                             "Inspect a concept in the cross-conversation ontology.
+
+Args: term (string OR keyword) or `{:id \"concept-id\"}`. Returns the
+definition, aliases, related concepts, and source references.
+
+Use this when the user mentions a term and you want the project's shared
+understanding of it rather than your own guess."
+                             'remove-concept
+                             "Mark a concept as removed from the ontology (soft delete).
+
+Args: `{:id \"concept-id\"}`. Use when a concept is obsolete or was
+incorrectly extracted. Does not drop the row — sets `status = removed`."
+                             'edit-concept
+                             "Update a concept's definition / aliases / relationships.
+
+Args: `{:id \"concept-id\" :definition \"...\" :aliases [...] :group \"...\"}`.
+Only provided fields are updated. Use to refine a concept based on new
+information."}]
         (doseq [[sym f] concept-binds]
           (register! sym f
             (cond-> {:doc (str "(" sym " ...) — concept graph tool")
-                     :group "Concepts" :activation-doc "no concepts extracted yet"
-                     :activation-fn has-concepts?}
+                     :group "concepts" :activation-doc "no concepts extracted yet"
+                     :activation-fn has-concepts?
+                     :prompt (or (get concept-prompts sym)
+                               "Concept graph tool.")}
               (concept-formatter sym) (assoc :format-result (concept-formatter sym)))))))
     ;; Update initial-ns-keys so get-locals excludes built-in tools
     (when sci-ctx

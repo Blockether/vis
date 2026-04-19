@@ -204,7 +204,23 @@
      :validate-output validate-list-output
      :format-result format-list-result
      :activation-fn (constantly true)
-     :group "Filesystem" :activation-doc "always active"
+     :group "filesystem" :activation-doc "always active"
      :examples ["(list-dir \"src\")"
-                "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"]}))
+                "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"]
+     :prompt "List files and subdirectories under a path, with optional glob filter.
+
+Args: path (string, required), opts (map, optional).
+Opts:
+  :glob              — recursive glob like \"**/*.clj\" (matches nested files).
+                       Omit for a single-level listing.
+  :depth             — max recursion depth when using :glob (default: unbounded).
+  :limit             — hard cap on entries returned (default: 500).
+  :include-hidden?   — include dotfiles (default: false).
+
+Returns lines with file type + size + name. Use for:
+  - \"What's in this project?\" before read-file.
+  - Scoping a grep: list-dir first to confirm paths exist.
+  - Counting files matching a pattern before batch-processing.
+
+Prefer a single call with a precise :glob over many separate list-dir calls."}))
 
