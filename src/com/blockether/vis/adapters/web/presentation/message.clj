@@ -65,32 +65,46 @@
               (string? clean) clean
               :else [:pre.exec-data (pr-str clean)])])]))))
 
-(defn- normalize-thinking
-  "Trim + collapse runs of 3+ newlines down to a single paragraph break so
-   marked.js doesn't stretch reasoning over huge vertical gaps."
-  [s]
-  (some-> s str/trim (str/replace #"\n{3,}" "\n\n")))
+(defn- render-vars-table
+  "Portal-style compact table listing vars (re)defined in this iteration.
+   Columns: name · type · preview. Skipped when no vars were written."
+  [vars]
+  (when (seq vars)
+    [:table.var-table
+     [:thead
+      [:tr
+       [:th.var-th-name "var"]
+       [:th.var-th-type "type"]
+       [:th.var-th-preview "preview"]]]
+     [:tbody
+      (for [{:keys [name type preview]} vars]
+        [:tr.var-row
+         [:td.var-td-name [:code name]]
+         [:td.var-td-type [:span.var-type-chip type]]
+         [:td.var-td-preview [:code preview]]])]]))
 
-(defn- render-iteration [{:keys [iteration thinking executions final? error]}]
-  (let [thinking      (normalize-thinking thinking)
-        has-thinking? (not (str/blank? thinking))
-        has-execs?    (seq executions)]
-    (cond
-      ;; Final iteration: only surface its thinking (answer renders separately).
-      ;; Skip entirely when there's nothing to show.
-      final?
-      (when has-thinking?
-        [:div.iteration.iteration-thinking-only
-         [:div.thinking.md-content thinking]])
+(defn- render-iteration
+  "Render one iteration row.
 
-      ;; Non-final iteration: header + optional thinking/executions/error.
-      ;; Skip entirely when the iteration produced nothing we care to show.
-      (not (or has-thinking? has-execs? error))
-      nil
+   Distilled to essentials: ITER N header + optional status badge +
+   code/result rows per execution + var writes table + error banner.
 
-      :else
-      [:div.iteration {:class (when error "iteration-error")}
-       [:div.iter-header (str "Iteration " (inc iteration))
+   The LLM's `:thinking` narrative is intentionally NOT shown — it used to
+   render as a \"Thinking\"-labeled callout that felt like the system prompt
+   was drifting turn-to-turn. The main chat now shows only WHAT the model
+   did (code) and WHAT came back (result). The full thinking log still lives
+   in the query entity tree for anyone who wants to dig."
+  [{:keys [iteration executions final? error vars]}]
+  (let [has-execs? (seq executions)
+        has-vars?  (seq vars)]
+    (when (or has-execs? error has-vars?)
+      [:div.iteration {:class (str/join " "
+                                (cond-> []
+                                  error (conj "iteration-error")
+                                  final? (conj "iteration-final-ok")))}
+       [:div.iter-header
+        (str "Iteration " (inc iteration))
+        (when final? [:span.iter-final-tag " FINAL"])
         (when error [:span.iter-error-tag " ERROR"])]
        (when error
          (let [{:keys [message type class data cause stack]} error]
@@ -112,33 +126,85 @@
               [:details.iter-error-details
                [:summary "stack"]
                [:pre.iter-error-data (str/join "\n" stack)]])]))
-       (when has-thinking?
-         [:div.thinking.md-content thinking])
-       (when has-execs? (keep render-exec executions))])))
+       (when has-execs? (keep render-exec executions))
+       (render-vars-table vars)])))
+
+(defn- has-final-answer?
+  "True when the result has a non-blank :answer AND a :final? iteration
+   exists in the trace. Triggers the collapsed-trace presentation."
+  [{:keys [trace answer]}]
+  (and (some :final? trace)
+    (let [v (if (map? answer) (:result answer) answer)
+          s (cond (string? v) v
+                  (nil? v)    ""
+                  :else       (pr-str v))]
+      (not (str/blank? s)))))
+
+(defn- trace-summary-label
+  "Short `N steps · M tool calls` label for the collapsed reasoning toggle."
+  [trace]
+  (let [steps (count (remove :final? trace))
+        calls (reduce + 0 (map (fn [t] (count (:executions t))) trace))]
+    (str steps " step" (when (not= 1 steps) "s")
+      (when (pos? calls)
+        (str " · " calls " tool call" (when (not= 1 calls) "s"))))))
+
+(defn- status-banner
+  "Visible banner when a turn ended on a non-:success status. Without this,
+   :max-iterations / :error-budget-exhausted turns rendered as normal
+   answers and the user had no idea the agent gave up."
+  [status]
+  (case status
+    :max-iterations
+    [:div.status-banner.status-warn
+     [:i {:data-lucide "alert-triangle"}]
+     [:span "Agent stopped at the iteration limit without finalizing. The answer below is a partial summary."]]
+    :error-budget-exhausted
+    [:div.status-banner.status-err
+     [:i {:data-lucide "octagon-alert"}]
+     [:span "Agent gave up after repeated errors. The answer below lists the recent failures."]]
+    :cancelled
+    [:div.status-banner
+     [:i {:data-lucide "circle-stop"}]
+     [:span "Turn cancelled."]]
+    nil))
 
 (defn render-msg [_idx {:keys [role text result]}]
   (case role
     :user [:div.msg.user-msg [:div.bubble.user-bubble [:span text]]]
     :assistant
-    [:div.msg.ai-msg
-     [:div.bubble.ai-bubble
-      (when-let [trace (:trace result)]
-        (map render-iteration trace))
-      (when-let [a (:answer result)]
-        (let [v (if (map? a) (:result a) a)
-              raw (cond (string? v)     v
-                    (sequential? v) (str/join "\n" (map str v))
-                    :else           (pr-str v))
-              cleaned (-> raw str/trim (str/replace #"\n{3,}" "\n\n"))]
-          (when-not (str/blank? cleaned)
-            [:div.answer.md-content cleaned])))
-      (let [{:keys [iterations duration-ms tokens cost]} result]
-        [:div.meta
-         (str/join " · "
-           (cond-> []
-             (:model cost) (conj (:model cost))
-             iterations (conj (str iterations " iter"))
-             duration-ms (conj (fmt-dur duration-ms))
-             (:input tokens) (conj (str (:input tokens) "↓ " (:output tokens) "↑"))
-             (:total-cost cost) (conj (String/format Locale/US "$%.4f"
-                                        (into-array Object [(double (:total-cost cost))])))))])]]))
+    (let [trace        (:trace result)
+          final-ready? (has-final-answer? result)]
+      [:div.msg.ai-msg
+       [:div.bubble.ai-bubble
+        (status-banner (:status result))
+        ;; Reasoning trace — collapsed by default when a final answer exists,
+        ;; so the user sees the answer first and can expand to inspect steps.
+        (when (seq trace)
+          (if final-ready?
+            [:details.trace-details
+             [:summary.trace-summary
+              [:i {:data-lucide "chevron-right"}]
+              [:span.trace-summary-label
+               (str "Reasoning — " (trace-summary-label trace))]]
+             [:div.trace-body (map render-iteration trace)]]
+            (map render-iteration trace)))
+        ;; Final answer — unchanged prose rendering path.
+        (when-let [a (:answer result)]
+          (let [v (if (map? a) (:result a) a)
+                raw (cond (string? v)     v
+                      (sequential? v) (str/join "\n" (map str v))
+                      :else           (pr-str v))
+                cleaned (-> raw str/trim (str/replace #"\n{3,}" "\n\n"))]
+            (when-not (str/blank? cleaned)
+              [:div.answer.md-content cleaned])))
+        (let [{:keys [iterations duration-ms tokens cost]} result]
+          [:div.meta
+           (str/join " · "
+             (cond-> []
+               (:model cost) (conj (:model cost))
+               iterations (conj (str iterations " iter"))
+               duration-ms (conj (fmt-dur duration-ms))
+               (:input tokens) (conj (str (:input tokens) "↓ " (:output tokens) "↑"))
+               (:total-cost cost) (conj (String/format Locale/US "$%.4f"
+                                          (into-array Object [(double (:total-cost cost))])))))])]])))

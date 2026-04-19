@@ -94,8 +94,6 @@ function extractTraceText(bubble) {
   bubble.querySelectorAll('.iteration').forEach(function(it) {
     var h = it.querySelector('.iter-header');
     if (h) text += h.textContent + '\n';
-    var t = it.querySelector('.thinking');
-    if (t) text += 'Thinking: ' + t.textContent + '\n';
     it.querySelectorAll('.exec,.exec-final').forEach(function(ex) {
       var c = ex.querySelector('.exec-code');
       if (c) text += '> ' + c.textContent + '\n';
@@ -245,7 +243,7 @@ function copySelected() {
         var clone = bubble.cloneNode(true);
         var meta = clone.querySelector('.meta');
         if (meta) meta.remove();
-        clone.querySelectorAll('.iter-header,.thinking').forEach(function(el) { el.remove(); });
+        clone.querySelectorAll('.iter-header').forEach(function(el) { el.remove(); });
         var answer = clone.querySelector('.answer');
         var text = answer ? answer.textContent.trim() : clone.textContent.trim();
         texts.push(prefix + text);
@@ -303,26 +301,89 @@ function showContext() {
         });
         html += '</div>';
       }
-      // Variables section
+      // Variables section — Portal-style var list; click to inspect versions
       if (data.variables && data.variables.length > 0) {
+        window.__varIndex = {};
+        data.variables.forEach(function(v) { window.__varIndex[v.name] = v; });
         html += '<div class="ctx-section">';
         html += '<div class="ctx-section-header"><i data-lucide="variable"></i> Variables <span class="ctx-count">' + data.variables.length + '</span></div>';
         data.variables.forEach(function(v) {
-          html += '<div class="ctx-card ctx-var">';
+          var versionCount = (v.versions && v.versions.length) || v.version || 1;
+          html += '<div class="ctx-card ctx-var" onclick="openVarHistory(\'' + escHtml(v.name) + '\')">';
+          html += '<div class="ctx-var-header">';
           html += '<span class="ctx-var-name">' + escHtml(v.name) + '</span>';
-          html += '<span class="ctx-var-value">' + escHtml(v.value.substring(0, 200)) + (v.value.length > 200 ? '...' : '') + '</span>';
+          html += '<span class="ctx-var-type">' + escHtml(v.type || '?') + '</span>';
+          if (versionCount > 1) {
+            html += '<span class="ctx-var-versions">v' + versionCount + '</span>';
+          }
+          html += '</div>';
+          html += '<span class="ctx-var-value">' + escHtml((v.value || '').substring(0, 200)) + ((v.value || '').length > 200 ? '…' : '') + '</span>';
           html += '</div>';
         });
         html += '</div>';
       }
-      if (!html) html = '<div class="ctx-empty">Empty. The agent will populate this as it works.</div>';
+      if (!html) html = '<div class="ctx-empty">Nothing here yet. Variables and notes will appear as the agent works.</div>';
       if (typeof lucide !== 'undefined') setTimeout(function() { lucide.createIcons(); }, 50);
       document.getElementById('sidebar-content').innerHTML = html;
     })
     .catch(function() { showToast('Failed to load context'); });
 }
 
+function openVarHistory(varName) {
+  var v = (window.__varIndex || {})[varName];
+  if (!v) return;
+  var sidebar = document.getElementById('context-sidebar');
+  if (!sidebar) return;
+  var panel = document.getElementById('var-history-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'var-history-panel';
+    panel.className = 'var-history-panel';
+    sidebar.appendChild(panel);
+  }
+  var versions = (v.versions && v.versions.length) ? v.versions.slice() : [{
+    version: 1, type: v.type, preview: v.value, code: v.code, 'created-at': ''
+  }];
+  // Newest first in UI.
+  versions.reverse();
+  var latestVersion = versions[0] && versions[0].version;
+  var html = '';
+  html += '<div class="var-history-header">';
+  html += '<button class="var-history-back" onclick="closeVarHistory()" title="Back to variables"><i data-lucide="arrow-left"></i></button>';
+  html += '<span class="var-history-title">' + escHtml(v.name) + '</span>';
+  html += '<span class="var-history-count">' + versions.length + ' version' + (versions.length === 1 ? '' : 's') + '</span>';
+  html += '</div>';
+  html += '<div class="var-history-body">';
+  versions.forEach(function(ver) {
+    var isLatest = ver.version === latestVersion;
+    html += '<div class="var-version' + (isLatest ? ' var-version-latest' : '') + '">';
+    html += '<div class="var-version-header">';
+    html += '<span class="var-version-badge">v' + ver.version + (isLatest ? ' · latest' : '') + '</span>';
+    html += '<span class="var-version-time">' + escHtml(ver['created-at'] || '') + '</span>';
+    if (ver.type) html += '<span class="var-version-type">' + escHtml(ver.type) + '</span>';
+    html += '</div>';
+    html += '<div class="var-version-body">';
+    if (ver.code) {
+      html += '<div class="var-version-label">source</div>';
+      html += '<pre class="var-version-code">' + escHtml(ver.code) + '</pre>';
+    }
+    html += '<div class="var-version-label">value</div>';
+    html += '<pre class="var-version-preview">' + escHtml(ver.preview || '') + '</pre>';
+    html += '</div></div>';
+  });
+  html += '</div>';
+  panel.innerHTML = html;
+  if (typeof lucide !== 'undefined') setTimeout(function() { lucide.createIcons(); }, 30);
+  panel.classList.add('open');
+}
+
+function closeVarHistory() {
+  var panel = document.getElementById('var-history-panel');
+  if (panel) panel.classList.remove('open');
+}
+
 function closeContext() {
+  closeVarHistory();
   var sidebar = document.getElementById('context-sidebar');
   if (sidebar) sidebar.classList.remove('open');
   var bg = document.getElementById('sidebar-bg');
@@ -463,17 +524,18 @@ function replaceChat(html) {
 // ── Live trace rendering ────────────────────────────────────────────────
 
 function renderLiveTrace(iterations) {
+  // Mirrors the Clojure-side `render-iteration` in
+  // adapters/web/presentation/message.clj — iteration header + code/result
+  // rows only. The `:thinking` narrative is intentionally NOT rendered; it
+  // used to drift turn-to-turn and felt like the system prompt was
+  // changing. The main chat shows WHAT the model did, not its inner monologue.
   if (!iterations || !iterations.length) return '';
   var html = '';
   for (var i = 0; i < iterations.length; i++) {
     var it = iterations[i];
-    if (it["final?"]) continue; // FINAL iterations hidden — answer shown separately
+    if (it["final?"]) continue; // FINAL answer is shown separately
     html += '<div class="iteration">';
-    html += '<div class="iter-header">Iteration ' + (it.iteration + 1);
-    html += '</div>';
-    if (it.thinking) {
-      html += '<div class="thinking md-content">' + escHtml(it.thinking) + '</div>';
-    }
+    html += '<div class="iter-header">Iteration ' + (it.iteration + 1) + '</div>';
     if (it.executions) {
       for (var j = 0; j < it.executions.length; j++) {
         var ex = it.executions[j];
