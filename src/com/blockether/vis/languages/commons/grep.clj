@@ -220,7 +220,27 @@
      :validate-input validate-grep-input
      :validate-output validate-grep-output
      :activation-fn (constantly true)
-     :group "Filesystem" :activation-doc "always active"
+     :group "filesystem" :activation-doc "always active"
      :examples ["(grep \"HITL\" \"src\")"
                 "(grep \"approval|confirm\" \"src\" {:glob \"**/*.clj\" :case-insensitive? true})"
-                "(grep #\"\\bhuman-in-the-loop\\b\" \"src\" {:max-matches 50})"]}))
+                "(grep #\"\\bhuman-in-the-loop\\b\" \"src\" {:max-matches 50})"]
+     :prompt "Recursively search files for a regex pattern. First stop for
+\"where is X used?\", \"who touches this function?\", \"find all callers\".
+
+Args: pattern (string OR java.util.regex.Pattern, required),
+      path (string, required — directory to search),
+      opts (map, optional).
+
+Opts:
+  :glob               — glob pattern for files to include (e.g. \"**/*.clj\").
+  :case-insensitive?  — ignore case (default: false).
+  :max-matches        — cap on returned hits (default: 200).
+  :context-lines      — lines of context around each match (default: 0).
+
+Returns lines formatted `path:line: content`. String patterns are compiled
+as regex — escape regex metacharacters if you want literal matching.
+
+Prefer ONE grep with a precise alternation (`\"foo|bar|baz\"`) over three
+separate greps. Prefer a glob-scoped grep (`{:glob \"**/*.clj\"}`) over
+walking the whole repo. PATHS MUST BE STRINGS — passing a java.nio Path
+from elsewhere throws `'other' is different type of Path`."}))

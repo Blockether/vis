@@ -404,12 +404,6 @@
 ;; System Prompt — delegates to loop.runtime.prompt
 ;; =============================================================================
 
-(def format-custom-docs prompt/format-custom-docs)
-
-(def build-document-summary prompt/build-document-summary)
-
-
-
 (def build-system-prompt prompt/build-system-prompt)
 
 ;; =============================================================================
@@ -1061,38 +1055,21 @@
         has-reasoning? (boolean (provider-has-reasoning? (:router rlm-env)))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default)
                                reasoning-quick)
+        ;; `:has-documents?` is the only activation flag that still matters
+        ;; at this level — it drives the RESPONSE FORMAT's :sources field in
+        ;; the iteration spec. Every other tool-group is rendered entirely
+        ;; through the data-driven <tools> block below.
         has-docs? (when-let [db (:db-info rlm-env)]
                     (pos? (count (db-list-documents db {:limit 1 :include-toc? false}))))
-        doc-summary (when (and has-docs? (:db-info rlm-env))
-                      (build-document-summary (:db-info rlm-env)))
-        ;; Git repos are read from SQLite on each iteration (NOT from an
-        ;; atom) so persistent conversations resume with attached repos
-        ;; intact. Empty list elides the GIT REPO block entirely from the
-        ;; system prompt.
-        git-repos (when-let [db (:db-info rlm-env)]
-                    (rlm-db/db-list-repos db))
-        concept-prompt (when-let [db (:db-info rlm-env)]
-                         (ontology/concept-graph-for-prompt db))
-        ;; Activation flags — mirror the per-tool activation-fns in
-        ;; register-builtin-tools!. Must stay in sync with them: if a tool
-        ;; group's activation-fn flips false, the corresponding prompt
-        ;; section below should also flip off so the LLM doesn't see tool
-        ;; references it can't actually call.
-        has-conv?     (boolean (:conversation-ref rlm-env))
-        has-concepts? (when-let [db (:db-info rlm-env)]
-                        (try (boolean (seq (rlm-db/list-concepts db)))
-                          (catch Throwable _ false)))
         system-prompt (build-system-prompt {:output-spec output-spec
                                             :custom-docs custom-docs
                                             :has-documents? has-docs?
-                                            :document-summary doc-summary
-                                            :has-conversation? has-conv?
-                                            :has-concepts? has-concepts?
                                             :has-reasoning? has-reasoning?
                                             :system-prompt system-prompt
-                                            :git-repos git-repos
-                                            :concept-graph-prompt concept-prompt
                                             :max-context-tokens max-context-tokens
+                                            :env rlm-env
+                                            :tool-defs (when-let [a (:tool-registry-atom rlm-env)]
+                                                         (vals @a))
                                             :skill-registry (when-let [a (:skill-registry-atom rlm-env)] @a)})
         initial-user-content (str "{:requirement " (pr-str query)
                                (when pre-fetched-context
@@ -1224,9 +1201,21 @@
 
           (>= iteration (effective-max-iterations))
           (let [debug? (:rlm-debug? *rlm-ctx*)
-                locals (when debug? (get-locals rlm-env))]
-            (rlm-stage! :error iteration {:reason :max-iterations :max (effective-max-iterations)})
-            (merge {:answer nil
+                locals (when debug? (get-locals rlm-env))
+                max-iter (effective-max-iterations)
+                last-thinking (some->> trace reverse
+                                (map :thinking)
+                                (filter #(and (string? %) (not (str/blank? %))))
+                                first)
+                fallback-answer (str "⚠️ Iteration limit reached (" iteration "/" max-iter
+                                  ") without finalizing.\n\n"
+                                  (when last-thinking
+                                    (str "**Last reasoning step:**\n\n"
+                                      (truncate last-thinking 800) "\n\n"))
+                                  "**What to try:** Check the reasoning trace below for partial progress, "
+                                  "or rephrase the question more narrowly so the agent can commit to an answer faster.")]
+            (rlm-stage! :error iteration {:reason :max-iterations :max max-iter})
+            (merge {:answer {:result fallback-answer :type :markdown}
                     :status :max-iterations
                     :status-id (status->id :max-iterations)
                     :trace trace
@@ -1258,9 +1247,25 @@
               (do (trove/log! {:level :warn :data {:iteration iteration :consecutive-errors consecutive-errors
                                                    :restarts restarts}
                                :msg "Error budget exhausted — too many consecutive errors across restarts. Simplify your code or break the task into smaller steps."})
-                (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
-                  {:status-id (status->id :error-budget-exhausted)}
-                  (finalize-cost))))
+                (let [recent-errors (->> trace reverse
+                                      (keep :error)
+                                      (take 3)
+                                      (map (fn [e] (str "- " (or (:message e) (str e)))))
+                                      (str/join "\n"))
+                      fallback-answer (str "⚠️ Too many consecutive errors (" consecutive-errors
+                                        ") across " (inc restarts) " restart attempt"
+                                        (when (not= restarts 0) "s")
+                                        ". Giving up.\n\n"
+                                        (when-not (str/blank? recent-errors)
+                                          (str "**Recent errors:**\n\n" recent-errors "\n\n"))
+                                        "**What to try:** Simplify the request, break the task into smaller steps, "
+                                        "or rephrase so the agent can use a different approach.")]
+                  (merge {:answer {:result fallback-answer :type :markdown}
+                          :status :error-budget-exhausted
+                          :trace trace
+                          :iterations iteration}
+                    {:status-id (status->id :error-budget-exhausted)}
+                    (finalize-cost)))))
             (let [;; Prefer the LLM's own next-iteration preference, fall back to
                   ;; error-driven escalation when it hasn't asked for one.
                   reasoning-level (when has-reasoning?
@@ -1272,10 +1277,48 @@
                   ;; journal — the LLM pulls older turns via history tools on demand.
                   var-index-str (get-var-index)
                   exec-results-str (format-execution-results prev-executions prev-iteration)
+                  ;; Budget warning: when we're within 3 iterations of the
+                  ;; hard cap, loudly remind the LLM of its two real exits —
+                  ;; (1) :final with a partial answer, or (2) call
+                  ;; (request-more-iterations N). Without this, models that
+                  ;; are incrementally exploring silently run off the end
+                  ;; and the user sees an empty bubble.
+                  budget-warning-str (let [max-iter (effective-max-iterations)
+                                           ;; `iteration` is 0-indexed. The
+                                           ;; LLM is about to produce response
+                                           ;; for iteration N, and the cap
+                                           ;; check blocks iteration >= max —
+                                           ;; so this IS the last iteration
+                                           ;; when iteration = max-1.
+                                           remaining (- max-iter iteration)]
+                                       (cond
+                                         (<= remaining 1)
+                                         (str "\n<budget warning=\"LAST ITERATION\">\n"
+                                           "THIS IS ITERATION " (inc iteration) " OF " max-iter
+                                           " — THE HARD CAP. No iteration runs after this one.\n"
+                                           "TWO WAYS OUT:\n"
+                                           "  1. Emit :final NOW with your best partial answer from <var_index>/<journal>.\n"
+                                           "     A partial answer beats an empty bubble.\n"
+                                           "  2. Call (request-more-iterations N) THIS TURN to extend the budget —\n"
+                                           "     returns {:granted n :new-budget M :cap 500}. Max 50 per request.\n"
+                                           "     Only do this if you have a concrete plan for the extra turns;\n"
+                                           "     don't extend to keep exploring aimlessly.\n"
+                                           "</budget>")
+                                         (<= remaining 3)
+                                         (str "\n<budget warning=\"CLOSE TO CAP\">\n"
+                                           "Iteration " (inc iteration) " of " max-iter
+                                           ". You have " remaining " turn" (when (not= 1 remaining) "s") " left including this one.\n"
+                                           "STOP exploring. Synthesize from existing <var_index> + <journal>.\n"
+                                           "If you genuinely need more turns for a concrete plan, call\n"
+                                           "(request-more-iterations N) NOW — don't wait for the last iteration.\n"
+                                           "Otherwise commit to a confidence level and emit :final.\n"
+                                           "</budget>")
+                                         :else nil))
                   iteration-context (str
                                       (when exec-results-str (str "\n" exec-results-str))
                                       (when var-index-str
-                                        (str "\n<var_index>\n" var-index-str "\n</var_index>")))
+                                        (str "\n<var_index>\n" var-index-str "\n</var_index>"))
+                                      budget-warning-str)
                   base-messages (vec (take 2 messages)) ;; [system-prompt, user-query]
                   effective-messages (cond-> base-messages
                                        (not (str/blank? iteration-context))
@@ -1677,7 +1720,11 @@
     (when-let [sci-ctx (:sci-ctx env)]
       (rlm-tools/sci-update-binding! sci-ctx sym
         (rlm-tools/wrap-tool-for-sci env sym f (:tool-registry-atom env))))
-    (swap! (:state-atom env) update :custom-docs conj (dissoc canonical-tool-def :fn)))
+    ;; Tool-defs live in `:tool-registry-atom` only — they flow into the
+    ;; <tools> prompt block via `render-active-tools` with activation-fn
+    ;; filtering. `:custom-docs` is now reserved for `:type :def` constants
+    ;; registered via `register-env-def!`.
+    )
   env)
 
 (defn register-env-def!

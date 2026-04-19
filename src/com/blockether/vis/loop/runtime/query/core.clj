@@ -486,31 +486,35 @@
            confidence sources reasoning total-tokens-atom total-cost-atom]}]
   (let [duration-ms (util/elapsed-since start-time)]
     (if status
-      ;; failure path
+      ;; failure path — surface the fallback answer (built by the loop for
+      ;; :max-iterations / :error-budget-exhausted) to the caller. Leaving
+      ;; :answer nil here meant the web bubble rendered blank even though
+      ;; we had diagnostic text ready.
       (do
         (rlm-core/rlm-stage! :query-end 0
           {:duration-ms duration-ms :iterations iterations :status status})
-        (try
-          (rlm-db/update-query! db-info query-ref
-            {:answer      (:result answer answer)
-             :iterations  iterations
-             :duration-ms duration-ms
-             :status      status
-             :tokens      @total-tokens-atom
-             :cost        @total-cost-atom})
-          (catch Exception e
-            (trove/log! {:level :warn :data {:error (ex-message e)}
-                         :msg   "Failed to update query (max iterations)"})))
-        (cond-> {:answer      nil
-                 :raw-answer  (:result answer answer)
-                 :status      status
-                 :status-id   status-id
-                 :trace       trace
-                 :iterations  iterations
-                 :duration-ms duration-ms
-                 :tokens      @total-tokens-atom
-                 :cost        @total-cost-atom}
-          (some? locals) (assoc :locals locals)))
+        (let [fallback-answer (:result answer answer)]
+          (try
+            (rlm-db/update-query! db-info query-ref
+              {:answer      fallback-answer
+               :iterations  iterations
+               :duration-ms duration-ms
+               :status      status
+               :tokens      @total-tokens-atom
+               :cost        @total-cost-atom})
+            (catch Exception e
+              (trove/log! {:level :warn :data {:error (ex-message e)}
+                           :msg   "Failed to update query (max iterations)"})))
+          (cond-> {:answer      fallback-answer
+                   :raw-answer  fallback-answer
+                   :status      status
+                   :status-id   status-id
+                   :trace       trace
+                   :iterations  iterations
+                   :duration-ms duration-ms
+                   :tokens      @total-tokens-atom
+                   :cost        @total-cost-atom}
+            (some? locals) (assoc :locals locals))))
       ;; success path
       (do
         (rlm-core/rlm-stage! :query-end 0

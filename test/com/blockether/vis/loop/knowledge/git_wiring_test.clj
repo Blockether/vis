@@ -323,58 +323,17 @@
             (expect thrown?)))))))
 
 (defdescribe git-system-prompt-test
-  (describe "build-system-prompt with :git-repos"
-    (it "omits GIT REPO block when :git-repos is nil"
+  ;; Git tools now flow through the data-driven <tools> block. Their
+  ;; prompt is a fn of env that lists attached repos inline. Coverage of
+  ;; the actual <tools> rendering lives in prompt_activation_test.clj;
+  ;; here we just smoke-check that passing an env with no tool-defs
+  ;; produces no git content.
+  (describe "build-system-prompt with no tool-defs"
+    (it "omits every git tool name"
       (let [prompt (rlm-core/build-system-prompt {:has-reasoning? false})]
-        (expect (not (str/includes? prompt "GIT REPO")))
-        (expect (not (str/includes? prompt "git-search-commits")))))
-
-    (it "omits GIT REPO block when :git-repos is empty vec"
-      (let [prompt (rlm-core/build-system-prompt
-                     {:has-reasoning? false :git-repos []})]
-        (expect (not (str/includes? prompt "GIT REPO")))))
-
-    (it "renders single-repo block with git- prefixed tool list"
-      (let [prompt (rlm-core/build-system-prompt
-                     {:has-reasoning? false
-                      :git-repos [{:name "myrepo"
-                                   :path "/tmp/fake"
-                                   :head-sha "abc123def456789"
-                                   :head-short "abc123def456"
-                                   :branch "main"
-                                   :commits-ingested 42}]})]
-        (expect (str/includes? prompt "GIT REPO: myrepo"))
-        (expect (str/includes? prompt "/tmp/fake"))
-        (expect (str/includes? prompt "abc123def456"))
-        (expect (str/includes? prompt "on main"))
-        (expect (str/includes? prompt "commits ingested: 42"))
-        (expect (str/includes? prompt "git-search-commits"))
-        (expect (str/includes? prompt "git-file-history"))
-        (expect (str/includes? prompt "git-blame"))
-        (expect (str/includes? prompt "git-commit-diff"))
-        (expect (str/includes? prompt "git-commit-parents"))))
-
-    (it "renders multi-repo blocks with absolute-path guidance"
-      (let [prompt (rlm-core/build-system-prompt
-                     {:has-reasoning? false
-                      :git-repos [{:name "svar"
-                                   :path "/x/svar"
-                                   :head-short "deadbeef0000"
-                                   :branch "main"
-                                   :commits-ingested 290}
-                                  {:name "sqlite-rlm"
-                                   :path "/x/sqlite-rlm"
-                                   :head-short "cafef00d0000"
-                                   :branch "master"
-                                   :commits-ingested 5000}]})]
-        (expect (str/includes? prompt "GIT REPO: svar"))
-        (expect (str/includes? prompt "GIT REPO: sqlite-rlm"))
-        (expect (str/includes? prompt "on main"))
-        (expect (str/includes? prompt "on master"))
-        (expect (str/includes? prompt "290"))
-        (expect (str/includes? prompt "5000"))
-        (expect (str/includes? prompt "ABSOLUTE path"))
-        (expect (str/includes? prompt "git-blame"))))))
+        (expect (not (str/includes? prompt "git-search-commits")))
+        (expect (not (str/includes? prompt "git-blame")))
+        (expect (not (str/includes? prompt "git-file-history")))))))
 
 (defdescribe dispose-no-git-resources-test
   (describe "dispose-env! with git attached"

@@ -352,7 +352,11 @@
         (sut/dispose-env! env)))))
 
 (defdescribe max-iterations-fallback-test
-  (it "returns nil answer on max-iterations and includes locals only in debug mode"
+  (it "returns a fallback answer on max-iterations and includes locals only in debug mode"
+    ;; When the iteration loop hits its cap without a :final, we now
+    ;; synthesize a \"⚠️ Iteration limit reached\" markdown answer instead
+    ;; of returning :answer nil. A blank bubble was the worst UX; a
+    ;; partial summary + clear status is strictly better.
     (let [router (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
                                     :models [{:name "gpt-4o"}]}])
           env (sut/create-env router {:db :temp})]
@@ -360,10 +364,11 @@
         (let [normal (sut/query-env! env [(llm/user "No-op")] {:max-iterations 0 :refine? false})
               debug  (sut/query-env! env [(llm/user "No-op")] {:max-iterations 0 :refine? false :debug? true})]
           (expect (= :max-iterations (:status normal)))
-          (expect (nil? (:answer normal)))
+          (expect (string? (:answer normal)))
+          (expect (str/includes? (:answer normal) "Iteration limit reached"))
           (expect (not (contains? normal :locals)))
           (expect (= :max-iterations (:status debug)))
-          (expect (nil? (:answer debug)))
+          (expect (string? (:answer debug)))
           (expect (map? (:locals debug))))
         (finally
           (sut/dispose-env! env))))))
@@ -447,12 +452,16 @@
       (expect (not (str/includes? prompt "learning-stats")))
       (expect (not (str/includes? prompt "list-learning-tags")))))
 
-  (it "includes unified document tools section when has-documents?"
-    (let [prompt (#'rlm-core/build-system-prompt {:has-documents? true :document-summary "1 document"})]
-      (expect (str/includes? prompt "DOCUMENTS"))
-      (expect (str/includes? prompt "search-documents"))
-      (expect (str/includes? prompt "fetch-document-content"))
-      (expect (str/includes? prompt ":doc/id"))))
+  (it ":has-documents? advertises :sources in the iteration-spec response"
+    ;; Document-tool prompts now live on the tool-defs themselves (see
+    ;; prompt_activation_test.clj). This test just pins down the one
+    ;; remaining flag-driven effect: :has-documents? adds `:sources` to
+    ;; the iteration schema so the LLM is asked to cite retrieved pages.
+    (let [p (#'rlm-core/build-system-prompt {:has-documents? true})]
+      (expect (str/includes? p "sources:"))
+      (expect (str/includes? p "IDs of sources")))
+    (let [p (#'rlm-core/build-system-prompt {:has-documents? false})]
+      (expect (not (str/includes? p "sources:")))))
 
   (it "includes spec schema when provided"
     (let [test-spec (svar/spec

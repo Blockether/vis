@@ -88,6 +88,21 @@
   [x]
   (and (string? x) (not (str/blank? x))))
 
+(defn- normalize-prompt-fn
+  "Accept a string or `(fn [env] string)` on :prompt and normalize to a fn.
+
+   Returning a nil/blank string from the fn is legal — the renderer skips
+   tools with no prompt text. This lets tools compute their prompt from the
+   live env (e.g. git tools listing attached repos) without forcing every
+   tool to write a lambda."
+  [prompt]
+  (cond
+    (nil? prompt)        nil
+    (fn? prompt)         prompt
+    (string? prompt)     (constantly prompt)
+    :else (throw (ex-info "tool-def :prompt must be a string or (fn [env] string)"
+                   {:type :rlm/invalid-tool-def :field :prompt :got prompt}))))
+
 (defn complete-fn-tool-def
   "Return a canonical function tool-def with all required keys populated.
 
@@ -97,15 +112,22 @@
    Optional keys:
    - :activation-fn — `(fn [env] bool)`. When present, the tool is only bound
      in the sandbox if `(activation-fn env)` returns truthy at query time.
-     Receives the full env map (db-info, router, state-atom, etc.)."
+     Receives the full env map (db-info, router, state-atom, etc.).
+   - :prompt — string OR `(fn [env] string)`. Rich prompt-time documentation
+     injected into the system prompt's <tools> block when the tool is active.
+     Normalized to a fn internally; callers can always invoke `((:prompt tool-def) env)`.
+     Distinct from :doc (one-liner summary) and :examples (call syntax). Use
+     :prompt to tell the LLM when to reach for this tool, what its arguments
+     mean, what it returns, and any gotchas."
   [sym f tool-def]
   (let [fn-meta (meta f)
         inferred-doc (:doc fn-meta)
         inferred-arglists (:arglists fn-meta)
         arglists (or (:arglists tool-def) inferred-arglists)
         normalized-arglists (or (normalize-arglists arglists) ['[& args]])
-        examples (or (:examples tool-def) (default-examples sym normalized-arglists))]
-      (-> tool-def
+        examples (or (:examples tool-def) (default-examples sym normalized-arglists))
+        prompt-fn (normalize-prompt-fn (:prompt tool-def))]
+    (-> tool-def
       (assoc :sym sym
         :fn f
         :type :fn
@@ -115,7 +137,8 @@
         :validate-output (or (:validate-output tool-def) default-validate-output)
         :format-result (or (:format-result tool-def) default-format-result)
         :activation-fn (or (:activation-fn tool-def) (constantly true))
-        :examples (vec examples)))))
+        :examples (vec examples))
+      (cond-> prompt-fn (assoc :prompt prompt-fn)))))
 
 (defn assert-fn-tool-def!
   "Validate canonical function tool-def shape. Throws ex-info on invalid input."
@@ -171,6 +194,12 @@
     (when-not (fn? (:activation-fn tool-def))
       (throw (ex-info "tool-def :activation-fn must be a function (fn [env] -> boolean)"
                {:type :rlm/invalid-tool-def :field :activation-fn :tool-def (dissoc tool-def :fn)})))
+    ;; :prompt is optional; when present it must be a 1-arity fn that returns
+    ;; a string (or nil). Normalization already coerces string→fn.
+    (when-let [prompt (:prompt tool-def)]
+      (when-not (fn? prompt)
+        (throw (ex-info "tool-def :prompt must normalize to a function (fn [env] -> string|nil)"
+                 {:type :rlm/invalid-tool-def :field :prompt :tool-def (dissoc tool-def :fn)}))))
     tool-def))
 
 (defn maybe-assert-fn-tool-def!

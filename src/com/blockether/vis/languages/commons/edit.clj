@@ -546,6 +546,24 @@
      :validate-output validate-edit-output
      :format-result format-edit-result
      :activation-fn (constantly true)
-     :group "Filesystem" :activation-doc "always active"
-     :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"]}))
+     :group "filesystem" :activation-doc "always active"
+     :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"]
+     :prompt "Apply a unified-diff style patch to one or more files.
+
+Takes a SINGLE string argument — a patch envelope that starts with
+`*** Begin Patch`, lists one or more `*** Update File: /abs/path` /
+`*** Add File: /abs/path` / `*** Delete File: /abs/path` sections, and
+ends with `*** End Patch`. Each Update section contains standard unified-diff
+hunks (`@@ -old,len +new,len @@` followed by context/`-`/`+` lines).
+
+Use edit-file for SURGICAL changes: rename a symbol, tweak a function body,
+swap one branch of a cond. It's the right tool whenever you'd preserve most
+of the file. Reach for write-file only when you're replacing everything.
+
+Returns a diff preview with CREATED/MODIFIED badges per section. If a hunk
+fails to apply (context mismatch), the error names the offending hunk.
+
+Before emitting the patch: read-file the region you're changing so your
+context lines match the current file exactly. Stale context is the #1
+reason edit-file fails."}))
 

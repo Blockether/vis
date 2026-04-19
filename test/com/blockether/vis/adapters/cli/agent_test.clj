@@ -43,10 +43,14 @@
           (expect (string? json-str))
           (expect (map? parsed))
           ;; Full JSON envelope verification
-          (expect-keys-subset parsed ["conv-id" "iterations" "duration-ms" "tokens" "cost" "trace" "status"])
+          (expect-keys-subset parsed ["conv-id" "iterations" "duration-ms" "tokens" "cost" "trace" "status" "answer"])
           (expect (string? (get parsed "conv-id")))
-          ;; answer is nil for :max-iterations 0 and sanitize-for-json drops nils
-          (expect (false? (contains? parsed "answer")))
+          ;; With :max-iterations 0 the loop hits the cap on the first
+          ;; check. The loop builds a \"⚠️ Iteration limit reached\"
+          ;; markdown fallback (surfaced to the UI so the bubble isn't
+          ;; blank). Test that it came through the envelope.
+          (expect (string? (get parsed "answer")))
+          (expect (clojure.string/includes? (get parsed "answer") "Iteration limit reached"))
           (expect (false? (contains? parsed "confidence")))
           (expect (false? (contains? parsed "learn")))
           (expect (false? (contains? parsed "error")))
