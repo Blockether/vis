@@ -95,9 +95,16 @@
                            :msg "Skill auto-refine failed — non-blocking, swallowed"}))))))))
 
 (defn run-sub-rlm
-  "Runs an iterated sub-RLM query using the existing iteration-loop machinery."
+  "Runs an iterated sub-RLM query using the existing iteration-loop machinery.
+
+   Forwards the caller's `:routing` + `:reasoning` into `iteration-loop` so
+   `(sub-rlm-query \"q\" {:routing {:optimize :cost} :reasoning :deep})` actually
+   steers every sub-iteration (not just the first). The LLM inside the sub-RLM
+   can still override per-turn via `:next.model` / `:next.reasoning`; those
+   overrides win for that one iteration but don't sticky past it."
   [iteration-loop-fn rlm-env prompt {:keys [system-prompt max-iter cancel-atom
-                                            include-trace skills-loaded]
+                                            include-trace skills-loaded
+                                            routing reasoning]
                                      :or   {max-iter 5}}]
   (when-not iteration-loop-fn
     (throw (ex-info "run-sub-rlm requires iteration-loop-fn — caller must inject it"
@@ -106,16 +113,20 @@
                :data {:prompt-len (count prompt)
                       :max-iter max-iter
                       :has-system-prompt (some? system-prompt)
+                      :routing routing
+                      :reasoning reasoning
                       :skills-loaded skills-loaded}
                :msg "Sub-RLM iterated query starting"})
   (let [result (iteration-loop-fn
                  rlm-env
                  prompt
-                 {:system-prompt          system-prompt
-                  :max-iterations         max-iter
-                  :cancel-atom            (or cancel-atom (atom false))
-                  :max-consecutive-errors 3
-                  :max-restarts           1})
+                 (cond-> {:system-prompt          system-prompt
+                          :max-iterations         max-iter
+                          :cancel-atom            (or cancel-atom (atom false))
+                          :max-consecutive-errors 3
+                          :max-restarts           1}
+                   routing   (assoc :routing routing)
+                   reasoning (assoc :reasoning-default reasoning)))
         answer-data (:answer result)
         answer-str (when answer-data
                      (if (map? answer-data)

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.loop.conversations.shared
   "Reusable helpers for RLM conversation lifecycle."
   (:require [com.blockether.vis.languages.commons.edit :as edit]
+            [com.blockether.vis.languages.commons.grep :as grep]
             [com.blockether.vis.languages.commons.list :as list]
             [com.blockether.vis.languages.commons.read :as read]
             [com.blockether.vis.languages.commons.write :as write]
@@ -17,7 +18,8 @@
   [read/tool-def
    write/tool-def
    edit/tool-def
-   list/tool-def])
+   list/tool-def
+   grep/tool-def])
 
 (defn register-base-tools!
   [env]

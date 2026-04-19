@@ -118,32 +118,25 @@
   (when status
     (keyword "rlm.status" (name status))))
 
-(def ^:private reasoning-low "low")
-(def ^:private reasoning-medium "medium")
-(def ^:private reasoning-high "high")
+(def ^:private reasoning-quick :quick)
+(def ^:private reasoning-balanced :balanced)
+(def ^:private reasoning-deep :deep)
 
-(def ^:private reasoning-effort-values
-  #{reasoning-low reasoning-medium reasoning-high})
-
-(defn- normalize-reasoning-effort
-  "Returns normalized reasoning effort string or nil.
-   Accepts string/keyword input."
+(defn- normalize-reasoning-level
+  "Returns canonical :quick | :balanced | :deep, or nil for unknown input.
+   Accepts the abstract vocabulary, or OpenAI-style :low/:medium/:high aliases
+   (for backward-compat with `:reasoning-default` configs). Delegates to svar."
   [v]
-  (let [s (cond
-            (keyword? v) (name v)
-            (string? v) (str/lower-case (str/trim v))
-            :else nil)]
-    (when (contains? reasoning-effort-values s)
-      s)))
+  (router/normalize-reasoning-level v))
 
-(defn- reasoning-effort-for-errors
-  "Maps consecutive error count to effective reasoning effort.
-   `base-effort` is the no-error level for iteration start/recovery."
-  [base-effort consecutive-errors]
+(defn- reasoning-level-for-errors
+  "Maps consecutive error count to an effective reasoning level.
+   `base` is the no-error level for iteration start/recovery."
+  [base consecutive-errors]
   (cond
-    (<= (long consecutive-errors) 0) base-effort
-    (= 1 (long consecutive-errors)) (if (= base-effort reasoning-low) reasoning-medium reasoning-high)
-    :else reasoning-high))
+    (<= (long consecutive-errors) 0) base
+    (= 1 (long consecutive-errors)) (if (= base reasoning-quick) reasoning-balanced reasoning-deep)
+    :else reasoning-deep))
 
 ;; =============================================================================
 ;; RLM Environment
@@ -436,24 +429,25 @@
       - :iteration-spec - Spec for ask! (default: ITERATION_SPEC_NON_REASONING).
                          For reasoning providers, pass ITERATION_SPEC_REASONING.
       - :on-chunk - Streaming callback function."
-  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration reasoning-effort]
+  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration reasoning-level]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [model-name (resolve-root-model (:router rlm-env))
-          effective-reasoning-effort (when (some? reasoning-effort)
-                                       (or (normalize-reasoning-effort reasoning-effort)
-                                         (throw (ex-info "Invalid :reasoning-effort. Expected one of low|medium|high"
-                                                  {:type :rlm/invalid-reasoning-effort
-                                                   :got reasoning-effort}))))
-          ;; Use ask! with iteration spec — router auto-resolves max_tokens + reasoning_params
+          effective-reasoning (when (some? reasoning-level)
+                                (or (normalize-reasoning-level reasoning-level)
+                                  (throw (ex-info "Invalid :reasoning-level. Expected one of quick|balanced|deep."
+                                           {:type :rlm/invalid-reasoning-level
+                                            :got reasoning-level}))))
+          ;; ask! auto-translates :reasoning to the right provider extra-body
+          ;; using the selected model's :reasoning? flag + provider :api-style.
           ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
                        (llm/ask! (:router rlm-env)
                          (cond-> {:spec iteration-spec
                                   :messages messages
                                   :routing (or routing {})
                                   :check-context? false}
-                           on-chunk (assoc :on-chunk on-chunk)
-                           effective-reasoning-effort (assoc :extra-body {:reasoning_effort effective-reasoning-effort}))))
+                           on-chunk          (assoc :on-chunk on-chunk)
+                           effective-reasoning (assoc :reasoning effective-reasoning))))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           ;; Native reasoning takes priority over spec-parsed thinking
@@ -465,9 +459,11 @@
                :duration-ms (:duration-ms ask-result)
                :tokens (:tokens ask-result)
                :thinking thinking})
-          ;; LLM's preference for next iteration's model selection
-          next-optimize (when-let [opt (:next-optimize parsed)]
-                          (keyword opt))
+          ;; LLM's steering hints for the next iteration (both sub-keys optional).
+          next-hint (:next parsed)
+          next-model (when-let [m (:model next-hint)]
+                       (keyword m))
+          next-reasoning (normalize-reasoning-level (:reasoning next-hint))
           ;; LLM's request to drop named vars from <var_index>.
           forget-names (vec (keep (fn [n] (when (and n (seq (str n))) (str n)))
                               (:forget parsed)))
@@ -564,7 +560,9 @@
           (if validation-error
             (do (rlm-debug! {:final-answer (truncate final-answer 200)
                              :validation-error validation-error} "FINAL rejected")
-              {:thinking thinking :next-optimize next-optimize :forget forget-names
+              {:thinking thinking
+               :next-model next-model :next-reasoning next-reasoning
+               :forget forget-names
                :executions (or executions
                              [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
                                :error validation-error}])
@@ -576,7 +574,9 @@
                                         :confidence confidence}
                                  (seq sources) (assoc :sources sources)
                                  (:reasoning parsed) (assoc :reasoning (:reasoning parsed)))]
-              {:thinking thinking :next-optimize next-optimize :forget forget-names
+              {:thinking thinking
+               :next-model next-model :next-reasoning next-reasoning
+               :forget forget-names
                :executions (or executions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
         ;; Normal path: execute code blocks — must be maps with :expr and :time-ms
@@ -649,7 +649,8 @@
                                   :execution-time-ms (:execution-time-ms result)
                                   :repaired? (:repaired? result)})
                            (range) code-blocks execution-results)]
-          {:thinking thinking :next-optimize next-optimize
+          {:thinking thinking
+           :next-model next-model :next-reasoning next-reasoning
            :executions executions :final-result nil :api-usage api-usage
            :duration-ms (or (:duration-ms ask-result) 0)})))))
 
@@ -715,6 +716,24 @@
   "Threshold in ms above which execution time is flagged as slow."
   5000)
 
+(defn- formatted-str-of
+  "Return the canonical formatted string for a tool-produced value.
+
+   Lookup order:
+   1. `:rlm/formatted` from value metadata — precomputed by the tool wrapper.
+   2. `(:rlm/format meta) called on value` — meta was preserved but the cached
+      string wasn't (e.g. value was transformed but `vary-meta` carried the fn).
+   3. nil — caller falls back to its own rendering (pr-str of realized value).
+
+   Returns nil for non-IObj values (primitives cannot carry meta). The caller
+   is responsible for the default-string fallback so this fn stays pure."
+  [v]
+  (when (instance? clojure.lang.IObj v)
+    (let [m (meta v)]
+      (or (:rlm/formatted m)
+          (when-let [f (:rlm/format m)]
+            (try (f v) (catch Throwable _ nil)))))))
+
 (defn format-executions
   "Formats executions for LLM feedback as EDN.
    All results shown inline — context budget handles size naturally.
@@ -730,11 +749,12 @@
                             (str ":error " (pr-str error)
                               (when hint (str " :hint " (pr-str hint))))
 
-                            (fn? result)
-                            (str ":error \"" code-str " is a function object. Call it: (" code-str ")\"")
+                             (fn? result)
+                             (str ":error \"" code-str " is a function object. Call it: (" code-str ")\"")
 
-                            :else
-                            (str ":ok " (pr-str (realize-value result))))
+                             :else
+                             (str ":ok " (or (formatted-str-of result)
+                                             (pr-str (realize-value result)))))
 
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
@@ -785,17 +805,23 @@
     :else ""))
 
 (defn- format-execution-results
-  "Formats previous iteration's executions as an XML receipt. Each block
-   shows the FULL evaluated value — no summarisation, no preview. Lazy
-   sequences are already bounded by realize-value's 100-item cap; everything
-   else is pr-str'd in full, protected only by a pathological-size safety
-   guard. The LLM should be able to ground :final on what it sees here.
+  "Formats the previous iteration's executions as an XML receipt tagged
+   `<journal>`. Each block shows the FULL evaluated value — no summarisation,
+   no preview. Lazy sequences are already bounded by realize-value's 100-item
+   cap; everything else is pr-str'd in full, protected only by a
+   pathological-size safety guard. The LLM grounds :final on what it sees
+   here plus anything it explicitly pulls via history/var tools.
 
    (def sym expr) is rendered as :result-kind :var :var-name \"sym\" so the
-   LLM can reference the symbol on the next iteration."
+   LLM can reference the symbol on the next iteration.
+
+   NOTE: the XML tag is `<journal>` (NOT `<execution_results>`) — the name
+   reflects that this is the only rolling ledger in the prompt. Anything
+   earlier than the previous iteration is accessed on-demand via
+   conversation-history / var-history / var-diff."
   [executions iteration]
   (when (seq executions)
-    (str "<execution_results iteration=\"" iteration "\">\n"
+    (str "<journal iteration=\"" iteration "\">\n"
       (str/join "\n"
         (map-indexed
           (fn [idx {:keys [code error result stdout stderr execution-time-ms]}]
@@ -819,8 +845,14 @@
                                 (instance? clojure.lang.Var result)
                                 (let [^clojure.lang.Var var-obj result
                                       var-name (name (.sym var-obj))
-                                      bound (realize-value (.getRawRoot var-obj))
-                                      value-str (truncate (pr-str bound) EXECUTION_SAFETY_CAP_CHARS)]
+                                      raw-bound (.getRawRoot var-obj)
+                                      ;; Check meta on the RAW bound value before
+                                      ;; realize-value strips it (realize-value
+                                      ;; rebuilds maps/vecs/sets, losing meta).
+                                      pre-formatted (formatted-str-of raw-bound)
+                                      bound (realize-value raw-bound)
+                                      value-str (or pre-formatted
+                                                    (truncate (pr-str bound) EXECUTION_SAFETY_CAP_CHARS))]
                                   (str "{:success? true :result-kind :var"
                                     " :var-name " (pr-str var-name)
                                     " :value-type " (type-label-of bound)
@@ -831,8 +863,10 @@
                                     "}"))
 
                                 :else
-                                (let [v (realize-value result)
-                                      value-str (truncate (pr-str v) EXECUTION_SAFETY_CAP_CHARS)]
+                                (let [pre-formatted (formatted-str-of result)
+                                      v (realize-value result)
+                                      value-str (or pre-formatted
+                                                    (truncate (pr-str v) EXECUTION_SAFETY_CAP_CHARS))]
                                   (str "{:success? true :result-type " (type-label-of v)
                                     (size-suffix v)
                                     " :value " value-str
@@ -841,51 +875,20 @@
                                     "}")))]
               (str "  [" (inc idx) "] " code-str " → " result-info)))
           executions))
-      "\n</execution_results>")))
+      "\n</journal>")))
 
-(def ^:private SQUASH_INTERVAL
-  "Number of iterations per squash cycle."
-  5)
-
-(defn- format-journal-entry
-  "Formats a single journal entry as text."
-  [{:keys [iteration thinking var-names]}]
-  (str "[iteration-" (inc iteration) "] "
-    (when thinking (truncate thinking 300))
-    (when (seq var-names)
-      (str "\n    vars: " (str/join ", " var-names)))))
-
-(defn- squash-journal
-  "Performs cumulative mechanical squash on journal entries.
-   Every SQUASH_INTERVAL iterations, all entries up to the boundary get concatenated
-   with --- separators into one squashed block. Returns [squashed-entries recent-entries]."
-  [journal]
-  (let [n (count journal)
-        squash-boundary (* SQUASH_INTERVAL (quot n SQUASH_INTERVAL))]
-    (if (< squash-boundary SQUASH_INTERVAL)
-      ;; Not enough entries to squash yet
-      [nil journal]
-      ;; Split into squashed + recent
-      [(subvec journal 0 squash-boundary)
-       (subvec journal squash-boundary)])))
-
-(defn- render-execution-journal
-  "Renders the execution journal as XML for prompt injection.
-   Squashed entries are concatenated with --- separators.
-   Recent entries are shown individually."
-  [journal]
-  (when (seq journal)
-    (let [[squashed recent] (squash-journal journal)]
-      (str "<execution_journal>\n"
-        (when (seq squashed)
-          (str "  [iterations 1-" (count squashed) " squashed]\n    "
-            (str/join "\n    ---\n    "
-              (map format-journal-entry squashed))
-            "\n"))
-        (when (seq recent)
-          (str/join "\n"
-            (map (fn [entry] (str "  " (format-journal-entry entry))) recent)))
-        "\n</execution_journal>"))))
+;; NOTE (2025-04): the accumulating `execution_journal` block was removed.
+;; It grew monotonically per iteration (~300 chars squashed + 8K recent per
+;; entry × iterations_so_far) and bloated the prompt on long turns with no
+;; real benefit once the LLM has:
+;;   - `*query*`     — current query, bound into the sandbox on query start.
+;;   - `*reasoning*` — current iteration's thinking, auto-def'd per iteration.
+;;   - `conversation-history` / `conversation-code` / `conversation-results`
+;;     — on-demand access to prior turns across queries.
+;;   - `var-history` / `var-diff` — on-demand access to var evolution.
+;; The `<journal>` block (was `<execution_results>`) carries only the PREVIOUS
+;; iteration's executions. Pulling anything further back is the LLM's job via
+;; the tools above. This makes the per-iteration prompt O(1) instead of O(n).
 
 (defn- extract-def-names
   "Extracts var names from code blocks via EDN parsing of def-like forms."
@@ -944,24 +947,42 @@
                      :code (get sym->code sym)})))))
       vec)))
 
+(defn- earmuffed-sym?
+  "True for names matching *foo* — used to identify SYSTEM vars. Also
+   rejects the degenerate single-char `*` to avoid false positives."
+  [sym]
+  (let [n (name sym)]
+    (and (> (count n) 2) (str/starts-with? n "*") (str/ends-with? n "*"))))
+
 (defn- forget-vars!
   "Unmap `names` from the SCI sandbox namespace. Mirrors what the LLM asked
    for via the `:forget` iteration-spec field — removes the bindings so they
    stop showing up in <var_index>. The persisted :iteration-var rows in the
-   DB are not touched; `(restore-var 'sym)` can bring one back later."
+   DB are not touched; `(restore-var 'sym)` can bring one back later.
+
+   HARD GUARD: earmuffed SYSTEM vars (*query*, *reasoning*, *answer*, …)
+   can NEVER be forgotten — silently filtered out of `names`. These are
+   contract surfaces the iteration loop re-binds every turn; dropping them
+   would leave the sandbox in a torn state where *query* disappears
+   mid-turn. If the LLM asks to forget one, we log it and move on."
   [sci-ctx names]
-  (let [syms (keep (fn [n]
-                     (cond (symbol? n) n
-                       (string? n) (try (symbol n) (catch Throwable _ nil))
-                       :else       nil))
-               names)]
-    (when (seq syms)
+  (let [raw-syms (keep (fn [n]
+                         (cond (symbol? n) n
+                           (string? n) (try (symbol n) (catch Throwable _ nil))
+                           :else       nil))
+                   names)
+        {system-syms true user-syms false} (group-by (comp boolean earmuffed-sym?) raw-syms)]
+    (when (seq system-syms)
+      (trove/log! {:level :info :id ::forget-system-var-refused
+                   :data {:requested (mapv str system-syms)}
+                   :msg "Refusing to forget SYSTEM vars (*foo*) — ignoring those names"}))
+    (when (seq user-syms)
       (try
         (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
-          (fn [ns-map] (apply dissoc ns-map syms)))
+          (fn [ns-map] (apply dissoc ns-map user-syms)))
         (catch Throwable e
           (trove/log! {:level :debug :id ::forget-vars-failed
-                       :data {:error (ex-message e) :syms (mapv str syms)}
+                       :data {:error (ex-message e) :syms (mapv str user-syms)}
                        :msg "forget-vars! failed — skipping"}))))))
 
 ;; =============================================================================
@@ -1006,8 +1027,8 @@
             (and
               ;; Not a built-in
               (not (contains? initial-ns-keys sym))
-              ;; Not an auto-injected *earmuffed* var (*query*, *reasoning*)
-              (not (let [n (name sym)] (and (str/starts-with? n "*") (str/ends-with? n "*"))))
+              ;; Not an earmuffed SYSTEM var (*query*, *reasoning*, *answer*, …)
+              (not (earmuffed-sym? sym))
               ;; No docstring — vars with docs are intentionally persisted
               (not has-doc?)
               ;; Has a registry entry (was persisted at some point)
@@ -1020,7 +1041,7 @@
                               pre-fetched-context query-ref user-messages
                               max-iterations max-consecutive-errors max-restarts
                               hooks cancel-atom current-iteration-atom
-                              reasoning-default]}]
+                              reasoning-default routing]}]
   (let [max-iterations (or max-iterations 50)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
@@ -1038,8 +1059,8 @@
                              (long (* 0.6 (router/context-limit effective-model))))
         ;; Check if root provider has native reasoning (thinking tokens)
         has-reasoning? (boolean (provider-has-reasoning? (:router rlm-env)))
-        base-reasoning-effort (or (normalize-reasoning-effort reasoning-default)
-                                reasoning-low)
+        base-reasoning-level (or (normalize-reasoning-level reasoning-default)
+                               reasoning-quick)
         has-docs? (when-let [db (:db-info rlm-env)]
                     (pos? (count (db-list-documents db {:limit 1 :include-toc? false}))))
         doc-summary (when (and has-docs? (:db-info rlm-env))
@@ -1052,10 +1073,21 @@
                     (rlm-db/db-list-repos db))
         concept-prompt (when-let [db (:db-info rlm-env)]
                          (ontology/concept-graph-for-prompt db))
+        ;; Activation flags — mirror the per-tool activation-fns in
+        ;; register-builtin-tools!. Must stay in sync with them: if a tool
+        ;; group's activation-fn flips false, the corresponding prompt
+        ;; section below should also flip off so the LLM doesn't see tool
+        ;; references it can't actually call.
+        has-conv?     (boolean (:conversation-ref rlm-env))
+        has-concepts? (when-let [db (:db-info rlm-env)]
+                        (try (boolean (seq (rlm-db/list-concepts db)))
+                          (catch Throwable _ false)))
         system-prompt (build-system-prompt {:output-spec output-spec
                                             :custom-docs custom-docs
                                             :has-documents? has-docs?
                                             :document-summary doc-summary
+                                            :has-conversation? has-conv?
+                                            :has-concepts? has-concepts?
                                             :has-reasoning? has-reasoning?
                                             :system-prompt system-prompt
                                             :git-repos git-repos
@@ -1171,7 +1203,7 @@
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [iteration 0 messages initial-messages trace [] consecutive-errors 0 restarts 0
              prev-executions nil prev-iteration -1
-             journal [] prev-optimize nil]
+             prev-next-model nil prev-next-reasoning nil]
         (when current-iteration-atom
           (reset! current-iteration-atom iteration))
         (cond
@@ -1222,22 +1254,25 @@
                              :msg "Strategy restart — resetting with anti-knowledge"})
                 (rlm-debug! {:failed-summary failed-summary} "Strategy restart triggered")
                 (recur (inc iteration) restart-messages trace 0 (inc restarts)
-                  nil -1 journal nil))
+                  nil -1 nil nil))
               (do (trove/log! {:level :warn :data {:iteration iteration :consecutive-errors consecutive-errors
                                                    :restarts restarts}
                                :msg "Error budget exhausted — too many consecutive errors across restarts. Simplify your code or break the task into smaller steps."})
                 (merge {:answer nil :status :error-budget-exhausted :trace trace :iterations iteration}
                   {:status-id (status->id :error-budget-exhausted)}
                   (finalize-cost))))
-            (let [reasoning-effort (when has-reasoning?
-                                     (reasoning-effort-for-errors base-reasoning-effort consecutive-errors))
-                  _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-effort})
-                  ;; Build single-shot prompt: conversation + journal + execution results + var index
+            (let [;; Prefer the LLM's own next-iteration preference, fall back to
+                  ;; error-driven escalation when it hasn't asked for one.
+                  reasoning-level (when has-reasoning?
+                                    (or prev-next-reasoning
+                                      (reasoning-level-for-errors base-reasoning-level consecutive-errors)))
+                  _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
+                  ;; Build single-shot prompt: system + user-query + <journal> (prev iter
+                  ;; execution results) + <var_index>. No accumulating multi-iteration
+                  ;; journal — the LLM pulls older turns via history tools on demand.
                   var-index-str (get-var-index)
                   exec-results-str (format-execution-results prev-executions prev-iteration)
-                  journal-str (render-execution-journal journal)
                   iteration-context (str
-                                      (when journal-str (str "\n" journal-str))
                                       (when exec-results-str (str "\n" exec-results-str))
                                       (when var-index-str
                                         (str "\n<var_index>\n" var-index-str "\n</var_index>")))
@@ -1263,15 +1298,20 @@
                                                  :tokens nil
                                                  :cost nil
                                                  :done? false}))))
-                  iteration-result (try
-                                     (run-iteration rlm-env effective-messages
-                                       (cond-> {:iteration-spec (if has-reasoning?
-                                                                  ITERATION_SPEC_REASONING
-                                                                  ITERATION_SPEC_NON_REASONING)
-                                                :iteration iteration
-                                                :reasoning-effort reasoning-effort
-                                                :routing (when prev-optimize {:optimize prev-optimize})}
-                                         iter-on-chunk (assoc :on-chunk iter-on-chunk)))
+                   ;; Effective routing = caller's base `:routing` + LLM's
+                   ;; `:next.model` override on `:optimize`. Caller's other
+                   ;; routing keys (`:provider`, `:model`, etc.) survive.
+                   effective-routing (cond-> (or routing {})
+                                       prev-next-model (assoc :optimize prev-next-model))
+                   iteration-result (try
+                                      (run-iteration rlm-env effective-messages
+                                        (cond-> {:iteration-spec (if has-reasoning?
+                                                                   ITERATION_SPEC_REASONING
+                                                                   ITERATION_SPEC_NON_REASONING)
+                                                 :iteration iteration
+                                                 :reasoning-level reasoning-level
+                                                 :routing effective-routing}
+                                          iter-on-chunk (assoc :on-chunk iter-on-chunk)))
                                      (catch Exception e
                                        (let [ex-data-map (ex-data e)
                                              err-msg (ex-message e)
@@ -1333,10 +1373,10 @@
                     (conj trace trace-entry)
                     (inc consecutive-errors)
                     restarts
-                    nil -1 journal nil))
+                    nil -1 nil nil))
                 ;; Normal path — accumulate token usage
                 (let [_ (accumulate-usage! (:api-usage iteration-result))
-                      {:keys [thinking executions final-result next-optimize forget]} iteration-result
+                      {:keys [thinking executions final-result next-model next-reasoning forget]} iteration-result
                       _ (when (seq forget)
                           (forget-vars! (:sci-ctx rlm-env) forget)
                           (swap! var-index-atom update :current-revision inc))
@@ -1344,16 +1384,33 @@
                       ;; The LLM (and var-history) can inspect prior reasoning via (var-history '*reasoning*).
                       _ (when (seq thinking)
                           (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*reasoning* thinking))
+                      ;; Auto-bind *answer* when the turn finalizes. Survives into the
+                      ;; next turn in this conversation (vars persist across queries).
+                      ;; (var-history '*answer*) → every prior turn's answer; most
+                      ;; recent lives under the bare *answer* var.
+                      final-answer (when final-result (:answer final-result))
+                      _ (when final-result
+                          (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*answer* final-answer))
                       vars-snapshot (restorable-var-snapshots rlm-env executions)
-                      ;; Inject auto-vars (*query*, *reasoning*) into the persisted snapshot
-                      ;; so var-history can track them across queries and iterations.
+                      ;; Inject auto-vars (*query*, *reasoning*, *answer*) into the
+                      ;; persisted snapshot so var-history can track them across
+                      ;; queries and iterations.
+                      ;; SYSTEM vars behave like any other SCI var at read time
+                      ;; — executable, callable, printable. What makes them
+                      ;; SYSTEM is that the iteration loop BINDS them every
+                      ;; turn and forget-vars! refuses to drop them. There's
+                      ;; no (def …) source for the binding itself, so :code
+                      ;; is a marker string, not evaluable code.
                       vars-snapshot (cond-> vars-snapshot
                                       ;; Persist *query* on the FIRST iteration only (once per query)
                                       (zero? iteration)
-                                      (conj {:name "*query*" :value query :code "(auto-injected)"})
+                                      (conj {:name "*query*" :value query :code ";; SYSTEM var — bound by agent loop, never forgotten"})
                                       ;; Persist *reasoning* whenever thinking is present
                                       (seq thinking)
-                                      (conj {:name "*reasoning*" :value thinking :code "(auto-injected)"}))
+                                      (conj {:name "*reasoning*" :value thinking :code ";; SYSTEM var — bound by agent loop, never forgotten"})
+                                      ;; Persist *answer* on turn finalize
+                                      final-result
+                                      (conj {:name "*answer*" :value final-answer :code ";; SYSTEM var — bound by agent loop, never forgotten"}))
                       ;; Store iteration snapshot — exact input/output for fine-tuning
                       _traj-iter (rlm-db/store-iteration! db-info
                                    {:query-ref query-ref
@@ -1433,7 +1490,7 @@
                           trace ;; DON'T add empty trace entry
                           (inc consecutive-errors)
                           restarts
-                          nil -1 journal next-optimize))
+                          nil -1 next-model next-reasoning))
                       ;; Normal iteration with executions
                       (let [exec-feedback (format-executions executions)
                             iteration-header (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
@@ -1454,17 +1511,14 @@
                         (let [had-successful-execution? (some #(nil? (:error %)) executions)
                               next-errors (if had-successful-execution? 0 (inc consecutive-errors))
                               _ (when had-successful-execution?
-                                  (swap! var-index-atom update :current-revision inc))
-                              journal-entry {:iteration iteration
-                                             :thinking thinking
-                                             :var-names (extract-def-names executions)}]
+                                  (swap! var-index-atom update :current-revision inc))]
                           (recur (inc iteration)
                             messages
                             (conj trace trace-entry)
                             next-errors
                             restarts
                             executions iteration
-                            (conj journal journal-entry) next-optimize))))))))))))))
+                            next-model next-reasoning))))))))))))))
 
 ;; =============================================================================
 ;; Public API — environment lifecycle, tool registration
@@ -1512,12 +1566,14 @@
                           :conversation-ref nil})
         rlm-env-atom (atom nil)
         skill-registry-atom (atom skill-registry-map)
+        ;; Single sub-rlm tool — LLM decides routing per-call via `:routing` opt.
+        ;; Previously we forked a `cheap-sub-rlm-query-fn` with `{:optimize :cost}`
+        ;; baked in and shoved that into the SCI sandbox; that stole agency from
+        ;; the model. Now the model gets the neutral fn and picks cost/speed/
+        ;; intelligence itself when the task calls for it.
         sub-rlm-query-fn (make-routed-sub-rlm-query-fn
                            {} depth-atom router skill-registry-atom rlm-env-atom
                            iteration-loop)
-        cheap-sub-rlm-query-fn (make-routed-sub-rlm-query-fn
-                                 {:optimize :cost} depth-atom router skill-registry-atom rlm-env-atom
-                                 iteration-loop)
         env-id (str (util/uuid))
         root-model (or (resolve-root-model router) "unknown")
         has-reasoning? (boolean (provider-has-reasoning? router))
@@ -1529,7 +1585,7 @@
                              {:model root-model
                               :system-prompt system-prompt}))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (create-sci-context cheap-sub-rlm-query-fn db-info
+        (create-sci-context sub-rlm-query-fn db-info
           conversation-ref
           (:custom-bindings @state-atom))
         env {:env-id env-id
@@ -1545,8 +1601,7 @@
              :sandbox-ns sandbox-ns
              :initial-ns-keys initial-ns-keys
              :router router
-             :sub-rlm-query-fn sub-rlm-query-fn
-             :cheap-sub-rlm-query-fn cheap-sub-rlm-query-fn}]
+             :sub-rlm-query-fn sub-rlm-query-fn}]
     (reset! rlm-env-atom env)
     (swap! state-atom assoc :rlm-env env :conversation-ref conversation-ref)
     ;; Register all built-in tools with proper activation-fns

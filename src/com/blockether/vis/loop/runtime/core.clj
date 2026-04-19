@@ -18,6 +18,7 @@
    [com.blockether.vis.loop.storage.db :as db]
 
    [com.blockether.vis.loop.tool :as sci-tool]
+   [com.blockether.vis.loop.runtime.formatters :as fmt]
    [com.blockether.vis.loop.runtime.tools.core :as sci-tools]
    [com.blockether.vis.loop.runtime.tools.git :as sci-git]
    [com.blockether.vis.loop.knowledge.ontology :as ontology]
@@ -45,6 +46,115 @@
 ;; SCI Context Creation
 ;; =============================================================================
 
+(defn- ->pattern
+  "Promote `x` to a `java.util.regex.Pattern` if it's a string. Pass-through
+   when it's already a Pattern. Shared helper behind all the auto-promoting
+   regex wrappers below."
+  ^java.util.regex.Pattern [x]
+  (if (instance? java.util.regex.Pattern x)
+    x
+    (java.util.regex.Pattern/compile (str x))))
+
+(defn- safe-split
+  "Drop-in replacement for `clojure.string/split` that auto-promotes a string
+   delimiter to a `java.util.regex.Pattern`. Clojure's native `str/split`
+   requires a Pattern — LLMs frequently write `(str/split s \"\\n\")` and the
+   error surfaces late (often inside a lazy seq realization), burning
+   iterations. This wrapper matches what the LLM expects and never weakens the
+   Pattern path."
+  ([s re] (str/split s (->pattern re)))
+  ([s re limit] (str/split s (->pattern re) limit)))
+
+(defn- safe-re-find
+  "Shadow for `clojure.core/re-find`: accepts a string pattern in addition to a
+   `java.util.regex.Pattern`. Preserves Matcher-arity passthrough unchanged."
+  ([x]
+   (re-find x))
+  ([re s]
+   (re-find (->pattern re) (str s))))
+
+(defn- safe-re-seq
+  "Shadow for `clojure.core/re-seq`: accepts a string pattern too."
+  [re s]
+  (re-seq (->pattern re) (str s)))
+
+(defn- safe-re-matches
+  "Shadow for `clojure.core/re-matches`: accepts a string pattern too."
+  [re s]
+  (re-matches (->pattern re) (str s)))
+
+(def ^:private max-sandbox-slurp-bytes
+  "Upper bound on `(slurp ...)` inside the sandbox. Mirrors `read-file`'s
+   `max-file-size` (10 MB). Prevents a single agent call from pulling a
+   300 MB core.basis into memory by accident."
+  (* 10 1024 1024))
+
+(defn- safe-slurp
+  "Sandbox `slurp` that mirrors `read-file`'s safety guards but returns raw
+   content (no line numbering) so callers can parse with `edn/read-string`,
+   `fast-edn/parse-string`, etc.
+
+   Blocks:
+   * Symlinked files (no follow-through to arbitrary targets).
+   * Directory targets (tells the LLM to use `list-dir`).
+   * Files over `max-sandbox-slurp-bytes` (tells the LLM to use
+     `(read-file path offset limit)`).
+
+   Everything else falls through to regular `clojure.core/slurp`, so all the
+   usual URL/Reader-arity flexibility survives."
+  [source & opts]
+  (when (string? source)
+    (let [f (java.io.File. ^String source)]
+      (when (.exists f)
+        (when (.isDirectory f)
+          (throw (ex-info (str "slurp path is a directory: " source
+                            ". Use list-dir to enumerate entries.")
+                   {:path source :error :is-directory})))
+        (when (java.nio.file.Files/isSymbolicLink (.toPath f))
+          (throw (ex-info (str "Refusing to follow symlink: " source)
+                   {:path source :error :symlink})))
+        (when (> (.length f) max-sandbox-slurp-bytes)
+          (throw (ex-info (str "slurp target too large: "
+                            (quot (.length f) 1024) "KB. Use "
+                            "(read-file path offset limit) for paged reads.")
+                   {:path source :size (.length f) :max max-sandbox-slurp-bytes}))))))
+  (apply clojure.core/slurp source opts))
+
+(defn- format-printable
+  "If `v` carries :rlm/format / :rlm/formatted metadata (attached by the tool
+   wrapper), return its formatted string. Otherwise return `v` unchanged.
+
+   Used by the sandbox `println` / `print` overrides to render tool results
+   with their tool-specific formatter instead of pr-str'ing the raw map.
+   Non-IObj values (strings, numbers, keywords) pass through untouched —
+   they can't carry metadata and usually render cleanly with plain println."
+  [v]
+  (if (instance? clojure.lang.IObj v)
+    (or (:rlm/formatted (meta v))
+        (when-let [f (:rlm/format (meta v))]
+          (try (f v) (catch Throwable _ v)))
+        v)
+    v))
+
+(defn- sandbox-println
+  "Sandbox replacement for clojure.core/println. Substitutes formatted strings
+   for any arg that was produced by a tool with a :format-result formatter.
+
+   SCI rebinds `sci.core/out` (NOT Clojure's `*out*`) per-iteration via
+   `sci/binding`. SCI's built-in println handles this by rebinding `*out*`
+   from `@sci.core/out` inside the fn body — we do the same so stdout
+   capture keeps working with our override in place."
+  [& args]
+  (binding [*out* @sci/out]
+    (apply println (map format-printable args))))
+
+(defn- sandbox-print
+  "Sandbox replacement for clojure.core/print. Same substitution as
+   sandbox-println, without the trailing newline."
+  [& args]
+  (binding [*out* @sci/out]
+    (apply print (map format-printable args))))
+
 (defn create-sci-context
   "Creates the SCI sandbox context with all available bindings.
 
@@ -59,13 +169,36 @@
                        'date-after? sci-shared/date-after?
                        'days-between sci-shared/days-between 'date-plus-days sci-shared/date-plus-days
                        'date-minus-days sci-shared/date-minus-days 'date-format sci-shared/date-format
-                       'today-str sci-shared/today-str}
+                       'today-str sci-shared/today-str
+                       ;; Formatter-aware println/print — substitute the tool's
+                       ;; :format-result output for args carrying :rlm/format meta.
+                       ;; prn is intentionally NOT overridden: it's for data
+                       ;; round-trip and must stay verbatim pr-str.
+                       'println sandbox-println
+                       'print sandbox-print
+                       ;; LLM footgun shadows: auto-promote string→Pattern so
+                       ;; (re-find "HITL" s), (re-seq "\\d+" s), etc. stop
+                       ;; throwing ClassCastException late inside lazy seqs.
+                       're-find safe-re-find
+                       're-seq safe-re-seq
+                       're-matches safe-re-matches
+                       ;; Sandbox-safe slurp that reuses read-file's guards.
+                       ;; LLMs reach for `slurp` reflexively — giving them a
+                       ;; capped, symlink-safe version kills a class of
+                       ;; NullPointerException-on-unresolved-var turns.
+                       'slurp safe-slurp}
         all-bindings (merge EXTRA_BINDINGS base-bindings
                        (or custom-bindings {}))
         str-ns  (sci/create-ns 'clojure.string nil)
         set-ns  (sci/create-ns 'clojure.set nil)
         walk-ns (sci/create-ns 'clojure.walk nil)
         plus-ns (sci/create-ns 'clojure+.core nil)
+        ;; Patch clojure.string/split so string delimiters auto-promote to
+        ;; Patterns. The original raises a late ClassCastException when an
+        ;; LLM passes a string, usually after the cast hides inside a lazy
+        ;; seq that only realizes during answer/mustache rendering.
+        str-ns-copied (assoc (sci/copy-ns clojure.string str-ns)
+                        'split (sci/new-var 'split safe-split {:ns str-ns}))
         zp-resolve (fn [sym] (deref (requiring-resolve (symbol "zprint.core" (str sym)))))
         lt-resolve (fn [sym] (deref (requiring-resolve (symbol "lazytest.core" (str sym)))))
         sandbox-ns (sci/create-ns 'sandbox nil)
@@ -81,7 +214,7 @@
                                                                                   (list 'let [(first bindings) (second bindings)]
                                                                                     (cons 'when (cons (first bindings) body))))
                                                                                 {:macro true})})
-                                                            'clojure.string (sci/copy-ns clojure.string str-ns)
+                                                            'clojure.string str-ns-copied
                                                             'clojure.set (sci/copy-ns clojure.set set-ns)
                                                             'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
                                                             'clojure+.core (sci/copy-ns clojure+.core plus-ns)
@@ -195,9 +328,19 @@
                                                           LinkedHashMap java.util.LinkedHashMap
                                                           ArrayList java.util.ArrayList
                                                           Random java.util.Random}
-                                               :deny '[require import ns eval load-string load-file
-                                                       read-string find-ns
-                                                       slurp spit
+                                               ;; `slurp` intentionally NOT denied: we shadow it in
+                                               ;; sandbox bindings with `safe-slurp`, which delegates
+                                               ;; to read-file-style guards (no symlink follow, 10 MB
+                                               ;; cap, directory→friendly error). `spit` stays denied —
+                                               ;; `write-file` is the audited path that renders diffs.
+                                               ;;
+                                               ;; `require`, `import`, `find-ns` are NOT denied either
+                                               ;; (real Clojure reach for namespace discovery), but we
+                                               ;; deliberately don't advertise them in tool docs so the
+                                               ;; LLM's canonical playbook stays narrow.
+                                               :deny '[ns eval load-string load-file
+                                                       read-string
+                                                       spit
                                                        intern
                                                        sh
                                                        *in* *out* *err* *command-line-args*]}))]
@@ -289,17 +432,20 @@
           (sci-tools/make-conversation-history-fn db-info conversation-ref)
           {:doc "(conversation-history) or (conversation-history n) — prior query summaries"
            :group "Conversation" :activation-doc "no active conversation"
-           :activation-fn has-history?})
+           :activation-fn has-history?
+           :format-result fmt/format-conversation-history})
         (register! 'conversation-code
           (sci-tools/make-conversation-code-fn db-info conversation-ref)
           {:doc "(conversation-code query-selector) — prior query code blocks"
            :group "Conversation" :activation-doc "no active conversation"
-           :activation-fn has-history?})
+           :activation-fn has-history?
+           :format-result fmt/format-conversation-code})
         (register! 'conversation-results
           (sci-tools/make-conversation-results-fn db-info conversation-ref)
           {:doc "(conversation-results query-selector) — prior query results"
            :group "Conversation" :activation-doc "no active conversation"
-           :activation-fn has-history?})))
+           :activation-fn has-history?
+           :format-result fmt/format-conversation-results})))
     ;; --- Restore tools (active when conversation has prior queries) ---
     ;; Special: restore-var also rebinds the value into the SCI sandbox.
     (when has-conv?
@@ -330,35 +476,58 @@
         (register! 'restore-vars binding-restore-vars
           {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
            :group "Conversation" :activation-doc "no persisted vars from prior queries"
-           :activation-fn has-vars?})
+           :activation-fn has-vars?
+           :format-result fmt/format-restore-vars})
         (register! 'var-history
           (sci-tools/make-var-history-fn db-info conversation-ref)
           {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}"
            :group "Conversation" :activation-doc "no persisted vars from prior queries"
-           :activation-fn has-vars?})
+           :activation-fn has-vars?
+           :format-result fmt/format-var-history})
         (register! 'var-diff
           (sci-tools/make-var-diff-fn db-info conversation-ref)
           {:doc "(var-diff 'sym 1 3) — structural diff between two versions. Returns {:edits [...] :edit-count N}"
            :group "Conversation" :activation-doc "no persisted vars from prior queries"
-           :activation-fn has-vars?})))
+           :activation-fn has-vars?
+           :format-result fmt/format-var-diff})))
     ;; --- Git tools (active when repos are attached) ---
     (when has-db?
-      (let [has-repos? (fn [env] (boolean (seq (db/db-list-repos (:db-info env)))))
-            git-binds  (sci-git/make-git-sci-bindings db-info)]
+      (let [has-repos?    (fn [env] (boolean (seq (db/db-list-repos (:db-info env)))))
+            git-binds     (sci-git/make-git-sci-bindings db-info)
+            ;; Per-tool formatter dispatch. All commit-list tools share one
+            ;; formatter; git-commit-diff returns a string (default) so we
+            ;; don't override it.
+            git-formatter (fn [sym]
+                            (case sym
+                              git-search-commits   fmt/format-commit-list
+                              git-commit-history   fmt/format-commit-list
+                              git-commits-by-ticket fmt/format-commit-list
+                              git-file-history     fmt/format-commit-list
+                              git-commit-parents   fmt/format-commit-parents
+                              git-blame            fmt/format-blame
+                              nil))]
         (doseq [[sym f] git-binds]
           (register! sym f
-            {:doc (str "(" sym " ...) — git tool")
-             :group "Git" :activation-doc "no git repos attached"
-             :activation-fn has-repos?}))))
+            (cond-> {:doc (str "(" sym " ...) — git tool")
+                     :group "Git" :activation-doc "no git repos attached"
+                     :activation-fn has-repos?}
+              (git-formatter sym) (assoc :format-result (git-formatter sym)))))))
     ;; --- Concept tools (active when concepts exist — cross-conversation) ---
     (when has-db?
-      (let [has-concepts? (fn [env] (boolean (seq (db/list-concepts (:db-info env)))))
-            concept-binds (ontology/make-concept-graph-bindings db-info)]
+      (let [has-concepts?     (fn [env] (boolean (seq (db/list-concepts (:db-info env)))))
+            concept-binds     (ontology/make-concept-graph-bindings db-info)
+            concept-formatter (fn [sym]
+                                (case sym
+                                  concept-info    fmt/format-concept-info
+                                  remove-concept  fmt/format-concept-mutation
+                                  edit-concept    fmt/format-concept-mutation
+                                  nil))]
         (doseq [[sym f] concept-binds]
           (register! sym f
-            {:doc (str "(" sym " ...) — concept graph tool")
-             :group "Concepts" :activation-doc "no concepts extracted yet"
-             :activation-fn has-concepts?}))))
+            (cond-> {:doc (str "(" sym " ...) — concept graph tool")
+                     :group "Concepts" :activation-doc "no concepts extracted yet"
+                     :activation-fn has-concepts?}
+              (concept-formatter sym) (assoc :format-result (concept-formatter sym)))))))
     ;; Update initial-ns-keys so get-locals excludes built-in tools
     (when sci-ctx
       (let [current-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)"
@@ -418,30 +587,51 @@
                                 [sym {:val ::persisted
                                       :doc (str "persisted - (restore-var '" sym ") to load")
                                       :persisted-preview (or value "")}])))
-           var-info (merge persisted-info live-info)
-           entries (->> var-info
-                     (remove (fn [[sym _]]
-                               (or (contains? initial-ns-keys sym)
-                                   ;; Hide auto-injected *earmuffed* vars (*query*, *reasoning*)
-                                   (let [n (name sym)] (and (str/starts-with? n "*") (str/ends-with? n "*"))))))
-                     (sort-by (fn [[sym _]] [(- (long (recency-of sym))) (str sym)]))
-                     (mapv (fn [[sym {:keys [val doc arglists persisted-preview]}]]
-                             (let [persisted? (= val ::persisted)
-                                   type-label (cond
-                                                persisted? "persisted"
-                                                (nil? val) "nil"
-                                                (fn? val) (if arglists (str "fn " arglists) "fn")
-                                                (map? val) "map"
-                                                (vector? val) "vector"
-                                                (set? val) "set"
-                                                (sequential? val) "seq"
-                                                (string? val) "string"
-                                                (integer? val) "int"
-                                                (float? val) "float"
-                                                (boolean? val) "bool"
-                                                (keyword? val) "keyword"
-                                                (symbol? val) "symbol"
-                                                :else (.getSimpleName (class val)))
+            var-info (merge persisted-info live-info)
+            earmuffed? (fn [sym]
+                         (let [n (name sym)]
+                           (and (> (count n) 2)
+                             (str/starts-with? n "*")
+                             (str/ends-with? n "*"))))
+            ;; Human-readable description for earmuffed SYSTEM vars. These
+            ;; are bound by the iteration loop and treated as part of the
+            ;; agent's contract surface — readable/usable like any other SCI
+            ;; var, but NEVER FORGOTTEN (forget-vars! refuses to drop them).
+            ;; The (SYSTEM) prefix signals to the LLM that trying to :forget
+            ;; these is a no-op.
+            system-doc (fn [sym]
+                         (case (str sym)
+                           "*query*"     "(SYSTEM, never forgotten) current user query"
+                           "*reasoning*" "(SYSTEM, never forgotten) YOUR thinking from the previous iteration"
+                           "*answer*"    "(SYSTEM, never forgotten) final answer from the previous turn in this conversation"
+                           (str "(SYSTEM, never forgotten) agent-bound var")))
+            entries (->> var-info
+                      (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
+                      ;; Sort order:
+                      ;;   1. earmuffed *system* vars FIRST (stable by name so *answer*/*query*/*reasoning* line up)
+                      ;;   2. then user vars, most-recently-touched first
+                      (sort-by (fn [[sym _]]
+                                 [(if (earmuffed? sym) 0 1)
+                                  (- (long (recency-of sym)))
+                                  (str sym)]))
+                      (mapv (fn [[sym {:keys [val doc arglists persisted-preview]}]]
+                              (let [persisted? (= val ::persisted)
+                                    system?    (earmuffed? sym)
+                                    type-label (cond
+                                                 persisted? "persisted"
+                                                 (nil? val) "nil"
+                                                 (fn? val) (if arglists (str "fn " arglists) "fn")
+                                                 (map? val) "map"
+                                                 (vector? val) "vector"
+                                                 (set? val) "set"
+                                                 (sequential? val) "seq"
+                                                 (string? val) "string"
+                                                 (integer? val) "int"
+                                                 (float? val) "float"
+                                                 (boolean? val) "bool"
+                                                 (keyword? val) "keyword"
+                                                 (symbol? val) "symbol"
+                                                 :else (.getSimpleName (class val)))
                                    size (cond
                                           persisted? (str (count persisted-preview) " chars")
                                           (nil? val) "-"
@@ -454,15 +644,28 @@
                                               (str MAX_VAR_INDEX_COUNT "+ items")
                                               (str n " items")))
                                           :else "-")
-                                   preview (cond
-                                             persisted? (sci-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
-                                             (fn? val) "-"
-                                             :else (sci-shared/truncate (safe-preview-str val) MAX_VAR_INDEX_PREVIEW))
+                                    preview (cond
+                                              persisted? (sci-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
+                                              (fn? val) "-"
+                                              :else (sci-shared/truncate
+                                                      (or (when (instance? clojure.lang.IObj val)
+                                                            (or (:rlm/formatted (meta val))
+                                                                (when-let [f (:rlm/format (meta val))]
+                                                                  (try (f val) (catch Throwable _ nil)))))
+                                                          (safe-preview-str val))
+                                                      MAX_VAR_INDEX_PREVIEW))
                                    version (get-in var-info [sym :version] 1)
                                    ver-str (str version)]
-                               {:name (str sym) :ver ver-str :type type-label :size size
-                                :doc (if doc (sci-shared/truncate doc 80) "-")
-                                :preview preview}))))]
+                                ;; SYSTEM vars override the doc column so the LLM
+                                ;; sees them labelled `(SYSTEM) …` even though no
+                                ;; docstring was attached at def-time.
+                                {:name (str sym) :ver ver-str :type type-label :size size
+                                 :doc (cond
+                                        system? (sci-shared/truncate (system-doc sym) 80)
+                                        doc (sci-shared/truncate doc 80)
+                                        :else "-")
+                                 :preview preview
+                                 :system? system?}))))]
        (when (seq entries)
          (let [visible (vec (take MAX_VAR_INDEX_ROWS entries))
                omitted (- (count entries) (count visible))
@@ -682,6 +885,37 @@
                    {:type :rlm/invoke-error :outcome outcome}))
           (:result outcome))))))
 
+(defn- apply-tool-formatter
+  "Run the tool-def's :format-result on `raw-result` and, when possible,
+   attach `:rlm/format` + `:rlm/formatted` metadata so downstream consumers
+   (LLM serializer, println override, var index) can skip recomputing.
+
+   Contract:
+   - Always returns `{:result value-maybe-with-meta :formatted string}`.
+   - Formatter exceptions are swallowed: fallback to pr-str of the raw value
+     so one misbehaving formatter can't nuke a tool call.
+   - Non-IObj values (strings, numbers, keywords, booleans, nil) pass through
+     unchanged — metadata isn't attachable. The serializer still receives
+     `:formatted` on the outcome map and can use tool-sym lookup for primitives.
+   - When `raw-result` already carries `:rlm/format` meta (e.g. a tool returned
+     an already-formatted nested value), we don't overwrite it; the upstream
+     formatter wins. This keeps composition sane."
+  [tool-def raw-result]
+  (let [fmt (:format-result tool-def)
+        formatted (if fmt
+                    (try (fmt raw-result)
+                      (catch Throwable _ (pr-str raw-result)))
+                    (pr-str raw-result))
+        existing-meta (when (instance? clojure.lang.IObj raw-result) (meta raw-result))
+        already-formatted? (contains? existing-meta :rlm/format)
+        result' (cond
+                  (not (instance? clojure.lang.IObj raw-result)) raw-result
+                  already-formatted? raw-result
+                  :else (vary-meta raw-result assoc
+                          :rlm/format (or fmt (constantly formatted))
+                          :rlm/formatted formatted))]
+    {:result result' :formatted formatted}))
+
 (defn execute-tool
   "Core tool invocation pipeline. Runs :before chain -> :wrap middleware ->
    fn -> :after chain, firing global :on-tool-invoked / :on-tool-completed
@@ -753,9 +987,14 @@
                            :error-id :rlm.error/wrap-exception
                            :message (ex-message t)}}))))
           duration-ms (double (/ (- (System/nanoTime) start-ns) 1e6))
+          {formatted-result :result formatted-str :formatted}
+          (if (or error (nil? tool-def))
+            {:result result :formatted nil}
+            (apply-tool-formatter tool-def result))
           initial-outcome (merge invocation
                             {:args transformed-args
-                             :result result
+                             :result formatted-result
+                             :formatted formatted-str
                              :error (ensure-error-map error :rlm.error/tool-error)
                              :duration-ms duration-ms
                              :skipped? (boolean skipped?)

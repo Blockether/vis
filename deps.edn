@@ -3,8 +3,10 @@
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
   hiccup/hiccup                             {:mvn/version "2.0.0"}
-  ;; LLM structured output (local clone for context management improvements)
-  com.blockether/svar                       {:mvn/version "0.3.0"}
+  ;; LLM structured output — local dep while reasoning-param translation lands.
+  ;; Flip back to `{:mvn/version "0.4.0"}` once svar is released with the
+  ;; router/reasoning-extra-body changes.
+  com.blockether/svar                       {:local/root "../svar"}
   ;; Anomaly - standardized error categories (used by RLM)
   com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)
@@ -81,7 +83,11 @@
   ;; jmustache — Mustache templating (RLM answer interpolation)
   com.samskivert/jmustache                  {:mvn/version "1.16"}
   ;; editscript — structural diff for Clojure data (var version diffs)
-  juji/editscript                           {:mvn/version "0.6.4"}}
+  juji/editscript                           {:mvn/version "0.6.4"}
+  ;; RE2/J — linear-time regex (ReDoS-safe). Used by the grep tool so
+  ;; agent-supplied patterns can never burn the box with catastrophic
+  ;; backtracking. No native deps, pure Java, license Go-BSD.
+  com.google.re2j/re2j                      {:mvn/version "1.8"}}
 
  :aliases
  {:dev   {:extra-paths  ["dev"]

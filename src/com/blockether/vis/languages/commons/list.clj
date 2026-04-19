@@ -2,7 +2,8 @@
   "Base LIST tool for RLM agents.
    Lists directory contents with metadata (type, size, permissions, modified).
    Supports glob filtering, depth control, and configurable limits."
-  (:require [com.blockether.vis.loop.tool :as sci-tool])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.loop.tool :as sci-tool])
   (:import [java.io File]
            [java.nio.file Files Path FileSystems LinkOption]
            [java.nio.file.attribute PosixFilePermissions]
@@ -172,6 +173,25 @@
              {:type :tool/invalid-output :tool 'list-dir :result result})))
   {:result result})
 
+(defn- format-list-result
+  "Pure formatter for list-dir's return map. Pattern:
+     <path> — <total> entr(y|ies) [truncated]
+       <entry>
+       <entry>
+       ...
+
+   All entries are shown — list-dir already caps the entry list at its
+   configured limit. Handles nil (validator probes) gracefully."
+  [result]
+  (if (nil? result)
+    ""
+    (let [{:keys [path entries total truncated]} result
+          header (str path " — " total " entr" (if (= 1 total) "y" "ies")
+                   (when truncated " (truncated)"))
+          body (when (seq entries)
+                 (str "\n  " (str/join "\n  " entries)))]
+      (str header (or body "")))))
+
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
 (def tool-def
@@ -182,6 +202,7 @@
      :arglists (:arglists (meta #'list-dir))
      :validate-input validate-list-input
      :validate-output validate-list-output
+     :format-result format-list-result
      :activation-fn (constantly true)
      :group "Filesystem" :activation-doc "always active"
      :examples ["(list-dir \"src\")"

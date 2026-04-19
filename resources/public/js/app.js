@@ -535,6 +535,7 @@ function pollForResponse(action, expectedCount) {
           var liveEl = document.getElementById('live-trace');
           if (liveEl && data.iterations && data.iterations.length > 0) {
             liveEl.innerHTML = renderLiveTrace(data.iterations);
+            renderMarkdown();
             if (data.iterations.length > lastIterCount) {
               scrollToBottom();
               lastIterCount = data.iterations.length;

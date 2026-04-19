@@ -156,11 +156,20 @@
           (sci/eval-string+ (:sci-ctx env)
             "(def keep-var 99) (def drop-me 42)"
             {:ns (sci/find-ns (:sci-ctx env) 'sandbox)})
+          ;; NOTE: :answer-type is REQUIRED by the iteration spec whenever
+          ;; :answer is present (see storage/schema.clj — `:required true`).
+          ;; Without it, the iteration is rejected with a `:answer-type
+          ;; is required` validation error, before cleanup-claim-without-forget?
+          ;; even gets a chance to run. The mock below uses mustache-text for
+          ;; both iterations so the cleanup-claim rejection is the ONLY
+          ;; validation gate that matters here.
           (with-redefs [llm/ask! (scripted-llm
                                    [{:answer "Posprzatane, usunalem vars z indexu."
+                                     :answer-type "mustache-text"
                                      :confidence "high"}
                                     {:forget ["drop-me"]
                                      :answer "FORGOTTEN"
+                                     :answer-type "mustache-text"
                                      :confidence "high"}])]
             (let [result (conversations/send! id "drop it" {:max-iterations 3})
                   names (sandbox-names env)]

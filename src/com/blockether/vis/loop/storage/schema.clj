@@ -172,55 +172,101 @@
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/description "Expected max execution time in ms. def 100, assert 500, heavy 2000. Max 5000."})))
 
+(def NEXT_SPEC
+  "Per-iteration steering hint. Both fields are optional — emit `:next` only
+   when you want to change something for the next turn.
+
+   `:model` picks a model class from the router's configured pool:
+     cost         → cheapest available (rough drafts, simple lookups)
+     speed        → fastest available (trivial follow-ups)
+     intelligence → most capable available (hard reasoning, synthesis)
+
+   `:reasoning` picks a thinking depth. vis translates this to the right
+   provider-specific param — `reasoning_effort` on OpenAI GPT-5/o-series,
+   `thinking.budget_tokens` on Anthropic Claude 4.x. Models without native
+   reasoning ignore it silently.
+     quick    → short chain-of-thought, minimal tokens
+     balanced → moderate reasoning (default for most turns)
+     deep     → deep reasoning, large thinking budget
+
+   The two dials are orthogonal: `:model :cost :reasoning :deep` is a valid
+   combination that asks for the cheapest model at maximum depth."
+  (spec/spec :next_turn
+    (spec/field {::spec/name :model
+                 ::spec/type :spec.type/keyword
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required false
+                 ::spec/description "Model class to use on the next iteration"
+                 ::spec/values {"cost" "Cheap model for simple operations"
+                                "speed" "Fast model for quick tasks"
+                                "intelligence" "Powerful model for hard reasoning"}})
+    (spec/field {::spec/name :reasoning
+                 ::spec/type :spec.type/keyword
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required false
+                 ::spec/description "Thinking depth for the next iteration"
+                 ::spec/values {"quick"    "Short CoT, minimal reasoning tokens — for simple lookups/formatting"
+                                "balanced" "Moderate reasoning — default for most turns"
+                                "deep"     "Deep reasoning with large thinking budget — for hard analysis"}})))
+
 (defn- make-iteration-spec
   "Builds an iteration response spec.
-   include-thinking? true -> non-reasoning providers.
-   include-thinking? false -> reasoning providers."
-  [{:keys [include-thinking?]}]
-  (let [base-fields [(spec/field {::spec/name :code
-                                  ::spec/type :spec.type/ref
-                                  ::spec/target :code_block
-                                  ::spec/cardinality :spec.cardinality/many
-                                  ::spec/required false
-                                  ::spec/description "Code blocks to execute. Each has :expr and :time-ms. Always executes, even with :final."})
-                     (spec/field {::spec/name :next-optimize
-                                  ::spec/type :spec.type/keyword
-                                  ::spec/cardinality :spec.cardinality/one
-                                  ::spec/required false
-                                  ::spec/description "Model preference for next iteration"
-                                  ::spec/values {"cost" "Cheap model for simple operations"
-                                                 "speed" "Fast model for quick tasks"
-                                                 "intelligence" "Powerful model for hard reasoning"}})
-                     (spec/field {::spec/name :forget
-                                  ::spec/type :spec.type/string
-                                  ::spec/cardinality :spec.cardinality/many
-                                  ::spec/required false
-                                  ::spec/description "Var names to drop from <var_index>. DB rows stay. Use (restore-var 'sym) to bring them back."})
-                     (spec/field {::spec/name :answer
-                                  ::spec/type :spec.type/string
-                                  ::spec/cardinality :spec.cardinality/one
-                                  ::spec/required false
-                                  ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
-                     (spec/field {::spec/name :answer-type
-                                  ::spec/type :spec.type/keyword
-                                  ::spec/cardinality :spec.cardinality/one
-                                  ::spec/required true
-                                  ::spec/description "REQUIRED with :answer. How to render the answer."
-                                  ::spec/values {"mustache-text" "Mustache-rendered plain text. Sandbox vars = context. {{var}}, {{#list}}..{{/list}}, {{^val}}..{{/val}}, {{list.size}}, {{.}}. All referenced vars must be def'd."
-                                                 "mustache-markdown" "Mustache-rendered Markdown. Same template features but rendered as Markdown in the UI."}})
-                     (spec/field {::spec/name :confidence
-                                  ::spec/type :spec.type/keyword
-                                  ::spec/cardinality :spec.cardinality/one
-                                  ::spec/required false
-                                  ::spec/description "Confidence level"
-                                  ::spec/values {"high" "Very confident in the answer"
-                                                 "medium" "Somewhat confident"
-                                                 "low" "Uncertain, best guess"}})
-                     (spec/field {::spec/name :sources
-                                  ::spec/type :spec.type/string
-                                  ::spec/cardinality :spec.cardinality/many
-                                  ::spec/required false
-                                  ::spec/description "IDs of sources used (page.node, document, entity). Required when search-documents or fetch-document-content was used."})]
+
+   Opts:
+     :include-thinking? — true for non-reasoning providers (CoT goes in
+       JSON), false for reasoning providers (CoT is native, no duplication).
+     :include-sources?  — true when at least one document-retrieval tool
+       is active in the current env (has-documents? in the agent loop).
+       When false, the :sources field is omitted entirely — no tool name
+       leaks into the spec and the LLM isn't nudged to produce source IDs
+       it cannot possibly have."
+  [{:keys [include-thinking? include-sources?]}]
+  (let [base-fields (cond-> [(spec/field {::spec/name :code
+                                          ::spec/type :spec.type/ref
+                                          ::spec/target :code_block
+                                          ::spec/cardinality :spec.cardinality/many
+                                          ::spec/required false
+                                          ::spec/description "Code blocks to execute. Each has :expr and :time-ms. Always executes, even with :final."})
+                             (spec/field {::spec/name :next
+                                          ::spec/type :spec.type/ref
+                                          ::spec/target :next_turn
+                                          ::spec/cardinality :spec.cardinality/one
+                                          ::spec/required false
+                                          ::spec/description "Optional steering hint for the next iteration. Either or both sub-keys may be set."})
+                             (spec/field {::spec/name :forget
+                                          ::spec/type :spec.type/string
+                                          ::spec/cardinality :spec.cardinality/many
+                                          ::spec/required false
+                                          ::spec/description "Var names to drop from <var_index>. DB rows stay — the binding is just unmapped from the sandbox."})
+                             (spec/field {::spec/name :answer
+                                          ::spec/type :spec.type/string
+                                          ::spec/cardinality :spec.cardinality/one
+                                          ::spec/required false
+                                          ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
+                             (spec/field {::spec/name :answer-type
+                                          ::spec/type :spec.type/keyword
+                                          ::spec/cardinality :spec.cardinality/one
+                                          ::spec/required true
+                                          ::spec/description "REQUIRED with :answer. How to render the answer."
+                                          ::spec/values {"mustache-text" "Mustache-rendered plain text. Sandbox vars = context. {{var}}, {{#list}}..{{/list}}, {{^val}}..{{/val}}, {{list.size}}, {{.}}. All referenced vars must be def'd."
+                                                         "mustache-markdown" "Mustache-rendered Markdown. Same template features but rendered as Markdown in the UI."}})
+                             (spec/field {::spec/name :confidence
+                                          ::spec/type :spec.type/keyword
+                                          ::spec/cardinality :spec.cardinality/one
+                                          ::spec/required false
+                                          ::spec/description "Confidence level"
+                                          ::spec/values {"high" "Very confident in the answer"
+                                                         "medium" "Somewhat confident"
+                                                         "low" "Uncertain, best guess"}})]
+                      ;; :sources only shows up when document-retrieval tools
+                      ;; are actually callable this turn. Otherwise the LLM
+                      ;; would be told to cite sources it cannot fetch.
+                      include-sources?
+                      (conj (spec/field {::spec/name :sources
+                                         ::spec/type :spec.type/string
+                                         ::spec/cardinality :spec.cardinality/many
+                                         ::spec/required false
+                                         ::spec/description "IDs of sources (page.node, document, entity) that grounded the :answer. Required whenever you pulled content from any document-retrieval tool this turn."})))
         fields (if include-thinking?
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string
@@ -228,20 +274,31 @@
                                      ::spec/description "Your reasoning: what you observed, what you learned, what to do next"})]
                    base-fields)
                  base-fields)]
-    (apply spec/spec {:refs [CODE_BLOCK_SPEC]} fields)))
+    (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC]} fields)))
+
+(defn iteration-spec
+  "Compose the iteration response spec for the CURRENT env state. Callers
+   pass :has-reasoning? and :has-documents?; the former selects the
+   thinking/non-thinking variant, the latter gates the :sources field.
+
+   Keep this as the single call site — `ITERATION_SPEC_*` constants below
+   are legacy defaults kept for tests that don't thread env state."
+  [{:keys [has-reasoning? has-documents?]}]
+  (make-iteration-spec {:include-thinking? (not has-reasoning?)
+                        :include-sources?  (boolean has-documents?)}))
 
 (def ITERATION_SPEC_BASE
-  "Shared base for all iteration response specs (code/next-optimize/final)."
-  (make-iteration-spec {:include-thinking? false}))
+  "Legacy default — :sources INCLUDED, no :thinking. Kept for backwards
+   compat with existing consumers; agent loop should use `iteration-spec`
+   so :sources tracks document-tool activation."
+  (make-iteration-spec {:include-thinking? false :include-sources? true}))
 
 (def ITERATION_SPEC_NON_REASONING
-  "Iteration response spec for non-reasoning providers.
-   Includes explicit :thinking field."
-  (make-iteration-spec {:include-thinking? true}))
+  "Legacy default with :thinking. See ITERATION_SPEC_BASE note."
+  (make-iteration-spec {:include-thinking? true :include-sources? true}))
 
 (def ITERATION_SPEC_REASONING
-  "Iteration response spec for reasoning-capable providers.
-   Excludes :thinking field to avoid duplicating native reasoning tokens."
+  "Legacy default — alias for ITERATION_SPEC_BASE."
   ITERATION_SPEC_BASE)
 
 (def SUB_RLM_QUERY_SPEC

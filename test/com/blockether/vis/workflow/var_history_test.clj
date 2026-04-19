@@ -1,6 +1,6 @@
 (ns com.blockether.vis.workflow.var-history-test
   "End-to-end tests for var-history, var-diff, diffable? guard, and
-   auto-injected *query* / *reasoning* vars.
+   auto-bound SYSTEM vars (*query* / *reasoning* / *answer*).
 
    Exercises the full path — conversations/send! → rlm iteration loop →
    LLM-stubbed response → iteration-var persistence — then queries
@@ -184,30 +184,36 @@
             (expect (seq (:edits diff))))
           (conversations/delete! id))))
 
-    (it "throws on non-diffable (string) vars"
+    (it "strings get a line-level unified diff (:string-diff)"
+      ;; var-diff's diff-values dispatch treats two strings as a `:string-diff`
+      ;; (unified line diff via java-diff-utils). It is NOT a "non-diffable"
+      ;; case — that's reserved for heterogeneous types that don't support
+      ;; any structural comparison (→ `:replacement`). This test pins the
+      ;; :string-diff semantics so future refactors can't silently regress it.
       (with-temp-db
         (let [{id :id} (conversations/create! :cli {:title "sci var-diff string"})]
           (with-redefs [llm/ask! (scripted-llm
                                    [{:code [{:expr "(def msg \"hello\")" :time-ms 100}]}
-                                    {:answer "v1" :confidence "high"}])]
+                                    {:answer "v1" :answer-type "mustache-text" :confidence "high"}])]
             (conversations/send! id "msg v1" {:max-iterations 3}))
           (with-redefs [llm/ask! (scripted-llm
                                    [{:code [{:expr "(def msg \"world\")" :time-ms 100}]}
-                                    {:answer "v2" :confidence "high"}])]
+                                    {:answer "v2" :answer-type "mustache-text" :confidence "high"}])]
             (conversations/send! id "msg v2" {:max-iterations 3}))
           (let [env (conversations/env-for id)
-                err (try (sci/eval-string+ (:sci-ctx env)
-                           "(var-diff 'msg 1 2)"
-                           {:ns (sci/find-ns (:sci-ctx env) 'sandbox)})
-                         nil
-                         (catch clojure.lang.ExceptionInfo e e)
-                         (catch Throwable e e))]
-            ;; SCI wraps the exception — check that it threw and the root cause is correct
-            (expect (some? err))
-            (expect (re-find #"not diffable" (ex-message err))))
+                result (sci/eval-string+ (:sci-ctx env)
+                         "(var-diff 'msg 1 2)"
+                         {:ns (sci/find-ns (:sci-ctx env) 'sandbox)})
+                diff (:val result)]
+            (expect (= :string-diff (:type diff)))
+            (expect (= 1 (:from-version diff)))
+            (expect (= 2 (:to-version diff)))
+            (expect (pos? (:edit-count diff)))
+            (expect (re-find #"-hello" (:unified diff)))
+            (expect (re-find #"\+world" (:unified diff))))
           (conversations/delete! id)))))
 
-  (describe "auto-injected *query* var"
+  (describe "auto-bound *query* var"
     (it "persists user query text and is retrievable via var-history"
       (with-temp-db
         (let [{id :id} (conversations/create! :cli {:title "auto query var"})]
@@ -234,22 +240,28 @@
             (expect (= "Hello world" (sandbox-value env '*query*))))
           (conversations/delete! id)))))
 
-  (describe "auto-injected *reasoning* var"
+  (describe "auto-bound *reasoning* var"
     (it "persists thinking text when present"
+      ;; :answer-type is required when :answer is set — without it, mock[1]
+      ;; would fail validation and the loop would keep spinning until the
+      ;; scripted script is exhausted. We pin it explicitly so the mock
+      ;; reflects a well-formed iteration response.
       (with-temp-db
         (let [{id :id} (conversations/create! :cli {:title "auto reasoning var"})]
           (with-redefs [llm/ask! (scripted-llm
                                    [{:thinking "Let me think about this carefully"
                                      :code [{:expr "(def x 42)" :time-ms 100}]}
                                     {:thinking "Now I know the answer"
-                                     :answer "42" :confidence "high"}])]
+                                     :answer "42" :answer-type "mustache-text" :confidence "high"}])]
             (conversations/send! id "What is the answer?" {:max-iterations 3}))
           (let [env (conversations/env-for id)
-                history (db/db-var-history (:db-info env) (:conversation-ref env) '*reasoning*)]
-            ;; Two iterations with thinking → two *reasoning* versions
+                history (db/db-var-history (:db-info env) (:conversation-ref env) '*reasoning*)
+                values  (set (map :value history))]
+            ;; Two iterations with thinking → two *reasoning* versions.
+            ;; Assert by SET: iterations can share a millisecond timestamp,
+            ;; which makes sequence ordering DB-engine-dependent.
             (expect (= 2 (count history)))
-            (expect (= "Let me think about this carefully" (:value (first history))))
-            (expect (= "Now I know the answer" (:value (second history)))))
+            (expect (= #{"Let me think about this carefully" "Now I know the answer"} values)))
           (conversations/delete! id))))
 
     (it "is accessible as a live sandbox var with latest thinking"

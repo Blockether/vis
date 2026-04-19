@@ -134,23 +134,27 @@
                    :max-iter       max-iter
                    :cancel-atom    (:cancel-atom opts)
                    :routing        call-routing
+                   :reasoning      (:reasoning opts)
                    :include-trace  (:include-trace opts)
                    :skills-loaded  skills-loaded}))
               ;; SINGLE-SHOT PATH: llm/ask! with SUB_RLM_QUERY_SPEC
               (let [messages (cond-> []
                                skill-msg (conj skill-msg)
-                               true (conj {:role "user" :content prompt}))]
+                               true (conj {:role "user" :content prompt}))
+                    reasoning (:reasoning opts)]
                 (trove/log! {:level :info :id ::sub-rlm-call
                              :data {:depth @depth-atom
                                     :prompt-len (count prompt)
                                     :routing call-routing
+                                    :reasoning reasoning
                                     :skills-loaded skills-loaded}
                              :msg "Sub-RLM query (sub-rlm-query)"})
                 (let [r (llm/ask! rlm-router
-                          {:spec SUB_RLM_QUERY_SPEC
-                           :messages messages
-                           :routing call-routing
-                           :check-context? false})
+                          (cond-> {:spec SUB_RLM_QUERY_SPEC
+                                   :messages messages
+                                   :routing call-routing
+                                   :check-context? false}
+                            reasoning (assoc :reasoning reasoning)))
                       parsed (:result r)
                       code (when-let [c (:code parsed)]
                              (let [v (vec c)]
@@ -181,14 +185,20 @@
       (:name model-map))))
 
 (defn provider-has-reasoning?
-  "Checks if the root provider has native reasoning (thinking) capability.
+  "Checks if the root model accepts a reasoning-depth parameter.
+
+   The `:reasoning?` flag lives on svar's `KNOWN_MODEL_METADATA` (or on a user's
+   explicit model map override) and is merged onto the resolved model via
+   `infer-model-metadata`. When true, svar's `ask!` auto-translates vis's
+   abstract `:reasoning :quick|:balanced|:deep` into the provider's wire shape
+   (OpenAI `reasoning_effort` or Anthropic `thinking.budget_tokens`).
 
    Params:
    `rlm-router` - Router from llm/make-router, or nil.
 
    Returns:
-   Boolean. True if the root model has :reasoning-params set."
+   Boolean. True if the root model is tagged `:reasoning? true`."
   [rlm-router]
   (when rlm-router
     (when-let [[_provider model] (llm/select-provider rlm-router {:strategy :root})]
-      (boolean (seq (:reasoning-params model))))))
+      (boolean (:reasoning? model)))))
