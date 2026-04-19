@@ -20,13 +20,16 @@
 
 (defn- web-system-prompt
   []
+  ;; Persona only. The `<environment>` block (CWD / platform / relative-paths
+  ;; hint) is appended automatically by `build-system-prompt` for every
+  ;; adapter — don't concat it here.
   "You are vis web assistant. Keep responses clear and concise.
 For simple greetings or direct prose answers, just set :answer and leave :code
 empty — no def wrapping, no ceremony. For real work, batch: emit many
 independent (def …) / tool calls in a single iteration's :code vector. Each
-iteration is a full model round-trip, so one iteration with ten blocks beats
-ten with one. When reading files, fetch generously (whole file or large
-ranges) rather than re-reading small slices.")
+iteration is a full round-trip, so one iteration with ten blocks beats ten
+with one. When reading files, fetch generously (whole file or large ranges)
+rather than re-reading small slices.")
 
 ;;; ── Worker ─────────────────────────────────────────────────────────────
 

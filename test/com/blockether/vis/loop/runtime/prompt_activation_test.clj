@@ -159,3 +159,60 @@
                                      :doc "Should not appear here"}]})]
         (expect (not (str/includes? p "Should not appear here")))
         (expect (not (str/includes? p "<constants>")))))))
+
+(defdescribe environment-block-is-universal
+  (describe "<environment> block"
+    ;; This block must appear in the prompt for EVERY adapter (web, tui,
+    ;; telegram, cli) — the single chokepoint is `build-system-prompt`
+    ;; itself. Adapters never concat `<environment>` manually anymore;
+    ;; these tests pin that contract down so we never regress into the
+    ;; per-adapter copy-paste that shipped earlier.
+    (it "renders even with no env, tool-defs, or adapter system-prompt"
+      (let [p (build {})]
+        (expect (str/includes? p "<environment>"))
+        (expect (str/includes? p "</environment>"))
+        (expect (str/includes? p "Working directory:"))))
+
+    (it "includes the relative-paths hint for file tools"
+      ;; Without this sentence the model defaults to absolute paths
+      ;; because tool examples historically used /path/to/... templates.
+      (let [p (build {})]
+        (expect (str/includes? p "Prefer RELATIVE paths"))
+        (expect (str/includes? p "user.dir"))))
+
+    (it "reports the JVM's actual working directory"
+      (let [p   (build {})
+            cwd (System/getProperty "user.dir")]
+        (expect (str/includes? p (str "Working directory: " cwd)))))
+
+    (it "renders exactly once (no adapter-side duplication)"
+      (let [p     (build {:system-prompt "Adapter persona."})
+            opens (count (re-seq #"<environment>" p))]
+        ;; If an adapter starts concatenating its own copy again, this
+        ;; guard trips instead of silently doubling tokens.
+        (expect (= 1 opens))))
+
+    (it "sits before the INSTRUCTIONS block so adapter prose can reference CWD"
+      ;; `build-system-prompt` places `<environment>` ahead of
+      ;; INSTRUCTIONS on purpose: adapter instructions can mention
+      ;; relative paths knowing the model already saw the CWD.
+      (let [p       (build {:system-prompt "Adapter persona."})
+            env-idx (.indexOf p "<environment>")
+            ins-idx (.indexOf p "INSTRUCTIONS:")]
+        (expect (pos? env-idx))
+        (expect (pos? ins-idx))
+        (expect (< env-idx ins-idx))))))
+
+(defdescribe environment-block-direct
+  (describe "prompt/environment-block"
+    ;; The public helper exists so tests and future callers can assert on
+    ;; the shape without rebuilding the full system prompt.
+    (it "is a standalone string containing the expected field labels"
+      (let [b (prompt/environment-block)]
+        (expect (string? b))
+        (expect (str/includes? b "Working directory:"))
+        (expect (str/includes? b "Home directory:"))
+        (expect (str/includes? b "User:"))
+        (expect (str/includes? b "Platform:"))
+        (expect (str/includes? b "Shell:"))
+        (expect (str/includes? b "</environment>"))))))

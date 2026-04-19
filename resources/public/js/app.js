@@ -300,20 +300,20 @@ function showContext() {
       }
 
       var html = '';
-      // User-defined variables — primary section, always expanded.
+      // SYSTEM variables — agent-loop bookkeeping (*query*, *reasoning*, *answer*),
+      // always visible at the top, never collapsed.
+      if (systemVars.length > 0) {
+        html += '<div class="ctx-section ctx-section-system">';
+        html += '<div class="ctx-section-header"><i data-lucide="cpu"></i> System <span class="ctx-count">' + systemVars.length + '</span></div>';
+        systemVars.forEach(function(v) { html += renderVarCard(v); });
+        html += '</div>';
+      }
+      // User-defined variables — below system vars, always expanded.
       if (userVars.length > 0) {
         html += '<div class="ctx-section">';
         html += '<div class="ctx-section-header"><i data-lucide="variable"></i> Variables <span class="ctx-count">' + userVars.length + '</span></div>';
         userVars.forEach(function(v) { html += renderVarCard(v); });
         html += '</div>';
-      }
-      // SYSTEM variables — agent-loop bookkeeping (*query*, *reasoning*, *answer*),
-      // collapsed by default so user vars stay visible.
-      if (systemVars.length > 0) {
-        html += '<details class="ctx-section ctx-section-system">';
-        html += '<summary class="ctx-section-header"><i data-lucide="cpu"></i> System <span class="ctx-count">' + systemVars.length + '</span></summary>';
-        systemVars.forEach(function(v) { html += renderVarCard(v); });
-        html += '</details>';
       }
       if (!html) html = '<div class="ctx-empty">Nothing here yet. Variables will appear as the agent works.</div>';
       if (typeof lucide !== 'undefined') setTimeout(function() { lucide.createIcons(); }, 50);

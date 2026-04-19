@@ -108,24 +108,12 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
 ;; See SAMPLE_CONFIG.edn for svar-native format.
 
 ;;; ── Environment Info ─────────────────────────────────────────────────────
-
-(defn environment-info
-  "Build an environment context string (CWD, platform, shell) for injection
-   into the agent system prompt.  Mirrors Claude Code's # Environment section."
-  []
-  (let [cwd    (System/getProperty "user.dir")
-        os     (System/getProperty "os.name")
-        arch   (System/getProperty "os.arch")
-        shell  (or (System/getenv "SHELL") "unknown")
-        user   (System/getProperty "user.name")
-        home   (System/getProperty "user.home")]
-    (str "\n<environment>\n"
-      "  Working directory: " cwd "\n"
-      "  Home directory: " home "\n"
-      "  User: " user "\n"
-      "  Platform: " os " (" arch ")\n"
-      "  Shell: " shell "\n"
-      "</environment>")))
+;;
+;; Previously this namespace built an `<environment>` block and concatenated
+;; it onto every CLI system prompt. That responsibility has moved into
+;; `loop.runtime.prompt/build-system-prompt` so EVERY adapter (cli, web,
+;; telegram, tui) gets the block automatically — no per-adapter concat,
+;; no drift. See `prompt/environment-block` for the current source.
 
 ;;; ── Execution ────────────────────────────────────────────────────────────
 
@@ -178,8 +166,9 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
                       {:doc (str sym)}))
         iters     (or max-iterations (:max-iterations agent-def) core/MAX_ITERATIONS)
         mdl       (or model (:model agent-def))
-        raw-sys   (or system-prompt (:system-prompt agent-def))
-        sys       (str raw-sys (environment-info))
+        ;; Adapter passes persona only. `build-system-prompt` appends the
+        ;; `<environment>` block (CWD/platform/shell) for every adapter.
+        sys       (or system-prompt (:system-prompt agent-def))
         projector (when on-chunk
                     (shared/make-on-chunk-projector))
         on-chunk* (when on-chunk

@@ -237,10 +237,7 @@ button:disabled{opacity:.4;cursor:default;transform:none}
 .load-more{text-align:center;color:var(--dim);padding:12px;font-size:13px}
 .ctx-section{margin-bottom:12px}
 .ctx-section-header{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--accent);margin-bottom:6px;display:flex;align-items:center;gap:5px}
-.ctx-section-system{margin-top:14px;padding-top:10px;border-top:1px dashed var(--border)}
-.ctx-section-system>summary{cursor:pointer;list-style:none;color:var(--dim);user-select:none}
-.ctx-section-system>summary::-webkit-details-marker{display:none}
-.ctx-section-system[open]>summary{margin-bottom:6px}
+.ctx-section-system{padding-bottom:10px;border-bottom:1px dashed var(--border)}
 .ctx-var-system .ctx-var-name{color:var(--dim)}
 .ctx-var-system .ctx-var-type{background:rgba(0,0,0,0.04);color:var(--dim)}
 .ctx-count{background:var(--accent);color:var(--bg);font-size:9px;padding:1px 5px;border-radius:7px;font-weight:700}
