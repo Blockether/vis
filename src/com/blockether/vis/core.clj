@@ -61,7 +61,8 @@
 
 #_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
 (def MAX_ITERATIONS
-  "Hard ceiling on iteration count per query (default 50)."
+  "Default iteration budget per query. Kept tight — the LLM can extend it
+   at runtime via (request-more-iterations n) up to MAX_ITERATION_CAP."
   schema/MAX_ITERATIONS)
 
 #_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}

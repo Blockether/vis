@@ -336,6 +336,65 @@
   [messages max-w]
   (reduce + 0 (map #(bubble-height % max-w) messages)))
 
+;;; ── Progress timeline formatting ───────────────────────────────────────────
+
+(def ^:private progress-thinking-prefix "  ")
+(def ^:private progress-code-prefix     "  ↳ ")
+
+(defn- truncate-single-line
+  "Collapse multi-line text to a single line (first non-blank) and cap length."
+  [s max-len]
+  (when (string? s)
+    (let [first-line (->> (str/split-lines s)
+                       (map str/trim)
+                       (remove str/blank?)
+                       first)]
+      (when first-line
+        (if (> (count first-line) max-len)
+          (str (subs first-line 0 (max 0 (- max-len 1))) "…")
+          first-line)))))
+
+(defn- format-iteration-entry
+  "Turn one progress iteration into display lines. Returns a vec of strings.
+   First line is the iteration header; subsequent lines are thinking tail
+   (multi-line, preserved) and streamed code forms (single-line each)."
+  [{:keys [iteration thinking code final?]} code-width]
+  (let [header (str "• Iteration " (inc iteration)
+                 (when final? " · finalizing"))
+        thinking-lines (when (and (string? thinking) (seq (str/trim thinking)))
+                         (->> (str/split-lines thinking)
+                           (map str/trimr)
+                           (remove str/blank?)
+                           (mapv #(str progress-thinking-prefix %))))
+        code-lines (when (seq code)
+                     (into []
+                       (keep (fn [form]
+                               (when-let [one (truncate-single-line form code-width)]
+                                 (str progress-code-prefix one))))
+                       code))]
+    (into [header] (concat thinking-lines code-lines))))
+
+(defn progress->text
+  "Build the text body of the live progress placeholder bubble.
+
+   `progress` is the `:progress` slot from app-db: `{:iterations [...]}`.
+   `bubble-w` is the outer bubble width in chars — we size inner content
+   conservatively so wrap-text inside draw-chat-bubble! doesn't blow up.
+   Returns a single string with newlines separating lines.
+
+   Returns the literal \"thinking...\" string when the progress timeline is
+   empty, so the placeholder still shows *something* in the first 100ms
+   before the first chunk arrives."
+  [progress bubble-w]
+  (let [iterations (:iterations progress)
+        content-w  (max 10 (- bubble-w 6))] ;; leave room for prefix + padding
+    (if (empty? iterations)
+      "thinking..."
+      (str/join "\n"
+        (into []
+          (mapcat #(format-iteration-entry % content-w))
+          iterations)))))
+
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 
 (defn draw-messages-area!

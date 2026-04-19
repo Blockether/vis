@@ -247,6 +247,13 @@ button:disabled{opacity:.4;cursor:default;transform:none}
 @keyframes pulse{from{opacity:.85}to{opacity:1}}
 .toast{position:fixed;top:0;left:50%;transform:translateX(-50%) translateY(-100%);z-index:200;background:#2d2a26;color:#fff;padding:10px 24px;border-radius:0 0 14px 14px;font-size:14px;font-weight:600;letter-spacing:.2px;box-shadow:0 4px 16px rgba(0,0,0,0.18);opacity:0;transition:transform .35s cubic-bezier(.4,.8,.3,1.1),opacity .25s ease;pointer-events:none;display:flex;align-items:center;gap:8px}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.not-found{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 24px 40px;text-align:center;min-height:60vh}
+.not-found-icon{color:var(--dim);margin-bottom:16px}
+.not-found-icon i{width:48px;height:48px}
+.not-found-title{font-size:22px;font-weight:700;color:var(--fg);margin-bottom:8px}
+.not-found-body{font-size:15px;color:var(--dim);line-height:1.5;margin-bottom:24px;max-width:360px}
+.not-found-link{display:inline-block;font-size:14px;font-weight:600;color:var(--bg);background:var(--accent);padding:10px 24px;border-radius:999px;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,0.12);transition:background .15s}
+.not-found-link:hover,.not-found-link:active{background:#5a4228}
 @media(min-width:700px){
   .input-bar form{max-width:1040px;margin:0 auto}
   .sheet-content{width:100%;max-width:100%;margin-left:0;margin-right:0;border-radius:16px 16px 0 0;margin-bottom:0}
