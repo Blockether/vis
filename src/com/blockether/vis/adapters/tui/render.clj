@@ -338,8 +338,7 @@
 
 ;;; ── Progress timeline formatting ───────────────────────────────────────────
 
-(def ^:private progress-thinking-prefix "  ")
-(def ^:private progress-code-prefix     "  ↳ ")
+(def ^:private progress-code-prefix "❯ ")
 
 (defn- truncate-single-line
   "Collapse multi-line text to a single line (first non-blank) and cap length."
@@ -355,24 +354,20 @@
           first-line)))))
 
 (defn- format-iteration-entry
-  "Turn one progress iteration into display lines. Returns a vec of strings.
-   First line is the iteration header; subsequent lines are thinking tail
-   (multi-line, preserved) and streamed code forms (single-line each)."
-  [{:keys [iteration thinking code final?]} code-width]
-  (let [header (str "• Iteration " (inc iteration)
-                 (when final? " · finalizing"))
-        thinking-lines (when (and (string? thinking) (seq (str/trim thinking)))
-                         (->> (str/split-lines thinking)
-                           (map str/trimr)
-                           (remove str/blank?)
-                           (mapv #(str progress-thinking-prefix %))))
+  "Turn one progress iteration into display lines mirroring the web's
+   iteration card: an `ITER N` header plus one `❯ <code>` row per streamed
+   expression. The LLM's `:thinking` narrative is intentionally omitted —
+   see the matching decision in `adapters/web/presentation/message.clj`."
+  [{:keys [iteration code final?]} code-width]
+  (let [header (str "ITER " (inc iteration)
+                 (when final? "  · finalizing"))
         code-lines (when (seq code)
                      (into []
                        (keep (fn [form]
                                (when-let [one (truncate-single-line form code-width)]
                                  (str progress-code-prefix one))))
                        code))]
-    (into [header] (concat thinking-lines code-lines))))
+    (into [header] code-lines)))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -387,7 +382,7 @@
    before the first chunk arrives."
   [progress bubble-w]
   (let [iterations (:iterations progress)
-        content-w  (max 10 (- bubble-w 6))] ;; leave room for prefix + padding
+        content-w  (max 10 (- bubble-w 4))] ;; room for prefix + padding
     (if (empty? iterations)
       "thinking..."
       (str/join "\n"

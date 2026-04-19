@@ -132,15 +132,13 @@
 (defn- update-iteration-entry
   "Merge a chunk into the `:iterations` vector, preserving previously
    streamed fields when the new chunk arrives with nils (matches the web
-   on-chunk-handler's defensive merge)."
-  [iters {:keys [iteration thinking code final done?]}]
+   on-chunk-handler's defensive merge). The `:thinking` field is ignored —
+   the TUI no longer renders it; see `adapters/tui/render.clj`."
+  [iters {:keys [iteration code final done?]}]
   (let [new-code (when (sequential? code)
                    (vec (keep streamed-code->str code)))
         existing (get iters iteration)
         merged   {:iteration  iteration
-                  :thinking   (if (and (nil? thinking) existing)
-                                (:thinking existing)
-                                thinking)
                   :code       (if (and (empty? new-code) existing)
                                 (:code existing)
                                 (or new-code []))

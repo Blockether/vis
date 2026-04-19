@@ -20,7 +20,12 @@
 
 (defn- web-system-prompt
   []
-  "You are vis web assistant. Keep responses clear and concise.")
+  "You are vis web assistant. Keep responses clear and concise.
+Batch work aggressively: emit many independent (def …) / tool calls in a single
+iteration's :code vector — each iteration is a full model round-trip, so one
+iteration with ten blocks beats ten iterations with one. When reading files,
+fetch generously (whole file or large ranges) rather than re-reading small
+slices.")
 
 ;;; ── Worker ─────────────────────────────────────────────────────────────
 
@@ -48,19 +53,22 @@
   "Build the :on-chunk callback svar now uses (post-:hooks refactor). svar calls it
     during streaming with {:iteration :thinking :code :final :done?} and once with
     :done? true when an iteration finalizes. We project each call into the web
-    live-status atom so the /check polling endpoint can stream UI updates."
+    live-status atom so the /check polling endpoint can stream UI updates.
+
+    `:thinking` on the incoming chunk is ignored — the main chat no longer
+    renders the LLM's inner monologue (it used to render as a \"Thinking\"
+    callout and felt like the system prompt was drifting turn-to-turn).
+    Status labels fall back to iteration + first tool name."
   [conversation-id]
-  (fn [{:keys [iteration thinking code final done?]}]
+  (fn [{:keys [iteration code final done?]}]
     (let [code-vec (when (sequential? code)
                      (vec (keep streamed-code->expr code)))
           first-code (first (filter identity code-vec))
           label (cond
-                  done?                     "Finalizing…"
-                  (seq first-code)          (str "Iteration " (inc iteration) " → "
-                                              (or (first-symbol first-code) "…"))
-                  (and thinking (seq (str/trim thinking)))
-                  (str "Iteration " (inc iteration) " · thinking…")
-                  :else                     (str "Iteration " (inc iteration) "…"))]
+                  done?             "Finalizing…"
+                  (seq first-code)  (str "Iteration " (inc iteration) " → "
+                                      (or (first-symbol first-code) "…"))
+                  :else             (str "Iteration " (inc iteration) "…"))]
       (swap! web-conversations/live-status
         (fn [ls]
           (let [conv-state (or (get ls conversation-id) {})
@@ -69,17 +77,13 @@
                 ;; nil/empty payload, keep whatever was already streamed for
                 ;; this iteration. Two layers of protection (the other is in
                 ;; loop/core.clj's iter-on-chunk) — if either one regresses,
-                ;; the UI still shows the reasoning/code it saw mid-stream.
+                ;; the UI still shows the code it saw mid-stream.
                 existing (get iters-so-far iteration)
-                merged-thinking (if (and (nil? thinking) existing)
-                                  (:thinking existing)
-                                  thinking)
                 merged-executions (let [new-execs (mapv (fn [c] {:code c}) (or code-vec []))]
                                     (if (and (empty? new-execs) existing)
                                       (:executions existing)
                                       new-execs))
                 entry {:iteration iteration
-                       :thinking  merged-thinking
                        :final?    (or (boolean final) (:final? existing))
                        :executions merged-executions}
                 iters' (cond
