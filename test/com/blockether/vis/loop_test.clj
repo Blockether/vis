@@ -529,13 +529,17 @@
 ;; =============================================================================
 
 (def ^:private test-providers
-  "LLM providers for integration tests. Uses blockether proxy."
+  "LLM providers for integration tests. Uses the Blockether proxy with
+   gpt-5-mini — reasoning-capable, cheap ($0.25/$2.00 per 1M), and
+   verified working end-to-end via the live z.ai-coding + Blockether
+   live test suites in svar. Replaces the earlier {gpt-4o, gpt-4o-mini}
+   pair where gpt-4o-mini wasn't in svar's pricing table and gpt-4o
+   was too expensive to run on every CI pass."
   [{:id :blockether
     :api-key (System/getenv "BLOCKETHER_OPENAI_API_KEY")
     :base-url (or (System/getenv "BLOCKETHER_OPENAI_BASE_URL")
                 "https://llm.blockether.com/v1")
-    :models [{:name "gpt-4o"}
-             {:name "gpt-4o-mini"}]}])
+    :models [{:name "gpt-5-mini"}]}])
 
 (defn- make-integration-router
   "Fresh router for each integration test run. Avoids shared budget/circuit state."
