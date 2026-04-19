@@ -14,9 +14,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 :root{--bg:#fdf4e5;--fg:#2d2a26;--accent:#785a32;--dim:#a0927e;--user-bg:#e6dcc8;--ai-bg:#f5f0e6;--border:#c8b89a;--code-bg:#f0ebe0;--font-text:'Writer',monospace;--font-ui:'Inter',-apple-system,system-ui,sans-serif;--font-mono:'Fira Code',monospace;--icon-xs:10px;--icon-sm:12px;--icon-md:14px;--icon-lg:18px;--icon-xl:32px}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:text;user-select:text;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 html{touch-action:manipulation;-ms-touch-action:manipulation}
 body{touch-action:manipulation}
