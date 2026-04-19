@@ -5,7 +5,8 @@
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.vis.loop.storage.db :as rlm-db]
    [com.blockether.vis.loop.storage.schema
-    :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING]]
+    :refer [iteration-spec
+            ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING]]
    [com.blockether.vis.loop.knowledge.skills :as rlm-skills]))
 
 (def ^:private CAVEMAN_ITERATION_OUTPUT
@@ -115,9 +116,63 @@ Git tools available this session — all prefixed `git-`:
 ")]
       (str (str/join "\n" blocks) "\n" tools))))
 
+(defn- history-decision-block
+  "Builds the \"BEFORE WRITING CODE, DECIDE\" list, including ONLY the tools
+   that are actually active in the current env. If no history tools are
+   active (e.g. a fresh env with no conversation), returns nil so the
+   whole block is elided instead of listing dead tool names."
+  [{:keys [has-conversation?]}]
+  (when has-conversation?
+    (str "\nBEFORE WRITING CODE, DECIDE:
+- Do I need older reasoning from this turn?     → (var-history '*reasoning*) — every iteration's thinking.
+- Do I need results from an earlier iteration?  → (conversation-results [:id query-id]) or check <var_index>.
+- Do I need an earlier QUERY in this convo?     → (conversation-history) then (conversation-code …) or (conversation-results …).
+- Do I need an older *answer*?                  → (var-history '*answer*) — every prior turn's final answer.
+- Do I need a prior value of a var?             → (var-history 'sym) / (var-diff 'sym v1 v2).
+- Do I need to restore a persisted var?         → (restore-var 'sym).
+Don't speculate about past state — pull it. Don't re-derive what you can look up.\n")))
+
+(defn- arch-history-tools-line
+  "The `(var-history 'x) / (var-diff 'x 1 3)` ARCH bullet references tools
+   that only exist when the env has a conversation. Elide when inactive."
+  [{:keys [has-conversation?]}]
+  (when has-conversation?
+    "\n  (var-history 'x) → all versions. (var-diff 'x 1 3) → structural diff (collections only)."))
+
+(defn- concept-navigation-block
+  "Concept-graph navigation tools are only bound when the DB holds
+   extracted concepts. Without concepts, listing them would point at
+   nil bindings and waste tokens."
+  [{:keys [has-concepts? concept-graph-prompt]}]
+  (when has-concepts?
+    (str (when concept-graph-prompt (str "\n" concept-graph-prompt "\n"))
+      "
+Concept navigation (cross-document ontology):
+- (concept-info \"Term\") → definition, aliases, sources (go-to-definition)
+- (remove-concept \"Term\" \"rationale why\") → removes concept (rationale REQUIRED)
+- (edit-concept \"Term\" {:definition \"new def\"}) → updates concept (survives rebuild)
+")))
+
 (defn build-system-prompt
-  "Builds the system prompt — compact, token-efficient."
-  [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary system-prompt git-repos skill-registry concept-graph-prompt]}]
+  "Builds the system prompt — compact, token-efficient.
+
+   Every tool reference is ACTIVATION-GATED: if a tool's activation-fn would
+   return false for the current env, the corresponding prompt block is
+   elided. This keeps `build-system-prompt` in lockstep with the per-turn
+   activation check in `runtime.query.core/prepare-query-context`.
+
+   Required opts:
+     :has-documents?    — DB has ≥1 document
+     :has-conversation? — env has a conversation-ref (→ history/restore/var tools)
+     :has-concepts?     — DB has ≥1 concept
+     :git-repos         — non-nil seq means ≥1 repo attached
+
+   Keeping these flags in sync with `register-builtin-tools!` is the one
+   invariant this module depends on."
+  [{:keys [output-spec custom-docs has-reasoning? has-documents? document-summary
+           system-prompt git-repos skill-registry concept-graph-prompt
+           has-conversation? has-concepts?]
+    :as opts}]
   (str
     "Clojure SCI agent. Write, exec, iterate.
 Current date/time (server local): " (.truncatedTo (java.time.LocalDateTime/now) java.time.temporal.ChronoUnit/SECONDS) "
@@ -125,22 +180,35 @@ Current date/time (server local): " (.truncatedTo (java.time.LocalDateTime/now) 
 
 MINDSET:
 - ALL reasoning MUST happen in :code. The SCI sandbox is your brain. Think by computing, not by writing prose.
-- NEVER mentally simulate, estimate, or speculate. Write code, run it, read <execution_results>.
+- NEVER mentally simulate, estimate, or speculate. Write code, run it, read <journal>.
 - Even for simple math, dates, string ops — CODE IT. (+ 2 2) beats \"I think 4\".
 - Reasoning text: 2-5 lines max to state intent. Then CODE.
 - Text/Q&A tasks: fetch data with tools, then :final.
 - Asserts: ALWAYS (assert expr \"message\"). Bare asserts = useless errors.
 
+CONTEXT MODEL — the prompt is FIXED size; you PULL what you need:
+- <journal>         — previous iteration's execution results (ONLY the previous one).
+- <var_index>       — every def'd var, including SYSTEM vars (marked `(SYSTEM, …) …` in the doc column).
+- SYSTEM vars are bound by the agent loop, usable like any other SCI var,
+  and NEVER forgotten (:forget on them is silently refused):
+    *query*         current user query (this turn).
+    *reasoning*     YOUR thinking from the previous iteration.
+    *answer*        final answer from the previous turn in this conversation.
+- Everything older is ON-DEMAND via tools below. Nothing else accumulates.
+"
+    (history-decision-block opts)
+    "
 ARCH:
-- Single-shot iter. State = def'd vars. <var_index> = vars. <execution_results> = last results.
+- Single-shot iter. State = def'd vars. <var_index> = vars. <journal> = last iteration's results.
 - Cross-query memory is ONLY def'd vars. Plain final answers do not persist.
 - (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
 - (def x \"docstring\" val) → docstring in <var_index>. Defs for reusable state only.
 - VAR REUSE: ALWAYS redef existing vars instead of creating new names for the same concept.
   Check <var_index> first. (def file-list ...) again, NOT (def files ...). Vars show (vN) when updated.
 - STORE RESULTS: Always (def answer-name result) to persist computed answers.
-  Plain :final text does NOT persist across queries. Only def'd vars survive.
-  (var-history 'x) → all versions. (var-diff 'x 1 3) → structural diff (collections only).
+  Plain :final text does NOT persist across queries. Only def'd vars survive."
+    (arch-history-tools-line opts)
+    "
 - :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
 - VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
   Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
@@ -153,12 +221,34 @@ ARCH:
   Missing vars → rejected. Define all referenced vars in :code first.
 - :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
 
+STEERING (optional :next map for the NEXT turn — omit entirely for the default path):
+- :next.model — switch model class. 'cost' for trivial lookups / formatting, 'speed' for
+  fast follow-ups, 'intelligence' for hard reasoning / synthesis / debugging tricky code.
+  Only set when the current model is clearly under- or over-powered for the next turn.
+- :next.reasoning — thinking depth. 'quick' for simple assertions, var lookups, obvious
+  code. 'balanced' is the everyday default — leave :reasoning unset or choose balanced.
+  'deep' for ambiguous requirements, multi-step analysis, cross-referencing documents,
+  or debugging after repeated failures. One level up after a recoverable error is fine;
+  escalating to deep every turn wastes tokens.
+- Both dials are orthogonal. {:model 'cost' :reasoning 'deep'} means 'think hard on the
+  cheapest model'. Keep the pair empty unless you actually want to change something.
+
 GROUNDING:
-- Only tools listed exist. Data in :final MUST come from <execution_results>. Never fabricate.
+- Only tools listed exist. Data in :final MUST come from <journal> or values you explicitly pulled via history/var tools this turn. Never fabricate.
 - :answer-type mustache-text|mustache-markdown → Mustache-rendered. All referenced vars MUST be def'd.
 
 SUB-CALLS:
 - (sub-rlm-query \"q\") → {:content :code}. Batch: (sub-rlm-query-batch [\"q1\" \"q2\"]).
+- Second arg is an opts map; use it to steer cost/quality per sub-call:
+  (sub-rlm-query \"q\" {:routing {:optimize :cost}}) — cheapest model for trivial lookups
+  (sub-rlm-query \"q\" {:routing {:optimize :speed}}) — fastest model for quick answers
+  (sub-rlm-query \"q\" {:routing {:optimize :intelligence}}) — strongest model for hard reasoning
+  (sub-rlm-query \"q\" {:reasoning :deep}) — enable deep thinking when the root model supports it
+  (sub-rlm-query \"q\" {:max-iter 5}) — multi-iteration sub-query (default 1, single-shot)
+- Default (no opts) uses the same model as the main turn. Only steer when the
+  sub-task clearly differs in difficulty from the outer one — e.g. a one-liner
+  lookup inside a hard reasoning turn is `:cost`; a tricky derivation inside
+  an easy turn is `:intelligence :deep`.
 
 PERF:
 - SCI is FAST. def=100ms, assert=500ms, heavy=2000ms max. No 5000+ budgets.
@@ -191,15 +281,7 @@ Doc tools (2 fns):
 (def pages (fetch-document-content [:doc/id \"doc-1\"]))
 Search in English. Translate non-EN queries first.
 "))
-    (str
-      (when concept-graph-prompt
-        (str "\n" concept-graph-prompt "\n"))
-      "
-Concept navigation (cross-document ontology):
-- (concept-info \"Term\") → definition, aliases, sources (go-to-definition)
-- (remove-concept \"Term\" \"rationale why\") → removes concept (rationale REQUIRED)
-- (edit-concept \"Term\" {:definition \"new def\"}) → updates concept (survives rebuild)
-")
+    (concept-navigation-block opts)
     (when system-prompt
       (str "\nINSTRUCTIONS:\n" system-prompt "\n"))
     (format-custom-docs custom-docs)
@@ -208,7 +290,12 @@ Concept navigation (cross-document ontology):
     "
 RESPONSE FORMAT:
 "
-    (spec/spec->prompt (if has-reasoning? ITERATION_SPEC_REASONING ITERATION_SPEC_NON_REASONING))
+    ;; Build the iteration spec from the current env's activation flags so
+    ;; `:sources` is only advertised when document-retrieval tools actually
+    ;; exist this turn. Without docs, the LLM has no way to produce valid
+    ;; source IDs — no point in nudging it to try.
+    (spec/spec->prompt (iteration-spec {:has-reasoning? has-reasoning?
+                                        :has-documents? has-documents?}))
     "
 "
     (if has-reasoning?
@@ -219,7 +306,7 @@ Set final fields when done: {\"answer\": \"...\", \"answer-type\": \"mustache-te
 
 RULES:
 - ALWAYS test. Untested = wrong. No repeat fail → different approach.
-- <var_index>|<context> answers query → finalize now.
+- <var_index>|<journal> answers query → finalize now.
 - No prose in :code. Bare string literal = wrong. Prose → :answer with mustache-text or mustache-markdown.
 - Simplest solution. No over-eng. No unused abstractions.
 

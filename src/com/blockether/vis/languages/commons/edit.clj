@@ -505,6 +505,35 @@
              {:type :tool/invalid-output :tool 'edit-file :result result})))
   {:result result})
 
+(defn- format-edit-result
+  "Pure formatter for edit-file's return map. Pattern:
+     edited <n> file(s), <h> hunk(s)
+       <action> <path> [<k> hunks]
+         <first 10 diff lines...>
+
+   Diff lines are shown once across files (first 10 total) to keep the
+   summary compact. Callers who need full diffs introspect (:files result).
+   Handles nil (no result) gracefully since the validator probes with nil."
+  [result]
+  (if (nil? result)
+    ""
+    (let [{:keys [files total-files total-hunks]} result
+          header (str "edited " total-files " file" (when (not= 1 total-files) "s")
+                   (when (and total-hunks (pos? total-hunks))
+                     (str ", " total-hunks " hunk" (when (not= 1 total-hunks) "s"))))
+          file-lines (map (fn [{:keys [action path hunks diff]}]
+                            (let [diff-shown (when (seq diff) (take 5 diff))
+                                  diff-more (when (seq diff) (- (count diff) (count diff-shown)))
+                                  diff-block (when (seq diff-shown)
+                                               (str "\n    " (str/join "\n    " diff-shown)
+                                                 (when (pos? diff-more)
+                                                   (str "\n    ... " diff-more " more diff lines"))))]
+                              (str "  " (name action) " " path
+                                (when hunks (str " [" hunks " hunk" (when (not= 1 hunks) "s") "]"))
+                                (or diff-block ""))))
+                       files)]
+      (str header "\n" (str/join "\n" file-lines)))))
+
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
 (def tool-def
@@ -515,6 +544,7 @@
      :arglists (:arglists (meta #'edit-file))
      :validate-input validate-edit-input
      :validate-output validate-edit-output
+     :format-result format-edit-result
      :activation-fn (constantly true)
      :group "Filesystem" :activation-doc "always active"
      :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"]}))

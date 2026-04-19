@@ -195,7 +195,7 @@
   (let [{:keys [spec model max-iterations max-refinements threshold
                 max-context-tokens max-recursion-depth concurrency
                 system-prompt debug? hooks cancel-atom eval-timeout-ms
-                reasoning-default]
+                reasoning-default routing]
          :or   {max-iterations      schema/MAX_ITERATIONS
                 max-refinements     1
                 threshold           0.8
@@ -224,8 +224,12 @@
           root-model             (or (when rlm-router (rlm-routing/resolve-root-model rlm-router)) model)
           depth-atom             (atom 0)
           db-info                (:db-info env)
-          cheap-sub-rlm-fn       (rlm-routing/make-routed-sub-rlm-query-fn
-                                   {:optimize :cost} depth-atom rlm-router
+          ;; Neutral sub-rlm — no routing preset baked in. LLM picks
+          ;; cost/speed/intelligence itself via `(sub-rlm-query prompt
+          ;; {:routing {:optimize :cost}})` when it actually wants cheap.
+          ;; See IDEAS.md #3 for the original motivation.
+          sub-rlm-fn             (rlm-routing/make-routed-sub-rlm-query-fn
+                                   {} depth-atom rlm-router
                                    (:skill-registry-atom env) (atom env)
                                    rlm-core/iteration-loop)
           custom-bindings        (rlm-core/custom-bindings env)
@@ -244,26 +248,43 @@
                                                             :new-budget new-budget :cap schema/MAX_ITERATION_CAP}
                                                      :msg  "LLM requested more iterations"})
                                         {:granted granted :new-budget new-budget :cap schema/MAX_ITERATION_CAP})))}
-          sub-rlm-query-overrides {'sub-rlm-query       cheap-sub-rlm-fn
+          sub-rlm-query-overrides {'sub-rlm-query       sub-rlm-fn
                                    'sub-rlm-query-batch (fn [items]
-                                                          (sub-rlm-query-batch cheap-sub-rlm-fn items))
+                                                          (sub-rlm-query-batch sub-rlm-fn items))
                                    'skill-manage        (fn [action o]
                                                           (rlm-skills/skill-manage db-info (:skill-registry-atom env) action o))}
           sci-ctx                (:sci-ctx env)
           tool-registry-atom     (:tool-registry-atom env)
           query-ctx              {:hooks hooks :iteration-atom current-iteration-atom}
           _                      (when (and sci-ctx tool-registry-atom)
-                                   (doseq [[sym {:keys [fn activation-fn]}] @tool-registry-atom]
-                                     (when fn
-                                       (let [t0      (System/nanoTime)
-                                             active? (boolean (activation-fn env))
-                                             elapsed (- (System/nanoTime) t0)]
-                                         (tool-diag/record-activation-check! sym active? elapsed)
-                                         (if active?
-                                           (rlm-tools/sci-update-binding! sci-ctx sym
-                                             (rlm-tools/wrap-tool-for-sci env sym fn tool-registry-atom query-ctx))
-                                           (rlm-tools/sci-update-binding! sci-ctx sym nil))))))
-          _                      (let [per-query (merge {'sub-rlm-query cheap-sub-rlm-fn}
+                                   ;; Per-turn activation pass. For each registered tool:
+                                   ;;   - active?   → bind the wrapped tool fn into the sandbox
+                                   ;;   - inactive? → REMOVE the symbol from the sandbox entirely
+                                   ;; The inactive branch does NOT bind nil or a stub — it
+                                   ;; dissocs the symbol so the tool simply does not exist in
+                                   ;; the sandbox namespace. Combined with the prompt's
+                                   ;; activation-gated tool blocks (runtime.prompt), the LLM
+                                   ;; never sees the tool name AND can't call it. If the LLM
+                                   ;; invokes it anyway from prior training, it gets SCI's
+                                   ;; own `Unable to resolve symbol: search-documents` — the
+                                   ;; right signal: "this tool isn't part of this session".
+                                   (doseq [[sym tool-def] @tool-registry-atom]
+                                     (let [tool-fn       (:fn tool-def)
+                                           activation-fn (:activation-fn tool-def)]
+                                       (when tool-fn
+                                         (let [t0      (System/nanoTime)
+                                               active? (boolean (activation-fn env))
+                                               elapsed (- (System/nanoTime) t0)]
+                                           (tool-diag/record-activation-check! sym active? elapsed)
+                                           (if active?
+                                             (rlm-tools/sci-update-binding! sci-ctx sym
+                                               (rlm-tools/wrap-tool-for-sci env sym tool-fn tool-registry-atom query-ctx))
+                                             ;; Dissoc the symbol from the sandbox namespace.
+                                             ;; Safe if the symbol was never bound: swap! on
+                                             ;; a missing key is a no-op.
+                                             (swap! (:env sci-ctx) update-in
+                                               [:namespaces 'sandbox] dissoc sym)))))))
+          _                      (let [per-query (merge {'sub-rlm-query sub-rlm-fn}
                                                    budget-bindings
                                                    (or custom-bindings {}) sub-rlm-query-overrides)]
                                    (doseq [[sym val] per-query]
@@ -295,6 +316,7 @@
        :hooks                  hooks
        :eval-timeout-ms        eval-timeout-ms
        :reasoning-default      reasoning-default
+       :routing                routing
        :messages               messages})))
 
 ;; -----------------------------------------------------------------------------
@@ -307,24 +329,25 @@
   [{:keys [rlm-env query-str messages spec max-iterations
            max-context-tokens custom-docs system-prompt
            current-iteration-atom hooks cancel-atom db-info
-           reasoning-default]}]
+           reasoning-default routing]}]
   (let [query-ref        (rlm-db/store-query! db-info
                            {:conversation-ref (:conversation-ref rlm-env)
                             :text             query-str
                             :messages         messages
                             :status           :running})
         iteration-result (rlm-core/iteration-loop rlm-env query-str
-                           {:max-iterations         max-iterations
-                            :query-ref              query-ref
-                            :output-spec            spec
-                            :max-context-tokens     max-context-tokens
-                            :custom-docs            custom-docs
-                            :system-prompt          system-prompt
-                            :reasoning-default      reasoning-default
-                            :user-messages          messages
-                            :current-iteration-atom current-iteration-atom
-                            :hooks                  hooks
-                            :cancel-atom            cancel-atom})
+                           (cond-> {:max-iterations         max-iterations
+                                    :query-ref              query-ref
+                                    :output-spec            spec
+                                    :max-context-tokens     max-context-tokens
+                                    :custom-docs            custom-docs
+                                    :system-prompt          system-prompt
+                                    :reasoning-default      reasoning-default
+                                    :user-messages          messages
+                                    :current-iteration-atom current-iteration-atom
+                                    :hooks                  hooks
+                                    :cancel-atom            cancel-atom}
+                             routing (assoc :routing routing)))
         {iter-tokens :tokens
          iter-cost   :cost} iteration-result
         total-tokens-atom (atom (or iter-tokens {}))
@@ -594,7 +617,7 @@
          (rlm-core/rlm-stage! :query-start 0
            {:model root-model
             :max-iterations max-iterations
-            :reasoning? (some? (:reasoning-params (first (mapcat :models (:providers (:router env))))))
+             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router env))))))
             :query query-str})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)

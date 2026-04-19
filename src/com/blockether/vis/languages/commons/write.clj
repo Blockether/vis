@@ -87,6 +87,39 @@
              {:type :tool/invalid-output :tool 'write-file :result result})))
   {:result result})
 
+(defn- format-write-result
+  "Pure formatter for write-file's return map. Pattern:
+     wrote <path> — <n> lines (created)
+   or for overwrites:
+     wrote <path> — <n> lines (was <m>)
+     <first 20 diff lines...>
+   Handles nil (no result) gracefully since the validator probes with nil."
+  [result]
+  (if (nil? result)
+    ""
+    (let [{:keys [path lines created? old-lines diff preview]} result
+          header (str "wrote " path " — " lines " line"
+                   (when (not= 1 lines) "s")
+                   (cond
+                     created? " (created)"
+                     (integer? old-lines) (str " (was " old-lines ")")
+                     :else ""))
+          body (cond
+                 (seq diff)
+                 (let [shown (take 20 diff)
+                       more (- (count diff) (count shown))]
+                   (str "\n" (str/join "\n" shown)
+                     (when (pos? more) (str "\n... " more " more diff lines"))))
+
+                 (seq preview)
+                 (let [shown (take 20 preview)
+                       more (- (count preview) (count shown))]
+                   (str "\n" (str/join "\n" shown)
+                     (when (pos? more) (str "\n... " more " more lines"))))
+
+                 :else "")]
+      (str header body))))
+
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
 (def tool-def
@@ -97,6 +130,7 @@
      :arglists (:arglists (meta #'write-file))
      :validate-input validate-write-input
      :validate-output validate-write-output
+     :format-result format-write-result
      :activation-fn (constantly true)
      :group "Filesystem" :activation-doc "always active"
      :examples ["(write-file \"/tmp/notes.txt\" \"hello\\nworld\")"

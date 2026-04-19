@@ -649,6 +649,212 @@
           (catch Exception _))
         (expect (= 0 @depth-atom))))))
 
+(defn- make-mock-ask-response-inline
+  "Local helper; `make-mock-ask-response` is defined later in this file."
+  [result]
+  {:result result :tokens {:input 0 :output 0 :total 0}
+   :cost {:input-cost 0 :output-cost 0 :total-cost 0} :duration-ms 0})
+
+(defdescribe sub-rlm-query-opts-propagation-test
+  "Regression tests: every opt documented in the system prompt's SUB-CALLS
+   section must actually reach the LLM / iteration-loop. Previously the
+   prompt advertised `:routing` and `:reasoning` but the code silently
+   dropped them (the cheap-sub-rlm-fn debacle)."
+
+  (describe "single-shot path (max-iter=1, the default)"
+    (it "forwards :routing {:optimize :cost} to llm/ask!"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn {} (atom 0) r nil nil nil)]
+        (with-redefs [llm/ask! (fn [_r# opts#]
+                                 (reset! captured opts#)
+                                 (make-mock-ask-response-inline {:content "ok"}))]
+          (query-fn "test" {:routing {:optimize :cost}}))
+        (expect (= :cost (get-in @captured [:routing :optimize])))))
+
+    (it "forwards :routing {:optimize :speed} to llm/ask!"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn {} (atom 0) r nil nil nil)]
+        (with-redefs [llm/ask! (fn [_r# opts#]
+                                 (reset! captured opts#)
+                                 (make-mock-ask-response-inline {:content "ok"}))]
+          (query-fn "test" {:routing {:optimize :speed}}))
+        (expect (= :speed (get-in @captured [:routing :optimize])))))
+
+    (it "forwards :routing {:optimize :intelligence} to llm/ask!"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn {} (atom 0) r nil nil nil)]
+        (with-redefs [llm/ask! (fn [_r# opts#]
+                                 (reset! captured opts#)
+                                 (make-mock-ask-response-inline {:content "ok"}))]
+          (query-fn "test" {:routing {:optimize :intelligence}}))
+        (expect (= :intelligence (get-in @captured [:routing :optimize])))))
+
+    (it "forwards :reasoning :deep to llm/ask! as an abstract reasoning level"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-5" :reasoning? true :reasoning-style :openai-effort}]}])
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn {} (atom 0) r nil nil nil)]
+        (with-redefs [llm/ask! (fn [_r# opts#]
+                                 (reset! captured opts#)
+                                 (make-mock-ask-response-inline {:content "ok"}))]
+          (query-fn "test" {:reasoning :deep}))
+        (expect (= :deep (:reasoning @captured)))))
+
+    (it "defaults preserve caller's routing preset from make-routed factory"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            ;; Factory routing is merged with per-call routing.
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn
+                       {:optimize :cost} (atom 0) r nil nil nil)]
+        (with-redefs [llm/ask! (fn [_r# opts#]
+                                 (reset! captured opts#)
+                                 (make-mock-ask-response-inline {:content "ok"}))]
+          (query-fn "test"))
+        (expect (= :cost (get-in @captured [:routing :optimize])))))
+
+    (it "per-call routing wins over factory preset"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn
+                       {:optimize :cost} (atom 0) r nil nil nil)]
+        (with-redefs [llm/ask! (fn [_r# opts#]
+                                 (reset! captured opts#)
+                                 (make-mock-ask-response-inline {:content "ok"}))]
+          (query-fn "test" {:routing {:optimize :intelligence}}))
+        (expect (= :intelligence (get-in @captured [:routing :optimize]))))))
+
+  (describe "iterated path (max-iter > 1)"
+    (it "forwards :routing and :reasoning into iteration-loop as :routing + :reasoning-default"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            mock-iter-loop (fn [_env# _query# opts#]
+                             (reset! captured opts#)
+                             {:answer "done" :trace [] :iterations 1
+                              :status nil :status-id nil
+                              :tokens {} :cost {}})
+            rlm-env-atom (atom {:router r :db-info nil :env-id "test-env"})
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn
+                       {} (atom 0) r nil rlm-env-atom mock-iter-loop)]
+        (query-fn "test" {:max-iter 3
+                          :routing {:optimize :intelligence}
+                          :reasoning :deep})
+        (expect (= :intelligence (get-in @captured [:routing :optimize])))
+        (expect (= :deep (:reasoning-default @captured)))
+        (expect (= 3 (:max-iterations @captured)))))
+
+    (it "iterated sub-rlm with no routing/reasoning still works (back-compat)"
+      (let [captured (atom nil)
+            r (llm/make-router [{:id :test :api-key "test" :base-url "http://localhost"
+                                 :models [{:name "gpt-4o"}]}])
+            mock-iter-loop (fn [_env# _query# opts#]
+                             (reset! captured opts#)
+                             {:answer "done" :trace [] :iterations 1
+                              :status nil :status-id nil
+                              :tokens {} :cost {}})
+            rlm-env-atom (atom {:router r :db-info nil :env-id "test-env"})
+            query-fn (#'rlm-routing/make-routed-sub-rlm-query-fn
+                       {} (atom 0) r nil rlm-env-atom mock-iter-loop)]
+        (query-fn "test" {:max-iter 2})
+        (expect (map? @captured))
+        (expect (nil? (:reasoning-default @captured)))))))
+
+(defdescribe iteration-loop-routing-seed-test
+  "iteration-loop must accept a caller's :routing preset and thread its
+   :optimize through on every iteration (unless the LLM overrides via
+   :next.model). Other routing keys (e.g. :provider) must also survive."
+
+  (it "caller's :routing :optimize is forwarded to run-iteration on iter 0"
+    (let [captured (atom [])]
+      (with-test-env* {} (fn [env]
+                           (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] false)
+                                         rlm-core/run-iteration (fn [_ _ opts]
+                                                                  (swap! captured conj (:routing opts))
+                                                                  {:thinking nil
+                                                                   :executions []
+                                                                   :final-result {:answer {:result "done" :type String}
+                                                                                  :confidence :high}
+                                                                   :api-usage nil
+                                                                   :duration-ms 0})]
+                             (sut/query-env! env [(llm/user "ping")]
+                               {:max-iterations 2
+                                :refine? false
+                                :routing {:optimize :cost}}))))
+      (expect (= :cost (get-in (first @captured) [:optimize])))))
+
+  (it "LLM's :next.model override wins over caller's :routing for that turn only"
+    (let [captured (atom [])
+          call-count (atom 0)]
+      (with-test-env* {} (fn [env]
+                           (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] false)
+                                         rlm-core/run-iteration (fn [_ _ opts]
+                                                                  (swap! captured conj (:routing opts))
+                                                                  (if (= 1 (swap! call-count inc))
+                                                                    ;; Iter 0 — LLM asks for :intelligence next turn
+                                                                    {:thinking nil
+                                                                     :executions [{:id 0 :code "(def x 1)" :result nil
+                                                                                   :stdout "" :stderr "" :execution-time-ms 1}]
+                                                                     :next-model :intelligence
+                                                                     :final-result nil
+                                                                     :api-usage nil
+                                                                     :duration-ms 0}
+                                                                    ;; Iter 1 — done
+                                                                    {:thinking nil
+                                                                     :executions []
+                                                                     :final-result {:answer {:result "done" :type String}
+                                                                                    :confidence :high}
+                                                                     :api-usage nil
+                                                                     :duration-ms 0}))]
+                             (sut/query-env! env [(llm/user "ping")]
+                               {:max-iterations 3
+                                :refine? false
+                                :routing {:optimize :cost}}))))
+      ;; Iter 0 uses caller's :cost, iter 1 uses LLM's :intelligence override
+      (expect (= [:cost :intelligence]
+                (mapv :optimize @captured)))))
+
+  (it "caller's non-:optimize routing keys (e.g. :provider) survive LLM's override"
+    (let [captured (atom [])
+          call-count (atom 0)]
+      (with-test-env* {} (fn [env]
+                           (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] false)
+                                         rlm-core/run-iteration (fn [_ _ opts]
+                                                                  (swap! captured conj (:routing opts))
+                                                                  (if (= 1 (swap! call-count inc))
+                                                                    {:thinking nil
+                                                                     :executions [{:id 0 :code "(def x 1)" :result nil
+                                                                                   :stdout "" :stderr "" :execution-time-ms 1}]
+                                                                     :next-model :speed
+                                                                     :final-result nil
+                                                                     :api-usage nil
+                                                                     :duration-ms 0}
+                                                                    {:thinking nil
+                                                                     :executions []
+                                                                     :final-result {:answer {:result "done" :type String}
+                                                                                    :confidence :high}
+                                                                     :api-usage nil
+                                                                     :duration-ms 0}))]
+                             (sut/query-env! env [(llm/user "ping")]
+                               {:max-iterations 3
+                                :refine? false
+                                :routing {:optimize :cost :provider :custom}}))))
+      ;; :provider must survive through the LLM's :optimize override
+      (expect (= :custom (get-in (second @captured) [:provider]))))))
+
+;; journal-truncation-test — DELETED.
+;; The accumulating <execution_journal> block was removed (see note in
+;; loop/core.clj). The single rolling ledger is now <journal> which holds
+;; ONLY the previous iteration's executions. Nothing to truncate per-entry.
+;; History access is via conversation-history / var-history / var-diff tools.
+
 ;; =============================================================================
 ;; SAFE_BINDINGS Completeness Tests
 ;; =============================================================================
@@ -765,30 +971,35 @@
                  llm/eval!* (fn [_router# opts#] (~eval-fn _router# opts#))]
      ~@body))
 
-(defdescribe adaptive-reasoning-effort-test
-  (describe "normalize-reasoning-effort"
-    (it "accepts low/medium/high as keyword or string"
-      (expect (= "low" (#'rlm-core/normalize-reasoning-effort :low)))
-      (expect (= "medium" (#'rlm-core/normalize-reasoning-effort " medium ")))
-      (expect (= "high" (#'rlm-core/normalize-reasoning-effort "HIGH"))))
+(defdescribe adaptive-reasoning-level-test
+  (describe "normalize-reasoning-level"
+    (it "accepts quick/balanced/deep as keyword or string"
+      (expect (= :quick    (#'rlm-core/normalize-reasoning-level :quick)))
+      (expect (= :balanced (#'rlm-core/normalize-reasoning-level " balanced ")))
+      (expect (= :deep     (#'rlm-core/normalize-reasoning-level "DEEP"))))
+
+    (it "accepts OpenAI-style low/medium/high aliases (back-compat)"
+      (expect (= :quick    (#'rlm-core/normalize-reasoning-level :low)))
+      (expect (= :balanced (#'rlm-core/normalize-reasoning-level "medium")))
+      (expect (= :deep     (#'rlm-core/normalize-reasoning-level "HIGH"))))
 
     (it "returns nil for invalid values"
-      (expect (nil? (#'rlm-core/normalize-reasoning-effort nil)))
-      (expect (nil? (#'rlm-core/normalize-reasoning-effort :turbo)))
-      (expect (nil? (#'rlm-core/normalize-reasoning-effort "")))))
+      (expect (nil? (#'rlm-core/normalize-reasoning-level nil)))
+      (expect (nil? (#'rlm-core/normalize-reasoning-level :turbo)))
+      (expect (nil? (#'rlm-core/normalize-reasoning-level "")))))
 
-  (describe "reasoning-effort-for-errors"
-    (it "maps errors with low base"
-      (expect (= "low" (#'rlm-core/reasoning-effort-for-errors "low" -1)))
-      (expect (= "low" (#'rlm-core/reasoning-effort-for-errors "low" 0)))
-      (expect (= "medium" (#'rlm-core/reasoning-effort-for-errors "low" 1)))
-      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "low" 2))))
+  (describe "reasoning-level-for-errors"
+    (it "maps errors with quick base"
+      (expect (= :quick    (#'rlm-core/reasoning-level-for-errors :quick -1)))
+      (expect (= :quick    (#'rlm-core/reasoning-level-for-errors :quick 0)))
+      (expect (= :balanced (#'rlm-core/reasoning-level-for-errors :quick 1)))
+      (expect (= :deep     (#'rlm-core/reasoning-level-for-errors :quick 2))))
 
-    (it "respects higher base effort"
-      (expect (= "medium" (#'rlm-core/reasoning-effort-for-errors "medium" 0)))
-      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "medium" 1)))
-      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "high" 0)))
-      (expect (= "high" (#'rlm-core/reasoning-effort-for-errors "high" 5)))))
+    (it "respects higher base level"
+      (expect (= :balanced (#'rlm-core/reasoning-level-for-errors :balanced 0)))
+      (expect (= :deep     (#'rlm-core/reasoning-level-for-errors :balanced 1)))
+      (expect (= :deep     (#'rlm-core/reasoning-level-for-errors :deep 0)))
+      (expect (= :deep     (#'rlm-core/reasoning-level-for-errors :deep 5)))))
 
   (describe "iteration-loop wiring"
     (it "passes configured base reasoning on first iteration"
@@ -796,7 +1007,7 @@
         (with-test-env* {} (fn [env]
                              (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
                                            rlm-core/run-iteration (fn [_ _ opts]
-                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    (swap! captured conj (:reasoning-level opts))
                                                                     {:thinking nil
                                                                      :executions []
                                                                      :final-result {:answer {:result "done" :type String}
@@ -806,8 +1017,8 @@
                                (sut/query-env! env [(llm/user "ping")]
                                  {:max-iterations 3
                                   :refine? false
-                                  :reasoning-default "medium"}))))
-        (expect (= ["medium"] @captured))))
+                                  :reasoning-default "balanced"}))))
+        (expect (= [:balanced] @captured))))
 
     (it "escalates after one all-error iteration"
       (let [captured (atom [])
@@ -815,7 +1026,7 @@
         (with-test-env* {} (fn [env]
                              (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
                                            rlm-core/run-iteration (fn [_ _ opts]
-                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    (swap! captured conj (:reasoning-level opts))
                                                                     (if (= 1 (swap! call-count inc))
                                                                       {:thinking nil
                                                                        :executions [{:id 0 :code "(bad)" :result nil :stdout "" :stderr ""
@@ -832,15 +1043,15 @@
                                (sut/query-env! env [(llm/user "ping")]
                                  {:max-iterations 3
                                   :refine? false
-                                  :reasoning-default "low"}))))
-        (expect (= ["low" "medium"] @captured))))
+                                  :reasoning-default "quick"}))))
+        (expect (= [:quick :balanced] @captured))))
 
-    (it "does not set reasoning effort when provider has no reasoning"
+    (it "does not set reasoning level when provider has no reasoning"
       (let [captured (atom [])]
         (with-test-env* {} (fn [env]
                              (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] false)
                                            rlm-core/run-iteration (fn [_ _ opts]
-                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    (swap! captured conj (:reasoning-level opts))
                                                                     {:thinking nil
                                                                      :executions []
                                                                      :final-result {:answer {:result "done" :type String}
@@ -850,15 +1061,15 @@
                                (sut/query-env! env [(llm/user "ping")]
                                  {:max-iterations 2
                                   :refine? false
-                                  :reasoning-default "high"}))))
+                                  :reasoning-default "deep"}))))
         (expect (= [nil] @captured))))
 
-    (it "falls back to low when config value invalid"
+    (it "falls back to :quick when config value invalid"
       (let [captured (atom [])]
         (with-test-env* {} (fn [env]
                              (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
                                            rlm-core/run-iteration (fn [_ _ opts]
-                                                                    (swap! captured conj (:reasoning-effort opts))
+                                                                    (swap! captured conj (:reasoning-level opts))
                                                                     {:thinking nil
                                                                      :executions []
                                                                      :final-result {:answer {:result "done" :type String}
@@ -869,7 +1080,33 @@
                                  {:max-iterations 2
                                   :refine? false
                                   :reasoning-default "turbo"}))))
-        (expect (= ["low"] @captured))))))
+        (expect (= [:quick] @captured))))
+
+    (it "honors LLM's :next.reasoning hint on the following iteration"
+      (let [captured (atom [])
+            call-count (atom 0)]
+        (with-test-env* {} (fn [env]
+                             (with-redefs [rlm-routing/provider-has-reasoning? (fn [_] true)
+                                           rlm-core/run-iteration (fn [_ _ opts]
+                                                                    (swap! captured conj (:reasoning-level opts))
+                                                                    (if (= 1 (swap! call-count inc))
+                                                                      {:thinking nil
+                                                                       :executions [{:id 0 :code "(+ 1 1)" :result 2 :stdout "" :stderr "" :execution-time-ms 1}]
+                                                                       :next-reasoning :deep
+                                                                       :final-result nil
+                                                                       :api-usage nil
+                                                                       :duration-ms 0}
+                                                                      {:thinking nil
+                                                                       :executions []
+                                                                       :final-result {:answer {:result "done" :type String}
+                                                                                      :confidence :high}
+                                                                       :api-usage nil
+                                                                       :duration-ms 0}))]
+                               (sut/query-env! env [(llm/user "ping")]
+                                 {:max-iterations 3
+                                  :refine? false
+                                  :reasoning-default "quick"}))))
+        (expect (= [:quick :deep] @captured))))))
 
 (defdescribe final-mutation-claim-guard-test
   (it "rejects cleanup claims unless the same iteration emits :forget"

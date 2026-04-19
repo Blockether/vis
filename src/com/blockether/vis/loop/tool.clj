@@ -1,6 +1,7 @@
 (ns com.blockether.vis.loop.tool
   "Tool definition helpers shared by tool producers and SCI runtime code."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.loop.runtime.shared :as rt-shared]))
 
 (defn- default-validate-input
   [{:keys [args]}]
@@ -9,6 +10,54 @@
 (defn- default-validate-output
   [{:keys [result]}]
   {:result result})
+
+(def ^:private DEFAULT_FORMAT_CAP_CHARS
+  "Safety cap for the default formatter. Matches loop.core/EXECUTION_SAFETY_CAP_CHARS.
+   Only protects against pathological non-lazy dumps; realize-value already
+   bounds lazy seqs upstream."
+  200000)
+
+(defn default-format-result
+  "Default tool result formatter.
+
+   Contract — MUST hold for every :format-result override:
+   - Strictly 1-arity — receives ONLY the tool's raw return value.
+   - Pure — result is a function of the input alone. No env, no dynamic vars,
+     no other iteration state.
+   - Returns a plain string safe to embed inside a mustache template
+     (no active {{}} tags in output — callers treat this as escaped content).
+
+   The default realizes lazy seqs (bounded at 100 items), pr-str's, and
+   caps at DEFAULT_FORMAT_CAP_CHARS. Tool authors override this to produce
+   a token-efficient, human-readable rendering for their specific return shape."
+  [value]
+  (-> value rt-shared/realize-value pr-str (rt-shared/truncate DEFAULT_FORMAT_CAP_CHARS)))
+
+(defn- fn-arity-1?
+  "Best-effort check that `f` accepts exactly one positional arg.
+
+   Rejects variadic-only fns ([& args]) and multi-arity fns that don't
+   include a 1-arg signature. We INTENTIONALLY don't reject multi-arity
+   fns that happen to include a 1-arg overload — they satisfy the contract.
+
+   The check probes :arglists metadata first; if absent, tries reflective
+   `invoke(Object)` method presence on the fn class (works for fn literals
+   produced by `fn` / `defn`)."
+  [f]
+  (if-let [arglists (:arglists (meta f))]
+    (some (fn [al]
+            (let [al (vec al)
+                  amp-idx (.indexOf ^java.util.List al '&)]
+              (or (and (neg? amp-idx) (= 1 (count al)))
+                  (and (pos? amp-idx) (<= amp-idx 1)))))
+      arglists)
+    ;; No :arglists — reflect on the class.
+    (let [klass (class f)
+          methods (.getDeclaredMethods klass)]
+      (boolean (some (fn [^java.lang.reflect.Method m]
+                       (and (= "invoke" (.getName m))
+                            (= 1 (count (.getParameterTypes m)))))
+                 methods)))))
 
 (defn- normalize-arglists
   [arglists]
@@ -56,7 +105,7 @@
         arglists (or (:arglists tool-def) inferred-arglists)
         normalized-arglists (or (normalize-arglists arglists) ['[& args]])
         examples (or (:examples tool-def) (default-examples sym normalized-arglists))]
-    (-> tool-def
+      (-> tool-def
       (assoc :sym sym
         :fn f
         :type :fn
@@ -64,6 +113,7 @@
         :arglists normalized-arglists
         :validate-input (or (:validate-input tool-def) default-validate-input)
         :validate-output (or (:validate-output tool-def) default-validate-output)
+        :format-result (or (:format-result tool-def) default-format-result)
         :activation-fn (or (:activation-fn tool-def) (constantly true))
         :examples (vec examples)))))
 
@@ -92,6 +142,27 @@
     (when-not (fn? validate-output)
       (throw (ex-info "tool-def :validate-output must be a function"
                {:type :rlm/invalid-tool-def :field :validate-output :tool-def (dissoc tool-def :fn)})))
+    (let [fmt (:format-result tool-def)]
+      (when-not (fn? fmt)
+        (throw (ex-info "tool-def :format-result must be a function"
+                 {:type :rlm/invalid-tool-def :field :format-result :tool-def (dissoc tool-def :fn)})))
+      (when-not (fn-arity-1? fmt)
+        (throw (ex-info "tool-def :format-result must accept exactly 1 arg (the raw tool return value)"
+                 {:type :rlm/invalid-tool-def :field :format-result :tool-def (dissoc tool-def :fn)})))
+      ;; Probe the formatter with nil to flush obvious crashes. nil is a legal
+      ;; input (a tool may return nil) — the formatter MUST handle it without
+      ;; throwing, and MUST return a string.
+      (let [probe (try (fmt nil) (catch Throwable t t))]
+        (when (instance? Throwable probe)
+          (throw (ex-info "tool-def :format-result threw when called with nil"
+                   {:type :rlm/invalid-tool-def :field :format-result
+                    :tool-def (dissoc tool-def :fn)
+                    :cause (ex-message ^Throwable probe)})))
+        (when-not (string? probe)
+          (throw (ex-info "tool-def :format-result must return a string"
+                   {:type :rlm/invalid-tool-def :field :format-result
+                    :tool-def (dissoc tool-def :fn)
+                    :returned-type (some-> probe class .getName)})))))
     (when-not (and (vector? examples)
                 (seq examples)
                 (every? non-blank-string? examples))
