@@ -1,5 +1,66 @@
 # Vis - Development Guide
 
+## MANDATORY: Agent Rules
+
+### Always reply in English
+
+Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. No exceptions, no mixed-language responses, no apology paragraphs in the user's language. This rule overrides any implicit language mirroring behavior.
+
+### Always check SQLite when investigating issues
+
+`~/.vis/vis.mdb/rlm.db` is the single source of truth for everything that happened in every conversation — queries, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about user-reported bugs that reference a specific `conversation-id` or `query-id`, you MUST open the DB and read the actual rows. Do NOT guess from logs or code alone when the DB can tell you definitively what the model saw, what it returned, and which vars were bound at which step.
+
+Minimum triage checklist when a user flags a broken conversation:
+
+```bash
+CID='<conversation-uuid>'
+
+# Sidecar row + entity row for the conversation
+sqlite3 -header ~/.vis/vis.mdb/rlm.db \
+  "SELECT * FROM vis_conversation WHERE conversation_id='$CID';"
+sqlite3 -header ~/.vis/vis.mdb/rlm.db \
+  "SELECT id,type,name,created_at FROM entity WHERE id='$CID';"
+
+# All turns (queries) in the conversation, in order
+sqlite3 -header ~/.vis/vis.mdb/rlm.db "
+  SELECT e.id, e.created_at,
+         substr(q.text,1,120)   AS text,
+         q.iterations, q.duration_ms, q.status,
+         substr(q.answer,1,120) AS answer
+  FROM entity e JOIN query_attrs q ON q.entity_id = e.id
+  WHERE e.parent_id='$CID'
+  ORDER BY e.created_at;"
+
+# Iterations for a single query (QID = query-uuid)
+sqlite3 -header ~/.vis/vis.mdb/rlm.db "
+  SELECT e.id, e.created_at,
+         substr(i.code,1,200)     AS code,
+         substr(i.results,1,200)  AS results,
+         substr(i.answer,1,200)   AS answer,
+         substr(i.thinking,1,400) AS thinking,
+         i.error, i.duration_ms
+  FROM entity e JOIN iteration_attrs i ON i.entity_id = e.id
+  WHERE e.parent_id='$QID'
+  ORDER BY e.created_at;"
+
+# Every iteration-var (SYSTEM + user vars) across the conversation
+sqlite3 -header ~/.vis/vis.mdb/rlm.db "
+  SELECT e.id AS iter, e.parent_id AS query, e.created_at,
+         v.name, substr(v.value,1,200) AS value
+  FROM entity e
+  JOIN iteration_var_attrs v ON v.entity_id = e.id
+  WHERE e.type='iteration-var'
+    AND e.parent_id IN (
+      SELECT iter.id FROM entity iter
+      WHERE iter.parent_id IN (
+        SELECT q.id FROM entity q WHERE q.parent_id='$CID'))
+  ORDER BY e.created_at;"
+```
+
+Cross-reference with `~/.vis/vis.log` to recover the full pre-truncation `thinking`, raw LLM reasoning, input/output tokens, and `rlm-stage` transitions. Logs complement the DB; they don't replace it.
+
+Only AFTER the DB has been inspected may you form a hypothesis, propose a fix, or blame the model, the UI, or the runtime loop. This rule exists because repeated incidents wasted a turn on plausible-sounding code-only explanations when the DB would have pinpointed the bug in one query.
+
 ## Clojure CLI
 
 ### JS Interop

@@ -386,6 +386,72 @@
   [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
 
+(defn- data-literal-form?
+  "True when `form` is a literal data payload rather than executable code."
+  [form]
+  (or (map? form)
+    (vector? form)
+    (set? form)
+    (keyword? form)
+    (number? form)
+    (boolean? form)
+    (nil? form)
+    (char? form)
+    (instance? java.util.regex.Pattern form)
+    (and (seq? form)
+      (= 'quote (first form))
+      (= 2 (count form)))))
+
+(defn- bare-data-literal-shape?
+  "Cheap fallback for malformed literal dumps that fail full parsing.
+   This intentionally catches obvious payload shapes the model should never
+   emit directly in :code: maps, vectors, sets, keywords, quoted data, and
+   scalar literals."
+  [expr]
+  (let [s (str/trim (str expr))]
+    (or (str/starts-with? s "{")
+      (str/starts-with? s "[")
+      (str/starts-with? s "#{")
+      (str/starts-with? s ":")
+      (str/starts-with? s "'{")
+      (str/starts-with? s "'[")
+      (str/starts-with? s "'#{")
+      (str/starts-with? s "':")
+      (re-matches #"[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?" s)
+      (= s "true")
+      (= s "false")
+      (= s "nil"))))
+
+(defn bare-data-literal-code-block?
+  "True when a code expression is just a single literal data form.
+   Raw data belongs in :answer, or behind `(def result ...)` when the model
+   wants to reuse it later in the same turn."
+  [expr]
+  (or (try
+        (let [forms (check-syntax (str expr))]
+          (and (= 1 (count forms))
+            (data-literal-form? (first forms))))
+        (catch Throwable _ false))
+    (bare-data-literal-shape? expr)))
+
+(defn literal-code-block-error
+  "Returns a validation error when `expr` is literal payload incorrectly
+   emitted in :code instead of actual executable code.
+
+   Self-evaluating data literals (`{:a 1}`, `[1 2 3]`, `:kw`, `42`, `nil`,
+   quoted forms, etc.) are ALLOWED. They're valid Clojure code and agents
+   legitimately use them as steps — most importantly to push a payload into
+   the next iteration's `<journal>` without binding a var. Execution
+   receipts persist the evaluated value, so a literal form is a cheap,
+   visible way to stash state between turns.
+
+   Only bare string prose is still blocked, because that's the concrete
+   failure mode where the LLM tries to answer *through* `:code` instead of
+   `:answer`."
+  [expr]
+  (when (bare-string-code-block? expr)
+    "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."))
+
 (def ^:private PLACEHOLDER_WORDS
   "Single-word placeholders the LLM sometimes emits as :answer instead of
    the real content. Checked AFTER var-resolve — if the word matches a def, it
@@ -405,6 +471,101 @@
 ;; =============================================================================
 
 (def build-system-prompt prompt/build-system-prompt)
+
+;; =============================================================================
+;; Iteration message / context assembly (pure helpers — fully testable)
+;; =============================================================================
+;;
+;; Extracted from the iteration-loop body so three known context-loss bugs
+;; can be covered by unit tests that don't spin up an LLM or DB:
+;;
+;;   Fix #1 — `assemble-initial-messages` drops the old multimodal-only gate
+;;            so plain-text user/assistant history from web/Telegram actually
+;;            reaches the model.
+;;   Fix #2 — `trim-to-initial-history` keeps the entire initial prompt
+;;            (system + requirement + prior transcript) across iterations;
+;;            previously hard-coded `(take 2 messages)` truncated it.
+;;   Fix #3 — `build-iteration-context` promotes `*reasoning*` to its own
+;;            <prior_thinking> block with the full text (up to
+;;            `PRIOR_THINKING_MAX_CHARS`), instead of a 150-char preview
+;;            buried in <var_index>.
+
+(def ^:const PRIOR_THINKING_MAX_CHARS
+  "Ceiling on how many characters of the previous iteration's `:thinking`
+   we re-inject into the next iteration's prompt via <prior_thinking>.
+   4000 ≈ ~800–1000 tokens — enough to keep the model's reasoning chain
+   visible without letting unbounded thinking blow the context window."
+  4000)
+
+(defn assemble-initial-messages
+  "Build the LLM message vector for iteration 0 of a query.
+
+   In order:
+   1. {:role \"system\"  :content system-prompt}
+   2. {:role \"user\"    :content initial-user-content} — the
+      `{:requirement ...}` envelope for the CURRENT turn.
+   3. Every entry of `:history-messages` verbatim. Plain-text transcripts
+      and multimodal entries alike — the caller owns this slice and
+      guarantees it contains NO current-turn message (the current turn
+      is already carried by `initial-user-content`).
+
+   Previously the loop gated history behind `(some sequential? …)`, which
+   silently dropped every plain-text transcript and caused the observable
+   'agent forgets prior turns' symptom. Fix #1."
+  [{:keys [system-prompt initial-user-content history-messages]}]
+  (into [{:role "system" :content system-prompt}
+         {:role "user"   :content initial-user-content}]
+    (or history-messages [])))
+
+(defn trim-to-initial-history
+  "Strip error-feedback / empty-iteration nudges that the iteration loop
+   appended via `recur`, keeping exactly the first `initial-count`
+   messages.
+
+   Rationale: the loop accumulates one-shot feedback messages across
+   iterations for its error-recovery / empty-response paths. When a
+   NEW iteration is assembled, only the ORIGINAL set (system +
+   requirement + prior conversation history) should flow back into the
+   prompt — intra-query nudges are not meant to recur.
+
+   Previously hard-coded as `(take 2 messages)`, which dropped the
+   cross-turn history restored by fix #1. See fix #2."
+  [messages initial-count]
+  (vec (take initial-count messages)))
+
+(defn build-iteration-context
+  "Assemble the optional trailing user message appended to the base prompt
+   on every iteration beyond the first.
+
+   Components (all optional, string-valued):
+   - :prior-thinking     — YOUR :thinking from the previous iteration,
+                           FULL text (truncated at
+                           `PRIOR_THINKING_MAX_CHARS`). Fix #3: promotes
+                           this to a first-class <prior_thinking> block
+                           so the model sees its own chain-of-thought
+                           continuously, instead of relying on the
+                           150-char preview inside <var_index>.
+   - :exec-results       — <journal> of the previous iteration's code.
+   - :var-index-str      — current sandbox vars table.
+   - :budget-warning-str — budget-remaining nudge.
+
+   Returns the joined block as a string, or nil when every component
+   is blank. nil lets `iteration-loop` skip the extra user message
+   cleanly via `(not (str/blank? ctx))`."
+  [{:keys [prior-thinking exec-results var-index-str budget-warning-str]}]
+  (let [clamp (fn [s n] (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
+        prior-block (when (and (string? prior-thinking)
+                            (not (str/blank? prior-thinking)))
+                      (str "<prior_thinking>\n"
+                        (clamp prior-thinking PRIOR_THINKING_MAX_CHARS)
+                        "\n</prior_thinking>"))
+        var-block (when (and (string? var-index-str)
+                          (not (str/blank? var-index-str)))
+                    (str "<var_index>\n" var-index-str "\n</var_index>"))
+        parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
+                [prior-block exec-results var-block budget-warning-str])]
+    (when (seq parts)
+      (str/join "\n" parts))))
 
 ;; =============================================================================
 ;; Iteration Loop
@@ -483,11 +644,11 @@
                ;; MUST run BEFORE single-token :answer resolve so freshly-def'd vars are visible.
               exec-results (when (seq code-blocks)
                              (mapv (fn [{:keys [expr time-ms]}]
-                                     (if (bare-string-code-block? expr)
-                                       {:result nil :error "Bare string literal in :code. Prose belongs in :answer, not :code."
-                                        :stdout "" :stderr "" :execution-time-ms 0}
-                                       (execute-code rlm-env expr :timeout-ms time-ms)))
-                               code-entries))
+                                      (if-let [err (literal-code-block-error expr)]
+                                        {:result nil :error err
+                                         :stdout "" :stderr "" :execution-time-ms 0}
+                                        (execute-code rlm-env expr :timeout-ms time-ms)))
+                                code-entries))
               exec-errors (when exec-results
                             (seq (filter :error exec-results)))
                ;; NOW read sandbox — code has executed, (def reply ...) is visible.
@@ -617,12 +778,12 @@
                                         (rlm-stage! :code-exec iteration
                                           {:idx (inc idx) :total total-blocks
                                            :code code :time-ms timeout})
-                                        (if (bare-string-code-block? code)
-                                          ;; Runtime rejection: prose in :code → error, not execution
-                                          (let [err "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."]
-                                            (rlm-stage! :code-result iteration
-                                              {:idx (inc idx) :total total-blocks :error err})
-                                            {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
+                                         (if-let [err (literal-code-block-error code)]
+                                           ;; Runtime rejection: literal payload in :code → error, not execution
+                                           (let [err err]
+                                             (rlm-stage! :code-result iteration
+                                               {:idx (inc idx) :total total-blocks :error err})
+                                             {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
                                           (let [r (execute-code rlm-env code :timeout-ms timeout)]
                                             (rlm-stage! :code-result iteration
                                               {:idx (inc idx) :total total-blocks
@@ -641,6 +802,7 @@
                                   :stderr (:stderr result)
                                   :error (:error result)
                                   :execution-time-ms (:execution-time-ms result)
+                                  :timeout? (:timeout? result)
                                   :repaired? (:repaired? result)})
                            (range) code-blocks execution-results)]
           {:thinking thinking
@@ -729,10 +891,19 @@
             (try (f v) (catch Throwable _ nil)))))))
 
 (defn format-executions
-  "Formats executions for LLM feedback as EDN.
-   All results shown inline — context budget handles size naturally.
-   Error hints injected only when an error matches a known pattern.
-   Includes execution time for every block; warns when slow."
+  "Formats executions as compact per-block receipts for LLM feedback in the
+   error-recovery / iteration-accumulation path. One line per block:
+
+     <code> → <value>                          ;; success
+     <code> → ERROR: <msg> :hint \"...\"          ;; error + pattern hint
+     <code> → <value> (1250ms SLOW)            ;; slow execution
+     <code> → <value> :stdout \"...\"            ;; stdout if present
+
+   Type labels, size suffixes, `:success?` flags, `:time-ms 0` spam, and
+   per-block wrapping braces were all removed — they duplicated info the
+   LLM derives from Clojure syntax. Only `:hint` (pattern-based error
+   guidance) and `:warning \"auto-repaired delimiters\"` carry real
+   signal not in the value itself."
   [executions]
   (str/join "\n"
     (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
@@ -740,26 +911,26 @@
                  hint (when error (error-hint error))
                  val-part (cond
                             error
-                            (str ":error " (pr-str error)
+                            (str "ERROR: " error
                               (when hint (str " :hint " (pr-str hint))))
 
-                             (fn? result)
-                             (str ":error \"" code-str " is a function object. Call it: (" code-str ")\"")
+                            (fn? result)
+                            (str "ERROR: " code-str " is a function object. Call it: (" code-str ")")
 
-                             :else
-                             (str ":ok " (or (formatted-str-of result)
-                                             (pr-str (realize-value result)))))
-
+                            :else
+                            (or (formatted-str-of result)
+                              (pr-str (realize-value result))))
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
                                 " :warning \"auto-repaired delimiters\"")
                  time-ms (or execution-time-ms 0)
-                 slow? (> time-ms SLOW_EXECUTION_MS)
-                 time-part (str " :time-ms " time-ms
-                             (when slow?
-                               " :perf-warning \"SLOW — optimize algorithm or reduce input size\""))]
-             (str "{" code-str " → " val-part (or stdout-part "") (or warning-part "") time-part "}")))
+                 slow-part (when (> time-ms SLOW_EXECUTION_MS)
+                             (str " (" time-ms "ms SLOW)"))]
+             (str code-str " → " val-part
+               (or slow-part "")
+               (or stdout-part "")
+               (or warning-part ""))))
       executions)))
 
 (def ^:private EXECUTION_SAFETY_CAP_CHARS
@@ -798,76 +969,102 @@
     (coll? v) (str " :size " (count v) "-items")
     :else ""))
 
+(defn- truncated-pr-str
+  "pr-str v + truncate-at-cap flag. Single pass, used by journal rendering."
+  [v]
+  (let [s (pr-str v)]
+    (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
+      [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
+      [s false])))
+
 (defn- format-execution-results
-  "Formats the previous iteration's executions as an XML receipt tagged
-   `<journal>`. Each block shows the FULL evaluated value — no summarisation,
-   no preview. Lazy sequences are already bounded by realize-value's 100-item
-   cap; everything else is pr-str'd in full, protected only by a
-   pathological-size safety guard. The LLM grounds :final on what it sees
-   here plus anything it explicitly pulls via history/var tools.
+  "Formats the previous iteration's executions as the `<journal>` block
+   shown at the top of the next iteration's user message.
 
-   (def sym expr) is rendered as :result-kind :var :var-name \"sym\" so the
-   LLM can reference the symbol on the next iteration.
+   Minimal one-line-per-block format (as of 2026-04):
 
-   NOTE: the XML tag is `<journal>` (NOT `<execution_results>`) — the name
-   reflects that this is the only rolling ledger in the prompt. Anything
-   earlier than the previous iteration is accessed on-demand via
-   conversation-history / var-history / var-diff."
+     [1] (+ 1 2) → 3
+     [2] (def x 42) → *x* = 42
+     [3] (bad-fn) → ERROR: Unable to resolve symbol: bad-fn
+     [4] (slow-scan db) → [...data...] (2100ms SLOW)
+     [5] (println \"hi\") → nil :stdout \"hi\\n\"
+     [6] (huge-expr) → \"...\" :truncated? true
+
+   What was removed and why (compared to the earlier EDN-map format):
+
+   - `:success?` — `ERROR:` prefix already marks failure.
+   - `:result-type` / `:value-type` — Clojure `pr-str` syntax is its own
+     type ticker. `3` is obviously an int, `[1 2 3]` obviously a vector.
+   - `:value-size` — the LLM can count `[1 2 3]` too.
+   - `:time-ms 0` on every block — noise. Only `SLOW` exceedances matter,
+     and the ARCH section already calibrates the agent's time budget.
+   - `:perf-warning \"SLOW — optimize …\"` full sentence — replaced by
+     the `(Xms SLOW)` suffix; the advice itself lives once in ARCH.
+   - `:result-kind :var` + `:var-name` — a `(def sym …)` block now
+     renders as `*sym* = <value>` inline, which is both obvious to the
+     LLM and the same earmuffed convention used elsewhere in vis.
+   - Outer `{…}` wrap on every entry — the line structure already
+     delimits entries.
+   - `iteration=\"N\"` on `<journal>` — the loop already tells the LLM
+     which iteration it's on.
+
+   Cross-reference by `[N]` is preserved so the model can say \"the error
+   in [3]\". Stdout/stderr stay as `:stdout \"…\"` / `:stderr \"…\"`
+   suffixes (non-empty only). Over-cap values get `:truncated? true`.
+
+   Semantic equivalence: every signal the earlier format carried is still
+   reachable from the new format; redundancy was stripped, not content."
   [executions iteration]
   (when (seq executions)
-    (str "<journal iteration=\"" iteration "\">\n"
+    (str "<journal>\n"
       (str/join "\n"
         (map-indexed
           (fn [idx {:keys [code error result stdout stderr execution-time-ms]}]
-            (let [code-str (str/trim (or code ""))
-                  stdout-part (when-not (str/blank? stdout)
-                                (str " :stdout " (pr-str stdout)))
-                  stderr-part (when-not (str/blank? stderr)
-                                (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
-                  time-ms (or execution-time-ms 0)
-                  slow? (> time-ms SLOW_EXECUTION_MS)
-                  time-part (str " :time-ms " time-ms
-                              (when slow?
-                                " :perf-warning \"SLOW — optimize algorithm, avoid brute-force, reduce input size\""))
-                  result-info (cond
-                                error
-                                (str "{:success? false :error " (pr-str (truncate error 400)) time-part "}")
+            (let [code-str      (str/trim (or code ""))
+                  stdout-suffix (when-not (str/blank? stdout)
+                                  (str " :stdout " (pr-str stdout)))
+                  stderr-suffix (when-not (str/blank? stderr)
+                                  (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
+                  time-ms       (or execution-time-ms 0)
+                  slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
+                                  (str " (" time-ms "ms SLOW)"))
+                  value-part
+                  (cond
+                    error
+                    (str "ERROR: " (truncate error 400))
 
-                                (fn? result)
-                                (str "{:success? false :error \"Result is a function, not a value\"" time-part "}")
+                    (fn? result)
+                    "ERROR: Result is a function, not a value"
 
-                                (instance? clojure.lang.Var result)
-                                (let [^clojure.lang.Var var-obj result
-                                      var-name (name (.sym var-obj))
-                                      raw-bound (.getRawRoot var-obj)
-                                      ;; Check meta on the RAW bound value before
-                                      ;; realize-value strips it (realize-value
-                                      ;; rebuilds maps/vecs/sets, losing meta).
-                                      pre-formatted (formatted-str-of raw-bound)
-                                      bound (realize-value raw-bound)
-                                      value-str (or pre-formatted
-                                                    (truncate (pr-str bound) EXECUTION_SAFETY_CAP_CHARS))]
-                                  (str "{:success? true :result-kind :var"
-                                    " :var-name " (pr-str var-name)
-                                    " :value-type " (type-label-of bound)
-                                    (str/replace (size-suffix bound) ":size" ":value-size")
-                                    " :value " value-str
-                                    stdout-part stderr-part
-                                    time-part
-                                    "}"))
+                    (instance? clojure.lang.Var result)
+                    (let [^clojure.lang.Var var-obj result
+                          var-name (name (.sym var-obj))
+                          raw-bound (.getRawRoot var-obj)
+                          ;; Check meta on the RAW bound value before
+                          ;; realize-value strips it (realize-value rebuilds
+                          ;; maps/vecs/sets, losing meta).
+                          pre-formatted (formatted-str-of raw-bound)
+                          bound (realize-value raw-bound)
+                          [value-str truncated?]
+                          (if pre-formatted
+                            [pre-formatted false]
+                            (truncated-pr-str bound))]
+                      (str "*" var-name "* = " value-str
+                        (when truncated? " :truncated? true")))
 
-                                :else
-                                (let [pre-formatted (formatted-str-of result)
-                                      v (realize-value result)
-                                      value-str (or pre-formatted
-                                                    (truncate (pr-str v) EXECUTION_SAFETY_CAP_CHARS))]
-                                  (str "{:success? true :result-type " (type-label-of v)
-                                    (size-suffix v)
-                                    " :value " value-str
-                                    stdout-part stderr-part
-                                    time-part
-                                    "}")))]
-              (str "  [" (inc idx) "] " code-str " → " result-info)))
+                    :else
+                    (let [pre-formatted (formatted-str-of result)
+                          v (realize-value result)
+                          [value-str truncated?]
+                          (if pre-formatted
+                            [pre-formatted false]
+                            (truncated-pr-str v))]
+                      (str value-str
+                        (when truncated? " :truncated? true"))))]
+              (str "  [" (inc idx) "] " code-str " → " value-part
+                (or slow-suffix "")
+                (or stdout-suffix "")
+                (or stderr-suffix ""))))
           executions))
       "\n</journal>")))
 
@@ -1032,7 +1229,7 @@
       (keys sandbox-map))))
 (defn iteration-loop [rlm-env query
                       {:keys [output-spec max-context-tokens custom-docs system-prompt
-                              pre-fetched-context query-ref user-messages
+                              pre-fetched-context query-ref history-messages
                               max-iterations max-consecutive-errors max-restarts
                               hooks cancel-atom current-iteration-atom
                               reasoning-default routing]}]
@@ -1075,13 +1272,14 @@
                                (when pre-fetched-context
                                  (str "\n :plan " (pr-str pre-fetched-context)))
                                "}")
-        ;; Build initial messages: system + structured context/requirement + original user messages (multimodal)
-        initial-messages (into [{:role "system" :content system-prompt}
-                                {:role "user" :content initial-user-content}]
-                           (when (and user-messages
-                                   (some #(sequential? (:content %)) user-messages))
-                              ;; Include original multimodal messages (images etc.) as additional context
-                             user-messages))
+        ;; Build initial messages: system + structured {:requirement ...} +
+        ;; caller's verbatim conversation history (plain text AND multimodal).
+        ;; See `assemble-initial-messages` — fix #1 removes the old
+        ;; multimodal-only gate that dropped web/Telegram transcripts.
+        initial-messages (assemble-initial-messages
+                           {:system-prompt system-prompt
+                            :initial-user-content initial-user-content
+                            :history-messages history-messages})
         ;; Store initial messages if history tracking is enabled
         db-info (:db-info rlm-env)
         ;; ── Auto-forget stale vars ──────────────────────────────────────
@@ -1175,8 +1373,11 @@
                                         :msg log-msg})))))]
     ;; query-start is logged in query.clj — don't duplicate
     ;; Auto-bind *query* into the SCI sandbox so the LLM (and var-history)
-    ;; can always see the current user query. Updated once per query.
-    (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*query* query)
+    ;; can always see the current user query. `bind-and-bump!` atomically
+    ;; updates SCI AND invalidates the var-index cache — skipping the bump
+    ;; causes turns with no `:code` (greetings) to serve a stale <var_index>
+    ;; with a PRIOR turn's `*query*` value to the LLM.
+    (rlm-tools/bind-and-bump! rlm-env '*query* query)
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [iteration 0 messages initial-messages trace [] consecutive-errors 0 restarts 0
              prev-executions nil prev-iteration -1
@@ -1272,18 +1473,34 @@
                                     (or prev-next-reasoning
                                       (reasoning-level-for-errors base-reasoning-level consecutive-errors)))
                   _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
-                  ;; Build single-shot prompt: system + user-query + <journal> (prev iter
-                  ;; execution results) + <var_index>. No accumulating multi-iteration
-                  ;; journal — the LLM pulls older turns via history tools on demand.
+                  ;; Build single-shot prompt: system + user-query +
+                  ;; <prior_thinking> (full reasoning from the previous
+                  ;; iteration) + <journal> (prev iter execution results)
+                  ;; + <var_index>. No accumulating multi-iteration journal
+                  ;; — the LLM pulls older turns via history tools on demand.
                   var-index-str (get-var-index)
                   exec-results-str (format-execution-results prev-executions prev-iteration)
+                  ;; Prior :thinking as a first-class prompt block — FULL text
+                  ;; (up to PRIOR_THINKING_MAX_CHARS), not the 150-char stub
+                  ;; that <var_index> carries. Read `*reasoning*` directly from
+                  ;; the SCI sandbox so we inherit any value that survived from
+                  ;; the previous turn (cross-turn continuity). Fix #3.
+                  prior-thinking (try
+                                   (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env))
+                                                       [:namespaces 'sandbox])
+                                         v (get sandbox-map '*reasoning*)]
+                                     (when v
+                                       (let [s (str (if (instance? clojure.lang.IDeref v) @v v))]
+                                         (when-not (str/blank? s) s))))
+                                   (catch Throwable _ nil))
+                  current-max-iterations (effective-max-iterations)
                   ;; Budget warning: when we're within 3 iterations of the
                   ;; hard cap, loudly remind the LLM of its two real exits —
                   ;; (1) :final with a partial answer, or (2) call
                   ;; (request-more-iterations N). Without this, models that
                   ;; are incrementally exploring silently run off the end
                   ;; and the user sees an empty bubble.
-                  budget-warning-str (let [max-iter (effective-max-iterations)
+                  budget-warning-str (let [max-iter current-max-iterations
                                            ;; `iteration` is 0-indexed. The
                                            ;; LLM is about to produce response
                                            ;; for iteration N, and the cap
@@ -1313,13 +1530,17 @@
                                            "(request-more-iterations N) NOW — don't wait for the last iteration.\n"
                                            "Otherwise commit to a confidence level and emit :final.\n"
                                            "</budget>")
-                                         :else nil))
-                  iteration-context (str
-                                      (when exec-results-str (str "\n" exec-results-str))
-                                      (when var-index-str
-                                        (str "\n<var_index>\n" var-index-str "\n</var_index>"))
-                                      budget-warning-str)
-                  base-messages (vec (take 2 messages)) ;; [system-prompt, user-query]
+                                          :else nil))
+                  iteration-context (build-iteration-context
+                                      {:prior-thinking prior-thinking
+                                       :exec-results exec-results-str
+                                       :var-index-str var-index-str
+                                       :budget-warning-str budget-warning-str})
+                  ;; Preserve the FULL initial prompt (system + requirement +
+                  ;; caller's prior transcript) across iterations. Was
+                  ;; `(take 2 messages)`, which dropped cross-turn history
+                  ;; restored by fix #1. Fix #2.
+                  base-messages (trim-to-initial-history messages (count initial-messages))
                   effective-messages (cond-> base-messages
                                        (not (str/blank? iteration-context))
                                        (conj {:role "user" :content iteration-context}))
@@ -1440,15 +1661,19 @@
                           (swap! var-index-atom update :current-revision inc))
                       ;; Auto-bind *reasoning* into the SCI sandbox after every iteration.
                       ;; The LLM (and var-history) can inspect prior reasoning via (var-history '*reasoning*).
+                      ;; Bump `:current-revision` on every system-var mutation
+                      ;; so the next `get-var-index` call rebuilds the cache.
+                      ;; Otherwise a next turn that runs no `:code` would keep
+                      ;; serving this turn's stale `<var_index>` to the LLM.
                       _ (when (seq thinking)
-                          (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*reasoning* thinking))
+                          (rlm-tools/bind-and-bump! rlm-env '*reasoning* thinking))
                       ;; Auto-bind *answer* when the turn finalizes. Survives into the
                       ;; next turn in this conversation (vars persist across queries).
                       ;; (var-history '*answer*) → every prior turn's answer; most
                       ;; recent lives under the bare *answer* var.
                       final-answer (when final-result (:answer final-result))
                       _ (when final-result
-                          (rlm-tools/sci-update-binding! (:sci-ctx rlm-env) '*answer* final-answer))
+                          (rlm-tools/bind-and-bump! rlm-env '*answer* final-answer))
                       vars-snapshot (restorable-var-snapshots rlm-env executions)
                       ;; Inject auto-vars (*query*, *reasoning*, *answer*) into the
                       ;; persisted snapshot so var-history can track them across
@@ -1771,4 +1996,3 @@
 (def extract-entities-from-page! rlm-entity/extract-entities-from-page!)
 (def extract-entities-from-visual-node! rlm-entity/extract-entities-from-visual-node!)
 (def extract-entities-from-document! rlm-entity/extract-entities-from-document!)
-

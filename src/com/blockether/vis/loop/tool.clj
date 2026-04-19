@@ -118,7 +118,20 @@
      Normalized to a fn internally; callers can always invoke `((:prompt tool-def) env)`.
      Distinct from :doc (one-liner summary) and :examples (call syntax). Use
      :prompt to tell the LLM when to reach for this tool, what its arguments
-     mean, what it returns, and any gotchas."
+     mean, what it returns, and any gotchas.
+   - :rescue-fn — `(fn [err & args])`. Optional recovery hook. When the
+     tool's :fn throws, the dispatcher calls `(apply rescue-fn err args)`
+     where `args` is the exact vector passed to :fn. Three outcomes:
+       1. Returns a value → used as the tool's result (runs through
+          :validate-output just like a normal return).
+       2. Re-throws `err` (or a new ex-info) → exception propagates as
+          a :tool-exception, same as if no rescue-fn existed.
+       3. Returns `nil` → treated as a successful nil result (NOT a
+          fallthrough). If you want the original error to propagate,
+          re-throw explicitly.
+     Use for teaching-oriented recovery: map a cryptic exception into a
+     clearer ex-info, retry with adjusted args, or fall back to a
+     simpler implementation."
   [sym f tool-def]
   (let [fn-meta (meta f)
         inferred-doc (:doc fn-meta)
@@ -200,6 +213,13 @@
       (when-not (fn? prompt)
         (throw (ex-info "tool-def :prompt must normalize to a function (fn [env] -> string|nil)"
                  {:type :rlm/invalid-tool-def :field :prompt :tool-def (dissoc tool-def :fn)}))))
+    ;; :rescue-fn is optional; when present it must be a variadic fn
+    ;; `(fn [err & args])`. The dispatcher invokes it only when the
+    ;; tool's :fn throws.
+    (when-let [rescue (:rescue-fn tool-def)]
+      (when-not (fn? rescue)
+        (throw (ex-info "tool-def :rescue-fn must be a function (fn [err & args])"
+                 {:type :rlm/invalid-tool-def :field :rescue-fn :tool-def (dissoc tool-def :fn)}))))
     tool-def))
 
 (defn maybe-assert-fn-tool-def!

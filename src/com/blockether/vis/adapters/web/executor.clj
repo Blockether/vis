@@ -21,33 +21,14 @@
 (defn- web-system-prompt
   []
   "You are vis web assistant. Keep responses clear and concise.
-Batch work aggressively: emit many independent (def …) / tool calls in a single
-iteration's :code vector — each iteration is a full model round-trip, so one
-iteration with ten blocks beats ten iterations with one. When reading files,
-fetch generously (whole file or large ranges) rather than re-reading small
-slices.")
+For simple greetings or direct prose answers, just set :answer and leave :code
+empty — no def wrapping, no ceremony. For real work, batch: emit many
+independent (def …) / tool calls in a single iteration's :code vector. Each
+iteration is a full model round-trip, so one iteration with ten blocks beats
+ten with one. When reading files, fetch generously (whole file or large
+ranges) rather than re-reading small slices.")
 
 ;;; ── Worker ─────────────────────────────────────────────────────────────
-
-(defn- first-symbol
-  "Extract the leading symbol name from a Clojure expression string, for live-status
-    labels like 'Iteration … → read-file'. Returns nil if it can't find one."
-  [code]
-  (when code
-    (let [t (str/trim code)
-          b (if (str/starts-with? t "(") (subs t 1) t)
-          nm (first (str/split b #"[\s\)\(\"']" 2))]
-      (when (and nm (not (str/blank? nm))) nm))))
-
-(defn- streamed-code->expr
-  "Normalize streamed code entries to raw expr strings.
-   RLM partial chunks may carry either plain strings or {:expr ...} blocks."
-  [entry]
-  (cond
-    (string? entry) entry
-    (map? entry) (let [expr (:expr entry)]
-                   (when (string? expr) expr))
-    :else nil))
 
 (defn- on-chunk-handler
   "Build the :on-chunk callback svar now uses (post-:hooks refactor). svar calls it
@@ -55,45 +36,35 @@ slices.")
     :done? true when an iteration finalizes. We project each call into the web
     live-status atom so the /check polling endpoint can stream UI updates.
 
-    `:thinking` on the incoming chunk is ignored — the main chat no longer
-    renders the LLM's inner monologue (it used to render as a \"Thinking\"
-    callout and felt like the system prompt was drifting turn-to-turn).
-    Status labels fall back to iteration + first tool name."
+    Merge semantics are centralized in `conv-shared/merge-stream-iteration` so
+    every adapter handles sparse terminal chunks the same way. Status labels
+    fall back to iteration + first tool name."
   [conversation-id]
-  (fn [{:keys [iteration code final done?]}]
-    (let [code-vec (when (sequential? code)
-                     (vec (keep streamed-code->expr code)))
-          first-code (first (filter identity code-vec))
-          label (cond
-                  done?             "Finalizing…"
-                  (seq first-code)  (str "Iteration " (inc iteration) " → "
-                                      (or (first-symbol first-code) "…"))
-                  :else             (str "Iteration " (inc iteration) "…"))]
-      (swap! web-conversations/live-status
-        (fn [ls]
-          (let [conv-state (or (get ls conversation-id) {})
-                iters-so-far (or (:iterations conv-state) [])
-                ;; Defensive: if the terminal done? chunk arrives with a
-                ;; nil/empty payload, keep whatever was already streamed for
-                ;; this iteration. Two layers of protection (the other is in
-                ;; loop/core.clj's iter-on-chunk) — if either one regresses,
-                ;; the UI still shows the code it saw mid-stream.
-                existing (get iters-so-far iteration)
-                merged-executions (let [new-execs (mapv (fn [c] {:code c}) (or code-vec []))]
-                                    (if (and (empty? new-execs) existing)
-                                      (:executions existing)
-                                      new-execs))
-                entry {:iteration iteration
-                       :final?    (or (boolean final) (:final? existing))
-                       :executions merged-executions}
-                iters' (cond
-                         (< iteration (count iters-so-far)) (assoc iters-so-far iteration entry)
-                         (= iteration (count iters-so-far)) (conj iters-so-far entry)
-                         :else                               (conj iters-so-far entry))]
-            (assoc ls conversation-id
-              (assoc conv-state
-                :iterations iters'
-                :current (when-not done? label)))))))))
+  (let [project! (conv-shared/make-on-chunk-projector
+                   {:on-update
+                    (fn [timeline {:keys [iteration done?] :as chunk}]
+                      (let [code-vec (conv-shared/chunk->code-vec chunk)
+                            first-code (first (filter identity code-vec))
+                            label (cond
+                                    done?             "Finalizing…"
+                                    (seq first-code)  (str "Iteration " (inc iteration) " → "
+                                                        (or (conv-shared/first-symbol first-code) "…"))
+                                    :else             (str "Iteration " (inc iteration) "…"))
+                            iters' (mapv (fn [{:keys [iteration final? thinking code]}]
+                                           {:iteration iteration
+                                            :thinking  thinking
+                                            :final? final?
+                                            :executions (mapv (fn [c] {:code c}) code)})
+                                     timeline)]
+                        (swap! web-conversations/live-status
+                          (fn [ls]
+                            (let [conv-state (or (get ls conversation-id) {})]
+                              (assoc ls conversation-id
+                                (assoc conv-state
+                                  :iterations iters'
+                                  :current (when-not done? label))))))))})]
+    (fn [chunk]
+      (project! chunk))))
 
 (defn- msgs->llm
   "Convert cached web messages into the llm message vector the RLM expects.
@@ -121,8 +92,8 @@ slices.")
         (let [history (msgs->llm (:messages conv))
               msgs    (if (seq history) history [(llm/user query)])
               result  (conversations/send! conversation-id msgs
-                        {:system-prompt (web-system-prompt)
-                         :hooks {:on-chunk (on-chunk-handler conversation-id)}})]
+                         {:system-prompt (web-system-prompt)
+                          :hooks {:on-chunk (on-chunk-handler conversation-id)}})]
           (when (web-conversations/get-conversation conversation-id)
             (web-conversations/append-message! conversation-id
               {:role :assistant :text (:answer result)
@@ -175,7 +146,8 @@ slices.")
               (when (web-conversations/get-conversation conversation-id)
                 (web-conversations/set-conversation-title! conversation-id title)))))
         (when-let [ch @exec-ch]
-          (async/put! ch {:conversation-id conversation-id :query query}))))))
+          (async/put! ch {:conversation-id conversation-id
+                          :query query}))))))
 
 (defn- drain-workers!
   "Wait for all tracked worker go-loops to finish (with timeout)."

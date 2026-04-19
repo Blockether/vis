@@ -16,7 +16,7 @@
 (defn- parse-form-params [body]
   (into {} (map #(let [[k v] (str/split % #"=" 2)]
                    [(java.net.URLDecoder/decode (or k "") "UTF-8")
-                    (java.net.URLDecoder/decode (or v "") "UTF-8")])
+                     (java.net.URLDecoder/decode (or v "") "UTF-8")])
              (str/split body #"&"))))
 
 ;;; ── Handler ────────────────────────────────────────────────────────────
@@ -95,16 +95,20 @@
 
       ;; Static files from resources/public/
       (and (= meth :get) (or (str/starts-with? uri "/css/")
-                           (str/starts-with? uri "/js/")))
+                            (str/starts-with? uri "/js/")
+                            (str/starts-with? uri "/fonts/")))
       (let [resource (io/resource (str "public" uri))
             ext (cond (str/ends-with? uri ".css") "text/css"
                   (str/ends-with? uri ".js") "application/javascript"
+                  (str/ends-with? uri ".ttf") "font/ttf"
+                  (str/ends-with? uri ".woff2") "font/woff2"
+                  (str/ends-with? uri ".woff") "font/woff"
                   :else "application/octet-stream")]
         (if resource
           {:status 200
-           :headers {"Content-Type" (str ext "; charset=utf-8")
-                     "Cache-Control" "no-cache, no-store, must-revalidate"}
-           :body (slurp resource)}
+           :headers {"Content-Type" ext
+                     "Cache-Control" "public, max-age=86400"}
+           :body (io/input-stream resource)}
           {:status 404 :body "Not found"}))
 
       :else {:status 404 :body "Not found"})))

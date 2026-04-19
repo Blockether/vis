@@ -12,18 +12,16 @@
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.spec :as spec]
-   [com.blockether.vis.loop.storage.schema
-    :refer [iteration-spec
-            ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING]]
+   [com.blockether.vis.loop.storage.schema :refer [iteration-spec]]
    [com.blockether.vis.loop.knowledge.skills :as rlm-skills]))
 
-(def ^:private CAVEMAN_ITERATION_OUTPUT
-  "Drop: articles, filler, hedging, conjunctions. Fragments OK. → for causality. One word when enough. Tech terms exact. Code unchanged.
-Pattern: [thing] [action] [reason]. [next step].")
-
-(def ^:private FINAL_ANSWER_OUTPUT
-  "Normal English. Clear, direct sentences. No AI filler (no \"As an AI\", \"I believe\",
-\"In conclusion\"). No hedging. Factual. Technical terms exact. Concise but complete. Prefer tables and lists over prose.")
+(def ^:private OUTPUT_STYLE_GUIDE
+  "One merged voice guide — was split into CAVEMAN (iteration voice) +
+   FINAL_ANSWER (final-voice) which dumped the same 'no hedging / no AI
+   filler' advice into the prompt twice. Both contexts are covered in a
+   single paragraph now; the iteration-vs-final distinction lives in a
+   trailing parenthetical the caller already renders."
+  "Factual, direct, concise. No AI filler (\"As an AI\", \"I believe\", \"In conclusion\"). No hedging. Tech terms exact, code unchanged. Tables/lists over prose. Iteration voice: fragments OK, [thing] [action] [reason] pattern, one word when enough. Final-answer voice: clear complete sentences.")
 
 (defn- render-constant
   "Render a single `:type :def` constant registered via register-env-def!.
@@ -69,20 +67,7 @@ Pattern: [thing] [action] [reason]. [next step].")
                "(sub-rlm-query \"cheap lookup\" {:routing {:optimize :cost}})"
                "(sub-rlm-query \"hard derivation\" {:routing {:optimize :intelligence} :reasoning :deep})"
                "(sub-rlm-query \"multi-step\" {:max-iter 5})"]
-    :prompt "Spawn a sub-query against a (possibly different) model. Returns a string
-answer synchronously.
-
-Args: prompt (string, required), opts (map, optional).
-Opts:
-  :routing   — `{:optimize :cost | :speed | :intelligence}`. Default: same
-               model as the current turn.
-  :reasoning — `:normal | :deep` when the target model supports reasoning.
-  :max-iter  — multi-iteration budget for the sub-query (default 1 — single-shot).
-
-Use for: cheap lookups inside a hard turn (`:cost`), isolated hard
-derivations inside an easy turn (`:intelligence :deep`), or farming out
-a sub-problem that doesn't need the full outer context. Do NOT use for
-work that could be done inline with code."}
+    :prompt "Sync sub-query. Opts: `:routing {:optimize :cost|:speed|:intelligence}`, `:reasoning :normal|:deep`, `:max-iter` (default 1). Use when sub-problem needs different model/depth; else inline code."}
 
    {:sym 'sub-rlm-query-batch
     :group "meta"
@@ -90,13 +75,7 @@ work that could be done inline with code."}
     :activation-fn (constantly true)
     :examples ["(sub-rlm-query-batch [{:prompt \"q1\"} {:prompt \"q2\"}])"
                "(sub-rlm-query-batch [{:prompt \"cheap\" :routing {:optimize :cost}} {:prompt \"hard\" :reasoning :deep}])"]
-    :prompt "Run many independent sub-queries in parallel. Takes a vector of
-`{:prompt ... (opts)}` maps, returns a vector of answer strings in the
-same order.
-
-Use when you have independent sub-tasks you'd otherwise fire with
-multiple sub-rlm-query calls. The batch variant parallelizes across
-provider connections."}
+    :prompt "Parallel `sub-rlm-query`. Takes `[{:prompt \"...\" …opts} …]`, returns a vector of answer strings in order. Use when sub-tasks are independent."}
 
    {:sym 'request-more-iterations
     :group "meta"
@@ -104,15 +83,7 @@ provider connections."}
     :activation-fn (constantly true)
     :examples ["(request-more-iterations 10)"
                "(request-more-iterations 50)"]
-    :prompt "Extend the current turn's iteration budget.
-
-Args: n (positive int) — how many EXTRA iterations to grant. Max 50 per
-request, hard ceiling 500 total. Returns `{:granted k :new-budget M :cap C}`.
-
-Call this AS SOON as you realize the turn needs more steps — don't wait
-for the last iteration; the cap terminates before you get another chance.
-Only extend when you have a concrete plan for the extra turns; don't
-request speculatively. Default budget (10) is plenty for most tasks."}])
+    :prompt "Extend iteration budget by `n` (≤50/call, 500 total). Returns `{:granted k :new-budget M :cap C}`. Call EARLY when you see you need more; only with a concrete plan. Default 10 is enough for most."}])
 
 ;; =============================================================================
 ;; Activation-aware tool prompt rendering
@@ -197,20 +168,45 @@ request speculatively. Default budget (10) is plenty for most tasks."}])
   [group]
   (if (str/blank? group) "misc" group))
 
+(defn- resolve-group-preamble
+  "Resolve the first non-blank `:group-preamble` among the active tools of
+   a group to a single string. Rendered once at the top of the group's
+   `<group>` block, so tools in the group don't each have to paste the
+   same context (repo summary, shared caveats, etc.) into their own
+   `:prompt`. The preamble may be a string or a `(fn [env]) → string`."
+  [env tools-in-group]
+  (some (fn [t]
+          (let [p (:group-preamble t)
+                s (cond
+                    (string? p) p
+                    (fn? p)     (try (p env) (catch Throwable _ nil))
+                    :else       nil)]
+            (when (and s (not (str/blank? s))) (str/trim s))))
+    tools-in-group))
+
 (defn render-active-tools
   "Render every tool in `tool-defs` whose activation-fn passes for `env`
    into a single <tools> block, grouped by :group. Returns nil when no
    tool is active — the caller should elide the block entirely.
 
+   A group may carry a one-shot `<group-preamble>` chunk: the first
+   active tool in the group that declares `:group-preamble` (string or
+   `(fn [env])`) contributes it. This keeps shared context (e.g. the
+   git repo summary) out of every sibling `:prompt` — was pasted 7×
+   across the git tools before. Sibling prompts should assume the
+   preamble is present.
+
    Preconditions:
-   - `tool-defs` is a seq of canonical tool-defs (each with :sym, :activation-fn,
-     optionally :prompt / :group / :examples / :arglists).
-   - `env` is the live RLM env; :activation-fn and :prompt both receive it."
+   - `tool-defs` is a seq of canonical tool-defs (each with :sym,
+     :activation-fn, optionally :prompt / :group / :group-preamble /
+     :examples / :arglists).
+   - `env` is the live RLM env; :activation-fn, :prompt, and
+     :group-preamble all receive it."
   [env tool-defs]
   (when (seq tool-defs)
     (let [active  (filter #(active-tool? env %) tool-defs)
           with-bodies (keep #(when-let [body (render-one-tool env %)]
-                               [(group-label (:group %)) (:sym %) body])
+                               [(group-label (:group %)) (:sym %) body %])
                         active)]
       (when (seq with-bodies)
         (let [by-group (group-by first with-bodies)
@@ -218,13 +214,26 @@ request speculatively. Default budget (10) is plenty for most tasks."}])
           (str "\n<tools>\n"
             (str/join "\n"
               (for [g groups
-                    :let [entries (->> (get by-group g)
+                    :let [group-entries (get by-group g)
+                          preamble (resolve-group-preamble env (map #(nth % 3) group-entries))
+                          entries (->> group-entries
                                     (sort-by second)
                                     (map #(nth % 2)))]]
                 (str "<group name=\"" g "\">\n"
+                  (when preamble
+                    (str "<group-preamble>\n" preamble "\n</group-preamble>\n"))
                   (str/join "\n" entries)
                   "\n</group>")))
             "\n</tools>\n"))))))
+
+(defn- multi-model?
+  "True when the env's router has more than one callable model available.
+   Used to gate the STEERING section — there's no point telling the LLM to
+   pick between `:cost` / `:speed` / `:intelligence` when only one model
+   can actually run."
+  [env]
+  (when-let [router (:router env)]
+    (> (count (mapcat :models (:providers router))) 1)))
 
 (defn build-system-prompt
   "Builds the system prompt — compact, token-efficient.
@@ -289,30 +298,29 @@ ARCH:
 - (def x \"docstring\" val) → docstring in <var_index>. Defs for reusable state only.
 - VAR REUSE: ALWAYS redef existing vars instead of creating new names for the same concept.
   Check <var_index> first. (def file-list ...) again, NOT (def files ...). Vars show (vN) when updated.
-- STORE RESULTS: Always (def answer-name result) to persist computed answers.
-  Plain :final text does NOT persist across queries. Only def'd vars survive.
-- BATCH WORK: :code is an array — emit MANY blocks per iteration when work is independent.
-  Prefer one iteration with [(def a ...) (def b ...) (def c ...) (analyze a b c)] over three
-  iterations. Each iteration costs a full round-trip; batching saves tokens and latency.
-  Split into multiple iterations only when later blocks depend on results from earlier ones.
-- READ LARGER: when reading files, pull big chunks, not tiny slices. Prefer (read-file path)
-  or (read-file path {:offset 1 :limit 500}) over 30-line windows. Re-reading the same file
-  to grow your window is wasteful — the file fits in context, just fetch enough the first time.
-- ITERATION BUDGET: default cap is 10 iterations. When the prompt shows a <budget> warning,
-  either finalize with a partial answer or extend via `request-more-iterations` (see <tools>).
-  Don't silently run off the end — that yields an empty bubble.
+- DIRECT ANSWER: for greetings or plain text replies, leave :code empty and set :answer directly. The previous turn's final is already bound as SYSTEM var *answer*. Don't wrap prose in (def reply …).
+- DEF ONLY FOR CROSS-ITERATION STATE: <journal> already shows every value your last iteration computed — use them directly (inline a count, copy a literal, compose a new pipeline). `(def x …)` earns its keep only when (1) you'll need x more than ONE iteration ahead (journal keeps only the previous iter), (2) x is the anchor for `:answer` (single-word resolve or `{{x}}` in Mustache), or (3) recomputing x is genuinely expensive (huge file parse, slow API). For ephemeral intermediates, skip def — the journal is your scratchpad.
+- BATCH WORK: :code is an array — emit many independent blocks per iteration. Split into sequential iterations ONLY when later blocks depend on earlier results. Each iter = full round-trip.
+- READ LARGER: prefer one (read-file path) or (read-file path {:offset 1 :limit 500}) over many 30-line windows — the file fits in context once.
+- ITERATION BUDGET: default cap 10. On <budget> warning, finalize with a partial answer or call (request-more-iterations). Don't silently run off the end.
 - :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
 - VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
-  Example: :code [(def reply (str \"Answer: \" x))], :answer \"reply\" → user sees string.
-- MUSTACHE: :answer-type mustache-text or mustache-markdown to render :answer as Mustache.
-  Sandbox vars = context. {{var}}, {{#list}}..{{/list}}, {{^val}}..{{/val}}, {{.}}, {{list.size}}.
-  NO pipe filters. NO {{#each}} → use {{#list}} directly.
-  mustache-text = plain text. mustache-markdown = Markdown output.
-  Example: :code [(def items [{:n \"A\"} {:n \"B\"}])],
-           :answer \"{{items.size}} items:\\n{{#items}}• {{n}}\\n{{/items}}\", :answer-type mustache-text.
-  Missing vars → rejected. Define all referenced vars in :code first.
+  Useful when the answer IS a computed value you already stored:
+    :code [(def totals (map sum-row rows))]
+    :answer \"totals\" → user sees the vector's string form.
+  NOT useful for prose you could just inline. See DIRECT ANSWER above.
+- MUSTACHE (:answer-type = mustache-text | mustache-markdown — the -markdown variant renders in the UI as Markdown, otherwise identical):
+  Sandbox vars = context. Tags: {{var}} {{#list}}..{{/list}} {{^val}}..{{/val}} {{.}} {{list.size}}.
+  No pipe filters. No {{#each}} — use {{#list}}. Missing vars rejected; define all referenced vars in :code first.
+  Ex: :code [(def items [{:n \"A\"} {:n \"B\"}])], :answer \"{{items.size}} items:\\n{{#items}}• {{n}}\\n{{/items}}\", :answer-type mustache-text.
 - :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
-
+"
+    ;; STEERING is only rendered when the env actually has >1 model to switch
+    ;; between. On single-model routers the :next.model dial is a no-op, so
+    ;; burning ~200 tokens teaching the LLM to use it is pure waste. The JSON
+    ;; schema still lists :next in the spec — this just drops the essay.
+    (when (multi-model? env)
+      "
 STEERING (optional :next map for the NEXT turn — omit entirely for the default path):
 - :next.model — switch model class. 'cost' for trivial lookups / formatting, 'speed' for
   fast follow-ups, 'intelligence' for hard reasoning / synthesis / debugging tricky code.
@@ -324,11 +332,10 @@ STEERING (optional :next map for the NEXT turn — omit entirely for the default
   escalating to deep every turn wastes tokens.
 - Both dials are orthogonal. {:model 'cost' :reasoning 'deep'} means 'think hard on the
   cheapest model'. Keep the pair empty unless you actually want to change something.
-
+")
+    "
 GROUNDING:
-- Only tools listed in <tools> exist. Data in :final MUST come from <journal>, <var_index>, or
-  values you explicitly pulled via a tool this turn. Never fabricate.
-- :answer-type mustache-text|mustache-markdown → Mustache-rendered. All referenced vars MUST be def'd.
+- Only tools listed in <tools> exist. Data in :final MUST come from <journal>, <var_index>, or values you explicitly pulled via a tool this turn. Never fabricate.
 
 PERF:
 - SCI is FAST. def=100ms, assert=500ms, heavy=2000ms max. No 5000+ budgets.
@@ -373,16 +380,14 @@ RESPONSE FORMAT:
       "JSON only. Native reasoning — omit 'thinking'."
       "JSON with 'thinking' + 'code'.")
     "
-Set final fields when done: {\"answer\": \"...\", \"answer-type\": \"mustache-text\", \"confidence\": \"high|medium|low\"}
+Set final fields when done: {\"answer\": \"...\", \"answer-type\": \"mustache-text|mustache-markdown\", \"confidence\": \"high|medium|low\"}
 
 RULES:
 - ALWAYS test. Untested = wrong. No repeat fail → different approach.
 - <var_index>|<journal> answers query → finalize now.
-- No prose in :code. Bare string literal = wrong. Prose → :answer with mustache-text or mustache-markdown.
+- No prose in :code. Bare string literal = wrong. Prose → :answer (see ARCH / MUSTACHE).
+- def only cross-iter state / :answer anchors / expensive recomputes — journal already shows last iter in full.
 - Simplest solution. No over-eng. No unused abstractions.
 
-OUTPUT: "
-    CAVEMAN_ITERATION_OUTPUT " (iterations). "
-    FINAL_ANSWER_OUTPUT " (final answer).
-Answer → top-level final fields when done. No boilerplate.
+OUTPUT: " OUTPUT_STYLE_GUIDE "
 "))

@@ -4,7 +4,8 @@
    Owns sidebar/page projections, message cache hydration from RLM DB,
    title generation, and context payload shaping for the web adapter."
   (:require [com.blockether.vis.loop.conversations.core :as conversations]
-            [com.blockether.vis.core :as core]
+   [com.blockether.vis.core :as core]
+            [com.blockether.vis.loop.core :as loop-core]
             [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.loop.storage.db :as rlm-db]
             [clojure.edn :as edn]
@@ -86,12 +87,31 @@
     (safe-read-edn s s)
     s))
 
+(defn- exec-envelope?
+  "Recognize the new-shape execution record stored per call. Shape:
+   `{:result v :error e? :stdout s?}`. Old rows stored bare results, so
+   maps that happen to look similar still parse correctly — the envelope
+   must have the `:result` key but nothing more restrictive."
+  [x]
+  (and (map? x) (contains? x :result)))
+
 (defn- iteration-entity->exec [iter-entity]
   (let [codes   (safe-read-edn (:code iter-entity) [])
         results (safe-read-edn (:results iter-entity) [])]
-    (mapv (fn [code result]
-            {:code   code
-             :result (safe-read-edn result result)})
+    (mapv (fn [code raw]
+            (let [parsed (safe-read-edn raw raw)
+                  envelope? (exec-envelope? parsed)
+                  result-val (if envelope? (:result parsed) parsed)
+                  exec-err   (when envelope? (:error parsed))
+                  lint-err   (loop-core/literal-code-block-error code)]
+              (cond-> {:code    code
+                       :result  result-val
+                       :error   (or exec-err lint-err)}
+                envelope? (assoc :stdout  (:stdout parsed)
+                                 :stderr  (:stderr parsed)
+                                 :time-ms (:time-ms parsed)
+                                 :timeout? (boolean (:timeout? parsed))
+                                 :repaired? (boolean (:repaired? parsed))))))
       codes
       (concat results (repeat nil)))))
 
@@ -129,35 +149,86 @@
               :else           (pr-str value))]
     (truncate-str raw 400)))
 
+(defn- var-preview
+  [name value]
+  (let [n (str name)]
+    (cond
+      (and (= n "*answer*") (map? value) (contains? value :result))
+      (let [r (:result value)
+            text (cond
+                   (string? r) r
+                   (sequential? r) (str/join "\n" (map str r))
+                   (nil? r) ""
+                   :else (pr-str r))]
+        (truncate-str text 400))
+
+      :else
+      (value->preview value))))
+
+(defn- var-history-for
+  [cache db-info conv-ref sym]
+  (if-let [rows (get @cache sym)]
+    rows
+    (let [rows (try (rlm-db/db-var-history db-info conv-ref sym)
+                 (catch Exception _ []))]
+      (swap! cache assoc sym rows)
+      rows)))
+
+(defn- resolve-var-version
+  [history target-query-id iter-created-at current-value current-code]
+  (let [same-iter (->> history
+                    (filter (fn [{:keys [query-id created-at]}]
+                              (and (= query-id target-query-id)
+                                (= created-at iter-created-at)))))
+        exact     (first (filter (fn [{:keys [value code]}]
+                                   (and (= value current-value)
+                                     (= code current-code)))
+                            same-iter))
+        current   (or exact (last same-iter))
+        version   (:version current)
+        prev      (when (and (number? version) (> version 1))
+                    (nth history (- version 2) nil))]
+    {:version      version
+     :prev-version (:version prev)
+     :prev-preview (some-> prev :value value->preview)}))
+
 (defn- iteration-entity->vars
   "Project the vars written in this iteration into a compact table shape
    the frontend can render without re-parsing values."
-  [db-info iter-entity]
+  [db-info conv-ref query-id var-history-cache iter-entity]
   (try
-    (let [rows (rlm-db/db-list-iteration-vars db-info [:id (:id iter-entity)])]
+    (let [rows         (rlm-db/db-list-iteration-vars db-info [:id (:id iter-entity)])
+          iter-created (:created-at iter-entity)]
       (into []
         (keep (fn [{:keys [name value code]}]
                 (when name
-                  {:name    name
-                   :type    (type-label value)
-                   :preview (value->preview value)
-                   :code    code})))
-        rows))
+                  (let [sym       (symbol name)
+                        history   (var-history-for var-history-cache db-info conv-ref sym)
+                        versioned (resolve-var-version history query-id iter-created value code)]
+                    {:name         name
+                     :type         (type-label value)
+                     :preview      (var-preview name value)
+                     :code         code
+                     :version      (:version versioned)
+                     :prev-version (:prev-version versioned)
+                     :prev-preview (:prev-preview versioned)})))
+         rows)))
     (catch Exception _ [])))
 
-(defn- iteration-entity->trace-entry [db-info idx iter-entity]
+(defn- iteration-entity->trace-entry [db-info conv-ref query-id var-history-cache idx iter-entity]
   (let [err (some-> (:error iter-entity) (safe-read-edn nil))]
     (cond-> {:iteration  idx
              :thinking   (:thinking iter-entity)
              :executions (iteration-entity->exec iter-entity)
-             :vars       (iteration-entity->vars db-info iter-entity)}
+             :vars       (iteration-entity->vars db-info conv-ref query-id var-history-cache iter-entity)}
       (some? (:answer iter-entity)) (assoc :final? true)
       err (assoc :error err))))
 
-(defn- query-entity->message-pair [db-info query-entity]
-  (let [query-ref   [:id (:id query-entity)]
+(defn- query-entity->message-pair [db-info conv-ref var-history-cache query-entity]
+  (let [query-id    (:id query-entity)
+        query-ref   [:id query-id]
         iterations  (rlm-db/db-list-query-iterations db-info query-ref)
-        trace       (vec (map-indexed #(iteration-entity->trace-entry db-info %1 %2) iterations))
+        trace       (vec (map-indexed #(iteration-entity->trace-entry db-info conv-ref query-id var-history-cache %1 %2) iterations))
         final-iter  (last (filter :answer iterations))
         answer      (or (some-> final-iter   :answer read-answer)
                       (some-> query-entity :answer read-answer))
@@ -193,8 +264,9 @@
   (try
     (let [db-info  (:db-info env)
           conv-ref (:conversation-ref env)
-          queries  (rlm-db/db-list-conversation-queries db-info conv-ref)]
-      (into [] (mapcat #(query-entity->message-pair db-info %)) queries))
+          queries  (rlm-db/db-list-conversation-queries db-info conv-ref)
+          var-history-cache (atom {})]
+      (into [] (mapcat #(query-entity->message-pair db-info conv-ref var-history-cache %)) queries))
     (catch Exception e
       (println (str "[web] load-messages-from-db failed: " (ex-message e)))
       [])))
@@ -261,7 +333,49 @@
                :created-at (str created-at)})))
     (catch Exception _ [])))
 
+(defn- system-var?
+  "Agent-loop SYSTEM vars are earmuffed (`*foo*`) and rebound by the loop
+   itself rather than by user code. They are surfaced in their own collapsed
+   sub-section so they don't drown out the user-defined variables."
+  [sym]
+  (let [n (str sym)]
+    (and (> (count n) 2)
+      (= \* (.charAt n 0))
+      (= \* (.charAt n (dec (count n)))))))
+
+(defn- system-display-name
+  "Human-friendly label for the three canonical SYSTEM vars; falls back to
+   the raw symbol name (without earmuffs) for any other earmuffed var."
+  [sym]
+  (let [n (str sym)]
+    (case n
+      "*query*"     "query"
+      "*reasoning*" "thinking"
+      "*answer*"    "answer"
+      (let [stripped (subs n 1 (dec (count n)))]
+        (if (seq stripped) stripped n)))))
+
+(defn- ->var-entry
+  [db-info conv-ref system? [sym {:keys [value code version]}]]
+  (let [versions (var-version-entries db-info conv-ref sym)]
+    (cond-> {:name     (str sym)
+             :value    (truncate-str (pr-str (if (and system? (= "*answer*" (str sym))
+                                                (map? value) (contains? value :result))
+                                               (:result value)
+                                               value))
+                         200)
+             :code     code
+             :type     (type-label value)
+             :version  (or version (count versions))
+             :versions versions
+             :system?  (boolean system?)}
+      system? (assoc :display-name (system-display-name sym)))))
+
 (defn context-payload
+  "Sidebar payload for `GET /conversations/:id/context`.
+   Returns `{:variables [...] :system-variables [...]}` — user-defined vars
+   and agent-loop SYSTEM vars (earmuffed names like `*query*`) are split into
+   two distinct sections so the SYSTEM trio doesn't dominate the view."
   [conversation-id]
   (when (conversations/by-id conversation-id)
     (let [env          (conversations/env-for conversation-id)
@@ -270,16 +384,10 @@
           var-registry (try (when (and db-info conv-ref)
                               (rlm-db/db-latest-var-registry db-info conv-ref))
                          (catch Exception _ nil))
-          vars         (when (seq var-registry)
-                         (->> var-registry
-                           (sort-by first)
-                           (mapv (fn [[sym {:keys [value code version]}]]
-                                   (let [versions (var-version-entries db-info conv-ref sym)]
-                                     {:name     (str sym)
-                                      :value    (truncate-str (pr-str value) 200)
-                                      :code     code
-                                      :type     (type-label value)
-                                      :version  (or version (count versions))
-                                      :versions versions})))))]
-      (cond-> {:context [] :learnings []}
-        (seq vars) (assoc :variables vars)))))
+          {system-pairs true user-pairs false}
+          (when (seq var-registry)
+            (group-by (fn [[sym _]] (system-var? sym)) (sort-by first var-registry)))
+          user-vars    (mapv #(->var-entry db-info conv-ref false %) user-pairs)
+          system-vars  (mapv #(->var-entry db-info conv-ref true  %) system-pairs)]
+      (cond-> {:variables user-vars}
+        (seq system-vars) (assoc :system-variables system-vars)))))

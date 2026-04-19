@@ -104,11 +104,27 @@
   (let [parent-id (when query-ref (second query-ref))
         executions (or executions [])
         code-strs (mapv :code executions)
-        result-strs (mapv #(try (pr-str (:result %))
-                             (catch Exception e
-                               (trove/log! {:level :warn :data {:error (ex-message e)}
-                                            :msg "Failed to serialize execution result"})
-                               "???"))
+        ;; Each result element now stores {:result v :error e} instead of
+        ;; just `v`. Per-execution errors (timeouts, exceptions, literal
+        ;; guards) used to vanish here — the frontend saw an empty card
+        ;; between successful ones and it looked like the order was
+        ;; scrambled. The read-side tolerates both shapes so legacy rows
+        ;; still render as pure results.
+        blank? (fn [s] (or (nil? s) (and (string? s) (clojure.string/blank? s))))
+        result-strs (mapv (fn [exec]
+                            (try
+                              (pr-str
+                                (cond-> {:result (:result exec)}
+                                  (some? (:error exec))             (assoc :error (str (:error exec)))
+                                  (not (blank? (:stdout exec)))     (assoc :stdout (:stdout exec))
+                                  (not (blank? (:stderr exec)))     (assoc :stderr (:stderr exec))
+                                  (some? (:execution-time-ms exec)) (assoc :time-ms (:execution-time-ms exec))
+                                  (true? (:timeout? exec))          (assoc :timeout? true)
+                                  (true? (:repaired? exec))         (assoc :repaired? true)))
+                              (catch Exception e
+                                (trove/log! {:level :warn :data {:error (ex-message e)}
+                                             :msg "Failed to serialize execution result"})
+                                "???")))
                       executions)
         iter-ref (core/store-entity! db-info
                    (cond-> {:type :iteration

@@ -528,9 +528,22 @@
 ;; =============================================================================
 
 #_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
-(def tool-diagnostics
-  "Returns tool diagnostics map: {sym -> {:activation-checks :executions :last-active? ...}}"
-  (deref #'com.blockether.vis.loop.runtime.tool-diagnostics/get-diagnostics))
+(defn tool-diagnostics
+  "Return the current cross-conversation tool diagnostics map.
+
+   Shape: `{tool-sym -> telemetry-record}` where each record carries
+   activation counters (`:activation-checks`, `:activation-active`,
+   `:activation-errors`), execution counters (`:executions`,
+   `:execution-errors`), and cumulative timing totals/maxes. See
+   `com.blockether.vis.loop.runtime.tool-diagnostics/empty-record` for the
+   full, stable shape.
+
+   Previously this was a `def` that dereffed the var of `get-diagnostics`,
+   which silently evaluated to the fn object itself at namespace-load time
+   (never to a live snapshot). Callers should now invoke this as a
+   function."
+  []
+  ((requiring-resolve 'com.blockether.vis.loop.runtime.tool-diagnostics/get-diagnostics)))
 
 ;; =============================================================================
 ;; PageIndex

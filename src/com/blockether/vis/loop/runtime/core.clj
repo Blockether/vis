@@ -36,11 +36,35 @@
 (defn sci-update-binding!
   "Update a binding in an existing SCI context.
    Ensures the symbol is a real SCI var before interning the value,
-   since bindings from sci/init :namespaces are not SCI vars."
+   since bindings from sci/init :namespaces are not SCI vars.
+
+   NOTE: This mutates the SCI sandbox only. If the caller wants the next
+   iteration's `<var_index>` context block to reflect the new binding, they
+   MUST also call `bump-var-index!` on the env — the var-index is cached and
+   only rebuilds when `:current-revision` advances. Every past cache-staleness
+   bug (4-iter `(restore-vars …)` spin, turn-3 `*query*=\"Siema\"` replay)
+   traces back to forgetting this pair. Prefer `bind-and-bump!` below."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
     (sci/eval-string+ sci-ctx (str "(def " sym " nil)") {:ns ns-obj})
     (sci/intern sci-ctx ns-obj sym val)))
+
+(defn bump-var-index!
+  "Invalidate the env's cached `<var_index>` so the next `get-var-index` call
+   rebuilds it from the live SCI sandbox. No-op when the env has no
+   `:var-index-atom` (e.g. ad-hoc test contexts)."
+  [env]
+  (when-let [atom (:var-index-atom env)]
+    (swap! atom update :current-revision (fnil inc 0))))
+
+(defn bind-and-bump!
+  "Atomic \"rebind var in SCI + invalidate var-index cache\" — the only API
+   call sites should use when mutating runtime bindings that the LLM needs
+   to see on the NEXT iteration. Fixes every instance of the model looping
+   on `(restore-vars …)` / `(def X …)` because the var_index never caught up."
+  [env sym val]
+  (sci-update-binding! (:sci-ctx env) sym val)
+  (bump-var-index! env))
 
 ;; =============================================================================
 ;; SCI Context Creation
@@ -420,14 +444,11 @@
            :prompt (fn [env]
                      (str "Full-text search across ingested documents. First stop for \"what do my docs say about X?\".\n"
                        "\n"
-                       "Args: query (string, required), opts (map, optional).\n"
-                       "Opts:\n"
-                       "  :in           — narrow scope: :pages | :toc | :entities (default: all).\n"
-                       "  :top-k        — max hits (default: 10).\n"
-                       "  :document-id  — restrict to one document by its :doc/id.\n"
+                       "- `:in :pages|:toc|:entities` — narrow scope (default: all).\n"
+                       "- `:top-k` — max hits (default 10).\n"
+                       "- `:document-id` — restrict to one document.\n"
                        "\n"
-                       "Returns a markdown-formatted list of hits with ids suitable for\n"
-                       "fetch-document-content. Search in English — translate non-EN queries first.\n"
+                       "Returns hits with ids ready for `fetch-document-content`. Search in English — translate non-EN queries first.\n"
                        "\n"
                        (let [n (try (count (db/db-list-documents (:db-info env))) (catch Throwable _ 0))]
                          (str "Currently " n " document" (when (not= 1 n) "s") " ingested."))))})
@@ -438,17 +459,7 @@
            :examples ["(fetch-document-content [:node/id \"page-42\"])"
                       "(fetch-document-content [:doc/id \"doc-1\"])"
                       "(fetch-document-content [:toc/id \"toc-3\"])"]
-           :prompt "Fetch the raw content behind a search hit. Use after `search-documents`
-to pull the full text of a promising page.
-
-Takes one positional `ref` argument — a 2-vector identifying what to load:
-  [:node/id \"id\"] → full page text as a single string.
-  [:doc/id \"id\"]  → vector of ~4K-char pages (whole document).
-  [:toc/id \"id\"]  → TOC description for that section.
-  [:id \"id\"]       → generic entity: {:entity {...} :relationships [...]}.
-
-Common pattern: (def pages (fetch-document-content [:doc/id \"doc-1\"])) then
-slice/iterate `pages` on subsequent iterations."})
+           :prompt "Fetch content behind a `search-documents` hit. Refs: `[:node/id id]` page text, `[:doc/id id]` full doc as pages, `[:toc/id id]` TOC desc, `[:id id]` generic entity."})
         (register! 'search-batch
           (fn search-batch
             ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
@@ -458,11 +469,7 @@ slice/iterate `pages` on subsequent iterations."})
            :activation-fn has-docs?
            :examples ["(search-batch [\"neural\" \"RLHF\" \"alignment\"])"
                       "(search-batch [\"q1\" \"q2\"] {:top-k-per-query 5})"]
-           :prompt "Batch variant of search-documents: run multiple queries in one call.
-
-Takes a vector of query strings and returns a merged, deduplicated hit list.
-Prefer batch when the task wants evidence across several terms — saves
-round-trips. Use search-documents for a single term."})))
+           :prompt "Parallel `search-documents`. Takes a vector of query strings, returns a merged deduplicated hit list. Use when the task wants evidence across several terms."})))
     ;; --- Conversation history tools (active when conversation exists) ---
     (when has-conv?
       (let [has-history? (fn [env] (boolean (:conversation-ref env)))]
@@ -474,13 +481,7 @@ round-trips. Use search-documents for a single term."})))
            :examples ["(conversation-history)"
                       "(conversation-history 5)"]
            :format-result fmt/format-conversation-history
-           :prompt "Summaries of PREVIOUS user queries in this conversation (this turn not included).
-Use when the current <journal> can't answer because the answer came from
-a prior turn. Without args, returns all prior turns; with n, only the last n.
-
-Each summary includes the query text, a short answer preview, iteration
-count, and the key vars that got def'd. Use this to decide whether to
-call conversation-code / conversation-results / restore-var for details."})
+           :prompt "Summaries of prior turns in this conversation (text, answer preview, iter count, key vars). Use to decide whether to drill via `conversation-code`/`conversation-results`/`restore-var`."})
         (register! 'conversation-code
           (sci-tools/make-conversation-code-fn db-info conversation-ref)
           {:doc "(conversation-code query-selector) — prior query code blocks"
@@ -489,13 +490,7 @@ call conversation-code / conversation-results / restore-var for details."})
            :examples ["(conversation-code :last)"
                       "(conversation-code {:index 0})"]
            :format-result fmt/format-conversation-code
-           :prompt "Fetch the CODE BLOCKS executed in a previous turn. Takes a selector:
-  :last            — most recent prior turn.
-  {:index N}       — zero-based index into conversation-history.
-  {:query-id \"id\"} — specific query entity id.
-
-Use when you need to see HOW a previous answer was computed so you can
-extend or fix it. Pair with conversation-results for the values."})
+           :prompt "Code blocks from a prior turn. Selector: `:last`, `{:index N}`, `{:query-id id}`. Shows HOW the answer was computed; pair with `conversation-results` for values."})
         (register! 'conversation-results
           (sci-tools/make-conversation-results-fn db-info conversation-ref)
           {:doc "(conversation-results query-selector) — prior query results"
@@ -504,12 +499,7 @@ extend or fix it. Pair with conversation-results for the values."})
            :examples ["(conversation-results :last)"
                       "(conversation-results {:index 1})"]
            :format-result fmt/format-conversation-results
-           :prompt "Fetch the VALUES produced by a previous turn's iterations. Same selector
-grammar as conversation-code: `:last | {:index N} | {:query-id \"id\"}`.
-
-Prefer var-history / restore-var when you just need one var — they're
-more direct. conversation-results is for \"show me everything that turn
-computed\" diagnostics."})))
+           :prompt "Values produced by a prior turn's iterations. Selector: see `conversation-code`. For one var prefer `restore-var`/`var-history`."})))
     ;; --- Restore tools (active when conversation has prior queries) ---
     ;; Special: restore-var also rebinds the value into the SCI sandbox.
     (when has-conv?
@@ -518,7 +508,7 @@ computed\" diagnostics."})))
                                   ([sym] (binding-restore-var sym {}))
                                   ([sym opts]
                                    (let [val (raw-restore-fn sym opts)]
-                                     (sci-update-binding! sci-ctx sym val)
+                                     (bind-and-bump! env sym val)
                                      val)))
             binding-restore-vars (fn binding-restore-vars
                                    ([syms] (binding-restore-vars syms {}))
@@ -539,14 +529,7 @@ computed\" diagnostics."})))
            :activation-fn has-vars?
            :examples ["(restore-var 'docs)"
                       "(restore-var 'docs {:version 2})"]
-           :prompt "Pull a var from an earlier turn INTO the current SCI sandbox.
-
-Takes a quoted symbol. Rebinds the var to its latest value so subsequent
-iterations can reference it without a fresh compute. With {:version N},
-restores a specific historical version (see var-history for the list).
-
-Use when the current task builds on something a previous turn def'd.
-Cheaper than recomputing; exact, not summarized."})
+           :prompt "Pull a var from an earlier turn into the current SCI sandbox. Rebinds it to the latest value so subsequent iterations reference it without recomputing. Pass `{:version N}` for a specific historical version (see `var-history`)."})
         (register! 'restore-vars binding-restore-vars
           {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
            :group "conversation" :activation-doc "no persisted vars from prior queries"
@@ -554,10 +537,7 @@ Cheaper than recomputing; exact, not summarized."})
            :examples ["(restore-vars ['docs 'hits 'analysis])"
                       "(restore-vars ['x 'y] {:version 1})"]
            :format-result fmt/format-restore-vars
-           :prompt "Batch restore of multiple vars in one call. Returns a map of
-`sym → value` (or `sym → {:error ...}` for missing vars).
-
-Prefer this over many `restore-var` calls when you know upfront what you need."})
+           :prompt "Parallel `restore-var`. Returns `{sym value}` or `{sym {:error …}}` for missing ones. Use when you know upfront which vars you need."})
         (register! 'var-history
           (sci-tools/make-var-history-fn db-info conversation-ref)
           {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}"
@@ -566,11 +546,7 @@ Prefer this over many `restore-var` calls when you know upfront what you need."}
            :examples ["(var-history 'hits)"
                       "(var-history '*reasoning*)"]
            :format-result fmt/format-var-history
-           :prompt "List every version of a var across this conversation, oldest first.
-
-Each entry: {:version N :value <pr-str'd> :code <source> :created-at <ts>}.
-Use before restore-var when you need a specific historical version, or
-to audit how a value evolved (e.g. `*reasoning*` across iterations)."})
+           :prompt "Every version of a var across this conversation, oldest first. Use before `restore-var` when you need a specific version, or to audit how a value evolved (e.g. `*reasoning*` across iterations)."})
         (register! 'var-diff
           (sci-tools/make-var-diff-fn db-info conversation-ref)
           {:doc "(var-diff 'sym 1 3) — structural diff between two versions. Returns {:edits [...] :edit-count N}"
@@ -579,13 +555,7 @@ to audit how a value evolved (e.g. `*reasoning*` across iterations)."})
            :examples ["(var-diff 'state 1 3)"
                       "(var-diff 'plan :prev :latest)"]
            :format-result fmt/format-var-diff
-           :prompt "Structural diff between two versions of a var.
-
-Args: sym (quoted), v-old, v-new — version numbers OR `:prev` / `:latest`.
-Returns `{:edits [...] :edit-count N}` describing every path that changed.
-
-Use to answer \"what changed between iter X and Y?\" without re-reading
-two giant values. Cheap on big maps/vecs."})))
+           :prompt "Structural diff between two versions of a var. Versions can be ints or `:prev`/`:latest`. Returns `{:edits … :edit-count N}`. Use to answer \"what changed between iter X and Y?\" on large maps/vecs without re-reading both."})))
     ;; --- Git tools (active when repos are attached) ---
     (when has-db?
       (let [has-repos?    (fn [env] (boolean (seq (db/db-list-repos (:db-info env)))))
@@ -618,40 +588,33 @@ two giant values. Cheap on big maps/vecs."})))
                                                "at " path)))
                                       (str/join "\n")))
                                   "No repos attached right now.")))
+            ;; All git tools share the same repo roster + the absolute-
+            ;; paths caveat. Rendered once as the group's
+            ;; <group-preamble>; sibling prompts no longer paste either.
+            git-group-preamble (fn [env]
+                                 (str (repo-summary-fn env)
+                                   "\n\nNote: repo paths must be ABSOLUTE strings in any `:path` opt."))
             tool-prompts {'git-search-commits
-                          "Full-text search across commit messages. Returns a commit list.
-Prefer ONE search with an alternation (`\"HITL|approval|confirm\"`) over
-multiple searches. Use `:author`, `:since`, `:until` opts to narrow."
+                          "Full-text search across commit messages. Prefer one search with an alternation (`\"HITL|approval|confirm\"`) over multiple searches. Narrow with `:author`, `:since`, `:until`."
                           'git-commit-history
-                          "Linear commit history for a repo (or a path within it). Without args,
-returns recent commits on current branch; `{:path \"src/foo.clj\" :n 20}`
-narrows to a file."
+                          "Linear commit history for a repo (or a path within it). Narrow with `{:path \"src/foo.clj\" :n 20}`."
                           'git-commits-by-ticket
-                          "Find every commit mentioning a ticket id / key. Useful when the user
-references JIRA/issue numbers and you want the related history."
+                          "Find every commit mentioning a ticket id / key. Use when the user cites a JIRA/issue number."
                           'git-commit-parents
-                          "Parents of a given commit (by SHA or short SHA). Essential for
-reasoning about merges — a merge commit has 2+ parents."
+                          "Parents of a given commit (SHA or short SHA). Merge commits have 2+ parents."
                           'git-file-history
-                          "History of commits touching a specific file path. Pair with git-blame
-for \"when and why did this line appear?\" investigations."
+                          "Commits that touched a specific file path. Pair with `git-blame` for \"when did this line appear?\"."
                           'git-blame
-                          "Line-by-line authorship for a file at a given range. Args: path,
-from-line, to-line. Use to answer \"who last touched line N?\"."
+                          "Line-by-line authorship for a file range. Answers \"who last touched line N?\"."
                           'git-commit-diff
-                          "Full diff for a single commit. Args: SHA (or short SHA). Returns
-patch text; parse or scan it for the relevant hunks."}]
+                          "Full diff for one commit (SHA or short SHA). Returns patch text — scan for the relevant hunks."}]
         (doseq [[sym f] git-binds]
           (register! sym f
             (cond-> {:doc (str "(" sym " ...) — git tool")
                      :group "git" :activation-doc "no git repos attached"
                      :activation-fn has-repos?
-                     :prompt (fn [env]
-                               (str (get tool-prompts sym "Git tool.")
-                                 "\n\n"
-                                 (repo-summary-fn env)
-                                 "\n\n"
-                                 "NOTE: repo paths must be ABSOLUTE strings in any :path opt."))}
+                     :group-preamble git-group-preamble
+                     :prompt (get tool-prompts sym "Git tool.")}
               (git-formatter sym) (assoc :format-result (git-formatter sym)))))))
     ;; --- Concept tools (active when concepts exist — cross-conversation) ---
     (when has-db?
@@ -664,24 +627,11 @@ patch text; parse or scan it for the relevant hunks."}]
                                   edit-concept    fmt/format-concept-mutation
                                   nil))
             concept-prompts {'concept-info
-                             "Inspect a concept in the cross-conversation ontology.
-
-Args: term (string OR keyword) or `{:id \"concept-id\"}`. Returns the
-definition, aliases, related concepts, and source references.
-
-Use this when the user mentions a term and you want the project's shared
-understanding of it rather than your own guess."
+                             "Inspect a concept in the cross-conversation ontology. Returns definition, aliases, related concepts, and source references. Use when the user mentions a term — prefer the project's shared understanding over guessing."
                              'remove-concept
-                             "Mark a concept as removed from the ontology (soft delete).
-
-Args: `{:id \"concept-id\"}`. Use when a concept is obsolete or was
-incorrectly extracted. Does not drop the row — sets `status = removed`."
+                             "Soft-delete a concept. Sets `status = removed` without dropping the row. Use when a concept is obsolete or was incorrectly extracted."
                              'edit-concept
-                             "Update a concept's definition / aliases / relationships.
-
-Args: `{:id \"concept-id\" :definition \"...\" :aliases [...] :group \"...\"}`.
-Only provided fields are updated. Use to refine a concept based on new
-information."}]
+                             "Update a concept's definition / aliases / relationships. Only provided fields are changed."}]
         (doseq [[sym f] concept-binds]
           (register! sym f
             (cond-> {:doc (str "(" sym " ...) — concept graph tool")
@@ -761,12 +711,12 @@ information."}]
             ;; var, but NEVER FORGOTTEN (forget-vars! refuses to drop them).
             ;; The (SYSTEM) prefix signals to the LLM that trying to :forget
             ;; these is a no-op.
-            system-doc (fn [sym]
-                         (case (str sym)
-                           "*query*"     "(SYSTEM, never forgotten) current user query"
-                           "*reasoning*" "(SYSTEM, never forgotten) YOUR thinking from the previous iteration"
-                           "*answer*"    "(SYSTEM, never forgotten) final answer from the previous turn in this conversation"
-                           (str "(SYSTEM, never forgotten) agent-bound var")))
+             system-doc (fn [sym]
+                          (case (str sym)
+                            "*query*"     "(SYSTEM, never forgotten) current user query"
+                            "*reasoning*" "(SYSTEM, never forgotten) YOUR thinking from the previous iteration"
+                            "*answer*"    "(SYSTEM, never forgotten) final answer from the previous turn in this conversation"
+                            (str "(SYSTEM, never forgotten) agent-bound var")))
             entries (->> var-info
                       (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
                       ;; Sort order:
@@ -1116,8 +1066,20 @@ information."}]
             short-circuit
 
             :else
-            (let [validate-input (:validate-input tool-def)
+            (let [validate-input  (:validate-input tool-def)
                   validate-output (:validate-output tool-def)
+                  rescue-fn       (:rescue-fn tool-def)
+                  ;; Wrap validate-output in a local fn so we can reuse it
+                  ;; for both the happy path and the rescued path without
+                  ;; duplicating the three-branch coerce/default logic.
+                  apply-validate-output
+                  (fn [validated-inv raw-result]
+                    (if validate-output
+                      (let [ret (validate-output (assoc validated-inv :result raw-result))]
+                        (if (and (map? ret) (contains? ret :result))
+                          (:result ret)
+                          raw-result))
+                      raw-result))
                   base-handler (fn [inv]
                                  (try
                                    (let [validated-inv (if validate-input
@@ -1126,13 +1088,21 @@ information."}]
                                                              (assoc inv :args (:args ret))
                                                              inv))
                                                          inv)
-                                         raw-result (apply user-fn (:args validated-inv))
-                                         final-result (if validate-output
-                                                        (let [ret (validate-output (assoc validated-inv :result raw-result))]
-                                                          (if (and (map? ret) (contains? ret :result))
-                                                            (:result ret)
-                                                            raw-result))
-                                                        raw-result)]
+                                         args          (:args validated-inv)
+                                         ;; Isolate the tool-fn call so its
+                                         ;; exceptions can be intercepted by
+                                         ;; `:rescue-fn` without catching
+                                         ;; validator or reducer errors.
+                                         raw-result    (try
+                                                         (apply user-fn args)
+                                                         (catch Throwable t
+                                                           (if rescue-fn
+                                                             ;; Rescue handler: may return a value,
+                                                             ;; return nil (treated as successful nil),
+                                                             ;; or throw (original or replacement error).
+                                                             (apply rescue-fn t args)
+                                                             (throw t))))
+                                         final-result  (apply-validate-output validated-inv raw-result)]
                                      {:result final-result :error nil})
                                    (catch Throwable t
                                      {:result nil
