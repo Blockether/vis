@@ -67,3 +67,31 @@
   (when-let [d @shared-db]
     (try (rlm-db/dispose-rlm-conn! d) (catch Exception _ nil))
     (reset! shared-db nil)))
+
+(defn sweep-orphaned-running-queries!
+  "Reconciles `query_attrs` rows left in `:running` state by a prior
+   process that was killed mid-turn. Safe to call at startup BEFORE any
+   new query is accepted — no live turn exists yet in a fresh process,
+   so every `:running` row is by definition an orphan.
+
+   Rewrites status → `:interrupted` and stamps a user-visible answer so
+   the UI renders a distinct banner instead of showing a stuck spinner
+   or treating the row as `:success`. Iteration/trace rows are left
+   untouched; the user can still read how far the agent got.
+
+   Returns the number of queries that were swept."
+  ([] (sweep-orphaned-running-queries! (db-info)))
+  ([db]
+   (let [orphans (try
+                   (rlm-db/db-list-queries db {:status :running})
+                   (catch Exception _ []))
+         answer  "⚠️ Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."]
+     (doseq [{:keys [id iterations duration-ms]} orphans]
+       (try
+         (rlm-db/update-query! db [:id id]
+           {:answer      answer
+            :iterations  (or iterations 0)
+            :duration-ms (or duration-ms 0)
+            :status      :interrupted})
+         (catch Exception _ nil)))
+     (count orphans))))

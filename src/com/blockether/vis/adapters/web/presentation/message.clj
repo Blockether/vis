@@ -300,6 +300,14 @@
     [:div.status-banner
      [:i {:data-lucide "circle-stop"}]
      [:span "Turn cancelled."]]
+    :interrupted
+    [:div.status-banner.status-warn
+     [:i {:data-lucide "plug-zap"}]
+     [:span "Server restarted mid-turn — this answer never finalized. Re-send the message to retry."]]
+    :running
+    [:div.status-banner.status-warn
+     [:i {:data-lucide "loader"}]
+     [:span "Turn still in flight — refresh to see updates. If the page hasn't moved in a while, the server may have crashed; re-send to retry."]]
     nil))
 
 (defn render-msg [_idx {:keys [role text result]}]

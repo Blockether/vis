@@ -1,6 +1,7 @@
 (ns com.blockether.vis.adapters.web.service
   "Managed web service lifecycle with health endpoints."
   (:require [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.loop.conversations.persistence :as conv-persistence]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
             [com.blockether.vis.adapters.web.executor :as executor]
             [com.blockether.vis.adapters.web.routes :as routes]
@@ -47,6 +48,16 @@
    (when-let [^Server s (:server @service-state)]
      (try (.stop s) (catch Exception _)))
    (executor/start!)
+   ;; Reconcile zombie turns from a prior crash BEFORE we accept new work,
+   ;; otherwise the sidebar shows stuck spinners for conversations whose
+   ;; last query never terminated. Safe: the new process has not accepted
+   ;; any turn yet, so every `:running` row is unambiguously an orphan.
+   (let [swept (try (conv-persistence/sweep-orphaned-running-queries!)
+                    (catch Exception _ 0))]
+     (when (pos? swept)
+       (println (str "[vis] swept " swept
+                  (if (= 1 swept) " orphaned running query" " orphaned running queries")
+                  " from prior crash"))))
    (let [handler (wrap-health #'routes/handler)
          srv     (jetty/run-jetty handler
                    {:port port :join? false :host "0.0.0.0"})]

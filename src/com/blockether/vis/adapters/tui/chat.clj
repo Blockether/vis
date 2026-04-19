@@ -30,6 +30,13 @@
   (let [{:keys [id]} (conversations/create! :vis)]
     {:id id :history []}))
 
+(defn- tui-system-prompt []
+  ;; Persona only. The `<environment>` block is appended by
+  ;; `build-system-prompt` for every adapter — don't concat it here.
+  "You are vis in the terminal UI. Keep replies concise; the user sees them
+in a text bubble. For trivial greetings, set :answer directly and leave :code
+empty.")
+
 (defn query!
   "Send a user query through the shared conversations cache. Blocking.
    Returns `{:answer str}` or `{:error str}`.
@@ -42,7 +49,7 @@
   ([conv text] (query! conv text {}))
   ([{:keys [id]} text {:keys [on-chunk]}]
    (try
-     (let [send-opts (cond-> {}
+     (let [send-opts (cond-> {:system-prompt (tui-system-prompt)}
                        on-chunk (assoc :hooks {:on-chunk on-chunk}))
            result (conversations/send! id text send-opts)
            answer (or (:answer result) "[empty response]")]

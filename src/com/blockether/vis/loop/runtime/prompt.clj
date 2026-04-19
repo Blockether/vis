@@ -23,6 +23,38 @@
    trailing parenthetical the caller already renders."
   "Factual, direct, concise. No AI filler (\"As an AI\", \"I believe\", \"In conclusion\"). No hedging. Tech terms exact, code unchanged. Tables/lists over prose. Iteration voice: fragments OK, [thing] [action] [reason] pattern, one word when enough. Final-answer voice: clear complete sentences.")
 
+(defn environment-block
+  "Build the `<environment>` section of the system prompt: CWD, home, user,
+   platform, shell. Mirrors Claude Code's `# Environment` block.
+
+   Rendered automatically for EVERY adapter (web, tui, telegram, cli) by
+   `build-system-prompt` — individual adapters do NOT concatenate their
+   own copy. The sentence about relative paths exists because file tools
+   (read-file / write-file / edit-file / grep / list-dir) accept any
+   `io/file` path, so without the CWD hint the model defaults to absolute
+   paths that leak the host filesystem into the conversation DB.
+
+   Pure read of `System/getProperty` + `System/getenv`; no secrets, no
+   session state. Public so test code can assert expected shape."
+  []
+  (let [cwd    (System/getProperty "user.dir")
+        os     (System/getProperty "os.name")
+        arch   (System/getProperty "os.arch")
+        shell  (or (System/getenv "SHELL") "unknown")
+        user   (System/getProperty "user.name")
+        home   (System/getProperty "user.home")]
+    (str "\n<environment>\n"
+      "  Working directory: " cwd "\n"
+      "  Home directory: " home "\n"
+      "  User: " user "\n"
+      "  Platform: " os " (" arch ")\n"
+      "  Shell: " shell "\n"
+      "  File paths: the sandbox JVM's `user.dir` is the working directory above.\n"
+      "    Prefer RELATIVE paths (e.g. `src/foo.clj`) over absolute paths for any\n"
+      "    file tool — read-file, write-file, edit-file, grep, list-dir all resolve\n"
+      "    relative paths against `user.dir`.\n"
+      "</environment>\n")))
+
 (defn- render-constant
   "Render a single `:type :def` constant registered via register-env-def!.
    Constants are literal bindings (no activation, no callable), so the
@@ -350,6 +382,11 @@ CLJ:
 - Quote lists: '(1 2 3). Complete expr per block. No fragments.
 "
     (rlm-skills/skills-manifest-block skill-registry)
+    ;; Runtime environment block — CWD/home/user/platform/shell + the
+    ;; relative-paths hint for file tools. Injected HERE, not by each
+    ;; adapter, so web/telegram/tui/cli can never drift on this. See
+    ;; `environment-block` for the full rationale.
+    (environment-block)
     (when system-prompt
       (str "\nINSTRUCTIONS:\n" system-prompt "\n"))
     ;; Data-driven tool prompts: every active tool contributes its own

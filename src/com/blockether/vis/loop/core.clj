@@ -1321,17 +1321,24 @@
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
-        ;; Repetition detection: track individual call→result pairs across iterations
-        call-counts-atom (atom {})  ;; {[code result-str] count}
+         ;; Repetition detection: track individual call→result pairs across iterations
+         call-counts-atom (atom {})  ;; {[code result-str] count}
+         ;; Empty-iteration loop detection: the user saw 5 empty iterations
+         ;; in conversation 924e7cb3 with near-identical `*reasoning*`. The
+         ;; model was talking to itself while burning budget. Track how many
+         ;; empty iterations have fired in a row so the empty-branch nudge
+         ;; can escalate from a polite "include code" to an unmistakable
+         ;; "your `<var_index>` already has the data — use it".
+         empty-streak-atom (atom 0)
         detect-repetition (fn [executions]
                             (let [pairs (mapv (fn [e] [(:code e) (truncate (str (:result e)) 200)]) executions)
                                   counts (swap! call-counts-atom
                                            (fn [m] (reduce (fn [acc p] (update acc p (fnil inc 0))) m pairs)))
-                                  repeated (->> pairs
-                                             (filter #(>= (get counts % 0) 3))
-                                             (map first))]
-                              (when (seq repeated)
-                                (str "\n\n⚠ REPETITION DETECTED: These calls have been executed 3+ times with the SAME results:\n"
+                                   repeated (->> pairs
+                                              (filter #(>= (get counts % 0) 2))
+                                              (map first))]
+                               (when (seq repeated)
+                                 (str "\n\n⚠ REPETITION DETECTED: These calls have been executed 2+ times with the SAME results:\n"
                                   (str/join "\n" (map #(str "  - " (truncate (str %) 80)) (distinct repeated)))
                                   "\nRepeating the same action will NOT produce different results. "
                                   "You MUST try a DIFFERENT approach, or call \final\": {\"answer\": \"your answer\", \"confidence\": \"high\"} with what you have."))))
@@ -1767,20 +1774,37 @@
                        ;; timestamp, same thinking, `:executions nil`, and
                        ;; no vars — which is exactly what the DB showed
                        ;; for conversation 33b6d8ae… pre-fix.
-                       (let [_ (rlm-stage! :empty iteration {})
-                             current-max (effective-max-iterations)
-                             remaining-iters (- current-max (inc iteration))
-                             last-iter? (zero? remaining-iters)
-                             nudge (str "[Iteration " (inc iteration) "/" current-max "]\n"
-                                     "{:requirement " (pr-str (truncate query 200)) "}\n"
-                                     "⚠ EMPTY — no code executed. You MUST include code. "
-                                     (if has-reasoning?
-                                       "Respond with code or set final to finish."
-                                       "Respond with thinking + code, or set final to finish.")
-                                     (when last-iter?
-                                       (str "\n[SYSTEM_NUDGE] ‼ THIS IS YOUR LAST ITERATION ‼ "
-                                         "Emit :final NOW or call (request-more-iterations N) — "
-                                         "the loop terminates after this turn.")))]
+                        (let [streak (swap! empty-streak-atom inc)
+                              _ (rlm-stage! :empty iteration {:streak streak})
+                              current-max (effective-max-iterations)
+                              remaining-iters (- current-max (inc iteration))
+                              last-iter? (zero? remaining-iters)
+                              ;; After 2+ consecutive empties we're in a
+                              ;; talk-to-myself loop. The var_index is
+                              ;; ALREADY in the user message above; quote it
+                              ;; back and demand the model either pick an
+                              ;; exit or set :final.
+                              streak-nudge (when (>= streak 2)
+                                             (str "\n[SYSTEM_NUDGE] ‼ " streak
+                                               " EMPTY ITERATIONS IN A ROW ‼ "
+                                               "You are burning budget on reasoning with zero code. "
+                                               "The <var_index> above already contains the results of "
+                                               "your prior code; DO NOT re-execute things you have. "
+                                               "Pick ONE exit NOW:\n"
+                                               "  (a) emit :final with a partial answer from <var_index>/<journal>; OR\n"
+                                               "  (b) emit ONE concrete code block that makes progress; OR\n"
+                                               "  (c) call (request-more-iterations N) if you truly need more turns."))
+                              nudge (str "[Iteration " (inc iteration) "/" current-max "]\n"
+                                      "{:requirement " (pr-str (truncate query 200)) "}\n"
+                                      "⚠ EMPTY — no code executed. You MUST include code. "
+                                      (if has-reasoning?
+                                        "Respond with code or set final to finish."
+                                        "Respond with thinking + code, or set final to finish.")
+                                      streak-nudge
+                                      (when last-iter?
+                                        (str "\n[SYSTEM_NUDGE] ‼ THIS IS YOUR LAST ITERATION ‼ "
+                                          "Emit :final NOW or call (request-more-iterations N) — "
+                                          "the loop terminates after this turn.")))]
                         (recur (inc iteration) ;; still increment to prevent infinite loop
                           (conj messages
                             {:role "assistant" :content (or thinking "[empty]")}
@@ -1789,8 +1813,9 @@
                           (inc consecutive-errors)
                           restarts
                           nil -1 next-model next-reasoning))
-                       ;; Normal iteration with executions
-                       (let [exec-feedback (format-executions executions)
+                        ;; Normal iteration with executions
+                        (let [_reset-empty-streak (reset! empty-streak-atom 0)
+                              exec-feedback (format-executions executions)
                              current-max (effective-max-iterations)
                              iteration-header (str "[Iteration " (inc iteration) "/" current-max "]\n"
                                                 "{:requirement " (pr-str (truncate query 200)) "}")

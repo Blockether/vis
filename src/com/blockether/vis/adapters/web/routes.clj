@@ -94,6 +94,10 @@
             {:status 200 :headers {"Content-Type" "application/json"} :body "{\"ok\":true}"})))
 
       ;; Static files from resources/public/
+      ;; Fonts are immutable — cache for a year. JS/CSS change frequently
+      ;; and are NOT versioned in the URL, so the browser must revalidate
+      ;; every request. Otherwise a deploy never reaches the user until
+      ;; they hard-reload.
       (and (= meth :get) (or (str/starts-with? uri "/css/")
                             (str/starts-with? uri "/js/")
                             (str/starts-with? uri "/fonts/")))
@@ -103,11 +107,14 @@
                   (str/ends-with? uri ".ttf") "font/ttf"
                   (str/ends-with? uri ".woff2") "font/woff2"
                   (str/ends-with? uri ".woff") "font/woff"
-                  :else "application/octet-stream")]
+                  :else "application/octet-stream")
+            cache-control (if (str/starts-with? uri "/fonts/")
+                            "public, max-age=31536000, immutable"
+                            "no-cache, no-store, must-revalidate")]
         (if resource
           {:status 200
            :headers {"Content-Type" ext
-                     "Cache-Control" "public, max-age=86400"}
+                     "Cache-Control" cache-control}
            :body (io/input-stream resource)}
           {:status 404 :body "Not found"}))
 

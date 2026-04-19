@@ -17,6 +17,8 @@
 (def ^:private poll-timeout-seconds 30)
 
 (defn- telegram-system-prompt []
+  ;; Persona only. The `<environment>` block is appended by
+  ;; `build-system-prompt` for every adapter — don't concat it here.
   "You are vis over Telegram. Keep replies short and direct. Use minimal markdown.")
 
 (defn- extract-text [msg] (or (:text msg) (:caption msg)))
