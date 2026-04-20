@@ -4,7 +4,7 @@
     [com.blockether.vis.languages.commons.edit :as edit]
     [com.blockether.vis.loop.tool-formatter-invariants-test :as inv]))
 
-(defn- fmt [] (:format-result edit/tool-def))
+(defn- fmt [] (:format-result-fn edit/tool-def))
 
 (defdescribe edit-file-formatter
   (describe "format-result produces a compact per-file summary"

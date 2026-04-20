@@ -6,7 +6,7 @@
     [com.blockether.vis.languages.commons.write :as write]
     [com.blockether.vis.loop.tool-formatter-invariants-test :as inv]))
 
-(defn- fmt [] (:format-result write/tool-def))
+(defn- fmt [] (:format-result-fn write/tool-def))
 
 (defdescribe write-file-formatter
   (describe "format-result produces a compact, deterministic summary"

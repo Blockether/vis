@@ -1,5 +1,5 @@
 (ns com.blockether.vis.loop.runtime.formatters
-  "Pure `:format-result` formatters for built-in RLM tools.
+  "Pure `:format-result-fn` formatters for built-in RLM tools.
 
    Every fn in this namespace:
    - Takes EXACTLY one arg (the tool's raw return value).

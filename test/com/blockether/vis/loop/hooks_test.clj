@@ -268,7 +268,7 @@
           (sut/register-env-fn! env 'needs-int
             (fn [_] (reset! called true) :ok)
             {:doc "needs int"
-             :validate-input (fn [{:keys [args]}]
+             :validate-input-fn (fn [{:keys [args]}]
                                (let [[x] args]
                                  (when-not (integer? x)
                                    (throw (ex-info "x must be int" {:type :tool/invalid-input})))
@@ -287,7 +287,7 @@
           (sut/register-env-fn! env 'bad-out
             (fn [_] {:ok true})
             {:doc "bad out"
-             :validate-output (fn [{:keys [result]}]
+             :validate-output-fn (fn [{:keys [result]}]
                                 (when-not (string? result)
                                   (throw (ex-info "must return string" {:type :tool/invalid-output})))
                                 {:result result})})
@@ -304,7 +304,7 @@
           (sut/register-env-fn! env 'norm
             (fn [x] x)
             {:doc "normalize"
-             :validate-input (fn [{:keys [args]}]
+             :validate-input-fn (fn [{:keys [args]}]
                                (let [[x] args]
                                  {:args [(if (string? x) (Long/parseLong x) x)]}))})
           (expect (= 42 (eval-in-sandbox env "(norm \"42\")")))
@@ -316,7 +316,7 @@
           (sut/register-env-fn! env 'norm-out
             (fn [_] {:value 7})
             {:doc "normalize out"
-             :validate-output (fn [{:keys [result]}]
+             :validate-output-fn (fn [{:keys [result]}]
                                 {:result (:value result)})})
           (expect (= 7 (eval-in-sandbox env "(norm-out :x)")))
           (finally (sut/dispose-env! env)))))))

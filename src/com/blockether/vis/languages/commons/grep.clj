@@ -320,9 +320,9 @@
     grep
     {:doc (:doc (meta #'grep))
      :arglists (:arglists (meta #'grep))
-     :validate-input validate-grep-input
-     :validate-output validate-grep-output
-     :superseded-by grep-superseded-by
+     :validate-input-fn validate-grep-input
+     :validate-output-fn validate-grep-output
+     :superseded-by-fn grep-superseded-by
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
      :examples ["(grep \"HITL\")                                          ;; whole repo, every file type"

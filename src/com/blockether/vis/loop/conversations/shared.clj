@@ -81,10 +81,11 @@
    Merge rules are adapter-agnostic and intentionally defensive:
    - preserve prior `:thinking` when incoming chunk has nil
    - preserve prior `:code` when incoming chunk has no code payload
-   - mark `:final?` when either chunk `:final` OR chunk `:done?` OR prior final
+   - mark `:final?` only when chunk has a truthy `:final` payload OR prior was final
 
-   This keeps all adapters aligned when terminal `done?` chunks arrive with
-   sparse payloads."
+   `:done?` means streaming delivery completed for one ask! call — it does NOT
+   mean the iteration is the final answer. Only `:final` (the answer payload)
+   should set `:final?`."
   [iters {:keys [iteration thinking final done?] :as chunk}]
   (let [new-code (chunk->code-vec chunk)
         existing (get iters iteration)
@@ -95,9 +96,7 @@
                   :code      (if (and (empty? new-code) existing)
                                (:code existing)
                                new-code)
-                  :final?    (or (boolean final)
-                               (:final? existing)
-                               (boolean done?))}]
+                  :final?    (boolean (or final (:final? existing)))}]
     (cond
       (< iteration (count iters)) (assoc iters iteration merged)
       (= iteration (count iters)) (conj iters merged)

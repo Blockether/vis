@@ -29,7 +29,7 @@
    Params:
    - sym  — Symbol name for the tool in the RLM SCI sandbox
    - f    — Implementation function
-   - opts — Map with :doc, :arglists, :validate-input, :validate-output, :examples
+   - opts — Map with :doc, :arglists, :validate-input-fn, :validate-output-fn, :examples
 
    Example:
       (tool 'read-file slurp

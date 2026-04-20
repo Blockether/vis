@@ -74,50 +74,83 @@
         "Otherwise commit to a confidence level and emit :final.\n"
         "</budget>"))))
 
+(def ^:const RESULT_ONLY_REPETITION_THRESHOLD
+  "Occurrences required before the result-only key trips. Higher than
+   the pair/error threshold (2) because a coarser signal needs more
+   evidence: two identical successful results can be a legitimate
+   retry (verify an edit took effect); the THIRD repeat is the
+   unambiguous loop signal."
+  3)
+
 (defn bump-and-detect-repetition
   "Increment the running call-counts by every `[code, result-preview]`
-   pair AND every `[:error-only, error-message]` pair in a fresh batch
-   of executions, and return the updated counts plus an LLM-facing
+   pair, every `[:error-only, error-message]` pair, AND every
+   `[:result-only, result-preview]` pair for successful executions in
+   a fresh batch, then return the updated counts plus an LLM-facing
    warning string (or nil).
 
-   Why dual keys: the code+result key catches a model re-running the
-   IDENTICAL call with the identical result (classic loop). The
-   error-only key catches a subtler failure mode — model keeps varying
-   the inputs (different greps, different globs) but the tool keeps
-   rejecting with the SAME `:error` string. In that case the
-   code+result pair is new every time, so the classical key never
-   triggers; but the agent clearly learned nothing between attempts.
-   Flagging on repeated error message lets the loop teach 'the shape
-   of your call is wrong, change your approach — not your inputs'.
+   Why three keys:
 
-   Threshold: 2+ occurrences. First occurrence is a genuine mistake;
-   the second is a pattern worth interrupting.
+   - The code+result key catches a model re-running the IDENTICAL
+     call with the identical result (classic loop). Threshold 2.
+   - The error-only key catches varied-inputs-same-error (different
+     greps/globs, same `:error` each time — agent learned nothing
+     between attempts). Threshold 2.
+   - The result-only key catches a CLOAKED loop where the model
+     wraps identical tool calls in uniquely-named `def`s (or varies
+     `:content`-style destructuring) to produce different code
+     strings around the same underlying call. Conversation
+     6f832df0-6762-402b-8ca0-275f9aeb54a4 burned 96 iterations this
+     way — 52 re-reads of the same file, each under a fresh var
+     name. Pair key never fired (code unique every time); error
+     key never fired (calls succeeded). Result-only fires on the
+     third identical successful result.
+
+   Result-only uses a higher threshold (see
+   `RESULT_ONLY_REPETITION_THRESHOLD`) and is only keyed on
+   executions WITHOUT `:error` — error rows are already owned by
+   the error-only key, and double-firing muddies the teaching
+   signal.
 
    Pure — returns `[new-counts warning-or-nil]`. The iteration-loop
    owns the atom that holds `counts`; `repetition-warning` below is
    the side-effectful wrapper that swap!s and returns the warning."
   [counts executions]
   (let [truncate (fn [s n] (if (> (count s) n) (str (subs s 0 n) "...") s))
-        pair-keys  (mapv (fn [e] [:pair (:code e) (truncate (str (:result e)) 200)]) executions)
-        error-keys (->> executions
-                     (keep (fn [e]
-                             (when-let [err (:error e)]
-                               [:error-only (truncate (str err) 200)]))))
-        all-keys   (into pair-keys error-keys)
-        counts' (reduce (fn [acc k] (update acc k (fnil inc 0))) counts all-keys)
-        repeated-pairs (->> pair-keys
-                         (filter #(>= (get counts' % 0) 2))
-                         (map (fn [[_ code _]] (str "  - " (truncate (str code) 80)))))
-        repeated-errors (->> error-keys
-                          distinct
-                          (filter #(>= (get counts' % 0) 2))
-                          (map (fn [[_ msg]]
-                                 (str "  - error repeated: " (truncate (str msg) 120)))))
-        lines (into (vec repeated-pairs) repeated-errors)
+        pair-keys   (mapv (fn [e] [:pair (:code e) (truncate (str (:result e)) 200)]) executions)
+        error-keys  (->> executions
+                      (keep (fn [e]
+                              (when-let [err (:error e)]
+                                [:error-only (truncate (str err) 200)]))))
+        result-keys (->> executions
+                      (keep (fn [e]
+                              (when-not (:error e)
+                                [:result-only (truncate (str (:result e)) 200)]))))
+        all-keys    (-> pair-keys (into error-keys) (into result-keys))
+        counts'     (reduce (fn [acc k] (update acc k (fnil inc 0))) counts all-keys)
+        repeated-pairs   (->> pair-keys
+                           (filter #(>= (get counts' % 0) 2))
+                           (map (fn [[_ code _]] (str "  - " (truncate (str code) 80)))))
+        repeated-errors  (->> error-keys
+                           distinct
+                           (filter #(>= (get counts' % 0) 2))
+                           (map (fn [[_ msg]]
+                                  (str "  - error repeated: " (truncate (str msg) 120)))))
+        repeated-results (->> result-keys
+                           distinct
+                           (filter #(>= (get counts' % 0)
+                                     RESULT_ONLY_REPETITION_THRESHOLD))
+                           (map (fn [[_ preview]]
+                                  (str "  - result repeated: " (truncate (str preview) 120)))))
+        lines   (-> (vec repeated-pairs)
+                  (into repeated-errors)
+                  (into repeated-results))
         warning (when (seq lines)
                   (str "\n\n⚠ REPETITION DETECTED: These calls/errors have fired 2+ times this query:\n"
                     (str/join "\n" lines)
-                    "\nRetrying the same action — or varying inputs while hitting the SAME error — will not produce different results. "
+                    "\nRetrying the same action — varying inputs while hitting the SAME error — "
+                    "or wrapping identical calls in differently-named `def`s to cloak the repeat — "
+                    "will not produce different results. "
                     "Change your APPROACH (different tool, different shape of call), or emit :final with what you have."))]
     [counts' warning]))
 

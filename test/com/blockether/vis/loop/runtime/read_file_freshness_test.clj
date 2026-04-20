@@ -2,7 +2,7 @@
   "Tool-owned freshness contract coverage for `read-file`.
 
    The iteration-loop seeds a var's `:metadata` by calling the
-   producing tool's `:freshness` fn with `{:args result :metadata nil}`,
+   producing tool's `:metadata-fn` fn with `{:args result :metadata nil}`,
    then re-checks freshness later by calling the same fn with the
    stored snapshot. This suite pins both phases + the MISSING path
    (file deleted since bind) — the only signal the agent has that
@@ -20,30 +20,30 @@
 
 (defdescribe read-file-freshness-seed-test
   (describe "seed phase (metadata nil)"
-    (it "returns baseline metadata + :freshness? true"
+    (it "returns baseline metadata + :fresh? true"
       (let [p (tmp-file "alpha")
             out (sut/freshness {:args [p] :result "alpha" :metadata nil})]
         (expect (= :file (get-in out [:metadata :kind])))
         (expect (= p     (get-in out [:metadata :path])))
         (expect (pos?    (get-in out [:metadata :mtime])))
         (expect (= 5     (get-in out [:metadata :size])))
-        (expect (true?   (:freshness? out)))))))
+        (expect (true?   (:fresh? out)))))))
 
 (defdescribe read-file-freshness-recheck-test
   (describe "re-check phase (metadata present)"
-    (it "reports :freshness? true when mtime+size are unchanged"
+    (it "reports :fresh? true when mtime+size are unchanged"
       (let [p (tmp-file "alpha")
             seed (sut/freshness {:args [p] :result "alpha" :metadata nil})
             out  (sut/freshness {:args nil :result nil :metadata (:metadata seed)})]
-        (expect (true? (:freshness? out)))))
+        (expect (true? (:fresh? out)))))
 
-    (it "reports :freshness? false when content changes"
+    (it "reports :fresh? false when content changes"
       (let [p (tmp-file "alpha")
             seed (sut/freshness {:args [p] :result "alpha" :metadata nil})]
         (Thread/sleep 1100)  ;; FAT-class mtime resolution safety
         (spit p "alpha-plus-extra")
         (let [out (sut/freshness {:args nil :result nil :metadata (:metadata seed)})]
-          (expect (false? (:freshness? out)))
+          (expect (false? (:fresh? out)))
           ;; New metadata reflects current on-disk state so a caller
           ;; can distinguish "size changed" from "mtime changed".
           (expect (not= (get-in seed [:metadata :size])

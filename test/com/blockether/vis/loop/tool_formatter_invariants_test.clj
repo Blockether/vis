@@ -1,5 +1,5 @@
 (ns com.blockether.vis.loop.tool-formatter-invariants-test
-  "Invariant tests for tool :format-result formatters + the metadata pipeline
+  "Invariant tests for tool :format-result-fn formatters + the metadata pipeline
    that carries formatted strings from the tool wrapper through to the LLM
    serializer, println override, and var index.
 
@@ -15,7 +15,7 @@
 
    Use `check-formatter-invariants!` in per-tool tests:
 
-     (check-formatter-invariants! (:format-result read/tool-def)
+     (check-formatter-invariants! (:format-result-fn read/tool-def)
                                   \"1: foo\\n[lines 1-1 of 1]\")
 
    Tool authors bring their own sample values. Samples are NOT declared on
@@ -95,64 +95,64 @@
             (catch clojure.lang.ExceptionInfo _ true)))))))
 
 (defdescribe tool-def-validation
-  (describe "make-tool-def accepts a valid :format-result"
+  (describe "make-tool-def accepts a valid :format-result-fn"
     (it "accepts a custom 1-arg formatter"
       (let [td (tool/make-tool-def 'probe
                  (fn probe-impl [x] x)
                  {:doc "probe" :arglists '[[x]]
                   :examples ["(probe 1)"]
-                  :format-result (fn [v] (str "probe:" (pr-str v)))})]
-        (expect (= "probe:nil" ((:format-result td) nil)))
-        (expect (= "probe:42" ((:format-result td) 42))))))
+                  :format-result-fn (fn [v] (str "probe:" (pr-str v)))})]
+        (expect (= "probe:nil" ((:format-result-fn td) nil)))
+        (expect (= "probe:42" ((:format-result-fn td) 42))))))
 
-  (describe "make-tool-def populates :format-result by default"
+  (describe "make-tool-def populates :format-result-fn by default"
     (it "uses default-format-result when not specified"
       (let [td (tool/make-tool-def 'probe
                  (fn probe-impl [x] x)
                  {:doc "probe" :arglists '[[x]]
                   :examples ["(probe 1)"]})]
-        (expect (= tool/default-format-result (:format-result td))))))
+        (expect (= tool/default-format-result (:format-result-fn td))))))
 
-  (describe "make-tool-def rejects bad :format-result"
+  (describe "make-tool-def rejects bad :format-result-fn"
     (it "rejects non-fn formatter"
       (expect
         (try
           (tool/make-tool-def 'probe (fn [x] x)
             {:doc "d" :arglists '[[x]] :examples ["(probe)"]
-             :format-result "not-a-fn"})
+             :format-result-fn "not-a-fn"})
           false
           (catch clojure.lang.ExceptionInfo e
-            (= :format-result (:field (ex-data e)))))))
+            (= :format-result-fn (:field (ex-data e)))))))
 
     (it "rejects variadic-only formatter (no fixed 1-arg signature)"
       (expect
         (try
           (tool/make-tool-def 'probe (fn [x] x)
             {:doc "d" :arglists '[[x]] :examples ["(probe)"]
-             :format-result (fn variadic [& args] (pr-str args))})
+             :format-result-fn (fn variadic [& args] (pr-str args))})
           false
           (catch clojure.lang.ExceptionInfo e
-            (= :format-result (:field (ex-data e)))))))
+            (= :format-result-fn (:field (ex-data e)))))))
 
     (it "rejects formatter that returns non-string"
       (expect
         (try
           (tool/make-tool-def 'probe (fn [x] x)
             {:doc "d" :arglists '[[x]] :examples ["(probe)"]
-             :format-result (fn [_] 42)})
+             :format-result-fn (fn [_] 42)})
           false
           (catch clojure.lang.ExceptionInfo e
-            (= :format-result (:field (ex-data e)))))))
+            (= :format-result-fn (:field (ex-data e)))))))
 
     (it "rejects formatter that throws on nil"
       (expect
         (try
           (tool/make-tool-def 'probe (fn [x] x)
             {:doc "d" :arglists '[[x]] :examples ["(probe)"]
-             :format-result (fn [v] (.toUpperCase ^String v))})
+             :format-result-fn (fn [v] (.toUpperCase ^String v))})
           false
           (catch clojure.lang.ExceptionInfo e
-            (= :format-result (:field (ex-data e)))))))))
+            (= :format-result-fn (:field (ex-data e)))))))))
 
 (defdescribe wrapper-metadata-integration
   (describe "tool wrapper attaches :rlm/format + :rlm/formatted on IObj results"
@@ -160,7 +160,7 @@
       (let [td (tool/make-tool-def 'probe
                  (fn [_x] {:kind :ok})
                  {:doc "d" :arglists '[[x]] :examples ["(probe 1)"]
-                  :format-result (fn [v] (str "OK:" (:kind v)))})
+                  :format-result-fn (fn [v] (str "OK:" (:kind v)))})
             result (#'runtime/apply-tool-formatter td {:kind :ok})]
         (expect (= "OK::ok" (:formatted result)))
         (expect (= "OK::ok" (:rlm/formatted (meta (:result result)))))
@@ -170,7 +170,7 @@
       (let [td (tool/make-tool-def 'probe
                  (fn [_x] "plain-string")
                  {:doc "d" :arglists '[[x]] :examples ["(probe 1)"]
-                  :format-result (fn [v] (str "wrapped:" v))})
+                  :format-result-fn (fn [v] (str "wrapped:" v))})
             result (#'runtime/apply-tool-formatter td "plain-string")]
         (expect (= "wrapped:plain-string" (:formatted result)))
         (expect (= "plain-string" (:result result)))
@@ -180,9 +180,9 @@
       (let [td (tool/make-tool-def 'probe
                  (fn [_x] {:k 1})
                  {:doc "d" :arglists '[[x]] :examples ["(probe 1)"]
-                  :format-result (fn [_] "safe-default")})
+                  :format-result-fn (fn [_] "safe-default")})
             ;; Swap in a broken formatter post-validation to simulate runtime blow-up.
-            td' (assoc td :format-result (fn [_] (throw (ex-info "boom" {}))))
+            td' (assoc td :format-result-fn (fn [_] (throw (ex-info "boom" {}))))
             result (#'runtime/apply-tool-formatter td' {:k 1})]
         (expect (string? (:formatted result)))
         (expect (re-find #":k 1" (:formatted result)))))
@@ -192,7 +192,7 @@
                  (fn [_x] (with-meta {:k 1} {:rlm/format (fn [_] "upstream")
                                              :rlm/formatted "upstream"}))
                  {:doc "d" :arglists '[[x]] :examples ["(probe 1)"]
-                  :format-result (fn [v] (str "downstream:" (:k v)))})
+                  :format-result-fn (fn [v] (str "downstream:" (:k v)))})
             raw {:k 1}
             raw-with-upstream-meta (with-meta raw {:rlm/format (fn [_] "upstream")
                                                    :rlm/formatted "upstream"})
