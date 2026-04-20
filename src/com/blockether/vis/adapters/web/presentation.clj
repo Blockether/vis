@@ -19,7 +19,7 @@
         [:meta {:name "viewport" :content "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
         [:title "vis — not found"]
         [:link {:rel "stylesheet" :href "/css/app.css"}]
-        [:script {:src "https://unpkg.com/lucide@latest"}]]
+        [:script {:src "/vendor/lucide.min.js"}]]
        [:body
         [:div.main
          [:div#chat.chat
@@ -51,10 +51,16 @@
           [:meta {:name "viewport" :content "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
           [:title "vis"]
           [:link {:rel "stylesheet" :href "/css/app.css"}]
-          [:link {:rel "stylesheet" :href "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"}]
-          [:script {:src "https://cdn.jsdelivr.net/npm/marked/marked.min.js"}]
-          [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"}]
-          [:script {:src "https://unpkg.com/lucide@latest"}]]
+          ;; All third-party assets are vendored into `resources/public/vendor/`
+          ;; and served locally so the page works offline, loads on flaky
+          ;; networks, and doesn't leak page-view requests to three different
+          ;; CDN operators. Bump the file inside `vendor/` to upgrade; the
+          ;; version is deliberately not in the URL so we don't have to touch
+          ;; this hiccup every time.
+          [:link {:rel "stylesheet" :href "/vendor/highlight-github.min.css"}]
+          [:script {:src "/vendor/marked.min.js"}]
+          [:script {:src "/vendor/highlight.min.js"}]
+          [:script {:src "/vendor/lucide.min.js"}]]
          [:body
           (topbar/render current-id conversations (seq messages))
           (sheet/render current-id conversations)

@@ -7,13 +7,10 @@
    [com.blockether.vis.core :as sut]
    [com.blockether.vis.loop.storage.schema :as schema]
    [com.blockether.vis.loop.storage.db :as rlm-db]
-   [com.blockether.vis.loop.runtime.shared :as rlm-tools]
    [com.blockether.vis.loop.runtime.tools.core :as rlm-tools-core]
    [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
    [com.blockether.vis.loop.core :as rlm-core]
-   [com.blockether.svar.core :as svar])
-  (:import
-   [java.util UUID]))
+   [com.blockether.svar.core :as svar]))
 
 (declare test-ingest-router)
 
@@ -439,66 +436,10 @@
                            ;; SCI uses #inst not #instant
                            (expect (re-find #"#inst" (:result r))))))))
 
-(defdescribe build-system-prompt-test
-  (it "includes basic environment info"
-    (let [prompt (#'rlm-core/build-system-prompt {})]
-      (expect (str/includes? prompt "Clojure SCI agent"))
-      (expect (str/includes? prompt "ARCH"))
-      (expect (str/includes? prompt "final"))))
-
-  (it "excludes learning helpers"
-    (let [prompt (#'rlm-core/build-system-prompt {})]
-      (expect (not (str/includes? prompt "search-learnings")))
-      (expect (not (str/includes? prompt "learning-stats")))
-      (expect (not (str/includes? prompt "list-learning-tags")))))
-
-  (it ":has-documents? advertises :sources in the iteration-spec response"
-    ;; Document-tool prompts now live on the tool-defs themselves (see
-    ;; prompt_activation_test.clj). This test just pins down the one
-    ;; remaining flag-driven effect: :has-documents? adds `:sources` to
-    ;; the iteration schema so the LLM is asked to cite retrieved pages.
-    (let [p (#'rlm-core/build-system-prompt {:has-documents? true})]
-      (expect (str/includes? p "sources:"))
-      (expect (str/includes? p "IDs of sources")))
-    (let [p (#'rlm-core/build-system-prompt {:has-documents? false})]
-      (expect (not (str/includes? p "sources:")))))
-
-  (it "includes spec schema when provided"
-    (let [test-spec (svar/spec
-                      (svar/field {svar/NAME :name
-                                   svar/TYPE :spec.type/string
-                                   svar/CARDINALITY :spec.cardinality/one
-                                   svar/REQUIRED true
-                                   svar/DESCRIPTION "Name field"}))
-          prompt (#'rlm-core/build-system-prompt {:output-spec test-spec})]
-      (expect (str/includes? prompt "OUTPUT SCHEMA"))))
-
-  (it "includes iteration output guidance"
-    (let [prompt (#'rlm-core/build-system-prompt {})]
-      (expect (str/includes? prompt "OUTPUT"))
-      ;; The caveman/iteration voice hint lives inside a merged
-      ;; OUTPUT_STYLE_GUIDE block now (was a separate CAVEMAN_ITERATION_OUTPUT
-      ;; const). Look for the pattern template instead of the label.
-      (expect (str/includes? prompt "[thing] [action] [reason]"))))
-
-  (it "documents Mustache template support in ARCH and GROUNDING"
-    (let [prompt (#'rlm-core/build-system-prompt {})]
-      (expect (str/includes? prompt "MUSTACHE"))
-      (expect (str/includes? prompt "mustache-text"))
-      (expect (str/includes? prompt "mustache-markdown"))
-      (expect (str/includes? prompt "{{#"))
-      (expect (str/includes? prompt "{{^")))))
-
-;; =============================================================================
-;; System Prompt Tests
-;; =============================================================================
-
-(defdescribe system-prompt-injection-test
-  (describe "system prompt injection"
-    (it "includes custom instructions when provided"
-      (let [prompt (#'rlm-core/build-system-prompt {:system-prompt "You are a code reviewer"})]
-        (expect (str/includes? prompt "INSTRUCTIONS"))
-        (expect (str/includes? prompt "You are a code reviewer"))))))
+;; System-prompt copy tests removed — prompt narrative is no longer a
+;; pinned contract. The data-driven contracts (tool activation, env
+;; block, has-documents → :sources schema, no git wiring without
+;; tool-defs) live in prompt-activation paths and git_wiring_test.clj.
 
 ;; =============================================================================
 ;; Sub-RLM Tests

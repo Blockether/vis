@@ -10,7 +10,6 @@
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.util :as util]
-   [babashka.fs :as fs]
    [com.blockether.vis.loop.knowledge.pageindex.core :as rlm-pageindex-core]
    [com.blockether.vis.loop.knowledge.pageindex.markdown :as markdown]
    [com.blockether.vis.loop.knowledge.pageindex.pdf :as pdf]
@@ -1067,7 +1066,7 @@
                                               (sort selected-page-indices))))
                                         (or (:pages existing-manifest) {}))
                manifest-atom (atom
-                               (merge {:file-path (str abs-path)
+                               (merge {:file-path abs-path
                                        :file-hash current-hash
                                        :total-pages total-pages-hint
                                        :model (or vision-model "default")

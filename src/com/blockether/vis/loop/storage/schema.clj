@@ -170,7 +170,14 @@
     (spec/field {::spec/name :expr
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Clojure expression to execute in the sandbox"})
+                 ::spec/description (str "A SINGLE valid Clojure S-expression evaluated in the SCI sandbox. "
+                                      "This is Clojure, NOT shell. Every tool call is a parenthesised form: "
+                                      "`(grep \"pattern\" \"src\" {:max-matches 30})`, "
+                                      "`(list-dir \"src\" {:glob \"**/*.clj\"})`, "
+                                      "`(read-file \"src/foo.clj\")`. "
+                                      "Bare `grep \"...\" \"src\" {...}` is INVALID — the reader sees four unrelated forms, "
+                                      "no tool gets called, and the iteration is wasted. "
+                                      "If the expression is not a complete, balanced, parenthesised form, the iteration is rejected.")})
     (spec/field {::spec/name :time-ms
                  ::spec/type :spec.type/int
                  ::spec/cardinality :spec.cardinality/one
@@ -218,20 +225,32 @@
   "Builds an iteration response spec.
 
    Opts:
-     :include-thinking? — true for non-reasoning providers (CoT goes in
-       JSON), false for reasoning providers (CoT is native, no duplication).
-     :include-sources?  — true when at least one document-retrieval tool
-       is active in the current env (has-documents? in the agent loop).
-       When false, the :sources field is omitted entirely — no tool name
-       leaks into the spec and the LLM isn't nudged to produce source IDs
-       it cannot possibly have."
+     :include-thinking? — true for non-reasoning providers (CoT goes
+       in JSON), false for reasoning providers (CoT is native, no
+       duplication).
+     :include-sources?  — true when at least one document-retrieval
+       tool is active in the current env (has-documents? in the agent
+       loop). When false, the :sources field is omitted entirely — no
+       tool name leaks into the spec and the LLM isn't nudged to
+       produce source IDs it cannot possibly have.
+
+   `:request-prior-reasonings` is ALWAYS present (optional, int) so
+   the model can ask for older reasonings to be spliced into the
+   next iteration's <prior_thinking>. See its field description for
+   the contract."
   [{:keys [include-thinking? include-sources?]}]
   (let [base-fields (cond-> [(spec/field {::spec/name :code
                                           ::spec/type :spec.type/ref
                                           ::spec/target :code_block
                                           ::spec/cardinality :spec.cardinality/many
-                                          ::spec/required false
-                                          ::spec/description "Code blocks to execute. Each has :expr and :time-ms. Always executes, even with :final."})
+                                          ::spec/required true
+                                           ::spec/description (str "REQUIRED. Vector of Clojure code blocks to execute. Each has :expr (Clojure S-expression) and :time-ms. "
+                                                                "EVERY :expr is Clojure, not shell. Tool invocations MUST start with `(`: "
+                                                                "`(grep \"pat\" \"src\")`, NOT `grep \"pat\" \"src\"`. "
+                                                                "Always executes, even with :final. "
+                                                                "When you have nothing to compute this turn, emit `[{:expr \":ok\" :time-ms 1}]` "
+                                                                "— a one-element sentinel that evaluates to the :ok keyword. "
+                                                                "Empty :code is rejected; the loop will feed back an error and waste your budget.")})
                              (spec/field {::spec/name :next
                                           ::spec/type :spec.type/ref
                                           ::spec/target :next_turn
@@ -265,15 +284,25 @@
                                           ::spec/required false
                                           ::spec/description "Confidence level"
                                           ::spec/values ["high" "medium" "low"]})]
-                      ;; :sources only shows up when document-retrieval tools
-                      ;; are actually callable this turn. Otherwise the LLM
-                      ;; would be told to cite sources it cannot fetch.
-                      include-sources?
-                      (conj (spec/field {::spec/name :sources
-                                         ::spec/type :spec.type/string
-                                         ::spec/cardinality :spec.cardinality/many
-                                         ::spec/required false
-                                         ::spec/description "IDs of sources (page.node, document, entity) that grounded the :answer. Required whenever you pulled content from any document-retrieval tool this turn."})))
+                       ;; :sources only shows up when document-retrieval tools
+                       ;; are actually callable this turn. Otherwise the LLM
+                       ;; would be told to cite sources it cannot fetch.
+                       include-sources?
+                       (conj (spec/field {::spec/name :sources
+                                          ::spec/type :spec.type/string
+                                          ::spec/cardinality :spec.cardinality/many
+                                          ::spec/required false
+                                          ::spec/description "IDs of sources (page.node, document, entity) that grounded the :answer. Required whenever you pulled content from any document-retrieval tool this turn."}))
+
+                       ;; Always required — feeds this many extra
+                       ;; historical reasonings into the NEXT
+                       ;; iteration's <prior_thinking>.
+                       true
+                       (conj (spec/field {::spec/name :request-prior-reasonings
+                                          ::spec/type :spec.type/int
+                                          ::spec/cardinality :spec.cardinality/one
+                                          ::spec/required true
+                                          ::spec/description "Int 1-10. Extra older reasonings spliced into next <prior_thinking>. Deeper history: (take-last N (var-history '*reasoning*))."})))
         fields (if include-thinking?
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string
@@ -285,8 +314,8 @@
 
 (defn iteration-spec
   "Compose the iteration response spec for the CURRENT env state. Callers
-   pass :has-reasoning? and :has-documents?; the former selects the
-   thinking/non-thinking variant, the latter gates the :sources field.
+   pass :has-reasoning? and :has-documents?; the first selects the
+   thinking/non-thinking variant, the second gates the :sources field.
 
    Keep this as the single call site — `ITERATION_SPEC_*` constants below
    are legacy defaults kept for tests that don't thread env state."
@@ -308,25 +337,10 @@
   "Legacy default — alias for ITERATION_SPEC_BASE."
   ITERATION_SPEC_BASE)
 
-(def SUB_RLM_QUERY_SPEC
-  "Spec for sub-rlm-query responses. Forces structured output: prose content +
-   optional Clojure code blocks. Used by make-routed-sub-rlm-query-fn so callers
-   receive a provider-enforced {:content :code} shape with no regex parsing.
-
-   :content is always present (prose answer).
-   :code is a vec of complete Clojure expressions. Each entry is one form.
-   Omit :code or return empty vec when no code applies."
-  (spec/spec
-    {:refs []}
-    (spec/field {::spec/name :content
-                 ::spec/type :spec.type/string
-                 ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Prose answer. Include reasoning and explanations here."})
-    (spec/field {::spec/name :code
-                 ::spec/type :spec.type/string
-                 ::spec/cardinality :spec.cardinality/many
-                 ::spec/required false
-                 ::spec/description "Optional Clojure expressions to execute in the caller sandbox. One complete form per vec entry. Omit when not applicable."})))
+;; SUB_RLM_QUERY_SPEC was removed — sub-RLMs now run through the same
+;; iteration-loop as the main RLM, producing a full trace (thinking +
+;; code + final + vars + persistence) instead of a flat {:content :code}
+;; distillate. See `run-sub-rlm` in loop.runtime.query.subquery.
 
 (defn bytes->base64
   "Converts raw bytes to a base64 string.

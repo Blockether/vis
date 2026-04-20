@@ -4,6 +4,46 @@ var form = document.getElementById('form');
 var input = document.getElementById('input');
 var btn = document.getElementById('btn');
 
+// ── Pinch-zoom blocker ─────────────────────────────────────────────────
+//
+// `<meta name="viewport" user-scalable=no>` plus CSS `touch-action: pan-x
+// pan-y` is what the spec says you need. Both are in place. Neither is
+// enough on iOS Safari — Apple deliberately ignores `user-scalable=no` on
+// iOS 10+, and `touch-action` doesn't suppress the iOS pinch gesture
+// either. The only reliable kill-switch is to `preventDefault()` the
+// non-standard `gesturestart` / `gesturechange` / `gestureend` events
+// that WebKit fires for pinch, plus `touchmove` whenever the touch event
+// reports `scale !== 1` (Apple's signal that the user is pinching).
+// `wheel` with `ctrlKey` covers trackpad / touchscreen pinch on Chrome
+// and Firefox. Registered before anything else so the listeners are live
+// before the user can possibly interact with the page.
+(function blockPinchZoom() {
+  var prevent = function(e) { e.preventDefault(); };
+
+  // iOS Safari WebKit pinch gestures (deprecated but still the only
+  // reliable hook on iOS; see https://webkit.org/blog/5610/more-responsive-tapping-on-ios/).
+  document.addEventListener('gesturestart',  prevent, { passive: false });
+  document.addEventListener('gesturechange', prevent, { passive: false });
+  document.addEventListener('gestureend',    prevent, { passive: false });
+
+  // Modern iOS path: a two-finger touch reports `scale !== 1` on touchmove.
+  document.addEventListener('touchmove', function(e) {
+    if (e.scale !== undefined && e.scale !== 1) e.preventDefault();
+  }, { passive: false });
+
+  // Trackpad / touchscreen pinch on desktop browsers fires `wheel` with
+  // `ctrlKey` set (even when Ctrl isn't physically pressed).
+  document.addEventListener('wheel', function(e) {
+    if (e.ctrlKey) e.preventDefault();
+  }, { passive: false });
+
+  // Belt-and-braces: Safari's double-tap-to-zoom can still slip through
+  // `touch-action: manipulation` on some iOS versions when the second tap
+  // lands within ~300ms on a non-clickable element. Snap zoom back to 1
+  // if the page somehow ends up scaled.
+  document.addEventListener('dblclick', prevent, { passive: false });
+})();
+
 // ── Init ────────────────────────────────────────────────────────────────
 
 function init() {
@@ -34,10 +74,32 @@ function initIcons() {
 
 // ── Scroll ──────────────────────────────────────────────────────────────
 
+// iOS Safari + the mobile virtual keyboard disagree about the scroll container's
+// height during the layout/keyboard dance right after submit. `chat.scrollTo`
+// uses the layout-viewport metric and lands the content roughly mid-screen
+// while the keyboard is still animating. Pinning a specific DOM element via
+// `scrollIntoView({block:'end'})` respects the visual viewport and reliably
+// puts the last bubble at the bottom of the visible chat area. We still fall
+// back to scrollTo if there are no children yet.
 function scrollToBottom(instant) {
-  setTimeout(function() {
-    chat.scrollTo({ top: chat.scrollHeight, behavior: instant ? 'instant' : 'smooth' });
-  }, 50);
+  var behavior = instant ? 'instant' : 'smooth';
+  var run = function() {
+    var inner = getChatInner ? getChatInner() : chat.querySelector('.chat-inner');
+    var last  = inner && inner.lastElementChild;
+    if (last && typeof last.scrollIntoView === 'function') {
+      try {
+        last.scrollIntoView({ block: 'end', inline: 'nearest', behavior: behavior });
+        return;
+      } catch (e) { /* fall through */ }
+    }
+    chat.scrollTo({ top: chat.scrollHeight, behavior: behavior });
+  };
+  // Double rAF: wait one frame for DOM insertion, one more for layout/keyboard.
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(function() { requestAnimationFrame(run); });
+  } else {
+    setTimeout(run, 50);
+  }
 }
 
 // ── Conversation sheet ─────────────────────────────────────────────────
@@ -300,19 +362,22 @@ function showContext() {
       }
 
       var html = '';
-      // SYSTEM variables — agent-loop bookkeeping (*query*, *reasoning*, *answer*),
-      // always visible at the top, never collapsed.
-      if (systemVars.length > 0) {
-        html += '<div class="ctx-section ctx-section-system">';
-        html += '<div class="ctx-section-header"><i data-lucide="cpu"></i> System <span class="ctx-count">' + systemVars.length + '</span></div>';
-        systemVars.forEach(function(v) { html += renderVarCard(v); });
-        html += '</div>';
-      }
-      // User-defined variables — below system vars, always expanded.
+      // User-defined variables first — these are what the user actually cares
+      // about. Shown at the top, always expanded.
       if (userVars.length > 0) {
         html += '<div class="ctx-section">';
         html += '<div class="ctx-section-header"><i data-lucide="variable"></i> Variables <span class="ctx-count">' + userVars.length + '</span></div>';
         userVars.forEach(function(v) { html += renderVarCard(v); });
+        html += '</div>';
+      }
+      // SYSTEM variables — agent-loop bookkeeping (*query*, *reasoning*, *answer*),
+      // below. Only draw the divider above when user vars preceded; otherwise
+      // the section stands alone with no orphan border.
+      if (systemVars.length > 0) {
+        var sysClass = 'ctx-section ctx-section-system' + (userVars.length > 0 ? ' ctx-section-system-divided' : '');
+        html += '<div class="' + sysClass + '">';
+        html += '<div class="ctx-section-header"><i data-lucide="cpu"></i> System <span class="ctx-count">' + systemVars.length + '</span></div>';
+        systemVars.forEach(function(v) { html += renderVarCard(v); });
         html += '</div>';
       }
       if (!html) html = '<div class="ctx-empty">Nothing here yet. Variables will appear as the agent works.</div>';
@@ -337,7 +402,7 @@ function openVarHistory(varName) {
     sidebar.appendChild(panel);
   }
   var versions = (v.versions && v.versions.length) ? v.versions.slice() : [{
-    version: 1, type: v.type, preview: v.value, code: v.code, 'created-at': ''
+    version: 1, type: v.type, preview: v.value, value: v.value, code: v.code, 'created-at': ''
   }];
   // Newest first in UI.
   versions.reverse();
@@ -363,12 +428,36 @@ function openVarHistory(varName) {
       html += '<pre class="var-version-code">' + escHtml(ver.code) + '</pre>';
     }
     if (!isSystemVar) html += '<div class="var-version-label">value</div>';
-    html += '<pre class="var-version-preview">' + escHtml(ver.preview || '') + '</pre>';
+    // Prefer the full `:value` (untruncated) so opening a var shows its
+    // complete contents; fall back to `:preview` for older cached entries
+    // and to `:value` on the synthetic no-history fallback above.
+    var full = (typeof ver.value === 'string' && ver.value.length)
+      ? ver.value
+      : (ver.preview || '');
+    // Non-strings are server-side pretty-printed EDN (maps/vectors/sets
+    // etc.) — highlight as Clojure so keywords/strings/numbers get the
+    // same colors the user sees in their editor. Raw-string values stay
+    // plain: they're often free-text (skill bodies, tool output, prose)
+    // that would be mis-colored by the Clojure grammar.
+    var isClj = ver.type !== 'string';
+    html += '<pre class="var-version-preview">'
+         + '<code class="' + (isClj ? 'language-clojure hljs-pending' : 'var-version-plain') + '">'
+         + escHtml(full)
+         + '</code></pre>';
     html += '</div></div>';
   });
   html += '</div>';
   panel.innerHTML = html;
   if (typeof lucide !== 'undefined') setTimeout(function() { lucide.createIcons(); }, 30);
+  // Colorize pretty-printed Clojure values with highlight.js — the lib is
+  // already loaded on the page for chat message code fences. Only target
+  // our freshly-inserted blocks so we don't re-highlight the chat.
+  if (typeof hljs !== 'undefined') {
+    panel.querySelectorAll('code.hljs-pending').forEach(function(el) {
+      el.classList.remove('hljs-pending');
+      try { hljs.highlightElement(el); } catch (e) { /* ignore */ }
+    });
+  }
   panel.classList.add('open');
 }
 
@@ -438,7 +527,19 @@ function getChatInner() {
   return chat.querySelector('.chat-inner') || chat;
 }
 
+// The server renders a `.empty` placeholder (40vh top margin) when the
+// conversation has zero messages. The JS-driven first turn appends bubbles
+// into `.chat-inner` via fetch+poll — with no full reload — so we must
+// remove the placeholder ourselves before it pushes the first user bubble
+// and the thinking bubble into the middle of the viewport on mobile.
+function removeEmptyPlaceholder() {
+  var inner = getChatInner();
+  var placeholder = inner.querySelector(':scope > .empty');
+  if (placeholder) placeholder.remove();
+}
+
 function appendUserBubble(text) {
+  removeEmptyPlaceholder();
   var d = document.createElement('div');
   d.className = 'msg user-msg';
   d.innerHTML = '<div class="bubble user-bubble">' +
@@ -447,6 +548,7 @@ function appendUserBubble(text) {
 }
 
 function appendThinkingBubble() {
+  removeEmptyPlaceholder();
   var d = document.createElement('div');
   d.className = 'msg ai-msg';
   d.id = 'thinking-msg';
@@ -827,9 +929,159 @@ function checkInFlight() {
     .catch(function() { onQueryComplete(); });
 }
 
+// ── Dictation (Web Speech API + LLM cleanup) ────────────────────────────
+//
+// Flow:
+//   idle      → user taps mic → SpeechRecognition.start()
+//   recording → user taps mic → SpeechRecognition.stop()
+//   refining  → POST raw transcript to /conversations/:id/dictate
+//             → on response, append refined text to #input
+//   idle
+//
+// Hidden on browsers without SpeechRecognition (e.g. Firefox).
+// Audio never leaves the browser; only the final transcript is sent.
+
+function initDictation() {
+  var micBtn = document.getElementById('mic-btn');
+  if (!micBtn) return;
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return; // Unsupported — leave button hidden.
+  micBtn.hidden = false;
+
+  var recognition = null;
+  var chunks = [];
+  var state = 'idle'; // 'idle' | 'recording' | 'refining'
+
+  function setState(next) {
+    state = next;
+    micBtn.dataset.micState = next;
+    micBtn.disabled = (next === 'refining');
+    if (next === 'recording') {
+      micBtn.title = 'Stop dictating';
+    } else if (next === 'refining') {
+      micBtn.title = 'Refining…';
+    } else {
+      micBtn.title = 'Dictate (tap to start, tap again to stop)';
+    }
+  }
+
+  function appendToInput(text) {
+    var existing = input.value;
+    var sep = (existing.length > 0 && !/\s$/.test(existing)) ? ' ' : '';
+    input.value = existing + sep + text;
+    // Trigger the existing input listeners so the send button enables and
+    // the textarea auto-grows. dispatchEvent is the canonical way to make
+    // imperative changes look like user input.
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+    // Move caret to end.
+    var end = input.value.length;
+    try { input.setSelectionRange(end, end); } catch (e) {}
+  }
+
+  function refineAndInsert(rawText) {
+    var trimmed = (rawText || '').trim();
+    if (!trimmed) { setState('idle'); return; }
+    setState('refining');
+    var url = micBtn.dataset.dictateUrl;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: trimmed })
+    })
+      .then(function(r) { return r.json().catch(function() { return { text: trimmed }; }); })
+      .then(function(data) {
+        appendToInput((data && data.text) ? data.text : trimmed);
+        setState('idle');
+      })
+      .catch(function() {
+        // Network failure — fall back to raw transcript so the user
+        // doesn't lose what they said.
+        appendToInput(trimmed);
+        setState('idle');
+        showToast('Dictation refinement failed — kept raw transcript');
+      });
+  }
+
+  function startRecording() {
+    chunks = [];
+    try {
+      recognition = new SR();
+    } catch (e) {
+      showToast('Speech recognition unavailable');
+      return;
+    }
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = function(event) {
+      for (var i = event.resultIndex; i < event.results.length; i++) {
+        var res = event.results[i];
+        if (res.isFinal && res[0] && res[0].transcript) {
+          chunks.push(res[0].transcript.trim());
+        }
+      }
+    };
+    recognition.onerror = function(event) {
+      var msg = (event && event.error) || 'unknown';
+      if (msg === 'not-allowed' || msg === 'service-not-allowed') {
+        showToast('Microphone permission denied');
+      } else if (msg === 'no-speech') {
+        showToast('No speech detected');
+      } else if (msg !== 'aborted') {
+        showToast('Dictation error: ' + msg);
+      }
+      try { recognition.abort(); } catch (e) {}
+      setState('idle');
+    };
+    recognition.onend = function() {
+      // onend fires after stop() OR after the engine times out.
+      if (state === 'recording') {
+        // User did not tap stop — engine ended on its own. Treat the
+        // collected chunks as the transcript and refine.
+        refineAndInsert(chunks.join(' '));
+      }
+    };
+    try {
+      recognition.start();
+      setState('recording');
+    } catch (e) {
+      showToast('Could not start dictation');
+      setState('idle');
+    }
+  }
+
+  function stopRecording() {
+    if (!recognition) { setState('idle'); return; }
+    try { recognition.stop(); } catch (e) {}
+    // We do NOT refine here — we wait for `onend` to fire so any final
+    // results that were still buffered are included in `chunks`.
+    // But guard against onend never firing by also refining after a
+    // short safety timeout.
+    var rawAtStop = chunks.slice();
+    setTimeout(function() {
+      if (state === 'recording') {
+        refineAndInsert(rawAtStop.join(' '));
+      }
+    }, 800);
+    // Flip state so onend's branch above does the refine path.
+    // (Keeping 'recording' until onend means onend handles it; we keep it.)
+  }
+
+  micBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    if (state === 'idle')         startRecording();
+    else if (state === 'recording') stopRecording();
+    // 'refining' → button is disabled; nothing to do.
+  });
+}
+
 // ── Boot ────────────────────────────────────────────────────────────────
 
 init();
 initInfiniteScroll();
 initFormSubmit();
+initDictation();
 checkInFlight();

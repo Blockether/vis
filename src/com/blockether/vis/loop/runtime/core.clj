@@ -107,42 +107,22 @@
   [re s]
   (re-matches (->pattern re) (str s)))
 
-(def ^:private max-sandbox-slurp-bytes
-  "Upper bound on `(slurp ...)` inside the sandbox. Mirrors `read-file`'s
-   `max-file-size` (10 MB). Prevents a single agent call from pulling a
-   300 MB core.basis into memory by accident."
-  (* 10 1024 1024))
-
-(defn- safe-slurp
-  "Sandbox `slurp` that mirrors `read-file`'s safety guards but returns raw
-   content (no line numbering) so callers can parse with `edn/read-string`,
-   `fast-edn/parse-string`, etc.
-
-   Blocks:
-   * Symlinked files (no follow-through to arbitrary targets).
-   * Directory targets (tells the LLM to use `list-dir`).
-   * Files over `max-sandbox-slurp-bytes` (tells the LLM to use
-     `(read-file path offset limit)`).
-
-   Everything else falls through to regular `clojure.core/slurp`, so all the
-   usual URL/Reader-arity flexibility survives."
-  [source & opts]
-  (when (string? source)
-    (let [f (java.io.File. ^String source)]
-      (when (.exists f)
-        (when (.isDirectory f)
-          (throw (ex-info (str "slurp path is a directory: " source
-                            ". Use list-dir to enumerate entries.")
-                   {:path source :error :is-directory})))
-        (when (java.nio.file.Files/isSymbolicLink (.toPath f))
-          (throw (ex-info (str "Refusing to follow symlink: " source)
-                   {:path source :error :symlink})))
-        (when (> (.length f) max-sandbox-slurp-bytes)
-          (throw (ex-info (str "slurp target too large: "
-                            (quot (.length f) 1024) "KB. Use "
-                            "(read-file path offset limit) for paged reads.")
-                   {:path source :size (.length f) :max max-sandbox-slurp-bytes}))))))
-  (apply clojure.core/slurp source opts))
+(defn- banned-slurp
+  "Sandbox `slurp` override that rejects every call. Agent-facing file
+   reads go through `read-file` exclusively — line-numbered output, path
+   sanity, size cap, offset/limit paging, and var-source tracking all
+   live there. `slurp` returns raw bytes with none of that, making it a
+   cache-coherency footgun: a var bound from `slurp` can't be validated
+   against the filesystem the next iteration, so the agent silently
+   trusts stale content. Better to refuse the call and point at
+   `read-file`."
+  [& _args]
+  (throw (ex-info (str "slurp is banned in the sandbox — use (read-file \"path\") "
+                    "or (read-file \"path\" offset limit). "
+                    "read-file is the only sanctioned file read: line-numbered, "
+                    "size-capped, symlink-safe, and tracked by <var_index> for "
+                    "staleness between iterations.")
+           {:type :tool/banned :tool 'slurp})))
 
 (defn- format-printable
   "If `v` carries :rlm/format / :rlm/formatted metadata (attached by the tool
@@ -206,11 +186,11 @@
                        're-find safe-re-find
                        're-seq safe-re-seq
                        're-matches safe-re-matches
-                       ;; Sandbox-safe slurp that reuses read-file's guards.
-                       ;; LLMs reach for `slurp` reflexively — giving them a
-                       ;; capped, symlink-safe version kills a class of
-                       ;; NullPointerException-on-unresolved-var turns.
-                       'slurp safe-slurp}
+                       ;; `slurp` is BANNED. Every file read goes through
+                       ;; `read-file` so var_index can track mtime/size and
+                       ;; mark cached reads as `valid`/`stale`/`missing`
+                       ;; between iterations. `slurp` bypassed all of that.
+                       'slurp banned-slurp}
         all-bindings (merge EXTRA_BINDINGS base-bindings
                        (or custom-bindings {}))
         str-ns  (sci/create-ns 'clojure.string nil)
@@ -352,10 +332,12 @@
                                                           LinkedHashMap java.util.LinkedHashMap
                                                           ArrayList java.util.ArrayList
                                                           Random java.util.Random}
-                                               ;; `slurp` intentionally NOT denied: we shadow it in
-                                               ;; sandbox bindings with `safe-slurp`, which delegates
-                                               ;; to read-file-style guards (no symlink follow, 10 MB
-                                               ;; cap, directory→friendly error). `spit` stays denied —
+                                               ;; `slurp` intentionally NOT denied at the SCI level: we
+                                               ;; shadow it in sandbox bindings with `banned-slurp`,
+                                               ;; which throws a descriptive ex-info pointing at
+                                               ;; `read-file`. Keeping it as a sandbox binding (not a
+                                               ;; deny) gives the LLM a useful error message instead of
+                                               ;; SCI's generic "not allowed". `spit` stays denied —
                                                ;; `write-file` is the audited path that renders diffs.
                                                ;;
                                                ;; `require`, `import`, `find-ns` are NOT denied either
@@ -450,8 +432,16 @@
                        "\n"
                        "Returns hits with ids ready for `fetch-document-content`. Search in English — translate non-EN queries first.\n"
                        "\n"
-                       (let [n (try (count (db/db-list-documents (:db-info env))) (catch Throwable _ 0))]
-                         (str "Currently " n " document" (when (not= 1 n) "s") " ingested."))))})
+                       (let [n (try (count (db/db-list-documents (:db-info env)))
+                                  (catch Throwable t
+                                    (trove/log! {:level :warn
+                                                 :data {:error (ex-message t)
+                                                        :ex-data (ex-data t)
+                                                        :class (.getName (class t))
+                                                        :stack (mapv str (take 8 (.getStackTrace t)))}
+                                                 :msg "db-list-documents count failed — search-documents prompt will report 0 ingested"})
+                                    0))]
+                          (str "Currently " n " document" (when (not= 1 n) "s") " ingested."))))})
         (register! 'fetch-document-content fetch-fn
           {:doc "(fetch-document-content [:node/id \"id\"]) or [:doc/id \"id\"] or [:toc/id \"id\"]"
            :group "documents" :activation-doc "no documents ingested"
@@ -538,15 +528,28 @@
                       "(restore-vars ['x 'y] {:version 1})"]
            :format-result fmt/format-restore-vars
            :prompt "Parallel `restore-var`. Returns `{sym value}` or `{sym {:error …}}` for missing ones. Use when you know upfront which vars you need."})
-        (register! 'var-history
-          (sci-tools/make-var-history-fn db-info conversation-ref)
-          {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}"
-           :group "conversation" :activation-doc "no persisted vars from prior queries"
-           :activation-fn has-vars?
-           :examples ["(var-history 'hits)"
-                      "(var-history '*reasoning*)"]
-           :format-result fmt/format-var-history
-           :prompt "Every version of a var across this conversation, oldest first. Use before `restore-var` when you need a specific version, or to audit how a value evolved (e.g. `*reasoning*` across iterations)."})
+         (register! 'var-history
+           (sci-tools/make-var-history-fn db-info conversation-ref)
+           {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}. For the last N: `(take-last N (var-history 'sym))`."
+            :group "conversation" :activation-doc "no persisted vars from prior queries"
+            :activation-fn has-vars?
+            :examples ["(var-history 'hits)"
+                       "(var-history '*reasoning*)"
+                       ;; Last 3 reasonings — the standard idiom when
+                       ;; <prior_thinking>'s breadcrumb says to go
+                       ;; deeper than the default window.
+                       "(take-last 3 (var-history '*reasoning*))"
+                       ;; Just the values, dropping metadata.
+                       "(mapv :value (take-last 4 (var-history '*reasoning*)))"]
+            :format-result fmt/format-var-history
+            :prompt (str "Every version of a var across this conversation, oldest first — "
+                      "`[{:version N :value :code :created-at}]`. Two common idioms:\n"
+                      "  `(take-last 3 (var-history 'sym))` — most recent 3 versions (the "
+                      "typical need when <prior_thinking>'s breadcrumb points here).\n"
+                      "  `(mapv :value (take-last N (var-history 'sym)))` — just the values, "
+                      "dropping metadata (handy for recomposing a window of `*reasoning*`).\n"
+                      "Use before `restore-var` when you need a specific version, or to audit "
+                      "how a value evolved across iterations.")})
         (register! 'var-diff
           (sci-tools/make-var-diff-fn db-info conversation-ref)
           {:doc "(var-diff 'sym 1 3) — structural diff between two versions. Returns {:edits [...] :edit-count N}"
@@ -646,32 +649,208 @@
                                             {:ns (:sandbox-ns env (get-in @(:env sci-ctx) [:namespaces 'sandbox]))}))))]
         (assoc env :initial-ns-keys current-keys)))))
 
-(def ^:private ^:const MAX_VAR_INDEX_ROWS 12)
+;; MAX_VAR_INDEX_ROWS was removed — every defined var shows up in
+;; <var_index>. With the `code` column (bounded to
+;; MAX_VAR_INDEX_CODE_CHARS per row) instead of raw value previews,
+;; even dozens of vars stay cheap to render.
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
-(def ^:private ^:const MAX_VAR_INDEX_PREVIEW 150)
+(def ^:private ^:const MAX_VAR_INDEX_CODE_CHARS
+  "Per-row budget for the `code` column in <var_index>. We show the
+   CODE that produced each var (not a preview of its value) — the
+   journal already carries full values for the last iteration, and
+   the model can always re-reference a var by name to materialize
+   its value into the next journal. Code is bounded by what the
+   model typed, so this cap is only a safety rail against pathological
+   one-liners, not a lossy summary."
+  400)
 
-(defn- safe-preview-str
-  "Render a bounded printable preview for arbitrary values.
-   Uses print limits so infinite/lazy seqs (e.g. (range)) do not OOM."
-  [val]
-  (binding [*print-length* 20
-            *print-level* 4]
-    (pr-str val)))
+(def ^:private SYSTEM_VAR_CODE_PLACEHOLDER
+  "(SYSTEM — bound each turn by the agent loop)")
+
+;;; ── Var freshness (tool-owned) ──────────────────────────────────────
+;;;
+;;; Every tool that produces a CACHEABLE result (file reads, git
+;;; snapshots, HTTP fetches) opts into the freshness channel by
+;;; setting `:requires-freshness? true` in its tool-def and providing
+;;; a `:freshness` fn. The fn is the SOLE owner of freshness logic
+;;; for its tool — there are no fallbacks, no central parse-expr
+;;; heuristics, no `extract-metadata` regex tricks.
+;;;
+;;; Contract — `:freshness` is a single-arg fn:
+;;;
+;;;   (fn [{:keys [args result metadata]}]
+;;;     => {:metadata <updated-map> :freshness? <bool>})
+;;;
+;;; Called at TWO phases:
+;;;
+;;;   a) Seed (right after the tool returns):
+;;;      `{:args <tool-args> :result <tool-result> :metadata nil}`
+;;;      → must populate `:metadata` from args/result and return
+;;;        `:freshness? true` (we just observed the source, by
+;;;        definition fresh).
+;;;
+;;;   b) Re-check (when <var_index> is rendered on a later turn):
+;;;      `{:args nil :result nil :metadata <stored-snapshot>}`
+;;;      → must re-consult the underlying source (stat the file,
+;;;        query git, hit the URL) and return new `:metadata` + a
+;;;        fresh `:freshness?` bool.
+;;;
+;;; Enforcement lives in `register-tool-def!` (see bottom of this
+;;; file): `:requires-freshness? true` without a callable
+;;; `:freshness` throws on registration, not on first use.
+
+;; No ambient state — metadata seeding happens once, AFTER the SCI
+;; eval, inside `restorable-var-snapshots`: each defining expression
+;; is parsed to surface its top-level tool symbol + args, and if the
+;; tool's registration has `:requires-freshness? true` we invoke
+;; `(:freshness tool-def)` with {:args :result :metadata nil} to
+;; seed. The resulting map is stored on the var snapshot and persists
+;; through `store-iteration!` into the iteration_var_attrs.code map.
+;; At render time `build-var-index` looks up the same :freshness fn
+;; (via the `:tool` key in the stored metadata) and calls it with
+;; the stored metadata for the re-check. One contract, two phases,
+;; no dynamic state.
+
+(defn parse-rich-code
+  "Decode the `code` column from the `iteration_var_attrs` DB row into
+   a uniform map `{:expr :time-ms :metadata}`.
+
+   New writes use `pr-str {:expr … :time-ms … :metadata …}`. Legacy
+   writes (and user-supplied raw expressions) are bare strings. We
+   accept both. Unparseable inputs degrade to `{:expr <raw>}` so we
+   never lose provenance."
+  [code-col]
+  (cond
+    (nil? code-col) nil
+
+    (map? code-col)
+    code-col
+
+    (string? code-col)
+    (if (str/starts-with? (str/triml code-col) "{")
+      (try
+        (let [parsed (read-string {:read-cond :allow :features #{:clj}} code-col)]
+          (if (map? parsed) parsed {:expr code-col}))
+        (catch Throwable _ {:expr code-col}))
+      {:expr code-col})
+
+    :else nil))
+
+(defn- render-var-code
+  "Render the `code` column entry for one var. We show CODE (plus
+   `:time-ms` when known), not a preview of the value — the journal
+   already carries the previous iteration's full values and the model
+   can reference any var by name to materialize its current value
+   into the NEXT journal. Preview columns forced the model to re-read
+   files it had already stored (see conversation 1f44852d-…) because
+   a bounded slice is ambiguous for structured data like source files
+   or hiccup trees."
+  [{:keys [system? expr time-ms]}]
+  (cond
+    system? SYSTEM_VAR_CODE_PLACEHOLDER
+
+    (and (string? expr) (not (str/blank? expr)))
+    (let [trimmed (sci-shared/truncate (str/trim expr) MAX_VAR_INDEX_CODE_CHARS)]
+      (if time-ms
+        (str trimmed " [" time-ms "ms]")
+        trimmed))
+
+    :else "-"))
+
+(defn- render-var-freshness
+  "Render the `freshness` column by asking the producing tool's own
+   `:freshness` fn. `metadata` carries `:tool` (string name) from seed
+   time; we use it to look up the current tool-def in `tool-registry`
+   and invoke its `:freshness` with `{:args nil :result nil :metadata
+   stored}`. The fn returns `{:freshness? bool …}` — we translate that
+   boolean into the column label.
+
+   Error handling: `{:type :rlm.freshness/missing}` is the TOOL's
+   signal that the backing resource vanished (file deleted, URL 404,
+   git ref gone) — we render `MISSING`. Any OTHER exception indicates
+   a bug in the :freshness fn itself and propagates uncaught so the
+   loop logs it instead of silently disguising a tool bug as a
+   missing file.
+
+   SYSTEM vars and anything without stored metadata (or without a
+   registered tool) render as `-`."
+  [{:keys [metadata system? tool-registry]}]
+  (cond
+    system? "-"
+
+    (and (map? metadata) (string? (:tool metadata)))
+    (let [tool-sym (symbol (:tool metadata))
+          tool-def (get tool-registry tool-sym)]
+      (if-let [fresh-fn (:freshness tool-def)]
+        (try
+          (let [{:keys [freshness?]} (fresh-fn {:args nil :result nil :metadata metadata})]
+            (if freshness? "fresh" "STALE"))
+          (catch clojure.lang.ExceptionInfo ex
+            (if (= :rlm.freshness/missing (:type (ex-data ex)))
+              "MISSING"
+              (throw ex))))
+        "-"))
+
+    :else "-"))
+
+(defn- render-var-status
+  "Render the `status` column entry — a GC-grade lifecycle hint for
+   the agent.
+
+   Values:
+     live       — bound in the current sandbox; usable by name.
+     forgotten  — dropped from the sandbox (via :forget or auto-forget)
+                  but the DB row survives; `(restore-var 'sym)` brings
+                  it back.
+     SYSTEM     — earmuffed (*query*, *reasoning*, …) — cannot be
+                  forgotten, never expires.
+
+   The agent uses this to decide whether to reclaim a persisted var
+   instead of recomputing, and which vars are safe to ignore."
+  [{:keys [system? persisted?]}]
+  (cond
+    system?    "SYSTEM"
+    persisted? "forgotten"
+    :else      "live"))
 
 (defn build-var-index
   "Builds a formatted var index table from user-def'd vars in the SCI context.
    Filters out initial bindings (tools, helpers) using initial-ns-keys.
    Returns nil if no user vars exist.
 
-   Row format: `name | type | size | doc - preview`
-   When `db-info` and `conversation-ref` are provided, rows are sorted
-   newest-first by `:iteration-var` `:entity/created-at`; freshly-def'd
-   vars (not yet persisted) sort above any DB-recorded ones."
+   Row format: `name | ver | type | size | status | freshness | doc | code`
+
+   The `code` column shows the DEFINING expression for each var plus
+   its execution time in ms (`(def x …) [42ms]`) so the model has
+   complete provenance without a lossy value preview. For the raw
+   value the LLM references the var by name in its own code — the
+   next <journal> then shows the full materialized value.
+
+   The `freshness` column shows `fresh` / `STALE` / `MISSING` / `-`
+   by invoking the producing tool's `:freshness` fn (registered via
+   `register-tool-def!` with `:requires-freshness? true`). The
+   stored `:metadata` carries a `:tool` key that names the producing
+   tool; `render-var-freshness` looks its fn up in `:tool-registry`
+   and calls it with the stored snapshot. No central freshness logic
+   lives here — every tool owns its own `:freshness` contract.
+
+   All user vars appear — no `MAX_VAR_INDEX_ROWS` cap. SYSTEM vars
+   sort first; the rest are newest-touched first.
+
+   Opts (6-arity):
+     :include-persisted? — when false, rows persisted in DB but NOT in
+       the live sandbox are suppressed. Set by sub-RLM calls so a
+       forked env only sees its own snapshot + its own new vars; it
+       never leaks sibling queries' vars into the sub's <var_index>.
+       Defaults to true (main RLM — full conversation view)."
   ([sci-ctx initial-ns-keys]
-   (build-var-index sci-ctx initial-ns-keys nil nil nil))
+   (build-var-index sci-ctx initial-ns-keys nil nil nil nil))
   ([sci-ctx initial-ns-keys sandbox]
-   (build-var-index sci-ctx initial-ns-keys sandbox nil nil))
+   (build-var-index sci-ctx initial-ns-keys sandbox nil nil nil))
   ([sci-ctx initial-ns-keys sandbox db-info conversation-ref]
+   (build-var-index sci-ctx initial-ns-keys sandbox db-info conversation-ref nil))
+  ([sci-ctx initial-ns-keys sandbox db-info conversation-ref
+    {:keys [include-persisted? tool-registry] :or {include-persisted? true}}]
    (try
      (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
            var-registry (when (and db-info conversation-ref)
@@ -683,50 +862,58 @@
                             (integer? ts) (long ts)
                             :else Long/MAX_VALUE)
                           Long/MAX_VALUE))
+           ;; The `code` column in the DB carries rich `{:expr :time-ms
+           ;; :metadata}` maps for new writes and bare strings for
+           ;; legacy rows — `parse-rich-code` smooths the two.
+           rich-code-for (fn [sym]
+                           (parse-rich-code (get-in var-registry [sym :code])))
            live-info (into {}
                        (for [[s v] sandbox-map
                              :when (symbol? s)]
-                         [s {:val (if (instance? clojure.lang.IDeref v) @v v)
-                             :doc (:doc (meta v))
-                             :arglists (:arglists (meta v))
-                             :version (get-in var-registry [s :version] 1)}]))
-           persisted-info (when var-registry
+                         (let [rich (rich-code-for s)]
+                           [s {:val (if (instance? clojure.lang.IDeref v) @v v)
+                               :doc (:doc (meta v))
+                               :arglists (:arglists (meta v))
+                               :version (get-in var-registry [s :version] 1)
+                               :expr (or (:expr rich) (:rlm/def-source (meta v)))
+                               :time-ms (:time-ms rich)
+                               :metadata (:metadata rich)}])))
+           ;; Sub-RLMs (env with :parent-iteration-ref set → caller
+           ;; passes :include-persisted? false) see ONLY their forked
+           ;; sandbox. Sibling queries in the same conversation must
+           ;; not leak into a sub-RLM's <var_index>, otherwise a
+           ;; sub-sub-RLM would drown in its grandparent's junk.
+           persisted-info (when (and var-registry include-persisted?)
                             (into {}
-                              (for [[sym {:keys [value]}] var-registry
+                              (for [[sym _] var-registry
                                     :when (and (symbol? sym)
                                             (not (contains? live-info sym))
                                             (not (contains? initial-ns-keys sym)))]
-                                [sym {:val ::persisted
-                                      :doc (str "persisted - (restore-var '" sym ") to load")
-                                      :persisted-preview (or value "")}])))
+                                (let [rich (rich-code-for sym)]
+                                  [sym {:val ::persisted
+                                        :doc (str "persisted - (restore-var '" sym ") to load")
+                                        :expr (:expr rich)
+                                        :time-ms (:time-ms rich)
+                                        :metadata (:metadata rich)}]))))
             var-info (merge persisted-info live-info)
             earmuffed? (fn [sym]
                          (let [n (name sym)]
                            (and (> (count n) 2)
                              (str/starts-with? n "*")
                              (str/ends-with? n "*"))))
-            ;; Human-readable description for earmuffed SYSTEM vars. These
-            ;; are bound by the iteration loop and treated as part of the
-            ;; agent's contract surface — readable/usable like any other SCI
-            ;; var, but NEVER FORGOTTEN (forget-vars! refuses to drop them).
-            ;; The (SYSTEM) prefix signals to the LLM that trying to :forget
-            ;; these is a no-op.
              system-doc (fn [sym]
                           (case (str sym)
                             "*query*"     "(SYSTEM, never forgotten) current user query"
                             "*reasoning*" "(SYSTEM, never forgotten) YOUR thinking from the previous iteration"
                             "*answer*"    "(SYSTEM, never forgotten) final answer from the previous turn in this conversation"
-                            (str "(SYSTEM, never forgotten) agent-bound var")))
+                            "(SYSTEM, never forgotten) agent-bound var"))
             entries (->> var-info
                       (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
-                      ;; Sort order:
-                      ;;   1. earmuffed *system* vars FIRST (stable by name so *answer*/*query*/*reasoning* line up)
-                      ;;   2. then user vars, most-recently-touched first
                       (sort-by (fn [[sym _]]
                                  [(if (earmuffed? sym) 0 1)
                                   (- (long (recency-of sym)))
                                   (str sym)]))
-                      (mapv (fn [[sym {:keys [val doc arglists persisted-preview]}]]
+                      (mapv (fn [[sym {:keys [val doc arglists expr time-ms metadata]}]]
                               (let [persisted? (= val ::persisted)
                                     system?    (earmuffed? sym)
                                     type-label (cond
@@ -745,7 +932,7 @@
                                                  (symbol? val) "symbol"
                                                  :else (.getSimpleName (class val)))
                                    size (cond
-                                          persisted? (str (count persisted-preview) " chars")
+                                          persisted? "-"
                                           (nil? val) "-"
                                           (string? val) (str (count val) " chars")
                                           (or (map? val) (vector? val) (set? val))
@@ -756,45 +943,55 @@
                                               (str MAX_VAR_INDEX_COUNT "+ items")
                                               (str n " items")))
                                           :else "-")
-                                    preview (cond
-                                              persisted? (sci-shared/truncate persisted-preview MAX_VAR_INDEX_PREVIEW)
-                                              (fn? val) "-"
-                                              :else (sci-shared/truncate
-                                                      (or (when (instance? clojure.lang.IObj val)
-                                                            (or (:rlm/formatted (meta val))
-                                                                (when-let [f (:rlm/format (meta val))]
-                                                                  (try (f val) (catch Throwable _ nil)))))
-                                                          (safe-preview-str val))
-                                                      MAX_VAR_INDEX_PREVIEW))
+                                   code-col      (render-var-code {:system? system? :expr expr :time-ms time-ms})
+                                   freshness-col (render-var-freshness {:system? system?
+                                                                        :metadata metadata
+                                                                        :tool-registry tool-registry})
+                                   status-col    (render-var-status {:system? system? :persisted? persisted?})
                                    version (get-in var-info [sym :version] 1)
                                    ver-str (str version)]
-                                ;; SYSTEM vars override the doc column so the LLM
-                                ;; sees them labelled `(SYSTEM) …` even though no
-                                ;; docstring was attached at def-time.
                                 {:name (str sym) :ver ver-str :type type-label :size size
+                                 :status status-col
+                                 :freshness freshness-col
                                  :doc (cond
                                         system? (sci-shared/truncate (system-doc sym) 80)
                                         doc (sci-shared/truncate doc 80)
                                         :else "-")
-                                 :preview preview
+                                 :code code-col
                                  :system? system?}))))]
        (when (seq entries)
-         (let [visible (vec (take MAX_VAR_INDEX_ROWS entries))
-               omitted (- (count entries) (count visible))
+         (let [visible entries   ;; full index — no MAX_VAR_INDEX_ROWS cap
                max-name (max 4 (apply max (map #(count (:name %)) visible)))
                max-ver  (max 3 (apply max (map #(count (:ver %)) visible)))
                max-type (max 4 (apply max (map #(count (:type %)) visible)))
                max-size (max 4 (apply max (map #(count (:size %)) visible)))
+               max-status (max 6 (apply max (map #(count (:status %)) visible)))
+               max-freshness (max 9 (apply max (map #(count (:freshness %)) visible)))
                max-doc  (max 3 (apply max (map #(count (:doc %)) visible)))
                pad (fn [s n] (str s (apply str (repeat (max 0 (- n (count s))) \space))))
-               header (str "  " (pad "name" max-name) " | " (pad "ver" max-ver) " | " (pad "type" max-type) " | " (pad "size" max-size) " | " (pad "doc" max-doc) " | preview")
-               sep (str "  " (apply str (repeat max-name \-)) "-+-" (apply str (repeat max-ver \-)) "-+-" (apply str (repeat max-type \-)) "-+-" (apply str (repeat max-size \-)) "-+-" (apply str (repeat max-doc \-)) "-+---------")
-               rows (mapv (fn [{:keys [name ver type size doc preview]}]
-                            (str "  " (pad name max-name) " | " (pad ver max-ver) " | " (pad type max-type) " | " (pad size max-size) " | " (pad doc max-doc) " | " preview))
-                      visible)
-               footer (when (pos? omitted)
-                        (str "  ... " omitted " more vars omitted"))]
-           (str/join "\n" (concat [header sep] rows (when footer [footer]))))))
+               header (str "  " (pad "name" max-name) " | " (pad "ver" max-ver)
+                        " | " (pad "type" max-type) " | " (pad "size" max-size)
+                        " | " (pad "status" max-status)
+                        " | " (pad "freshness" max-freshness) " | " (pad "doc" max-doc)
+                        " | code")
+               sep (str "  " (apply str (repeat max-name \-)) "-+-"
+                     (apply str (repeat max-ver \-)) "-+-"
+                     (apply str (repeat max-type \-)) "-+-"
+                     (apply str (repeat max-size \-)) "-+-"
+                     (apply str (repeat max-status \-)) "-+-"
+                     (apply str (repeat max-freshness \-)) "-+-"
+                     (apply str (repeat max-doc \-)) "-+---------")
+               rows (mapv (fn [{:keys [name ver type size status freshness doc code]}]
+                            (str "  " (pad name max-name)
+                              " | " (pad ver max-ver)
+                              " | " (pad type max-type)
+                              " | " (pad size max-size)
+                              " | " (pad status max-status)
+                              " | " (pad freshness max-freshness)
+                              " | " (pad doc max-doc)
+                              " | " code))
+                      visible)]
+           (str/join "\n" (concat [header sep] rows)))))
      (catch Exception _ nil))))
 
 ;; =============================================================================
@@ -1207,8 +1404,24 @@
     @removed?))
 
 (defn register-tool-def!
-  "Register or layer a tool-def in `hook-registry-atom`."
+  "Register or layer a tool-def in `hook-registry-atom`.
+
+   Enforces the freshness contract: any tool-def marked
+   `:requires-freshness? true` MUST ship a callable `:freshness` fn
+   (single-arg map — see the `Var freshness` ns docstring section).
+   Registration throws `:rlm.tool/missing-freshness-fn` up-front so
+   the author gets a loud error at boot, not a surprise nil stacktrace
+   at the first call site."
   [hook-registry-atom sym tool-def]
+  (when (:requires-freshness? tool-def)
+    (when-not (fn? (:freshness tool-def))
+      (throw (ex-info (str "Tool " sym
+                        " declares :requires-freshness? true but no "
+                        ":freshness fn is attached. Provide a fn matching "
+                        "(fn [{:keys [args result metadata]}] "
+                        "{:metadata <…> :freshness? <bool>}).")
+               {:type :rlm.tool/missing-freshness-fn
+                :tool sym}))))
   (let [canonical (merge-tool-def-hooks
                     (get @hook-registry-atom sym {})
                     tool-def)]

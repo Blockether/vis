@@ -67,3 +67,27 @@
         (expect (some? ex))
         (expect (= :tool/invalid-input (:type (ex-data ex))))
         (expect (str/includes? (ex-message ex) "not found"))))))
+
+(defdescribe grep-relative-path-regression
+  (describe "grep with a RELATIVE path root (regression)"
+    ;; Prior versions crashed with `'other' is different type of Path` because
+    ;; the root was left as a relative File (`(io/file "src")`) while child
+    ;; files were built from `(.getCanonicalPath root)` -> absolute. The
+    ;; `Path.relativize` call then compared a relative Path to an absolute
+    ;; one and blew up. Agents calling `(grep "foo" "src")` or `(grep "foo"
+    ;; ".")` burned entire iteration budgets on this.
+    (it "accepts \".\" as a path without crashing"
+      ;; This is the canonical repro. The JVM's cwd is whatever the test
+      ;; runner started in; `.` just needs to exist (it always does). The
+      ;; bug triggers deterministically regardless of what cwd contains,
+      ;; because the crash is in Path.relativize, not in file-walking.
+      (let [result (sut/grep "definitely-will-not-match-anything-xyz-123" ".")]
+        (expect (= :directory (:mode result)))
+        (expect (vector? (:matches result)))))
+
+    (it "accepts a relative path segment without crashing"
+      ;; Equivalent repro using a real relative subdir that exists in any
+      ;; checkout of this repo. Same root cause as the `.` case.
+      (let [result (sut/grep "definitely-will-not-match-anything-xyz-123" "src")]
+        (expect (= :directory (:mode result)))
+        (expect (vector? (:matches result)))))))

@@ -11,7 +11,7 @@
    [com.blockether.vis.loop.runtime.query.routing :as routing])
   (:import
    [com.knuddels.jtokkit Encodings]
-   [com.knuddels.jtokkit.api EncodingType ModelType]))
+   [com.knuddels.jtokkit.api EncodingType]))
 
 (def ^:private registry (Encodings/newDefaultEncodingRegistry))
 

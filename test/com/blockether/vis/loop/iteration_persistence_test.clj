@@ -21,6 +21,7 @@
      2. A normal iteration with executions is persisted exactly once.
      3. A final-result iteration is persisted exactly once."
   (:require
+    [clojure.string :as str]
     [lazytest.core :refer [defdescribe describe expect it]]
     [com.blockether.svar.internal.llm :as llm]
     [com.blockether.vis.core :as sut]
@@ -179,5 +180,5 @@
             ;; the model can adapt its strategy.
             (let [second-iter-msgs (nth @captured 1)
                   all-text (apply str (keep :content second-iter-msgs))]
-              (expect (clojure.string/includes? all-text "ExceptionInfo"))
-              (expect (clojure.string/includes? all-text "grep path must be a directory")))))))))
+              (expect (str/includes? all-text "ExceptionInfo"))
+              (expect (str/includes? all-text "grep path must be a directory")))))))))

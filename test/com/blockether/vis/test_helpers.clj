@@ -37,9 +37,9 @@
   ([f] (with-temp-raw-env {} f))
   ([opts f]
    (let [opts   (if (contains? opts :db) opts (assoc opts :db :temp))
-         router (make-stub-router)]
-     (let [env (#'rlm-core/create-rlm-env (atom 0) router opts)]
-       (try
-         (f env)
-         (finally
-           (#'rlm-core/dispose-rlm-env! env)))))))
+         router (make-stub-router)
+         env    (#'rlm-core/create-rlm-env (atom 0) router opts)]
+     (try
+       (f env)
+       (finally
+         (#'rlm-core/dispose-rlm-env! env))))))

@@ -5,6 +5,7 @@
    each :query owns many :iteration children; each :iteration owns many
    :iteration-var children."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.loop.storage.sqlite.core :as core]
    [taoensso.trove :as trove]))
 
@@ -60,9 +61,16 @@
 ;; =============================================================================
 
 (defn store-query!
-  "Stores a query entity linked to a conversation via parent-id."
-  [db-info {:keys [conversation-ref text messages answer iterations duration-ms status eval-score]}]
-  (let [parent-id (when conversation-ref (second conversation-ref))]
+  "Stores a query entity linked to a parent (conversation by default,
+   or an :iteration when the caller is spawning a sub-RLM).
+
+   `:parent-ref` takes precedence over `:conversation-ref` for the
+   parent-id link. When only `:conversation-ref` is supplied (the
+   normal top-level query case), it's used as the parent. Sub-RLM
+   calls pass both — `:conversation-ref` for ownership/membership and
+   `:parent-ref [:id iteration-uuid]` for the hierarchical link."
+  [db-info {:keys [conversation-ref parent-ref text messages answer iterations duration-ms status eval-score]}]
+  (let [parent-id (second (or parent-ref conversation-ref))]
     (core/store-entity! db-info
       (cond-> {:type :query
                :name (let [t (or text "")]
@@ -110,7 +118,7 @@
         ;; between successful ones and it looked like the order was
         ;; scrambled. The read-side tolerates both shapes so legacy rows
         ;; still render as pure results.
-        blank? (fn [s] (or (nil? s) (and (string? s) (clojure.string/blank? s))))
+        blank? (fn [s] (or (nil? s) (and (string? s) (str/blank? s))))
         result-strs (mapv (fn [exec]
                             (try
                               (pr-str
@@ -135,14 +143,23 @@
                             :duration-ms (or duration-ms 0)}
                      answer (assoc :answer answer)
                      error  (assoc :error (pr-str error))))]
-    (doseq [{:keys [name value code]} (or vars [])]
+    (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
       (when name
-        (core/store-entity! db-info
-          {:type :iteration-var
-           :name (str name)
-           :parent-id (second iter-ref)
-           :value (pr-str value)
-           :code (or code "")})))
+        (let [rich-code (pr-str (cond-> {}
+                                  code     (assoc :expr code)
+                                  time-ms  (assoc :time-ms time-ms)
+                                  metadata (assoc :metadata metadata)))]
+          (core/store-entity! db-info
+            {:type :iteration-var
+             :name (str name)
+             :parent-id (second iter-ref)
+             :value (pr-str value)
+             ;; `:code` column now carries a pr-str'd EDN map
+             ;; `{:expr :time-ms :metadata}` so downstream consumers
+             ;; (var_index, var-history) get rich per-var provenance
+             ;; without a schema migration. Legacy bare-string rows are
+             ;; handled on read via `parse-rich-code` — no data loss.
+             :code rich-code}))))
     iter-ref))
 
 (defn db-list-iteration-vars

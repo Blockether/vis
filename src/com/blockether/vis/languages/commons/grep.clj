@@ -13,8 +13,8 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.languages.commons.list :as list-cmd]
             [com.blockether.vis.loop.tool :as sci-tool])
-  (:import [com.google.re2j Pattern Matcher]
-           [java.io File]))
+   (:import [com.google.re2j Pattern]
+            [java.io File]))
 
 ;; Note: `Pattern` here is `com.google.re2j.Pattern`, the linear-time engine.
 ;; `java.util.regex.Pattern` is used only by caller-supplied `#\"...\"` literals
@@ -40,18 +40,13 @@
    LLM from accidentally slurping a 500MB core.basis or index file."
   (* 2 1024 1024))
 
+;; Default ignore-set lives with `list-dir` (the underlying walker). Both
+;; tools agree on what counts as junk; one source of truth.
 (def default-ignore-dirs
-  "Directory names pruned by default. Pass `:ignore-dirs` to override
-   (empty set disables). Matched by exact segment name anywhere in the tree."
-  #{".git" ".hg" ".svn"
-    ".cache" ".cpcache" ".gitlibs" ".m2" ".shadow-cljs"
-    ".clj-kondo" ".lsp" ".calva" "target"
-    "node_modules" ".next" ".nuxt" ".turbo" ".yarn" ".pnpm-store"
-    "__pycache__" ".venv" "venv" ".tox" ".mypy_cache" ".pytest_cache" ".ruff_cache"
-    ".idea" ".vscode"
-    "coverage" ".nyc_output"
-    ".terraform" ".vercel" ".netlify"
-    "DerivedData" "Pods"})
+  "Re-exported from list-cmd so callers and the `:prompt` block can still
+   reach it as `grep/default-ignore-dirs`. See list-cmd/default-ignore-dirs
+   for the canonical set."
+  list-cmd/default-ignore-dirs)
 
 ;;; ── Pattern coercion ──────────────────────────────────────────────────
 
@@ -192,10 +187,19 @@
                  max-line-chars default-max-line-chars
                  literal? false
                  ignore-dirs default-ignore-dirs}} (or opts {})
-         root (io/file (or path "."))
-         _    (when-not (.exists root)
+         ;; Canonicalize the root IMMEDIATELY so every downstream use
+         ;; (`toPath`, `relativize`, file walk) sees a single absolute
+         ;; Path object. Without this, a relative input like `"src"` or
+         ;; `"."` left `root` as a relative File while child files were
+         ;; built from `(.getCanonicalPath root)` — absolute. Mixing those
+         ;; two in `Path.relativize` throws
+         ;; `IllegalArgumentException: 'other' is different type of Path`
+         ;; and agents waste iterations retrying the exact same call.
+         raw-root (io/file (or path "."))
+         _    (when-not (.exists raw-root)
                 (throw (ex-info "grep: path not found"
                          {:type :tool/invalid-input :tool 'grep :path path})))
+         root (io/file (.getCanonicalPath raw-root))
          ;; `:literal? true` forces Pattern.quote() — caller wants a plain
          ;; text match, no regex interpretation. Otherwise `->re2j` tries
          ;; regex first and falls back to literal for compile errors on
@@ -297,6 +301,19 @@
 
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
+(defn- grep-superseded-by
+  "Returns true when this grep call is redundant given other calls in the batch.
+   Rule: a grep on a SPECIFIC file (not \".\") is superseded when the same
+   file is being read-file'd in the same batch — the read already gives
+   full content, grep on that one file adds nothing."
+  [{:keys [path]} other-calls]
+  (and (string? path)
+       (not= path ".")
+       (some (fn [other]
+               (and (= (:tool other) 'read-file)
+                    (= (:path other) path)))
+             other-calls)))
+
 (def tool-def
   (sci-tool/make-tool-def
     'grep
@@ -305,24 +322,36 @@
      :arglists (:arglists (meta #'grep))
      :validate-input validate-grep-input
      :validate-output validate-grep-output
+     :superseded-by grep-superseded-by
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
-     :examples ["(grep \"HITL\" \"src\")"
-                "(grep \"approval|confirm\" \"src\" {:glob \"**/*.clj\" :case-insensitive? true})"
-                "(grep \"*query*\" \"src\" {:literal? true})"
-                "(grep #\"\\bhuman-in-the-loop\\b\" \"src\" {:max-matches 50})"
-                "(grep \"[TODO]\" \".\" {:literal? true})"
-                "(grep \"password\" \".\" {:ignore-dirs #{}})  ;; disable pruning when you NEED the caches"
-                "(grep \"FIXME\" \"src\" {:max-matches 2000})  ;; broad audit, override default cap"]
+     :examples ["(grep \"HITL\")                                          ;; whole repo, every file type"
+                "(grep \".sheet-item-del\")                                ;; CSS class — find it wherever it lives"
+                "(grep \"conversation-header|sheet-list|delete|trash|icon\")  ;; alternation: bare | between options"
+                "(grep \"approval|confirm\" \".\" {:glob \"**/*.clj\" :case-insensitive? true})"
+                "(grep \"deftest\" \"test\")                                ;; scope to test/ when you mean tests"
+                "(grep \"*query*\" \".\" {:literal? true})                  ;; literal mode for regex metacharacters"
+                "(grep #\"\\bhuman-in-the-loop\\b\" \".\" {:max-matches 50})  ;; word-boundary regex"
+                "(grep \"password\" \".\" {:ignore-dirs #{}})              ;; include build caches when needed"
+                "(grep \"FIXME\" \".\" {:max-matches 2000})                ;; broad audit, raise the cap"]
      :prompt "Recursively search files for a pattern. First stop for \"where is X used?\", \"who touches this function?\", \"find all callers\".
 
-Pattern modes:
-- String pattern is tried as regex; if it fails to compile, grep retries as literal text and marks `:pattern-mode :literal-fallback` in the output.
-- `#\"...\"` pattern is always regex; compile errors throw.
-- Pass `{:literal? true}` when you want exact text containing regex metacharacters (`* + ? ( ) [ ] { } | ^ $ . \\`). Always use literal mode for user-supplied text — most users don't mean regex.
+Path defaults to `.` (cwd). The default already prunes `.git`, `node_modules`, `target/`, build caches, IDE state, and OS metadata, so a bare `(grep \"X\")` searches every source file in the project — Clojure under `src/`, CSS/HTML/JS under `resources/`, tests under `test/`, REPL tooling under `dev/`, plus `deps.edn` / `build.clj` / `package.json` at the root.
 
-Defaults you should consciously override:
-- `:max-matches` defaults to 500. That's fine for a focused lookup; bump it when you're auditing (`:max-matches 2000+`), lower it when you only need a first sighting (`:max-matches 20`). Don't assume 500 is always right — tune per task.
-- `:ignore-dirs` prunes junk directories (VCS, build caches, node_modules, venvs, IDE state, coverage, OS metadata) BEFORE they're ever walked. Pass `{:ignore-dirs #{}}` to search caches too, or a custom set to replace the default.
+Filter by FILE TYPE with `:glob`, not by hand-picking a subdirectory:
+  (grep \"foo\" \".\" {:glob \"**/*.css\"})   ;; CSS across the whole repo
+  (grep \"foo\" \".\" {:glob \"**/*.clj\"})   ;; Clojure across the whole repo
+Pass a subdirectory only when you have evidence the answer lives there (`test/` for test-only matches, a specific module path you've already verified contains the symbol).
 
-Prefer one grep with an alternation (`\"foo|bar|baz\"`) over three separate greps. Narrow with `:glob \"**/*.clj\"` instead of walking the whole repo."}))
+Pattern shapes:
+- Plain string  → regex first, literal on compile failure (reported as `:pattern-mode :literal-fallback`).
+- `#\"…\"`        → always regex; compile errors throw.
+- `{:literal? true}` → force literal text. Use this for user-supplied strings or anything containing `* + ? ( ) [ ] { } | ^ $ . \\`.
+
+Regex alternation: write the pipe bare. `\"foo|bar|baz\"` matches any of the three. Inside a Clojure string, `|`, `(`, `)`, `[`, `]`, `{`, `}` all stand for themselves — paste them as-is. One alternation beats three separate greps.
+
+Paths accept absolute (`/Users/you/proj`), bare relative (`src`, `resources`), or `.` for cwd. Use them as-is — no `./` prefix.
+
+Tunable defaults:
+- `:max-matches` 500 fits a focused lookup. Set 20 for first-sighting, 2000+ for repo-wide audits.
+- `:ignore-dirs` defaults to the project-junk set. Pass `#{}` to search caches too, or a custom set to replace (not merge with) the default."}))

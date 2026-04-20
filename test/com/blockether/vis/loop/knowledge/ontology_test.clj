@@ -1,11 +1,13 @@
 (ns com.blockether.vis.loop.knowledge.ontology-test
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.test-helpers :as h]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.loop.storage.db :as db]
    [com.blockether.vis.loop.knowledge.ontology :as ontology]
    [com.blockether.vis.loop.storage.sqlite.concept-graph :as cg]
    [com.blockether.vis.loop.storage.sqlite.core :as sq-core]
+   [com.blockether.vis.loop.tool :as sci-tool]
    [lazytest.core :refer [defdescribe describe it expect]]))
 
 (defdescribe concept-removal-rationale-test
@@ -129,7 +131,7 @@
             sha3 (ontology/content-sha "different")]
         (expect (= sha1 sha2))
         (expect (not= sha1 sha3))
-        (expect (clojure.string/starts-with? sha1 "sha256:"))))
+        (expect (str/starts-with? sha1 "sha256:"))))
 
     (it "returns nil for blank content"
       (expect (nil? (ontology/content-sha nil)))
@@ -159,15 +161,15 @@
                 page    (first pages)
                 nodes   (sq-core/query! db-info
                           ["SELECT id, content FROM page_node WHERE page_id = ?" (:id page)])
-                content (clojure.string/join "\n" (keep :content nodes))
-                node-id (:id (first nodes))]
+                content (str/join "\n" (keep :content nodes))
+                node-id (:id (first nodes))
+                sha     (ontology/content-sha content)]
             ;; Simulate prior extraction by setting SHA
-            (let [sha (ontology/content-sha content)]
-              (db/update-page-content-sha! db-info (:id page) sha)
-              ;; Should skip before LLM call — stub router is fine
-              (let [result (ontology/extract-page-concepts!
-                             (h/make-stub-router) db-info (:document_id page) (:id page) node-id content)]
-                (expect (= :unchanged result)))))))))
+            (db/update-page-content-sha! db-info (:id page) sha)
+            ;; Should skip before LLM call — stub router is fine
+            (let [result (ontology/extract-page-concepts!
+                           (h/make-stub-router) db-info (:document_id page) (:id page) node-id content)]
+              (expect (= :unchanged result))))))))
 
   (describe "user edits survive rebuild"
     (it "preserves user_edited concepts"
@@ -205,7 +207,7 @@
   (describe "tool activation-fn"
     (it "tool-def preserves activation-fn through make-tool-def"
       (let [activation (fn [env] (some? (:db-info env)))
-            tool-def (com.blockether.vis.loop.tool/make-tool-def
+            tool-def (sci-tool/make-tool-def
                        'my-tool
                        (fn [x] x)
                        {:doc "test tool" :activation-fn activation})]
@@ -213,7 +215,7 @@
         (expect (= 'my-tool (:sym tool-def)))))
 
     (it "tool without explicit activation-fn defaults to (constantly true)"
-      (let [tool-def (com.blockether.vis.loop.tool/make-tool-def
+      (let [tool-def (sci-tool/make-tool-def
                        'plain-tool
                        (fn [x] x)
                        {:doc "plain tool"})]

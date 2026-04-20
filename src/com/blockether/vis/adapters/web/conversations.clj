@@ -9,7 +9,45 @@
             [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
             [com.blockether.vis.loop.storage.db :as rlm-db]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [zprint.core :as zp])
+  (:import (java.time Instant ZoneId)
+           (java.time.format DateTimeFormatter)
+           (java.util Date)
+           (java.sql Timestamp)))
+
+;; Zprint config shared across every var-value render. Width tuned for the
+;; ~340px context sidebar at 11px mono (~50 char usable line). Community
+;; style drops the trailing comma after map entries that would otherwise
+;; eat a column.
+(def ^:private zprint-opts
+  {:width 50
+   :style :community})
+
+(def ^:private ^DateTimeFormatter var-ts-formatter
+  (.withZone (DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm:ss")
+             (ZoneId/systemDefault)))
+
+(defn- ->instant
+  "Best-effort coercion of whatever `db-var-history` puts in `:created-at`
+   into a `java.time.Instant`. Returns nil if we don't recognize the shape."
+  [v]
+  (cond
+    (nil? v)             nil
+    (instance? Instant v)   v
+    (instance? Timestamp v) (.toInstant ^Timestamp v)
+    (instance? Date v)      (.toInstant ^Date v)
+    (number? v)             (Instant/ofEpochMilli (long v))
+    (string? v)             (try (Instant/parse v) (catch Exception _ nil))
+    :else                   nil))
+
+(defn- format-var-timestamp
+  "Format a var-history `:created-at` value as `YYYY-MM-DD HH:mm:ss` in the
+   server's local timezone. Falls back to `(str v)` when we can't parse."
+  [v]
+  (if-let [^Instant inst (->instant v)]
+    (.format var-ts-formatter inst)
+    (str v)))
 
 ;; conv-id -> [{:role :text :ts :result?} ...]
 (defonce messages-cache (atom {}))
@@ -137,6 +175,29 @@
   [s n]
   (let [s (str s)]
     (if (> (count s) n) (str (subs s 0 (max 0 (- n 1))) "…") s)))
+
+(defn- display-value
+  "Stringify a var value for human display in the context sidebar.
+
+   Top-level strings keep their literal content (real tabs/newlines, no
+   surrounding quotes or `\\t`/`\\n` escapes) so `<pre>` rendering shows
+   the code or prose the user actually stored.
+
+   Everything else is pretty-printed with zprint — maps/vectors/sets get
+   proper multi-line indentation instead of one long `pr-str` line, so
+   the sidebar detail panel matches what the user would see in a REPL
+   via `clojure.pprint`. Strings inside a collection stay EDN-escaped,
+   which is correct for the container's visual form."
+  [value]
+  (if (string? value)
+    value
+    (try
+      (str/trim-newline (zp/zprint-str value zprint-opts))
+      ;; zprint can throw on exotic inputs (lazy seqs from destroyed
+      ;; transducers, infinite sequences, broken :print-method impls).
+      ;; Fall back to pr-str so the sidebar still shows SOMETHING
+      ;; readable instead of rendering a Clojure stack trace.
+      (catch Throwable _ (pr-str value)))))
 
 (defn- value->preview
   "Render a var's value as a human-friendly preview for the iteration card.
@@ -319,18 +380,39 @@
   [conversation-id title]
   (conversations/set-title! conversation-id title))
 
+(defn- unwrap-answer
+  "System var `*answer*` is stored as the full iteration response map
+   `{:result ... :confidence ... :language ... :sources ...}`. Users opening
+   the sidebar want to read the answer, not the envelope. If it looks like
+   an answer envelope, unwrap it to the `:result` payload."
+  [sym value]
+  (if (and (= "*answer*" (str sym))
+        (map? value)
+        (contains? value :result))
+    (:result value)
+    value))
+
 (defn- var-version-entries
   "Fetch every historical write of `sym` in this conversation, oldest → newest,
-   shaped for the sidebar. Preview uses 200 chars to match the flat-list limit."
+   shaped for the sidebar.
+
+   Each entry carries:
+   - `:preview` — first 200 chars, ends with `…` on overflow; used by the
+     collapsed card in the sidebar.
+   - `:value`   — the full value, untruncated; used by the var-history
+     detail panel so opening a var always shows its complete contents."
   [db-info conv-ref sym]
   (try
     (->> (rlm-db/db-var-history db-info conv-ref sym)
       (mapv (fn [{:keys [version value code created-at]}]
-              {:version    version
-               :type       (type-label value)
-               :preview    (truncate-str (pr-str value) 200)
-               :code       code
-               :created-at (str created-at)})))
+              (let [unwrapped (unwrap-answer sym value)
+                    rendered  (display-value unwrapped)]
+                {:version    version
+                 :type       (type-label unwrapped)
+                 :preview    (truncate-str rendered 200)
+                 :value      rendered
+                 :code       code
+                 :created-at (format-var-timestamp created-at)}))))
     (catch Exception _ [])))
 
 (defn- system-var?
@@ -357,15 +439,12 @@
 
 (defn- ->var-entry
   [db-info conv-ref system? [sym {:keys [value code version]}]]
-  (let [versions (var-version-entries db-info conv-ref sym)]
+  (let [versions  (var-version-entries db-info conv-ref sym)
+        displayed (unwrap-answer sym value)]
     (cond-> {:name     (str sym)
-             :value    (truncate-str (pr-str (if (and system? (= "*answer*" (str sym))
-                                                (map? value) (contains? value :result))
-                                               (:result value)
-                                               value))
-                         200)
+             :value    (truncate-str (display-value displayed) 200)
              :code     code
-             :type     (type-label value)
+             :type     (type-label displayed)
              :version  (or version (count versions))
              :versions versions
              :system?  (boolean system?)}

@@ -112,13 +112,34 @@
 ;; Fix #3 — prior thinking gets a dedicated full-text block, not a 150-char stub
 ;; =============================================================================
 
+;; Stub env shape required by `build-iteration-context`:
+;;   - :var-index-atom — pre-seeded so the cache short-circuits read-var-index-str
+;;     and we don't have to spin up a real SCI sandbox to control the rendered
+;;     <var_index> body.
+;;   - :sci-ctx :env  — atom with an empty 'sandbox' namespace so
+;;     read-user-var-count returns 0 (which keeps var-index-overflow nudge silent).
+;;   - :initial-ns-keys #{} — paired with the above; declares "no built-in vars
+;;     to filter out", so any seeded vars would count as user vars if present.
+(defn- stub-env
+  "Build the smallest rlm-env shape `build-iteration-context` will accept.
+   `var-index` is the literal <var_index> body (or nil to leave the block out)."
+  ([] (stub-env nil))
+  ([var-index]
+   {:var-index-atom (atom {:index var-index :revision 0 :current-revision 0})
+    :sci-ctx        {:env (atom {:namespaces {'sandbox {}}})}
+    :initial-ns-keys #{}}))
+
+(defn- exec-block
+  "One execution-result entry shaped like the iteration loop produces, used to
+   make `:prev-executions` exercise format-execution-results' <journal> rendering."
+  [code result]
+  {:code code :result result})
+
 (defdescribe build-iteration-context-test
   (it "includes prior-thinking as a <prior_thinking> block when non-blank"
     (let [ctx (rlm-core/build-iteration-context
-                {:prior-thinking "I realized the pattern is X because Y"
-                 :exec-results nil
-                 :var-index-str nil
-                 :budget-warning-str nil})]
+                (stub-env)
+                {:prior-thinking "I realized the pattern is X because Y"})]
       (expect (some? ctx))
       (expect (str/includes? ctx "<prior_thinking>"))
       (expect (str/includes? ctx "I realized the pattern is X because Y"))))
@@ -126,10 +147,8 @@
   (it "shows FULL thinking well past the old <var_index> 150-char cap"
     (let [long-thinking (apply str (repeat 1500 "reasoning "))  ;; 15000 chars
           ctx (rlm-core/build-iteration-context
-                {:prior-thinking long-thinking
-                 :exec-results nil
-                 :var-index-str nil
-                 :budget-warning-str nil})
+                (stub-env)
+                {:prior-thinking long-thinking})
           between (-> ctx
                     (str/replace "<prior_thinking>\n" "")
                     (str/replace "\n</prior_thinking>" ""))]
@@ -139,63 +158,58 @@
   (it "truncates prior-thinking at PRIOR_THINKING_MAX_CHARS"
     (let [huge (apply str (repeat (* 10 rlm-core/PRIOR_THINKING_MAX_CHARS) "x"))
           ctx (rlm-core/build-iteration-context
-                {:prior-thinking huge
-                 :exec-results nil
-                 :var-index-str nil
-                 :budget-warning-str nil})]
+                (stub-env)
+                {:prior-thinking huge})]
       (expect (<= (count ctx)
                 (+ rlm-core/PRIOR_THINKING_MAX_CHARS 200)))))  ;; + tag overhead
 
   (it "omits <prior_thinking> when thinking is nil or blank"
     (let [with-journal (rlm-core/build-iteration-context
+                         (stub-env)
                          {:prior-thinking nil
-                          :exec-results "<journal>foo</journal>"
-                          :var-index-str nil
-                          :budget-warning-str nil})
+                          :prev-executions [(exec-block "(+ 1 2)" 3)]
+                          :prev-iteration 0})
           blank-string (rlm-core/build-iteration-context
+                         (stub-env)
                          {:prior-thinking "   \n  "
-                          :exec-results "<journal>foo</journal>"
-                          :var-index-str nil
-                          :budget-warning-str nil})]
+                          :prev-executions [(exec-block "(+ 1 2)" 3)]
+                          :prev-iteration 0})]
       (expect (not (str/includes? with-journal "<prior_thinking>")))
       (expect (not (str/includes? blank-string "<prior_thinking>")))))
 
-  (it "wraps var-index-str in <var_index>...</var_index>"
+  (it "wraps var-index from the env in <var_index>...</var_index>"
     (let [ctx (rlm-core/build-iteration-context
-                {:prior-thinking nil
-                 :exec-results nil
-                 :var-index-str "  x | 1 | int | - | - | 42"
-                 :budget-warning-str nil})]
+                (stub-env "  x | 1 | int | - | - | 42")
+                {})]
       (expect (str/includes? ctx "<var_index>"))
       (expect (str/includes? ctx "x | 1 | int"))
       (expect (str/includes? ctx "</var_index>"))))
 
   (it "returns nil when every component is blank"
-    (let [ctx (rlm-core/build-iteration-context
-                {:prior-thinking nil
-                 :exec-results nil
-                 :var-index-str nil
-                 :budget-warning-str nil})]
+    (let [ctx (rlm-core/build-iteration-context (stub-env) {})]
       (expect (nil? ctx))))
 
   (it "returns nil for whitespace-only components"
     (let [ctx (rlm-core/build-iteration-context
-                {:prior-thinking " "
-                 :exec-results "   "
-                 :var-index-str ""
-                 :budget-warning-str "\n"})]
+                (stub-env "")
+                {:prior-thinking " "})]
       (expect (nil? ctx))))
 
-  (it "orders blocks: prior-thinking, exec-results, var-index, budget-warning"
+  (it "orders blocks: iter-header, prior-thinking, journal, var-index, nudges"
+    ;; Force every block to render: small budget triggers LAST ITERATION nudge.
     (let [ctx (rlm-core/build-iteration-context
-                {:prior-thinking "PT"
-                 :exec-results "JOURNAL"
-                 :var-index-str "VI"
-                 :budget-warning-str "BW"})
-          pt-idx (str/index-of ctx "PT")
-          j-idx  (str/index-of ctx "JOURNAL")
-          vi-idx (str/index-of ctx "<var_index>")
-          bw-idx (str/index-of ctx "BW")]
+                (stub-env "VI_BODY")
+                {:iteration 0
+                 :current-max-iterations 1
+                 :prior-thinking "PT_BODY"
+                 :prev-executions [(exec-block "(+ 1 2)" 3)]
+                 :prev-iteration 0})
+          iter-idx   (str/index-of ctx "[iter 1/1]")
+          pt-idx     (str/index-of ctx "PT_BODY")
+          j-idx      (str/index-of ctx "<journal>")
+          vi-idx     (str/index-of ctx "<var_index>")
+          budget-idx (str/index-of ctx "LAST ITERATION")]
+      (expect (< iter-idx pt-idx))
       (expect (< pt-idx j-idx))
       (expect (< j-idx vi-idx))
-      (expect (< vi-idx bw-idx)))))
+      (expect (< vi-idx budget-idx)))))

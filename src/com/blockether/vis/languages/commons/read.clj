@@ -15,8 +15,9 @@
 (def FULL_FILE_THRESHOLD
   "Files with at most this many lines are returned in full when no explicit
    offset/limit is provided. Deterministic default — no probabilistic
-   trimming, no model-side heuristic."
-  3000)
+   trimming, no model-side heuristic. 1500 lines keeps context
+   manageable and forces pagination on larger files."
+  1500)
 
 (def PARTIAL_READ_LIMIT
   "When a file exceeds FULL_FILE_THRESHOLD lines and the caller didn't
@@ -49,7 +50,7 @@
    - limit  — Max lines to return (int, optional). Must be >= 1 when given.
 
    Auto-pagination (default when NO offset AND NO limit are passed):
-   - Files with ≤ FULL_FILE_THRESHOLD (3000) lines return in full.
+   - Files with ≤ FULL_FILE_THRESHOLD (1500) lines return in full.
    - Files with > FULL_FILE_THRESHOLD lines return the first
      PARTIAL_READ_LIMIT (1500) lines. The footer marks the result as
      `auto-paged` so the caller knows to pass explicit offset/limit to
@@ -212,7 +213,59 @@
                  err)))
       (throw err))))
 
+;;; ── Freshness tracking ────────────────────────────────────────────────
+
+(defn- stat-path
+  "Return `{:mtime :size}` for an existing path, nil when missing."
+  [path]
+  (try
+    (let [f (java.io.File. ^String path)]
+      (when (.exists f)
+        {:mtime (.lastModified f)
+         :size  (.length f)}))
+    (catch Throwable _ nil)))
+
+(defn freshness
+  "`:freshness` implementation for the read-file tool. Single-arg map
+   with the standard `{:args :result :metadata}` shape — see
+   `runtime.core` docstring for the contract.
+
+   Seed phase (`:metadata nil`): pulls the path out of `args`, stats
+   it, returns the baseline + `:freshness? true` (the file was just
+   read).
+   Re-check phase (`:metadata {…}`): re-stats the stored path and
+   compares mtime+size; returns `:freshness? false` on drift, and
+   `:metadata {…}` reflecting the CURRENT on-disk values so callers
+   can show `STALE` vs `fresh` without a second round-trip."
+  [{:keys [args metadata]}]
+  (let [path (or (:path metadata) (first args))]
+    (if (nil? metadata)
+      ;; Seed: tool just ran, args present, file by definition fresh.
+      (let [{:keys [mtime size]} (stat-path path)]
+        {:metadata   {:kind :file :path path :mtime mtime :size size}
+         :freshness? true})
+      ;; Re-check: compare live stat to stored snapshot.
+      (if-let [{:keys [mtime size]} (stat-path path)]
+        {:metadata   {:kind :file :path path :mtime mtime :size size}
+         :freshness? (and (= mtime (:mtime metadata))
+                       (= size (:size metadata)))}
+        ;; File was deleted since bind. Leave :metadata at the last
+        ;; known-good snapshot so the column renderer can distinguish
+        ;; missing from stale; downstream render code maps exceptions
+        ;; from this fn to `MISSING` via render-var-freshness' catch.
+        (throw (ex-info (str "read-file freshness: path no longer exists: " path)
+                 {:type :rlm.freshness/missing :path path}))))))
+
 ;;; ── Tool definition ────────────────────────────────────────────────────
+
+(defn- read-file-superseded-by
+  "A read-file call is superseded when another read-file in the same batch
+   targets the EXACT same path (duplicate read). The first occurrence wins."
+  [{:keys [path]} other-calls]
+  (some (fn [other]
+          (and (= (:tool other) 'read-file)
+               (= (:path other) path)))
+        other-calls))
 
 (def tool-def
   (sci-tool/make-tool-def
@@ -223,13 +276,16 @@
      :validate-input validate-read-input
      :validate-output validate-read-output
      :rescue-fn rescue-read-file
+     :superseded-by read-file-superseded-by
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
+     :requires-freshness? true
+     :freshness freshness
      :examples ["(read-file \"/path/to/file.clj\")"
                 "(def src (read-file \"/path/to/file.clj\"))"
                 "(read-file \"/path/to/file.clj\" 1501 1500)"]
      :prompt "Numbered lines + `[lines N-M of TOTAL]` footer.
-`(read-file path)` = full if ≤3000 lines, else first 1500 auto-paged.
+`(read-file path)` = full if ≤1500 lines, else first 1500 auto-paged.
 Page bigger files: `(read-file path 1501 1500)`.
 `(def src (read-file path))` once, reuse. Don't re-read."}))
 

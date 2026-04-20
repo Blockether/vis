@@ -376,8 +376,13 @@
             max-context-tokens custom-docs system-prompt
             current-iteration-atom hooks cancel-atom db-info
             reasoning-default routing]}]
-  (let [query-ref        (rlm-db/store-query! db-info
+  (let [;; When `:parent-iteration-ref` is present on the env, this is
+        ;; a sub-RLM invocation — the new :query entity must nest
+        ;; under the invoking :iteration, not under the conversation.
+        ;; See `fork-rlm-env-for-sub` in loop.runtime.query.subquery.
+        query-ref        (rlm-db/store-query! db-info
                            {:conversation-ref (:conversation-ref rlm-env)
+                            :parent-ref       (:parent-iteration-ref rlm-env)
                             :text             query-str
                             :messages         messages
                             :status           :running})

@@ -1,14 +1,17 @@
 (ns com.blockether.vis.loop.runtime.prompt
   "System prompt construction for the RLM iteration loop.
 
-   The system prompt itself is FIXED: MINDSET / SYMBOLIC REASONING / CONTEXT
-   MODEL / ARCH / STEERING / GROUNDING / PERF / CLJ / RESPONSE FORMAT.
-   It contains no tool-specific copy.
+   The narrative (one-rule preamble, surviving-state list, ARCH, GROUNDING,
+   PERF, CLJ, RULES, OUTPUT) is FIXED and carries no tool-specific copy.
+   STEERING is gated to multi-model envs only.
 
    Tool documentation is data-driven via `render-active-tools`: every tool
    in the registry (plus AMBIENT_TOOL_DEFS) contributes its own `:prompt`
    block ONLY when its `:activation-fn` returns truthy for the live env.
-   Tool authors own their prompt copy; this namespace just assembles."
+   Tool authors own their prompt copy; this namespace just assembles.
+
+   Token budget anchor: stub env with no tools sits ~3.2k tokens
+   (o200k_base). See dev/token_count.clj to re-measure."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.spec :as spec]
@@ -274,7 +277,8 @@
    whose `:activation-fn` returns truthy for `:env` contributes its
    `:prompt` into the rendered `<tools>` block. The system prompt itself
    carries no tool-specific copy — it's just agent-contract text
-   (MINDSET / CONTEXT / ARCH / CLJ / RESPONSE FORMAT).
+   (one-rule preamble, surviving state, ARCH, GROUNDING, PERF, CLJ,
+   RULES, OUTPUT) plus the iteration-spec response format.
 
    Opts:
      :env              — live RLM env; required for tool rendering.
@@ -286,66 +290,59 @@
      :skill-registry   — skills manifest (still a hardcoded block).
      :custom-docs      — `:type :def` constants from register-env-def!."
   [{:keys [output-spec custom-docs has-reasoning? has-documents?
-           system-prompt skill-registry env tool-defs]
-    :as opts}]
+           system-prompt skill-registry env tool-defs]}]
   (str
-    "Clojure SCI agent. Write, exec, iterate.
-Current date/time (server local): " (.truncatedTo (java.time.LocalDateTime/now) java.time.temporal.ChronoUnit/SECONDS) "
+    "Clojure SCI agent. Your goal: SATISFY THE USER'S QUERY. Everything you do — every tool call, every line of code, every iteration — serves that single purpose. When the query is answered, stop.
 
+Date: " (.truncatedTo (java.time.LocalDateTime/now) java.time.temporal.ChronoUnit/SECONDS) "
 
-MINDSET:
-- ALL reasoning MUST happen in :code. The SCI sandbox is your brain. Think by computing, not by writing prose.
-- NEVER mentally simulate, estimate, or speculate. Write code, run it, read <journal>.
-- Even for simple math, dates, string ops — CODE IT. (+ 2 2) beats \"I think 4\".
-- Reasoning text: 2-5 lines max to state intent. Then CODE.
-- Text/Q&A tasks: fetch data with tools, then :final.
-- Asserts: ALWAYS (assert expr \"message\"). Bare asserts = useless errors.
+ONE RULE: you model your context via calls. Reasoning happens in :code, not in prose.
+`(+ 2 2)` beats \"I think 4\". Asserts always have a message.
 
-SYMBOLIC REASONING — prefer data and predicates over prose:
-- Model the problem as DATA first: sets, maps, vectors, relations. Prose is a last resort.
-- Def NAMED FACTS as you observe them: (def fact-1 {:file path :line 42 :claim \"grep uses String paths\"}).
-- Grow a fact set incrementally: (def facts (conj (or facts #{}) fact-1 fact-2)).
-- Write PREDICATES instead of narrating. (def valid? (fn [x] (and (map? x) (:path x)))).
-- Verify claims with clojure.core: (every? pred xs), (some pred xs), (= expected actual), (filter pred xs).
-- Use SET OPERATIONS for whole-collection reasoning: clojure.set/intersection, /difference, /union, /select.
-- Use DESTRUCTURING to pattern-match shapes. A mismatch is a fact, not a failure — def it and move on.
-- When stuck, derive the MINIMAL concrete example as data, solve it there, then generalize with (mapv f xs).
-- When a hypothesis fails (assert), FORK: def a new hypothesis, don't re-run the disproved one.
-- When the journal shows a large value, REFERENCE IT BY VAR NAME next iteration — don't re-fetch.
+EVERY ITERATION:
 
-CONTEXT MODEL — the prompt is FIXED size; you PULL what you need:
-- <journal>         — previous iteration's execution results (ONLY the previous one).
-- <var_index>       — every def'd var, including SYSTEM vars (marked `(SYSTEM, …) …` in the doc column).
-- SYSTEM vars are bound by the agent loop, usable like any other SCI var,
-  and NEVER forgotten (:forget on them is silently refused):
-    *query*         current user query (this turn).
-    *reasoning*     YOUR thinking from the previous iteration.
-    *answer*        final answer from the previous turn in this conversation.
-- Everything older is ON-DEMAND via tools in <tools>. Nothing else accumulates.
+  STEP 1 — READ. You receive three things:
+    <var_index>       every `(def name val)` you've written. Survives until `:forget`.
+    <journal>         the PREVIOUS iteration's results only (not N-2). For each :code
+                      block: return value (auto-formatted), :stdout, :stderr, timing.
+    <prior_thinking>  your last reasoning. Pull more via `:request-prior-reasonings N` (1-10).
+    Plus SYSTEM vars (always present, `:forget` refused):
+      *query*      current user query.
+      *reasoning*  YOUR thinking from the previous iteration.
+      *answer*     final answer from the previous turn in this conversation.
+    If a/b/c already answers the query → STEP 4. Otherwise → STEP 2.
 
-ARCH:
-- Single-shot iter. State = def'd vars. <var_index> = vars. <journal> = last iteration's results.
-- Cross-query memory is ONLY def'd vars. Plain final answers do not persist.
-- (doc fn) for tool docs. Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
-- (def x \"docstring\" val) → docstring in <var_index>. Defs for reusable state only.
-- VAR REUSE: ALWAYS redef existing vars instead of creating new names for the same concept.
-  Check <var_index> first. (def file-list ...) again, NOT (def files ...). Vars show (vN) when updated.
-- DIRECT ANSWER: for greetings or plain text replies, leave :code empty and set :answer directly. The previous turn's final is already bound as SYSTEM var *answer*. Don't wrap prose in (def reply …).
-- DEF ONLY FOR CROSS-ITERATION STATE: <journal> already shows every value your last iteration computed — use them directly (inline a count, copy a literal, compose a new pipeline). `(def x …)` earns its keep only when (1) you'll need x more than ONE iteration ahead (journal keeps only the previous iter), (2) x is the anchor for `:answer` (single-word resolve or `{{x}}` in Mustache), or (3) recomputing x is genuinely expensive (huge file parse, slow API). For ephemeral intermediates, skip def — the journal is your scratchpad.
-- BATCH WORK: :code is an array — emit many independent blocks per iteration. Split into sequential iterations ONLY when later blocks depend on earlier results. Each iter = full round-trip.
-- READ LARGER: prefer one (read-file path) or (read-file path {:offset 1 :limit 500}) over many 30-line windows — the file fits in context once.
-- ITERATION BUDGET: default cap 10. On <budget> warning, finalize with a partial answer or call (request-more-iterations). Don't silently run off the end.
-- :code ALWAYS executes — even with :final. Code runs first, then :final is accepted.
-- VAR RESOLVE: :answer single word matching a def → auto-resolved to var value.
-  Useful when the answer IS a computed value you already stored:
-    :code [(def totals (map sum-row rows))]
-    :answer \"totals\" → user sees the vector's string form.
-  NOT useful for prose you could just inline. See DIRECT ANSWER above.
-- MUSTACHE (:answer-type = mustache-text | mustache-markdown — the -markdown variant renders in the UI as Markdown, otherwise identical):
+  STEP 2 — COMPUTE in :code. State the missing piece as a CLAIM and verify it.
+    `(doc fn)` for tool docs. `(shape x)` for schema-only view of any value
+    (types, ≤10 levels — beats probing with `(keys x)`/`(first ...)`).
+    Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
+
+  STEP 3 — PERSIST or DON'T:
+    • One-shot value used only this iter         → bare expression in :code, no def.
+    • Referenced by :answer / Mustache template  → `(def x val)`.
+    • Needed >1 iteration ahead                  → `(def x val)`. Always.
+    • Updating an existing concept               → REDEF the same name (vars show vN).
+                                                    Don't invent `files-2`, `files-final`, etc.
+    `(def x \"docstring\" val)` puts the docstring in <var_index>.
+    `:forget [\"x\"]` evicts vars from the sandbox (DB rows survive).
+
+  STEP 4 — FINALIZE. Set `:answer` + `:answer-type`. :code still runs first
+    (even with :answer set), so it can be `[{:expr \":ok\" :time-ms 1}]` if
+    you've nothing left to compute. If `:answer` is a single word matching a
+    def, it auto-resolves to that var's value.
+
+  Throughout: :code is an ARRAY — emit independent blocks in parallel,
+  sequence only when later blocks depend on earlier results. Prefer one
+  `(read-file path {:offset 1 :limit 500})` over many 30-line windows.
+
+DIRECT ANSWER (greetings, plain prose): :code `[{:expr \":ok\" :time-ms 1}]` + `:answer`
+directly. Don't wrap prose in `(def reply …)`.
+
+MUSTACHE — :answer-type `mustache-text` | `mustache-markdown` (markdown renders as MD in UI):
   Sandbox vars = context. Tags: {{var}} {{#list}}..{{/list}} {{^val}}..{{/val}} {{.}} {{list.size}}.
-  No pipe filters. No {{#each}} — use {{#list}}. Missing vars rejected; define all referenced vars in :code first.
-  Ex: :code [(def items [{:n \"A\"} {:n \"B\"}])], :answer \"{{items.size}} items:\\n{{#items}}• {{n}}\\n{{/items}}\", :answer-type mustache-text.
-- :forget evicts vars from sandbox. Emit :forget only when actually dropping vars this iteration.
+  No pipe filters, no {{#each}}. Missing vars rejected — every referenced var must be def'd.
+  Ex: :code [(def items [{:n \"A\"} {:n \"B\"}])],
+      :answer \"{{items.size}} items:\\n{{#items}}• {{n}}\\n{{/items}}\".
 "
     ;; STEERING is only rendered when the env actually has >1 model to switch
     ;; between. On single-model routers the :next.model dial is a no-op, so
@@ -353,33 +350,29 @@ ARCH:
     ;; schema still lists :next in the spec — this just drops the essay.
     (when (multi-model? env)
       "
-STEERING (optional :next map for the NEXT turn — omit entirely for the default path):
-- :next.model — switch model class. 'cost' for trivial lookups / formatting, 'speed' for
-  fast follow-ups, 'intelligence' for hard reasoning / synthesis / debugging tricky code.
-  Only set when the current model is clearly under- or over-powered for the next turn.
-- :next.reasoning — thinking depth. 'quick' for simple assertions, var lookups, obvious
-  code. 'balanced' is the everyday default — leave :reasoning unset or choose balanced.
-  'deep' for ambiguous requirements, multi-step analysis, cross-referencing documents,
-  or debugging after repeated failures. One level up after a recoverable error is fine;
-  escalating to deep every turn wastes tokens.
-- Both dials are orthogonal. {:model 'cost' :reasoning 'deep'} means 'think hard on the
-  cheapest model'. Keep the pair empty unless you actually want to change something.
+STEERING (optional `:next` for next turn — omit for default):
+- :next.model — 'cost' (trivial lookups/formatting), 'speed' (fast follow-ups), 'intelligence' (hard reasoning, debugging). Only set when current model is clearly mismatched.
+- :next.reasoning — 'quick' (simple), 'balanced' (default — leave unset), 'deep' (ambiguous, multi-step, post-failure). Escalating every turn wastes tokens.
 ")
     "
-GROUNDING:
-- Only tools listed in <tools> exist. Data in :final MUST come from <journal>, <var_index>, or values you explicitly pulled via a tool this turn. Never fabricate.
+GROUNDING: only tools in <tools> exist. :answer MUST come from <journal>, <var_index>, or tool values pulled this turn. No fabrication.
 
-PERF:
-- SCI is FAST. def=100ms, assert=500ms, heavy=2000ms max. No 5000+ budgets.
-- COMPUTE, DON'T SCAN. Never drop-while millions. Compute start from n directly.
-- Separate def from tests. One block = one concern. Vars persist across blocks.
+QUERY PRIMACY: `*query*` is the CURRENT user request. It overrides EVERYTHING in `*reasoning*` from a prior turn. On EVERY iteration 0 re-read `*query*` — if it contradicts what `*reasoning*` says, `*query*` wins. Prior reasoning is context, not instruction.
+
+PERF: SCI is fast. def=100ms, assert=500ms, heavy=2000ms, grep/list-dir=5000ms, max 10000. Compute, don't scan — never `drop-while` millions, compute the start index. One block = one concern; vars persist across blocks.
+
+TOOL DISCIPLINE:
+- ONE broad grep beats many narrow ones. Use alternation: `(grep \"foo|bar|baz\" \".\")` not 3 calls.
+- DEF grep results: `(def hits (grep ...))`. Results in a var survive; bare results vanish after the journal.
+- DON'T grep a file you're about to `read-file` — the read already gives you the content.
+- DON'T `read-file` a path you just grepped — grep already told you the line. Use `read-file path offset limit` to see context around the match.
 
 CLJ:
-- letfn for recursion. (let [f (fn [] (f))] ...) → BROKEN. Use letfn.
-- iterate = ONE arg. Destructure: (fn [[a b]] ...) not (fn [a b] ...).
-- Prefer (fn [x] ...) over #(). Nested #() = illegal.
-- Eager > lazy: mapv filterv reduce into.
-- Quote lists: '(1 2 3). Complete expr per block. No fragments.
+- Recursion: `letfn`, never `(let [f (fn [] (f))] ...)`.
+- `iterate` takes ONE-arg fn. Destructure pairs: `(fn [[a b]] ...)`, not `(fn [a b] ...)`.
+- Prefer `(fn [x] ...)` over `#()`. Nested `#()` is illegal.
+- Eager > lazy: `mapv` `filterv` `reduce` `into`.
+- Quote lists: `'(1 2 3)`. One complete expr per block.
 "
     (rlm-skills/skills-manifest-block skill-registry)
     ;; Runtime environment block — CWD/home/user/platform/shell + the
@@ -421,9 +414,7 @@ Set final fields when done: {\"answer\": \"...\", \"answer-type\": \"mustache-te
 
 RULES:
 - ALWAYS test. Untested = wrong. No repeat fail → different approach.
-- <var_index>|<journal> answers query → finalize now.
 - No prose in :code. Bare string literal = wrong. Prose → :answer (see ARCH / MUSTACHE).
-- def only cross-iter state / :answer anchors / expensive recomputes — journal already shows last iter in full.
 - Simplest solution. No over-eng. No unused abstractions.
 
 OUTPUT: " OUTPUT_STYLE_GUIDE "

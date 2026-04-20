@@ -242,7 +242,7 @@
                     "+TWO\n"
                     " three\n"
                     "*** End Patch")
-            result (sut/edit-file patch)]
+            _result (sut/edit-file patch)]
         (expect (= "one\nTWO\nthree" (read-file a)))))
 
     (it "rejects old-start < 1"
