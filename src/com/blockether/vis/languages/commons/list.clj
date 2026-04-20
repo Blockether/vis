@@ -306,10 +306,10 @@
     list-dir
     {:doc (:doc (meta #'list-dir))
      :arglists (:arglists (meta #'list-dir))
-     :validate-input validate-list-input
-     :validate-output validate-list-output
-     :format-result format-list-result
-     :superseded-by list-dir-superseded-by
+     :validate-input-fn validate-list-input
+     :validate-output-fn validate-list-output
+     :format-result-fn format-list-result
+     :superseded-by-fn list-dir-superseded-by
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
      :examples ["(list-dir \"src\")"

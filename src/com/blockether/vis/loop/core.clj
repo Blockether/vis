@@ -282,7 +282,7 @@
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
 ;; =============================================================================
-;; Redundant-call filter (tool-native via :superseded-by)
+;; Redundant-call filter (tool-native via :superseded-by-fn)
 ;; =============================================================================
 
 (defn- extract-tool-call
@@ -487,7 +487,7 @@
     "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."))
 
 ;; =============================================================================
-;; Sequential execute-then-filter (tool-native via :superseded-by)
+;; Sequential execute-then-filter (tool-native via :superseded-by-fn)
 ;; =============================================================================
 
 (defn- block-superseded?
@@ -496,12 +496,12 @@
    does NOT supersede a subsequent grep (we don't have the content)."
   [parsed-call executed-calls tool-registry]
   (when-let [{:keys [tool]} parsed-call]
-    (when-let [superseded-by (get-in tool-registry [tool :superseded-by])]
+    (when-let [superseded-by (get-in tool-registry [tool :superseded-by-fn])]
       (try (superseded-by parsed-call executed-calls)
         (catch Throwable t
           (trove/log! {:level :warn
                        :data {:tool tool :error (ex-message t)}
-                       :msg ":superseded-by threw; keeping block"})
+                       :msg ":superseded-by-fn threw; keeping block"})
           false)))))
 
 (defn- execute-and-filter-blocks
@@ -1030,7 +1030,7 @@
                                                   :time-ms joined-time})))
                                 (recur (rest remaining) (conj result (first remaining)))))))
               ;; Sequential execute-then-filter: run block N, then use
-              ;; its :superseded-by to prune remaining blocks BEFORE
+              ;; its :superseded-by-fn to prune remaining blocks BEFORE
               ;; running them. This is strictly more powerful than
               ;; upfront filtering because a failed execution does NOT
               ;; trigger supersession (we don't have the content).
@@ -1615,26 +1615,26 @@
       (catch Throwable _ nil))))
 
 (defn- seed-var-metadata
-  "Invoke the producing tool's `:freshness` fn to seed a var snapshot's
+  "Invoke the producing tool's `:metadata-fn` fn to seed a var snapshot's
    metadata. Returns `{:tool <sym-str> …}` merged with whatever the
    fn's `:metadata` map is, or nil when the tool doesn't require
    freshness tracking or the expr isn't a literal tool call.
 
    Logs (not throws) when the tool's fn blows up — freshness metadata
-   is best-effort; a faulty :freshness should never break the turn."
+   is best-effort; a faulty :metadata-fn should never break the turn."
   [tool-registry expr result]
   (when-let [{:keys [tool-sym args]} (parse-top-level-tool-call expr)]
     (when-let [tool-def (get tool-registry tool-sym)]
-      (when (:requires-freshness? tool-def)
+      (when (:metadata-fn tool-def)
         (try
-          (let [seed ((:freshness tool-def)
+          (let [seed ((:metadata-fn tool-def)
                       {:args args :result result :metadata nil})]
             (when (map? (:metadata seed))
               (assoc (:metadata seed) :tool (name tool-sym))))
           (catch Throwable t
             (trove/log! {:level :warn
                          :data {:tool tool-sym :error (ex-message t)}
-                         :msg "Tool :freshness seed failed — metadata dropped for this var"})
+                         :msg "Tool :metadata-fn seed failed — metadata dropped for this var"})
             nil))))))
 
 (defn- restorable-var-snapshots
@@ -1649,7 +1649,7 @@
 
    `:metadata` is populated only when the defining expression is a
    literal tool call AND the tool's registration declares
-   `:requires-freshness? true`. The tool's own `:freshness` fn
+   ``. The tool's own `:metadata-fn` fn
    decides what goes in the map — see `seed-var-metadata`."
   [rlm-env executions]
   (let [execution->defs (mapv (fn [{:keys [error] :as execution}]

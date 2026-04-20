@@ -119,8 +119,8 @@
   "Build and validate a canonical function tool-def.
 
    `(make-tool-def sym f tool-def-map)` → validated tool-def with all
-   required keys: :sym, :fn, :type, :doc, :arglists, :validate-input,
-   :validate-output, :examples. Missing keys are inferred from fn metadata
+   required keys: :sym, :fn, :type, :doc, :arglists, :validate-input-fn,
+   :validate-output-fn, :examples. Missing keys are inferred from fn metadata
    or filled with defaults. Throws on invalid shape.
 
    Use this when registering custom tools via `register-env-fn!`."
@@ -141,7 +141,7 @@
   "Validate a canonical function tool-def shape. Throws ex-info on invalid input.
 
    Checks: :sym is symbol, :fn is function, :type is :fn, :doc is non-blank
-   string, :arglists is non-empty vector, :validate-input/:validate-output are
+   string, :arglists is non-empty vector, :validate-input-fn/:validate-output-fn are
    fns, :examples is non-empty vector of non-blank strings."
   tool/assert-fn-tool-def!)
 

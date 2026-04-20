@@ -4,7 +4,7 @@
     [com.blockether.vis.languages.commons.list :as list-tool]
     [com.blockether.vis.loop.tool-formatter-invariants-test :as inv]))
 
-(defn- fmt [] (:format-result list-tool/tool-def))
+(defn- fmt [] (:format-result-fn list-tool/tool-def))
 
 (defdescribe list-dir-formatter
   (describe "format-result produces a compact directory listing"

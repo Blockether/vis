@@ -4,9 +4,9 @@
    Contract:
    - When the tool's :fn throws, the dispatcher invokes
      `(apply rescue-fn err args)` (args = the exact arg vector passed to
-     the tool AFTER :validate-input).
+     the tool AFTER :validate-input-fn).
    - Rescue-fn may return a value → used as the tool result (and still
-     runs through :validate-output).
+     runs through :validate-output-fn).
    - Rescue-fn may throw → exception propagates as a normal :tool-exception.
    - Rescue-fn may return nil → used as the result (NOT fallthrough).
    - Tools without :rescue-fn behave exactly as before."
@@ -117,7 +117,7 @@
                     {:doc "throws"
                      :examples ["(wrap :a)"]
                      :rescue-fn (fn [_err _arg] "raw-string")
-                     :validate-output (fn [inv]
+                     :validate-output-fn (fn [inv]
                                         ;; Coerce any string result into
                                         ;; a map the caller can destructure.
                                         (if (string? (:result inv))

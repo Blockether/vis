@@ -128,11 +128,11 @@
     write-file
     {:doc (:doc (meta #'write-file))
      :arglists (:arglists (meta #'write-file))
-     :validate-input validate-write-input
-     :validate-output validate-write-output
-     :format-result format-write-result
+     :validate-input-fn validate-write-input
+     :validate-output-fn validate-write-output
+     :format-result-fn format-write-result
      ;; Mutations are NEVER superseded — order and side effects matter.
-     :superseded-by (constantly false)
+     :superseded-by-fn (constantly false)
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
      :examples ["(write-file \"/tmp/notes.txt\" \"hello\\nworld\")"

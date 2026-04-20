@@ -566,11 +566,11 @@
     edit-file
     {:doc (:doc (meta #'edit-file))
      :arglists (:arglists (meta #'edit-file))
-     :validate-input validate-edit-input
-     :validate-output validate-edit-output
-     :format-result format-edit-result
+     :validate-input-fn validate-edit-input
+     :validate-output-fn validate-edit-output
+     :format-result-fn format-edit-result
      ;; Mutations are NEVER superseded — order and side effects matter.
-     :superseded-by (constantly false)
+     :superseded-by-fn (constantly false)
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
      :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"

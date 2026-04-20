@@ -20,7 +20,7 @@
 (defn default-format-result
   "Default tool result formatter.
 
-   Contract — MUST hold for every :format-result override:
+   Contract — MUST hold for every :format-result-fn override:
    - Strictly 1-arity — receives ONLY the tool's raw return value.
    - Pure — result is a function of the input alone. No env, no dynamic vars,
      no other iteration state.
@@ -107,7 +107,7 @@
   "Return a canonical function tool-def with all required keys populated.
 
    Required canonical keys:
-   - :sym, :fn, :type, :doc, :arglists, :validate-input, :validate-output, :examples
+   - :sym, :fn, :type, :doc, :arglists, :validate-input-fn, :validate-output-fn, :examples
 
    Optional keys:
    - :activation-fn — `(fn [env] bool)`. When present, the tool is only bound
@@ -123,7 +123,7 @@
      tool's :fn throws, the dispatcher calls `(apply rescue-fn err args)`
      where `args` is the exact vector passed to :fn. Three outcomes:
        1. Returns a value → used as the tool's result (runs through
-          :validate-output just like a normal return).
+          :validate-output-fn just like a normal return).
        2. Re-throws `err` (or a new ex-info) → exception propagates as
           a :tool-exception, same as if no rescue-fn existed.
        3. Returns `nil` → treated as a successful nil result (NOT a
@@ -146,9 +146,9 @@
         :type :fn
         :doc (or (:doc tool-def) inferred-doc)
         :arglists normalized-arglists
-        :validate-input (or (:validate-input tool-def) default-validate-input)
-        :validate-output (or (:validate-output tool-def) default-validate-output)
-        :format-result (or (:format-result tool-def) default-format-result)
+        :validate-input-fn (or (:validate-input-fn tool-def) default-validate-input)
+        :validate-output-fn (or (:validate-output-fn tool-def) default-validate-output)
+        :format-result-fn (or (:format-result-fn tool-def) default-format-result)
         :activation-fn (or (:activation-fn tool-def) (constantly true))
         :examples (vec examples))
       (cond-> prompt-fn (assoc :prompt prompt-fn)))))
@@ -156,7 +156,7 @@
 (defn assert-fn-tool-def!
   "Validate canonical function tool-def shape. Throws ex-info on invalid input."
   [tool-def]
-  (let [{:keys [sym fn type doc arglists validate-input validate-output examples]} tool-def]
+  (let [{:keys [sym fn type doc arglists validate-input-fn validate-output-fn examples]} tool-def]
     (when-not (symbol? sym)
       (throw (ex-info "tool-def :sym must be a symbol"
                {:type :rlm/invalid-tool-def :field :sym :tool-def tool-def})))
@@ -172,31 +172,31 @@
     (when-not (and (vector? arglists) (seq arglists))
       (throw (ex-info "tool-def :arglists must be a non-empty vector"
                {:type :rlm/invalid-tool-def :field :arglists :tool-def (dissoc tool-def :fn)})))
-    (when-not (fn? validate-input)
-      (throw (ex-info "tool-def :validate-input must be a function"
-               {:type :rlm/invalid-tool-def :field :validate-input :tool-def (dissoc tool-def :fn)})))
-    (when-not (fn? validate-output)
-      (throw (ex-info "tool-def :validate-output must be a function"
-               {:type :rlm/invalid-tool-def :field :validate-output :tool-def (dissoc tool-def :fn)})))
-    (let [fmt (:format-result tool-def)]
+    (when-not (fn? validate-input-fn)
+      (throw (ex-info "tool-def :validate-input-fn must be a function"
+               {:type :rlm/invalid-tool-def :field :validate-input-fn :tool-def (dissoc tool-def :fn)})))
+    (when-not (fn? validate-output-fn)
+      (throw (ex-info "tool-def :validate-output-fn must be a function"
+               {:type :rlm/invalid-tool-def :field :validate-output-fn :tool-def (dissoc tool-def :fn)})))
+    (let [fmt (:format-result-fn tool-def)]
       (when-not (fn? fmt)
-        (throw (ex-info "tool-def :format-result must be a function"
-                 {:type :rlm/invalid-tool-def :field :format-result :tool-def (dissoc tool-def :fn)})))
+        (throw (ex-info "tool-def :format-result-fn must be a function"
+                 {:type :rlm/invalid-tool-def :field :format-result-fn :tool-def (dissoc tool-def :fn)})))
       (when-not (fn-arity-1? fmt)
-        (throw (ex-info "tool-def :format-result must accept exactly 1 arg (the raw tool return value)"
-                 {:type :rlm/invalid-tool-def :field :format-result :tool-def (dissoc tool-def :fn)})))
+        (throw (ex-info "tool-def :format-result-fn must accept exactly 1 arg (the raw tool return value)"
+                 {:type :rlm/invalid-tool-def :field :format-result-fn :tool-def (dissoc tool-def :fn)})))
       ;; Probe the formatter with nil to flush obvious crashes. nil is a legal
       ;; input (a tool may return nil) — the formatter MUST handle it without
       ;; throwing, and MUST return a string.
       (let [probe (try (fmt nil) (catch Throwable t t))]
         (when (instance? Throwable probe)
-          (throw (ex-info "tool-def :format-result threw when called with nil"
-                   {:type :rlm/invalid-tool-def :field :format-result
+          (throw (ex-info "tool-def :format-result-fn threw when called with nil"
+                   {:type :rlm/invalid-tool-def :field :format-result-fn
                     :tool-def (dissoc tool-def :fn)
                     :cause (ex-message ^Throwable probe)})))
         (when-not (string? probe)
-          (throw (ex-info "tool-def :format-result must return a string"
-                   {:type :rlm/invalid-tool-def :field :format-result
+          (throw (ex-info "tool-def :format-result-fn must return a string"
+                   {:type :rlm/invalid-tool-def :field :format-result-fn
                     :tool-def (dissoc tool-def :fn)
                     :returned-type (some-> probe class .getName)})))))
     (when-not (and (vector? examples)
@@ -220,15 +220,15 @@
       (when-not (fn? rescue)
         (throw (ex-info "tool-def :rescue-fn must be a function (fn [err & args])"
                  {:type :rlm/invalid-tool-def :field :rescue-fn :tool-def (dissoc tool-def :fn)}))))
-    ;; :superseded-by is optional; when present it must be a fn:
+    ;; :superseded-by-fn is optional; when present it must be a fn:
     ;; `(fn [this-call other-calls] -> boolean)`
     ;; where `this-call` is `{:tool sym :path str :args vec}` and
     ;; `other-calls` is a vec of the same shape for every OTHER block
     ;; in the batch. Returns true when this call is redundant.
-    (when-let [sf (:superseded-by tool-def)]
+    (when-let [sf (:superseded-by-fn tool-def)]
       (when-not (fn? sf)
-        (throw (ex-info "tool-def :superseded-by must be a function (fn [this-call other-calls] -> bool)"
-                 {:type :rlm/invalid-tool-def :field :superseded-by :tool-def (dissoc tool-def :fn)}))))
+        (throw (ex-info "tool-def :superseded-by-fn must be a function (fn [this-call other-calls] -> bool)"
+                 {:type :rlm/invalid-tool-def :field :superseded-by-fn :tool-def (dissoc tool-def :fn)}))))
     tool-def))
 
 (defn maybe-assert-fn-tool-def!

@@ -99,9 +99,9 @@
   [^java.io.File f]
   (let [name (.getName f)]
     (or (get filename->lang name)
-        (let [dot (.lastIndexOf name ".")]
-          (when (pos? dot)
-            (get ext->lang (str/lower-case (subs name dot))))))))
+      (let [dot (.lastIndexOf name ".")]
+        (when (pos? dot)
+          (get ext->lang (str/lower-case (subs name dot))))))))
 
 ;;; ── Core ───────────────────────────────────────────────────────────────
 
@@ -185,30 +185,25 @@
 
                :else
                (str/join "\n" (take PARTIAL_READ_LIMIT all-lines)))]
-         {:content content :lang lang})))))
-
+         content)))))
 
 ;;; ── Display formatting ──────────────────────────────────────────────
 
 (defn- format-read-result
-  "Format read-file result for LLM display. Adds lang tag, line numbers,
-   and a line-count footer. The raw return value (bound to the SCI var)
-   stays clean for programmatic use.
+  "Format read-file result for LLM display. Adds line numbers and count.
+   The raw return value (bound to the SCI var) is the plain string.
 
    Contract: 1-arity, pure, returns string, handles nil."
   [result]
   (cond
     (nil? result) ""
-    (not (map? result)) (str result)
+    (not (string? result)) (str result)
+    (= "" result) "[empty file]"
     :else
-    (let [{:keys [content lang]} result]
-      (if (= "" content)
-        "[empty file]"
-        (let [lines (str/split-lines content)
-              n     (count lines)]
-          (str (when lang (str "[lang:" lang "] "))
-            "[" n " lines]\n"
-            (str/join "\n" (map-indexed (fn [i line] (str (inc i) "\t" line)) lines))))))))
+    (let [lines (str/split-lines result)
+          n     (count lines)]
+      (str "[" n " lines]\n"
+        (str/join "\n" (map-indexed (fn [i line] (str (inc i) "\t" line)) lines))))))
 
 (defn- validate-read-input
   [{:keys [args]}]
@@ -229,12 +224,9 @@
 
 (defn- validate-read-output
   [{:keys [result]}]
-  (when-not (map? result)
-    (throw (ex-info "read-file must return a map with :content and :lang"
+  (when-not (string? result)
+    (throw (ex-info "read-file must return a string"
              {:type :tool/invalid-output :tool 'read-file :got-type (type result)})))
-  (when-not (string? (:content result))
-    (throw (ex-info "read-file :content must be a string"
-             {:type :tool/invalid-output :tool 'read-file :got-type (type (:content result))})))
   {:result result})
 
 ;;; ── Rescue ────────────────────────────────────────────────────────────
@@ -310,28 +302,29 @@
     (catch Throwable _ nil)))
 
 (defn freshness
-  "`:freshness` implementation for the read-file tool. Single-arg map
+  "`:metadata-fn` implementation for the read-file tool. Single-arg map
    with the standard `{:args :result :metadata}` shape — see
    `runtime.core` docstring for the contract.
 
    Seed phase (`:metadata nil`): pulls the path out of `args`, stats
-   it, returns the baseline + `:freshness? true` (the file was just
+   it, returns the baseline + `:fresh? true` (the file was just
    read).
    Re-check phase (`:metadata {…}`): re-stats the stored path and
-   compares mtime+size; returns `:freshness? false` on drift, and
+   compares mtime+size; returns `:fresh? false` on drift, and
    `:metadata {…}` reflecting the CURRENT on-disk values so callers
    can show `STALE` vs `fresh` without a second round-trip."
   [{:keys [args metadata]}]
   (let [path (or (:path metadata) (first args))]
     (if (nil? metadata)
       ;; Seed: tool just ran, args present, file by definition fresh.
-      (let [{:keys [mtime size]} (stat-path path)]
-        {:metadata   {:kind :file :path path :mtime mtime :size size}
-         :freshness? true})
+      (let [{:keys [mtime size]} (stat-path path)
+            lang (path->lang (java.io.File. (str path)))]
+        {:metadata   {:kind :file :path path :mtime mtime :size size :lang lang}
+         :fresh? true})
       ;; Re-check: compare live stat to stored snapshot.
       (if-let [{:keys [mtime size]} (stat-path path)]
         {:metadata   {:kind :file :path path :mtime mtime :size size}
-         :freshness? (and (= mtime (:mtime metadata))
+         :fresh? (and (= mtime (:mtime metadata))
                        (= size (:size metadata)))}
         ;; File was deleted since bind. Leave :metadata at the last
         ;; known-good snapshot so the column renderer can distinguish
@@ -348,8 +341,8 @@
   [{:keys [path]} other-calls]
   (some (fn [other]
           (and (= (:tool other) 'read-file)
-               (= (:path other) path)))
-        other-calls))
+            (= (:path other) path)))
+    other-calls))
 
 (def tool-def
   (sci-tool/make-tool-def
@@ -357,22 +350,21 @@
     read-file
     {:doc (:doc (meta #'read-file))
      :arglists (:arglists (meta #'read-file))
-     :validate-input validate-read-input
-     :validate-output validate-read-output
-     :format-result format-read-result
+     :validate-input-fn validate-read-input
+     :validate-output-fn validate-read-output
+     :format-result-fn format-read-result
      :rescue-fn rescue-read-file
-     :superseded-by read-file-superseded-by
+     :superseded-by-fn read-file-superseded-by
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
-     :requires-freshness? true
-     :freshness freshness
+     
+     :metadata-fn freshness
      :examples ["(read-file \"/path/to/file.clj\")"
                 "(def src (read-file \"/path/to/file.clj\"))"
                 "(read-file \"/path/to/file.clj\" 1501 1500)"]
-     :prompt "Returns `{:content raw-string :lang highlight-js-id}`.
-`(:content result)` for raw text — use with str/replace, write-file, etc.
-`(:lang result)` for syntax highlight language id (nil when unknown).
+     :prompt "Returns the raw file content as a string.
 `(read-file path)` = full if ≤1500 lines, else first 1500 auto-paged.
 Page bigger files: `(read-file path 1501 1500)`.
-`(def src (read-file path))` once, reuse. Don't re-read."}))
+`(def src (read-file path))` once, reuse. Don't re-read.
+Language metadata stored in tool metadata (:lang in freshness)."}))
 

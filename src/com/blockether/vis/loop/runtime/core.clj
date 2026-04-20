@@ -142,7 +142,7 @@
 
 (defn- sandbox-println
   "Sandbox replacement for clojure.core/println. Substitutes formatted strings
-   for any arg that was produced by a tool with a :format-result formatter.
+   for any arg that was produced by a tool with a :format-result-fn formatter.
 
    SCI rebinds `sci.core/out` (NOT Clojure's `*out*`) per-iteration via
    `sci/binding`. SCI's built-in println handles this by rebinding `*out*`
@@ -175,7 +175,7 @@
                        'date-minus-days sci-shared/date-minus-days 'date-format sci-shared/date-format
                        'today-str sci-shared/today-str
                        ;; Formatter-aware println/print — substitute the tool's
-                       ;; :format-result output for args carrying :rlm/format meta.
+                       ;; :format-result-fn output for args carrying :rlm/format meta.
                        ;; prn is intentionally NOT overridden: it's for data
                        ;; round-trip and must stay verbatim pr-str.
                        'println sandbox-println
@@ -470,7 +470,7 @@
            :activation-fn has-history?
            :examples ["(conversation-history)"
                       "(conversation-history 5)"]
-           :format-result fmt/format-conversation-history
+           :format-result-fn fmt/format-conversation-history
            :prompt "Summaries of prior turns in this conversation (text, answer preview, iter count, key vars). Use to decide whether to drill via `conversation-code`/`conversation-results`/`restore-var`."})
         (register! 'conversation-code
           (sci-tools/make-conversation-code-fn db-info conversation-ref)
@@ -479,7 +479,7 @@
            :activation-fn has-history?
            :examples ["(conversation-code :last)"
                       "(conversation-code {:index 0})"]
-           :format-result fmt/format-conversation-code
+           :format-result-fn fmt/format-conversation-code
            :prompt "Code blocks from a prior turn. Selector: `:last`, `{:index N}`, `{:query-id id}`. Shows HOW the answer was computed; pair with `conversation-results` for values."})
         (register! 'conversation-results
           (sci-tools/make-conversation-results-fn db-info conversation-ref)
@@ -488,7 +488,7 @@
            :activation-fn has-history?
            :examples ["(conversation-results :last)"
                       "(conversation-results {:index 1})"]
-           :format-result fmt/format-conversation-results
+           :format-result-fn fmt/format-conversation-results
            :prompt "Values produced by a prior turn's iterations. Selector: see `conversation-code`. For one var prefer `restore-var`/`var-history`."})))
     ;; --- Restore tools (active when conversation has prior queries) ---
     ;; Special: restore-var also rebinds the value into the SCI sandbox.
@@ -526,7 +526,7 @@
            :activation-fn has-vars?
            :examples ["(restore-vars ['docs 'hits 'analysis])"
                       "(restore-vars ['x 'y] {:version 1})"]
-           :format-result fmt/format-restore-vars
+           :format-result-fn fmt/format-restore-vars
            :prompt "Parallel `restore-var`. Returns `{sym value}` or `{sym {:error …}}` for missing ones. Use when you know upfront which vars you need."})
          (register! 'var-history
            (sci-tools/make-var-history-fn db-info conversation-ref)
@@ -541,7 +541,7 @@
                        "(take-last 3 (var-history '*reasoning*))"
                        ;; Just the values, dropping metadata.
                        "(mapv :value (take-last 4 (var-history '*reasoning*)))"]
-            :format-result fmt/format-var-history
+            :format-result-fn fmt/format-var-history
             :prompt (str "Every version of a var across this conversation, oldest first — "
                       "`[{:version N :value :code :created-at}]`. Two common idioms:\n"
                       "  `(take-last 3 (var-history 'sym))` — most recent 3 versions (the "
@@ -557,7 +557,7 @@
            :activation-fn has-vars?
            :examples ["(var-diff 'state 1 3)"
                       "(var-diff 'plan :prev :latest)"]
-           :format-result fmt/format-var-diff
+           :format-result-fn fmt/format-var-diff
            :prompt "Structural diff between two versions of a var. Versions can be ints or `:prev`/`:latest`. Returns `{:edits … :edit-count N}`. Use to answer \"what changed between iter X and Y?\" on large maps/vecs without re-reading both."})))
     ;; --- Git tools (active when repos are attached) ---
     (when has-db?
@@ -618,7 +618,7 @@
                      :activation-fn has-repos?
                      :group-preamble git-group-preamble
                      :prompt (get tool-prompts sym "Git tool.")}
-              (git-formatter sym) (assoc :format-result (git-formatter sym)))))))
+              (git-formatter sym) (assoc :format-result-fn (git-formatter sym)))))))
     ;; --- Concept tools (active when concepts exist — cross-conversation) ---
     (when has-db?
       (let [has-concepts?     (fn [env] (boolean (seq (db/list-concepts (:db-info env)))))
@@ -642,7 +642,7 @@
                      :activation-fn has-concepts?
                      :prompt (or (get concept-prompts sym)
                                "Concept graph tool.")}
-              (concept-formatter sym) (assoc :format-result (concept-formatter sym)))))))
+              (concept-formatter sym) (assoc :format-result-fn (concept-formatter sym)))))))
     ;; Update initial-ns-keys so get-locals excludes built-in tools
     (when sci-ctx
       (let [current-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)"
@@ -671,42 +671,42 @@
 ;;;
 ;;; Every tool that produces a CACHEABLE result (file reads, git
 ;;; snapshots, HTTP fetches) opts into the freshness channel by
-;;; setting `:requires-freshness? true` in its tool-def and providing
-;;; a `:freshness` fn. The fn is the SOLE owner of freshness logic
+;;; setting `` in its tool-def and providing
+;;; a `:metadata-fn` fn. The fn is the SOLE owner of freshness logic
 ;;; for its tool — there are no fallbacks, no central parse-expr
 ;;; heuristics, no `extract-metadata` regex tricks.
 ;;;
-;;; Contract — `:freshness` is a single-arg fn:
+;;; Contract — `:metadata-fn` is a single-arg fn:
 ;;;
 ;;;   (fn [{:keys [args result metadata]}]
-;;;     => {:metadata <updated-map> :freshness? <bool>})
+;;;     => {:metadata <updated-map> :fresh? <bool>})
 ;;;
 ;;; Called at TWO phases:
 ;;;
 ;;;   a) Seed (right after the tool returns):
 ;;;      `{:args <tool-args> :result <tool-result> :metadata nil}`
 ;;;      → must populate `:metadata` from args/result and return
-;;;        `:freshness? true` (we just observed the source, by
+;;;        `:fresh? true` (we just observed the source, by
 ;;;        definition fresh).
 ;;;
 ;;;   b) Re-check (when <var_index> is rendered on a later turn):
 ;;;      `{:args nil :result nil :metadata <stored-snapshot>}`
 ;;;      → must re-consult the underlying source (stat the file,
 ;;;        query git, hit the URL) and return new `:metadata` + a
-;;;        fresh `:freshness?` bool.
+;;;        fresh `:fresh?` bool.
 ;;;
 ;;; Enforcement lives in `register-tool-def!` (see bottom of this
-;;; file): `:requires-freshness? true` without a callable
-;;; `:freshness` throws on registration, not on first use.
+;;; file): `` without a callable
+;;; `:metadata-fn` throws on registration, not on first use.
 
 ;; No ambient state — metadata seeding happens once, AFTER the SCI
 ;; eval, inside `restorable-var-snapshots`: each defining expression
 ;; is parsed to surface its top-level tool symbol + args, and if the
-;; tool's registration has `:requires-freshness? true` we invoke
-;; `(:freshness tool-def)` with {:args :result :metadata nil} to
+;; tool's registration has `` we invoke
+;; `(:metadata-fn tool-def)` with {:args :result :metadata nil} to
 ;; seed. The resulting map is stored on the var snapshot and persists
 ;; through `store-iteration!` into the iteration_var_attrs.code map.
-;; At render time `build-var-index` looks up the same :freshness fn
+;; At render time `build-var-index` looks up the same :metadata-fn fn
 ;; (via the `:tool` key in the stored metadata) and calls it with
 ;; the stored metadata for the re-check. One contract, two phases,
 ;; no dynamic state.
@@ -759,16 +759,16 @@
 
 (defn- render-var-freshness
   "Render the `freshness` column by asking the producing tool's own
-   `:freshness` fn. `metadata` carries `:tool` (string name) from seed
+   `:metadata-fn` fn. `metadata` carries `:tool` (string name) from seed
    time; we use it to look up the current tool-def in `tool-registry`
-   and invoke its `:freshness` with `{:args nil :result nil :metadata
-   stored}`. The fn returns `{:freshness? bool …}` — we translate that
+   and invoke its `:metadata-fn` with `{:args nil :result nil :metadata
+   stored}`. The fn returns `{:fresh? bool …}` — we translate that
    boolean into the column label.
 
    Error handling: `{:type :rlm.freshness/missing}` is the TOOL's
    signal that the backing resource vanished (file deleted, URL 404,
    git ref gone) — we render `MISSING`. Any OTHER exception indicates
-   a bug in the :freshness fn itself and propagates uncaught so the
+   a bug in the :metadata-fn fn itself and propagates uncaught so the
    loop logs it instead of silently disguising a tool bug as a
    missing file.
 
@@ -781,7 +781,7 @@
     (and (map? metadata) (string? (:tool metadata)))
     (let [tool-sym (symbol (:tool metadata))
           tool-def (get tool-registry tool-sym)]
-      (if-let [fresh-fn (:freshness tool-def)]
+      (if-let [fresh-fn (:metadata-fn tool-def)]
         (try
           (let [{:keys [freshness?]} (fresh-fn {:args nil :result nil :metadata metadata})]
             (if freshness? "fresh" "STALE"))
@@ -827,12 +827,12 @@
    next <journal> then shows the full materialized value.
 
    The `freshness` column shows `fresh` / `STALE` / `MISSING` / `-`
-   by invoking the producing tool's `:freshness` fn (registered via
-   `register-tool-def!` with `:requires-freshness? true`). The
+   by invoking the producing tool's `:metadata-fn` fn (registered via
+   `register-tool-def!` with ``). The
    stored `:metadata` carries a `:tool` key that names the producing
    tool; `render-var-freshness` looks its fn up in `:tool-registry`
    and calls it with the stored snapshot. No central freshness logic
-   lives here — every tool owns its own `:freshness` contract.
+   lives here — every tool owns its own `:metadata-fn` contract.
 
    All user vars appear — no `MAX_VAR_INDEX_ROWS` cap. SYSTEM vars
    sort first; the rest are newest-touched first.
@@ -952,7 +952,7 @@
                                    ver-str (str version)]
                                 {:name (str sym) :ver ver-str :type type-label :size size
                                  :status status-col
-                                 :freshness freshness-col
+                                 :fresh? freshness-col
                                  :doc (cond
                                         system? (sci-shared/truncate (system-doc sym) 80)
                                         doc (sci-shared/truncate doc 80)
@@ -966,7 +966,7 @@
                max-type (max 4 (apply max (map #(count (:type %)) visible)))
                max-size (max 4 (apply max (map #(count (:size %)) visible)))
                max-status (max 6 (apply max (map #(count (:status %)) visible)))
-               max-freshness (max 9 (apply max (map #(count (:freshness %)) visible)))
+               max-freshness (max 9 (apply max (map #(count (:fresh? %)) visible)))
                max-doc  (max 3 (apply max (map #(count (:doc %)) visible)))
                pad (fn [s n] (str s (apply str (repeat (max 0 (- n (count s))) \space))))
                header (str "  " (pad "name" max-name) " | " (pad "ver" max-ver)
@@ -1195,7 +1195,7 @@
           (:result outcome))))))
 
 (defn- apply-tool-formatter
-  "Run the tool-def's :format-result on `raw-result` and, when possible,
+  "Run the tool-def's :format-result-fn on `raw-result` and, when possible,
    attach `:rlm/format` + `:rlm/formatted` metadata so downstream consumers
    (LLM serializer, println override, var index) can skip recomputing.
 
@@ -1210,7 +1210,7 @@
      an already-formatted nested value), we don't overwrite it; the upstream
      formatter wins. This keeps composition sane."
   [tool-def raw-result]
-  (let [fmt (:format-result tool-def)
+  (let [fmt (:format-result-fn tool-def)
         formatted (if fmt
                     (try (fmt raw-result)
                       (catch Throwable _ (pr-str raw-result)))
@@ -1263,8 +1263,8 @@
             short-circuit
 
             :else
-            (let [validate-input  (:validate-input tool-def)
-                  validate-output (:validate-output tool-def)
+            (let [validate-input  (:validate-input-fn tool-def)
+                  validate-output (:validate-output-fn tool-def)
                   rescue-fn       (:rescue-fn tool-def)
                   ;; Wrap validate-output in a local fn so we can reuse it
                   ;; for both the happy path and the rescued path without
@@ -1407,19 +1407,19 @@
   "Register or layer a tool-def in `hook-registry-atom`.
 
    Enforces the freshness contract: any tool-def marked
-   `:requires-freshness? true` MUST ship a callable `:freshness` fn
+   `` MUST ship a callable `:metadata-fn` fn
    (single-arg map — see the `Var freshness` ns docstring section).
    Registration throws `:rlm.tool/missing-freshness-fn` up-front so
    the author gets a loud error at boot, not a surprise nil stacktrace
    at the first call site."
   [hook-registry-atom sym tool-def]
-  (when (:requires-freshness? tool-def)
-    (when-not (fn? (:freshness tool-def))
+  (when (:metadata-fn tool-def)
+    (when-not (fn? (:metadata-fn tool-def))
       (throw (ex-info (str "Tool " sym
-                        " declares :requires-freshness? true but no "
-                        ":freshness fn is attached. Provide a fn matching "
+                        " declares  but no "
+                        ":metadata-fn fn is attached. Provide a fn matching "
                         "(fn [{:keys [args result metadata]}] "
-                        "{:metadata <…> :freshness? <bool>}).")
+                        "{:metadata <…> :fresh? <bool>}).")
                {:type :rlm.tool/missing-freshness-fn
                 :tool sym}))))
   (let [canonical (merge-tool-def-hooks
