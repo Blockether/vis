@@ -418,7 +418,7 @@
             fetch-fn  (sci-tools/make-fetch-document-content-fn db-info)]
         (register! 'search-documents search-fn
           {:doc "(search-documents \"query\") or (search-documents \"query\" {:in :pages :top-k 20})"
-           :group "documents" :activation-doc "no documents ingested"
+           :group "documents"
            :activation-fn has-docs?
            :examples ["(search-documents \"neural network\")"
                       "(search-documents \"RLHF\" {:in :pages :top-k 20})"
@@ -444,7 +444,7 @@
                           (str "Currently " n " document" (when (not= 1 n) "s") " ingested."))))})
         (register! 'fetch-document-content fetch-fn
           {:doc "(fetch-document-content [:node/id \"id\"]) or [:doc/id \"id\"] or [:toc/id \"id\"]"
-           :group "documents" :activation-doc "no documents ingested"
+           :group "documents"
            :activation-fn has-docs?
            :examples ["(fetch-document-content [:node/id \"page-42\"])"
                       "(fetch-document-content [:doc/id \"doc-1\"])"
@@ -455,7 +455,7 @@
             ([queries] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries))))
             ([queries opts] (when db-info (sci-tools/format-docs (db/db-search-batch db-info queries opts)))))
           {:doc "(search-batch [\"q1\" \"q2\"]) — batch search across pages and TOC"
-           :group "documents" :activation-doc "no documents ingested"
+           :group "documents"
            :activation-fn has-docs?
            :examples ["(search-batch [\"neural\" \"RLHF\" \"alignment\"])"
                       "(search-batch [\"q1\" \"q2\"] {:top-k-per-query 5})"]
@@ -466,7 +466,7 @@
         (register! 'conversation-history
           (sci-tools/make-conversation-history-fn db-info conversation-ref)
           {:doc "(conversation-history) or (conversation-history n) — prior query summaries"
-           :group "conversation" :activation-doc "no active conversation"
+           :group "conversation"
            :activation-fn has-history?
            :examples ["(conversation-history)"
                       "(conversation-history 5)"]
@@ -475,7 +475,7 @@
         (register! 'conversation-code
           (sci-tools/make-conversation-code-fn db-info conversation-ref)
           {:doc "(conversation-code query-selector) — prior query code blocks"
-           :group "conversation" :activation-doc "no active conversation"
+           :group "conversation"
            :activation-fn has-history?
            :examples ["(conversation-code :last)"
                       "(conversation-code {:index 0})"]
@@ -484,7 +484,7 @@
         (register! 'conversation-results
           (sci-tools/make-conversation-results-fn db-info conversation-ref)
           {:doc "(conversation-results query-selector) — prior query results"
-           :group "conversation" :activation-doc "no active conversation"
+           :group "conversation"
            :activation-fn has-history?
            :examples ["(conversation-results :last)"
                       "(conversation-results {:index 1})"]
@@ -515,14 +515,14 @@
                         (boolean (:conversation-ref env)))]
         (register! 'restore-var binding-restore-var
           {:doc "(restore-var 'sym) — fetch + rebind persisted var from prior iterations"
-           :group "conversation" :activation-doc "no persisted vars from prior queries"
+           :group "conversation"
            :activation-fn has-vars?
            :examples ["(restore-var 'docs)"
                       "(restore-var 'docs {:version 2})"]
            :prompt "Pull a var from an earlier turn into the current SCI sandbox. Rebinds it to the latest value so subsequent iterations reference it without recomputing. Pass `{:version N}` for a specific historical version (see `var-history`)."})
         (register! 'restore-vars binding-restore-vars
           {:doc "(restore-vars ['sym1 'sym2]) — batch restore + rebind"
-           :group "conversation" :activation-doc "no persisted vars from prior queries"
+           :group "conversation"
            :activation-fn has-vars?
            :examples ["(restore-vars ['docs 'hits 'analysis])"
                       "(restore-vars ['x 'y] {:version 1})"]
@@ -531,7 +531,7 @@
          (register! 'var-history
            (sci-tools/make-var-history-fn db-info conversation-ref)
            {:doc "(var-history 'sym) — all persisted versions of a var, oldest first. Each: {:version N :value :code :created-at}. For the last N: `(take-last N (var-history 'sym))`."
-            :group "conversation" :activation-doc "no persisted vars from prior queries"
+            :group "conversation"
             :activation-fn has-vars?
             :examples ["(var-history 'hits)"
                        "(var-history '*reasoning*)"
@@ -541,19 +541,20 @@
                        "(take-last 3 (var-history '*reasoning*))"
                        ;; Just the values, dropping metadata.
                        "(mapv :value (take-last 4 (var-history '*reasoning*)))"]
-            :format-result-fn fmt/format-var-history
-            :prompt (str "Every version of a var across this conversation, oldest first — "
-                      "`[{:version N :value :code :created-at}]`. Two common idioms:\n"
-                      "  `(take-last 3 (var-history 'sym))` — most recent 3 versions (the "
-                      "typical need when <prior_thinking>'s breadcrumb points here).\n"
-                      "  `(mapv :value (take-last N (var-history 'sym)))` — just the values, "
-                      "dropping metadata (handy for recomposing a window of `*reasoning*`).\n"
-                      "Use before `restore-var` when you need a specific version, or to audit "
-                      "how a value evolved across iterations.")})
+           :format-result-fn fmt/format-var-history
+           :prompt (str "Every version of a var across this conversation, oldest first — "
+                     "`[{:version N :value :code :created-at}]`. THE escape hatch for older "
+                     "reasonings: <prior_thinking> only ships your previous iteration's "
+                     "thinking, so when you need older steps call this tool from :code.\n"
+                     "  `(var-history '*reasoning*)` — every prior iteration's thinking, oldest first.\n"
+                     "  `(take-last 3 (var-history '*reasoning*))` — last 3 reasonings.\n"
+                     "  `(mapv :value (take-last N (var-history 'sym)))` — values only, no metadata.\n"
+                     "Use before `restore-var` when you need a specific version, or to audit "
+                     "how any value evolved across iterations.")})
         (register! 'var-diff
           (sci-tools/make-var-diff-fn db-info conversation-ref)
           {:doc "(var-diff 'sym 1 3) — structural diff between two versions. Returns {:edits [...] :edit-count N}"
-           :group "conversation" :activation-doc "no persisted vars from prior queries"
+           :group "conversation"
            :activation-fn has-vars?
            :examples ["(var-diff 'state 1 3)"
                       "(var-diff 'plan :prev :latest)"]
@@ -614,7 +615,7 @@
         (doseq [[sym f] git-binds]
           (register! sym f
             (cond-> {:doc (str "(" sym " ...) — git tool")
-                     :group "git" :activation-doc "no git repos attached"
+                     :group "git"
                      :activation-fn has-repos?
                      :group-preamble git-group-preamble
                      :prompt (get tool-prompts sym "Git tool.")}
@@ -638,7 +639,7 @@
         (doseq [[sym f] concept-binds]
           (register! sym f
             (cond-> {:doc (str "(" sym " ...) — concept graph tool")
-                     :group "concepts" :activation-doc "no concepts extracted yet"
+                     :group "concepts"
                      :activation-fn has-concepts?
                      :prompt (or (get concept-prompts sym)
                                "Concept graph tool.")}

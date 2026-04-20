@@ -190,12 +190,9 @@
 (defn- format-tool-line
   "Render one tool's row: status icon, name, reason, live activation cost,
    and — when present — execution stats and activation-error trailer."
-  [{:keys [sym active? activation-ms activation-doc]} stats]
+  [{:keys [sym active? activation-ms]} stats]
   (let [icon     (if active? "\u2713" "\u2717")
-        reason   (if active?
-                   "active"
-                   (str "inactive \u2014 "
-                     (or activation-doc "activation-fn returned false")))
+        reason   (if active? "active" "inactive")
         act-ms   (when activation-ms (format " (%.2fms)" (double activation-ms)))
         exec     (when (and stats (pos? (long (:executions stats 0))))
                    (let [n       (:executions stats)
@@ -219,7 +216,7 @@
       :group \"documents\"
       :active? true
       :activation-ms 0.42
-      :activation-doc \"requires indexed docs\"}
+}
    The live activation pass is the caller's responsibility — this fn is
    pure. It merges the caller-supplied tool list with the cumulative
    telemetry from `get-diagnostics` so the report shows BOTH 'is this tool

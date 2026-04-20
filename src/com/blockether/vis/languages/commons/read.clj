@@ -325,7 +325,7 @@
       (if-let [{:keys [mtime size]} (stat-path path)]
         {:metadata   {:kind :file :path path :mtime mtime :size size}
          :fresh? (and (= mtime (:mtime metadata))
-                       (= size (:size metadata)))}
+                   (= size (:size metadata)))}
         ;; File was deleted since bind. Leave :metadata at the last
         ;; known-good snapshot so the column renderer can distinguish
         ;; missing from stale; downstream render code maps exceptions
@@ -356,8 +356,7 @@
      :rescue-fn rescue-read-file
      :superseded-by-fn read-file-superseded-by
      :activation-fn (constantly true)
-     :group "filesystem" :activation-doc "always active"
-     
+     :group "filesystem"
      :metadata-fn freshness
      :examples ["(read-file \"/path/to/file.clj\")"
                 "(def src (read-file \"/path/to/file.clj\"))"

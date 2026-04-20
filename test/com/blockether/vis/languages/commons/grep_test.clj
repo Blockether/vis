@@ -47,7 +47,8 @@
             result (sut/grep "var-row" (.getAbsolutePath f))]
         (expect (map? result))
         (expect (= :file (:mode result)))
-        (expect (= 1 (:files result)))
+        (expect (= 1 (:files-scanned result)))
+        (expect (= 1 (:files-with-matches result)))
         (expect (= 3 (count (:matches result))))
         ;; In :file mode the per-match :path is the basename (not a full
         ;; path), mirroring the directory-mode relative-path convention.

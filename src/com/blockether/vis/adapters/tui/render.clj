@@ -339,6 +339,7 @@
 ;;; ── Progress timeline formatting ───────────────────────────────────────────
 
 (def ^:private progress-code-prefix "❯ ")
+(def ^:private progress-thinking-prefix "  ")
 
 (defn- truncate-single-line
   "Collapse multi-line text to a single line (first non-blank) and cap length."
@@ -355,19 +356,27 @@
 
 (defn- format-iteration-entry
   "Turn one progress iteration into display lines mirroring the web's
-   iteration card: an `ITER N` header plus one `❯ <code>` row per streamed
-   expression. The LLM's `:thinking` narrative is intentionally omitted —
-   see the matching decision in `adapters/web/presentation/message.clj`."
-  [{:keys [iteration code final?]} code-width]
-  (let [header (str "ITER " (inc iteration)
-                 (when final? "  · finalizing"))
-        code-lines (when (seq code)
-                     (into []
-                       (keep (fn [form]
-                               (when-let [one (truncate-single-line form code-width)]
-                                 (str progress-code-prefix one))))
-                       code))]
-    (into [header] code-lines)))
+   iteration card: an `ITER N` header, the LLM's reasoning narrative
+   (wrapped to bubble width, indented), then one `❯ <code>` row per
+   streamed expression. Reasoning is shown verbatim — users were going
+   blind without it."
+  [{:keys [iteration thinking code final?]} code-width]
+  (let [header        (str "ITER " (inc iteration)
+                        (when final? "  · finalizing"))
+        thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
+                         (into [(str progress-thinking-prefix "» thinking")]
+                           (map #(str progress-thinking-prefix "  " %)
+                             (wrap-text (str/trim thinking)
+                               (max 1 (- code-width 4))))))
+        code-lines    (when (seq code)
+                        (into []
+                          (keep (fn [form]
+                                  (when-let [one (truncate-single-line form code-width)]
+                                    (str progress-code-prefix one))))
+                          code))]
+    (-> [header]
+      (into thinking-lines)
+      (into code-lines))))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.

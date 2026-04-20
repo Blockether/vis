@@ -26,13 +26,12 @@
      :tool-registry-atom registry}))
 
 (defn- register-tool!
-  [{:keys [tool-registry-atom]} sym handler activation-fn activation-doc]
+  [{:keys [tool-registry-atom]} sym handler activation-fn]
   (let [canonical (tool-def/make-tool-def sym handler
                     {:doc (str sym " tool")
                      :arglists '[[& args]]
                      :examples [(str "(" sym ")")]
-                     :activation-fn activation-fn
-                     :activation-doc activation-doc})]
+                     :activation-fn activation-fn})]
     (swap! tool-registry-atom assoc sym canonical)))
 
 (defn- run-activation-pass!
@@ -71,8 +70,7 @@
       (let [env (make-minimal-env)]
         (register-tool! env 'fake-search
           (fn fake-search-impl [_q] "never")
-          (fn [_env] false)
-          "no fake documents ingested")
+          (fn [_env] false))
         (run-activation-pass! env)
         (expect (not (sandbox-has-sym? env 'fake-search)))))
 
@@ -80,8 +78,7 @@
       (let [env (make-minimal-env)]
         (register-tool! env 'fake-search
           (fn fake-search-impl [_q] "never")
-          (fn [_env] false)
-          "no fake documents ingested")
+          (fn [_env] false))
         (run-activation-pass! env)
         (let [{:keys [err]} (eval-or-error env "(fake-search \"hello\")")]
           (expect (some? err))
@@ -95,8 +92,7 @@
       (let [env (make-minimal-env)]
         (register-tool! env 'always-on
           (fn always-on-impl [x] (inc x))
-          (fn [_env] true)
-          "always active")
+          (fn [_env] true))
         (run-activation-pass! env)
         (expect (sandbox-has-sym? env 'always-on))
         (let [{:keys [ok]} (eval-or-error env "(always-on 41)")]
@@ -110,8 +106,7 @@
             env (make-minimal-env)]
         (register-tool! env 'flip-flop
           (fn flip-flop-impl [] :ok)
-          (fn [_env] @active-atom)
-          "flip-flop tool")
+          (fn [_env] @active-atom))
         ;; Turn 1 — active
         (run-activation-pass! env)
         (expect (sandbox-has-sym? env 'flip-flop))

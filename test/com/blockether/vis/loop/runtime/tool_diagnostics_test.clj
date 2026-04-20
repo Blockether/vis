@@ -172,13 +172,12 @@
 (defn- sample-tool
   "Build the kind of tool descriptor the CLI's activation pass produces.
    Keeping this local avoids depending on the real registry at test time."
-  [{:keys [sym group active? ms doc]
+  [{:keys [sym group active? ms]
     :or   {group "filesystem" active? true ms 0.5}}]
   {:sym            (str sym)
    :group          group
    :active?        active?
-   :activation-ms  ms
-   :activation-doc doc})
+   :activation-ms  ms})
 
 (defdescribe summary-line-rendering
   (describe "summary-line"
@@ -226,17 +225,10 @@
       (reset!!)
       (let [out (tool-diag/format-doctor-report
                   [(sample-tool {:sym 'on :active? true})
-                   (sample-tool {:sym 'off :active? false
-                                 :doc "missing API key"})])]
+                   (sample-tool {:sym 'off :active? false})])]
         (expect (str/includes? out "\u2713 on"))
         (expect (str/includes? out "\u2717 off"))
-        (expect (str/includes? out "missing API key"))))
-
-    (it "falls back to the default reason when :activation-doc is nil"
-      (reset!!)
-      (let [out (tool-diag/format-doctor-report
-                  [(sample-tool {:sym 'off :active? false :doc nil})])]
-        (expect (str/includes? out "activation-fn returned false"))))
+        (expect (str/includes? out "inactive"))))
 
     (it "folds in execution stats from the diagnostics atom"
       (reset!!)

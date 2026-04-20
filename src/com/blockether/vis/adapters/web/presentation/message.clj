@@ -1,6 +1,7 @@
 (ns com.blockether.vis.adapters.web.presentation.message
   "Message rendering — user/assistant bubbles, iterations, executions."
   (:require [com.blockether.vis.adapters.web.presentation.tool-render :as tool-render]
+            [com.blockether.vis.loop.runtime.shared :as rt-shared]
             [clojure.string :as str])
   (:import [java.util Locale]))
 
@@ -74,8 +75,61 @@
     (when (and stderr (not (str/blank? stderr)))
       [:div.exec-stderr stderr])))
 
+(defn- render-exec-shape
+  "Render the structural sketch line that follows every non-atomic result.
+   Pure data form like `[int]`, `{:a int, :b str}`, `(int)`. Suppressed for
+   atomic values whose pr-str already conveys their type (see
+   `runtime.shared/atomic?`). The label is the literal `::` Haskell-style
+   marker — same text the LLM sees in the journal so the visual convention
+   is unified across UI and prompt."
+  [clean]
+  (when (and (some? clean) (not (rt-shared/atomic? clean)))
+    (when-let [shape-pr (try (pr-str (rt-shared/shape clean))
+                          (catch Throwable _ nil))]
+      [:div.exec-shape
+       [:span.exec-shape-label "::"]
+       [:code.exec-shape-data shape-pr]])))
+
+(defn- sci-var?
+  "True when v is a SCI or Clojure var. Detected by class name to avoid
+   coupling this rendering ns to `sci.core`'s class-loading order
+   (same reason as in storage/sqlite/conversations/edn-safe)."
+  [v]
+  (and (some? v)
+    (or (instance? clojure.lang.Var v)
+      (= "sci.lang.Var" (.getName (class v))))))
+
+(defn- unwrap-var-surrogate
+  "Strip var wrapping so the renderer sees the bound VALUE, not the
+   var reference itself.
+
+   Two shapes can arrive here, depending on whether the result came
+   from the live in-memory path or via the DB roundtrip:
+
+     - Live (executor cache): an actual `clojure.lang.Var` /
+       `sci.lang.Var` produced by `(def foo 42)`. We deref it to its
+       raw root value.
+     - Persisted (DB load): the storage layer's `edn-safe` already
+       replaced the var with `{:rlm/var-ref name :rlm/var-value bound}`
+       so EDN can roundtrip it. We pull `:rlm/var-value` out.
+
+   The var name itself is carried separately in the iteration's vars
+   table, so the exec card's value+shape lines should focus on the
+   bound value alone. Pass-through for anything else."
+  [v]
+  (cond
+    (sci-var? v)
+    (try
+      (.getRawRoot v)
+      (catch Throwable _ v))
+
+    (and (map? v) (contains? v :rlm/var-ref))
+    (:rlm/var-value v)
+
+    :else v))
+
 (defn- render-exec [{:keys [code result error timeout?] :as exec}]
-  (let [clean     (clean-result result)
+  (let [clean     (-> result clean-result unwrap-var-surrogate)
         is-final? (and (map? result) (:rlm/final result))
         badge     (exec-badge code)]
     (cond
@@ -104,7 +158,17 @@
                [:details.exec-code-toggle
                 [:summary.exec-code-summary "source"]
                 [:pre.exec-code-full code]])]))
-        ;; Fallback — no tool-specific renderer. Show the raw code + result.
+        ;; Fallback — no tool-specific renderer. Show the raw code + result + shape.
+        ;;
+        ;; Every successful exec auto-unwraps to value + shape:
+        ;;   - value : `result->display` for non-strings (pr-str, sandbox-stripped, 30k cap),
+        ;;             raw text for strings (no surrounding quotes — usually tool prose).
+        ;;             A `(def foo …)` whose result was a sci.lang.Var lands as the
+        ;;             string `#'sandbox/foo` after `edn-safe`, then `strip-sandbox-ns`
+        ;;             collapses it to `#'foo`.
+        ;;   - shape : recursive type sketch via `runtime.shared/shape`. Suppressed for
+        ;;             scalar atoms whose pr-str already conveys the type unambiguously
+        ;;             (no point printing `42` over `int`).
         [:div.exec
          (render-exec-meta exec)
          (when code [:pre.exec-code code])
@@ -112,8 +176,12 @@
          (when-not (nil? clean)
            [:div.exec-result
             (cond
-              (string? clean) clean
-              :else [:pre.exec-data (pr-str clean)])])]))))
+              (string? clean) [:pre.exec-data
+                               (-> clean rt-shared/strip-sandbox-ns
+                                 (rt-shared/truncate-with-marker rt-shared/MAX_RESULT_DISPLAY_CHARS))]
+              :else [:pre.exec-data
+                     (rt-shared/result->display clean :full)])
+            (render-exec-shape clean)])]))))
 
 (defn- system-var?
   "Agent-loop SYSTEM vars are rebound every iteration regardless of what

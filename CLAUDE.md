@@ -32,11 +32,60 @@ This applies to EVERY spec, not just iteration spec: sub-rlm-query,
 code_block, next_turn, all of them. If svar loaded it, the shape is
 correct by construction.
 
-### Always check SQLite when investigating issues
+### Always use `dev/dev.clj` FIRST when investigating conversations
 
-`~/.vis/vis.mdb/rlm.db` is the single source of truth for everything that happened in every conversation — queries, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about user-reported bugs that reference a specific `conversation-id` or `query-id`, you MUST open the DB and read the actual rows. Do NOT guess from logs or code alone when the DB can tell you definitively what the model saw, what it returned, and which vars were bound at which step.
+`dev/dev.clj` is the unified post-mortem debugger. It wraps every
+relevant DB query into an ergonomic Clojure API and reconstructs the
+exact iteration context the LLM saw, the journal, var-index,
+nudges, and per-turn quality metrics (repetition fires, budget
+extensions, redundant-exec-ratio, slowest iteration, token counts).
 
-Minimum triage checklist when a user flags a broken conversation:
+Before you open `sqlite3` by hand, before you write a `SELECT ... FROM
+entity`, before you theorize about why iterations look funny on the
+frontend: **use the debugger**. Raw SQL triage is a fallback for cases
+the debugger genuinely can't express, not a first move. If the
+debugger is missing a function you need, ADD it to `dev/dev.clj` —
+don't go around it. Every ad-hoc SQL query you write instead of
+calling `dev/...` is a missed opportunity to make the next post-mortem
+faster.
+
+Mandatory debugger-first flow:
+
+```clojure
+(require '[dev :as d])
+
+;; Top-level
+(d/conversation    "6f832df0-…")   ;; persona, model, turn + iter count, status
+(d/turns           "6f832df0-…")   ;; per-turn summary + key-vars + answer preview
+(d/quality-report  "6f832df0-…")   ;; metrics: repetition fires, budget ext, redundancy
+
+;; Drill in to one turn
+(d/iterations          <query-uuid>)        ;; every iter with reconstructed executions
+(d/iteration           <query-uuid> POS)    ;; single iter detail (zero-indexed)
+(d/iteration-context   <query-uuid> POS)    ;; journal + var-index + nudges + approx-full
+
+;; Cross-query perspective
+(d/query-context       "6f832df0-…" TURN)   ;; cross-query handover + inherited vars
+```
+
+`dev/dev.clj` is read-only, shares the SQLite pool with the live
+process, and is safe to run while the web server is up. Open a REPL
+(`clojure -M:dev -r`) or one-shot `clojure -M:dev -e '(...)'` —
+either works.
+
+### Raw SQL is a fallback, not a starting point
+
+`~/.vis/vis.mdb/rlm.db` is the single source of truth for everything that happened in every conversation — queries, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about user-reported bugs that reference a specific `conversation-id` or `query-id`, you MUST open the DB — preferably through `dev/dev.clj`. Only reach for raw SQL when:
+
+- you already confirmed `dev/dev.clj` does not expose the view you
+  need AND you intend to upstream that view as a new `dev` function,
+- you are checking schema/migration state, not conversation data, OR
+- you need cross-conversation aggregates that the debugger cannot
+  express.
+
+If those don't apply, call `dev/...` instead.
+
+Raw SQL triage checklist for the remaining cases:
 
 ```bash
 CID='<conversation-uuid>'
@@ -354,6 +403,10 @@ Ordering within a parent is by `:entity/created-at`. `restore-var` / `restore-va
 - `dispose-env!` — releases the env handle; the shared SQLite DataSource stays open for sibling envs.
 
 **Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, iteration stops and the answer is the RLM result. Observability: pass `{:hooks {:on-chunk (fn [{:iteration :thinking :code :final :done?}])}}` to `conversations/send!`.
+
+**`<prior_thinking>` rule:** the iteration loop ships **only the previous iteration's `:thinking`** in `<prior_thinking>`, plus a one-line breadcrumb. There is no spec field, no carry, no opt-in knob to request more. When the agent needs older reasonings it calls `(var-history '*reasoning*)` (or `(take-last N (var-history '*reasoning*))`) from `:code`. Do NOT reintroduce auto-shipping multiple historical reasonings — the eager-context path was deleted on purpose; the on-demand path is the only path. Cross-query handover at iter 0 (`HANDOVER_KEEP_LAST=2` from the previous turn + final answer) is a separate mechanism and stays.
+
+**`<prior_thinking>` rule:** the iteration loop ships **only the previous iteration's `:thinking`** in `<prior_thinking>`, plus a one-line breadcrumb. There is no spec field, no carry, no opt-in knob to request more. When the agent needs older reasonings it calls `(var-history '*reasoning*)` (or `(take-last N (var-history '*reasoning*))`) from `:code`. Do NOT reintroduce auto-shipping multiple historical reasonings — the eager-context path was deleted on purpose; the on-demand path is the only path. Cross-query handover at iter 0 (`HANDOVER_KEEP_LAST=2` from the previous turn + final answer) is a separate mechanism and stays.
 
 **Frontend wiring:**
 - **TUI** — `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty). Disposal on exit only closes the env; the conversation stays in the `:vis` channel so the web sidebar can see it.

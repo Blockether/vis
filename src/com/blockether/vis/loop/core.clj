@@ -289,18 +289,23 @@
   "Best-effort parse of the dominant tool call from a code block expr.
    Returns {:tool symbol :path string :args vec} or nil. Only detects
    top-level `(tool-name \"path\" ...)` shapes — good enough for the
-   batch filter."
+   batch filter.
+
+   Comments (`;; …`) and discard reader macros (`#_ x`) at the head of
+   the expression are stripped by edamame during parse, so a block like
+   `;; check auth\\n(read-file \"x\")` still produces `{:tool read-file …}`
+   and participates in the supersession optimization. Only edamame's
+   parsed forms matter — no string preprocessing, no fragile prefix
+   heuristic on the raw text."
   [^String expr]
   (try
-    (let [trimmed (str/trim expr)]
-      (when (str/starts-with? trimmed "(")
-        (let [forms (edamame/parse-string-all trimmed edamame-opts)]
-          (when (and (= 1 (count forms)) (list? (first forms)))
-            (let [[sym & args] (first forms)]
-              (when (symbol? sym)
-                {:tool sym
-                 :path (when (string? (first args)) (first args))
-                 :args (vec args)}))))))
+    (let [forms (edamame/parse-string-all (str/trim expr) edamame-opts)]
+      (when (and (= 1 (count forms)) (list? (first forms)))
+        (let [[sym & args] (first forms)]
+          (when (symbol? sym)
+            {:tool sym
+             :path (when (string? (first args)) (first args))
+             :args (vec args)}))))
     (catch Throwable _ nil)))
 
 (defn- check-syntax
@@ -468,9 +473,20 @@
         (catch Throwable _ false))
     (bare-data-literal-shape? expr)))
 
+(defn- comment-only-block?
+  "True when the expr parses to zero forms — i.e. it contains only `;;`
+   line comments and/or `#_` discards. SCI evaluates such a block to nil,
+   which is indistinguishable from a legitimately-nil result. Better to
+   reject it explicitly so the LLM gets actionable feedback."
+  [^String expr]
+  (try
+    (zero? (count (edamame/parse-string-all (str/trim expr) edamame-opts)))
+    (catch Throwable _ false)))
+
 (defn literal-code-block-error
   "Returns a validation error when `expr` is literal payload incorrectly
-   emitted in :code instead of actual executable code.
+   emitted in :code instead of actual executable code, or when it contains
+   no executable form at all.
 
    Self-evaluating data literals (`{:a 1}`, `[1 2 3]`, `:kw`, `42`, `nil`,
    quoted forms, etc.) are ALLOWED. They're valid Clojure code and agents
@@ -479,12 +495,23 @@
    receipts persist the evaluated value, so a literal form is a cheap,
    visible way to stash state between turns.
 
-   Only bare string prose is still blocked, because that's the concrete
+   Comments (`;; …`) and discard reader macros (`#_ form`) ARE supported
+   alongside an executable form — `;; intent\\n(read-file \"x\")` evaluates
+   normally, the comment carries narrative for post-mortem readability.
+   Only the case where the WHOLE expr is just comments/discards is rejected,
+   because such a block evaluates to nil and consumes an iteration slot
+   without doing anything useful.
+
+   Bare string prose is also blocked, because that's the concrete
    failure mode where the LLM tries to answer *through* `:code` instead of
    `:answer`."
   [expr]
-  (when (bare-string-code-block? expr)
-    "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."))
+  (cond
+    (bare-string-code-block? expr)
+    "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."
+
+    (comment-only-block? expr)
+    "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
 ;; =============================================================================
 ;; Sequential execute-then-filter (tool-native via :superseded-by-fn)
@@ -726,8 +753,7 @@
   {:prev-executions      nil
    :prev-iteration       -1
    :prev-next-model      nil
-   :prev-next-reasoning  nil
-   :prev-request-prior-n nil})
+   :prev-next-reasoning  nil})
 
 ;; =============================================================================
 ;; Iteration error normalization
@@ -776,7 +802,7 @@
    stored on the query row and fed back to the LLM. Pure function — no
    logging, no mutation.
 
-   svar's ex-data (0.3.4+) already carries what the PROVIDER saw —
+   svar's ex-data (0.3.4+) carries what the PROVIDER saw —
    `:chat-url`, `:api-style`, `:http-response {:parsed :raw-body …}`,
    `:duration-ms`. We preserve that under `:data` and additionally attach
    a `:vis-context` describing what the AGENT LOOP saw: iteration number,
@@ -786,7 +812,7 @@
    `ctx` keys: :iteration :messages :routing :reasoning-level."
   [^Throwable e ctx]
   (let [ex-data-map (ex-data e)
-        cause (.getCause e)]
+        cause       (.getCause e)]
     {:message     (ex-message e)
      :type        (:type ex-data-map)
      :class       (.getName (class e))
@@ -798,7 +824,7 @@
                    :last-user-preview (last-user-message-preview (:messages ctx))}
      :cause       (when cause
                     {:message (.getMessage ^Throwable cause)
-                     :class   (.getName (class cause))})
+                     :class   (.getName (class e))})
      :stack       (mapv str (take 12 (.getStackTrace e)))}))
 
 (defn- handle-iteration-exception!
@@ -836,9 +862,8 @@
    `messages` - Vector of message maps for the LLM.
    `opts` - Map, optional:
       - :iteration-spec - Spec for ask! (default: ITERATION_SPEC_NON_REASONING).
-                         For reasoning providers, pass ITERATION_SPEC_REASONING.
-      - :on-chunk - Streaming callback function."
-  [rlm-env messages & [{:keys [iteration-spec on-chunk routing iteration reasoning-level]
+                         For reasoning providers, pass ITERATION_SPEC_REASONING."
+  [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [_model-name (resolve-root-model (:router rlm-env))
@@ -855,7 +880,6 @@
                                   :messages messages
                                   :routing (or routing {})
                                   :check-context? false}
-                           on-chunk          (assoc :on-chunk on-chunk)
                            effective-reasoning (assoc :reasoning effective-reasoning))))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
@@ -1052,15 +1076,10 @@
                                   :timeout? (:timeout? result)
                                   :repaired? (:repaired? result)})
                            (range) code-blocks execution-results)]
-          (cond-> {:thinking thinking
-                   :next-model next-model :next-reasoning next-reasoning
-                   :executions executions :final-result nil :api-usage api-usage
-                   :duration-ms (or (:duration-ms ask-result) 0)}
-            ;; When the model set :request-prior-reasonings, propagate
-            ;; it — iteration-loop splices that many extra historical
-            ;; reasonings into the NEXT iteration's <prior_thinking>.
-            (:request-prior-reasonings parsed)
-            (assoc :request-prior-reasonings (:request-prior-reasonings parsed))))))))
+           {:thinking thinking
+            :next-model next-model :next-reasoning next-reasoning
+            :executions executions :final-result nil :api-usage api-usage
+            :duration-ms (or (:duration-ms ask-result) 0)})))))
 
 (defn- error-hint
   "Returns a specialized hint for a known error, or nil. Extracts context
@@ -1161,6 +1180,13 @@
     (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
            (let [code-str (str/trim (or code ""))
                  hint (when error (error-hint error))
+                 ;; Same `value :: shape` rule as `format-execution-results`,
+                 ;; with atomic-suppression for scalar results. See
+                 ;; `runtime.shared/atomic?` and `runtime.shared/SHAPE_MARKER`.
+                 shape-suffix-for (fn [v]
+                                    (when-not (rt-shared/atomic? v)
+                                      (str rt-shared/SHAPE_MARKER (pr-str (rt-shared/shape v)))))
+                 var-surrogate? (and (map? result) (contains? result :rlm/var-ref))
                  val-part (cond
                             error
                             (str "ERROR: " error
@@ -1169,9 +1195,26 @@
                             (fn? result)
                             (str "ERROR: " code-str " is a function object. Call it: (" code-str ")")
 
+                            var-surrogate?
+                            (let [{var-name :rlm/var-ref bound :rlm/var-value} result]
+                              (str "*" var-name "* = "
+                                (or (formatted-str-of bound)
+                                  (rt-shared/result->display bound :full))
+                                (shape-suffix-for bound)))
+
+                            (instance? clojure.lang.Var result)
+                            (let [^clojure.lang.Var var-obj result
+                                  var-name (name (.sym var-obj))
+                                  raw-bound (.getRawRoot var-obj)]
+                              (str "*" var-name "* = "
+                                (or (formatted-str-of raw-bound)
+                                  (rt-shared/result->display raw-bound :full))
+                                (shape-suffix-for raw-bound)))
+
                             :else
-                            (or (formatted-str-of result)
-                              (pr-str (realize-value result))))
+                            (str (or (formatted-str-of result)
+                                   (rt-shared/result->display result :full))
+                              (shape-suffix-for result)))
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
@@ -1186,20 +1229,27 @@
       executions)))
 
 (def ^:private EXECUTION_SAFETY_CAP_CHARS
-  "Safety cap for one value rendering in an execution receipt. Receipts show
-   the FULL value — lazy seqs are already bounded by realize-value's 100-item
-   cap. This guard only protects against pathological non-lazy dumps (e.g.
-   a 50MB string). In normal use no truncation happens."
-  200000)
+  "Cap for one value rendering in a journal entry. Aligned with the UI cap
+   (`runtime.shared/MAX_RESULT_DISPLAY_CHARS`, 30000) so the LLM and the
+   web/TUI see the same horizon. The DB still stores uncapped values via
+   `store-iteration!` so the debugger and corpus exporter retain ground
+   truth — only the prompt-facing render is bounded.
+
+   The `:truncated? true` flag (rather than an inline `…[truncated]…`
+   marker) is preserved so the LLM can still pattern-match on it the way
+   it always has."
+  rt-shared/MAX_RESULT_DISPLAY_CHARS)
 
 (def ^:private EXECUTION_STDERR_CHARS
   "Budget for captured stderr — diagnostics only, not a full data dump."
   2000)
 
 (defn- truncated-pr-str
-  "pr-str v + truncate-at-cap flag. Single pass, used by journal rendering."
+  "pr-str v + truncate-at-cap flag. Single pass, used by journal rendering.
+   Strips the `sandbox/` ns from var literals so the LLM sees `#'foo`
+   instead of `#'sandbox/foo` — same cosmetic the UI applies."
   [v]
-  (let [s (pr-str v)]
+  (let [s (rt-shared/strip-sandbox-ns (pr-str v))]
     (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
       [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
       [s false])))
@@ -1235,13 +1285,13 @@
 
 ;; Context-compaction (PRIOR_THINKING_BUDGET_CHARS + should-compact +
 ;; plan-thinking-compaction + format-compacted-thinking-chain + a
-;; `*compacted-reasoning*` SCI var) was removed. The agent now sees at
-;; most the SINGLE latest `[iter N] …` in <prior_thinking> (plus an
-;; opt-in `:request-prior-reasonings` pull), and can always fetch older
-;; reasonings on demand via `(var-history '*reasoning*)`. Kept the code
-;; honest and dropped a failure mode: the old compaction heuristic
-;; re-ran every iteration past a char threshold and silently burned
-;; tokens on summaries nobody asked for.
+;; `*compacted-reasoning*` SCI var) was removed. The same lesson applied
+;; later to multi-iteration <prior_thinking>: the spec used to expose a
+;; `:request-prior-reasonings` knob and the loop spliced 3+ historical
+;; reasonings into every prompt by default. Both are gone. The agent now
+;; sees at most the SINGLE latest `[iter N] …` and reaches anything older
+;; via `(var-history '*reasoning*)` on demand. Eager auto-context burns
+;; tokens on summaries nobody asked for; deliberate pulls don't.
 
 (def ^:const HANDOVER_KEEP_LAST
   "How many of the previous turn's most-recent iterations carry over
@@ -1342,6 +1392,23 @@
                   time-ms       (or execution-time-ms 0)
                   slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
                                   (str " (" time-ms "ms SLOW)"))
+                  ;; Auto-unwrap: every successful exec gets `value :: <shape>`.
+                  ;; Atomic results (int/str/kw/bool/nil) skip the suffix — the
+                  ;; value already conveys its type and the LLM gains nothing
+                  ;; from `42 :: int`. See `runtime.shared/atomic?` and
+                  ;; `runtime.shared/SHAPE_MARKER` (`" :: "`).
+                  ;;
+                  ;; Persisted SCI-var surrogate detection: storage's edn-safe
+                  ;; rewrites a `(def foo 42)` into
+                  ;; `{:rlm/var-ref "foo" :rlm/var-value 42}` so EDN can
+                  ;; roundtrip it. The live in-memory path carries the actual
+                  ;; sci.lang.Var (also `clojure.lang.Var` for `instance?`).
+                  ;; Both render as `*foo* = 42 :: int`.
+                  shape-suffix-for (fn [v]
+                                     (when-not (rt-shared/atomic? v)
+                                       (str rt-shared/SHAPE_MARKER (pr-str (rt-shared/shape v)))))
+                  var-surrogate? (and (map? result)
+                                   (contains? result :rlm/var-ref))
                   value-part
                   (cond
                     error
@@ -1349,6 +1416,18 @@
 
                     (fn? result)
                     "ERROR: Result is a function, not a value"
+
+                    var-surrogate?
+                    (let [{var-name :rlm/var-ref bound :rlm/var-value} result
+                          pre-formatted (formatted-str-of bound)
+                          bound* (realize-value bound)
+                          [value-str truncated?]
+                          (if pre-formatted
+                            [pre-formatted false]
+                            (truncated-pr-str bound*))]
+                      (str "*" var-name "* = " value-str
+                        (when truncated? " :truncated? true")
+                        (shape-suffix-for bound)))
 
                     (instance? clojure.lang.Var result)
                     (let [^clojure.lang.Var var-obj result
@@ -1364,7 +1443,8 @@
                             [pre-formatted false]
                             (truncated-pr-str bound))]
                       (str "*" var-name "* = " value-str
-                        (when truncated? " :truncated? true")))
+                        (when truncated? " :truncated? true")
+                        (shape-suffix-for raw-bound)))
 
                     :else
                     (let [pre-formatted (formatted-str-of result)
@@ -1374,7 +1454,8 @@
                             [pre-formatted false]
                             (truncated-pr-str v))]
                       (str value-str
-                        (when truncated? " :truncated? true"))))]
+                        (when truncated? " :truncated? true")
+                        (shape-suffix-for result))))]
               (str "  [" (inc idx) "] " code-str " → " value-part
                 (or slow-suffix "")
                 (or stdout-suffix "")
@@ -1446,51 +1527,28 @@
                    :msg "load-prior-thinking-chain failed — <prior_thinking> will render empty for this iteration"})
       [])))
 
-(def ^:const PRIOR_THINKING_DEFAULT_TAIL
-  "How many of the most recent iteration reasonings <prior_thinking>
-   shows by default. THREE gives the model enough cross-iteration
-   continuity to avoid derailing on stale context (especially at
-   query boundaries where *reasoning* still holds the previous
-   turn's thinking). The model can still pull more via
-   `:request-prior-reasonings`."
-  3)
-
-(def ^:const PRIOR_THINKING_REQUESTED_CAP
-  "Hard ceiling on `:request-prior-reasonings` — the model can ask for
-   this many extra historical reasonings to be spliced into the NEXT
-   iteration's <prior_thinking>. Past the cap we silently clamp; no
-   turn of 40 historical thinkings."
-  10)
-
 (def PRIOR_THINKING_BREADCRUMB
   "Static hint appended to <prior_thinking>. Tells the agent how to
-   reach older reasonings without blowing up every prompt with the
-   whole chain."
-  (str "[older reasonings available] Set `:request-prior-reasonings N` in your response to have the last N+1 reasonings spliced into the next iteration's <prior_thinking>. "
-    "For arbitrary-depth history call `(var-history '*reasoning*)` from :code."))
+   reach older reasonings without auto-shipping them in every prompt."
+  "[older reasonings] call `(var-history '*reasoning*)` from :code (oldest first; `take-last N` for a window).")
 
 (defn- build-prior-thinking
-  "Render the <prior_thinking> body: last `PRIOR_THINKING_DEFAULT_TAIL`
-   iteration reasonings plus the model-requested extras
-   (`:request-prior-reasonings N`), clamped to
-   `PRIOR_THINKING_REQUESTED_CAP`. Returns the string or nil.
+  "Render the <prior_thinking> body: ONLY the most recent iteration's
+   reasoning plus a one-line breadcrumb pointing at `var-history`.
 
-   Older history is intentionally NOT shown by default; the agent
-   reaches for it on demand via `(take-last N (var-history
-   '*reasoning*))` or by raising `:request-prior-reasonings` on the
-   next turn. The breadcrumb below reminds the model both paths
-   exist."
-  [_rlm-env db-info query-ref requested-n]
+   The loop deliberately does NOT pack older reasonings into the
+   prompt. Eager re-injection burned tokens on context the agent
+   rarely re-read; the agent now pulls older thinking on demand via
+   `(var-history '*reasoning*)` (or `(take-last N (var-history
+   '*reasoning*))`). Returns the string or nil when no prior
+   iteration has produced thinking yet."
+  [_rlm-env db-info query-ref]
   (let [chain (load-prior-thinking-chain db-info query-ref)]
     (when (seq chain)
-      (let [n    (max (long PRIOR_THINKING_DEFAULT_TAIL)
-                   (min (long PRIOR_THINKING_REQUESTED_CAP)
-                     (+ (long PRIOR_THINKING_DEFAULT_TAIL)
-                       (long (or requested-n 0)))))
-            tail (vec (take-last n chain))
+      (let [tail (vec (take-last 1 chain))
             body (format-prior-thinking-chain tail)]
         (if body
-          (str body "\n\n" PRIOR_THINKING_BREADCRUMB)
+          (str body "\n" PRIOR_THINKING_BREADCRUMB)
           PRIOR_THINKING_BREADCRUMB)))))
 
 (defn- read-user-var-count
@@ -1892,7 +1950,6 @@
         ;; without a shared var-index-atom still cache within this loop.
         var-index-atom (or (:var-index-atom rlm-env)
                          (atom {:index nil :revision -1 :current-revision 0}))
-        on-chunk (:on-chunk hooks)
         on-iteration (:on-iteration hooks)
         on-cancel (:on-cancel hooks)
         emit-hook! (fn [hook-fn payload log-msg]
@@ -1939,9 +1996,6 @@
       ;;   :prev-next-model      — the LLM's :next.model override for
       ;;                           the NEXT iteration's routing.
       ;;   :prev-next-reasoning  — the LLM's :next.reasoning override.
-      ;;   :prev-request-prior-n — carry for the model's
-      ;;                           :request-prior-reasonings pick (see
-      ;;                           PRIOR_THINKING_REQUESTED_CAP).
       (loop [loop-state (merge {:iteration          0
                                 :messages           initial-messages
                                 :trace              []
@@ -1950,8 +2004,7 @@
                           FRESH_ITER_CARRY)]
         (let [{:keys [iteration messages trace consecutive-errors restarts
                       prev-executions prev-iteration
-                      prev-next-model prev-next-reasoning
-                      prev-request-prior-n]} loop-state]
+                      prev-next-model prev-next-reasoning]} loop-state]
         (when current-iteration-atom
           (reset! current-iteration-atom iteration))
         (cond
@@ -2048,16 +2101,13 @@
                                     (or prev-next-reasoning
                                       (reasoning-level-for-errors base-reasoning-level consecutive-errors)))
                    _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
-                   ;; `<prior_thinking>` shows the single most recent
-                   ;; iteration reasoning + a breadcrumb reminding the
-                   ;; model how to pull older ones (either via the
-                   ;; structured `:request-prior-reasonings N` field or
-                   ;; by calling `(var-history '*reasoning*)`). When the
-                   ;; previous turn set `:request-prior-reasonings`,
-                   ;; `prev-request-prior-n` carries the count.
+                   ;; `<prior_thinking>` shows ONLY the most recent
+                   ;; iteration's reasoning + a breadcrumb pointing at
+                   ;; `(var-history '*reasoning*)` for anything older.
+                   ;; The agent pulls deeper context deliberately from
+                   ;; :code, never automatically.
                    prior-thinking-body
-                   (build-prior-thinking rlm-env db-info query-ref
-                     prev-request-prior-n)
+                   (build-prior-thinking rlm-env db-info query-ref)
                    ;; Iteration 0 of a NEW query (in an ongoing
                    ;; conversation) prepends a `[prior turn]` handover
                    ;; with last 2 reasonings + final from the previous
@@ -2090,53 +2140,19 @@
                   effective-messages (cond-> base-messages
                                        (not (str/blank? iteration-context))
                                        (conj {:role "user" :content iteration-context}))
-                   ;; Carry the latest non-nil thinking/code across chunks so
-                   ;; the terminal `:done? true` chunk doesn't blank them out.
-                   ;; svar streams partial results, then fires one final done=true
-                   ;; with tokens/cost but no payload — downstream consumers
-                   ;; (e.g. web live-status) overwrote the streamed thinking
-                   ;; with nil and the UI lost it. Hold onto the last seen
-                   ;; values in a closed-over atom and re-emit them on done.
-                   chunk-state (atom {:thinking nil :code nil})
-                   iter-on-chunk (when on-chunk
-                                   (fn [{:keys [result reasoning tokens cost done?]}]
-                                     (let [streamed-thinking (or reasoning (:thinking result))
-                                           streamed-code (when-let [c (:code result)]
-                                                           (when (sequential? c) (vec c)))
-                                           state (swap! chunk-state
-                                                   (fn [s]
-                                                     (cond-> s
-                                                       (some? streamed-thinking) (assoc :thinking streamed-thinking)
-                                                       (some? streamed-code)     (assoc :code streamed-code))))]
-                                       (if done?
-                                         (on-chunk {:iteration iteration
-                                                    :thinking (:thinking state)
-                                                    :code (:code state)
-                                                    :final nil
-                                                    :tokens tokens
-                                                    :cost cost
-                                                    :done? true})
-                                         (on-chunk {:iteration iteration
-                                                    :thinking (:thinking state)
-                                                    :code (:code state)
-                                                    :final nil
-                                                    :tokens nil
-                                                    :cost nil
-                                                    :done? false})))))
-                   ;; Effective routing = caller's base `:routing` + LLM's
-                   ;; `:next.model` override on `:optimize`. Caller's other
-                   ;; routing keys (`:provider`, `:model`, etc.) survive.
-                   effective-routing (cond-> (or routing {})
-                                       prev-next-model (assoc :optimize prev-next-model))
-                    iteration-result (try
-                                       (run-iteration rlm-env effective-messages
-                                         (cond-> {:iteration-spec (if has-reasoning?
-                                                                    ITERATION_SPEC_REASONING
-                                                                    ITERATION_SPEC_NON_REASONING)
-                                                  :iteration iteration
-                                                  :reasoning-level reasoning-level
-                                                  :routing effective-routing}
-                                           iter-on-chunk (assoc :on-chunk iter-on-chunk)))
+                    ;; Effective routing = caller's base `:routing` + LLM's
+                    ;; `:next.model` override on `:optimize`. Caller's other
+                    ;; routing keys (`:provider`, `:model`, etc.) survive.
+                    effective-routing (cond-> (or routing {})
+                                        prev-next-model (assoc :optimize prev-next-model))
+                     iteration-result (try
+                                        (run-iteration rlm-env effective-messages
+                                          {:iteration-spec (if has-reasoning?
+                                                             ITERATION_SPEC_REASONING
+                                                             ITERATION_SPEC_NON_REASONING)
+                                           :iteration iteration
+                                           :reasoning-level reasoning-level
+                                           :routing effective-routing})
                                        (catch Exception e
                                          (handle-iteration-exception! e
                                            {:iteration       iteration
@@ -2149,25 +2165,25 @@
                                        "<error>LLM call failed: " (:message iter-err) "</error>\n"
                                        "The previous attempt failed. Adjust your approach or call \final\": {\"answer\": \"your answer\", \"confidence\": \"high\"} with what you have.")
                       trace-entry {:iteration iteration :error iter-err :final? false}]
-                    ;; Store error iteration snapshot — full ex-data/type/stack so the UI
-                    ;; (and fine-tuning corpus) can inspect why the iteration blew up.
-                    ;; When svar signals :svar.llm/empty-content (provider returned
-                    ;; reasoning with no content), preserve that reasoning as the
-                    ;; iteration's :thinking so DB + UI keep the model's thoughts
-                    ;; for triage instead of a bare NULL row. The typed error
-                    ;; survives in (:type iter-err) and its ex-data lives in
-                    ;; (:data iter-err) — see the catch block above.
-                    (let [empty-content-reasoning (when (= :svar.llm/empty-content (:type iter-err))
-                                                    (:reasoning (:data iter-err)))
-                          err-iter-ref (rlm-db/store-iteration! db-info
-                                         {:query-ref query-ref
-                                          :vars []
-                                          :executions nil
-                                          :thinking empty-content-reasoning
-                                          :duration-ms 0
-                                          :error iter-err})]
-                      (when-let [a (:current-iteration-ref-atom rlm-env)]
-                        (reset! a err-iter-ref)))
+                     ;; Store error iteration snapshot — full ex-data/type/stack so the UI
+                     ;; (and fine-tuning corpus) can inspect why the iteration blew up.
+                     ;; When svar signals :svar.llm/empty-content (provider returned
+                     ;; reasoning with no content), preserve that reasoning as the
+                     ;; iteration's :thinking so DB + UI keep the model's thoughts
+                     ;; for triage instead of a bare NULL row. The typed error
+                     ;; survives in (:type iter-err) and its ex-data lives in
+                     ;; (:data iter-err) — see the catch block above.
+                     (let [empty-content-reasoning (when (= :svar.llm/empty-content (:type iter-err))
+                                                     (:reasoning (:data iter-err)))
+                           err-iter-ref (rlm-db/store-iteration! db-info
+                                          {:query-ref query-ref
+                                           :vars []
+                                           :executions nil
+                                           :thinking empty-content-reasoning
+                                           :duration-ms 0
+                                           :error iter-err})]
+                       (when-let [a (:current-iteration-ref-atom rlm-env)]
+                         (reset! a err-iter-ref)))
                    ;; Global observer hook after store-iteration! (error path)
                    (emit-hook! on-iteration
                      {:iteration iteration
@@ -2292,21 +2308,23 @@
                                (:sources final-result)   (assoc :sources (:sources final-result))
                                (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
                         (finalize-cost)))
-                     (if (empty? executions)
-                       ;; Empty iteration — spec-level `:code` is required so
-                       ;; this branch should almost never fire; svar rejects
-                       ;; responses missing the field. It survives only as
-                       ;; defence against a provider that silently skips
-                       ;; enforcement. We do NOT re-persist (the iteration
-                       ;; was already stored above with :executions []) and
-                       ;; we do NOT scold — the old soft nudge was dead
-                       ;; weight duplicating what the spec description
-                       ;; already says. All we do is propagate state so
-                       ;; the agent's last real journal survives an empty
-                       ;; "thinking only" blip (regression guarded by
-                       ;; journal-preservation-test).
-                        (do
-                          (rlm-stage! :empty iteration {})
+                       (if (empty? executions)
+                        ;; Empty iteration — spec-level `:code` is required so
+                        ;; this branch should almost never fire; svar rejects
+                        ;; responses missing the field via
+                        ;; `:svar.spec/required-field-missing` or
+                        ;; `:svar.spec/schema-rejected` (strict mode landed in
+                        ;; svar 0.3.6+). It survives only as defence against a
+                        ;; provider that silently skips enforcement. We do NOT
+                        ;; re-persist (the iteration was already stored above
+                        ;; with :executions []) and we do NOT scold — the old
+                        ;; soft nudge was dead weight duplicating what the
+                        ;; spec description already says. All we do is
+                        ;; propagate state so the agent's last real journal
+                        ;; survives an empty "thinking only" blip (regression
+                        ;; guarded by journal-preservation-test).
+                         (do
+                           (rlm-stage! :empty iteration {})
                           ;; Close the telemetry frame even for empty
                           ;; turns so `:iter-start :empty :iter-end`
                           ;; triples show in logs without a stray
@@ -2314,14 +2332,28 @@
                           ;; the no-exec state.
                           (rlm-stage! :iter-end iteration
                             {:blocks 0 :errors 0 :times []})
-                          ;; Empty turn only bumps `:iteration` and
-                          ;; threads the NEW model overrides; every
-                          ;; other value in `loop-state` carries
-                          ;; through verbatim — including
-                          ;; `prev-executions` so the last real
-                          ;; journal survives a "thinking only" blip.
+                          ;; Empty turn bumps `:iteration`, threads
+                          ;; NEW model overrides, AND appends the
+                          ;; `trace-entry` built above so the
+                          ;; returned `:trace` reflects what the
+                          ;; model actually did this turn. Before
+                          ;; this was added, empty iters were
+                          ;; persisted to SQLite but elided from the
+                          ;; in-memory trace — `conversations/send!`
+                          ;; returned a pruned trace, the web
+                          ;; message cache persisted the prune, and
+                          ;; the user saw `ITERATION 1` / `ITERATION
+                          ;; 8` with six invisible thinking-only
+                          ;; iterations between them (conversation
+                          ;; 2e3bf18c). Regression guarded by
+                          ;; trace-empty-iter-test. Every other
+                          ;; value in `loop-state` carries through
+                          ;; verbatim — including `prev-executions`
+                          ;; so the last real journal survives a
+                          ;; "thinking only" blip.
                           (recur (merge loop-state
                                   {:iteration           (inc iteration)
+                                   :trace               (conj trace trace-entry)
                                    :prev-next-model     next-model
                                    :prev-next-reasoning next-reasoning})))
                         ;; Normal iteration with executions. No
@@ -2343,11 +2375,7 @@
                                   (swap! var-index-atom update :current-revision inc))]
                           ;; Normal success: next loop-state absorbs
                           ;; this iter's executions as the journal for
-                          ;; the next turn, threads model overrides,
-                          ;; and carries the model's
-                          ;; `:request-prior-reasonings` pick forward
-                          ;; exactly ONE turn (clamped against
-                          ;; PRIOR_THINKING_REQUESTED_CAP downstream).
+                          ;; the next turn and threads model overrides.
                           (recur (merge loop-state
                                    {:iteration            (inc iteration)
                                     :messages             messages
@@ -2356,8 +2384,7 @@
                                     :prev-executions      executions
                                     :prev-iteration       iteration
                                     :prev-next-model      next-model
-                                    :prev-next-reasoning  next-reasoning
-                                    :prev-request-prior-n (:request-prior-reasonings iteration-result)}))))))))))))))))
+                                    :prev-next-reasoning  next-reasoning}))))))))))))))))
 
 ;; =============================================================================
 ;; Public API — environment lifecycle, tool registration

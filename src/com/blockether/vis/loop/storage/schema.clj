@@ -234,10 +234,12 @@
        tool name leaks into the spec and the LLM isn't nudged to
        produce source IDs it cannot possibly have.
 
-   `:request-prior-reasonings` is ALWAYS present (optional, int) so
-   the model can ask for older reasonings to be spliced into the
-   next iteration's <prior_thinking>. See its field description for
-   the contract."
+   The iteration loop ALWAYS sends only the previous iteration's
+   `:thinking` under `<prior_thinking>`. There is no spec knob to
+   request more — older reasonings live in `(var-history '*reasoning*)`
+   and the agent reaches them on demand from `:code`. This keeps the
+   per-iteration prompt O(1) and forces the agent to be deliberate
+   about what historical context it actually needs."
   [{:keys [include-thinking? include-sources?]}]
   (let [base-fields (cond-> [(spec/field {::spec/name :code
                                           ::spec/type :spec.type/ref
@@ -275,7 +277,7 @@
                              (spec/field {::spec/name :answer-type
                                           ::spec/type :spec.type/keyword
                                           ::spec/cardinality :spec.cardinality/one
-                                          ::spec/required true
+                                          ::spec/required false
                                           ::spec/description "REQUIRED with :answer. How to render the answer (see ARCH / MUSTACHE)."
                                           ::spec/values ["mustache-text" "mustache-markdown"]})
                              (spec/field {::spec/name :confidence
@@ -292,17 +294,7 @@
                                           ::spec/type :spec.type/string
                                           ::spec/cardinality :spec.cardinality/many
                                           ::spec/required false
-                                          ::spec/description "IDs of sources (page.node, document, entity) that grounded the :answer. Required whenever you pulled content from any document-retrieval tool this turn."}))
-
-                       ;; Always required — feeds this many extra
-                       ;; historical reasonings into the NEXT
-                       ;; iteration's <prior_thinking>.
-                       true
-                       (conj (spec/field {::spec/name :request-prior-reasonings
-                                          ::spec/type :spec.type/int
-                                          ::spec/cardinality :spec.cardinality/one
-                                          ::spec/required true
-                                          ::spec/description "Int 1-10. Extra older reasonings spliced into next <prior_thinking>. Deeper history: (take-last N (var-history '*reasoning*))."})))
+                                          ::spec/description "IDs of sources (page.node, document, entity) that grounded the :answer. Required whenever you pulled content from any document-retrieval tool this turn."})))
         fields (if include-thinking?
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string
