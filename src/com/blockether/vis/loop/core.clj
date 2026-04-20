@@ -2370,6 +2370,14 @@
                           {:blocks (count executions)
                            :errors (count (filter :error executions))
                            :times (mapv :execution-time-ms executions)})
+                        ;; Fire streaming callback so the web UI (and any
+                        ;; other adapter) gets live updates per iteration,
+                        ;; not just at finalize.
+                        (when on-chunk
+                          (on-chunk {:iteration iteration
+                                     :thinking thinking
+                                     :code (mapv :code executions)
+                                     :done? false}))
                         (let [had-successful-execution? (some #(nil? (:error %)) executions)
                               next-errors (if had-successful-execution? 0 (inc consecutive-errors))
                               _ (when had-successful-execution?
