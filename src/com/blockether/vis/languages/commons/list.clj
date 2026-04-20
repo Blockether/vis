@@ -289,6 +289,17 @@
 
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
+(defn- list-dir-superseded-by
+  "A list-dir call is superseded when another list-dir in the same batch
+   targets the EXACT same path (duplicate listing).
+   NOTE: grep on the same dir does NOT supersede list-dir — they serve
+   different purposes (tree structure vs content matches)."
+  [{:keys [path]} other-calls]
+  (some (fn [other]
+          (and (= (:tool other) 'list-dir)
+               (= (:path other) path)))
+        other-calls))
+
 (def tool-def
   (sci-tool/make-tool-def
     'list-dir
@@ -298,6 +309,7 @@
      :validate-input validate-list-input
      :validate-output validate-list-output
      :format-result format-list-result
+     :superseded-by list-dir-superseded-by
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
      :examples ["(list-dir \"src\")"

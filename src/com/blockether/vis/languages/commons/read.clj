@@ -1,7 +1,7 @@
 (ns com.blockether.vis.languages.commons.read
   "Base READ tool for RLM agents.
    Reads files with optional offset (line) and limit (line count).
-   Returns content with line numbers for precise referencing."
+   Returns raw content; line numbers are added by format-result for display."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.loop.tool :as sci-tool]))
@@ -38,6 +38,71 @@
       (throw (ex-info (str "Refusing to follow symlink: " path) {:path path :error :symlink})))
     f))
 
+;;; ── Language detection ───────────────────────────────────────────────
+
+(def ^:private ext->lang
+  "Map file extensions (lower-case, with dot) to highlight.js language ids."
+  {".clj"  "clojure"  ".cljs" "clojure"  ".cljc" "clojure"  ".edn" "clojure"
+   ".js"   "javascript" ".mjs" "javascript" ".cjs" "javascript" ".jsx" "javascript"
+   ".ts"   "typescript" ".tsx" "typescript" ".mts" "typescript"
+   ".py"   "python"    ".pyi" "python"    ".pyw" "python"
+   ".rb"   "ruby"      ".rake" "ruby"
+   ".java" "java"      ".kt"  "kotlin"    ".scala" "scala"   ".groovy" "groovy"
+   ".go"   "go"
+   ".rs"   "rust"
+   ".c"    "c"         ".h"   "c"
+   ".cpp"  "cpp"       ".cc"  "cpp"       ".cxx" "cpp"      ".hpp" "cpp"
+   ".cs"   "csharp"
+   ".swift" "swift"    ".m"   "objectivec"
+   ".css"  "css"       ".scss" "scss"     ".less" "less"
+   ".html" "html"      ".htm" "html"
+   ".xml"  "xml"       ".svg" "xml"       ".xsl" "xml"
+   ".json" "json"      ".jsonc" "json"
+   ".yaml" "yaml"      ".yml" "yaml"
+   ".toml" "toml"
+   ".md"   "markdown"  ".mdx" "markdown"
+   ".sql"  "sql"
+   ".sh"   "bash"      ".bash" "bash"     ".zsh" "bash"
+   ".ps1"  "powershell"
+   ".r"    "r"
+   ".lua"  "lua"
+   ".php"  "php"
+   ".pl"   "perl"      ".pm"  "perl"
+   ".ex"   "elixir"    ".exs" "elixir"
+   ".hs"   "haskell"
+   ".ml"   "ocaml"     ".mli" "ocaml"
+   ".tf"   "hcl"       ".hcl" "hcl"
+   ".ini"  "ini"       ".cfg" "ini"       ".properties" "ini"
+   ".vim"  "vim"
+   ".el"   "lisp"      ".lisp" "lisp"    ".scm" "scheme"
+   ".proto" "protobuf"
+   ".diff" "diff"      ".patch" "diff"
+   ".graphql" "graphql" ".gql" "graphql"
+   ".cmake" "cmake"
+   ".nix"  "nix"
+   ".zig"  "zig"
+   ".dart" "dart"})
+
+(def ^:private filename->lang
+  "Exact filename matches for files without a meaningful extension."
+  {"Dockerfile"    "dockerfile"
+   "Makefile"      "makefile"
+   "Rakefile"      "ruby"
+   "Gemfile"       "ruby"
+   "CMakeLists.txt" "cmake"
+   "Vagrantfile"   "ruby"
+   ".gitignore"    "plaintext"
+   ".dockerignore" "plaintext"})
+
+(defn- path->lang
+  "Derive highlight.js language identifier from file path. Returns nil for unknown."
+  [^java.io.File f]
+  (let [name (.getName f)]
+    (or (get filename->lang name)
+        (let [dot (.lastIndexOf name ".")]
+          (when (pos? dot)
+            (get ext->lang (str/lower-case (subs name dot))))))))
+
 ;;; ── Core ───────────────────────────────────────────────────────────────
 
 (defn read-file
@@ -59,11 +124,12 @@
    Callers who want a specific range pass `offset` and/or `limit`
    explicitly; the auto-pagination path is then skipped.
 
-   Returns string with numbered lines: \"1\\t(ns foo)\\n2\\t(:require ...)\""
+   Returns map `{:content raw-string :lang highlight-js-id-or-nil}`."
   ([path] (read-file path nil nil))
   ([path offset] (read-file path offset nil))
   ([path offset limit]
    (let [f   (validate-path! path)
+         lang (path->lang f)
          ;; Guard: map passed instead of positional int (LLM doc mismatch)
          _   (when (map? offset)
                (throw (ex-info (str "read-file takes positional args: (read-file path offset limit). "
@@ -95,39 +161,54 @@
                 {:path path :size (.length f) :max max-file-size})))
 
      ;; Single buffered pass — we always materialize all lines into a vector
-     ;; so the footer carries an accurate total. The 10MB byte guard above
-     ;; caps worst-case memory.
+     ;; so auto-pagination can compare against the total. The 10MB byte
+     ;; guard above caps worst-case memory.
      (with-open [rdr (io/reader f :encoding "UTF-8")]
        (let [all-lines (vec (line-seq rdr))
-             total     (count all-lines)]
-         (cond
-           ;; Empty file
-           (zero? total) "[empty file]"
+             total     (count all-lines)
+             content
+             (cond
+               ;; Empty file
+               (zero? total) ""
 
-           ;; Explicit range — honor offset/limit exactly.
-           explicit-range?
-           (let [taken (vec (cond->> (drop off all-lines) limit (take limit)))]
-             (if (empty? taken)
-               (throw (ex-info (str "[offset " (+ off 1) " beyond file end — file has " total " lines]")
-                        {:offset (+ off 1) :total total :error :offset-past-eof}))
-               (let [numbered (map-indexed
-                                (fn [i line] (str (+ off i 1) "\t" line))
-                                taken)]
-                 (str (str/join "\n" numbered)
-                   "\n[lines " (+ off 1) "-" (+ off (count taken)) " of " total "]"))))
+               ;; Explicit range — honor offset/limit exactly.
+               explicit-range?
+               (let [taken (vec (cond->> (drop off all-lines) limit (take limit)))]
+                 (if (empty? taken)
+                   (throw (ex-info (str "[offset " (+ off 1) " beyond file end — file has " total " lines]")
+                            {:offset (+ off 1) :total total :error :offset-past-eof}))
+                   (str/join "\n" taken)))
 
-           ;; Auto-pagination path — deterministic, no-knob defaults.
-           (<= total FULL_FILE_THRESHOLD)
-           (let [numbered (map-indexed (fn [i line] (str (inc i) "\t" line)) all-lines)]
-             (str (str/join "\n" numbered)
-               "\n[lines 1-" total " of " total "]"))
+               ;; Auto-pagination path — deterministic, no-knob defaults.
+               (<= total FULL_FILE_THRESHOLD)
+               (str/join "\n" all-lines)
 
-           :else
-           (let [taken    (vec (take PARTIAL_READ_LIMIT all-lines))
-                 numbered (map-indexed (fn [i line] (str (inc i) "\t" line)) taken)]
-             (str (str/join "\n" numbered)
-               "\n[lines 1-" PARTIAL_READ_LIMIT " of " total " — auto-paged; "
-               "pass offset/limit to read the rest]"))))))))
+               :else
+               (str/join "\n" (take PARTIAL_READ_LIMIT all-lines)))]
+         {:content content :lang lang})))))
+
+
+;;; ── Display formatting ──────────────────────────────────────────────
+
+(defn- format-read-result
+  "Format read-file result for LLM display. Adds lang tag, line numbers,
+   and a line-count footer. The raw return value (bound to the SCI var)
+   stays clean for programmatic use.
+
+   Contract: 1-arity, pure, returns string, handles nil."
+  [result]
+  (cond
+    (nil? result) ""
+    (not (map? result)) (str result)
+    :else
+    (let [{:keys [content lang]} result]
+      (if (= "" content)
+        "[empty file]"
+        (let [lines (str/split-lines content)
+              n     (count lines)]
+          (str (when lang (str "[lang:" lang "] "))
+            "[" n " lines]\n"
+            (str/join "\n" (map-indexed (fn [i line] (str (inc i) "\t" line)) lines))))))))
 
 (defn- validate-read-input
   [{:keys [args]}]
@@ -148,9 +229,12 @@
 
 (defn- validate-read-output
   [{:keys [result]}]
-  (when-not (string? result)
-    (throw (ex-info "read-file must return a string"
+  (when-not (map? result)
+    (throw (ex-info "read-file must return a map with :content and :lang"
              {:type :tool/invalid-output :tool 'read-file :got-type (type result)})))
+  (when-not (string? (:content result))
+    (throw (ex-info "read-file :content must be a string"
+             {:type :tool/invalid-output :tool 'read-file :got-type (type (:content result))})))
   {:result result})
 
 ;;; ── Rescue ────────────────────────────────────────────────────────────
@@ -275,6 +359,7 @@
      :arglists (:arglists (meta #'read-file))
      :validate-input validate-read-input
      :validate-output validate-read-output
+     :format-result format-read-result
      :rescue-fn rescue-read-file
      :superseded-by read-file-superseded-by
      :activation-fn (constantly true)
@@ -284,7 +369,9 @@
      :examples ["(read-file \"/path/to/file.clj\")"
                 "(def src (read-file \"/path/to/file.clj\"))"
                 "(read-file \"/path/to/file.clj\" 1501 1500)"]
-     :prompt "Numbered lines + `[lines N-M of TOTAL]` footer.
+     :prompt "Returns `{:content raw-string :lang highlight-js-id}`.
+`(:content result)` for raw text — use with str/replace, write-file, etc.
+`(:lang result)` for syntax highlight language id (nil when unknown).
 `(read-file path)` = full if ≤1500 lines, else first 1500 auto-paged.
 Page bigger files: `(read-file path 1501 1500)`.
 `(def src (read-file path))` once, reuse. Don't re-read."}))
