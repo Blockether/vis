@@ -303,45 +303,6 @@
                  :args (vec args)}))))))
     (catch Throwable _ nil)))
 
-(defn- filter-redundant-blocks
-  "Pre-execution filter driven by each tool's `:superseded-by` fn.
-
-   For every code block, parses the top-level tool call. If the tool
-   has a `:superseded-by` fn in the registry AND that fn returns true
-   given all OTHER calls in the batch, the block is dropped.
-
-   Returns [kept-entries filter-logs]. `filter-logs` is a vec of
-   human-readable strings for observability (logged by caller).
-
-   Tools that don't declare `:superseded-by` are NEVER filtered."
-  [code-entries tool-registry]
-  (let [parsed (mapv (fn [entry]
-                       (assoc entry ::parsed (extract-tool-call (:expr entry))))
-                 code-entries)
-        all-calls (vec (keep ::parsed parsed))
-        {kept true filtered false}
-        (group-by
-          (fn [{::keys [parsed] :keys [expr]}]
-            (if-let [{:keys [tool]} parsed]
-              (let [superseded-by (get-in tool-registry [tool :superseded-by])]
-                (if superseded-by
-                  (let [others (filterv #(not= % parsed) all-calls)]
-                    (not (try (superseded-by parsed others)
-                           (catch Throwable t
-                             (trove/log! {:level :warn
-                                          :data {:tool tool :error (ex-message t)}
-                                          :msg ":superseded-by threw; keeping block"})
-                             false))))
-                  true))
-              true))
-          parsed)
-        logs (mapv (fn [{:keys [expr]}]
-                     (str "[filter] Dropped redundant: "
-                       (subs expr 0 (min 80 (count expr)))))
-               (or filtered []))]
-    [(mapv #(dissoc % ::parsed) (or kept []))
-     logs]))
-
 (defn- check-syntax
   "Parses code with edamame. Returns parsed forms or throws."
   [code]
@@ -525,6 +486,78 @@
   (when (bare-string-code-block? expr)
     "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."))
 
+;; =============================================================================
+;; Sequential execute-then-filter (tool-native via :superseded-by)
+;; =============================================================================
+
+(defn- block-superseded?
+  "Check if a single parsed call is superseded given already-executed
+   calls. Only successful prior executions count — a failed read-file
+   does NOT supersede a subsequent grep (we don't have the content)."
+  [parsed-call executed-calls tool-registry]
+  (when-let [{:keys [tool]} parsed-call]
+    (when-let [superseded-by (get-in tool-registry [tool :superseded-by])]
+      (try (superseded-by parsed-call executed-calls)
+        (catch Throwable t
+          (trove/log! {:level :warn
+                       :data {:tool tool :error (ex-message t)}
+                       :msg ":superseded-by threw; keeping block"})
+          false)))))
+
+(defn- execute-and-filter-blocks
+  "Sequential execute-then-filter: run block N, then check if remaining
+   blocks are superseded by what already succeeded. Blocks superseded by
+   a SUCCESSFUL prior execution are skipped. Failed executions do NOT
+   trigger supersession (the data was never produced).
+
+   Returns {:executed-blocks [code-str ...] :executed-results [result ...]}.
+   Skipped blocks are logged but excluded from both vectors."
+  [rlm-env coalesced tool-registry iteration total-blocks]
+  (loop [remaining coalesced
+         idx 0
+         executed-calls []   ;; parsed calls of SUCCESSFUL prior blocks
+         out-blocks []
+         out-results []]
+    (if (empty? remaining)
+      {:executed-blocks out-blocks :executed-results out-results}
+      (let [{:keys [expr time-ms]} (first remaining)
+            parsed (extract-tool-call expr)
+            superseded? (and (seq executed-calls)
+                             (block-superseded? parsed executed-calls tool-registry))]
+        (if superseded?
+          ;; Skip this block — log and move to next
+          (do (trove/log! {:level :info
+                           :data {:idx (inc idx) :total total-blocks
+                                  :expr (subs expr 0 (min 80 (count expr)))}
+                           :msg "[filter] Skipped superseded block"})
+            (recur (rest remaining) (inc idx) executed-calls out-blocks out-results))
+          ;; Execute this block
+          (do (rlm-stage! :code-exec iteration
+                {:idx (inc idx) :total total-blocks
+                 :code expr :time-ms time-ms})
+            (let [result (if-let [err (literal-code-block-error expr)]
+                           (do (rlm-stage! :code-result iteration
+                                 {:idx (inc idx) :total total-blocks :error err})
+                             {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
+                           (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
+                             (rlm-stage! :code-result iteration
+                               {:idx (inc idx) :total total-blocks
+                                :execution-time-ms (:execution-time-ms r)
+                                :error (:error r)
+                                :timeout? (:timeout? r)
+                                :result (:result r)})
+                             r))
+                  ;; Only add to executed-calls if execution SUCCEEDED.
+                  ;; Failed/timed-out blocks don't supersede anything.
+                  new-executed (if (and (nil? (:error result))
+                                       (not (:timeout? result))
+                                       parsed)
+                                 (conj executed-calls parsed)
+                                 executed-calls)]
+              (recur (rest remaining) (inc idx) new-executed
+                (conj out-blocks expr)
+                (conj out-results result)))))))))
+
 (def ^:private PLACEHOLDER_WORDS
   "Single-word placeholders the LLM sometimes emits as :answer instead of
    the real content. Checked AFTER var-resolve — if the word matches a def, it
@@ -609,7 +642,7 @@
 ;; Forward-declared so `build-iteration-context` can call them — the
 ;; concrete bodies live further down in this file next to the other
 ;; rendering helpers (they depend on vars defined later).
-(declare read-var-index-str read-user-var-count format-execution-results)
+(declare read-var-index-str read-user-var-count format-execution-results literal-code-block-error)
 
 (defn build-iteration-context
   "Assemble the trailing user message appended to the base prompt on
@@ -996,35 +1029,17 @@
                                     (conj result {:expr joined-expr
                                                   :time-ms joined-time})))
                                 (recur (rest remaining) (conj result (first remaining)))))))
-              ;; Pre-execution filter: each tool's :superseded-by fn
-              ;; decides if this call is redundant given others in the
-              ;; batch. Logged so triage can see what was dropped.
+              ;; Sequential execute-then-filter: run block N, then use
+              ;; its :superseded-by to prune remaining blocks BEFORE
+              ;; running them. This is strictly more powerful than
+              ;; upfront filtering because a failed execution does NOT
+              ;; trigger supersession (we don't have the content).
               tool-reg (some-> rlm-env :tool-registry-atom deref)
-              [effective-entries filter-logs] (filter-redundant-blocks coalesced tool-reg)
-              _ (doseq [msg filter-logs]
-                  (trove/log! {:level :info :data {:msg msg} :msg "redundant-call-filter"}))
-              code-blocks (mapv :expr effective-entries)
-              time-limits (mapv :time-ms effective-entries)
-              total-blocks (count code-blocks)
-              execution-results (mapv (fn [idx code timeout]
-                                        (rlm-stage! :code-exec iteration
-                                          {:idx (inc idx) :total total-blocks
-                                           :code code :time-ms timeout})
-                                         (if-let [err (literal-code-block-error code)]
-                                           ;; Runtime rejection: literal payload in :code → error, not execution
-                                           (let [err err]
-                                             (rlm-stage! :code-result iteration
-                                               {:idx (inc idx) :total total-blocks :error err})
-                                             {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
-                                          (let [r (execute-code rlm-env code :timeout-ms timeout)]
-                                            (rlm-stage! :code-result iteration
-                                              {:idx (inc idx) :total total-blocks
-                                               :execution-time-ms (:execution-time-ms r)
-                                               :error (:error r)
-                                               :timeout? (:timeout? r)
-                                               :result (:result r)})
-                                            r)))
-                                  (range) code-blocks time-limits)
+              total-blocks (count coalesced)
+              {:keys [executed-blocks executed-results]}
+              (execute-and-filter-blocks rlm-env coalesced tool-reg iteration total-blocks)
+              code-blocks executed-blocks
+              execution-results executed-results
               ;; Combine code blocks with their execution results
               executions (mapv (fn [idx code result]
                                  {:id idx

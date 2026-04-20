@@ -569,6 +569,8 @@
      :validate-input validate-edit-input
      :validate-output validate-edit-output
      :format-result format-edit-result
+     ;; Mutations are NEVER superseded — order and side effects matter.
+     :superseded-by (constantly false)
      :activation-fn (constantly true)
      :group "filesystem" :activation-doc "always active"
      :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"
