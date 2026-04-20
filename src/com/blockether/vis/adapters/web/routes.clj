@@ -1,6 +1,7 @@
 (ns com.blockether.vis.adapters.web.routes
   "HTTP routing — GET/POST handlers for conversations and queries."
   (:require [com.blockether.vis.adapters.web.conversations :as web-conversations]
+            [com.blockether.vis.adapters.web.dictation :as dictation]
             [com.blockether.vis.adapters.web.executor :as executor]
             [com.blockether.vis.adapters.web.presentation :as presentation]
             [charred.api :as json]
@@ -79,6 +80,31 @@
                  :headers {"Content-Type" "text/html; charset=utf-8"}
                  :body (presentation/not-found-page)})))
 
+      ;; POST /conversations/:id/dictate → one-shot LLM cleanup of a raw
+      ;; speech-to-text transcript. Reads JSON body {"text":"..."} and
+      ;; returns {"text":"<refined>"}. NEVER creates a query or iteration
+      ;; entity — pure refinement helper, not part of the conversation.
+      (and (= meth :post) (str/ends-with? uri "/dictate"))
+      (let [parts (str/split uri #"/")
+            id    (when (= 4 (count parts)) (nth parts 2 nil))
+            id    (when (valid-conversation-id? id) id)
+            body  (try (slurp (:body req)) (catch Exception _ ""))
+            payload (try (json/read-json body :key-fn keyword)
+                         (catch Exception _ nil))
+            raw   (str/trim (str (:text payload)))]
+        (cond
+          (nil? id)
+          {:status 400 :headers {"Content-Type" "application/json"}
+           :body "{\"error\":\"invalid conversation id\"}"}
+          (str/blank? raw)
+          {:status 400 :headers {"Content-Type" "application/json"}
+           :body "{\"error\":\"missing text\"}"}
+          :else
+          (let [refined (dictation/cleanup-dictation id raw)]
+            {:status 200
+             :headers {"Content-Type" "application/json"}
+             :body (json/write-json-str {:text refined})})))
+
       ;; POST /conversations/:id → async query
       (and (= meth :post) (str/starts-with? uri "/conversations/"))
       (let [id     (let [raw (nth (str/split uri #"/") 2 nil)]
@@ -94,13 +120,16 @@
             {:status 200 :headers {"Content-Type" "application/json"} :body "{\"ok\":true}"})))
 
       ;; Static files from resources/public/
-      ;; Fonts are immutable — cache for a year. JS/CSS change frequently
-      ;; and are NOT versioned in the URL, so the browser must revalidate
-      ;; every request. Otherwise a deploy never reaches the user until
-      ;; they hard-reload.
+      ;; Fonts are immutable — cache for a year. Third-party libs vendored
+      ;; under /vendor/ are pinned to a specific version on disk so they
+      ;; can also be cached aggressively (bump the file, not the URL, to
+      ;; upgrade). Our own JS/CSS change frequently and are NOT versioned
+      ;; in the URL, so the browser must revalidate every request;
+      ;; otherwise a deploy never reaches the user until they hard-reload.
       (and (= meth :get) (or (str/starts-with? uri "/css/")
                             (str/starts-with? uri "/js/")
-                            (str/starts-with? uri "/fonts/")))
+                            (str/starts-with? uri "/fonts/")
+                            (str/starts-with? uri "/vendor/")))
       (let [resource (io/resource (str "public" uri))
             ext (cond (str/ends-with? uri ".css") "text/css"
                   (str/ends-with? uri ".js") "application/javascript"
@@ -108,8 +137,12 @@
                   (str/ends-with? uri ".woff2") "font/woff2"
                   (str/ends-with? uri ".woff") "font/woff"
                   :else "application/octet-stream")
-            cache-control (if (str/starts-with? uri "/fonts/")
+            cache-control (cond
+                            (str/starts-with? uri "/fonts/")
                             "public, max-age=31536000, immutable"
+                            (str/starts-with? uri "/vendor/")
+                            "public, max-age=604800"
+                            :else
                             "no-cache, no-store, must-revalidate")]
         (if resource
           {:status 200

@@ -2,8 +2,9 @@
   "Contract tests for the LLM-friendly sandbox wrappers wired into
    `create-sci-context`:
 
-   * `slurp` is allowed and goes through `safe-slurp` (symlink-safe, capped,
-     directory → friendly error pointing at `list-dir`).
+   * `slurp` is BANNED — the sandbox replaces it with an error pointing at
+     `read-file` (line-numbered, size-capped, symlink-safe, tracked by
+     <var_index>). Filesystem reads MUST go through `read-file`.
    * `re-find`, `re-seq`, `re-matches` accept a string pattern and auto-promote
      it to `java.util.regex.Pattern`, matching what LLMs naturally write.
    * `str/split` likewise accepts a string delimiter (already tested from the
@@ -13,8 +14,7 @@
      canonical playbook stays narrow).
    * `spit`, `eval`, `load-string`, `load-file`, `read-string`, `intern`,
      `sh`, and stdin/stdout/stderr vars remain denied."
-  (:require [babashka.fs :as fs]
-            [lazytest.core :refer [defdescribe describe expect it]]
+  (:require [lazytest.core :refer [defdescribe describe expect it]]
             [com.blockether.vis.loop.runtime.core :as rt]
             [sci.core :as sci]))
 
@@ -35,52 +35,14 @@
 
 ;;; ── slurp ───────────────────────────────────────────────────────────────
 
-(defdescribe slurp-wrapper-test
-  (describe "safe-slurp replaces the SCI-denied clojure.core/slurp"
-    (it "reads a real file from the project root"
+(defdescribe slurp-banned-test
+  (describe "slurp is BANNED in the sandbox"
+    (it "returns an error and points the LLM at read-file"
       (let [{:keys [ev]} (fresh-sandbox)
-            {:keys [ok err]} (ev "(count (slurp \"deps.edn\"))")]
-        (expect (nil? err))
-        (expect (integer? ok))
-        (expect (pos? ok))))
-
-    (it "returns a helpful error when pointed at a directory"
-      (let [{:keys [ev]} (fresh-sandbox)
-            {:keys [err]} (ev "(slurp \"src\")")]
+            {:keys [err]} (ev "(slurp \"deps.edn\")")]
         (expect (some? err))
-        (expect (re-find #"directory" err))
-        ;; Must point the LLM at the right affordance.
-        (expect (re-find #"list-dir" err))))
-
-    (it "refuses to follow symlinks"
-      (let [tmp (str (fs/create-temp-dir {:prefix "vis-slurp-sym-"}))
-            target (str (fs/path tmp "target.txt"))
-            link   (str (fs/path tmp "link.txt"))
-            _      (spit target "hello")
-            _      (java.nio.file.Files/createSymbolicLink
-                     (.toPath (java.io.File. link))
-                     (.toPath (java.io.File. target))
-                     (make-array java.nio.file.attribute.FileAttribute 0))
-            {:keys [ev]} (fresh-sandbox)
-            {:keys [err]} (ev (str "(slurp \"" link "\")"))]
-        (expect (some? err))
-        (expect (re-find #"symlink" err))
-        (fs/delete-tree tmp)))
-
-    (it "enforces the 10 MB file-size cap"
-      (let [tmp     (str (fs/create-temp-dir {:prefix "vis-slurp-big-"}))
-            big     (str (fs/path tmp "big.bin"))
-            ;; 11 MB — 1 MB over the cap.
-            payload (apply str (repeat 1024 \A))
-            _       (with-open [w (clojure.java.io/writer big)]
-                      (dotimes [_ (* 11 1024)]
-                        (.write w payload)))
-            {:keys [ev]} (fresh-sandbox)
-            {:keys [err]} (ev (str "(slurp \"" big "\")"))]
-        (expect (some? err))
-        (expect (re-find #"too large" err))
-        (expect (re-find #"read-file" err))
-        (fs/delete-tree tmp)))))
+        (expect (re-find #"banned" err))
+        (expect (re-find #"read-file" err))))))
 
 ;;; ── re-find / re-seq / re-matches ─────────────────────────────────────
 

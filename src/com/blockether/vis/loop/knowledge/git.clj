@@ -197,14 +197,14 @@
                                 (assoc (author->person-entity commit document-id)
                                   :id (java.util.UUID/randomUUID)))
                           unique-emails)
-        email->id (into {} (map-indexed
-                             (fn [i [email _]] [email (:id (nth person-entities i))])
-                             unique-emails))
+        _email->id (into {} (map-indexed
+                              (fn [i [email _]] [email (:id (nth person-entities i))])
+                              unique-emails))
         file-entities (mapv (fn [fp]
                               (assoc (file->file-entity fp document-id)
                                 :id (java.util.UUID/randomUUID)))
                         unique-paths)
-        path->id (zipmap unique-paths (map :id file-entities))
+        _path->id (zipmap unique-paths (map :id file-entities))
         event-entities (mapv (fn [commit]
                                (assoc (commit->entity commit document-id)
                                  :id (java.util.UUID/randomUUID)))

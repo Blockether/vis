@@ -7,7 +7,7 @@
    db-var-history and the SCI-bound var-history / var-diff tools.
    No network, no real model."
   (:require [babashka.fs :as fs]
-            [lazytest.core :refer [defdescribe describe expect it throws?]]
+            [lazytest.core :refer [defdescribe describe expect it]]
             [com.blockether.svar.internal.llm :as llm]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.conversations.core :as conversations]

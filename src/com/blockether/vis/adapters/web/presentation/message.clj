@@ -74,7 +74,7 @@
     (when (and stderr (not (str/blank? stderr)))
       [:div.exec-stderr stderr])))
 
-(defn- render-exec [{:keys [code result error stdout stderr timeout?] :as exec}]
+(defn- render-exec [{:keys [code result error timeout?] :as exec}]
   (let [clean     (clean-result result)
         is-final? (and (map? result) (:rlm/final result))
         badge     (exec-badge code)]
@@ -260,27 +260,6 @@
            (str "EXECUTION" (when (> (count executions) 1) "S"))]
           (keep render-exec executions)])
        (render-vars-table vars)]))))
-
-(defn- has-final-answer?
-  "True when the result has a non-blank :answer AND a :final? iteration
-   exists in the trace. Triggers the collapsed-trace presentation."
-  [{:keys [trace answer]}]
-  (and (some :final? trace)
-    (let [v (if (map? answer) (:result answer) answer)
-          s (cond (string? v) v
-                  (nil? v)    ""
-                  :else       (pr-str v))]
-      (not (str/blank? s)))))
-
-(defn- trace-summary-label
-  "Short summary for collapsed trace under a final answer."
-  [trace]
-  (let [steps (count trace)
-        calls (reduce + 0 (map (fn [t] (count (:executions t))) trace))]
-    (str "Execution trace · "
-      steps " iteration" (when (not= 1 steps) "s")
-      (when (pos? calls)
-        (str " · " calls " code call" (when (not= 1 calls) "s"))))))
 
 (defn- status-banner
   "Visible banner when a turn ended on a non-:success status. Without this,

@@ -6,6 +6,32 @@
 
 Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. No exceptions, no mixed-language responses, no apology paragraphs in the user's language. This rule overrides any implicit language mirroring behavior.
 
+### Trust svar spec guarantees — do NOT defensively re-validate
+
+svar's iteration spec is provider-enforced. When a field is declared as
+`{::spec/name :expr ::spec/type :spec.type/string ::spec/required true}`,
+svar guarantees the parsed result has `:expr` as a non-null string.
+Writing `(when (map? block) (when-not (str/blank? expr) ...))` and
+`(throw (ex-info "Code block missing :time-ms"))` after an already
+spec-validated response is **pure noise** — it duplicates what svar
+already enforced, hides what the code is actually trying to say, and
+makes downstream edits riskier because the defensive branches obscure
+the real control flow.
+
+Rule:
+
+- If a field is **required** in the iteration-spec, destructure it
+  directly. Don't `(when-not (str/blank? …))`. Don't throw "missing
+  :time-ms". That branch is dead code.
+- If a field is **optional**, use plain `(when (:field x) …)` or
+  `(or (:field x) default)` — NOT a full validator.
+- If you ever need to check shape after spec, the spec is WRONG.
+  Fix the spec, not the consumer.
+
+This applies to EVERY spec, not just iteration spec: sub-rlm-query,
+code_block, next_turn, all of them. If svar loaded it, the shape is
+correct by construction.
+
 ### Always check SQLite when investigating issues
 
 `~/.vis/vis.mdb/rlm.db` is the single source of truth for everything that happened in every conversation — queries, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about user-reported bugs that reference a specific `conversation-id` or `query-id`, you MUST open the DB and read the actual rows. Do NOT guess from logs or code alone when the DB can tell you definitively what the model saw, what it returned, and which vars were bound at which step.

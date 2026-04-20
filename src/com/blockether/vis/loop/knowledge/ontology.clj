@@ -17,7 +17,6 @@
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.loop.storage.db :as db]
-   [com.blockether.svar.internal.util :as util]
    [taoensso.trove :as trove])
   (:import
    [java.security MessageDigest]))

@@ -190,7 +190,7 @@
 (defn- format-tool-line
   "Render one tool's row: status icon, name, reason, live activation cost,
    and — when present — execution stats and activation-error trailer."
-  [{:keys [sym group active? activation-ms activation-doc]} stats]
+  [{:keys [sym active? activation-ms activation-doc]} stats]
   (let [icon     (if active? "\u2713" "\u2717")
         reason   (if active?
                    "active"

@@ -449,6 +449,15 @@
                                 (:vars attrs)        (assoc :vars (:vars attrs))
                                 (:answer attrs)      (assoc :answer (:answer attrs))
                                 (:thinking attrs)    (assoc :thinking (:thinking attrs))
+                                ;; iteration_attrs.error column existed in the
+                                ;; schema (see ITERATION-COLS + iteration-attrs->ns)
+                                ;; but the write-side cond-> was missing this
+                                ;; branch — every :error from store-iteration! was
+                                ;; being silently dropped. That's why historical
+                                ;; empty-content / iteration-error rows all show
+                                ;; error IS NULL in DB despite the error path in
+                                ;; loop/core.clj passing iter-err through.
+                                (:error attrs)       (assoc :error (:error attrs))
                                 (:duration-ms attrs) (assoc :duration_ms (:duration-ms attrs)))
                    :iteration-var (cond-> {}
                                     (:name attrs)  (assoc :name (:name attrs))

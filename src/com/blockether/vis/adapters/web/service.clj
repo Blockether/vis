@@ -12,12 +12,6 @@
 (defonce ^:private service-state
   (atom {:server nil :started-at nil :port nil}))
 
-(defn status []
-  (let [{:keys [server started-at port]} @service-state]
-    {:running? (some? server)
-     :port     port
-     :started-at started-at}))
-
 (defn health-handler [_req]
   {:status 200
    :headers {"Content-Type" "application/json"}

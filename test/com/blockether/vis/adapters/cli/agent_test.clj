@@ -2,6 +2,7 @@
   (:require
    [babashka.fs :as fs]
    [charred.api :as json]
+   [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]
    [com.blockether.vis.config :as config]
    [com.blockether.vis.loop.conversations.core :as conversations]
@@ -50,7 +51,7 @@
           ;; markdown fallback (surfaced to the UI so the bubble isn't
           ;; blank). Test that it came through the envelope.
           (expect (string? (get parsed "answer")))
-          (expect (clojure.string/includes? (get parsed "answer") "Iteration limit reached"))
+          (expect (str/includes? (get parsed "answer") "Iteration limit reached"))
           (expect (false? (contains? parsed "confidence")))
           (expect (false? (contains? parsed "learn")))
           (expect (false? (contains? parsed "error")))

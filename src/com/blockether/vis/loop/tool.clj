@@ -220,6 +220,15 @@
       (when-not (fn? rescue)
         (throw (ex-info "tool-def :rescue-fn must be a function (fn [err & args])"
                  {:type :rlm/invalid-tool-def :field :rescue-fn :tool-def (dissoc tool-def :fn)}))))
+    ;; :superseded-by is optional; when present it must be a fn:
+    ;; `(fn [this-call other-calls] -> boolean)`
+    ;; where `this-call` is `{:tool sym :path str :args vec}` and
+    ;; `other-calls` is a vec of the same shape for every OTHER block
+    ;; in the batch. Returns true when this call is redundant.
+    (when-let [sf (:superseded-by tool-def)]
+      (when-not (fn? sf)
+        (throw (ex-info "tool-def :superseded-by must be a function (fn [this-call other-calls] -> bool)"
+                 {:type :rlm/invalid-tool-def :field :superseded-by :tool-def (dissoc tool-def :fn)}))))
     tool-def))
 
 (defn maybe-assert-fn-tool-def!
