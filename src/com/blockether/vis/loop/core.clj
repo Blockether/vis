@@ -1951,6 +1951,7 @@
         var-index-atom (or (:var-index-atom rlm-env)
                          (atom {:index nil :revision -1 :current-revision 0}))
         on-iteration (:on-iteration hooks)
+        on-chunk (:on-chunk hooks)
         on-cancel (:on-cancel hooks)
         emit-hook! (fn [hook-fn payload log-msg]
                      (when hook-fn
