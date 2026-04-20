@@ -169,13 +169,16 @@
                             merge with — the default.
 
    Returns a map:
-   - :path       — Canonical root path (file or directory).
-   - :mode       — :directory or :file (which branch was taken).
-   - :pattern    — The pattern source that was searched.
-   - :matches    — Vector of {:path rel-str :line int :text str}. In :file
-                   mode the `:path` of each match is the file's basename.
-   - :files      — Number of files scanned (always 1 in :file mode).
-   - :truncated? — true when global cap was hit."
+   - :path               — Canonical root path (file or directory).
+   - :mode               — :directory or :file (which branch was taken).
+   - :pattern            — The pattern source that was searched.
+   - :matches            — Vector of {:path rel-str :line int :text str}. In :file
+                           mode the `:path` of each match is the file's basename.
+   - :files-scanned      — Number of files the walker opened (always 1 in :file mode).
+                           Includes files where NOTHING matched.
+   - :files-with-matches — Number of distinct files in :matches.
+                           This is the count agents/users usually want.
+   - :truncated?         — true when global cap was hit."
   ([pattern] (grep pattern "." nil))
   ([pattern path] (grep pattern path nil))
   ([pattern path opts]
@@ -253,12 +256,13 @@
              (transient [])
              files))
          truncated? (>= (count all-matches) max-matches)]
-     (cond-> {:path       (.getCanonicalPath root)
-              :mode       (if file-mode? :file :directory)
-              :pattern    (.pattern ^Pattern pat)
-              :matches    all-matches
-              :files      (count files)
-              :truncated? truncated?}
+     (cond-> {:path               (.getCanonicalPath root)
+              :mode               (if file-mode? :file :directory)
+              :pattern            (.pattern ^Pattern pat)
+              :matches            all-matches
+              :files-scanned      (count files)
+              :files-with-matches (count (into #{} (map :path) all-matches))
+              :truncated?         truncated?}
        ;; Surface the pattern mode when it's NOT plain regex so the LLM
        ;; knows whether its regex was honored or silently literalized.
        (not= :regex (:mode coerced))
@@ -324,7 +328,7 @@
      :validate-output-fn validate-grep-output
      :superseded-by-fn grep-superseded-by
      :activation-fn (constantly true)
-     :group "filesystem" :activation-doc "always active"
+     :group "filesystem"
      :examples ["(grep \"HITL\")                                          ;; whole repo, every file type"
                 "(grep \".sheet-item-del\")                                ;; CSS class — find it wherever it lives"
                 "(grep \"conversation-header|sheet-list|delete|trash|icon\")  ;; alternation: bare | between options"
@@ -335,6 +339,9 @@
                 "(grep \"password\" \".\" {:ignore-dirs #{}})              ;; include build caches when needed"
                 "(grep \"FIXME\" \".\" {:max-matches 2000})                ;; broad audit, raise the cap"]
      :prompt "Recursively search files for a pattern. First stop for \"where is X used?\", \"who touches this function?\", \"find all callers\".
+
+Returns `{:matches [{:path :line :text}...] :files-scanned N :files-with-matches M :truncated? bool ...}`.
+Read `:files-with-matches` for \"how many files contain hits\" — NOT `:files-scanned`, which counts every file the walker opened (including files with zero matches).
 
 Path defaults to `.` (cwd). The default already prunes `.git`, `node_modules`, `target/`, build caches, IDE state, and OS metadata, so a bare `(grep \"X\")` searches every source file in the project — Clojure under `src/`, CSS/HTML/JS under `resources/`, tests under `test/`, REPL tooling under `dev/`, plus `deps.edn` / `build.clj` / `package.json` at the root.
 

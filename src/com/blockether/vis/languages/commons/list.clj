@@ -311,7 +311,7 @@
      :format-result-fn format-list-result
      :superseded-by-fn list-dir-superseded-by
      :activation-fn (constantly true)
-     :group "filesystem" :activation-doc "always active"
+     :group "filesystem"
      :examples ["(list-dir \"src\")"
                 "(list-dir \"src\" {:glob \"**/*.clj\" :depth 4 :limit 200})"
                 "(list-dir \".\" {:limit 50 :offset 50})  ;; second page of 50"

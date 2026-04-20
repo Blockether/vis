@@ -3,6 +3,8 @@
 
    Contains:
    - General helpers: truncate, realize-value, ns->sci-map, EXTRA_BINDINGS
+   - shape — recursive structural sketch of any value
+   - result->display — exec-result formatter honoring :visibility + 30k cap
    - Date tool bindings: parse-date, date-before?, date-after?, etc.
    - Document tools: search-documents, fetch-document-content, format-docs
    - History tools: conversation-history, conversation-code, conversation-results
@@ -11,7 +13,7 @@
 
    All tool factories follow the pattern `(make-*-fn db-info ...)` → sandbox fn.
    Safe to load first — no cross-deps on runtime/core."
-  )
+  (:require [clojure.string :as str]))
 
 ;; =============================================================================
 ;; General helpers
@@ -105,11 +107,30 @@
 (defn- java-array? [v]
   (and (some? v) (.isArray ^Class (class v))))
 
+(defn- sci-var?
+  "True when v is a SCI var. Detection by class-name string instead of
+   `instance? sci.lang.Var` because SCI's class loader ordering means the
+   literal class symbol may not resolve at compile time of every consumer
+   namespace — same approach used by storage and web."
+  [v]
+  (and (some? v)
+    (= "sci.lang.Var" (.getName (class v)))))
+
+(defn- var-like?
+  "True when v is a `clojure.lang.Var` or `sci.lang.Var`. Both wrap a
+   bound value that the user almost always cares about more than the
+   wrapper itself, so `shape` deref's through them transparently."
+  [v]
+  (or (instance? clojure.lang.Var v) (sci-var? v)))
+
 (defn- ideref-kind
   "Pick a tag for an IDeref wrapper. Covers Clojure's built-in deref
    containers plus raw `java.util.concurrent.Future`. Falls back to the
    generic `deref` tag for reify'd objects like `(promise)` (which doesn't
-   implement any of the named classes but still satisfies IDeref)."
+   implement any of the named classes but still satisfies IDeref).
+
+   Vars are NOT in this list on purpose — `shape` deref's them transparently
+   above so callers always see the bound value's shape, never `(var X)`."
   [v]
   (condp instance? v
     clojure.lang.Atom           'atom
@@ -117,7 +138,6 @@
     clojure.lang.Agent          'agent
     clojure.lang.Delay          'delay
     clojure.lang.Volatile       'volatile
-    clojure.lang.Var            'var
     java.util.concurrent.Future 'future
     'deref))
 
@@ -211,15 +231,24 @@
      (set? v)    (set (seq-shape-sample v depth))
      (seq? v)    (apply list (seq-shape-sample v depth))
 
-     ;; Functions — no introspection beyond arity (we'd need metadata the
-     ;; sandbox typically lacks).
-     (fn? v) 'fn
+      ;; Functions — no introspection beyond arity (we'd need metadata the
+      ;; sandbox typically lacks).
+      (fn? v) 'fn
 
-     ;; IDeref wrappers — unwrap one level so the caller sees the inner
-     ;; shape. Returned as a list `(kind inner-shape)` so it reads like a
-     ;; call: `(atom int)`, `(delay {:a str})`. Guards against blocking
-     ;; on unrealised Delays / Futures / Promises via IPending.
-     (instance? clojure.lang.IDeref v)
+      ;; Vars deref transparently — `(shape #'foo)` returns the shape of
+      ;; whatever `foo` holds, never `(var X)` or `(deref X)`. Vars
+      ;; conceptually ARE their bound value for shape purposes; the
+      ;; wrapper is plumbing the user doesn't care about. MUST come
+      ;; before the IDeref branch since vars also satisfy IDeref.
+      (var-like? v)
+      (try (shape (deref v) (dec depth))
+        (catch Throwable _ 'opaque))
+
+      ;; IDeref wrappers — unwrap one level so the caller sees the inner
+      ;; shape. Returned as a list `(kind inner-shape)` so it reads like a
+      ;; call: `(atom int)`, `(delay {:a str})`. Guards against blocking
+      ;; on unrealised Delays / Futures / Promises via IPending.
+      (instance? clojure.lang.IDeref v)
      (let [kind     (ideref-kind v)
            pending? (and (instance? clojure.lang.IPending v)
                       (try (not (realized? v))
@@ -248,10 +277,104 @@
      (instance? Throwable v)
      (list 'throwable (symbol (.getSimpleName (class v))))
 
-     ;; Fallback — class's simple name as a symbol. Last-resort for
-     ;; arbitrary Java objects; useful enough for the caller to decide
-     ;; whether to `(doc some-fn)` or just inline.
-     :else (symbol (.getSimpleName (class v))))))
+      ;; Fallback — class's simple name as a symbol. Last-resort for
+      ;; arbitrary Java objects; useful enough for the caller to decide
+      ;; whether to `(doc some-fn)` or just inline.
+      :else (symbol (.getSimpleName (class v))))))
+
+;; =============================================================================
+;; Result display — unifies how an exec :result becomes the string the user
+;; (web/TUI) and the next-iteration LLM context see.
+;;
+;; Auto-unwrap rule (uniform across journal + UI):
+;;   `<value> :: <shape>`     for collections / maps / sets / seqs / records.
+;;   `<value>`                for scalar atoms (int, str, kw, bool, nil, char,
+;;                            uuid, symbol) — the value already conveys its
+;;                            type, the shape suffix would be redundant noise.
+;;
+;; The marker `::` is Haskell-style type annotation. RULES section of the
+;; system prompt documents it for the LLM. Costs 2 tokens per non-atomic
+;; result vs the previous ` :shape ` (3 tokens), saving ~1 token per line —
+;; multiplied across 5-10 execs per iter and 1-10 iters per turn that adds
+;; up. The atomic-suppression rule saves more: every `(+ 1 2) → 3` line
+;; sheds 4-5 tokens of redundant `:: int`.
+;;
+;; The realized value pr-str's with sandbox/ stripped from var literals
+;; (`#'foo` not `#'sandbox/foo`) and is capped at MAX_RESULT_DISPLAY_CHARS.
+;; DB rows are NOT touched — persistence stores raw uncapped values so the
+;; debugger / corpus exporter see ground truth.
+;; =============================================================================
+
+(def ^:const MAX_RESULT_DISPLAY_CHARS
+  "Character cap applied to exec results when rendered to the user and when
+   fed back to the LLM as journal context. DB persistence is uncapped on
+   purpose — see the result-display block docstring."
+  30000)
+
+(def ^:const SHAPE_MARKER
+  "Haskell-style `::` separator between a realized value and its structural
+   shape sketch. Single source of truth for the marker — change here once,
+   propagates to every formatter (journal, recovery feedback, web exec card)."
+  " :: ")
+
+(defn atomic?
+  "True when `v` is a scalar whose pr-str already conveys its type cleanly,
+   so a trailing ` :: <shape>` annotation would just repeat information.
+   Collections, maps, sets, seqs, and records get the shape suffix; atoms
+   skip it. Single source of truth — used by the journal renderer, the
+   error-recovery feedback formatter, and the web exec card."
+  [v]
+  (or (nil? v) (boolean? v) (number? v)
+    (keyword? v) (symbol? v) (string? v)
+    (char? v) (uuid? v)))
+
+(def ^:private SANDBOX_VAR_RE
+  "Matches `#'sandbox/<name>` in a pr-str'd string. The sandbox ns is the
+   only ns the LLM-defined vars live in, so stripping it here is loss-free
+   — the bare `#'name` always refers to the sandbox binding."
+  #"#'sandbox/")
+
+(defn strip-sandbox-ns
+  "Rewrite `#'sandbox/foo` → `#'foo` in a string. Pure fn, idempotent.
+   Used by `result->display` so var-typed exec results don't waste tokens
+   on the sandbox prefix."
+  [^String s]
+  (when s
+    (str/replace s SANDBOX_VAR_RE "#'")))
+
+(defn truncate-with-marker
+  "Cap `s` at `n` chars and append a `…[truncated, n of total chars]…`
+   marker when truncation actually happens. Returns nil for nil; returns
+   `s` unchanged when already within cap."
+  [^String s ^long n]
+  (when s
+    (let [total (.length s)]
+      (if (<= total n)
+        s
+        (str (subs s 0 n) "\n…[truncated, " n " of " total " chars]…")))))
+
+(defn result->display
+  "Convert a raw exec result value into the string the UI / next-iteration
+   LLM context should see.
+
+     :full / nil → (pr-str (realize-value v)), strip sandbox/, cap at
+                   MAX_RESULT_DISPLAY_CHARS with a truncation marker.
+     :shape      → (pr-str (shape v)), strip sandbox/. Shape output is
+                   already small, so no cap is applied (depth/breadth
+                   bounds inside `shape` keep it tame).
+
+   `visibility` is a keyword or nil. Unknown values default to :full
+   so a typo never blanks the result.
+
+   Returns a string. Nil input returns nil so callers can decide whether
+   to render an empty result row or skip entirely."
+  [v visibility]
+  (when (some? v)
+    (case visibility
+      :shape (-> v shape pr-str strip-sandbox-ns)
+      ;; :full and any unknown value share the realized-and-capped path.
+      (-> v realize-value pr-str strip-sandbox-ns
+        (truncate-with-marker MAX_RESULT_DISPLAY_CHARS)))))
 
 ;; =============================================================================
 ;; Date tool bindings

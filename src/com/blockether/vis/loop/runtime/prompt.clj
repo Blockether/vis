@@ -305,7 +305,7 @@ EVERY ITERATION:
     <var_index>       every `(def name val)` you've written. Survives until `:forget`.
     <journal>         the PREVIOUS iteration's results only (not N-2). For each :code
                       block: return value (auto-formatted), :stdout, :stderr, timing.
-    <prior_thinking>  your last reasoning. Pull more via `:request-prior-reasonings N` (1-10).
+    <prior_thinking>  ONLY your previous iteration's reasoning. Older reasonings are NOT auto-shipped — pull them yourself with `(var-history '*reasoning*)` (oldest first; `take-last N` for a window).
     Plus SYSTEM vars (always present, `:forget` refused):
       *query*      current user query.
       *reasoning*  YOUR thinking from the previous iteration.
@@ -416,6 +416,8 @@ RULES:
 - ALWAYS test. Untested = wrong. No repeat fail → different approach.
 - No prose in :code. Bare string literal = wrong. Prose → :answer (see ARCH / MUSTACHE).
 - Simplest solution. No over-eng. No unused abstractions.
+- <journal> format: `[N] <code> → <value> :: <shape>` — `::` is the type-annotation marker (Haskell-style). LHS is the realized value, RHS is the structural sketch from `(shape v)`. For `(def name …)` the value renders as `*name* = <value> :: <shape>`. Atomic results (int/str/kw/bool) skip the `:: <shape>` suffix — the value already conveys its type.
+- Comments inside :expr are accepted: `;; line comment` and `#_ discard` both work and are stripped during parse. Use them to state the WHY of a block before its code, not to restate WHAT the code does. `;; verify auth commits exist\\n(def hits (search-commits \"auth\"))` is good. `;; add 1 and 2\\n(+ 1 2)` is noise. Comment-only blocks (no executable form) are rejected.
 
 OUTPUT: " OUTPUT_STYLE_GUIDE "
 "))

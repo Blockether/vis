@@ -627,10 +627,10 @@ function replaceChat(html) {
 
 function renderLiveTrace(iterations) {
   // Mirrors the Clojure-side `render-iteration` in
-  // adapters/web/presentation/message.clj — iteration header + code/result
-  // rows only. The `:thinking` narrative is intentionally NOT rendered; it
-  // used to drift turn-to-turn and felt like the system prompt was
-  // changing. The main chat shows WHAT the model did, not its inner monologue.
+  // adapters/web/presentation/message.clj — iteration header, the model's
+  // streamed `:thinking` narrative, then code/result rows. Thinking is
+  // shown live so users can see WHY each step is being taken instead of
+  // staring at opaque code blocks.
   if (!iterations || !iterations.length) return '';
   var html = '';
   for (var i = 0; i < iterations.length; i++) {
@@ -638,6 +638,12 @@ function renderLiveTrace(iterations) {
     if (it["final?"]) continue; // FINAL answer is shown separately
     html += '<div class="iteration">';
     html += '<div class="iter-header">Iteration ' + (it.iteration + 1) + '</div>';
+    if (it.thinking && it.thinking.trim()) {
+      html += '<div class="iter-thinking">';
+      html += '<div class="iter-thinking-summary"><span class="iter-thinking-label">THINKING</span></div>';
+      html += '<div class="iter-thinking-body iter-thinking-live">' + escHtml(it.thinking.trim()) + '</div>';
+      html += '</div>';
+    }
     if (it.executions) {
       for (var j = 0; j < it.executions.length; j++) {
         var ex = it.executions[j];

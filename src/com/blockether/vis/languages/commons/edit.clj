@@ -572,7 +572,7 @@
      ;; Mutations are NEVER superseded — order and side effects matter.
      :superseded-by-fn (constantly false)
      :activation-fn (constantly true)
-     :group "filesystem" :activation-doc "always active"
+     :group "filesystem"
      :examples ["(edit-file \"*** Begin Patch\\n*** Update File: /tmp/demo.txt\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n*** End Patch\")"
                 "(edit-file \"*** Begin Patch\\n*** Add File: /tmp/new.txt\\n+hello\\n+world\\n*** End Patch\")"
                 "(edit-file \"*** Begin Patch\\n*** Delete File: /tmp/old.txt\\n*** End Patch\")"]

@@ -105,6 +105,76 @@
 ;; Iteration + iteration-vars
 ;; =============================================================================
 
+;; Decoupled SCI-var detection. We can't `(require 'sci.core)` here
+;; without dragging the SCI runtime into the storage namespace, AND we
+;; can't cache `(Class/forName "sci.lang.Var")` at top-level — when this
+;; ns loads (Flyway migrations, app boot), `sci.core` hasn't initialised
+;; its defrecords yet, so the class lookup returns ClassNotFoundException
+;; and we silently drop the substitution. By the time `store-iteration!`
+;; actually runs, SCI is loaded — but the cached nil sticks. Bug #1.
+;;
+;; Fix: detect by class name string (`"sci.lang.Var"`). Pure data check,
+;; no class lookup, no boot-order dependency. `(.getName (class v))` is
+;; ~50ns; we run it once per per-exec result, not in a hot loop.
+(defn- sci-var?
+  "True when v is an SCI var. Detection is by class name to avoid
+   coupling this ns to `sci.core`'s load order — see ns docstring of
+   the surrounding edn-safe block."
+  [v]
+  (and (some? v)
+    (= "sci.lang.Var" (.getName (class v)))))
+
+(declare edn-safe)
+
+(defn- sci-var->surrogate
+  "Convert a SCI var to a roundtrip-safe surrogate map.
+
+   `(def foo 42)` returns the var object, which pr-str's as
+   `#'sandbox/foo` — that breaks edn reading. We persist a tagged
+   map `{::var-ref \"foo\" ::var-value 42}` instead, so the read
+   side recovers BOTH the bound name (`*foo* =` in journal) and the
+   bound value (the `42`) without losing fidelity. Plain string
+   surrogates worked for display but stripped the value, leaving the
+   journal renderer with no way to render `*foo* = 42` from a string
+   that says `\"#'sandbox/foo\"`.
+
+   Reflective call to `.getRawRoot` — sci.lang.Var isn't on this ns'
+   compile-time classpath (see `sci-var?` for why), so we eat the
+   reflection cost (~µs once per def). Negligible vs the surrounding
+   pr-str / I/O cost. `depth` threads through to guard against pathological
+   nested data when the var's value is itself a deep structure."
+  [v depth]
+  (let [s (str v)                                         ;; e.g. "#'sandbox/foo"
+        bare-name (-> s (subs 2)                          ;; drop "#'"
+                    (str/replace #"^[^/]+/" ""))          ;; drop "sandbox/"
+        bound (try (.getRawRoot v) (catch Throwable _ nil))]
+    ;; `:rlm/*` keys (not ::-namespaced) so consumers in other ns'
+    ;; (loop.core's journal renderer, web's render-exec) can match on
+    ;; them without aliasing this storage namespace.
+    {:rlm/var-ref bare-name
+     :rlm/var-value (edn-safe bound (dec depth))}))
+
+(defn- edn-safe
+  "Recursively replace values that pr-str cannot round-trip through edn
+   with a printable surrogate. Currently handles SCI vars (`(def foo 42)`
+   returns one) — they pr-str as `#'sandbox/foo`, which the edn reader
+   rejects (`No dispatch macro for: '`). Replacing with a tagged map
+   `{::var-ref name ::var-value bound}` keeps the envelope roundtrippable
+   AND preserves enough info for the journal to render `*foo* = 42`.
+
+   Walks maps/vectors/sets/seqs to a small fixed depth so nested var refs
+   inside collections also survive. Anything else is returned untouched."
+  ([v] (edn-safe v 6))
+  ([v depth]
+   (cond
+     (zero? depth) v
+     (sci-var? v) (sci-var->surrogate v depth)
+     (map? v)    (persistent! (reduce-kv (fn [m k val] (assoc! m k (edn-safe val (dec depth)))) (transient {}) v))
+     (vector? v) (mapv #(edn-safe % (dec depth)) v)
+     (set? v)    (into #{} (map #(edn-safe % (dec depth))) v)
+     (seq? v)    (doall (map #(edn-safe % (dec depth)) v))
+     :else v)))
+
 (defn store-iteration!
   "Stores an iteration entity linked to a query via parent-id, plus child
    iteration-var entities for any restorable vars."
@@ -122,7 +192,7 @@
         result-strs (mapv (fn [exec]
                             (try
                               (pr-str
-                                (cond-> {:result (:result exec)}
+                                (cond-> {:result (edn-safe (:result exec))}
                                   (some? (:error exec))             (assoc :error (str (:error exec)))
                                   (not (blank? (:stdout exec)))     (assoc :stdout (:stdout exec))
                                   (not (blank? (:stderr exec)))     (assoc :stderr (:stderr exec))
@@ -153,7 +223,7 @@
             {:type :iteration-var
              :name (str name)
              :parent-id (second iter-ref)
-             :value (pr-str value)
+             :value (pr-str (edn-safe value))
              ;; `:code` column now carries a pr-str'd EDN map
              ;; `{:expr :time-ms :metadata}` so downstream consumers
              ;; (var_index, var-history) get rich per-var provenance

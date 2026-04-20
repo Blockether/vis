@@ -405,7 +405,7 @@
                   ;; buggy activation-fn are swallowed here and surfaced
                   ;; inline as "inactive" — the doctor exists precisely to
                   ;; let you spot such tools, not to crash on them.
-                  tools    (mapv (fn [[sym {:keys [activation-fn group activation-doc]}]]
+                  tools    (mapv (fn [[sym {:keys [activation-fn group]}]]
                                    (let [t0      (System/nanoTime)
                                          active? (boolean
                                                    (try
@@ -415,8 +415,7 @@
                                      {:sym           (str sym)
                                       :group         (or group "Other")
                                       :active?       active?
-                                      :activation-ms (/ (double elapsed) 1e6)
-                                      :activation-doc activation-doc}))
+                                      :activation-ms (/ (double elapsed) 1e6)}))
                              registry)
                   report   (tool-diag/format-doctor-report tools)
                   ;; DB stats

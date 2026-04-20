@@ -134,7 +134,7 @@
      ;; Mutations are NEVER superseded — order and side effects matter.
      :superseded-by-fn (constantly false)
      :activation-fn (constantly true)
-     :group "filesystem" :activation-doc "always active"
+     :group "filesystem"
      :examples ["(write-file \"/tmp/notes.txt\" \"hello\\nworld\")"
                 "(write-file \"src/foo.clj\" \"(ns foo)\\n(def x 1)\")"]
      :prompt "Write full file (creates parent dirs, overwrites). Use for new files or full rewrites. For small edits use `edit-file`."}))
