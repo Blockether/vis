@@ -286,107 +286,50 @@
      :has-reasoning?   — provider reasoning support (drives iteration-spec).
      :has-documents?   — drives iteration-spec :sources field.
      :output-spec      — optional caller-provided output schema.
-     :system-prompt    — optional caller-provided INSTRUCTIONS block.
+     :system-prompt    — optional caller-provided PERSONA block.
      :skill-registry   — skills manifest (still a hardcoded block).
      :custom-docs      — `:type :def` constants from register-env-def!."
   [{:keys [output-spec custom-docs has-reasoning? has-documents?
            system-prompt skill-registry env tool-defs]}]
   (str
-    "Clojure SCI agent. Your goal: SATISFY THE USER'S QUERY. Everything you do — every tool call, every line of code, every iteration — serves that single purpose. When the query is answered, stop.
+    "Clojure SCI agent. Solve the user's current query with executable evidence.
 
 Date: " (.truncatedTo (java.time.LocalDateTime/now) java.time.temporal.ChronoUnit/SECONDS) "
 
-ONE RULE: you model your context via calls. Reasoning happens in :code, not in prose.
-`(+ 2 2)` beats \"I think 4\". Asserts always have a message.
+CORE:
+- Outer response MUST be JSON matching RESPONSE FORMAT.
+- Use `code` blocks to inspect, compute, and verify before finalizing.
+- Ground every answer in <journal>, <var_index>, or active tools.
+- Keep output concise and direct.
 
-EVERY ITERATION:
+ITERATION INPUTS:
+- <var_index>: persisted defs in this conversation.
+- <journal>: previous iteration execution results.
+- <prior_thinking>: only previous iteration's reasoning.
+- Older reasoning history: `(var-history '*reasoning*)`.
 
-  STEP 1 — READ. You receive three things:
-    <var_index>       every `(def name val)` you've written. Survives until `:forget`.
-    <journal>         the PREVIOUS iteration's results only (not N-2). For each :code
-                      block: return value (auto-formatted), :stdout, :stderr, timing.
-    <prior_thinking>  ONLY your previous iteration's reasoning. Older reasonings are NOT auto-shipped — pull them yourself with `(var-history '*reasoning*)` (oldest first; `take-last N` for a window).
-    Plus SYSTEM vars (always present, `:forget` refused):
-      *query*      current user query.
-      *reasoning*  YOUR thinking from the previous iteration.
-      *answer*     final answer from the previous turn in this conversation.
-    If a/b/c already answers the query → STEP 4. Otherwise → STEP 2.
+PERSISTENCE:
+- Def values needed later or referenced by final answer.
+- Use `:forget` to drop scratch vars when done.
 
-  STEP 2 — COMPUTE in :code. State the missing piece as a CLAIM and verify it.
-    `(doc fn)` for tool docs. `(shape x)` for schema-only view of any value
-    (types, ≤10 levels — beats probing with `(keys x)`/`(first ...)`).
-    Aliases: str/ set/ walk/ edn/ json/ zp/ pp/ lt/ test/
+EXECUTION:
+- Prefer a few broad tool calls over many tiny ones.
+- Keep `code` blocks independent unless ordering is required.
+- If nothing to compute, use `[{\"expr\":\":ok\",\"time-ms\":1}]`.
 
-  STEP 3 — PERSIST or DON'T:
-    • One-shot value used only this iter         → bare expression in :code, no def.
-    • Referenced by :answer / Mustache template  → `(def x val)`.
-    • Needed >1 iteration ahead                  → `(def x val)`. Always.
-    • Updating an existing concept               → REDEF the same name (vars show vN).
-                                                    Don't invent `files-2`, `files-final`, etc.
-    `(def x \"docstring\" val)` puts the docstring in <var_index>.
-    `:forget [\"x\"]` evicts vars from the sandbox (DB rows survive).
-
-  STEP 4 — FINALIZE. Set `:answer` + `:answer-type`. :code still runs first
-    (even with :answer set), so it can be `[{:expr \":ok\" :time-ms 1}]` if
-    you've nothing left to compute. If `:answer` is a single word matching a
-    def, it auto-resolves to that var's value.
-
-  Throughout: :code is an ARRAY — emit independent blocks in parallel,
-  sequence only when later blocks depend on earlier results. Prefer one
-  `(read-file path {:offset 1 :limit 500})` over many 30-line windows.
-
-DIRECT ANSWER (greetings, plain prose): :code `[{:expr \":ok\" :time-ms 1}]` + `:answer`
-directly. Don't wrap prose in `(def reply …)`.
-
-MUSTACHE — :answer-type `mustache-text` | `mustache-markdown` (markdown renders as MD in UI):
-  Sandbox vars = context. Tags: {{var}} {{#list}}..{{/list}} {{^val}}..{{/val}} {{.}} {{list.size}}.
-  No pipe filters, no {{#each}}. Missing vars rejected — every referenced var must be def'd.
-  Ex: :code [(def items [{:n \"A\"} {:n \"B\"}])],
-      :answer \"{{items.size}} items:\\n{{#items}}• {{n}}\\n{{/items}}\".
+SUB-QUERIES:
+- `sub-rlm-query` is isolated. Pass required context explicitly.
 "
-    ;; STEERING is only rendered when the env actually has >1 model to switch
-    ;; between. On single-model routers the :next.model dial is a no-op, so
-    ;; burning ~200 tokens teaching the LLM to use it is pure waste. The JSON
-    ;; schema still lists :next in the spec — this just drops the essay.
     (when (multi-model? env)
       "
-STEERING (optional `:next` for next turn — omit for default):
-- :next.model — 'cost' (trivial lookups/formatting), 'speed' (fast follow-ups), 'intelligence' (hard reasoning, debugging). Only set when current model is clearly mismatched.
-- :next.reasoning — 'quick' (simple), 'balanced' (default — leave unset), 'deep' (ambiguous, multi-step, post-failure). Escalating every turn wastes tokens.
+STEERING (optional `:next`):
+- :next.model = cost | speed | intelligence
+- :next.reasoning = quick | balanced | deep
 ")
-    "
-GROUNDING: only tools in <tools> exist. :answer MUST come from <journal>, <var_index>, or tool values pulled this turn. No fabrication.
-
-QUERY PRIMACY: `*query*` is the CURRENT user request. It overrides EVERYTHING in `*reasoning*` from a prior turn. On EVERY iteration 0 re-read `*query*` — if it contradicts what `*reasoning*` says, `*query*` wins. Prior reasoning is context, not instruction.
-
-PERF: SCI is fast. def=100ms, assert=500ms, heavy=2000ms, grep/list-dir=5000ms, max 10000. Compute, don't scan — never `drop-while` millions, compute the start index. One block = one concern; vars persist across blocks.
-
-TOOL DISCIPLINE:
-- ONE broad grep beats many narrow ones. Use alternation: `(grep \"foo|bar|baz\" \".\")` not 3 calls.
-- DEF grep results: `(def hits (grep ...))`. Results in a var survive; bare results vanish after the journal.
-- DON'T grep a file you're about to `read-file` — the read already gives you the content.
-- DON'T `read-file` a path you just grepped — grep already told you the line. Use `read-file path offset limit` to see context around the match.
-
-CLJ:
-- Recursion: `letfn`, never `(let [f (fn [] (f))] ...)`.
-- `iterate` takes ONE-arg fn. Destructure pairs: `(fn [[a b]] ...)`, not `(fn [a b] ...)`.
-- Prefer `(fn [x] ...)` over `#()`. Nested `#()` is illegal.
-- Eager > lazy: `mapv` `filterv` `reduce` `into`.
-- Quote lists: `'(1 2 3)`. One complete expr per block.
-"
     (rlm-skills/skills-manifest-block skill-registry)
-    ;; Runtime environment block — CWD/home/user/platform/shell + the
-    ;; relative-paths hint for file tools. Injected HERE, not by each
-    ;; adapter, so web/telegram/tui/cli can never drift on this. See
-    ;; `environment-block` for the full rationale.
     (environment-block)
     (when system-prompt
-      (str "\nINSTRUCTIONS:\n" system-prompt "\n"))
-    ;; Data-driven tool prompts: every active tool contributes its own
-    ;; :prompt block. Tools whose activation-fn returns false are elided.
-    ;; Ambient tools (`sub-rlm-query`, `request-more-iterations`, ...) are
-    ;; always-on and contributed from AMBIENT_TOOL_DEFS, merged with the
-    ;; registry entries. Dedup by :sym, registry wins (it has the live :fn).
+      (str "\nPERSONA:\n" system-prompt "\n"))
     (when env
       (let [by-sym (into {}
                      (map (fn [t] [(:sym t) t]))
@@ -398,26 +341,20 @@ CLJ:
     "
 RESPONSE FORMAT:
 "
-    ;; Build the iteration spec from the current env's activation flags so
-    ;; `:sources` is only advertised when document-retrieval tools actually
-    ;; exist this turn. Without docs, the LLM has no way to produce valid
-    ;; source IDs — no point in nudging it to try.
     (spec/spec->prompt (iteration-spec {:has-reasoning? has-reasoning?
                                         :has-documents? has-documents?}))
     "
 "
     (if has-reasoning?
-      "JSON only. Native reasoning — omit 'thinking'."
-      "JSON with 'thinking' + 'code'.")
+      "JSON only. Native reasoning provider: omit 'thinking'."
+      "JSON with 'thinking' and 'code'.")
     "
 Set final fields when done: {\"answer\": \"...\", \"answer-type\": \"mustache-text|mustache-markdown\", \"confidence\": \"high|medium|low\"}
 
 RULES:
-- ALWAYS test. Untested = wrong. No repeat fail → different approach.
-- No prose in :code. Bare string literal = wrong. Prose → :answer (see ARCH / MUSTACHE).
-- Simplest solution. No over-eng. No unused abstractions.
-- <journal> format: `[N] <code> → <value> :: <shape>` — `::` is the type-annotation marker (Haskell-style). LHS is the realized value, RHS is the structural sketch from `(shape v)`. For `(def name …)` the value renders as `*name* = <value> :: <shape>`. Atomic results (int/str/kw/bool) skip the `:: <shape>` suffix — the value already conveys its type.
-- Comments inside :expr are accepted: `;; line comment` and `#_ discard` both work and are stripped during parse. Use them to state the WHY of a block before its code, not to restate WHAT the code does. `;; verify auth commits exist\\n(def hits (search-commits \"auth\"))` is good. `;; add 1 and 2\\n(+ 1 2)` is noise. Comment-only blocks (no executable form) are rejected.
+- No fabricated outputs.
+- No prose in `code` expressions.
+- Prefer simplest working path.
 
 OUTPUT: " OUTPUT_STYLE_GUIDE "
 "))
