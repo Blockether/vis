@@ -42,28 +42,6 @@
    opened through `conversations/create!` already has these registered — agent-defs
    only need to declare *extra* tools beyond this set."
   shared/base-tools)
-
-(defn default-system-prompt
-  "Tiny vis-side persona block. svar's own RLM prompt already covers ARCH,
-   GROUNDING, iteration spec, execution receipts, def discipline, final
-   mechanics. Here we only add what svar cannot know: the vis persona, the
-   specific tools vis registers, cross-query var persistence. Keep short."
-  []
-  "You are a vis agent — senior engineer pair, Clojure SCI sandbox, file tools only.
-
-Cross-query memory: only `(def name \"doc\" val)` persists in this conversation; next
-query sees it in <var_index>. Plain final answers do not persist unless you also
-def them. If a symbol should exist but isn't there, call (restore-var 'name) or
-(restore-vars ['a 'b]). Use `:forget` for scratch vars once they stop being useful.
-
-File tools (positional args, never maps): read-file, write-file, edit-file, list-dir.
-edit-file expects one patch string in OpenAI envelope format:
-*** Begin Patch / *** Update|Add|Delete File / *** End Patch.
-Update hunks must use strict headers: @@ -a[,b] +c[,d] @@.
-No shell, no git CLI, no network. If the user needs a shell command, say so plainly.
-
-Iteration budget: (request-more-iterations N) when you know the task will need more.")
-
 (defn agent
   "Create an agent definition (data map).
 
@@ -100,20 +78,8 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
             :tools          all-tools
             :constants      {}
             :max-iterations core/MAX_ITERATIONS
-            :system-prompt  (or (:system-prompt opts) (default-system-prompt))}
+            :system-prompt  (:system-prompt opts)}
       (assoc opts :tools all-tools))))
-
-;;; ── Config Resolution ────────────────────────────────────────────────────
-;; Delegates to config.clj — single source of truth for config I/O.
-;; See SAMPLE_CONFIG.edn for svar-native format.
-
-;;; ── Environment Info ─────────────────────────────────────────────────────
-;;
-;; Previously this namespace built an `<environment>` block and concatenated
-;; it onto every CLI system prompt. That responsibility has moved into
-;; `loop.runtime.prompt/build-system-prompt` so EVERY adapter (cli, web,
-;; telegram, tui) gets the block automatically — no per-adapter concat,
-;; no drift. See `prompt/environment-block` for the current source.
 
 ;;; ── Execution ────────────────────────────────────────────────────────────
 
@@ -175,11 +141,11 @@ Iteration budget: (request-more-iterations N) when you know the task will need m
                     (fn [chunk]
                       (on-chunk (assoc chunk :timeline (projector chunk)))))
         q-opts    (cond-> {:max-iterations iters
-                            :system-prompt  sys}
-                     spec     (assoc :spec spec)
-                     mdl      (assoc :model mdl)
-                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})
-                     debug?   (assoc :debug? true))
+                           :system-prompt  sys}
+                    spec     (assoc :spec spec)
+                    mdl      (assoc :model mdl)
+                    on-chunk* (assoc :hooks {:on-chunk on-chunk*})
+                    debug?   (assoc :debug? true))
         messages  (if (string? prompt) [(llm/user prompt)] prompt)]
     (try
       (let [result (conversations/send! conv-id messages q-opts)]

@@ -1,7 +1,6 @@
 (ns com.blockether.vis.adapters.web.presentation.message
   "Message rendering — user/assistant bubbles, iterations, executions."
-  (:require [com.blockether.vis.adapters.web.presentation.tool-render :as tool-render]
-            [com.blockether.vis.loop.runtime.shared :as rt-shared]
+  (:require [com.blockether.vis.loop.runtime.shared :as rt-shared]
             [clojure.string :as str])
   (:import [java.util Locale]))
 
@@ -28,18 +27,6 @@
 
     :else result))
 
-(defn- exec-badge [code]
-  (when code
-    (let [t (str/trim code)
-          list-form? (str/starts-with? t "(")]
-      (when list-form?
-        (let [b (subs t 1)
-              first-sym (first (str/split b #"[\s\)\(\"']" 2))]
-          ;; If wrapped in (def name (tool ...)), extract the inner tool name
-          (if (= first-sym "def")
-            (when-let [inner (second (re-find #"\(def\s+\S+\s+\((\S+)" t))]
-              inner)
-            first-sym))))))
 
 (defn- fmt-exec-time
   "Short human label for per-exec elapsed time."
@@ -75,20 +62,6 @@
     (when (and stderr (not (str/blank? stderr)))
       [:div.exec-stderr stderr])))
 
-(defn- render-exec-shape
-  "Render the structural sketch line that follows every non-atomic result.
-   Pure data form like `[int]`, `{:a int, :b str}`, `(int)`. Suppressed for
-   atomic values whose pr-str already conveys their type (see
-   `runtime.shared/atomic?`). The label is the literal `::` Haskell-style
-   marker — same text the LLM sees in the journal so the visual convention
-   is unified across UI and prompt."
-  [clean]
-  (when (and (some? clean) (not (rt-shared/atomic? clean)))
-    (when-let [shape-pr (try (pr-str (rt-shared/shape clean))
-                          (catch Throwable _ nil))]
-      [:div.exec-shape
-       [:span.exec-shape-label "::"]
-       [:code.exec-shape-data shape-pr]])))
 
 (defn- sci-var?
   "True when v is a SCI or Clojure var. Detected by class name to avoid
@@ -130,58 +103,21 @@
 
 (defn- render-exec [{:keys [code result error timeout?] :as exec}]
   (let [clean     (-> result clean-result unwrap-var-surrogate)
-        is-final? (and (map? result) (:rlm/final result))
-        badge     (exec-badge code)]
-    (cond
-      is-final? nil
-      error
-      [:div.exec.exec-errored
+        is-final? (and (map? result) (:rlm/final result))]
+    (when-not is-final?
+      [:div.exec
        (render-exec-meta exec)
-       (when code [:details.exec-code-toggle
-                   [:summary.exec-code-summary [:code (or badge "code")]]
-                   [:pre.exec-code-full code]])
+       (when code [:pre.exec-code code])
        (render-exec-streams exec)
-       [:div.exec-error {:class (when timeout? "exec-error-timeout")} (str error)]]
-      :else
-      (or
-        ;; Tool-specific renderer — shows the pretty tool output AND a
-        ;; click-to-expand `source` toggle below it with the exact SCI
-        ;; expression that produced the result. Answers "what code ran to
-        ;; produce this?" without bloating the main view.
-        (when badge
-          (when-let [rendered (tool-render/render-tool badge clean code)]
-            [:div.exec
-             (render-exec-meta exec)
-             rendered
-             (render-exec-streams exec)
-             (when code
-               [:details.exec-code-toggle
-                [:summary.exec-code-summary "source"]
-                [:pre.exec-code-full code]])]))
-        ;; Fallback — no tool-specific renderer. Show the raw code + result + shape.
-        ;;
-        ;; Every successful exec auto-unwraps to value + shape:
-        ;;   - value : `result->display` for non-strings (pr-str, sandbox-stripped, 30k cap),
-        ;;             raw text for strings (no surrounding quotes — usually tool prose).
-        ;;             A `(def foo …)` whose result was a sci.lang.Var lands as the
-        ;;             string `#'sandbox/foo` after `edn-safe`, then `strip-sandbox-ns`
-        ;;             collapses it to `#'foo`.
-        ;;   - shape : recursive type sketch via `runtime.shared/shape`. Suppressed for
-        ;;             scalar atoms whose pr-str already conveys the type unambiguously
-        ;;             (no point printing `42` over `int`).
-        [:div.exec
-         (render-exec-meta exec)
-         (when code [:pre.exec-code code])
-         (render-exec-streams exec)
-         (when-not (nil? clean)
-           [:div.exec-result
-            (cond
-              (string? clean) [:pre.exec-data
-                               (-> clean rt-shared/strip-sandbox-ns
-                                 (rt-shared/truncate-with-marker rt-shared/MAX_RESULT_DISPLAY_CHARS))]
-              :else [:pre.exec-data
-                     (rt-shared/result->display clean :full)])
-            (render-exec-shape clean)])]))))
+       (when error
+         [:div.exec-error {:class (when timeout? "exec-error-timeout")} (str error)])
+       (when (and (nil? error) (some? clean))
+         [:div.exec-result
+          [:pre.exec-data
+           (if (string? clean)
+             (-> clean rt-shared/strip-sandbox-ns
+               (rt-shared/truncate-with-marker rt-shared/MAX_RESULT_DISPLAY_CHARS))
+             (rt-shared/result->display clean :full))]])])))
 
 (defn- system-var?
   "Agent-loop SYSTEM vars are rebound every iteration regardless of what
@@ -288,17 +224,8 @@
         has-vars?     (seq vars)
         has-thinking? (and thinking (not (str/blank? (str thinking))))]
     (when (or has-execs? error has-vars? has-thinking?)
-      [(if solo? :div.iteration-solo :div.iteration)
-       {:class (str/join " "
-                 (cond-> []
-                   error  (conj "iteration-error")
-                   final? (conj "iteration-final-ok")))}
-       (when-not solo?
-         [:div.iter-header
-          [:span.iter-title (str "ITERATION " (inc iteration))]
-          (when final? [:span.iter-final-tag " FINAL"])
-          (when error [:span.iter-error-tag " ERROR"])])
-       (when (and solo? error)
+      [:div.iter-content
+       (when error
          [:div.iter-header
           [:span.iter-error-tag "ERROR"]])
        (when error

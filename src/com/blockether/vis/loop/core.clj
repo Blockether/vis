@@ -1179,42 +1179,33 @@
   (str/join "\n"
     (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
            (let [code-str (str/trim (or code ""))
-                 hint (when error (error-hint error))
-                 ;; Same `value :: shape` rule as `format-execution-results`,
-                 ;; with atomic-suppression for scalar results. See
-                 ;; `runtime.shared/atomic?` and `runtime.shared/SHAPE_MARKER`.
-                 shape-suffix-for (fn [v]
-                                    (when-not (rt-shared/atomic? v)
-                                      (str rt-shared/SHAPE_MARKER (pr-str (rt-shared/shape v)))))
-                 var-surrogate? (and (map? result) (contains? result :rlm/var-ref))
-                 val-part (cond
-                            error
-                            (str "ERROR: " error
-                              (when hint (str " :hint " (pr-str hint))))
+                  hint (when error (error-hint error))
+                  var-surrogate? (and (map? result) (contains? result :rlm/var-ref))
+                  val-part (cond
+                             error
+                             (str "ERROR: " error
+                               (when hint (str " :hint " (pr-str hint))))
 
-                            (fn? result)
-                            (str "ERROR: " code-str " is a function object. Call it: (" code-str ")")
+                             (fn? result)
+                             (str "ERROR: " code-str " is a function object. Call it: (" code-str ")")
 
-                            var-surrogate?
-                            (let [{var-name :rlm/var-ref bound :rlm/var-value} result]
-                              (str "*" var-name "* = "
-                                (or (formatted-str-of bound)
-                                  (rt-shared/result->display bound :full))
-                                (shape-suffix-for bound)))
+                             var-surrogate?
+                             (let [{var-name :rlm/var-ref bound :rlm/var-value} result]
+                               (str "*" var-name "* = "
+                                 (or (formatted-str-of bound)
+                                   (rt-shared/result->display bound :full))))
 
-                            (instance? clojure.lang.Var result)
-                            (let [^clojure.lang.Var var-obj result
-                                  var-name (name (.sym var-obj))
-                                  raw-bound (.getRawRoot var-obj)]
-                              (str "*" var-name "* = "
-                                (or (formatted-str-of raw-bound)
-                                  (rt-shared/result->display raw-bound :full))
-                                (shape-suffix-for raw-bound)))
+                             (instance? clojure.lang.Var result)
+                             (let [^clojure.lang.Var var-obj result
+                                   var-name (name (.sym var-obj))
+                                   raw-bound (.getRawRoot var-obj)]
+                               (str "*" var-name "* = "
+                                 (or (formatted-str-of raw-bound)
+                                   (rt-shared/result->display raw-bound :full))))
 
-                            :else
-                            (str (or (formatted-str-of result)
-                                   (rt-shared/result->display result :full))
-                              (shape-suffix-for result)))
+                             :else
+                             (str (or (formatted-str-of result)
+                                    (rt-shared/result->display result :full))))
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
@@ -1392,21 +1383,6 @@
                   time-ms       (or execution-time-ms 0)
                   slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
                                   (str " (" time-ms "ms SLOW)"))
-                  ;; Auto-unwrap: every successful exec gets `value :: <shape>`.
-                  ;; Atomic results (int/str/kw/bool/nil) skip the suffix — the
-                  ;; value already conveys its type and the LLM gains nothing
-                  ;; from `42 :: int`. See `runtime.shared/atomic?` and
-                  ;; `runtime.shared/SHAPE_MARKER` (`" :: "`).
-                  ;;
-                  ;; Persisted SCI-var surrogate detection: storage's edn-safe
-                  ;; rewrites a `(def foo 42)` into
-                  ;; `{:rlm/var-ref "foo" :rlm/var-value 42}` so EDN can
-                  ;; roundtrip it. The live in-memory path carries the actual
-                  ;; sci.lang.Var (also `clojure.lang.Var` for `instance?`).
-                  ;; Both render as `*foo* = 42 :: int`.
-                  shape-suffix-for (fn [v]
-                                     (when-not (rt-shared/atomic? v)
-                                       (str rt-shared/SHAPE_MARKER (pr-str (rt-shared/shape v)))))
                   var-surrogate? (and (map? result)
                                    (contains? result :rlm/var-ref))
                   value-part
@@ -1426,8 +1402,7 @@
                             [pre-formatted false]
                             (truncated-pr-str bound*))]
                       (str "*" var-name "* = " value-str
-                        (when truncated? " :truncated? true")
-                        (shape-suffix-for bound)))
+                        (when truncated? " :truncated? true")))
 
                     (instance? clojure.lang.Var result)
                     (let [^clojure.lang.Var var-obj result
@@ -1443,8 +1418,7 @@
                             [pre-formatted false]
                             (truncated-pr-str bound))]
                       (str "*" var-name "* = " value-str
-                        (when truncated? " :truncated? true")
-                        (shape-suffix-for raw-bound)))
+                        (when truncated? " :truncated? true")))
 
                     :else
                     (let [pre-formatted (formatted-str-of result)
@@ -1453,9 +1427,8 @@
                           (if pre-formatted
                             [pre-formatted false]
                             (truncated-pr-str v))]
-                      (str value-str
-                        (when truncated? " :truncated? true")
-                        (shape-suffix-for result))))]
+                       (str value-str
+                         (when truncated? " :truncated? true"))))]
               (str "  [" (inc idx) "] " code-str " → " value-part
                 (or slow-suffix "")
                 (or stdout-suffix "")

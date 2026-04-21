@@ -170,14 +170,7 @@
     (spec/field {::spec/name :expr
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
-                 ::spec/description (str "A SINGLE valid Clojure S-expression evaluated in the SCI sandbox. "
-                                      "This is Clojure, NOT shell. Every tool call is a parenthesised form: "
-                                      "`(grep \"pattern\" \"src\" {:max-matches 30})`, "
-                                      "`(list-dir \"src\" {:glob \"**/*.clj\"})`, "
-                                      "`(read-file \"src/foo.clj\")`. "
-                                      "Bare `grep \"...\" \"src\" {...}` is INVALID — the reader sees four unrelated forms, "
-                                      "no tool gets called, and the iteration is wasted. "
-                                      "If the expression is not a complete, balanced, parenthesised form, the iteration is rejected.")})
+                 ::spec/description "One valid Clojure S-expression to execute in SCI (tool calls must be parenthesized)."})
     (spec/field {::spec/name :time-ms
                  ::spec/type :spec.type/int
                  ::spec/cardinality :spec.cardinality/one
@@ -246,29 +239,23 @@
                                           ::spec/target :code_block
                                           ::spec/cardinality :spec.cardinality/many
                                           ::spec/required true
-                                           ::spec/description (str "REQUIRED. Vector of Clojure code blocks to execute. Each has :expr (Clojure S-expression) and :time-ms. "
-                                                                "EVERY :expr is Clojure, not shell. Tool invocations MUST start with `(`: "
-                                                                "`(grep \"pat\" \"src\")`, NOT `grep \"pat\" \"src\"`. "
-                                                                "Always executes, even with :final. "
-                                                                "When you have nothing to compute this turn, emit `[{:expr \":ok\" :time-ms 1}]` "
-                                                                "— a one-element sentinel that evaluates to the :ok keyword. "
-                                                                "Empty :code is rejected; the loop will feed back an error and waste your budget.")})
+                                           ::spec/description "Required code blocks to execute this iteration; use `[{\"expr\":\":ok\",\"time-ms\":1}]` when no computation is needed."})
                              (spec/field {::spec/name :next
                                           ::spec/type :spec.type/ref
                                           ::spec/target :next_turn
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
-                                          ::spec/description "Optional steering hint for the next iteration. Either or both sub-keys may be set."})
+                                           ::spec/description "Optional steering for the next iteration."})
                              (spec/field {::spec/name :forget
                                           ::spec/type :spec.type/string
                                           ::spec/cardinality :spec.cardinality/many
                                           ::spec/required false
-                                          ::spec/description "Var names to drop from <var_index>. DB rows stay — the binding is just unmapped from the sandbox."})
+                                           ::spec/description "Optional var names to forget from the sandbox."})
                              (spec/field {::spec/name :answer
                                           ::spec/type :spec.type/string
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
-                                          ::spec/description "Final answer. Single-word var names auto-resolve to their runtime value. Send with any needed :code. :code runs first."})
+                                           ::spec/description "Optional final answer for this iteration."})
                              ;; Values-only enum (svar 0.3.2+). Mustache
                              ;; semantics are documented once in the ARCH
                              ;; section of `runtime.prompt`; no need to
@@ -278,14 +265,14 @@
                                           ::spec/type :spec.type/keyword
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
-                                          ::spec/description "REQUIRED with :answer. How to render the answer (see ARCH / MUSTACHE)."
-                                          ::spec/values ["mustache-text" "mustache-markdown"]})
+                                           ::spec/description "Required with :answer; controls final answer rendering."
+                                           ::spec/values ["mustache-text" "mustache-markdown"]})
                              (spec/field {::spec/name :confidence
                                           ::spec/type :spec.type/keyword
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
-                                          ::spec/description "Confidence level"
-                                          ::spec/values ["high" "medium" "low"]})]
+                                           ::spec/description "Optional confidence level."
+                                           ::spec/values ["high" "medium" "low"]})]
                        ;; :sources only shows up when document-retrieval tools
                        ;; are actually callable this turn. Otherwise the LLM
                        ;; would be told to cite sources it cannot fetch.
@@ -294,12 +281,12 @@
                                           ::spec/type :spec.type/string
                                           ::spec/cardinality :spec.cardinality/many
                                           ::spec/required false
-                                          ::spec/description "IDs of sources (page.node, document, entity) that grounded the :answer. Required whenever you pulled content from any document-retrieval tool this turn."})))
+                                           ::spec/description "Optional source IDs used to ground the answer."})))
         fields (if include-thinking?
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string
                                      ::spec/cardinality :spec.cardinality/one
-                                     ::spec/description "Your reasoning: what you observed, what you learned, what to do next"})]
+                                      ::spec/description "Short reasoning for this iteration."})]
                    base-fields)
                  base-fields)]
     (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC]} fields)))

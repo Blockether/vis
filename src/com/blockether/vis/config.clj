@@ -123,7 +123,7 @@
        :label "Blockether"
        :base-url be-url
        :api-key be-key
-        :default-models ["glm-5.1" "glm-5-turbo" "gpt-5-mini" "gpt-4o"
+        :default-models ["glm-5-turbo" "glm-5.1" "gpt-5-mini" "gpt-4o"
                          "claude-sonnet-4-6" "claude-opus-4-6"
                          "minimax-m2.5" "gemini-2.5-pro"]})))
 

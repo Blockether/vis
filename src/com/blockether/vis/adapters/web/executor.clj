@@ -18,19 +18,6 @@
 (def ^:private worker-chs (atom [])) ;; vector of worker go-loop channels for drain tracking
 (def ^:private worker-count 4)
 
-(defn- web-system-prompt
-  []
-  ;; Persona only. The `<environment>` block (CWD / platform / relative-paths
-  ;; hint) is appended automatically by `build-system-prompt` for every
-  ;; adapter — don't concat it here.
-  "You are vis web assistant. Keep responses clear and concise.
-For simple greetings or direct prose answers, just set :answer and leave :code
-empty — no def wrapping, no ceremony. For real work, batch: emit many
-independent (def …) / tool calls in a single iteration's :code vector. Each
-iteration is a full round-trip, so one iteration with ten blocks beats ten
-with one. When reading files, fetch generously (whole file or large ranges)
-rather than re-reading small slices.")
-
 ;;; ── Worker ─────────────────────────────────────────────────────────────
 
 (defn- on-chunk-handler
@@ -94,9 +81,8 @@ rather than re-reading small slices.")
       (try
         (let [history (msgs->llm (:messages conv))
               msgs    (if (seq history) history [(llm/user query)])
-              result  (conversations/send! conversation-id msgs
-                         {:system-prompt (web-system-prompt)
-                          :hooks {:on-chunk (on-chunk-handler conversation-id)}})]
+               result  (conversations/send! conversation-id msgs
+                         {:hooks {:on-chunk (on-chunk-handler conversation-id)}})]
           (when (web-conversations/get-conversation conversation-id)
             (web-conversations/append-message! conversation-id
               {:role :assistant :text (:answer result)

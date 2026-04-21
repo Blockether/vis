@@ -16,11 +16,6 @@
 
 (def ^:private poll-timeout-seconds 30)
 
-(defn- telegram-system-prompt []
-  ;; Persona only. The `<environment>` block is appended by
-  ;; `build-system-prompt` for every adapter — don't concat it here.
-  "You are vis over Telegram. Keep replies short and direct. Use minimal markdown.")
-
 (defn- extract-text [msg] (or (:text msg) (:caption msg)))
 
 (defn- extract-sender [msg]
@@ -51,10 +46,9 @@
           (try
             (tg/send-chat-action! token chat-id "typing")
             (let [{:keys [id]} (conversations/for-telegram-chat! chat-id)
-                  result       (conversations/send! id text
-                                 {:system-prompt (telegram-system-prompt)
-                                  :max-context-tokens 2200
-                                  :max-iterations 12})
+                   result       (conversations/send! id text
+                                  {:max-context-tokens 2200
+                                   :max-iterations 12})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
                   env          (conversations/env-for id)
                   model-name   (routing/resolve-root-model (:router env))]
