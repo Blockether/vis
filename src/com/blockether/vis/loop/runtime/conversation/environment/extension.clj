@@ -101,9 +101,10 @@
 (s/def :ext/activation-fn fn?)
 
 ;; Rich documentation for the LLM - injected into the system prompt when
-;; the extension is active. String or (fn [env] string) so extensions can
-;; render dynamic context (e.g. number of ingested documents, attached repos).
-(s/def :ext/prompt fn-or-string?)
+;; the extension is active. After normalization, always a fn.
+;; The `extension` constructor and `validate!` both accept string | fn
+;; and normalize strings to (constantly s).
+(s/def :ext/prompt fn?)
 
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
@@ -218,16 +219,18 @@
 ;; =============================================================================
 
 (defn validate!
-  "Assert that an extension map conforms to ::extension.
+  "Normalize and assert that an extension map conforms to ::extension.
+   Normalizes :ext/prompt (string → fn) before checking the spec.
    Throws with spec explain-data on violation."
   [ext]
-  (when-not (s/valid? ::extension ext)
-    (throw (ex-info (str "Invalid extension '" (:ext/namespace ext) "':\n"
-                      (with-out-str (s/explain ::extension ext)))
-             {:type      :extension/invalid-spec
-              :namespace (:ext/namespace ext)
-              :explain   (s/explain-data ::extension ext)})))
-  ext)
+  (let [ext (update ext :ext/prompt normalize-prompt)]
+    (when-not (s/valid? ::extension ext)
+      (throw (ex-info (str "Invalid extension '" (:ext/namespace ext) "':\n"
+                        (with-out-str (s/explain ::extension ext)))
+               {:type      :extension/invalid-spec
+                :namespace (:ext/namespace ext)
+                :explain   (s/explain-data ::extension ext)})))
+    ext))
 
 ;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging

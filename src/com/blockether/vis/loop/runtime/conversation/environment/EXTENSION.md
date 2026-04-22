@@ -87,14 +87,20 @@ before-fn → fn → after-fn
 Not typically called directly — `wrap-extension` wires this up
 automatically.
 
-### `validate!` — assert extension conformance
+### `validate!` — normalize and assert extension conformance
 
 ```clojure
-(validate! ext) → ext (or throws)
+(validate! ext) → normalized ext (or throws)
 ```
 
-Checks that a raw extension map conforms to `::extension`. Called
-internally by `extension`; useful for testing hand-built maps.
+Normalizes `:ext/prompt` (string → fn) then checks that the extension
+map conforms to `::extension`. Called internally by `extension`; safe
+to call standalone on hand-built maps — string prompts are converted
+automatically.
+
+> **Note:** The `::extension` spec requires `:ext/prompt` to be `fn?`.
+> Both `extension` and `validate!` normalize strings to `(constantly s)`
+> before validation, so callers can pass either form.
 
 ## Hook Protocol
 
