@@ -3,10 +3,10 @@
 
    Owns sidebar/page projections, message cache hydration from RLM DB,
    title generation, and context payload shaping for the web adapter."
-  (:require [com.blockether.vis.loop.conversations.core :as conversations]
+  (:require [com.blockether.vis.loop.runtime.conversation.core :as conversations]
    [com.blockether.vis.core :as core]
             [com.blockether.vis.loop.core :as loop-core]
-            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.base :as rlm-routing]
             [com.blockether.vis.loop.storage.db :as rlm-db]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -227,10 +227,10 @@
       (value->preview value))))
 
 (defn- var-history-for
-  [cache db-info conv-ref sym]
+  [cache db-info conv-id sym]
   (if-let [rows (get @cache sym)]
     rows
-    (let [rows (try (rlm-db/db-var-history db-info conv-ref sym)
+    (let [rows (try (rlm-db/db-var-history db-info conv-id sym)
                  (catch Exception _ []))]
       (swap! cache assoc sym rows)
       rows)))
@@ -256,7 +256,7 @@
 (defn- iteration-entity->vars
   "Project the vars written in this iteration into a compact table shape
    the frontend can render without re-parsing values."
-  [db-info conv-ref query-id var-history-cache iter-entity]
+  [db-info conv-id query-id var-history-cache iter-entity]
   (try
     (let [rows         (rlm-db/db-list-iteration-vars db-info [:id (:id iter-entity)])
           iter-created (:created-at iter-entity)]
@@ -264,7 +264,7 @@
         (keep (fn [{:keys [name value code]}]
                 (when name
                   (let [sym       (symbol name)
-                        history   (var-history-for var-history-cache db-info conv-ref sym)
+                        history   (var-history-for var-history-cache db-info conv-id sym)
                         versioned (resolve-var-version history query-id iter-created value code)]
                     {:name         name
                      :type         (type-label value)
@@ -276,20 +276,20 @@
          rows)))
     (catch Exception _ [])))
 
-(defn- iteration-entity->trace-entry [db-info conv-ref query-id var-history-cache idx iter-entity]
+(defn- iteration-entity->trace-entry [db-info conv-id query-id var-history-cache idx iter-entity]
   (let [err (some-> (:error iter-entity) (safe-read-edn nil))]
     (cond-> {:iteration  idx
              :thinking   (:thinking iter-entity)
              :executions (iteration-entity->exec iter-entity)
-             :vars       (iteration-entity->vars db-info conv-ref query-id var-history-cache iter-entity)}
+             :vars       (iteration-entity->vars db-info conv-id query-id var-history-cache iter-entity)}
       (some? (:answer iter-entity)) (assoc :final? true)
       err (assoc :error err))))
 
-(defn- query-entity->message-pair [db-info conv-ref var-history-cache query-entity]
+(defn- query-entity->message-pair [db-info conv-id var-history-cache query-entity]
   (let [query-id    (:id query-entity)
-        query-ref   [:id query-id]
-        iterations  (rlm-db/db-list-query-iterations db-info query-ref)
-        trace       (vec (map-indexed #(iteration-entity->trace-entry db-info conv-ref query-id var-history-cache %1 %2) iterations))
+        query-id   [:id query-id]
+        iterations  (rlm-db/db-list-query-iterations db-info query-id)
+        trace       (vec (map-indexed #(iteration-entity->trace-entry db-info conv-id query-id var-history-cache %1 %2) iterations))
         final-iter  (last (filter :answer iterations))
         answer      (or (some-> final-iter   :answer read-answer)
                       (some-> query-entity :answer read-answer))
@@ -324,10 +324,10 @@
 (defn- load-messages-from-db [env]
   (try
     (let [db-info  (:db-info env)
-          conv-ref (:conversation-ref env)
-          queries  (rlm-db/db-list-conversation-queries db-info conv-ref)
+          conv-id (:conversation-id env)
+          queries  (rlm-db/db-list-conversation-queries db-info conv-id)
           var-history-cache (atom {})]
-      (into [] (mapcat #(query-entity->message-pair db-info conv-ref var-history-cache %)) queries))
+      (into [] (mapcat #(query-entity->message-pair db-info conv-id var-history-cache %)) queries))
     (catch Exception e
       (println (str "[web] load-messages-from-db failed: " (ex-message e)))
       [])))
@@ -401,9 +401,9 @@
      collapsed card in the sidebar.
    - `:value`   — the full value, untruncated; used by the var-history
      detail panel so opening a var always shows its complete contents."
-  [db-info conv-ref sym]
+  [db-info conv-id sym]
   (try
-    (->> (rlm-db/db-var-history db-info conv-ref sym)
+    (->> (rlm-db/db-var-history db-info conv-id sym)
       (mapv (fn [{:keys [version value code created-at]}]
               (let [unwrapped (unwrap-answer sym value)
                     rendered  (display-value unwrapped)]
@@ -438,8 +438,8 @@
         (if (seq stripped) stripped n)))))
 
 (defn- ->var-entry
-  [db-info conv-ref system? [sym {:keys [value code version]}]]
-  (let [versions  (var-version-entries db-info conv-ref sym)
+  [db-info conv-id system? [sym {:keys [value code version]}]]
+  (let [versions  (var-version-entries db-info conv-id sym)
         displayed (unwrap-answer sym value)]
     (cond-> {:name     (str sym)
              :value    (truncate-str (display-value displayed) 200)
@@ -458,15 +458,15 @@
   [conversation-id]
   (when (conversations/by-id conversation-id)
     (let [env          (conversations/env-for conversation-id)
-          conv-ref     (:conversation-ref env)
+          conv-id     (:conversation-id env)
           db-info      (:db-info env)
-          var-registry (try (when (and db-info conv-ref)
-                              (rlm-db/db-latest-var-registry db-info conv-ref))
+          var-registry (try (when (and db-info conv-id)
+                              (rlm-db/db-latest-var-registry db-info conv-id))
                          (catch Exception _ nil))
           {system-pairs true user-pairs false}
           (when (seq var-registry)
             (group-by (fn [[sym _]] (system-var? sym)) (sort-by first var-registry)))
-          user-vars    (mapv #(->var-entry db-info conv-ref false %) user-pairs)
-          system-vars  (mapv #(->var-entry db-info conv-ref true  %) system-pairs)]
+          user-vars    (mapv #(->var-entry db-info conv-id false %) user-pairs)
+          system-vars  (mapv #(->var-entry db-info conv-id true  %) system-pairs)]
       (cond-> {:variables user-vars}
         (seq system-vars) (assoc :system-variables system-vars)))))

@@ -3,7 +3,7 @@
    [lazytest.core :refer [defdescribe expect it]]
    [com.blockether.vis.adapters.web.conversations :as web-conversations]
    [com.blockether.vis.adapters.web.dictation :as sut]
-   [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]))
+   [com.blockether.vis.loop.runtime.conversation.environment.query.routing :as rlm-routing]))
 
 ;; ── helpers ────────────────────────────────────────────────────────────
 

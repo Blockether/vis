@@ -27,7 +27,7 @@
     [com.blockether.vis.core :as sut]
     [com.blockether.vis.loop.core :as rlm-core]
     [com.blockether.vis.loop.storage.db :as rlm-db]
-    [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]))
+    [com.blockether.vis.loop.runtime.conversation.environment.query.routing :as rlm-routing]))
 
 ;; =============================================================================
 ;; Test harness

@@ -12,7 +12,7 @@
             [lazytest.core :refer [defdescribe describe expect it]]
             [com.blockether.svar.internal.llm :as llm]
             [com.blockether.vis.config :as config]
-            [com.blockether.vis.loop.conversations.core :as conversations]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.core :as rlm-core]
             [com.blockether.vis.core :as rlm]
             [sci.core :as sci]))

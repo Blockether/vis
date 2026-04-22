@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.runtime.query.subquery-test
+(ns com.blockether.vis.loop.runtime.conversation.environment.query.subquery-test
   "Sub-RLM contract coverage.
 
    Regressions this suite locks down:
@@ -14,8 +14,8 @@
     [clojure.string :as str]
     [lazytest.core :refer [defdescribe describe expect it]]
     [com.blockether.vis.loop.core :as rlm-core]
-    [com.blockether.vis.loop.runtime.core :as rlm-tools]
-    [com.blockether.vis.loop.runtime.query.subquery :as sut]
+    [com.blockether.vis.loop.runtime.conversation.environment.core :as rlm-tools]
+    [com.blockether.vis.loop.runtime.conversation.environment.query.subquery :as sut]
     [com.blockether.vis.loop.storage.db :as rlm-db]
     [com.blockether.vis.loop.storage.sqlite.core :as sqlite-core]
     [com.blockether.svar.internal.llm :as llm]))

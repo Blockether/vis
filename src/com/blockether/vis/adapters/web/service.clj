@@ -1,7 +1,7 @@
 (ns com.blockether.vis.adapters.web.service
   "Managed web service lifecycle with health endpoints."
-  (:require [com.blockether.vis.loop.conversations.core :as conversations]
-            [com.blockether.vis.loop.conversations.persistence :as conv-persistence]
+  (:require [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis.loop.runtime.conversation.persistence :as conv-persistence]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
             [com.blockether.vis.adapters.web.executor :as executor]
             [com.blockether.vis.adapters.web.routes :as routes]

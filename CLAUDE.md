@@ -2,6 +2,31 @@
 
 ## MANDATORY: Agent Rules
 
+### Always use HoneySQL for SQL — no raw strings, no next.jdbc.sql
+
+Every SQL query in the codebase MUST use `honey.sql` data maps.
+Do NOT use `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) —
+it produces namespaced column keys that break with SQLite.
+Do NOT write raw SQL strings in application code (`["SELECT * FROM ..."]`).
+
+The ONE pattern:
+```clojure
+(require '[honey.sql :as sql]
+         '[next.jdbc :as jdbc]
+         '[next.jdbc.result-set :as rs])
+
+(def ^:private jdbc-opts {:builder-fn rs/as-unqualified-lower-maps})
+
+(jdbc/execute! datasource (sql/format {:select [:*]
+                                       :from   [:my_table]
+                                       :where  [:= :id id]})
+  jdbc-opts)
+```
+
+Raw `jdbc/execute!` with string SQL is allowed ONLY inside
+`loop/storage/sqlite/*.clj` for migration DDL and FTS queries that
+HoneySQL cannot express. Everywhere else: HoneySQL or bust.
+
 ### Always reply in English
 
 Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. No exceptions, no mixed-language responses, no apology paragraphs in the user's language. This rule overrides any implicit language mirroring behavior.
@@ -31,6 +56,22 @@ Rule:
 This applies to EVERY spec, not just iteration spec: sub-rlm-query,
 code_block, next_turn, all of them. If svar loaded it, the shape is
 correct by construction.
+
+### Always update `loop/runtime/README.md` when touching the loop
+
+`src/com/blockether/vis/loop/runtime/README.md` is the single source of
+truth for how the agent runtime works — architecture, flow, state,
+dependency graph, entity tree. **Every** change to any file under
+`loop/runtime/` MUST be followed by an update to this README if the
+change affects:
+- File moves, renames, or deletions
+- New files or namespaces
+- Changes to the iteration pipeline stages
+- Changes to the env map shape or state atoms
+- Changes to the dependency graph between modules
+
+Skipping this update is a bug. The README drifting from the code is
+how we ended up with an incomprehensible god file in the first place.
 
 ### Always use `dev/dev.clj` FIRST when investigating conversations
 

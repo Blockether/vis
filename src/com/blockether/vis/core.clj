@@ -1,6 +1,6 @@
 (ns com.blockether.vis.core
   "Public API facade for the Vis RLM (Recursive Language Model).
-   Delegates to loop.core, loop.knowledge.pageindex, loop.runtime.query, etc.
+   Delegates to loop.core, loop.knowledge.pageindex, loop.runtime.conversation.environment.query, etc.
 
    Sections:
    - Unified entrypoint
@@ -21,7 +21,7 @@
    [com.blockether.vis.loop.knowledge.git :as rlm-git]
    [com.blockether.vis.loop.knowledge.ontology :as ontology]
    [com.blockether.vis.loop.knowledge.pageindex :as rlm-pageindex]
-   [com.blockether.vis.loop.runtime.query.core :as rlm-query]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.core :as rlm-query]
    [com.blockether.vis.loop.tool :as tool]
    [com.blockether.vis.loop.storage.schema :as schema]
    [com.blockether.vis.loop.storage.trajectory :as trajectory]
@@ -65,15 +65,7 @@
    at runtime via (request-more-iterations n) up to MAX_ITERATION_CAP."
   schema/MAX_ITERATIONS)
 
-#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
-(def DEFAULT_RECURSION_DEPTH
-  "Default max nesting depth for sub-rlm-query calls."
-  schema/DEFAULT_RECURSION_DEPTH)
 
-#_{:clj-kondo/ignore [:clojure-lsp/unused-public-var]}
-(def ^:dynamic *max-recursion-depth*
-  "Dynamic var controlling max sub-rlm-query recursion depth."
-  schema/*max-recursion-depth*)
 
 ;; Use schema/*rlm-ctx* directly — do NOT redefine as a separate dynamic var,
 ;; as binding a local alias won't propagate to core.clj which imports schema/*rlm-ctx*.
@@ -346,9 +338,9 @@
 
    `env`      — RLM environment from `create-env`.
    `messages` — Vector of message maps, e.g. [(llm/user \"...\")].
-   `opts`     — Optional map. See `loop.runtime.query.core/query-env!` for all opts.
+   `opts`     — Optional map. See `loop.runtime.conversation.environment.query.core/query-env!` for all opts.
 
-   Returns map with :answer, :raw-answer, :trace, :iterations, :duration-ms,
+   Returns map with :answer, :trace, :iterations, :duration-ms,
    :tokens, :cost, :eval-scores, :refinement-count, :confidence, :sources,
    :reasoning. On failure also :status and :status-id."
   rlm-query/query-env!)

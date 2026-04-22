@@ -5,10 +5,10 @@
    Each Telegram chat maps to a `:telegram` conversation via
    `conversations/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
-   conversation's lock in `com.blockether.vis.loop.conversations.core`."
-  (:require [com.blockether.vis.loop.conversations.core :as conversations]
-            [com.blockether.vis.loop.conversations.shared :as conv-shared]
-            [com.blockether.vis.loop.runtime.query.routing :as routing]
+   conversation's lock in `com.blockether.vis.loop.runtime.conversation.core`."
+  (:require [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.shared :as query-shared]
             [com.blockether.vis.adapters.telegram.api :as tg]))
 
 (defonce ^:private running? (atom false))
@@ -46,12 +46,12 @@
           (try
             (tg/send-chat-action! token chat-id "typing")
             (let [{:keys [id]} (conversations/for-telegram-chat! chat-id)
-                   result       (conversations/send! id text
-                                  {:max-context-tokens 2200
-                                   :max-iterations 12})
+                  result       (conversations/send! id text
+                                 {:max-context-tokens 2200
+                                  :max-iterations 12})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
                   env          (conversations/env-for id)
-                  model-name   (routing/resolve-root-model (:router env))]
+                  model-name   (query-shared/resolve-root-model (:router env))]
               (tg/send-message! token chat-id
                 (str answer (format-footer result model-name))))
             (catch Exception e

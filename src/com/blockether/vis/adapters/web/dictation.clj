@@ -14,7 +14,7 @@
      is returned unchanged so the user is never left empty-handed."
   (:require [clojure.string :as str]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
-            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]))
+            [com.blockether.vis.loop.runtime.conversation.environment.query.base :as rlm-routing]))
 
 (def ^:private CLEANUP_SYSTEM_PROMPT
   (str "You clean up text that was just dictated by speech-to-text. "

@@ -336,7 +336,7 @@
    Returns empty string when the registry is empty.
 
    Format:
-     SKILLS (pass :skills [...] to sub-rlm-query, max 2 per call):
+     SKILLS (pass :skills [...] to query, max 2 per call):
        :name — <abstract>
        ..."
   [skill-registry]
@@ -346,7 +346,7 @@
           lines (mapv (fn [[k skill]]
                         (str "  :" (clojure.core/name k) " — " (:abstract skill)))
                   entries)]
-      (str "\nSKILLS (pass :skills [...] to sub-rlm-query, max 2 per call):\n"
+      (str "\nSKILLS (pass :skills [...] to query, max 2 per call):\n"
         (str/join "\n" lines) "\n"))))
 
 ;; =============================================================================

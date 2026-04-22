@@ -4,7 +4,7 @@
    [clojure.java.process :as proc]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
-   [com.blockether.vis.loop.runtime.form-repair :as form-repair]
+
    [com.blockether.svar.internal.spec :as spec]
    [fast-edn.core :as edn])
   (:import
@@ -26,13 +26,8 @@
    Prevents the LLM from requesting 500 iterations in one shot."
   50)
 
-(def DEFAULT_RECURSION_DEPTH
-  "Default maximum depth of nested rlm-query calls. Can be overridden via :max-recursion-depth."
-  5)
-
 (def DEFAULT_EVAL_TIMEOUT_MS
-  "Default timeout in milliseconds for code evaluation in SCI sandbox.
-   Must be long enough for nested sub-rlm-query calls."
+  "Default timeout in milliseconds for code evaluation in SCI sandbox."
   120000)
 
 (def MIN_EVAL_TIMEOUT_MS
@@ -58,30 +53,13 @@
 ;; =============================================================================
 
 (def DEFAULT_CONCURRENCY
-  "Default concurrency settings for sub-rlm-query-batch and nested calls.
-   Applied when :concurrency opt is absent from query-env!."
-  {:max-parallel-llm   8       ; HTTP calls in flight to LLM provider (reentrant sem)
-   :max-skills-per-call 2      ; ceiling on :skills vec length per sub-rlm-query
-   :default-timeout-ms 30000   ; total wall-clock per sub-rlm-query call
-   :http-timeout-ms    20000}) ; per HTTP request to provider
-
-(def ^:dynamic *sub-rlm-deadline*
-  "Absolute wall-clock deadline (java.time.Instant) for the current sub-rlm-query
-   call tree. Nested sub-rlm-query calls inherit min(caller, parent-remaining).
-   Nil when no deadline is active (unbounded)."
-  nil)
+  "Default concurrency settings. Applied when :concurrency opt is absent from query-env!."
+  {:max-parallel-llm   8
+   :http-timeout-ms    20000})
 
 (def ^:dynamic *concurrency*
-  "Merged concurrency settings for the current query-env! session.
-   Bound at query-env! entry, inherited by nested calls via Clojure binding
-   propagation through future macro."
+  "Merged concurrency settings for the current query-env! session."
   DEFAULT_CONCURRENCY)
-
-(def ^:dynamic *concurrency-semaphore*
-  "Query-env-scoped reentrant semaphore (from rlm.concurrency). Bound at
-   query-env! entry, used by sub-rlm-query-batch for HTTP slot acquisition.
-   Nil when no query-env! session is active."
-  nil)
 
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS].
@@ -113,9 +91,7 @@
         (re-find #"#\([^)]*#\(" s)
         "Nested #() is illegal in Clojure. Rewrite inner #() as (fn [...] ...)"
 
-        ;; Paren balance check - if repair changes the code, it's unbalanced
-        (not= s (form-repair/repair-code s))
-        "Unbalanced delimiters in code. Check your parens/brackets."
+
 
         :else nil))))
 
@@ -246,11 +222,6 @@
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
                                            ::spec/description "Optional steering for the next iteration."})
-                             (spec/field {::spec/name :forget
-                                          ::spec/type :spec.type/string
-                                          ::spec/cardinality :spec.cardinality/many
-                                          ::spec/required false
-                                           ::spec/description "Optional var names to forget from the sandbox."})
                              (spec/field {::spec/name :answer
                                           ::spec/type :spec.type/string
                                           ::spec/cardinality :spec.cardinality/one
@@ -319,7 +290,6 @@
 ;; SUB_RLM_QUERY_SPEC was removed — sub-RLMs now run through the same
 ;; iteration-loop as the main RLM, producing a full trace (thinking +
 ;; code + final + vars + persistence) instead of a flat {:content :code}
-;; distillate. See `run-sub-rlm` in loop.runtime.query.subquery.
 
 (defn bytes->base64
   "Converts raw bytes to a base64 string.
@@ -332,9 +302,7 @@
   [^bytes bs]
   (.encodeToString (Base64/getEncoder) bs))
 
-(def ^:dynamic *max-recursion-depth*
   "Dynamic var for max recursion depth. Bound per query-env! call."
-  DEFAULT_RECURSION_DEPTH)
 
 (def ^:dynamic *rlm-ctx*
   "Dynamic context for RLM debug logging. Bind with {:rlm-debug? true :rlm-phase :phase-name :rlm-env-id \"...\"}."

@@ -27,11 +27,11 @@
 
 (defn list-iterations
   "Lists iteration entities for a query via parent-id, sorted by created-at."
-  [db-info query-ref]
+  [db-info query-id]
   (when (:datasource db-info)
     (let [qref (cond
-                 (vector? query-ref) query-ref
-                 (uuid? query-ref) [:id query-ref]
+                 (vector? query-id) query-id
+                 (uuid? query-id) [:id query-id]
                  :else nil)]
       (when qref
         (rlm-db/db-list-query-iterations db-info qref)))))
@@ -42,15 +42,13 @@
 
    Scoring signals:
    +2 — Used (def ...) for variable storage
-   +3 — Used sub-rlm-query (teaches recursion)
-   +2 — Used sub-rlm-query-batch (teaches parallel fanout)
    +1 — Used search tools (teaches document navigation)
    +2 — Low iteration count relative to budget (efficient strategy)
    -2 — Had consecutive errors > 2 (noisy trace)
    -1 — Very short answer (< 20 chars, likely trivial)"
-  [db-info query-ref max-iterations]
+  [db-info query-id max-iterations]
   (when (:datasource db-info)
-    (let [iterations (list-iterations db-info query-ref)
+    (let [iterations (list-iterations db-info query-id)
           all-code (->> iterations
                      (mapcat (fn [it]
                                (try (edn/read-string (or (:code it) "[]"))
@@ -64,8 +62,6 @@
           error-count (count (filter #(nil? (:code %)) iterations))
           score (atom 0)]
       (when (re-find #"\(def\s+" all-code) (swap! score + 2))
-      (when (re-find #"\(sub-rlm-query\s" all-code) (swap! score + 3))
-      (when (re-find #"\(sub-rlm-query-batch\s" all-code) (swap! score + 2))
       (when (re-find #"\((?:search-documents|fetch-document-content)\s" all-code) (swap! score + 1))
       (when (and (pos? max-iterations) (< iter-count (/ max-iterations 2))) (swap! score + 2))
       (when (> error-count 2) (swap! score - 2))
@@ -114,9 +110,9 @@
 
    Returns vector of iteration maps sorted by created-at, each with:
    :code, :results, :thinking, :duration-ms, and optionally :answer."
-  [db-info query-ref]
+  [db-info query-id]
   (when (:datasource db-info)
-    (let [iterations (list-iterations db-info query-ref)]
+    (let [iterations (list-iterations db-info query-id)]
       (mapv (fn [it]
               (cond-> {:code (try (edn/read-string (:code it))
                                (catch Exception e

@@ -18,12 +18,6 @@
   (:require
     [clojure.string :as str]))
 
-(def ^:const VAR_INDEX_NUDGE_THRESHOLD
-  "Number of user-defined vars in <var_index> beyond which we remind
-   the agent to `:forget` stale scratch vars. Past ~30 the index
-   stops being a glance-and-go view and starts costing real context."
-  30)
-
 (def ^:const BUDGET_WARNING_LAST_ITER_REMAINING
   "When `remaining <= this`, the loudest nudge fires (LAST ITERATION /
    one-turn-left framing). Literal so the trigger is visible here
@@ -170,17 +164,9 @@
       (reset! call-counts-atom counts')
       warning)))
 
+
 (defn var-index-overflow
-  "Var-count nudge. Fires when the live <var_index> carries more than
-   `VAR_INDEX_NUDGE_THRESHOLD` user vars. Points at `:forget` as the
-   cheap consolidation move — DB rows survive, `(restore-var 'sym)`
-   reclaims later."
-  [var-count]
-  (when (and (integer? var-count) (> (long var-count) VAR_INDEX_NUDGE_THRESHOLD))
-    (str "\n[SYSTEM_NUDGE] <var_index> currently holds " var-count
-      " user vars (threshold " VAR_INDEX_NUDGE_THRESHOLD
-      "). Many are likely scratch/stale. Drop the names you no longer "
-      "need via `:forget [\"a\" \"b\" …]` in your response — DB rows "
-      "survive the forget so `(restore-var 'a)` can reclaim them later "
-      "if you change your mind. Keeping the index lean shrinks every "
-      "future prompt.")))
+  "Stub — was removed. Returns nil (no nudge)."
+  [_user-var-count]
+  nil)
+

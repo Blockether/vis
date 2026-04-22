@@ -2,18 +2,16 @@
   "Shared helpers and core tool factories for the SCI sandbox.
 
    Contains:
-   - General helpers: truncate, realize-value, ns->sci-map, EXTRA_BINDINGS
+   - General helpers: truncate, realize-value, format-exception, ->uuid
    - shape — recursive structural sketch of any value
    - result->display — exec-result formatter honoring :visibility + 30k cap
-   - Date tool bindings: parse-date, date-before?, date-after?, etc.
-   - Document tools: search-documents, fetch-document-content, format-docs
-   - History tools: conversation-history, conversation-code, conversation-results
-   - Restore tools: restore-var, restore-vars
-   - Git tools: in runtime/tools/git.clj (separate to avoid cyclic dep)
 
-   All tool factories follow the pattern `(make-*-fn db-info ...)` → sandbox fn.
+   Sandbox-specific things (EXTRA_BINDINGS, ns->sci-map, date fns)
+   live in environment/base.clj.
+
    Safe to load first — no cross-deps on runtime/core."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure.spec.alpha :as s]))
 
 ;; =============================================================================
 ;; General helpers
@@ -27,32 +25,119 @@
       (subs s 0 n)
       s)))
 
-(defn ns->sci-map
-  "Builds an SCI :namespaces entry map from a Clojure namespace's public vars.
-   Pulls the entire ns-publics surface so models can use everything a real
-   namespace offers without us enumerating fns manually.
-   NOTE: prefer sci/copy-ns for standard namespaces (preserves doc/arglists).
-   Use this only for namespaces where copy-ns fails (e.g. charred.api)."
-  [ns-sym]
-  (require ns-sym)
-  (into {} (for [[sym v] (ns-publics (the-ns ns-sym))
-                 :when (and (var? v) (not (:macro (meta v))))]
-             [sym @v])))
+;; =============================================================================
+;; UUID helpers
+;; =============================================================================
+
+(defn ->uuid
+  "The ONE uuid function. No args = random. With arg = coerce.
+
+   (->uuid)          → random UUID
+   (->uuid some-uuid) → returned as-is
+   (->uuid \"abc-...\") → parsed from string
+   (->uuid nil)       → nil
+   (->uuid 42)        → throws"
+  ([] (java.util.UUID/randomUUID))
+  ([v]
+   (cond
+     (nil? v)    nil
+     (uuid? v)   v
+     (string? v) (try (java.util.UUID/fromString v)
+                  (catch IllegalArgumentException _
+                    (throw (ex-info (str "Invalid UUID string: " (pr-str v))
+                             {:type :vis/invalid-uuid :got v}))))
+     :else       (throw (ex-info (str "Cannot coerce to UUID: " (pr-str v) " (" (type v) ")")
+                          {:type :vis/invalid-uuid :got v :got-type (type v)})))))
+
+;; =============================================================================
+;; Unified exception formatting
+;; =============================================================================
+
+(defn format-exception
+  "Unified exception → data map. Use this ONE function everywhere instead of
+   ad-hoc (ex-message e) / (.getName (class e)) / (.getStackTrace e) combos.
+
+   Returns:
+     {:message str :type kw|nil :class str :data map|nil
+      :cause {:message str :class str}|nil
+      :stack [str...]}
+
+   `opts` (optional):
+     :stack-depth  — how many stack frames to keep (default 12)
+     :context      — arbitrary map merged under :context key"
+  ([^Throwable e] (format-exception e nil))
+  ([^Throwable e {:keys [stack-depth context] :or {stack-depth 12}}]
+   (let [ex-data-map (ex-data e)
+         cause       (.getCause e)]
+     (cond-> {:message (ex-message e)
+              :type    (:type ex-data-map)
+              :class   (.getName (class e))
+              :data    (when (seq ex-data-map) (dissoc ex-data-map :type))
+              :cause   (when cause
+                         {:message (.getMessage ^Throwable cause)
+                          :class   (.getName (class cause))})
+              :stack   (mapv str (take stack-depth (.getStackTrace e)))}
+       context (assoc :context context)))))
+
+(defn format-exception-short
+  "Compact one-liner for log :data. Returns {:error str :class str :type kw|nil}."
+  [^Throwable e]
+  {:error (ex-message e)
+   :class (.getName (class e))
+   :type  (:type (ex-data e))})
+
+;; =============================================================================
+;; Unified specs — every bounded context registers its shapes here
+;; =============================================================================
+
+;; Primitives
+(s/def ::non-blank-string (s/and string? (complement str/blank?)))
+(s/def ::entity-id (s/tuple #{:id} uuid?))
+
+;; Env shape (the fields persistence cares about)
+(s/def ::db-info map?)
+(s/def ::conversation-id ::entity-id)
+(s/def ::parent-iteration-id (s/nilable ::entity-id))
+(s/def ::router some?)
+(s/def ::env (s/keys :req-un [::db-info ::conversation-id ::router]))
+
+;; Iteration persistence
+(s/def ::query-id ::entity-id)
+(s/def ::thinking (s/nilable string?))
+(s/def ::executions (s/nilable sequential?))
+(s/def ::vars (s/nilable sequential?))
+(s/def ::answer (s/nilable string?))
+(s/def ::duration-ms (s/nilable number?))
+(s/def ::error (s/nilable map?))
+(s/def ::iteration-store-opts
+  (s/keys :req-un [::query-id]
+          :opt-un [::thinking ::executions ::vars ::answer ::duration-ms ::error]))
+
+;; Query result (what iteration-loop returns)
+(s/def ::iterations int?)
+(s/def ::status keyword?)
+(s/def ::tokens (s/nilable map?))
+(s/def ::cost (s/nilable map?))
+(s/def ::query-result
+  (s/keys :opt-un [::answer ::iterations ::status ::tokens ::cost]))
+
+(defn validate!
+  "Validate `data` against `spec`. Throws ex-info with explain-data on failure.
+   Use this ONE function everywhere instead of ad-hoc :pre checks.
+
+   Example:
+     (validate! ::env env)
+     (validate! ::iteration-store-opts opts)"
+  [spec data]
+  (when-not (s/valid? spec data)
+    (throw (ex-info (str "Spec validation failed: " (pr-str spec) "\n"
+                      (with-out-str (s/explain spec data)))
+             {:type   :vis/spec-validation-failed
+              :spec   spec
+              :data   data
+              :errors (s/explain-data spec data)}))))
 
 (declare shape)
-
-(def EXTRA_BINDINGS
-  "Extra bindings beyond what SCI provides by default.
-   SCI already ships with all of clojure.core. We only add
-   Clojure 1.11/1.12 additions that SCI doesn't have yet, plus
-   vis-specific helpers like `shape`.
-   Models use str/join, set/union etc. via namespace aliases."
-  {'abs abs, 'parse-long parse-long, 'parse-double parse-double,
-   'parse-boolean parse-boolean, 'parse-uuid parse-uuid,
-   'infinite? infinite?, 'NaN? NaN?,
-   'url-encode (fn ^String url-encode [^String s] (java.net.URLEncoder/encode s "UTF-8")),
-   'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8")),
-   'shape shape})
 
 (def ^:private REALIZE_LAZY_LIMIT 100)
 
@@ -282,51 +367,11 @@
       ;; whether to `(doc some-fn)` or just inline.
       :else (symbol (.getSimpleName (class v))))))
 
-;; =============================================================================
-;; Result display — unifies how an exec :result becomes the string the user
-;; (web/TUI) and the next-iteration LLM context see.
-;;
-;; Auto-unwrap rule (uniform across journal + UI):
-;;   `<value> :: <shape>`     for collections / maps / sets / seqs / records.
-;;   `<value>`                for scalar atoms (int, str, kw, bool, nil, char,
-;;                            uuid, symbol) — the value already conveys its
-;;                            type, the shape suffix would be redundant noise.
-;;
-;; The marker `::` is Haskell-style type annotation. RULES section of the
-;; system prompt documents it for the LLM. Costs 2 tokens per non-atomic
-;; result vs the previous ` :shape ` (3 tokens), saving ~1 token per line —
-;; multiplied across 5-10 execs per iter and 1-10 iters per turn that adds
-;; up. The atomic-suppression rule saves more: every `(+ 1 2) → 3` line
-;; sheds 4-5 tokens of redundant `:: int`.
-;;
-;; The realized value pr-str's with sandbox/ stripped from var literals
-;; (`#'foo` not `#'sandbox/foo`) and is capped at MAX_RESULT_DISPLAY_CHARS.
-;; DB rows are NOT touched — persistence stores raw uncapped values so the
-;; debugger / corpus exporter see ground truth.
-;; =============================================================================
-
 (def ^:const MAX_RESULT_DISPLAY_CHARS
   "Character cap applied to exec results when rendered to the user and when
    fed back to the LLM as journal context. DB persistence is uncapped on
    purpose — see the result-display block docstring."
   30000)
-
-(def ^:const SHAPE_MARKER
-  "Haskell-style `::` separator between a realized value and its structural
-   shape sketch. Single source of truth for the marker — change here once,
-   propagates to every formatter (journal, recovery feedback, web exec card)."
-  " :: ")
-
-(defn atomic?
-  "True when `v` is a scalar whose pr-str already conveys its type cleanly,
-   so a trailing ` :: <shape>` annotation would just repeat information.
-   Collections, maps, sets, seqs, and records get the shape suffix; atoms
-   skip it. Single source of truth — used by the journal renderer, the
-   error-recovery feedback formatter, and the web exec card."
-  [v]
-  (or (nil? v) (boolean? v) (number? v)
-    (keyword? v) (symbol? v) (string? v)
-    (char? v) (uuid? v)))
 
 (def ^:private SANDBOX_VAR_RE
   "Matches `#'sandbox/<name>` in a pr-str'd string. The sandbox ns is the
@@ -376,53 +421,3 @@
       (-> v realize-value pr-str strip-sandbox-ns
         (truncate-with-marker MAX_RESULT_DISPLAY_CHARS)))))
 
-;; =============================================================================
-;; Date tool bindings
-;; =============================================================================
-
-(defn parse-date
-  "Parses an ISO-8601 date string (YYYY-MM-DD)."
-  [date-str]
-  (try
-    (when date-str
-      (str (java.time.LocalDate/parse date-str)))
-    (catch Exception _ nil)))
-
-(defn date-before? [date1 date2]
-  (try
-    (when (and date1 date2)
-      (.isBefore (java.time.LocalDate/parse date1) (java.time.LocalDate/parse date2)))
-    (catch Exception _ false)))
-
-(defn date-after? [date1 date2]
-  (try
-    (when (and date1 date2)
-      (.isAfter (java.time.LocalDate/parse date1) (java.time.LocalDate/parse date2)))
-    (catch Exception _ false)))
-
-(defn days-between [date1 date2]
-  (try
-    (when (and date1 date2)
-      (.between java.time.temporal.ChronoUnit/DAYS
-        (java.time.LocalDate/parse date1) (java.time.LocalDate/parse date2)))
-    (catch Exception _ nil)))
-
-(defn date-plus-days [date-str days]
-  (try
-    (when date-str (str (.plusDays (java.time.LocalDate/parse date-str) days)))
-    (catch Exception _ nil)))
-
-(defn date-minus-days [date-str days]
-  (try
-    (when date-str (str (.minusDays (java.time.LocalDate/parse date-str) days)))
-    (catch Exception _ nil)))
-
-(defn date-format [date-str pattern]
-  (try
-    (when (and date-str pattern)
-      (let [formatter (java.time.format.DateTimeFormatter/ofPattern pattern)
-            date (java.time.LocalDate/parse date-str)]
-        (.format date formatter)))
-    (catch Exception _ nil)))
-
-(defn today-str [] (str (java.time.LocalDate/now)))

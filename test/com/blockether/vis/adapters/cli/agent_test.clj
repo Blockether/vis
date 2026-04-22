@@ -5,7 +5,7 @@
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]
    [com.blockether.vis.config :as config]
-   [com.blockether.vis.loop.conversations.core :as conversations]
+   [com.blockether.vis.loop.runtime.conversation.core :as conversations]
    [com.blockether.vis.adapters.cli.agent :as sut]))
 
 (defn- parse-json

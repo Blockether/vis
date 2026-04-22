@@ -83,7 +83,7 @@
        `sci.lang.Var` produced by `(def foo 42)`. We deref it to its
        raw root value.
      - Persisted (DB load): the storage layer's `edn-safe` already
-       replaced the var with `{:rlm/var-ref name :rlm/var-value bound}`
+       replaced the var with `{:rlm/var-id name :rlm/var-value bound}`
        so EDN can roundtrip it. We pull `:rlm/var-value` out.
 
    The var name itself is carried separately in the iteration's vars
@@ -96,7 +96,7 @@
       (.getRawRoot v)
       (catch Throwable _ v))
 
-    (and (map? v) (contains? v :rlm/var-ref))
+    (and (map? v) (contains? v :rlm/var-id))
     (:rlm/var-value v)
 
     :else v))

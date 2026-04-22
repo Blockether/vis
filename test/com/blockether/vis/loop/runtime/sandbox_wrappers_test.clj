@@ -15,7 +15,7 @@
    * `spit`, `eval`, `load-string`, `load-file`, `read-string`, `intern`,
      `sh`, and stdin/stdout/stderr vars remain denied."
   (:require [lazytest.core :refer [defdescribe describe expect it]]
-            [com.blockether.vis.loop.runtime.core :as rt]
+            [com.blockether.vis.loop.runtime.conversation.environment.core :as rt]
             [sci.core :as sci]))
 
 ;;; ── Fixture ─────────────────────────────────────────────────────────────

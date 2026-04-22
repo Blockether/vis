@@ -291,48 +291,6 @@
 
 ;;; ── Freshness tracking ────────────────────────────────────────────────
 
-(defn- stat-path
-  "Return `{:mtime :size}` for an existing path, nil when missing."
-  [path]
-  (try
-    (let [f (java.io.File. ^String path)]
-      (when (.exists f)
-        {:mtime (.lastModified f)
-         :size  (.length f)}))
-    (catch Throwable _ nil)))
-
-(defn freshness
-  "`:metadata-fn` implementation for the read-file tool. Single-arg map
-   with the standard `{:args :result :metadata}` shape — see
-   `runtime.core` docstring for the contract.
-
-   Seed phase (`:metadata nil`): pulls the path out of `args`, stats
-   it, returns the baseline + `:fresh? true` (the file was just
-   read).
-   Re-check phase (`:metadata {…}`): re-stats the stored path and
-   compares mtime+size; returns `:fresh? false` on drift, and
-   `:metadata {…}` reflecting the CURRENT on-disk values so callers
-   can show `STALE` vs `fresh` without a second round-trip."
-  [{:keys [args metadata]}]
-  (let [path (or (:path metadata) (first args))]
-    (if (nil? metadata)
-      ;; Seed: tool just ran, args present, file by definition fresh.
-      (let [{:keys [mtime size]} (stat-path path)
-            lang (path->lang (java.io.File. (str path)))]
-        {:metadata   {:kind :file :path path :mtime mtime :size size :lang lang}
-         :fresh? true})
-      ;; Re-check: compare live stat to stored snapshot.
-      (if-let [{:keys [mtime size]} (stat-path path)]
-        {:metadata   {:kind :file :path path :mtime mtime :size size}
-         :fresh? (and (= mtime (:mtime metadata))
-                   (= size (:size metadata)))}
-        ;; File was deleted since bind. Leave :metadata at the last
-        ;; known-good snapshot so the column renderer can distinguish
-        ;; missing from stale; downstream render code maps exceptions
-        ;; from this fn to `MISSING` via render-var-freshness' catch.
-        (throw (ex-info (str "read-file freshness: path no longer exists: " path)
-                 {:type :rlm.freshness/missing :path path}))))))
-
 ;;; ── Tool definition ────────────────────────────────────────────────────
 
 (defn- read-file-superseded-by
@@ -357,7 +315,6 @@
      :superseded-by-fn read-file-superseded-by
      :activation-fn (constantly true)
      :group "filesystem"
-     :metadata-fn freshness
      :examples ["(read-file \"/path/to/file.clj\")"
                 "(def src (read-file \"/path/to/file.clj\"))"
                 "(read-file \"/path/to/file.clj\" 1501 1500)"]
@@ -365,5 +322,5 @@
 `(read-file path)` = full if ≤1500 lines, else first 1500 auto-paged.
 Page bigger files: `(read-file path 1501 1500)`.
 `(def src (read-file path))` once, reuse. Don't re-read.
-Language metadata stored in tool metadata (:lang in freshness)."}))
+Language metadata stored in tool metadata."}))
 

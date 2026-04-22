@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.conversations.persistence-sweep-test
+(ns com.blockether.vis.loop.runtime.conversation.persistence-sweep-test
   "Regression: on crash/restart, `query_attrs.status='running'` rows are
    zombies — the process that owned them is gone, and without a sweep they
    show as stuck spinners in the sidebar forever. `sweep-orphaned-running-queries!`
@@ -6,7 +6,7 @@
    is unambiguously an orphan and can be rewritten to `:interrupted`."
   (:require
     [lazytest.core :refer [defdescribe describe expect it]]
-    [com.blockether.vis.loop.conversations.persistence :as conv-persistence]
+    [com.blockether.vis.loop.runtime.conversation.persistence :as conv-persistence]
     [com.blockether.vis.loop.storage.db :as rlm-db]))
 
 (defn- make-temp-db []

@@ -1,7 +1,6 @@
 (ns com.blockether.vis.loop.memory-system-test
   (:require
    [com.blockether.vis.loop.storage.db :as rlm-db]
-   [com.blockether.vis.loop.runtime.tools.core :as tools-core]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- temp-db []
@@ -85,7 +84,8 @@
       (let [db-info (temp-db)]
         (try
           (let [{:keys [document-id alpha-page-id beta-page-id]} (seed-ranked-doc! db-info)
-                search-documents (tools-core/make-search-documents-fn db-info)]
+                search-documents (fn [q opts]
+                                   (rlm-db/db-search-page-nodes db-info q opts))]
             (dotimes [_ 8]
               (search-documents "alpha" {:in :pages :top-k 5 :document-id document-id}))
             (let [ranked (rlm-db/db-search-page-nodes db-info "common"

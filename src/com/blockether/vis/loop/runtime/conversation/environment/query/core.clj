@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.runtime.query.core
+(ns com.blockether.vis.loop.runtime.conversation.environment.query.core
   "query-env! orchestration: context prep, iteration, refinement, Q-value updates, finalization."
   (:require
    [clojure.set :as set]
@@ -7,10 +7,11 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.loop.core :as rlm-core]
    [com.blockether.vis.loop.storage.db :as rlm-db]
-   [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
+   [com.blockether.vis.loop.runtime.shared :as rt-shared]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.base :as query-base]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.shared :as query-shared]
    [com.blockether.vis.loop.storage.schema :as schema]
-   [com.blockether.vis.loop.knowledge.skills :as rlm-skills]
-   [com.blockether.vis.loop.runtime.core :as rlm-tools]
+   [com.blockether.vis.loop.runtime.conversation.environment.core :as rlm-tools]
    [com.blockether.vis.loop.runtime.tool-diagnostics :as tool-diag]
    [com.blockether.svar.internal.spec :as spec]
    [com.blockether.svar.internal.util :as util]
@@ -52,106 +53,6 @@
 
      :permits (fn [] (.availablePermits sem))
      :queued  (fn [] (.getQueueLength sem))}))
-
-(defn compute-deadline
-  "Computes the absolute deadline Instant for a sub-rlm-query call.
-   Respects parent deadline via *sub-rlm-deadline* — child never exceeds parent.
-
-   `timeout-ms` — caller's requested timeout (or nil for env default).
-   `parent-deadline` — current *sub-rlm-deadline* value (Instant or nil).
-   `default-timeout-ms` — from concurrency settings.
-
-   Returns java.time.Instant or nil (unbounded)."
-  [timeout-ms parent-deadline default-timeout-ms]
-  (let [effective-ms (or timeout-ms default-timeout-ms)
-        now (java.time.Instant/now)
-        caller-deadline (when effective-ms
-                          (.plusMillis now (long effective-ms)))]
-    (cond
-      (and caller-deadline parent-deadline)
-      (if (.isBefore caller-deadline parent-deadline)
-        caller-deadline
-        parent-deadline)
-
-      caller-deadline caller-deadline
-      parent-deadline parent-deadline
-      :else nil)))
-
-(defn remaining-ms
-  "Milliseconds remaining until deadline, or nil if no deadline.
-   Returns 0 when deadline has passed."
-  [deadline]
-  (when deadline
-    (max 0 (- (.toEpochMilli ^java.time.Instant deadline)
-             (.toEpochMilli (java.time.Instant/now))))))
-
-;; -----------------------------------------------------------------------------
-;; Batch fan-out
-;; -----------------------------------------------------------------------------
-
-(defn sub-rlm-query-batch
-  "Parallel batch of sub-rlm-query calls.
-
-   `sub-rlm-query-fn` — the bound sub-rlm-query function (from routing).
-   `items`            — vec of call specs. Each item is either:
-     - a string prompt (→ single-shot sub-rlm-query)
-     - a map with :prompt and optional :skills :max-iter :routing :include-trace
-
-   Uses the query-env-scoped reentrant semaphore (*concurrency-semaphore*) for
-   HTTP slot acquisition. Native Clojure `future` for binding propagation.
-   Timeout clock starts at slot acquisition per item.
-
-   Returns: vec of result maps (same order as input). Errored items have
-   {:error <keyword> :message <str>} shape. Batch never throws."
-  [sub-rlm-query-fn items]
-  (when-not (sequential? items)
-    (throw (ex-info "sub-rlm-query-batch expects a vec/seq of items"
-             {:type :rlm/invalid-batch-input :got (type items)})))
-  (let [sem schema/*concurrency-semaphore*
-        cancel-atom (atom false)
-        futures
-        (mapv
-          (fn [item]
-            (future
-              (try
-                (when @cancel-atom
-                  {:error :cancelled :message "Batch cancelled"})
-                (let [acquire! (when sem (:acquire! sem))
-                      release! (when sem (:release! sem))]
-                  (when acquire! (acquire!))
-                  (try
-                    (cond
-                      (string? item)
-                      (sub-rlm-query-fn item)
-
-                      (map? item)
-                      (let [{:keys [prompt]} item
-                            opts (dissoc item :prompt)]
-                        (when-not prompt
-                          (throw (ex-info "Batch item map requires :prompt"
-                                   {:type :rlm/missing-prompt :item item})))
-                        (sub-rlm-query-fn prompt opts))
-
-                      :else
-                      {:error :invalid-item
-                       :message (str "Expected string or map, got " (type item))})
-                    (finally
-                      (when release! (release!)))))
-                (catch Exception e
-                  {:error   :exception
-                   :message (ex-message e)
-                   :cause   (ex-data e)}))))
-          items)]
-    (trove/log! {:level :info :id ::batch-started
-                 :data {:item-count (count items)
-                        :has-semaphore (some? sem)}
-                 :msg "sub-rlm-query-batch started"})
-    (let [results (mapv deref futures)]
-      (trove/log! {:level :info :id ::batch-done
-                   :data {:item-count (count items)
-                          :error-count (count (filter :error results))}
-                   :msg "sub-rlm-query-batch done"})
-      results)))
 
 ;; -----------------------------------------------------------------------------
 ;; Q-value Reward Constants
@@ -199,7 +100,7 @@
           :or   {max-iterations      schema/MAX_ITERATIONS
                  max-refinements     1
                  threshold           0.8
-                max-recursion-depth schema/DEFAULT_RECURSION_DEPTH
+                max-recursion-depth 5
                 debug?              false}} opts]
     (when-not (:db-info env)
       (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
@@ -253,17 +154,8 @@
                                    (vec (take last-user-idx messages))
                                    (vec messages))
           rlm-router             (:router env)
-          root-model             (or (when rlm-router (rlm-routing/resolve-root-model rlm-router)) model)
-          depth-atom             (atom 0)
+          root-model             (or (when rlm-router (query-shared/resolve-root-model rlm-router)) model)
           db-info                (:db-info env)
-          ;; Neutral sub-rlm — no routing preset baked in. LLM picks
-          ;; cost/speed/intelligence itself via `(sub-rlm-query prompt
-          ;; {:routing {:optimize :cost}})` when it actually wants cheap.
-          ;; See IDEAS.md #3 for the original motivation.
-          sub-rlm-fn             (rlm-routing/make-routed-sub-rlm-query-fn
-                                   {} depth-atom rlm-router
-                                   (:skill-registry-atom env) (atom env)
-                                   rlm-core/iteration-loop)
           custom-bindings        (rlm-core/custom-bindings env)
           custom-docs            (rlm-core/custom-docs env)
           current-iteration-atom (atom 0)
@@ -280,11 +172,6 @@
                                                             :new-budget new-budget :cap schema/MAX_ITERATION_CAP}
                                                      :msg  "LLM requested more iterations"})
                                         {:granted granted :new-budget new-budget :cap schema/MAX_ITERATION_CAP})))}
-          sub-rlm-query-overrides {'sub-rlm-query       sub-rlm-fn
-                                   'sub-rlm-query-batch (fn [items]
-                                                          (sub-rlm-query-batch sub-rlm-fn items))
-                                   'skill-manage        (fn [action o]
-                                                          (rlm-skills/skill-manage db-info (:skill-registry-atom env) action o))}
           sci-ctx                (:sci-ctx env)
           tool-registry-atom     (:tool-registry-atom env)
           query-ctx              {:hooks hooks :iteration-atom current-iteration-atom}
@@ -328,9 +215,9 @@
                                               (swap! (:env sci-ctx) update-in
                                                 [:namespaces 'sandbox] dissoc sym)))))))
           _                      (rlm-tools/bump-var-index! env)
-          _                      (let [per-query (merge {'sub-rlm-query sub-rlm-fn}
-                                                   budget-bindings
-                                                   (or custom-bindings {}) sub-rlm-query-overrides)]
+          _                      (let [per-query (merge budget-bindings
+                                                   (or custom-bindings {}))]
+
                                    (doseq [[sym val] per-query]
                                      (when val
                                        (rlm-tools/sci-update-binding! sci-ctx sym val))))
@@ -370,25 +257,14 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- run-iteration-phase
-  "Runs the main iteration loop.
-   Returns iteration-result, query-ref, cost atoms, and merge-cost! fn."
+  "Runs the main iteration loop via query-base/run-query!.
+   Returns iteration-result, query-id, cost atoms, and merge-cost! fn."
    [{:keys [rlm-env query-str messages history-messages spec max-iterations
             max-context-tokens custom-docs system-prompt
             current-iteration-atom hooks cancel-atom db-info
             reasoning-default routing]}]
-  (let [;; When `:parent-iteration-ref` is present on the env, this is
-        ;; a sub-RLM invocation — the new :query entity must nest
-        ;; under the invoking :iteration, not under the conversation.
-        ;; See `fork-rlm-env-for-sub` in loop.runtime.query.subquery.
-        query-ref        (rlm-db/store-query! db-info
-                           {:conversation-ref (:conversation-ref rlm-env)
-                            :parent-ref       (:parent-iteration-ref rlm-env)
-                            :text             query-str
-                            :messages         messages
-                            :status           :running})
-        iteration-result (rlm-core/iteration-loop rlm-env query-str
+  (let [iteration-result (query-base/run-query! rlm-env query-str
                            (cond-> {:max-iterations         max-iterations
-                                    :query-ref              query-ref
                                     :output-spec            spec
                                     :max-context-tokens     max-context-tokens
                                     :custom-docs            custom-docs
@@ -399,6 +275,7 @@
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
                              routing (assoc :routing routing)))
+        query-id         (:query-id iteration-result)
         {iter-tokens :tokens
          iter-cost   :cost} iteration-result
         total-tokens-atom (atom (or iter-tokens {}))
@@ -415,7 +292,7 @@
                                   (merge-with + (select-keys acc [:input-cost :output-cost :total-cost])
                                     (select-keys extra-cost [:input-cost :output-cost :total-cost]))))))]
     {:iteration-result  iteration-result
-     :query-ref         query-ref
+     :query-id         query-id
      :total-tokens-atom total-tokens-atom
      :total-cost-atom   total-cost-atom
      :merge-cost!       merge-cost!}))
@@ -468,7 +345,7 @@
                                   (try
                                     (spec/str->data-with-spec refined-str spec)
                                     (catch Exception e
-                                      (trove/log! {:level :debug :data {:error (ex-message e)}
+                                      (trove/log! {:level :debug :data (rt-shared/format-exception-short e)
                                                    :msg   "Spec parse failed after refinement, retrying with fallback LLM"})
                                       (let [fallback (llm/ask! rlm-router
                                                        {:spec     spec
@@ -485,7 +362,7 @@
                            (try
                              (spec/coerce-data-with-spec answer-value spec)
                              (catch Exception e
-                               (trove/log! {:level :warn :data {:error (ex-message e)}
+                               (trove/log! {:level :warn :data (rt-shared/format-exception-short e)
                                             :msg   "Spec coercion failed, returning uncoerced answer"})
                                answer-value))
                            answer-value)
@@ -522,7 +399,7 @@
                   (rlm-db/finalize-q-updates! db-info uncited Q_REWARD_UNCITED))))
             (rlm-db/finalize-q-updates! db-info accessed Q_REWARD_UNCITED)))))
     (catch Exception e
-      (trove/log! {:level :debug :data {:error (ex-message e)}
+      (trove/log! {:level :debug :data (rt-shared/format-exception-short e)
                    :msg   "Q-value update failed (non-fatal)"}))))
 
 ;; -----------------------------------------------------------------------------
@@ -538,8 +415,8 @@
    we stitch the router-resolved `root-model` in here so it lands in
    `query_attrs.model`."
   [{:keys [db-info root-model]}
-   {:keys [query-ref start-time iterations status status-id trace locals
-           answer raw-answer final-answer eval-scores refinement-count
+   {:keys [query-id start-time iterations status status-id trace locals
+           answer eval-scores refinement-count
            confidence sources reasoning total-tokens-atom total-cost-atom]}]
   (let [duration-ms (util/elapsed-since start-time)
         cost-with-model (cond-> @total-cost-atom
@@ -555,7 +432,7 @@
           {:duration-ms duration-ms :iterations iterations :status status})
         (let [fallback-answer (:result answer answer)]
           (try
-            (rlm-db/update-query! db-info query-ref
+            (rlm-db/update-query! db-info query-id
               {:answer      fallback-answer
                :iterations  iterations
                :duration-ms duration-ms
@@ -563,10 +440,9 @@
                :tokens      @total-tokens-atom
                :cost        cost-with-model})
             (catch Exception e
-              (trove/log! {:level :warn :data {:error (ex-message e)}
+              (trove/log! {:level :warn :data (rt-shared/format-exception-short e)
                            :msg   "Failed to update query (max iterations)"})))
           (cond-> {:answer      fallback-answer
-                   :raw-answer  fallback-answer
                    :status      status
                    :status-id   status-id
                    :trace       trace
@@ -581,8 +457,8 @@
           {:duration-ms duration-ms :iterations iterations
            :cost (str (:total-cost cost-with-model))})
         (try
-          (rlm-db/update-query! db-info query-ref
-            {:answer      final-answer
+          (rlm-db/update-query! db-info query-id
+            {:answer      answer
              :iterations  iterations
              :duration-ms duration-ms
              :status      :success
@@ -590,10 +466,9 @@
              :tokens      @total-tokens-atom
              :cost        cost-with-model})
           (catch Exception e
-            (trove/log! {:level :warn :data {:error (ex-message e)}
+            (trove/log! {:level :warn :data (rt-shared/format-exception-short e)
                          :msg   "Failed to update query (success)"})))
-        (cond-> {:answer           final-answer
-                 :raw-answer       raw-answer
+        (cond-> {:answer           answer
                  :eval-scores      eval-scores
                  :refinement-count refinement-count
                  :trace            trace
@@ -644,7 +519,6 @@
     Returns:
    Map with:
      - :answer - Final (possibly refined) answer string, or parsed spec data.
-     - :raw-answer - Original answer before refinement.
       - :trace - Vector of iteration trace entries, each containing:
           {:iteration N
            :response <llm-response-text>
@@ -673,11 +547,7 @@
                                                :rlm-debug? debug? :rlm-phase :query}
                schema/*eval-timeout-ms*       (schema/clamp-eval-timeout-ms
                                                 (or eval-timeout-ms schema/*eval-timeout-ms*))
-               schema/*concurrency*           merged-concurrency
-               schema/*concurrency-semaphore* (make-reentrant-semaphore
-                                                (:max-parallel-llm merged-concurrency))
-               schema/*sub-rlm-deadline*      nil]
-       (binding [schema/*max-recursion-depth* max-recursion-depth]
+               schema/*concurrency*           merged-concurrency]
          (rlm-core/rlm-stage! :query-start 0
            {:model root-model
             :max-iterations max-iterations
@@ -685,7 +555,7 @@
             :query query-str})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
-               {:keys [iteration-result query-ref
+               {:keys [iteration-result query-id
                        total-tokens-atom total-cost-atom merge-cost!]} phase2
                {iter-answer :answer
                 trace       :trace
@@ -696,8 +566,7 @@
                 confidence  :confidence
                 sources     :sources
                 reasoning   :reasoning} iteration-result
-               ;; native Clojure value from FINAL (mirrors original answer-value)
-               answer-value (:result iter-answer iter-answer)]
+               ]
            (if status
              ;; failure - update Q with low reward, no refinement
              (do
@@ -707,7 +576,7 @@
                  {:status status})
                (finalize-query-result
                  ctx
-                 {:query-ref         query-ref
+                 {:query-id         query-id
                   :start-time        start-time
                   :iterations        iterations
                   :status            status
@@ -732,16 +601,15 @@
                   :iterations iterations :max-iterations max-iterations})
                (finalize-query-result
                  ctx
-                 {:query-ref         query-ref
+                 {:query-id         query-id
                   :start-time        start-time
                   :iterations        iterations
                   :trace             trace
-                  :raw-answer        answer-value
-                  :final-answer      answer
+                  :answer            answer
                   :eval-scores       eval-scores
                   :refinement-count  refinement-count
                   :confidence        confidence
                   :sources           sources
                   :reasoning         reasoning
                   :total-tokens-atom total-tokens-atom
-                  :total-cost-atom   total-cost-atom})))))))))
+                  :total-cost-atom   total-cost-atom}))))))))

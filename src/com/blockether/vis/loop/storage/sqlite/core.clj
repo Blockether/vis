@@ -230,7 +230,7 @@
   [db-info q]
   (first (query! db-info q)))
 
-(defn entity-ref->id
+(defn entity-id->id
   "Lookup ref [:id uuid] → string TEXT id. Tolerant of bare UUID/string."
   [ref]
   (cond
@@ -240,7 +240,7 @@
     (string? ref) ref
     :else nil))
 
-(defn id->entity-ref
+(defn id->entity-id
   "string TEXT id → [:id uuid] lookup ref."
   [id]
   (when id [:id (->uuid id)]))
@@ -523,9 +523,9 @@
 
 (defn update-entity!
   "Merges attrs onto an existing entity by lookup ref. Stamps :updated-at."
-  [db-info entity-ref attrs]
+  [db-info entity-id attrs]
   (when (ds db-info)
-    (let [id (entity-ref->id entity-ref)
+    (let [id (entity-id->id entity-id)
           base-row (when id (query-one! db-info {:select [:type] :from :entity :where [:= :id id]}))
           existing-type (->kw-back (:type base-row))
           merged (cond-> attrs

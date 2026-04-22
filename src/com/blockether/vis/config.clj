@@ -6,8 +6,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure+.error]
-            [clojure+.print]
-            [com.blockether.vis.loop.observability.redact :as redact]
             [taoensso.telemere :as t])
   (:import [java.io FileInputStream FileOutputStream]))
 
@@ -42,13 +40,14 @@
 (defn init!
   "Redirect System/out and System/err to log file. Lanterna uses tty-in/tty-out."
   []
-  (clojure+.print/install!)
   (clojure+.error/install!)
+  (set! *print-level* 10)
+  (set! *print-length* 100)
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
 
   (let [raw-out    (FileOutputStream. log-path true)
-        log-stream (redact/redacting-print-stream raw-out)]
+        log-stream (java.io.PrintStream. raw-out true)]
     (System/setOut log-stream)
     (System/setErr log-stream))
 
@@ -56,14 +55,12 @@
   (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
 
   (t/remove-handler! :default/console)
-  (let [default-fmt (t/format-signal-fn {})]
-    (t/add-handler! :file/vis
-      (t/handler:file {:path              log-path
-                       :interval          :monthly
-                       :max-file-size     4000000
-                       :max-num-parts     8
-                       :max-num-intervals 6
-                       :output-fn         (fn [signal] (redact/redact (default-fmt signal)))})))
+  (t/add-handler! :file/vis
+    (t/handler:file {:path              log-path
+                     :interval          :monthly
+                     :max-file-size     4000000
+                     :max-num-parts     8
+                     :max-num-intervals 6}))
 
   (t/call-on-shutdown! (fn [] (t/stop-handlers!))))
 
@@ -71,13 +68,14 @@
   "Logging init for CLI and non-TUI commands.
    Redirects System.out/System.err and Clojure *out*/*err* to log file."
   []
-  (clojure+.print/install!)
   (clojure+.error/install!)
+  (set! *print-level* 10)
+  (set! *print-length* 100)
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
 
   (let [raw-out    (FileOutputStream. log-path true)
-        log-stream (redact/redacting-print-stream raw-out)]
+        log-stream (java.io.PrintStream. raw-out true)]
     (System/setOut log-stream)
     (System/setErr log-stream))
 
@@ -85,15 +83,14 @@
   (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
 
   (t/remove-handler! :default/console)
-  (let [default-fmt (t/format-signal-fn {})]
-    (t/add-handler! :file/vis
-      (t/handler:file {:path              log-path
-                       :interval          :monthly
-                       :max-file-size     4000000
-                       :max-num-parts     8
-                       :max-num-intervals 6
-                       :output-fn         (fn [signal] (redact/redact (default-fmt signal)))}))))
+  (t/add-handler! :file/vis
+    (t/handler:file {:path              log-path
+                     :interval          :monthly
+                     :max-file-size     4000000
+                     :max-num-parts     8
+                     :max-num-intervals 6}))
 
+)
 (defn shutdown!
   "Flush and stop all handlers. Call after screen stops."
   []

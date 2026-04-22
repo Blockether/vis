@@ -16,7 +16,7 @@
 (defn store-conversation!
   "Create a new :conversation entity and return its lookup ref. Callers that
    want to resume an existing conversation should pass `[:id uuid]` to
-   `db-resolve-conversation-ref` directly instead of calling this."
+   `db-resolve-conversation-id` directly instead of calling this."
   [db-info {:keys [system-prompt model]}]
   (when (core/ds db-info)
     (core/store-entity! db-info
@@ -26,11 +26,11 @@
 
 (defn db-get-conversation
   "Returns a conversation entity by lookup ref or nil."
-  [db-info conversation-ref]
-  (when (and (core/ds db-info) (vector? conversation-ref))
-    (core/fetch-entity db-info (core/entity-ref->id conversation-ref))))
+  [db-info conversation-id]
+  (when (and (core/ds db-info) (vector? conversation-id))
+    (core/fetch-entity db-info (core/entity-id->id conversation-id))))
 
-(defn db-find-latest-conversation-ref
+(defn db-find-latest-conversation-id
   "Returns lookup ref for the most recently created conversation, or nil."
   [db-info]
   (when (core/ds db-info)
@@ -40,9 +40,9 @@
                       :where [:= :type "conversation"]
                       :order-by [[:created_at :desc] [:id :desc]]
                       :limit 1})]
-      (core/id->entity-ref (:id row)))))
+      (core/id->entity-id (:id row)))))
 
-(defn db-resolve-conversation-ref
+(defn db-resolve-conversation-id
   "Resolve a conversation selector to a lookup ref. Accepts:
      nil              → nil (caller should then create a new conversation)
      :latest          → the most recent :conversation entity
@@ -51,7 +51,7 @@
   [db-info selector]
   (cond
     (nil? selector) nil
-    (= :latest selector) (db-find-latest-conversation-ref db-info)
+    (= :latest selector) (db-find-latest-conversation-id db-info)
     (and (vector? selector) (= :id (first selector))) selector
     (uuid? selector) [:id selector]
     :else nil))
@@ -64,19 +64,19 @@
   "Stores a query entity linked to a parent (conversation by default,
    or an :iteration when the caller is spawning a sub-RLM).
 
-   `:parent-ref` takes precedence over `:conversation-ref` for the
-   parent-id link. When only `:conversation-ref` is supplied (the
-   normal top-level query case), it's used as the parent. Sub-RLM
-   calls pass both — `:conversation-ref` for ownership/membership and
-   `:parent-ref [:id iteration-uuid]` for the hierarchical link."
-  [db-info {:keys [conversation-ref parent-ref text messages answer iterations duration-ms status eval-score]}]
-  (let [parent-id (second (or parent-ref conversation-ref))]
+   `:parent-iteration-id` takes precedence over `:parent-conversation-id` for the
+   parent-id link. For a top-level query, parent is the conversation.
+   Sub-RLM calls pass `:parent-iteration-id` so the query nests under
+   the invoking iteration."
+  [db-info {:keys [parent-conversation-id parent-iteration-id
+                   query messages answer iterations duration-ms status eval-score]}]
+  (let [parent-id (second (or parent-iteration-id parent-conversation-id))
+        q (or query "")]
     (core/store-entity! db-info
       (cond-> {:type :query
-               :name (let [t (or text "")]
-                       (subs t 0 (min (count t) 100)))
+               :name (subs q 0 (min (count q) 100))
                :parent-id parent-id
-               :text (or text "")
+               :text q
                :answer (or (when answer (pr-str answer)) "")
                :iterations (or iterations 0)
                :duration-ms (or duration-ms 0)
@@ -87,8 +87,8 @@
 (defn update-query!
   "Updates a query entity with final outcome, including optional cost/token
    metadata so the UI can reconstruct meta lines after a restart."
-  [db-info query-ref {:keys [answer iterations duration-ms status eval-score tokens cost]}]
-  (core/update-entity! db-info query-ref
+  [db-info query-id {:keys [answer iterations duration-ms status eval-score tokens cost]}]
+  (core/update-entity! db-info query-id
     (cond-> {:answer (or (when answer (pr-str answer)) "")
              :iterations (or iterations 0)
              :duration-ms (or duration-ms 0)
@@ -131,7 +131,7 @@
 
    `(def foo 42)` returns the var object, which pr-str's as
    `#'sandbox/foo` — that breaks edn reading. We persist a tagged
-   map `{::var-ref \"foo\" ::var-value 42}` instead, so the read
+   map `{::var-id \"foo\" ::var-value 42}` instead, so the read
    side recovers BOTH the bound name (`*foo* =` in journal) and the
    bound value (the `42`) without losing fidelity. Plain string
    surrogates worked for display but stripped the value, leaving the
@@ -151,7 +151,7 @@
     ;; `:rlm/*` keys (not ::-namespaced) so consumers in other ns'
     ;; (loop.core's journal renderer, web's render-exec) can match on
     ;; them without aliasing this storage namespace.
-    {:rlm/var-ref bare-name
+    {:rlm/var-id bare-name
      :rlm/var-value (edn-safe bound (dec depth))}))
 
 (defn- edn-safe
@@ -159,7 +159,7 @@
    with a printable surrogate. Currently handles SCI vars (`(def foo 42)`
    returns one) — they pr-str as `#'sandbox/foo`, which the edn reader
    rejects (`No dispatch macro for: '`). Replacing with a tagged map
-   `{::var-ref name ::var-value bound}` keeps the envelope roundtrippable
+   `{::var-id name ::var-value bound}` keeps the envelope roundtrippable
    AND preserves enough info for the journal to render `*foo* = 42`.
 
    Walks maps/vectors/sets/seqs to a small fixed depth so nested var refs
@@ -178,8 +178,8 @@
 (defn store-iteration!
   "Stores an iteration entity linked to a query via parent-id, plus child
    iteration-var entities for any restorable vars."
-  [db-info {:keys [query-ref executions thinking answer duration-ms vars error]}]
-  (let [parent-id (when query-ref (second query-ref))
+  [db-info {:keys [query-id executions thinking answer duration-ms vars error]}]
+  (let [parent-id (when query-id (second query-id))
         executions (or executions [])
         code-strs (mapv :code executions)
         ;; Each result element now stores {:result v :error e} instead of
@@ -204,7 +204,7 @@
                                              :msg "Failed to serialize execution result"})
                                 "???")))
                       executions)
-        iter-ref (core/store-entity! db-info
+        iter-id (core/store-entity! db-info
                    (cond-> {:type :iteration
                             :parent-id parent-id
                             :code (pr-str code-strs)
@@ -222,7 +222,7 @@
           (core/store-entity! db-info
             {:type :iteration-var
              :name (str name)
-             :parent-id (second iter-ref)
+             :parent-id (second iter-id)
              :value (pr-str (edn-safe value))
              ;; `:code` column now carries a pr-str'd EDN map
              ;; `{:expr :time-ms :metadata}` so downstream consumers
@@ -230,14 +230,14 @@
              ;; without a schema migration. Legacy bare-string rows are
              ;; handled on read via `parse-rich-code` — no data loss.
              :code rich-code}))))
-    iter-ref))
+    iter-id))
 
 (defn db-list-iteration-vars
   "Lists persisted restorable vars for an iteration. Returns plain {:name :value :code} maps,
    matching the db.clj contract."
-  [db-info iteration-ref]
-  (if (and (core/ds db-info) iteration-ref)
-    (let [iter-id (core/entity-ref->id iteration-ref)
+  [db-info iteration-id]
+  (if (and (core/ds db-info) iteration-id)
+    (let [iter-id (core/entity-id->id iteration-id)
           rows (core/query! db-info
                  {:select [:e.created_at :v.name :v.value :v.code]
                   :from [[:entity :e]]
@@ -252,9 +252,9 @@
 
 (defn db-list-conversation-queries
   "Lists query entities for a conversation ordered by created-at."
-  [db-info conversation-ref]
-  (if (and (core/ds db-info) conversation-ref)
-    (let [conv-id (core/entity-ref->id conversation-ref)
+  [db-info conversation-id]
+  (if (and (core/ds db-info) conversation-id)
+    (let [conv-id (core/entity-id->id conversation-id)
           ids (mapv :id (core/query! db-info
                           {:select [:id]
                            :from :entity
@@ -266,9 +266,9 @@
 
 (defn db-list-query-iterations
   "Lists iteration entities for a query ordered by created-at."
-  [db-info query-ref]
-  (if (and (core/ds db-info) query-ref)
-    (let [q-id (core/entity-ref->id query-ref)
+  [db-info query-id]
+  (if (and (core/ds db-info) query-id)
+    (let [q-id (core/entity-id->id query-id)
           ids (mapv :id (core/query! db-info
                           {:select [:id]
                            :from :entity

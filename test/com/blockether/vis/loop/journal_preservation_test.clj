@@ -21,7 +21,7 @@
     [com.blockether.svar.internal.llm :as llm]
     [com.blockether.vis.core :as sut]
     [com.blockether.vis.loop.core :as rlm-core]
-    [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]))
+    [com.blockether.vis.loop.runtime.conversation.environment.query.routing :as rlm-routing]))
 
 (defn- make-test-env []
   (let [router (llm/make-router
