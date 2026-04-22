@@ -28,29 +28,26 @@ runtime/
                              var-index (build-var-index)
       core.clj               orchestration: hook system, execute-tool pipeline,
                              tool registration, built-in tool wiring
-      query/                ← one turn: prep → loop → refine → finalize
-      shared.clj             reusable: router, var snapshots, system-var lifecycle
-      persistence.clj        DB boundary: store-query!, update-query!
-      base.clj               CORE ENGINE: iteration-loop + run-query!
-      core.clj               query-env! orchestration (context prep, refinement, Q-values)
-      subquery.clj           sub-RLM: fork SCI + parent handoff + run-query!
+      extension.clj          extension spec: namespace-like bundles that add
+                             symbols, classes, and docs to the SCI sandbox
+      query/              ← one turn: prep → loop → refine → finalize
+        shared.clj           reusable: router, var snapshots, system-var lifecycle
+        persistence.clj      DB boundary: store-query!, update-query!
+        base.clj             CORE ENGINE: iteration-loop + run-query!
+        core.clj             query-env! orchestration (context prep, refinement, Q-values)
 
-      iteration/          ← one LLM call: assemble → ask → execute → format
-        shared.clj           reusable: rlm-debug!, rlm-stage!, reasoning levels, answer-str
-        persistence.clj      DB boundary: store-iteration!
-        core.clj             run-iteration (single LLM call + response handling)
-        execute.clj          SCI sandbox execution, timeouts, stdout capture
-        validate.clj         syntax parsing + code-block + answer validation
-        filter.clj           supersession: skip redundant tool calls
-        format.clj           journal rendering, error hints, prior-thinking, handover
-        assemble.clj         message assembly: system + user + history + var-index + nudges
+        iteration/        ← one LLM call: assemble → ask → execute → format
+          shared.clj         reusable: rlm-debug!, rlm-stage!, reasoning levels, answer-str
+          persistence.clj    DB boundary: store-iteration!
+          core.clj           run-iteration (single LLM call + response handling)
+          execute.clj        SCI sandbox execution, timeouts, stdout capture
+          validate.clj       syntax parsing + code-block + answer validation
+          format.clj         journal rendering, error hints, prior-thinking, handover
+          assemble.clj       message assembly: system + user + history + var-index + nudges
 
   shared.clj              ← realize-value, truncate, shape, date tools, doc tools, history tools
   prompt.clj              ← system prompt builder (ARCH rules, tool docs, response format)
   tool_diagnostics.clj    ← process-global tool telemetry (vis doctor)
-  tools/
-    core.clj              ← tool factories: search-documents, request-more-iterations, etc.
-    git.clj               ← git tool bindings (search-commits, blame, diff)
 ```
 
 ## Flow: What happens when the user sends a message
@@ -64,7 +61,7 @@ runtime/
    query-env! does:
    a. Validate inputs, extract query-str from messages
    b. Per-turn tool activation pass (activation-fn per tool)
-   c. Bind per-query SCI vars (sub-rlm-query, request-more-iterations)
+   c. Bind per-query SCI vars (request-more-iterations, etc.)
    d. Call run-query! which:
       - Stores a :query entity in DB
       - Calls iteration-loop
@@ -80,17 +77,9 @@ runtime/
    c. Call LLM via run-iteration (iteration/core.clj)
    d. If :final → return answer
    e. If :code → execute blocks (iteration/execute.clj)
-   f. Filter superseded blocks (iteration/filter.clj)
-   g. Format results as <journal> (iteration/format.clj)
-   h. Persist iteration + vars to DB
-   i. Loop back to (b)
-
-4. SUB-QUERIES (conversation/environment/query/subquery.clj)
-   When agent code calls (sub-rlm-query "prompt" opts):
-   a. Depth tracking + skill resolution (in query/base.clj)
-   b. subquery.clj forks the SCI env, prepends parent handoff
-   c. Calls run-query! → iteration-loop (same as main query)
-   d. Returns result to parent sandbox
+   f. Format results as <journal> (iteration/format.clj)
+   g. Persist iteration + vars to DB
+   h. Loop back to (b)
 ```
 
 ## State: What lives where
@@ -104,6 +93,7 @@ runtime/
 | Skill registry | `env :skill-registry-atom` | Conversation |
 | Max-iterations budget | `env :max-iterations-atom` | Query (set by query-env!) |
 | Current iteration ref | `env :current-iteration-ref-atom` | Query (reset per query) |
+| Query context depth | `query-ctx :depth` (plain int) | Query (0 = top-level) |
 | Token usage | `usage-atom` (local) | Query |
 | Repetition counts | `call-counts-atom` (local) | Query |
 | Tool diagnostics | `tool_diagnostics.clj/diagnostics` | Process |
@@ -113,7 +103,7 @@ runtime/
 ```clojure
 {:env-id              "uuid-str"
  :conversation-id     [:id uuid]        ;; entity ref
- :parent-iteration-id [:id uuid]|nil    ;; set for sub-RLMs
+ :parent-iteration-id [:id uuid]|nil    ;; vestigial; always nil for top-level queries
  :db-info             {...}             ;; SQLite connection
  :router              <svar-router>     ;; LLM provider router
  :sci-ctx             <sci-context>     ;; SCI sandbox
@@ -124,9 +114,7 @@ runtime/
  :var-index-atom      (atom {:index str :revision n :current-revision n})
  :max-iterations-atom (atom n)          ;; set per query
  :current-iteration-ref-atom (atom [:id uuid]|nil)
- :state-atom          (atom {:custom-bindings {} :custom-docs []})
- :depth-atom          (atom 0)          ;; sub-rlm recursion depth
- :sub-rlm-query-fn    fn}
+ :state-atom          (atom {:custom-bindings {} :custom-docs []})}
 ```
 
 ## Dependency graph
@@ -135,22 +123,22 @@ runtime/
                     (leaves — no runtime/ deps)
                     shared.clj
                     tool_diagnostics.clj
-                    tools/core.clj, tools/git.clj
                          │
-                    core.clj (SCI sandbox, var-index, hooks)
+              conversation/environment/
+                    base.clj (SCI sandbox, var-index)
+                    extension.clj (extension spec)
+                    core.clj (hooks, execute-tool, tool registration)
                          │
                     prompt.clj (system prompt builder)
                          │
               ┌──── conversation/environment/query/iteration/*
-              │       (validate → execute → filter → format → assemble → core)
+              │       (validate → execute → format → assemble → core)
               │
          conversation/environment/query/base.clj (router + iteration-loop + run-query!)
               │
-    ┌─────────┼──────────────┐
-    │         │              │
- subquery  base.clj    conversation/environment/query/core.clj
-    │                        │
-    └────────────────── conversation/core.clj
+         conversation/environment/query/core.clj (query-env! orchestration)
+              │
+         conversation/core.clj (conversation lifecycle)
 ```
 
 ## DB entity tree
@@ -160,7 +148,4 @@ runtime/
   └─ :query (one per user turn)
        └─ :iteration (one per LLM call)
             └─ :iteration-var (one per (def ...) in that iteration)
-       └─ :query (sub-RLM, parented to invoking :iteration)
-            └─ :iteration
-                 └─ :iteration-var
 ```
