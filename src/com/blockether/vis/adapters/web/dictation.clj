@@ -14,7 +14,8 @@
      is returned unchanged so the user is never left empty-handed."
   (:require [clojure.string :as str]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
-            [com.blockether.vis.loop.runtime.conversation.environment.query.base :as rlm-routing]))
+            [com.blockether.vis.loop.runtime.conversation.environment.query.base :as rlm-routing]
+            [taoensso.trove :as trove]))
 
 (def ^:private CLEANUP_SYSTEM_PROMPT
   (str "You clean up text that was just dictated by speech-to-text. "
@@ -95,5 +96,7 @@
             raw
             cleaned))
         (catch Exception e
-          (println (str "[web] dictation cleanup failed: " (ex-message e)))
+          (trove/log! {:level :warn :id ::cleanup-failed
+                       :data {:error (ex-message e)}
+                       :msg "dictation cleanup failed"})
           raw)))))

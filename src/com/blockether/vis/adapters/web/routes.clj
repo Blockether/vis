@@ -6,7 +6,8 @@
             [com.blockether.vis.adapters.web.presentation :as presentation]
             [charred.api :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [taoensso.trove :as trove])
   (:import [java.time Instant]))
 
 ;;; ── Helpers ────────────────────────────────────────────────────────────
@@ -115,7 +116,9 @@
         (if (or (str/blank? id) (str/blank? q))
           {:status 400 :headers {"Content-Type" "application/json"} :body "{\"error\":\"missing conversation or query\"}"}
           (do
-            (println (str "[" (Instant/now) "] [" (subs id 0 (min 8 (count id))) "] " q))
+            (trove/log! {:level :info :id ::submit-query
+                         :data {:conversation-id (subs id 0 (min 8 (count id))) :query q}
+                         :msg (str "query submitted: " q)})
             (executor/submit-query! id q)
             {:status 200 :headers {"Content-Type" "application/json"} :body "{\"ok\":true}"})))
 

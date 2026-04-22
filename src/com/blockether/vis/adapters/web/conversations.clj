@@ -10,7 +10,8 @@
             [com.blockether.vis.loop.storage.db :as rlm-db]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [zprint.core :as zp])
+            [zprint.core :as zp]
+            [taoensso.trove :as trove])
   (:import (java.time Instant ZoneId)
            (java.time.format DateTimeFormatter)
            (java.util Date)
@@ -94,10 +95,13 @@
       (try
         (core/ingest-git! env {:repo-path cwd :n 500})
         (swap! git-ingested conj conversation-id)
-        (println (str "[web] ingested git history from " cwd
-                   " (conv " (subs (str conversation-id) 0 (min 8 (count (str conversation-id)))) ")"))
+        (trove/log! {:level :info :id ::git-ingested
+                     :data {:cwd cwd :conversation-id conversation-id}
+                     :msg (str "ingested git history from " cwd)}))
         (catch Exception e
-          (println (str "[web] git ingestion skipped (" cwd "): " (ex-message e)))
+          (trove/log! {:level :warn :id ::git-ingestion-skipped
+                       :data {:cwd cwd :error (ex-message e)}
+                       :msg (str "git ingestion skipped (" cwd ")")})
           nil)))))
 
 (defn- safe-read-edn
@@ -329,7 +333,9 @@
           var-history-cache (atom {})]
       (into [] (mapcat #(query-entity->message-pair db-info conv-id var-history-cache %)) queries))
     (catch Exception e
-      (println (str "[web] load-messages-from-db failed: " (ex-message e)))
+      (trove/log! {:level :error :id ::load-messages-failed
+                    :data {:error (ex-message e)}
+                    :msg "load-messages-from-db failed"})
       [])))
 
 (defn messages-for
