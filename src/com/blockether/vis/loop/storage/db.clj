@@ -59,7 +59,7 @@
 
 (def store-conversation!              conv/store-conversation!)
 (def db-get-conversation              conv/db-get-conversation)
-(def db-resolve-conversation-ref      conv/db-resolve-conversation-ref)
+(def db-resolve-conversation-id      conv/db-resolve-conversation-id)
 
 (def store-query!   conv/store-query!)
 (def update-query!  conv/update-query!)
@@ -99,8 +99,8 @@
 
 (defn db-query-history
   "Ordered query history for a conversation with compact summaries."
-  [db-info conversation-ref]
-  (let [queries (db-list-conversation-queries db-info conversation-ref)]
+  [db-info conversation-id]
+  (let [queries (db-list-conversation-queries db-info conversation-id)]
     (mapv (fn [idx query]
             (let [qref [:id (:id query)]
                   iterations (db-list-query-iterations db-info qref)
@@ -112,10 +112,9 @@
                                      "")
                                    160)]
               {:query-pos idx
-               :query-ref qref
                :query-id (:id query)
                :created-at (:created-at query)
-               :text (:text query)
+               :query (:text query)
                :status (:status query)
                :iterations (count iterations)
                :answer-preview answer-preview
@@ -125,8 +124,8 @@
 
 (defn db-query-code
   "Ordered code blocks for a query with metadata."
-  [db-info query-ref]
-  (->> (db-list-query-iterations db-info query-ref)
+  [db-info query-id]
+  (->> (db-list-query-iterations db-info query-id)
     (map-indexed (fn [iter-pos iter]
                    {:iteration-pos iter-pos
                     :created-at (:created-at iter)
@@ -136,8 +135,8 @@
 
 (defn db-query-results
   "Ordered result blocks for a query with vars + answer."
-  [db-info query-ref]
-  (->> (db-list-query-iterations db-info query-ref)
+  [db-info query-id]
+  (->> (db-list-query-iterations db-info query-id)
     (map-indexed (fn [iter-pos iter]
                    (let [iref [:id (:id iter)]]
                      {:iteration-pos iter-pos
@@ -149,9 +148,9 @@
 
 (defn db-latest-var-registry
   "Builds latest restorable var registry for a conversation (last write wins)."
-  ([db-info conversation-ref] (db-latest-var-registry db-info conversation-ref {}))
-  ([db-info conversation-ref {:keys [max-scan-queries]}]
-   (let [ordered-queries (sort-by :created-at (db-list-conversation-queries db-info conversation-ref))
+  ([db-info conversation-id] (db-latest-var-registry db-info conversation-id {}))
+  ([db-info conversation-id {:keys [max-scan-queries]}]
+   (let [ordered-queries (sort-by :created-at (db-list-conversation-queries db-info conversation-id))
          queries (if max-scan-queries
                    (take-last (max 0 (long max-scan-queries)) ordered-queries)
                    ordered-queries)]
@@ -165,7 +164,6 @@
                                          (assoc m2 sym
                                            {:value value :code code
                                             :query-id (:id query)
-                                            :query-ref qref
                                             :iteration-id (:id iter)
                                             :created-at (:created-at iter)
                                             :version (inc prev-version)}))
@@ -189,9 +187,9 @@
   "Returns all versions of a named var across a conversation, oldest first.
    Each entry: {:version N :value <edn> :code str :diffable? bool
                 :query-id uuid :created-at inst}."
-  [db-info conversation-ref var-sym]
+  [db-info conversation-id var-sym]
   (let [var-name (str var-sym)
-        queries  (sort-by :created-at (db-list-conversation-queries db-info conversation-ref))]
+        queries  (sort-by :created-at (db-list-conversation-queries db-info conversation-id))]
     (->> queries
       (mapcat (fn [query]
                 (let [qref [:id (:id query)]]

@@ -24,7 +24,7 @@
     [lazytest.core :refer [defdescribe describe expect it]]
     [sci.core :as sci]
     [com.blockether.vis.loop.tool :as tool]
-    [com.blockether.vis.loop.runtime.core :as runtime]))
+    [com.blockether.vis.loop.runtime.conversation.environment.core :as runtime]))
 
 (defn check-formatter-invariants!
   "Assert the three formatter invariants for `fmt` on `value`.

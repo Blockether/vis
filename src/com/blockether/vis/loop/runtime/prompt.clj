@@ -94,25 +94,7 @@
 ;; static list of prompt-only tool-defs here and merge it in at render time.
 
 (def ^:private AMBIENT_TOOL_DEFS
-  [{:sym 'sub-rlm-query
-    :group "meta"
-    :arglists '([prompt] [prompt opts])
-    :activation-fn (constantly true)
-    :examples ["(sub-rlm-query \"Summarize src/foo.clj in one sentence\")"
-               "(sub-rlm-query \"cheap lookup\" {:routing {:optimize :cost}})"
-               "(sub-rlm-query \"hard derivation\" {:routing {:optimize :intelligence} :reasoning :deep})"
-               "(sub-rlm-query \"multi-step\" {:max-iter 5})"]
-    :prompt "Sync sub-query. Opts: `:routing {:optimize :cost|:speed|:intelligence}`, `:reasoning :normal|:deep`, `:max-iter` (default 1). Use when sub-problem needs different model/depth; else inline code."}
-
-   {:sym 'sub-rlm-query-batch
-    :group "meta"
-    :arglists '([items])
-    :activation-fn (constantly true)
-    :examples ["(sub-rlm-query-batch [{:prompt \"q1\"} {:prompt \"q2\"}])"
-               "(sub-rlm-query-batch [{:prompt \"cheap\" :routing {:optimize :cost}} {:prompt \"hard\" :reasoning :deep}])"]
-    :prompt "Parallel `sub-rlm-query`. Takes `[{:prompt \"...\" …opts} …]`, returns a vector of answer strings in order. Use when sub-tasks are independent."}
-
-   {:sym 'request-more-iterations
+  [{:sym 'request-more-iterations
     :group "meta"
     :arglists '([n])
     :activation-fn (constantly true)
@@ -310,7 +292,6 @@ ITERATION INPUTS:
 
 PERSISTENCE:
 - Def values needed later or referenced by final answer.
-- Use `:forget` to drop scratch vars when done.
 
 EXECUTION:
 - Prefer a few broad tool calls over many tiny ones.
@@ -318,7 +299,6 @@ EXECUTION:
 - If nothing to compute, use `[{\"expr\":\":ok\",\"time-ms\":1}]`.
 
 SUB-QUERIES:
-- `sub-rlm-query` is isolated. Pass required context explicitly.
 "
     (when (multi-model? env)
       "

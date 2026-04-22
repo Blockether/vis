@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.conversations.shared
+(ns com.blockether.vis.loop.runtime.conversation.shared
   "Reusable helpers for RLM conversation lifecycle."
   (:require [clojure.string :as str]
             [com.blockether.vis.languages.commons.edit :as edit]

@@ -11,7 +11,7 @@
     [clojure.string :as str]
     [lazytest.core :refer [defdescribe describe expect it]]
     [com.blockether.vis.loop.core :as sut]
-    [com.blockether.vis.loop.runtime.core :as rlm-tools]
+    [com.blockether.vis.loop.runtime.conversation.environment.core :as rlm-tools]
     [com.blockether.svar.internal.llm :as llm]))
 
 (defn- make-test-env []

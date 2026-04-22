@@ -8,7 +8,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.loop.core :as core]
    [com.blockether.vis.loop.runtime.prompt :as prompt]
-   [com.blockether.vis.loop.runtime.query.routing :as routing])
+   [com.blockether.vis.loop.runtime.conversation.environment.query.base :as routing])
   (:import
    [com.knuddels.jtokkit Encodings]
    [com.knuddels.jtokkit.api EncodingType]))

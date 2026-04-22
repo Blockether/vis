@@ -16,8 +16,8 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.loop.conversations.core :as conversations]
-   [com.blockether.vis.loop.conversations.shared :as shared]
+   [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+   [com.blockether.vis.loop.runtime.conversation.shared :as shared]
    [com.blockether.vis.core :as core]
    [com.blockether.vis.config :as config]))
 
@@ -38,7 +38,7 @@
   (assoc opts :sym sym :fn f))
 
 (def base-tools
-  "Alias for `com.blockether.vis.loop.conversations.shared/base-tools`. Every env
+  "Alias for `com.blockether.vis.loop.runtime.conversation.shared/base-tools`. Every env
    opened through `conversations/create!` already has these registered — agent-defs
    only need to declare *extra* tools beyond this set."
   shared/base-tools)

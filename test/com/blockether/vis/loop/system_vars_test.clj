@@ -7,7 +7,7 @@
     [lazytest.core :refer [defdescribe describe expect it]]
     [sci.core :as sci]
     [com.blockether.vis.loop.core :as rlm-core]
-    [com.blockether.vis.loop.runtime.core :as runtime]))
+    [com.blockether.vis.loop.runtime.conversation.environment.core :as runtime]))
 
 (defn- make-ctx []
   (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]}

@@ -14,6 +14,7 @@
    when a git repo is attached to the env."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.loop.runtime.shared :as rt-shared]
    [com.blockether.vis.loop.storage.db :as rlm-db]
    [taoensso.trove :as trove])
   (:import
@@ -195,19 +196,19 @@
                        commits)
         person-entities (mapv (fn [[_email commit]]
                                 (assoc (author->person-entity commit document-id)
-                                  :id (java.util.UUID/randomUUID)))
+                                  :id (rt-shared/->uuid)))
                           unique-emails)
         _email->id (into {} (map-indexed
                               (fn [i [email _]] [email (:id (nth person-entities i))])
                               unique-emails))
         file-entities (mapv (fn [fp]
                               (assoc (file->file-entity fp document-id)
-                                :id (java.util.UUID/randomUUID)))
+                                :id (rt-shared/->uuid)))
                         unique-paths)
         _path->id (zipmap unique-paths (map :id file-entities))
         event-entities (mapv (fn [commit]
                                (assoc (commit->entity commit document-id)
-                                 :id (java.util.UUID/randomUUID)))
+                                 :id (rt-shared/->uuid)))
                          commits)
         _sha->event-id (zipmap (map :sha commits) (map :id event-entities))]
     ;; Persist all entities + edges via the SQLite store.

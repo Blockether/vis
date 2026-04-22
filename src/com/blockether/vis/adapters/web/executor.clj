@@ -3,8 +3,8 @@
    State lives in web conversations atoms. Only the executor mutates during query execution.
    Survives page reloads — queries run to completion regardless of client state."
   (:require [com.blockether.svar.internal.llm :as llm]
-            [com.blockether.vis.loop.conversations.core :as conversations]
-            [com.blockether.vis.loop.conversations.shared :as conv-shared]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
             [clojure.core.async :as async]
             [clojure.string :as str])

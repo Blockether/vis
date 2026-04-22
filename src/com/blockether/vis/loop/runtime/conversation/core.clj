@@ -1,17 +1,17 @@
-(ns com.blockether.vis.loop.conversations.core
+(ns com.blockether.vis.loop.runtime.conversation.core
   "Conversation lifecycle/send orchestration inside loop core."
   (:require [com.blockether.svar.internal.llm :as llm]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.core :as core]
-            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.shared :as query-shared]
             [com.blockether.vis.loop.storage.db :as rlm-db]
-            [com.blockether.vis.loop.conversations.persistence :as persistence]
-            [com.blockether.vis.loop.conversations.shared :as shared])
+            [com.blockether.vis.loop.runtime.conversation.persistence :as persistence]
+            [com.blockether.vis.loop.runtime.conversation.shared :as shared])
   (:import [java.util UUID]))
 
 (defn- open-env!
   [id]
-  (let [router (rlm-routing/get-router)
+  (let [router (query-shared/get-router)
         sel    (when id [:id (UUID/fromString id)])
         env    (core/create-env router
                  (cond-> {:db config/db-path}
@@ -34,7 +34,7 @@
   ([channel] (create! channel nil))
   ([channel {:keys [title external-id]}]
    (let [env  (open-env! nil)
-         id   (str (second (:conversation-ref env)))
+         id   (str (second (:conversation-id env)))
          _    (shared/cache-env! id env)
          _    (persistence/insert-conversation! (persistence/db-info)
                 {:id id

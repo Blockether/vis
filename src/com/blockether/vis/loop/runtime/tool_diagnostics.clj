@@ -26,7 +26,8 @@
    pre-merged tool seq so callers control where the live activation pass
    happens (the `vis doctor` CLI runs a fresh pass at report time; test code
    can feed a synthetic seq)."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.loop.runtime.shared :as rt-shared]))
 
 ;; =============================================================================
 ;; State
@@ -93,8 +94,7 @@
         (update :activation-errors inc)
         (assoc :last-active?          false
                :last-activation-ns    elapsed-ns
-               :last-activation-error {:message (.getMessage t)
-                                       :class   (.getName (class t))})
+               :last-activation-error (rt-shared/format-exception-short t))
         (update :total-activation-ns + elapsed-ns)
         (update :max-activation-ns max elapsed-ns)))))
 

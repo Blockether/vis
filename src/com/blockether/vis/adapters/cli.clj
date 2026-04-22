@@ -7,9 +7,11 @@
             [com.blockether.vis.adapters.telegram.bot :as telegram]
             [com.blockether.vis.core :as core]
             [com.blockether.vis.loop.storage.db :as rlm-db]
-            [com.blockether.vis.loop.conversations.shared :as conv-shared]
-            [next.jdbc.sql]
-            [com.blockether.vis.loop.runtime.query.routing :as rlm-routing]
+            [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]
+            [honey.sql :as sql]
+            [next.jdbc :as jdbc]
+            [next.jdbc.result-set :as rs]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.base :as rlm-routing]
             [com.blockether.vis.loop.runtime.tool-diagnostics :as tool-diag]
             [com.blockether.vis.adapters.tui.screen :as screen]
             [taoensso.trove :as trove]))
@@ -449,8 +451,11 @@
                     count-ch    (fn [ch]
                                   (try
                                     (when sidecar-ds
-                                      (count (next.jdbc.sql/find-by-keys sidecar-ds :vis_conversation
-                                               {:channel (name ch)} {})))
+                                      (count (jdbc/execute! sidecar-ds
+                                               (sql/format {:select [:*]
+                                                            :from   [:vis_conversation]
+                                                            :where  [:= :channel (name ch)]})
+                                               {:builder-fn rs/as-unqualified-lower-maps})))
                                     (catch Exception _ 0)))
                     vis-n  (or (count-ch :vis) 0)
                     cli-n  (or (count-ch :cli) 0)

@@ -12,7 +12,7 @@
    - Tools without :rescue-fn behave exactly as before."
   (:require
     [lazytest.core :refer [defdescribe describe expect it]]
-    [com.blockether.vis.loop.runtime.core :as rt]
+    [com.blockether.vis.loop.runtime.conversation.environment.core :as rt]
     [com.blockether.vis.loop.tool :as sci-tool]))
 
 (defn- make-env

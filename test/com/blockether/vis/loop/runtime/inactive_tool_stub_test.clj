@@ -10,7 +10,7 @@
   (:require
     [lazytest.core :refer [defdescribe describe expect it]]
     [sci.core :as sci]
-    [com.blockether.vis.loop.runtime.core :as runtime]
+    [com.blockether.vis.loop.runtime.conversation.environment.core :as runtime]
     [com.blockether.vis.loop.tool :as tool-def]))
 
 (defn- make-minimal-env
@@ -35,7 +35,7 @@
     (swap! tool-registry-atom assoc sym canonical)))
 
 (defn- run-activation-pass!
-  "Mirror the binding pass from runtime.query.core/prepare-query-context.
+  "Mirror the binding pass from runtime.conversation.environment.query.core/prepare-query-context.
    Kept in sync with that loop — this test exists specifically to pin
    the contract `inactive ⇒ unbound`."
   [{:keys [sci-ctx tool-registry-atom] :as env}]

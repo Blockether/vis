@@ -3,7 +3,7 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [com.blockether.vis.adapters.tui.chat :as chat]
             [com.blockether.vis.adapters.tui.input :as input]
-            [com.blockether.vis.loop.conversations.shared :as conv-shared]))
+            [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
