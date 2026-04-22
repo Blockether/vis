@@ -7,7 +7,8 @@
             [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
             [clojure.core.async :as async]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [taoensso.trove :as trove])
   (:import [java.time Instant]))
 
 ;;; ── State ──────────────────────────────────────────────────────────────
@@ -89,14 +90,18 @@
                :result result :ts (str (Instant/now))})))
         (catch Exception e
           (let [user-msg (conv-shared/error->user-message e)]
-            (println (str "[executor] Error in " conversation-id ": " (ex-message e)))
+            (trove/log! {:level :error :id ::query-error
+                         :data {:conversation-id conversation-id :error (ex-message e)}
+                         :msg (str "error in " conversation-id)})
             (when (web-conversations/get-conversation conversation-id)
               (web-conversations/append-message! conversation-id
                 {:role :assistant
                  :text user-msg
                  :result {:answer user-msg}
                  :ts (str (Instant/now))})))))
-      (println (str "[executor] Conversation " conversation-id " not found, skipping")))
+      (trove/log! {:level :warn :id ::conversation-not-found
+                    :data {:conversation-id conversation-id}
+                    :msg (str "conversation " conversation-id " not found, skipping")}))
     (finally
       (swap! web-conversations/live-status dissoc conversation-id)
       (swap! in-flight disj conversation-id))))
@@ -125,7 +130,9 @@
   [conversation-id query]
   (when-let [conv (web-conversations/get-conversation conversation-id)]
     (if (in-flight? conversation-id)
-      (println (str "[executor] Conversation " conversation-id " already in-flight, skipping"))
+      (trove/log! {:level :warn :id ::already-in-flight
+                    :data {:conversation-id conversation-id}
+                    :msg (str "conversation " conversation-id " already in-flight, skipping")})
       (do
         (web-conversations/append-message! conversation-id
           {:role :user :text query :ts (str (Instant/now))})
@@ -164,7 +171,9 @@
           wks (vec (for [_ (range worker-count)] (start-worker! ch)))]
       (reset! exec-ch ch)
       (reset! worker-chs wks)
-      (println (str "Executor started (" worker-count " workers)")))))
+      (trove/log! {:level :info :id ::started
+                    :data {:worker-count worker-count}
+                    :msg (str "executor started (" worker-count " workers)")})))))
 
 (defn stop!
   "Stop the executor. Closes channel, waits for workers to drain, clears state."
@@ -176,4 +185,4 @@
     (drain-workers! 10000)
     (reset! worker-chs [])
     (reset! in-flight #{})
-    (println "Executor stopped")))
+    (trove/log! {:level :info :id ::stopped :msg "executor stopped"})))

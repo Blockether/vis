@@ -5,7 +5,8 @@
             [com.blockether.vis.adapters.web.conversations :as web-conversations]
             [com.blockether.vis.adapters.web.executor :as executor]
             [com.blockether.vis.adapters.web.routes :as routes]
-            [ring.adapter.jetty :as jetty])
+            [ring.adapter.jetty :as jetty]
+            [taoensso.trove :as trove])
   (:import [org.eclipse.jetty.server Server]
            [java.time Instant]))
 
@@ -49,17 +50,19 @@
    (let [swept (try (conv-persistence/sweep-orphaned-running-queries!)
                     (catch Exception _ 0))]
      (when (pos? swept)
-       (println (str "[vis] swept " swept
-                  (if (= 1 swept) " orphaned running query" " orphaned running queries")
-                  " from prior crash"))))
+       (trove/log! {:level :warn :id ::sweep-orphans
+                    :data {:swept swept}
+                    :msg (str "swept " swept
+                           (if (= 1 swept) " orphaned running query" " orphaned running queries")
+                           " from prior crash")}))))
    (let [handler (wrap-health #'routes/handler)
          srv     (jetty/run-jetty handler
                    {:port port :join? false :host "0.0.0.0"})]
      (swap! service-state assoc
        :server srv :started-at (Instant/now) :port port)
-     (println (str "[vis] web service started on http://0.0.0.0:" port))
-     (println (str "[vis] health: http://0.0.0.0:" port "/health"))
-     (println (str "[vis] conversations: " (count (web-conversations/conversations-list))))
+     (trove/log! {:level :info :id ::started
+                   :data {:port port :conversations (count (web-conversations/conversations-list))}
+                   :msg (str "web service started on http://0.0.0.0:" port)})
      srv)))
 
 (defn stop! []
@@ -68,4 +71,4 @@
     (try (.stop s) (catch Exception _)))
   (swap! service-state assoc :server nil :started-at nil :port nil)
   (conversations/close-all!)
-  (println "[vis] web service stopped."))
+  (trove/log! {:level :info :id ::stopped :msg "web service stopped"}))
