@@ -7,6 +7,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
+   [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.config :as config]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as rlm-tools]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value]]
@@ -33,15 +34,8 @@
 
 (defn ask! [opts] (llm/ask! (get-router) opts))
 
-(defn resolve-root-model [rlm-router]
-  (when rlm-router
-    (when-let [[_ model-map] (llm/select-provider rlm-router {:strategy :root})]
-      (:name model-map))))
-
-(defn provider-has-reasoning? [rlm-router]
-  (when rlm-router
-    (when-let [[_ model] (llm/select-provider rlm-router {:strategy :root})]
-      (boolean (:reasoning? model)))))
+(def resolve-root-model svar-router/root-model-name)
+(def provider-has-reasoning? svar-router/root-model-reasoning?)
 
 ;; =============================================================================
 ;; Var snapshot helpers

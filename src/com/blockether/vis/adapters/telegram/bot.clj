@@ -9,7 +9,8 @@
   (:require [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]
             [com.blockether.vis.loop.runtime.conversation.environment.query.shared :as query-shared]
-            [com.blockether.vis.adapters.telegram.api :as tg]))
+            [com.blockether.vis.adapters.telegram.api :as tg]
+            [taoensso.trove :as trove]))
 
 (defonce ^:private running? (atom false))
 (defonce ^:private poll-thread (atom nil))
@@ -55,8 +56,9 @@
               (tg/send-message! token chat-id
                 (str answer (format-footer result model-name))))
             (catch Exception e
-              (println (str "[telegram] error handling msg from " sender
-                         " in chat " chat-id ": " (ex-message e)))
+              (trove/log! {:level :error :id ::handle-message
+                           :data {:sender sender :chat-id chat-id :error (ex-message e)}
+                           :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
                      (str "⚠️ " (conv-shared/error->user-message e)))
                 (catch Exception _ nil)))))))))
@@ -69,7 +71,9 @@
                       (tg/get-updates token offset poll-timeout-seconds)
                       (catch InterruptedException _ ::interrupted)
                       (catch Exception e
-                        (println (str "[telegram] poll error: " (ex-message e)))
+                        (trove/log! {:level :error :id ::poll-error
+                                      :data {:error (ex-message e)}
+                                      :msg "poll error"})
                         (Thread/sleep 2000)
                         []))]
         (cond
@@ -92,7 +96,7 @@
       (.setDaemon t true)
       (.start t)
       (reset! poll-thread t)
-      (println "Telegram bot running. Message the bot to start chatting."))))
+      (trove/log! {:level :info :id ::started :msg "Telegram bot running"}))))
 
 (defn stop! []
   (when (compare-and-set! running? true false)
@@ -100,12 +104,12 @@
       (.interrupt ^Thread t)
       (reset! poll-thread nil))
     (conversations/close-all!)
-    (println "Telegram bot stopped.")))
+    (trove/log! {:level :info :id ::stopped :msg "Telegram bot stopped"})))
 
 (defn -main [& _]
   (.addShutdownHook (Runtime/getRuntime)
     (Thread. ^Runnable (fn []
-                         (println "Shutting down Telegram bot…")
+                         (trove/log! {:level :info :id ::shutdown :msg "Shutting down Telegram bot"})
                          (stop!))
       "vis-telegram-shutdown"))
   (start!)
