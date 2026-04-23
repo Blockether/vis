@@ -4,25 +4,27 @@
             [com.blockether.vis.config :as config]
             [com.blockether.vis.core :as core]
             [com.blockether.vis.loop.runtime.conversation.environment.query.shared :as query-shared]
-            [com.blockether.vis.loop.storage.db :as rlm-db]
             [com.blockether.vis.loop.runtime.conversation.persistence :as persistence]
             [com.blockether.vis.loop.runtime.conversation.shared :as shared])
   (:import [java.util UUID]))
 
 (defn- open-env!
-  [id]
+  [id {:keys [channel external-id title]}]
   (let [router (query-shared/get-router)
         sel    (when id [:id (UUID/fromString id)])
         env    (core/create-env router
                  (cond-> {:db config/db-path}
-                   sel (assoc :conversation sel)))]
+                   sel         (assoc :conversation sel)
+                   channel     (assoc :channel channel)
+                   external-id (assoc :external-id external-id)
+                   title       (assoc :title title)))]
     (shared/register-base-tools! env)))
 
 (defn- ensure-env!
   [id]
   (if-let [entry (get @shared/cache id)]
     entry
-    (let [env (open-env! id)]
+    (let [env (open-env! id {})]
       (swap! shared/cache
         (fn [m]
           (if (contains? m id)
@@ -33,14 +35,11 @@
 (defn create!
   ([channel] (create! channel nil))
   ([channel {:keys [title external-id]}]
-   (let [env  (open-env! nil)
+   (let [env  (open-env! nil {:channel     channel
+                              :external-id (some-> external-id str)
+                              :title       title})
          id   (str (second (:conversation-id env)))
-         _    (shared/cache-env! id env)
-         _    (persistence/insert-conversation! (persistence/db-info)
-                {:id id
-                 :channel channel
-                 :external-id (some-> external-id str)
-                 :title title})]
+         _    (shared/cache-env! id env)]
      {:id          id
       :channel     channel
       :external-id (some-> external-id str)
@@ -87,8 +86,6 @@
   [id]
   (close! id)
   (let [d (persistence/db-info)]
-    (try (rlm-db/delete-entity-tree! d (UUID/fromString id))
-      (catch Exception _ nil))
     (try (persistence/delete-conversation-row! d id)
       (catch Exception _ nil))))
 

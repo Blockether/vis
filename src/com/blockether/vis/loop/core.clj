@@ -864,7 +864,7 @@
   [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
-    (let [_model-name (query-shared/resolve-root-model (:router rlm-env))
+    (let [_model-name (:name (query-shared/resolve-effective-model (:router rlm-env)))
           effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level. Expected one of quick|balanced|deep."
@@ -1820,7 +1820,7 @@
         max-iter-atom (:max-iterations-atom rlm-env)
         effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
         ;; Resolve effective model name for token counting
-        effective-model (query-shared/resolve-root-model (:router rlm-env))
+        effective-model (:name (query-shared/resolve-effective-model (:router rlm-env)))
         _ (assert effective-model "Router must resolve a root model — check provider config")
         ;; Default max-context-tokens to 60% of model's context window.
         ;; Prevents unbounded history accumulation (quadratic token growth over iterations).
@@ -2390,7 +2390,7 @@
 
    Returns:
    RLM environment map (component). Pass to register-env-fn!, register-env-def!, ingest-to-env!, query-env!, dispose-env!."
-  [router {:keys [db conversation]}]
+  [router {:keys [db conversation channel external-id title]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :rlm/missing-router}))
   (let [depth-atom (atom 0)
@@ -2407,14 +2407,17 @@
                           :conversation-id nil})
         rlm-env-atom (atom nil)
                 env-id (str (util/uuid))
-        root-model (or (query-shared/resolve-root-model router) "unknown")
+        root-model (or (:name (query-shared/resolve-effective-model router)) "unknown")
         has-reasoning? (boolean (query-shared/provider-has-reasoning? router))
         system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
                                             })
         resolved-conversation-id (rlm-db/db-resolve-conversation-id db-info conversation)
         conversation-id (or resolved-conversation-id
                            (rlm-db/store-conversation! db-info
-                             {:model root-model
+                             {:channel       (or channel :vis)
+                              :external-id   external-id
+                              :model         root-model
+                              :title         title
                               :system-prompt system-prompt}))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (create-sci-context (:custom-bindings @state-atom))

@@ -59,7 +59,7 @@
         max-restarts (or max-restarts 3)
         max-iter-atom (:max-iterations-atom rlm-env)
         effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
-        effective-model (shared/resolve-root-model (:router rlm-env))
+        effective-model (:name (shared/resolve-effective-model (:router rlm-env)))
         _ (assert effective-model "Router must resolve a root model")
         max-context-tokens (or max-context-tokens
                              (long (* 0.6 (router/context-limit effective-model))))
@@ -192,13 +192,17 @@
                     effective-messages (cond-> base-messages
                                          (not (str/blank? iteration-context))
                                          (conj {:role "user" :content iteration-context}))
-                    effective-routing (cond-> (or routing {})
-                                        prev-next-model (assoc :optimize prev-next-model))
+                    effective-overrides (cond-> {}
+                                          prev-next-model     (assoc :optimize prev-next-model)
+                                          prev-next-reasoning (assoc :reasoning prev-next-reasoning))
+                    resolved-model (shared/resolve-effective-model (:router rlm-env) effective-overrides)
+                    effective-routing (merge (or routing {}) effective-overrides)
                     iteration-result (try
                                        (iterate/run-iteration rlm-env effective-messages
                                          {:iteration-spec (if has-reasoning? ITERATION_SPEC_REASONING ITERATION_SPEC_NON_REASONING)
                                           :iteration iteration :reasoning-level reasoning-level
-                                          :routing effective-routing})
+                                          :routing effective-routing
+                                          :resolved-model resolved-model})
                                        (catch Exception e
                                          (iterate/handle-iteration-exception! e
                                            {:iteration iteration :messages effective-messages

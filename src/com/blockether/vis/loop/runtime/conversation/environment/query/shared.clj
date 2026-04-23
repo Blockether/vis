@@ -1,7 +1,7 @@
 (ns com.blockether.vis.loop.runtime.conversation.environment.query.shared
   "Reusable query-level helpers.
 
-   - Router lifecycle: get-router, resolve-root-model, provider-has-reasoning?
+   - Router lifecycle: get-router, resolve-effective-model, provider-has-reasoning?
    - Var snapshots: restorable-var-snapshots, extract-def-names
    - System var lifecycle: update-system-vars!, inject-system-var-snapshots"
   (:require
@@ -34,8 +34,16 @@
 
 (defn ask! [opts] (llm/ask! (get-router) opts))
 
-(def resolve-root-model svar-router/root-model-name)
-(def provider-has-reasoning? svar-router/root-model-reasoning?)
+(def resolve-effective-model
+  "Resolves the effective model from the router. Returns map with
+   :name, :reasoning?, etc. or nil. Accepts optional overrides map
+   with :optimize, :provider, :model, :reasoning."
+  svar-router/resolve-effective-model)
+
+(defn provider-has-reasoning?
+  "True when the root model supports reasoning. Convenience wrapper."
+  [router]
+  (:reasoning? (resolve-effective-model router)))
 
 ;; =============================================================================
 ;; Var snapshot helpers

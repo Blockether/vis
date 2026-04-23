@@ -115,7 +115,7 @@
    - :initial   initial timeline vector (defaults to [])
    - :on-update side-effect callback invoked after each merge
 
-   This gives adapters a zero-duplication path for chunk merge semantics.
+   This gives channels a zero-duplication path for chunk merge semantics.
    They only decide how to project/render the returned timeline." 
   ([]
    (make-on-chunk-projector {}))

@@ -627,7 +627,7 @@ function replaceChat(html) {
 
 function renderLiveTrace(iterations) {
   // Mirrors the Clojure-side `render-iteration` in
-  // adapters/web/presentation/message.clj — iteration header, the model's
+  // channels/web/presentation/message.clj — iteration header, the model's
   // streamed `:thinking` narrative, then code/result rows. Thinking is
   // shown live so users can see WHY each step is being taken instead of
   // staring at opaque code blocks.
