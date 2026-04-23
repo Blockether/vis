@@ -204,7 +204,7 @@ clojure -M:run
 
 ### Project Structure
 
-- `src/com/blockether/vis/adapters/cli.clj` - CLI entrypoint (subcommands: chat, run, help)
+- `src/com/blockether/vis/channels/cli.clj` - CLI entrypoint (subcommands: chat, run, help)
 - `src/com/blockether/vis/agent.clj` - Agent orchestration over svar RLM (Sandcastle-inspired)
 - `src/com/blockether/vis/config.clj` - Config I/O, provider presets, svar-native helpers
 - `src/com/blockether/vis/logging.clj` - TTY logging setup, stream redirection
@@ -213,14 +213,14 @@ clojure -M:run
 - `src/com/blockether/vis/languages/commons/read.clj` - Base READ tool (offset/limit)
 - `src/com/blockether/vis/languages/commons/write.clj` - Base WRITE tool (full overwrite)
 - `src/com/blockether/vis/languages/commons/edit.clj` - Base EDIT tool (old_string → new_string)
-- `src/com/blockether/vis/adapters/tui/state.clj` - App state (re-frame pattern)
-- `src/com/blockether/vis/adapters/tui/screen.clj` - TUI main loop and rendering
-- `src/com/blockether/vis/adapters/tui/render.clj` - Rendering components (boxes, bubbles, text wrapping)
-- `src/com/blockether/vis/adapters/tui/chat.clj` - LLM integration via SVAR RLM
-- `src/com/blockether/vis/adapters/tui/dialogs.clj` - Interactive dialog screens
-- `src/com/blockether/vis/adapters/tui/input.clj` - Keyboard input handling
-- `src/com/blockether/vis/adapters/tui/provider.clj` - Provider setup wizard (TUI dialogs)
-- `src/com/blockether/vis/adapters/tui/theme.clj` - Colors and visual constants
+- `src/com/blockether/vis/channels/tui/state.clj` - App state (re-frame pattern)
+- `src/com/blockether/vis/channels/tui/screen.clj` - TUI main loop and rendering
+- `src/com/blockether/vis/channels/tui/render.clj` - Rendering components (boxes, bubbles, text wrapping)
+- `src/com/blockether/vis/channels/tui/chat.clj` - LLM integration via SVAR RLM
+- `src/com/blockether/vis/channels/tui/dialogs.clj` - Interactive dialog screens
+- `src/com/blockether/vis/channels/tui/input.clj` - Keyboard input handling
+- `src/com/blockether/vis/channels/tui/provider.clj` - Provider setup wizard (TUI dialogs)
+- `src/com/blockether/vis/channels/tui/theme.clj` - Colors and visual constants
 
 ## Ubiquitous Language (MANDATORY)
 
@@ -239,23 +239,23 @@ clojure -M:run
 - `*.core` means orchestration and use cases for one bounded context.
 - `*.persistence*` means storage/schema/DB boundary for one bounded context.
 - `*.presentation*` means pure rendering/view-model formatting for one bounded context or adapter.
-- `adapters.*` means external surface code only: web, TUI, Telegram, and CLI.
+- `channels.*` means external surface code only: web, TUI, Telegram, and CLI.
 - top-level facades like `rlm` should stay thin and stable.
 
 ### Adapter Target
 
-- `src/com/blockether/vis/adapters/web/*` - web adapter layer
-- `src/com/blockether/vis/adapters/tui/*` - TUI adapter layer
-- `src/com/blockether/vis/adapters/telegram/*` - Telegram adapter layer
-- `src/com/blockether/vis/adapters/cli.clj` - CLI adapter layer
+- `src/com/blockether/vis/channels/web/*` - web adapter layer
+- `src/com/blockether/vis/channels/tui/*` - TUI adapter layer
+- `src/com/blockether/vis/channels/telegram/*` - Telegram adapter layer
+- `src/com/blockether/vis/channels/cli.clj` - CLI adapter layer
 
 ### Web Target
 
-- `src/com/blockether/vis/adapters/web/app.clj` - process boot only; Jetty start/stop and wiring
-- `src/com/blockether/vis/adapters/web/routes.clj` - HTTP only; no DB/env poking, no cache mutation
-- `src/com/blockether/vis/adapters/web/conversations.clj` - deep web-facing module for conversation list/page/title/projection/cache
-- `src/com/blockether/vis/adapters/web/executor.clj` - async turn execution and live progress
-- `src/com/blockether/vis/adapters/web/presentation*.clj` - pure rendering only
+- `src/com/blockether/vis/channels/web/app.clj` - process boot only; Jetty start/stop and wiring
+- `src/com/blockether/vis/channels/web/routes.clj` - HTTP only; no DB/env poking, no cache mutation
+- `src/com/blockether/vis/channels/web/conversations.clj` - deep web-facing module for conversation list/page/title/projection/cache
+- `src/com/blockether/vis/channels/web/executor.clj` - async turn execution and live progress
+- `src/com/blockether/vis/channels/web/presentation*.clj` - pure rendering only
 
 ### Runtime Target
 
@@ -278,13 +278,13 @@ clojure -M:run
 - Do not introduce new catch-all `capability` names when the real concept is `tool` or `skill`.
 - If `routes` or `presenter` code needs raw `conversations/env-for` or DB access, the boundary is wrong.
 - Prefer in-place renames for vocabulary fixes; split files only when a namespace owns multiple contexts.
-- Prefer functional ownership over historical placement: shared vs core vs persistence vs presentation vs adapters, inside the correct bounded context.
-- Put reusable functions in `*.shared`, orchestration in `*.core`, storage in `*.persistence*`, rendering in `*.presentation*`, and external surfaces in `adapters.*`.
+- Prefer functional ownership over historical placement: shared vs core vs persistence vs presentation vs channels, inside the correct bounded context.
+- Put reusable functions in `*.shared`, orchestration in `*.core`, storage in `*.persistence*`, rendering in `*.presentation*`, and external surfaces in `channels.*`.
 - Use `core.clj` as the default application/use-case namespace in each bounded context.
 - Do not turn `rlm.core` or `rlm.tools.*` into dumping grounds for unrelated behavior.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
-- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. Prefer folding it into `adapters.cli` or deleting it once callers are simplified.
-- Do not keep long-term adapter code at the product root once the bounded-context APIs are ready for an `adapters/*` move.
+- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. Prefer folding it into `channels.cli` or deleting it once callers are simplified.
+- Do not keep long-term adapter code at the product root once the bounded-context APIs are ready for an `channels/*` move.
 - Prefer extracting a deep module first, then renaming callers, then deleting stale code.
 - Remove `requiring-resolve` cycles instead of spreading them further.
 - Keep slices small and shippable; no big-bang folder shuffle.
@@ -325,7 +325,7 @@ vis run --system-prompt "You are a code reviewer" "Review auth.clj"
 
 ### State Management (MANDATORY)
 
-All application state lives in `adapters/tui/state.clj` using a re-frame dispatch pattern.
+All application state lives in `channels/tui/state.clj` using a re-frame dispatch pattern.
 
 **Rules:**
 - ALL app state must go through `state/app-db` — never create standalone atoms for app state

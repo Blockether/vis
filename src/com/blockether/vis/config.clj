@@ -12,8 +12,8 @@
 ;;; ── Version ─────────────────────────────────────────────────────────────
 
 (def version
-  "Vis version string, read from resources/vis-version.txt at compile time."
-  (-> (io/resource "vis-version.txt") slurp str/trim))
+  "Vis version string, read from resources/VERSION at compile time."
+  (-> (io/resource "VERSION") slurp str/trim))
 
 ;;; ── Paths ───────────────────────────────────────────────────────────────
 

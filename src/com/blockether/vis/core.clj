@@ -33,9 +33,9 @@
 ;; =============================================================================
 
 (defn -main
-  "Unified entrypoint for all Vis adapters.
+  "Unified entrypoint for all Vis channels.
 
-   Dispatches to the appropriate adapter based on the first argument:
+   Dispatches to the appropriate channel based on the first argument:
 
      vis chat              TUI chat interface (default when no args)
      vis run <prompt>      One-shot CLI query
@@ -51,9 +51,9 @@
      (com.blockether.vis.core/-main \"web\" \"8080\")        ;; → Web on port 8080
      (com.blockether.vis.core/-main \"telegram\")           ;; → Telegram bot"
   [& args]
-  ;; Require at call time to avoid loading all adapters eagerly
-  (require 'com.blockether.vis.adapters.cli)
-  (apply (resolve 'com.blockether.vis.adapters.cli/-main) args))
+  ;; Require at call time to avoid loading all channels eagerly
+  (require 'com.blockether.vis.channels.cli)
+  (apply (resolve 'com.blockether.vis.channels.cli/-main) args))
 
 ;; =============================================================================
 ;; Schema constants

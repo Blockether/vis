@@ -93,10 +93,10 @@
                        io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}}}
 
   :run   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
-          :main-opts ["-m" "com.blockether.vis.adapters.cli"]}
+          :main-opts ["-m" "com.blockether.vis.channels.cli"]}
 
   :web   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
-          :main-opts ["-m" "com.blockether.vis.adapters.web.app"]}
+          :main-opts ["-m" "com.blockether.vis.channels.web.app"]}
 
   :test  {:extra-paths ["test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}

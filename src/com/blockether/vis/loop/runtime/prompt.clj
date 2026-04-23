@@ -31,7 +31,7 @@
    platform, shell. Mirrors Claude Code's `# Environment` block.
 
    Rendered automatically for EVERY adapter (web, tui, telegram, cli) by
-   `build-system-prompt` — individual adapters do NOT concatenate their
+   `build-system-prompt` — individual channels do NOT concatenate their
    own copy. The sentence about relative paths exists because file tools
    (read-file / write-file / edit-file / grep / list-dir) accept any
    `io/file` path, so without the CWD hint the model defaults to absolute

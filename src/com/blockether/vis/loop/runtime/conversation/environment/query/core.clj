@@ -154,7 +154,7 @@
                                    (vec (take last-user-idx messages))
                                    (vec messages))
           rlm-router             (:router env)
-          root-model             (or (when rlm-router (query-shared/resolve-root-model rlm-router)) model)
+          root-model             (or (when rlm-router (:name (query-shared/resolve-effective-model rlm-router))) model)
           db-info                (:db-info env)
           custom-bindings        (rlm-core/custom-bindings env)
           custom-docs            (rlm-core/custom-docs env)

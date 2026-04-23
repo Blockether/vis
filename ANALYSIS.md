@@ -80,8 +80,8 @@ external/REPL workflow that depends on them.
 | ------------------------------------------------------------------- | ------------------------------------ |
 | `src/com/blockether/vis/loop/storage/db.clj:292`                    | `db-count-document-pages`            |
 | `src/com/blockether/vis/loop/storage/db.clj:293`                    | `db-entity-type-counts`              |
-| `src/com/blockether/vis/adapters/cli/agent.clj:26`                  | `tool` (helper, only used inline)    |
-| `src/com/blockether/vis/adapters/tui/dialogs.clj:15`                | `clear-screen!`                      |
+| `src/com/blockether/vis/channels/cli/agent.clj:26`                  | `tool` (helper, only used inline)    |
+| `src/com/blockether/vis/channels/tui/dialogs.clj:15`                | `clear-screen!`                      |
 | `src/com/blockether/vis/loop/storage/sqlite/concept_graph.clj:158`  | `clear-page-concepts!`               |
 | `src/com/blockether/vis/loop/runtime/tools/core.clj:196`            | `make-restore-vars-fn`               |
 | `src/com/blockether/vis/loop/runtime/query/routing.clj:24`          | `reset-router!`                      |
@@ -129,7 +129,7 @@ needed.
 
 ## 6. TUI primitives — SUPPRESS as a library namespace (12)
 
-`src/com/blockether/vis/adapters/tui/primitives.clj` exports a
+`src/com/blockether/vis/channels/tui/primitives.clj` exports a
 self-contained TUI primitives library: ANSI escape constants
 (`UNDERLINE`, `REVERSE`, `CROSSED-OUT`, `BLINK`, `BORDERED`), enable/disable
 toggles, padding helpers (`pad-right`, `pad-left`), centering math
@@ -148,13 +148,13 @@ need them is greater than carrying ~80 lines of constants.
 
 | Var                                                       | Recommendation |
 | --------------------------------------------------------- | -------------- |
-| `adapters/tui/render.clj:40`  `wrap-messages`             | DELETE — TUI now uses single-message wrapping inline. |
-| `adapters/tui/render.clj:118` `draw-messages-box!`        | DELETE — superseded by per-bubble rendering. |
-| `adapters/tui/render.clj:179` `draw-dialog!`              | Sanity check — dialog screens may inline-render. If unused, DELETE. |
+| `channels/tui/render.clj:40`  `wrap-messages`             | DELETE — TUI now uses single-message wrapping inline. |
+| `channels/tui/render.clj:118` `draw-messages-box!`        | DELETE — superseded by per-bubble rendering. |
+| `channels/tui/render.clj:179` `draw-dialog!`              | Sanity check — dialog screens may inline-render. If unused, DELETE. |
 
 ## 8. TUI input formatter (1)
 
-| `adapters/tui/input.clj:199` `format-message` | DELETE — handler logic moved into the dispatch layer. |
+| `channels/tui/input.clj:199` `format-message` | DELETE — handler logic moved into the dispatch layer. |
 
 ## 9. `unused-private-var` — DELETE all (11)
 
@@ -164,8 +164,8 @@ Private vars with no caller are unambiguous dead code:
 | -------------------------------------------------------------- | ---------------------------- |
 | `src/com/blockether/vis/loop/core.clj:1052`                    | `type-label-of`              |
 | `src/com/blockether/vis/loop/core.clj:1068`                    | `size-suffix`                |
-| `src/com/blockether/vis/adapters/web/presentation/message.clj:264` | `has-final-answer?`      |
-| `src/com/blockether/vis/adapters/web/presentation/message.clj:275` | `trace-summary-label`    |
+| `src/com/blockether/vis/channels/web/presentation/message.clj:264` | `has-final-answer?`      |
+| `src/com/blockether/vis/channels/web/presentation/message.clj:275` | `trace-summary-label`    |
 | `src/com/blockether/vis/core.clj:377`                          | `qa-corpus-snapshot`         |
 | `src/com/blockether/vis/core.clj:382`                          | `write-qa-manifest!`         |
 | `src/com/blockether/vis/core.clj:387`                          | `compute-distribution`       |
@@ -196,7 +196,7 @@ unused fields):
 | `src/com/blockether/vis/loop/runtime/query/routing.clj:112`       |      | `rlm-router`    |
 | `src/com/blockether/vis/loop/runtime/prompt.clj:290`              |      | `opts`          |
 | `src/com/blockether/vis/loop/knowledge/git.clj:200,207`           |      | `email->id`, `path->id` |
-| `src/com/blockether/vis/adapters/web/presentation/message.clj:77` (×2) |  | `stdout`, `stderr` |
+| `src/com/blockether/vis/channels/web/presentation/message.clj:77` (×2) |  | `stdout`, `stderr` |
 | `test/com/blockether/vis/languages/commons/edit_test.clj:245`     |      | `result`        |
 
 **FIX**: prefix each with `_` (e.g. `_tag`) — preserves intent without the
@@ -227,7 +227,7 @@ Pure removals, **FIX** all.
 | ----------------------------------------------------------------- | ---------------------------------- |
 | `test/com/blockether/vis/loop/knowledge/ontology_test.clj:132,162` | `clojure.string`                   |
 | `test/com/blockether/vis/loop/knowledge/ontology_test.clj:208,216` | `com.blockether.vis.loop.tool`     |
-| `test/com/blockether/vis/adapters/cli/agent_test.clj:53`           | `clojure.string`                   |
+| `test/com/blockether/vis/channels/cli/agent_test.clj:53`           | `clojure.string`                   |
 | `test/com/blockether/vis/loop/iteration_persistence_test.clj:182,183` | `clojure.string`                |
 | `src/com/blockether/vis/loop/storage/sqlite/conversations.clj:120`  | `clojure.string`                   |
 | `test/com/blockether/vis/loop/runtime/sandbox_wrappers_test.clj:75` | `clojure.java.io`                  |
@@ -322,7 +322,7 @@ behaviour-preserving cleanup plus the two real bugs.
   `iteration_context_test`, `runtime/query/subquery_test`, `loop_test`,
   `workflow/var_history_test`.
 - **Missing requires added** in `loop/storage/sqlite/conversations.clj`,
-  `runtime/sandbox_wrappers_test`, `adapters/cli/agent_test`,
+  `runtime/sandbox_wrappers_test`, `channels/cli/agent_test`,
   `loop/iteration_persistence_test`, `loop/knowledge/ontology_test`
   (also pulled `loop.tool` in to replace fully-qualified
   `com.blockether.vis.loop.tool/...` calls).
@@ -377,7 +377,7 @@ the re-export shape \u2014 both out of scope for the "hygiene only" pass.
   newly visible because removing the dud `#_{:clj-kondo/ignore [...]}`
   marker was deferred (see next item). Suppress via `.lsp/config.edn` in
   the follow-up.
-- `adapters.tui.primitives` \u2014 12 ANSI/escape constants and helpers
+- `channels.tui.primitives` \u2014 12 ANSI/escape constants and helpers
   shaped as a reusable library. Same suppression treatment.
 - `loop.core` re-exports of `extract-entities-from-*!` (3) \u2014 user
   chose **keep + suppress**, deferred.
@@ -394,9 +394,9 @@ the re-export shape \u2014 both out of scope for the "hygiene only" pass.
   `loop.storage.schema/validate-final` (newly orphaned after we removed
   the unused `:refer` from `loop/core.clj`),
   `loop.storage.schema/::page-list` (unused public keyword),
-  `adapters.cli.agent/tool`, `adapters.tui.dialogs/clear-screen!`,
-  `adapters.tui.input/format-message`,
-  `adapters.tui.render/wrap-messages`, `draw-messages-box!`,
+  `channels.cli.agent/tool`, `channels.tui.dialogs/clear-screen!`,
+  `channels.tui.input/format-message`,
+  `channels.tui.render/wrap-messages`, `draw-messages-box!`,
   `draw-dialog!`, `test-helpers/with-temp-raw-env` \u2014 truly orphaned.
   User chose **don't delete this pass**.
 - The +1 vs. before: `validate-final` flipped from "indirectly referred
