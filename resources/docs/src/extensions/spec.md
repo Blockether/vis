@@ -15,6 +15,7 @@
 | `:ext/activation-fn` | ✗ | `(constantly true)` | `(fn [env] → bool)` — when falsy, all symbols are unbound and nudge-fn is skipped |
 | `:ext/prompt` | ✓ | — | String or `(fn [env] → string)` — LLM-facing docs in system prompt |
 | `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
+| `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['filesystem 'git]` |
 | `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
 | `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
 | `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
