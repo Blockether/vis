@@ -210,56 +210,58 @@
    per-iteration prompt O(1) and forces the agent to be deliberate
    about what historical context it actually needs."
   [{:keys [include-thinking? include-sources?]}]
-  (let [base-fields (cond-> [(spec/field {::spec/name :code
-                                          ::spec/type :spec.type/ref
-                                          ::spec/target :code_block
-                                          ::spec/cardinality :spec.cardinality/many
-                                          ::spec/required true
-                                           ::spec/description "Required code blocks to execute this iteration; use `[{\"expr\":\":ok\",\"time-ms\":1}]` when no computation is needed."})
-                             (spec/field {::spec/name :next
-                                          ::spec/type :spec.type/ref
-                                          ::spec/target :next_turn
-                                          ::spec/cardinality :spec.cardinality/one
-                                          ::spec/required false
-                                           ::spec/description "Optional steering for the next iteration."})
-                             (spec/field {::spec/name :answer
-                                          ::spec/type :spec.type/string
-                                          ::spec/cardinality :spec.cardinality/one
-                                          ::spec/required false
-                                           ::spec/description "Optional final answer for this iteration. Never use emoji/emoticons."})
-                             ;; Values-only enum (svar 0.3.2+). Mustache
-                             ;; semantics are documented once in the ARCH
-                             ;; section of `runtime.prompt`; no need to
-                             ;; re-paste them per iteration into the JSON
-                             ;; schema.
-                             (spec/field {::spec/name :answer-type
-                                          ::spec/type :spec.type/keyword
-                                          ::spec/cardinality :spec.cardinality/one
-                                          ::spec/required false
-                                           ::spec/description "Required with :answer; controls final answer rendering."
-                                           ::spec/values ["mustache-text" "mustache-markdown"]})
-                             (spec/field {::spec/name :confidence
-                                          ::spec/type :spec.type/keyword
-                                          ::spec/cardinality :spec.cardinality/one
-                                          ::spec/required false
-                                           ::spec/description "Optional confidence level."
-                                           ::spec/values ["high" "medium" "low"]})]
-                       ;; :sources only shows up when document-retrieval tools
-                       ;; are actually callable this turn. Otherwise the LLM
-                       ;; would be told to cite sources it cannot fetch.
-                       include-sources?
-                       (conj (spec/field {::spec/name :sources
-                                          ::spec/type :spec.type/string
-                                          ::spec/cardinality :spec.cardinality/many
-                                          ::spec/required false
-                                           ::spec/description "Optional source IDs used to ground the answer."})))
-        fields (if include-thinking?
-                 (into [(spec/field {::spec/name :thinking
-                                     ::spec/type :spec.type/string
-                                     ::spec/cardinality :spec.cardinality/one
-                                      ::spec/description "Short reasoning for this iteration. Never use emoji/emoticons."})]
-                   base-fields)
-                 base-fields)]
+  (let [base-fields
+        (cond->
+          [(spec/field {::spec/name        :code
+                        ::spec/type        :spec.type/ref
+                        ::spec/target      :code_block
+                        ::spec/cardinality :spec.cardinality/many
+                        ::spec/required    true
+                        ::spec/description "Required code blocks to execute this iteration; use `[{\"expr\":\":ok\",\"time-ms\":1}]` when no computation is needed."})
+           (spec/field {::spec/name        :next
+                        ::spec/type        :spec.type/ref
+                        ::spec/target      :next_turn
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "Optional steering for the next iteration."})
+           (spec/field {::spec/name        :answer
+                        ::spec/type        :spec.type/string
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "Optional final answer for this iteration. Never use emoji/emoticons."})
+           ;; Values-only enum (svar 0.3.2+). Mustache semantics are
+           ;; documented once in the ARCH section; no need to re-paste
+           ;; them per iteration into the JSON schema.
+           (spec/field {::spec/name        :answer-type
+                        ::spec/type        :spec.type/keyword
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "Required with :answer; controls final answer rendering."
+                        ::spec/values      ["mustache-text" "mustache-markdown"]})
+           (spec/field {::spec/name        :confidence
+                        ::spec/type        :spec.type/keyword
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "Optional confidence level."
+                        ::spec/values      ["high" "medium" "low"]})]
+          ;; :sources only shows up when document-retrieval tools are
+          ;; actually callable this turn. Otherwise the LLM would be
+          ;; told to cite sources it cannot fetch.
+          include-sources?
+          (conj (spec/field {::spec/name        :sources
+                             ::spec/type        :spec.type/string
+                             ::spec/cardinality :spec.cardinality/many
+                             ::spec/required    false
+                             ::spec/description "Optional source IDs used to ground the answer."})))
+
+        fields
+        (if include-thinking?
+          (into [(spec/field {::spec/name        :thinking
+                              ::spec/type        :spec.type/string
+                              ::spec/cardinality :spec.cardinality/one
+                              ::spec/description "Short reasoning for this iteration. Never use emoji/emoticons."})]
+            base-fields)
+          base-fields)]
     (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC]} fields)))
 
 (defn iteration-spec
