@@ -147,8 +147,8 @@
         text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
         h-scroll   (max 0 (- ccol (dec text-w)))
-        icon       " \uD83D\uDD0D "  ;; magnifying glass icon
-        icon-len   4]               ;; " 🔍 " = space + emoji(2cells) + space
+        icon       " [?] "         ;; inspect prompt icon
+        icon-len   5]               ;; " [?] " = 5 chars
 
     (draw-box-border! g box-top box-bottom cols hint)
     (fill-box-interior! g box-top box-bottom cols)
@@ -601,11 +601,12 @@
                                     (mapv #(str r-marker "  => " %)
                                       (wrap-text (str/trim (str result-str))
                                         (max 1 (- fill-w 5)))))
-                      ;; Code block = right-aligned header + pad-top + code + result + status + pad-bottom
+                      ;; Code block = header + pad-top + code + gap + result + status + pad-bottom
                       code-block  (vec (concat
-                                         [(str iter-hdr-marker expr-hdr)]  ;; right-aligned ᶜᵒᵈᵉ ¹
+                                         [(str iter-hdr-marker expr-hdr)]  ;; right-aligned code ₁
                                          [(str c-pad "")]        ;; pad top
                                          c-lines
+                                         (when (seq r-lines) [(str c-pad "")])  ;; gap between code and result
                                          r-lines
                                          (when status-line [status-line])  ;; right-aligned ✓/✗
                                          [(str c-pad "")]))
@@ -838,4 +839,21 @@
           ;; Draw only if bubble overlaps the visible viewport
           (when (and (> (+ msg-top msg-h) 0)
                   (< msg-top inner-h))
-            (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w))))))))
+            (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)))))
+
+    ;; Scrollbar on the right border column
+    (when (> total-h inner-h)
+      (let [max-scroll (max 1 (- total-h inner-h))
+            track-h    inner-h
+            thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
+            thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
+            bar-col    (dec cols)
+            bar-top    text-top]
+        ;; Track (light vertical line)
+        (doseq [r (range track-h)]
+          (p/set-colors! g t/border-fg t/terminal-bg)
+          (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
+        ;; Thumb (solid block)
+        (doseq [r (range thumb-h)]
+          (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+          (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588)))))))
