@@ -8,17 +8,17 @@
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `:ext/namespace` | ✓ | — | Unique symbol name, e.g. `'documents`, `'git` |
+| `:ext/namespace` | ✓ | — | Fully qualified symbol, e.g. `'com.blockether.vis.ext.editing`, `'com.acme.ext.git` |
 | `:ext/doc` | ✓ | — | Extension-level description |
 | `:ext/group` | ✓ | — | Top-level prompt group, e.g. `"knowledge"` |
 | `:ext/subgroup` | ✗ | same as `:ext/group` | Finer-grained grouping within the group |
 | `:ext/activation-fn` | ✗ | `(constantly true)` | `(fn [env] → bool)` — when falsy, all symbols are unbound and nudge-fn is skipped |
 | `:ext/prompt` | ✓ | — | String or `(fn [env] → string)` — LLM-facing docs in system prompt |
 | `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
-| `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['filesystem 'git]` |
+| `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.editing]` |
 | `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
 | `:ext/author` | ✗ | — | Author name or org, e.g. `"Blockether"` |
-| `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"` |
+| `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"Apache-2.0"` |
 | `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
 | `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
 | `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
@@ -94,14 +94,14 @@ Called internally by `extension`; safe to call standalone.
 
 (def docs-ext
   (ext/extension
-    {:ext/namespace     'documents
+    {:ext/namespace     'com.blockether.vis.ext.documents
      :ext/doc           "Document search and retrieval"
      :ext/version       "1.0.0"
      :ext/author        "Blockether"
-     :ext/license       "EPL-2.0"
+     :ext/license       "Apache-2.0"
      :ext/group         "knowledge"
      :ext/subgroup      "documents"
-     :ext/requires      ['filesystem]
+     :ext/requires      ['com.blockether.vis.ext.editing]
      :ext/prompt        "Full-text search across ingested documents.
                          Use (search-documents query) to find relevant pages."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
