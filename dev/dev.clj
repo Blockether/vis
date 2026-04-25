@@ -103,9 +103,9 @@
     :else       (throw (ex-info "Expected UUID or UUID string"
                          {:input x :type (class x)}))))
 
-(defn- conv-ref [conv-id] [:id (->uuid conv-id)])
-(defn- query-ref [q-id]   [:id (->uuid q-id)])
-(defn- iter-ref  [i-id]   [:id (->uuid i-id)])
+(defn- conv-ref [conv-id] (->uuid conv-id))
+(defn- query-ref [q-id]   (->uuid q-id))
+(defn- iter-ref  [i-id]   (->uuid i-id))
 
 (defn- read-edn-safe [s fallback]
   (if (or (nil? s) (= "" s))
@@ -162,7 +162,7 @@
           q-row        (fetch-entity db-info (->uuid q-id))
           conv-id      (:parent-id q-row)]
       (if conv-id
-        (conv-model db-info [:id conv-id])
+        (conv-model db-info conv-id)
         ""))
     (catch Exception _ "")))
 
@@ -180,7 +180,7 @@
         conv    (rlm-db/db-get-conversation db-info cref)
         queries (rlm-db/db-list-conversation-queries db-info cref)
         iter-counts (mapv (fn [q]
-                            (count (rlm-db/db-list-query-iterations db-info [:id (:id q)])))
+                            (count (rlm-db/db-list-query-iterations db-info (:id q))))
                       queries)]
     {:id              (:id conv)
      :system-prompt   (:system-prompt conv)
@@ -261,7 +261,7 @@
              :error        (:error it)
              :final?       (some? (:answer it))
              :executions   (reconstruct-executions it)
-             :vars-defined (rlm-db/db-list-iteration-vars db-info [:id (:id it)])})
+             :vars-defined (rlm-db/db-list-iteration-vars db-info (:id it))})
       (range) raw)))
 
 (defn iteration
@@ -295,7 +295,7 @@
                    :version     (inc prev-v)}))
               acc2))
           acc
-          (rlm-db/db-list-iteration-vars db-info [:id (:id it)])))
+          (rlm-db/db-list-iteration-vars db-info (:id it))))
       {}
       (map vector (range) iters))))
 
@@ -450,7 +450,7 @@
     (when q
       (let [prior        (when (pos? query-pos) (nth queries (dec query-pos) nil))
             prior-iters  (when prior
-                           (rlm-db/db-list-query-iterations db-info [:id (:id prior)]))
+                           (rlm-db/db-list-query-iterations db-info (:id prior)))
             inherited    (rlm-db/db-latest-var-registry db-info cref
                            {:max-scan-queries query-pos})]
         {:turn-pos      query-pos
@@ -513,7 +513,7 @@
         queries (rlm-db/db-list-conversation-queries db-info cref)]
     (vec
       (for [q queries]
-        (let [qref         [:id (:id q)]
+        (let [qref         (:id q)
               iters        (rlm-db/db-list-query-iterations db-info qref)
               per-iter     (mapv reconstruct-executions iters)
               all-execs    (vec (mapcat identity per-iter))

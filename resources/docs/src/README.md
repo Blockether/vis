@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Vis logo" width="200">
+</p>
+
 # Vis
 
 **A from-the-ground-up coding agent inspired by

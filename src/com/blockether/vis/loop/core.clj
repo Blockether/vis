@@ -405,7 +405,7 @@
   (let [remaining (- (long (or current-max-iterations 0)) (inc (long (or iteration 0))))]
     (when (<= remaining 2)
       (str "[system_nudge] Iteration budget nearly exhausted (remaining="
-        (max 0 remaining) "). If you can finalize safely, do it now."))))
+        (max 0 remaining) "). Finalize now, or call (request-more-iterations N) if more work is genuinely needed and makes sense for this task."))))
 
 (defn- var-index-overflow [user-var-count]
   (when (> (long (or user-var-count 0)) 150)
@@ -1366,11 +1366,9 @@
     (try
       (let [all-queries (sort-by :created-at
                           (db/db-list-conversation-queries db-info conversation-id))
-            current-id  (second current-query-id)
-            prior       (last (remove #(= (:id %) current-id) all-queries))]
+            prior       (last (remove #(= (:id %) current-query-id) all-queries))]
         (when prior
-          (let [prior-id    [:id (:id prior)]
-                iters        (db/db-list-query-iterations db-info prior-id)
+          (let [iters        (db/db-list-query-iterations db-info (:id prior))
                 tagged-iters (vec (keep-indexed
                                     (fn [idx it]
                                       (when-let [t (:thinking it)]
@@ -1512,7 +1510,7 @@
               (not (contains? recent-ids defining-query-id))))))
       (keys sandbox-map))))
 
-(defn- auto-forget-stale-vars!
+(defn auto-forget-stale-vars!
   "Deterministic cleanup at query boundary: remove sandbox vars that
   (a) have no docstring, and (b) were last defined/redefined more
   than AUTO_FORGET_STALE_QUERIES queries ago. This replaces the
@@ -2140,6 +2138,16 @@
 }]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
+    ;; Restore persisted vars when resuming an existing conversation.
+    (when resolved-conversation-id
+      (try
+        (sci-env/restore-sandbox! sci-ctx db-info conversation-id)
+        (sci-env/bump-var-index! env)
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::restore-sandbox-failed
+                     :data {:error (ex-message t)
+                            :conversation-id conversation-id}
+                     :msg "Failed to restore sandbox from DB — starting with empty sandbox"}))))
     ;; Install all globally registered extensions in dependency order.
     (ext/register-extensions! env register-extension!)
     env))

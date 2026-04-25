@@ -40,8 +40,8 @@
 ;; =============================================================================
 
 (def MAX_ITERATIONS
-  "Default iteration budget per query. The LLM can extend it
-   at runtime via (request-more-iterations n) up to MAX_ITERATION_CAP."
+  "Default iteration budget per query (4). The LLM calls
+   `(request-more-iterations n)` to extend on demand. No cap."
   rlm-spec/MAX_ITERATIONS)
 
 ;; =============================================================================

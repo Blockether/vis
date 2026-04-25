@@ -14,7 +14,7 @@ These keys exist on every environment for its entire lifetime:
 | Key | Type | Description |
 |-----|------|-------------|
 | `:env-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
-| `:conversation-id` | `uuid` | Conversation entity ID in the DB. Every query/iteration/var is parented under this. |
+| `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every query/iteration/var is parented under this. |
 | `:db-info` | `map` | Database connection handle (`{:datasource ds …}`). Pass to `persistance.core` functions for reads. **Do not close it.** |
 | `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only. |
 | `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Do not mutate directly** — use `bind-and-bump!`. |
@@ -34,7 +34,7 @@ the base environment returned by `create-environment`.
 | Key | Type | Description |
 |-----|------|-------------|
 | `:max-iterations-atom` | `atom of int` | Live iteration budget — extendable via `request-more-iterations`. Reset each query. |
-| `:current-iteration-id-atom` | `atom` | Entity ID of the most recent `store-iteration!`. Used for sub-RLM parenting. Reset each query. |
+| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `store-iteration!`. Used for sub-RLM parenting. |
 | `:parent-iteration-id` | `uuid or nil` | Non-nil for sub-RLM forks. Points to the parent iteration. |
 
 ## Safe Operations

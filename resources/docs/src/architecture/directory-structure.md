@@ -8,16 +8,16 @@ src/com/blockether/vis/
 ├── config.clj                        config I/O, provider presets
 │
 ├── loop/
-│   ├── core.clj                      environment lifecycle + iteration loop
+│   ├── core.clj                      environment lifecycle + code eval
 │   │                                 (create-environment, dispose-environment!,
-│   │                                  register-extension!, iteration-loop,
-│   │                                  run-iteration, execute-code)
+│   │                                  register-extension!, execute-code,
+│   │                                  auto-forget-stale-vars!)
 │   ├── mustache.clj                  Mustache template rendering for :answer
 │   └── runtime/
 │       └── conversation/
 │           ├── core.clj              conversation lifecycle
 │           │                         (create!, send!, close!, delete!,
-│           │                          by-channel, cache, make-on-chunk-projector,
+│           │                          by-channel, cache,
 │           │                          error->user-message)
 │           └── environment/
 │               ├── core.clj          SCI sandbox primitives

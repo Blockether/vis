@@ -27,13 +27,13 @@
    - :description    — What the agent does
    - :constants      — Map of {symbol value} constants for SCI sandbox
    - :model          — Override default model selection
-   - :max-iterations — Max iterations (default 50)
+   - :max-iterations — Initial iteration budget (default 4, no cap)
 
    Example:
      (agent {:name \"code-reviewer\"
              :description \"Reviews Clojure code for quality\"
              :model \"claude-sonnet-4-6\"
-             :max-iterations 30})"
+             :max-iterations 10})"
   [{:keys [name] :as opts}]
   (let [agent-name (or name "default")]
     (merge {:name           agent-name

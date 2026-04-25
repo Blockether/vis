@@ -33,6 +33,7 @@
 (def now-ms  base/now-ms)
 (def ->id    base/->id)
 (def ->uuid  base/->uuid)
+(def ->ref   base/->ref)
 (def ->kw    base/->kw)
 (def ->kw-back base/->kw-back)
 (def ->date  base/->date)
@@ -175,7 +176,7 @@
 
 (defn store-conversation!
   "Create conversation_soul + initial conversation_state (version 0).
-   Returns [:id conversation-soul-uuid].
+   Returns the conversation-soul UUID.
 
    Metadata layout:
      conversation_soul.metadata  → {:channel :vis, :external-id \"...\"}
@@ -201,7 +202,7 @@
                    :metadata             (->json {:system-prompt (or system-prompt "")
                                                   :model         (or model "")})
                    :created_at           now}]})
-      [:id soul-id])))
+      soul-id)))
 
 (defn- latest-state-for [db-info soul-id-s]
   (query-one! db-info
@@ -215,8 +216,8 @@
                 :where  [:= :conversation_soul_id soul-id-s]}]]}))
 
 (defn db-get-conversation [db-info conversation-id]
-  (when (and (ds db-info) (vector? conversation-id))
-    (let [id (->id (second conversation-id))]
+  (when (and (ds db-info) conversation-id)
+    (let [id (->ref conversation-id)]
       (when-let [soul (query-one! db-info {:select [:*] :from :conversation_soul :where [:= :id id]})]
         (let [state    (latest-state-for db-info id)
               soul-meta (<-json (:metadata soul))
@@ -239,9 +240,10 @@
       (when-let [row (query-one! db-info
                        {:select [:id] :from :conversation_soul
                         :order-by [[:created_at :desc]] :limit 1})]
-        [:id (->uuid (:id row))]))
-    (and (vector? selector) (= :id (first selector))) selector
-    (uuid? selector) [:id selector]
+        (->uuid (:id row))))
+    (and (vector? selector) (= :id (first selector))) (->uuid (second selector))
+    (uuid? selector) selector
+    (string? selector) (->uuid selector)
     :else nil))
 
 (defn db-list-conversations [db-info channel]
@@ -281,11 +283,11 @@
                             " AND json_extract(metadata, '$.\"external-id\"') = ?")
                           ch ext]
                          {:builder-fn rs/as-unqualified-lower-maps}))]
-        [:id (->uuid (:id row))]))))
+        (->uuid (:id row))))))
 
 (defn db-update-conversation-title! [db-info conversation-id title]
   (when (and (ds db-info) conversation-id)
-    (let [soul-id-s (->id (second conversation-id))]
+    (let [soul-id-s (->ref conversation-id)]
       (when-let [state (latest-state-for db-info soul-id-s)]
         (execute! db-info
           {:update :conversation_state
@@ -305,10 +307,10 @@
 (defn fork-conversation!
   "Fork a conversation. Creates a new conversation_state with
    parent_state_id pointing to the current latest state.
-   Returns [:state-id new-state-uuid]."
+   Returns the new state UUID."
   [db-info conversation-id {:keys [system-prompt model title]}]
   (when (ds db-info)
-    (let [soul-id-s (->id (second conversation-id))
+    (let [soul-id-s (->ref conversation-id)
           current   (latest-state-for db-info soul-id-s)
           new-id    (UUID/randomUUID)
           now       (now-ms)
@@ -326,7 +328,7 @@
                                                system-prompt (assoc :system-prompt system-prompt)
                                                model         (assoc :model model)))
                      :created_at           now}]})
-        [:state-id new-id]))))
+        new-id))))
 
 ;; =============================================================================
 ;; State resolution
@@ -334,7 +336,7 @@
 
 (defn- latest-state-id [db-info conversation-id]
   (when (ds db-info)
-    (let [soul-id-s (->id (second conversation-id))]
+    (let [soul-id-s (->ref conversation-id)]
       (:id (latest-state-for db-info soul-id-s)))))
 
 ;; =============================================================================
@@ -343,7 +345,7 @@
 
 (defn store-query!
   "Create query_soul + initial query_state (version 0).
-   Returns [:id query-soul-uuid]."
+   Returns the query-soul UUID."
   [db-info {:keys [parent-conversation-id query messages status]}]
   (when (ds db-info)
     (let [soul-id  (UUID/randomUUID)
@@ -366,7 +368,7 @@
                    :status        (normalize-status (or status :running))
                    :metadata      (->json (when messages {:messages messages}))
                    :created_at    now}]})
-      [:id soul-id])))
+      soul-id)))
 
 (defn- latest-query-state [db-info query-soul-id-s]
   (query-one! db-info
@@ -382,10 +384,10 @@
 (defn retry-query!
   "Create a new query_state (version N+1) for an existing query_soul.
    Used when re-running a query with a different model or settings.
-   Returns [:state-id new-query-state-uuid]."
+   Returns the new query-state UUID."
   [db-info query-soul-id {:keys [status model]}]
   (when (ds db-info)
-    (let [soul-id-s (->id (second query-soul-id))
+    (let [soul-id-s (->ref query-soul-id)
           current   (latest-query-state db-info soul-id-s)
           new-id    (UUID/randomUUID)
           now       (now-ms)]
@@ -399,13 +401,13 @@
                      :status                     (normalize-status (or status :running))
                      :llm_root_model             model
                      :created_at                 now}]})
-        [:state-id new-id]))))
+        new-id))))
 
 (defn update-query!
   "Update the latest query_state with final outcome."
   [db-info query-id {:keys [answer iterations duration-ms status tokens cost]}]
   (when (and (ds db-info) query-id)
-    (let [soul-id-s (->id (second query-id))
+    (let [soul-id-s (->ref query-id)
           state     (latest-query-state db-info soul-id-s)]
       (when state
         (execute! db-info
@@ -471,14 +473,14 @@
 
 (defn store-iteration!
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
-   Returns [:id iteration-uuid]."
+   Returns the iteration UUID."
   [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
                     llm-messages llm-model]}]
   (when (ds db-info)
     (let [iter-id   (UUID/randomUUID)
           iter-id-s (str iter-id)
           now       (now-ms)
-          query-soul-id-s (when query-id (->id (second query-id)))
+          query-soul-id-s (when query-id (->ref query-id))
           ;; Need query_state_id (iteration FK points to query_state)
           query-state (when query-soul-id-s
                         (latest-query-state db-info query-soul-id-s))
@@ -592,7 +594,7 @@
                                                          time-ms  (assoc :time-ms time-ms)
                                                          metadata (assoc :metadata metadata)))
                            :created_at         now}]})))))
-      [:id iter-id])))
+      iter-id)))
 
 ;; =============================================================================
 ;; Read helpers
@@ -662,7 +664,7 @@
 
 (defn db-list-query-iterations [db-info query-id]
   (if (and (ds db-info) query-id)
-    (let [soul-id-s (->id (second query-id))
+    (let [soul-id-s (->ref query-id)
           state     (latest-query-state db-info soul-id-s)]
       (when state
         (mapv row->iteration
@@ -674,7 +676,7 @@
 
 (defn db-list-iteration-vars [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
-    (let [iter-id-s (->id (second iteration-id))]
+    (let [iter-id-s (->ref iteration-id)]
       (mapv (fn [r]
               {:name    (:name r)
                :value   (<-blob (:result r))
@@ -695,7 +697,7 @@
    Each entry has :code, :result, :error, :stdout, :duration-ms."
   [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
-    (let [iter-id-s (->id (second iteration-id))]
+    (let [iter-id-s (->ref iteration-id)]
       (mapv (fn [r]
               (cond-> {:code (:expr r)}
                 (some? (:result r)) (assoc :result (<-blob (:result r)))
@@ -765,7 +767,7 @@
 (defn db-query-history [db-info conversation-id]
   (let [queries (db-list-conversation-queries db-info conversation-id)]
     (mapv (fn [idx query]
-            (let [qref       [:id (:id query)]
+            (let [qref       (:id query)
                   iter-count (count (db-list-query-iterations db-info qref))
                   answer-raw (or (:answer query) "")
                   answer-preview (subs answer-raw 0 (min (count answer-raw) 160))]
