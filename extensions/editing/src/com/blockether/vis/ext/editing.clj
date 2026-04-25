@@ -46,7 +46,7 @@
            showing  (count selected)]
        (str content
          (when (< (+ off showing) total)
-           (str "\n\n[" (- total off showing) " more lines. Use offset=" (+ off showing 1) " to continue.]")))))
+           (str "\n\n[" (- total off showing) " more lines. Use offset=" (+ off showing 1) " to continue.]"))))))
 
 (defn- write-file
   "Write content to a file. Creates parent directories."
