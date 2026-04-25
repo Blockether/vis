@@ -28,6 +28,7 @@ for the full convention.
 | `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
 | `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
 | `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
+| `:ext/ns-alias` | ✗ | — | `{:ns 'vis.ext.fs :alias 'fs}` — creates a dedicated SCI namespace with alias so the LLM can call `(fs/read-file ...)` in addition to `(read-file ...)` |
 
 ## `symbol` — function binding
 

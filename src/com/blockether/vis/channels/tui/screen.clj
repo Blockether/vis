@@ -50,7 +50,8 @@
                             (and (= :assistant (:role msg)) (:trace msg))
                             (assoc msg :text
                               (render/format-answer-with-thinking
-                                (:raw-answer msg) (:trace msg) bubble-w settings))
+                                (:raw-answer msg) (:trace msg) bubble-w settings
+                                (:confidence msg)))
                             ;; Plain assistant message: apply markdown
                             (= :assistant (:role msg))
                             (assoc msg :text

@@ -178,13 +178,22 @@
     #(every? symbol? (keys %))
     #(every? symbol? (vals %))))
 
+;; Optional SCI namespace alias for this extension's symbols.
+;; When set, a dedicated SCI namespace is created and aliased so
+;; the LLM can call `(fs/read-file "x")` in addition to `(read-file "x")`.
+;; e.g. {:ns 'vis.ext.fs :alias 'fs}
+(s/def :ext/ns-alias
+  (s/and map?
+    #(symbol? (:ns %))
+    #(symbol? (:alias %))))
+
 (s/def ::extension
   (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
                 :ext/activation-fn :ext/prompt :ext/symbols
                 :ext/classes :ext/imports]
     :opt [:ext/nudge-fn :ext/requires
           :ext/version :ext/author :ext/license
-          :ext/cli]))
+          :ext/cli :ext/ns-alias]))
 
 ;; =============================================================================
 ;; Symbol helper
@@ -464,6 +473,11 @@
      :ext/symbols        — required, vector of symbol entries
      :ext/classes        — optional, {fq-symbol → Class}, default {}
      :ext/imports        — optional, {short-symbol → fq-symbol}, default {}
+     :ext/ns-alias       — optional, {:ns 'vis.ext.fs :alias 'fs}
+                           Creates a dedicated SCI namespace with an alias
+                           so the LLM can call (fs/read-file ...) in addition
+                           to (read-file ...). Symbols are always also bound
+                           into the sandbox namespace.
 
    Example:
 

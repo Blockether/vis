@@ -264,6 +264,8 @@
 (def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
 (def ^:private iter-pad-marker   p/MARKER_ITER_PAD)
 (def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
+(def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
+(def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
 (def ^:private md-h1-marker      p/MARKER_MD_H1)
 (def ^:private md-h2-marker      p/MARKER_MD_H2)
 (def ^:private md-h3-marker      p/MARKER_MD_H3)
@@ -332,14 +334,21 @@
 
       ;; Text content — per-line styling via invisible marker prefixes
       ;;
-      ;; Iteration zone: every marker-prefixed line gets iter-header-bg as
-      ;; its base background so the whole iteration block is visually
-      ;; distinct from the plain-text answer below.
-      (let [iter-bg t/iter-header-bg]
+      ;; After the answer-hdr marker, all remaining lines get answer-bg
+      ;; as their base fill — this includes plain text and markdown lines.
+      (let [iter-bg      t/iter-header-bg
+            answer-start (or (some (fn [[i l]] (when (str/starts-with? l answer-hdr-marker) i))
+                              (map-indexed vector lines))
+                           (count lines))]
         (doseq [[i line] (map-indexed vector lines)]
           (p/clear-styles! g)
-          (let [x (+ bx 2) y (+ btop 1 i)
+          (let [in-answer? (> i answer-start)
+                x (+ bx 2) y (+ btop 1 i)
                 iw (- bubble-w 4)]
+            ;; Pre-fill answer zone bg so ALL line types get it
+            (when in-answer?
+              (p/set-bg! g t/answer-bg)
+              (p/fill-rect! g (inc bx) y iw 1))
             (cond
               ;; ── Iteration header — right-aligned, subtle ──
               (str/starts-with? line iter-hdr-marker)
@@ -444,29 +453,33 @@
 
               ;; ── Markdown heading 1 — bold ──
               (str/starts-with? line md-h1-marker)
-              (do (p/set-colors! g fg-color bg-color)
+              (let [lbg (if in-answer? t/answer-bg bg-color)]
+                (p/set-colors! g fg-color lbg)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               ;; ── Markdown heading 2 — bold ──
               (str/starts-with? line md-h2-marker)
-              (do (p/set-colors! g fg-color bg-color)
+              (let [lbg (if in-answer? t/answer-bg bg-color)]
+                (p/set-colors! g fg-color lbg)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               ;; ── Markdown heading 3 — bold, dim ──
               (str/starts-with? line md-h3-marker)
-              (do (p/set-colors! g t/dialog-hint bg-color)
+              (let [lbg (if in-answer? t/answer-bg bg-color)]
+                (p/set-colors! g t/dialog-hint lbg)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               ;; ── Markdown bold line ──
               (str/starts-with? line md-bold-marker)
-              (do (p/set-colors! g fg-color bg-color)
+              (let [lbg (if in-answer? t/answer-bg bg-color)]
+                (p/set-colors! g fg-color lbg)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
-              ;; ── Markdown code block — code bg ──
+              ;; ── Markdown code block ──
               (str/starts-with? line md-code-marker)
               (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                 (p/fill-rect! g (inc bx) y iw 1)
@@ -474,7 +487,8 @@
 
               ;; ── Markdown bullet ──
               (str/starts-with? line md-bullet-marker)
-              (do (p/set-colors! g fg-color bg-color)
+              (let [lbg (if in-answer? t/answer-bg bg-color)]
+                (p/set-colors! g fg-color lbg)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Legacy separator — dim ──
@@ -482,9 +496,25 @@
               (do (p/set-colors! g t/dialog-hint bg-color)
                 (p/put-str! g x y (subs line 1)))
 
-              ;; ── Plain text (answer) — normal bubble bg ──
+              ;; ── Answer text — answer bg ──
+              (str/starts-with? line answer-txt-marker)
+              (do (p/set-colors! g t/answer-fg t/answer-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
+
+              ;; ── Answer padding ──
+              (str/starts-with? line answer-pad-marker)
+              (do (p/set-bg! g t/answer-bg)
+                (p/fill-rect! g (inc bx) y iw 1))
+
+              ;; ── Plain text — answer bg if in answer zone, else bubble bg ──
               :else
-              (do (p/set-colors! g fg-color bg-color)
+              (let [line-bg (if in-answer? t/answer-bg bg-color)
+                    line-fg (if in-answer? t/answer-fg fg-color)]
+                (when in-answer?
+                  (p/set-bg! g line-bg)
+                  (p/fill-rect! g (inc bx) y iw 1))
+                (p/set-colors! g line-fg line-bg)
                 (p/put-str! g x y line))))))
 
       ;; Below-bubble meta (assistant only): model · iters · duration · tokens
@@ -753,8 +783,9 @@
    `settings` is `{:show-thinking bool :show-iterations bool}`.
    Trace is visually separated from the answer by a right-aligned
    'final answer' header."
-  ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil))
-  ([answer trace bubble-w settings]
+  ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil))
+  ([answer trace bubble-w settings] (format-answer-with-thinking answer trace bubble-w settings nil))
+  ([answer trace bubble-w settings confidence]
    (let [content-w (max 10 (- bubble-w 4))
          fill-w    (max 1 (dec content-w))
          show-thinking?   (get settings :show-thinking true)
@@ -767,19 +798,24 @@
                                      content-w (inc idx))))
                          (map-indexed vector trace)))
          answer-str  (or answer "")
-         ;; Right-aligned superscript "final answer" header
+         ;; Right-aligned "FINAL ANSWER" header with confidence
          fa-label    (label-text "final answer")
-         fa-pad      (max 0 (- fill-w (count fa-label) 1))
-         fa-hdr      (str answer-hdr-marker (apply str (repeat fa-pad \space)) fa-label " ")
-         ;; Markdown-rendered answer lines
-         md-lines    (markdown->lines answer-str content-w)
-         answer-text (if (seq md-lines)
-                       (str/join "\n" md-lines)
-                       answer-str)]
+         conf-str    (when confidence (str " · " (name confidence)))
+         full-label  (str fa-label (or conf-str ""))
+         fa-pad      (max 0 (- fill-w (count full-label) 1))
+         fa-hdr      (str answer-hdr-marker (apply str (repeat fa-pad \space)) full-label " ")
+         ;; Answer lines — keep markdown markers intact so they render properly.
+         ;; The in-answer? zone in draw-chat-bubble! fills answer-bg for ALL
+         ;; lines after the answer-hdr, regardless of their marker type.
+         md-lines    (markdown->lines answer-str (max 1 (- fill-w 2)))
+         ans-lines   (if (seq md-lines)
+                       md-lines
+                       (wrap-text answer-str (max 1 (- fill-w 2))))
+         ans-pad     (str answer-pad-marker "")]
      (if (seq trace-lines)
-       (str (str/join "\n" trace-lines)
-         "\n\n" fa-hdr "\n\n" answer-text)
-       (str fa-hdr "\n\n" answer-text)))))
+       (str/join "\n" (concat trace-lines
+                        [""] [fa-hdr] [ans-pad] ans-lines [ans-pad]))
+       (str/join "\n" (concat [fa-hdr] [ans-pad] ans-lines [ans-pad]))))))
 
 (defn format-answer-markdown
   "Format a plain answer (no trace) with markdown support."

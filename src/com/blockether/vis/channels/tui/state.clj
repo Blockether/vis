@@ -143,7 +143,7 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost]}]]]
+  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost confidence]}]]]
     (let [start    (:query-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
@@ -153,7 +153,8 @@
                              model      (assoc :model model)
                              iterations (assoc :iterations iterations)
                              tokens     (assoc :tokens tokens)
-                             cost       (assoc :cost cost)))
+                             cost       (assoc :cost cost)
+                             confidence (assoc :confidence confidence)))
           ;; Auto-generate title from first user message if not yet set
           conv-id  (get-in db [:conv :id])
           first-turn? (= 2 (count (:messages db)))  ;; user msg + placeholder
@@ -187,4 +188,4 @@
         (if (:error result)
           (dispatch [:message-received (str "Error: " (:error result))])
           (dispatch [:message-received (:answer result)
-                      (select-keys result [:model :iterations :duration-ms :tokens :cost])]))))))
+                      (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence])]))))))

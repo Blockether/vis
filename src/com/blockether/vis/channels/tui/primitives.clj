@@ -271,6 +271,8 @@
 (def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   → error code block padding line
 (def MARKER_ITER_PAD   "\u206C")  ;; IAFS                   → iteration zone padding (margin between blocks)
 (def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   → final answer header
+(def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   → answer text line (with answer bg)
+(def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   → answer padding line
 (def MARKER_MD_H1      "\u206E")  ;; NADS                   → markdown heading 1
 (def MARKER_MD_H2      "\u2029")  ;; paragraph sep           → markdown heading 2
 (def MARKER_MD_H3      "\u2028")  ;; line sep                → markdown heading 3

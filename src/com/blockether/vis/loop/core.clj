@@ -2229,7 +2229,16 @@
     (when-let [classes (seq (:ext/classes ext))]
       (swap! (:env sci-ctx) update :classes merge (into {} classes)))
     (when-let [imports (seq (:ext/imports ext))]
-      (swap! (:env sci-ctx) update :imports merge (into {} imports))))
+      (swap! (:env sci-ctx) update :imports merge (into {} imports)))
+    ;; Create a dedicated SCI namespace + alias when :ext/ns-alias is set.
+    ;; This lets the LLM call (fs/read-file ...) in addition to (read-file ...).
+    (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+      (let [ext-ns (sci/create-ns ns-sym)
+            ns-bindings (into {} (map (fn [[sym val]]
+                                        [sym (sci/new-var sym val {:ns ext-ns})]))
+                          wrapped)]
+        (swap! (:env sci-ctx) update :namespaces assoc ns-sym ns-bindings)
+        (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))))
   environment)
 
 ;; =============================================================================
