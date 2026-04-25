@@ -1596,13 +1596,17 @@
                          (catch Exception e
                            (tel/log! {:level :warn :data {:error (ex-message e)}
                                         :msg log-msg})))))
-        active-extension-names (fn []
-                                 (when-let [exts (some-> (:extensions rlm-env) deref seq)]
-                                   (mapv (comp str :ext/namespace) exts)))
+        active-extensions-meta (fn []
+                                (when-let [exts (some-> (:extensions rlm-env) deref seq)]
+                                  (mapv (fn [ext]
+                                          (cond-> {:namespace (str (:ext/namespace ext))}
+                                            (:ext/source-ns ext) (assoc :source-ns (:ext/source-ns ext))
+                                            (:ext/version ext)   (assoc :version (:ext/version ext))))
+                                    exts)))
         iter-metadata (fn []
-                        (let [ext-names (active-extension-names)]
-                          (when (seq ext-names)
-                            {:extensions ext-names})))]
+                        (let [exts (active-extensions-meta)]
+                          (when (seq exts)
+                            {:extensions exts})))]
     ;; query-start is logged in query.clj — don't duplicate
     ;; Auto-bind *query* into the SCI sandbox so the LLM (and var-history)
     ;; can always see the current user query. `bind-and-bump!` atomically

@@ -517,11 +517,13 @@
    Idempotent — re-registering the same :ext/namespace replaces
    the previous version. Returns the extension."
   [ext]
-  (let [ns-sym (:ext/namespace ext)]
+  (let [ns-sym  (:ext/namespace ext)
+        src-ns  (str (ns-name *ns*))
+        ext     (assoc ext :ext/source-ns src-ns)]
     (swap! global-registry assoc ns-sym ext)
     (tel/log! {:level :info :id ::register-global
-               :data {:ext ns-sym}
-               :msg (str "Extension '" ns-sym "' registered globally")})
+               :data {:ext ns-sym :source-ns src-ns}
+               :msg (str "Extension '" ns-sym "' registered globally from " src-ns)})
     ext))
 
 (defn deregister-global!
