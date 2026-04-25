@@ -140,17 +140,16 @@
 ;; Extensions export CLI commands via :ext/cli.
 ;;
 ;; Command spec:
-;;   {:cmd     "name"                         ;; required
-;;    :doc     "Short description"             ;; required
-;;    :args    [{:name "path"                  ;; arg name for help
-;;               :type :string                 ;; :string | :int | :boolean | :file
-;;               :required true                ;; default false
-;;               :doc "Path to file"}          ;; arg description
-;;              {:name "--verbose"
-;;               :type :boolean
-;;               :doc "Enable verbose output"}]
-;;    :fn      (fn [parsed-args] ...)          ;; receives parsed map
-;;   }
+;;   {:cmd  "name"
+;;    :doc  "Short description"
+;;    :args [{:name "path" :kind :positional :type :string :required true  :doc "Input file"}
+;;           {:name "count" :kind :positional :type :int   :required false :doc "How many"}
+;;           {:name "--verbose" :kind :flag :type :boolean :doc "Verbose output"}
+;;           {:name "--output"  :kind :flag :type :string  :doc "Output path"}]
+;;    :fn   (fn [parsed-args] ...)}
+;;
+;; :kind :positional — matched by order, no -- prefix
+;; :kind :flag       — matched by --name, boolean flags need no value
 ;;
 ;; `vis ext help` shows all commands.
 ;; `vis ext <cmd> --help` shows command-specific help with args.
@@ -188,7 +187,7 @@
 
 ;; ── Arg parsing & validation ───────────────────────────────────────────
 
-(defn- flag? [s] (str/starts-with? (str s) "--"))
+(defn- flag-arg? [s] (str/starts-with? (str s) "--"))
 
 (defn- coerce-arg [value type]
   (case (or type :string)
@@ -201,10 +200,13 @@
 
 (defn parse-ext-args
   "Parse CLI args against an arg spec. Returns a map of {arg-name value}.
-   Positional args are matched in order. Flags (--name) are matched by name."
+
+   :kind :positional args are matched in declaration order.
+   :kind :flag args are matched by --name. Boolean flags need no value."
   [arg-specs raw-args]
-  (let [positional (vec (remove #(flag? (:name %)) arg-specs))
-        flags      (into {} (map (fn [a] [(:name a) a])) (filter #(flag? (:name %)) arg-specs))]
+  (let [positional (vec (filter #(= :positional (:kind %)) arg-specs))
+        flags      (into {} (map (fn [a] [(:name a) a]))
+                     (filter #(= :flag (:kind %)) arg-specs))]
     (loop [args     (seq raw-args)
            pos-idx  0
            result   {}]
@@ -212,15 +214,15 @@
         result
         (let [arg  (first args)
               more (next args)]
-          (if (flag? arg)
-            ;; Flag arg
+          (if (flag-arg? arg)
+            ;; Flag
             (if-let [spec (get flags arg)]
               (if (= :boolean (:type spec))
-                (recur more pos-idx (assoc result arg true))
+                (recur more pos-idx (assoc result (:name spec) true))
                 (recur (next more) pos-idx
-                  (assoc result arg (coerce-arg (first more) (:type spec)))))
-              (recur more pos-idx result)) ;; unknown flag, skip
-            ;; Positional arg
+                  (assoc result (:name spec) (coerce-arg (first more) (:type spec)))))
+              (recur more pos-idx result))
+            ;; Positional
             (if (< pos-idx (count positional))
               (let [spec (nth positional pos-idx)]
                 (recur more (inc pos-idx)
@@ -244,24 +246,28 @@
 (defn format-cmd-help
   "Build help text for a single extension CLI command."
   [{:keys [cmd doc args ext-ns]}]
-  (let [usage-args (str/join " "
+  (let [positional (filter #(= :positional (:kind %)) (or args []))
+        flags      (filter #(= :flag (:kind %)) (or args []))
+        usage-pos  (str/join " "
                      (map (fn [{:keys [name required]}]
-                            (if required name (str "[" name "]")))
-                       (or args [])))
-        lines [(str "  vis ext " cmd (when (seq usage-args) (str " " usage-args)))
-               ""
-               (str "  " (or doc ""))
-               (when ext-ns (str "  Extension: " ext-ns))]]
-    (str (str/join "\n" (remove nil? lines))
-      (when (seq args)
-        (str "\n\n  Arguments:\n"
-          (str/join "\n"
-            (map (fn [{:keys [name type required doc]}]
-                   (str "    " (pad name 20)
-                     (pad (or (some-> type clojure.core/name) "string") 10)
-                     (if required "required  " "optional  ")
-                     (or doc "")))
-              args)))))))
+                            (if required (str "<" name ">") (str "[" name "]")))
+                       positional))
+        usage-flags (when (seq flags) "[flags]")
+        usage      (str/join " " (remove nil? [usage-pos usage-flags]))
+        fmt-arg    (fn [{:keys [name type required doc]}]
+                     (str "    " (pad name 20)
+                       (pad (or (some-> type clojure.core/name) "string") 10)
+                       (if required "required  " "optional  ")
+                       (or doc "")))]
+    (str "  vis ext " cmd (when (seq usage) (str " " usage))
+      "\n\n  " (or doc "")
+      (when ext-ns (str "\n  Extension: " ext-ns))
+      (when (seq positional)
+        (str "\n\n  Positional arguments:\n"
+          (str/join "\n" (map fmt-arg positional))))
+      (when (seq flags)
+        (str "\n\n  Flags:\n"
+          (str/join "\n" (map fmt-arg flags)))))))
 
 (defn extension-help
   "Build help text for all extension CLI commands."

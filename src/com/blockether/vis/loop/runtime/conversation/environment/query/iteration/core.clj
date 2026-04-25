@@ -9,7 +9,6 @@
    failures."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.loop.runtime.prompt :as prompt]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [truncate realize-value format-exception format-exception-short]]
    [com.blockether.vis.persistance.core :as db]
@@ -151,8 +150,8 @@
 (defn- formatted-str-of [v]
   (when (instance? clojure.lang.IObj v)
     (let [m (meta v)]
-      (or (:rlm/formatted m)
-        (when-let [f (:rlm/format m)]
+      (or (:vis/formatted m)
+        (when-let [f (:vis/format m)]
           (try (f v) (catch Throwable _ nil)))))))
 
 (defn- truncated-pr-str [v]
@@ -239,7 +238,7 @@
                           (:sci-ctx rlm-env) (:initial-ns-keys rlm-env)
                           sandbox-map
                           (:db-info rlm-env) (:conversation-id rlm-env)
-                          {:include-persisted? true})
+                          nil)
             live-rev    (:current-revision @var-index-atom)]
         (swap! var-index-atom assoc :index idx :revision live-rev)
         idx))))
@@ -296,6 +295,58 @@
                      :msg "build-cross-query-handover failed"})
         nil))))
 
+;; ---------------------------------------------------------------------------
+;; Nudges — per-iteration system hints injected into the iteration context
+;; ---------------------------------------------------------------------------
+
+(def ^:private BUDGET_WARNING_WINDOW 2)
+(def ^:private REPETITION_THRESHOLD 3)
+
+(defn- budget-warning
+  [{:keys [iteration current-max-iterations]}]
+  (let [iter (long (or iteration 0))
+        max-iters (long (or current-max-iterations 0))
+        remaining (- max-iters (inc iter))]
+    (when (<= remaining BUDGET_WARNING_WINDOW)
+      (str "[system_nudge] Iteration budget nearly exhausted (remaining="
+        (max 0 remaining) "). If you can finalize safely, do it now."))))
+
+(defn- repetition-warning
+  [call-counts-atom prev-expressions]
+  (when (and call-counts-atom (seq prev-expressions))
+    (let [keys* (mapv (fn [{:keys [code error result]}]
+                        (if error
+                          [:error-only (str/trim (str error))]
+                          [(str/trim (str code)) (pr-str result)]))
+                  prev-expressions)
+          max-count (swap! call-counts-atom
+                      (fn [m]
+                        (reduce (fn [acc k] (update acc k (fnil inc 0)))
+                          (or m {}) keys*)))
+          seen (apply max 0 (map #(get max-count % 0) keys*))]
+      (when (>= seen REPETITION_THRESHOLD)
+        "[system_nudge] You are repeating the same expression pattern. Change strategy."))))
+
+(defn- collect-extension-nudges
+  [extensions ctx]
+  (when (seq extensions)
+    (into []
+      (keep (fn [ext]
+              (when-let [nudge-fn (:ext/nudge-fn ext)]
+                (try
+                  (when ((:ext/activation-fn ext) (:environment ctx))
+                    (let [result (nudge-fn ctx)]
+                      (when (and (string? result) (not (str/blank? result)))
+                        result)))
+                  (catch Throwable t
+                    (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
+                    nil)))))
+      extensions)))
+
+;; ---------------------------------------------------------------------------
+;; Iteration context builder
+;; ---------------------------------------------------------------------------
+
 (defn build-iteration-context
   [rlm-env {:keys [iteration current-max-iterations
                    prior-thinking
@@ -323,11 +374,11 @@
                    :user-var-count       0}
         built-in-nudges (keep identity
                           [(when (and iteration current-max-iterations)
-                             (prompt/budget-warning
+                             (budget-warning
                                {:iteration              iteration
                                 :current-max-iterations current-max-iterations}))
-                           (prompt/repetition-warning call-counts-atom prev-expressions)])
-        ext-nudges (prompt/collect-extension-nudges
+                           (repetition-warning call-counts-atom prev-expressions)])
+        ext-nudges (collect-extension-nudges
                      (some-> (:extensions rlm-env) deref) nudge-ctx)
         nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
@@ -445,7 +496,7 @@
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
-                                           {:type :rlm/invalid-reasoning-level
+                                           {:type :vis/invalid-reasoning-level
                                             :got reasoning-level}))))
           ;; Stream reasoning chunks to the TUI while the LLM is thinking
           streaming-fn (when on-chunk

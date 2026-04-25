@@ -13,7 +13,6 @@
    [com.blockether.vis.persistance.spec :as rlm-spec
     :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING *rlm-ctx*]]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
-   [com.blockether.vis.loop.runtime.prompt :as prompt]
    [com.blockether.svar.internal.util :as util]
    [edamame.core :as edamame]
    [taoensso.telemere :as tel])
@@ -140,7 +139,7 @@
                 (let [realized (realize-value value)
                       exec-info (get sym->exec sym)]
                   ;; Accept ALL values — freeze-safe in the persistence layer
-                  ;; handles non-serializable types (fns → {:rlm/ref :expr}).
+                  ;; handles non-serializable types (fns → {:vis/ref :expr}).
                   (cond-> {:name (str sym) :value realized :code (:expr exec-info)}
                     (:time-ms exec-info) (assoc :time-ms (:time-ms exec-info)))))))
       vec)))
@@ -193,8 +192,7 @@
                              (long (* 0.6 (router/context-limit effective-model))))
         has-reasoning? (boolean (provider-has-reasoning? (:router rlm-env)))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
-        system-prompt (prompt/build-system-prompt
-                        {:system-prompt system-prompt})
+        system-prompt (or system-prompt "")
         initial-user-content query
         initial-messages (iterate/assemble-initial-messages
                            {:system-prompt system-prompt
@@ -457,13 +455,13 @@
          :or   {max-iterations      rlm-spec/MAX_ITERATIONS
                 debug?              false}} opts]
     (when-not (:db-info env)
-      (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
+      (anomaly/incorrect! "Invalid RLM environment" {:type :vis/invalid-env}))
     (when-not (and (vector? messages) (seq messages))
       (anomaly/incorrect! "messages must be a non-empty vector of message maps, e.g. [(llm/user \"...\")]"
-        {:type :rlm/invalid-messages :got (type messages)}))
+        {:type :vis/invalid-messages :got (type messages)}))
     (when (and (some? eval-timeout-ms) (not (integer? eval-timeout-ms)))
       (anomaly/incorrect! ":eval-timeout-ms must be an integer (milliseconds)"
-        {:type     :rlm/invalid-eval-timeout
+        {:type     :vis/invalid-eval-timeout
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
     (let [cancel-atom            (or cancel-atom (atom false))

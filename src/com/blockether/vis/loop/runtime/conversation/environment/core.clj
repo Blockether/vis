@@ -8,11 +8,9 @@
    [clojure+.walk]
    [com.blockether.vis.persistance.core :as db]
    [com.blockether.vis.loop.runtime.shared :as rt-shared]
-
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
-   [taoensso.telemere :as tel])
-)
+   [taoensso.telemere :as tel]))
 
 (defn sci-update-binding!
   "Update a binding in an existing SCI context.
@@ -106,7 +104,7 @@
            {:type :tool/banned :tool 'slurp})))
 
 (defn- format-printable
-  "If `v` carries :rlm/format / :rlm/formatted metadata (attached by the tool
+  "If `v` carries :vis/format / :vis/formatted metadata (attached by the tool
    wrapper), return its formatted string. Otherwise return `v` unchanged.
 
    Used by the sandbox `println` / `print` overrides to render tool results
@@ -115,8 +113,8 @@
    they can't carry metadata and usually render cleanly with plain println."
   [v]
   (if (instance? clojure.lang.IObj v)
-    (or (:rlm/formatted (meta v))
-      (when-let [f (:rlm/format (meta v))]
+    (or (:vis/formatted (meta v))
+      (when-let [f (:vis/format (meta v))]
         (try (f v) (catch Throwable _ v)))
       v)
     v))
@@ -140,7 +138,6 @@
   (binding [*out* @sci/out]
     (apply print (map format-printable args))))
 
-
 ;; =============================================================================
 ;; SCI namespace / binding helpers (moved from shared.clj — sandbox-only)
 ;; =============================================================================
@@ -162,65 +159,14 @@
    'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8")),
    'shape rt-shared/shape})
 
-;; =============================================================================
-;; Date tool bindings (moved from shared.clj — sandbox-only)
-;; =============================================================================
-
-(defn parse-date
-  "Parses an ISO-8601 date string (YYYY-MM-DD)."
-  [date-str]
-  (try
-    (when date-str (str (java.time.LocalDate/parse date-str)))
-    (catch Exception _ nil)))
-
-(defn date-before? [date1 date2]
-  (try
-    (when (and date1 date2)
-      (.isBefore (java.time.LocalDate/parse date1) (java.time.LocalDate/parse date2)))
-    (catch Exception _ false)))
-
-(defn date-after? [date1 date2]
-  (try
-    (when (and date1 date2)
-      (.isAfter (java.time.LocalDate/parse date1) (java.time.LocalDate/parse date2)))
-    (catch Exception _ false)))
-
-(defn days-between [date1 date2]
-  (try
-    (when (and date1 date2)
-      (.between java.time.temporal.ChronoUnit/DAYS
-        (java.time.LocalDate/parse date1) (java.time.LocalDate/parse date2)))
-    (catch Exception _ nil)))
-
-(defn date-plus-days [date-str days]
-  (try
-    (when date-str (str (.plusDays (java.time.LocalDate/parse date-str) days)))
-    (catch Exception _ nil)))
-
-(defn date-minus-days [date-str days]
-  (try
-    (when date-str (str (.minusDays (java.time.LocalDate/parse date-str) days)))
-    (catch Exception _ nil)))
-
-(defn date-format [date-str pattern]
-  (try
-    (when (and date-str pattern)
-      (let [formatter (java.time.format.DateTimeFormatter/ofPattern pattern)
-            date (java.time.LocalDate/parse date-str)]
-        (.format date formatter)))
-    (catch Exception _ nil)))
-
-(defn today-str [] (str (java.time.LocalDate/now)))
-
-
 (defn create-sci-context
   "Creates the SCI sandbox context with all available bindings.
 
    Params:
    `custom-bindings` - Map of symbol->value for custom bindings (can be nil)"
   [custom-bindings]
-  (let [base-bindings {                       ;; Formatter-aware println/print — substitute the tool's
-                       ;; :format-result-fn output for args carrying :rlm/format meta.
+  (let [base-bindings {;; Formatter-aware println/print — substitute the tool's
+                       ;; :format-result-fn output for args carrying :vis/format meta.
                        ;; prn is intentionally NOT overridden: it's for data
                        ;; round-trip and must stay verbatim pr-str.
                        'println sandbox-println
@@ -235,16 +181,7 @@
                        ;; `read-file` so var_index can track mtime/size and
                        ;; mark cached reads as `valid`/`stale`/`missing`
                        ;; between iterations. `slurp` bypassed all of that.
-                       'slurp banned-slurp
-                       ;; Date tools
-                       'parse-date parse-date
-                       'date-before? date-before?
-                       'date-after? date-after?
-                       'days-between days-between
-                       'date-plus-days date-plus-days
-                       'date-minus-days date-minus-days
-                       'date-format date-format
-                       'today-str today-str}
+                       'slurp banned-slurp}
         all-bindings (merge EXTRA_BINDINGS base-bindings
                        (or custom-bindings {}))
         str-ns  (sci/create-ns 'clojure.string nil)
@@ -408,6 +345,7 @@
     {:sci-ctx sci-ctx
      :sandbox-ns sandbox-ns
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
+
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 (def ^:private ^:const MAX_VAR_INDEX_CODE_CHARS
   "Per-row budget for the `code` column in <var_index>. We show the
@@ -503,20 +441,16 @@
    All user vars appear — no `MAX_VAR_INDEX_ROWS` cap. SYSTEM vars
    sort first; the rest are newest-touched first.
 
-   Opts (6-arity):
-     :include-persisted? — when false, rows persisted in DB but NOT in
-       the live sandbox are suppressed. Set by sub-RLM calls so a
-       forked env only sees its own snapshot + its own new vars; it
-       never leaks sibling queries' vars into the sub's <var_index>.
-       Defaults to true (main RLM — full conversation view)."
+   Vars persisted in the DB but no longer in the live sandbox appear
+   as 'persisted' placeholders so the LLM knows they exist and can
+   call `(var-history 'sym)` to inspect old values."
   ([sci-ctx initial-ns-keys]
    (build-var-index sci-ctx initial-ns-keys nil nil nil nil))
   ([sci-ctx initial-ns-keys sandbox]
    (build-var-index sci-ctx initial-ns-keys sandbox nil nil nil))
   ([sci-ctx initial-ns-keys sandbox db-info conversation-id]
    (build-var-index sci-ctx initial-ns-keys sandbox db-info conversation-id nil))
-  ([sci-ctx initial-ns-keys sandbox db-info conversation-id
-    {:keys [include-persisted?] :or {include-persisted? true}}]
+  ([sci-ctx initial-ns-keys sandbox db-info conversation-id _opts]
    (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
          var-registry (when (and db-info conversation-id)
                         (db/db-latest-var-registry db-info conversation-id))
@@ -539,14 +473,9 @@
                              :doc (:doc (meta v))
                              :arglists (:arglists (meta v))
                              :version (get-in var-registry [s :version] 1)
-                             :expr (or (:expr rich) (:rlm/def-source (meta v)))
+                             :expr (or (:expr rich) (:vis/def-source (meta v)))
                              :time-ms (:time-ms rich)}])))
-           ;; Sub-RLMs (env with :parent-iteration-id set → caller
-           ;; passes :include-persisted? false) see ONLY their forked
-           ;; sandbox. Sibling queries in the same conversation must
-           ;; not leak into a sub-RLM's <var_index>, otherwise a
-           ;; sub-sub-RLM would drown in its grandparent's junk.
-         persisted-info (when (and var-registry include-persisted?)
+         persisted-info (when var-registry
                           (into {}
                             (for [[sym _] var-registry
                                   :when (and (symbol? sym)
@@ -657,7 +586,7 @@
 
    Reads `db-restore-expressions` (topologically sorted) and for each entry:
    - Data value (nippy-thawed) → bind directly into the sandbox.
-   - `{:rlm/ref :expr}` → eval the `:expr` source code in the sandbox.
+   - `{:vis/ref :expr}` → eval the `:expr` source code in the sandbox.
      Dependencies are guaranteed to be bound first (topological order).
 
    Returns a vec of {:name :restored-via (:data | :eval) :success? :error}."
@@ -666,13 +595,13 @@
     (mapv (fn [{:keys [name expr result]}]
             (let [sym (symbol name)]
               (try
-                (if (and (map? result) (= :expr (:rlm/ref result)))
+                (if (and (map? result) (= :expr (:vis/ref result)))
                   ;; Function / lazy seq / runtime object → re-eval source
                   (if (and expr (not= expr ";; SYSTEM var"))
                     (do (sci/eval-string+ sci-ctx expr
                           {:ns (sci/find-ns sci-ctx 'sandbox)})
                       {:name name :restored-via :eval :success? true})
-                    ;; SYSTEM var with :rlm/ref but no real expr — skip
+                    ;; SYSTEM var with :vis/ref but no real expr — skip
                     {:name name :restored-via :skip :success? true})
                   ;; Data value → bind directly
                   (do (sci-update-binding! sci-ctx sym result)
