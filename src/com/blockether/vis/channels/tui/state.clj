@@ -124,7 +124,7 @@
   (fn [db [_ text]]
     {:db (-> db
            (update :messages conj (chat/user-msg text))
-           (update :messages conj (chat/assistant-msg "⏳ Sending request..."))
+           (update :messages conj (chat/assistant-msg "Sending request..."))
            (assoc :msg-scroll nil :loading? true
              :progress {:iterations []}
              :query-start-ms (System/currentTimeMillis)))
@@ -180,6 +180,6 @@
                               (catch Throwable _ nil)))})
             result (chat/query! conv text {:on-chunk on-chunk})]
         (if (:error result)
-          (dispatch [:message-received (str "⚠️ Error: " (:error result))])
+          (dispatch [:message-received (str "Error: " (:error result))])
           (dispatch [:message-received (:answer result)
                       (select-keys result [:model :iterations :duration-ms :tokens :cost])]))))))

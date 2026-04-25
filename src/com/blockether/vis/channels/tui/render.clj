@@ -283,7 +283,7 @@
                     (str "~$" (String/format java.util.Locale/US "%.6f" (into-array Object [(double c)]))))
         ;; Below-bubble meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration
         meta-parts (when (not user?)
-                     (remove nil? [model iter-str tok-in tok-out cost-str (when dur-str (str "⏱ " dur-str))]))
+                     (remove nil? [model iter-str tok-in tok-out cost-str dur-str]))
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
     ;; Label row: role name left, timestamp right-aligned
@@ -366,9 +366,9 @@
    Thinking lines get the thinking-marker prefix for italic rendering."
   [{:keys [thinking code]} code-width]
   (let [thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
-                         (mapv #(str thinking-marker %)
+                         (mapv #(str thinking-marker "> " %)
                            (wrap-text (str/trim thinking)
-                             (max 1 code-width))))
+                             (max 1 (- code-width 2)))))
         code-lines    (when (seq code)
                         (into []
                           (keep (fn [form]
@@ -393,14 +393,14 @@
         content-w  (max 10 (- bubble-w 4))]
     (cond
       (empty? iterations)
-      "⏳ Waiting for model response..."
+      "Waiting for model response..."
 
       ;; Only thinking, no code yet
       (and (= 1 (count iterations))
            (nil? (:code (first iterations)))
            (some? (:thinking (first iterations))))
       (let [lines (format-iteration-entry (first iterations) content-w)]
-        (str/join "\n" (cons "🧠 Reasoning..." lines)))
+        (str/join "\n" (cons "Reasoning..." lines)))
 
       :else
       (str/join "\n"
