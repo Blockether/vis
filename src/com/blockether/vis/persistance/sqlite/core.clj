@@ -690,6 +690,28 @@
            :order-by [[:est.created_at :asc]]})))
     []))
 
+(defn db-list-iteration-expressions
+  "Return execution expressions for an iteration, ordered by position.
+   Each entry has :code, :result, :error, :stdout, :duration-ms."
+  [db-info iteration-id]
+  (if (and (ds db-info) iteration-id)
+    (let [iter-id-s (->id (second iteration-id))]
+      (mapv (fn [r]
+              (cond-> {:code (:expr r)}
+                (some? (:result r)) (assoc :result (<-blob (:result r)))
+                (some? (:error r))  (assoc :error (<-blob (:error r)))
+                (some? (:stdout r)) (assoc :stdout (:stdout r))
+                (some? (:duration_ms r)) (assoc :duration-ms (:duration_ms r))))
+        (query! db-info
+          {:select   [:est.expr :est.result :est.error :est.stdout :est.duration_ms]
+           :from     [[:expression_state :est]]
+           :join     [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
+           :where    [:and
+                      [:= :est.iteration_id iter-id-s]
+                      [:= :es.kind "call"]]
+           :order-by [[:est.created_at :asc]]})))
+    []))
+
 (defn db-latest-var-registry
   ([db-info conversation-id] (db-latest-var-registry db-info conversation-id {}))
   ([db-info conversation-id _opts]
