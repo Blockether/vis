@@ -290,11 +290,9 @@
     (try
       (let [all-queries (sort-by :created-at
                           (db/db-list-conversation-queries db-info conversation-id))
-            current-id  (second current-query-id)
-            prior       (last (remove #(= (:id %) current-id) all-queries))]
+            prior       (last (remove #(= (:id %) current-query-id) all-queries))]
         (when prior
-          (let [prior-id    [:id (:id prior)]
-                iters        (db/db-list-query-iterations db-info prior-id)
+          (let [iters        (db/db-list-query-iterations db-info (:id prior))
                 tagged-iters (vec (keep-indexed
                                     (fn [idx it]
                                       (when-let [t (:thinking it)]
@@ -326,7 +324,7 @@
         remaining (- max-iters (inc iter))]
     (when (<= remaining BUDGET_WARNING_WINDOW)
       (str "[system_nudge] Iteration budget nearly exhausted (remaining="
-        (max 0 remaining) "). If you can finalize safely, do it now."))))
+        (max 0 remaining) "). Finalize now, or call (request-more-iterations N) if more work is genuinely needed and makes sense for this task."))))
 
 (defn- repetition-warning
   [call-counts-atom prev-expressions]

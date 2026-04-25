@@ -1,9 +1,10 @@
 (ns com.blockether.vis.channels.tui.chat
   "TUI-side projections over the shared conversations API.
 
-   On startup the TUI resumes the latest `:vis` conversation if one exists,
-   otherwise creates a fresh one. Conversation data is persisted in
-   `~/.vis/vis.mdb` so you can come back to it."
+   On startup the TUI creates a fresh `:vis` conversation by default.
+   Pass `--conversation-id ID` or `--resume` to pick up an existing one.
+   Conversation data is persisted in `~/.vis/vis.mdb` so you can come
+   back to it."
   (:require [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.persistance.core :as db]
@@ -28,8 +29,7 @@
   [conv-id]
   (try
     (let [d       (conversations/db-info)
-          ref     [:id (java.util.UUID/fromString (str conv-id))]
-          queries (db/db-list-conversation-queries d ref)]
+          queries (db/db-list-conversation-queries d conv-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-msg  (user-msg (or (:text q) "") (or (:created-at q) (java.util.Date.)))
@@ -42,10 +42,10 @@
                         dur-ms    (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
                         ;; Rebuild trace from iterations + expressions
-                        query-iters (db/db-list-query-iterations d [:id (:id q)])
+                        query-iters (db/db-list-query-iterations d (:id q))
                         trace (into []
                                 (map (fn [it]
-                                       (let [exprs (db/db-list-iteration-expressions d [:id (:id it)])
+                                       (let [exprs (db/db-list-iteration-expressions d (:id it))
                                              result-strs (mapv (fn [{:keys [result error]}]
                                                                  (if error
                                                                    (str "ERROR: " error)

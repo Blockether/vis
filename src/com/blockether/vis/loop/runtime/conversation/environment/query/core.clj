@@ -260,6 +260,7 @@
                             {:extensions exts})))]
     (sci-env/bind-and-bump! environment '*query* query)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
+    (loop-core/auto-forget-stale-vars! environment)
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                 :trace [] :consecutive-errors 0 :restarts 0}
@@ -547,16 +548,15 @@
           max-iterations-atom    (atom max-iterations)
           budget-bindings        {'request-more-iterations
                                   (fn [n]
-                                    (let [requested  (max 1 (min (long n) (long rlm-spec/MAX_EXTENSION_PER_REQUEST)))
-                                          current    @max-iterations-atom
-                                          new-budget (min (+ current requested) (long rlm-spec/MAX_ITERATION_CAP))]
+                                    (let [requested (max 1 (long n))
+                                          current   @max-iterations-atom
+                                          new-budget (+ current requested)]
                                       (reset! max-iterations-atom new-budget)
-                                      (let [granted (- new-budget current)]
-                                        (tel/log! {:level :info :id ::iteration-budget
-                                                   :data {:requested  (long n) :granted granted
-                                                          :new-budget new-budget :cap rlm-spec/MAX_ITERATION_CAP}
-                                                   :msg  "LLM requested more iterations"})
-                                        {:granted granted :new-budget new-budget :cap rlm-spec/MAX_ITERATION_CAP})))}
+                                      (tel/log! {:level :info :id ::iteration-budget
+                                                 :data {:requested requested :granted requested
+                                                        :new-budget new-budget}
+                                                 :msg  "LLM requested more iterations"})
+                                      {:granted requested :new-budget new-budget}))}
           sci-ctx                (:sci-ctx env)
           _                      (sci-env/bump-var-index! env)
           _                      (let [per-query (merge budget-bindings
@@ -566,7 +566,10 @@
                                      (when val
                                        (sci-env/sci-update-binding! sci-ctx sym val))))
           _                      (sci-env/bump-var-index! env)
-          environment            (assoc env :max-iterations-atom max-iterations-atom)
+          current-iteration-id-atom (atom nil)
+          environment            (assoc env
+                                   :max-iterations-atom max-iterations-atom
+                                   :current-iteration-id-atom current-iteration-id-atom)
           env-id                 (:env-id env)]
       {:cancel-atom            cancel-atom
        :query-str              query-str
@@ -718,7 +721,8 @@
    `opts` - Map, optional:
      - :spec - Output spec for structured answers.
      - :model - Override config's default model.
-     - :max-iterations - Max code iterations (default: 50).
+     - :max-iterations - Initial iteration budget (default: 4). The LLM
+       can extend on demand via (request-more-iterations n) — no cap.
       - :max-context-tokens - Token budget for context.
       - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
         code evaluation, LLM responses at :info level with :rlm-phase context.
@@ -751,12 +755,12 @@
      (binding [rlm-spec/*rlm-ctx*               {:rlm-env-id env-id :rlm-type :main
                                                  :rlm-debug? debug? :rlm-phase :query
                                                  :db-info db-info
-                                                 :conversation-soul-id (some-> environment :conversation-id second)}
+                                                 :conversation-soul-id (:conversation-id environment)}
                rlm-spec/*eval-timeout-ms*       (rlm-spec/clamp-eval-timeout-ms
                                                   (or eval-timeout-ms rlm-spec/*eval-timeout-ms*))
                rlm-spec/*concurrency*           merged-concurrency]
        (tel/with-ctx+ {:db-info db-info
-                       :conversation-soul-id (some-> environment :conversation-id second)}
+                       :conversation-soul-id (:conversation-id environment)}
          (iterate/log-stage! :query-start 0
            {:model root-model
             :max-iterations max-iterations

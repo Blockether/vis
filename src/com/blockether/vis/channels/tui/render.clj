@@ -253,6 +253,16 @@
 (def ^:private stdout-sep-marker p/MARKER_STDOUT_SEP)
 (def ^:private stdout-pad-marker p/MARKER_STDOUT_PAD)
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
+(def ^:private code-pad-marker   p/MARKER_CODE_PAD)
+(def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
+(def ^:private iter-pad-marker   p/MARKER_ITER_PAD)
+(def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
+(def ^:private md-h1-marker      p/MARKER_MD_H1)
+(def ^:private md-h2-marker      p/MARKER_MD_H2)
+(def ^:private md-h3-marker      p/MARKER_MD_H3)
+(def ^:private md-bold-marker    p/MARKER_MD_BOLD)
+(def ^:private md-code-marker    p/MARKER_MD_CODE)
+(def ^:private md-bullet-marker  p/MARKER_MD_BULLET)
 
 (defn draw-chat-bubble!
   "Draw a chat message bubble at the given row.
@@ -287,10 +297,10 @@
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
     ;; Label row: role name left (bold), timestamp right-aligned
+    (p/clear-styles! g)
     (p/set-colors! g role-fg t/terminal-bg)
-    (p/enable! g p/BOLD)
-    (p/put-str! g (inc bx) start-row label)
-    (p/disable! g p/BOLD)
+    (p/styled g [p/BOLD]
+      (p/put-str! g (inc bx) start-row label))
     (when time-str
       (p/set-colors! g t/dialog-hint t/terminal-bg)
       (p/put-str! g (+ bx (- bubble-w (count time-str) 1)) start-row time-str))
@@ -320,18 +330,18 @@
       ;; distinct from the plain-text answer below.
       (let [iter-bg t/iter-header-bg]
         (doseq [[i line] (map-indexed vector lines)]
+          (p/clear-styles! g)
           (let [x (+ bx 2) y (+ btop 1 i)
                 iw (- bubble-w 4)]
             (cond
-              ;; ── Iteration header — right-aligned label ──
+              ;; ── Iteration header — right-aligned, subtle ──
               (str/starts-with? line iter-hdr-marker)
-              (do (p/set-colors! g t/iter-header-fg iter-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+              (do (p/set-colors! g t/iter-header-fg bg-color)
                 (p/put-str! g x y (subs line 1)))
 
-              ;; ── Thinking — italic, dim, on iteration bg ──
+              ;; ── Thinking — dimmed bg, italic ──
               (str/starts-with? line thinking-marker)
-              (do (p/set-colors! g t/dialog-hint iter-bg)
+              (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
                 (p/fill-rect! g (inc bx) y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
@@ -398,13 +408,67 @@
               (do (p/set-bg! g t/stdout-bg)
                 (p/fill-rect! g (inc bx) y iw 1))
 
+              ;; ── Code block padding (success) ──
+              (str/starts-with? line code-pad-marker)
+              (do (p/set-bg! g t/code-block-bg)
+                (p/fill-rect! g (inc bx) y iw 1))
+
+              ;; ── Code block padding (error) ──
+              (str/starts-with? line code-err-pad-marker)
+              (do (p/set-bg! g t/code-err-bg)
+                (p/fill-rect! g (inc bx) y iw 1))
+
+              ;; ── Iteration zone padding (margin between blocks) ──
+              (str/starts-with? line iter-pad-marker)
+              (do (p/set-bg! g bg-color)
+                (p/fill-rect! g (inc bx) y iw 1))
+
               ;; ── Answer separator — visual break between trace and answer ──
               (str/starts-with? line answer-sep-marker)
               (let [raw (subs line 1)]
-                (p/set-colors! g t/answer-sep-fg t/answer-sep-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/set-colors! g t/answer-sep-fg bg-color)
                 (when (seq raw)
                   (p/put-str! g x y raw)))
+
+              ;; ── Answer header — right-aligned superscript on bubble bg ──
+              (str/starts-with? line answer-hdr-marker)
+              (do (p/set-colors! g t/iter-header-fg bg-color)
+                (p/put-str! g x y (subs line 1)))
+
+              ;; ── Markdown heading 1 — bold ──
+              (str/starts-with? line md-h1-marker)
+              (do (p/set-colors! g fg-color bg-color)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g x y (subs line 1))))
+
+              ;; ── Markdown heading 2 — bold ──
+              (str/starts-with? line md-h2-marker)
+              (do (p/set-colors! g fg-color bg-color)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g x y (subs line 1))))
+
+              ;; ── Markdown heading 3 — bold, dim ──
+              (str/starts-with? line md-h3-marker)
+              (do (p/set-colors! g t/dialog-hint bg-color)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g x y (subs line 1))))
+
+              ;; ── Markdown bold line ──
+              (str/starts-with? line md-bold-marker)
+              (do (p/set-colors! g fg-color bg-color)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g x y (subs line 1))))
+
+              ;; ── Markdown code block — code bg ──
+              (str/starts-with? line md-code-marker)
+              (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
+
+              ;; ── Markdown bullet ──
+              (str/starts-with? line md-bullet-marker)
+              (do (p/set-colors! g fg-color bg-color)
+                (p/put-str! g x y (subs line 1)))
 
               ;; ── Legacy separator — dim ──
               (str/starts-with? line sep-marker)
@@ -417,6 +481,7 @@
                 (p/put-str! g x y line))))))
 
       ;; Below-bubble meta (assistant only): model · iters · duration · tokens
+      (p/clear-styles! g)
       (let [meta-row (+ btop bubble-h)]
         (when meta-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
@@ -449,14 +514,26 @@
 
 
 
-(def ^:private superscript-digits
-  {\0 "\u2070" \1 "\u00B9" \2 "\u00B2" \3 "\u00B3" \4 "\u2074"
-   \5 "\u2075" \6 "\u2076" \7 "\u2077" \8 "\u2078" \9 "\u2079"})
+(def ^:private smallcaps-chars
+  "Unicode small caps (Phonetic Extensions block U+1D00–U+1D7F + friends).
+   All glyphs render at consistent lowercase x-height, unlike superscript
+   modifier letters which come from different blocks and vary in size."
+  {\A "\u1d00" \B "\u0299" \C "\u1d04" \D "\u1d05" \E "\u1d07"
+   \F "\ua730" \G "\u0262" \H "\u029c" \I "\u026a" \J "J"
+   \K "\u1d0b" \L "\u029f" \M "\u1d0d" \N "\u0274" \O "\u1d0f"
+   \P "\u1d18" \Q "Q"     \R "\u0280" \S "\ua731" \T "\u1d1b"
+   \U "\u1d1c" \V "\u1d20" \W "\u1d21" \X "X"     \Y "\u028f"
+   \Z "\u1d22"
+   \0 "0" \1 "1" \2 "2" \3 "3" \4 "4"
+   \5 "5" \6 "6" \7 "7" \8 "8" \9 "9"
+   \space " "})
 
-(defn- superscript-num
-  "Convert an integer to its superscript string representation. e.g. 12 → ¹²"
-  [n]
-  (apply str (map #(get superscript-digits % (str %)) (str n))))
+(defn- smallcaps
+  "Convert a string to small caps. Uses the Phonetic Extensions block
+   which renders at uniform size in monospace terminal fonts.
+   e.g. (smallcaps 'ITERATION 1') => \u026a\u1d1b\u1d07\u0280\u1d00\u1d1b\u026a\u1d0f\u0274 1"
+  [s]
+  (apply str (map #(get smallcaps-chars % (str %)) (str/upper-case (str s)))))
 
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
@@ -472,78 +549,98 @@
       :durations [int ...]        ;; per-expression ms
       :successes [bool ...]}      ;; per-expression success? (nil = unknown / streaming)"
   [{:keys [thinking code results stdouts durations successes]} code-width iter-num]
-  (let [;; Right-aligned "iteration N" label — leave 1 char margin-right
-        ;; Note: code-width is the drawable content area. We must NOT exceed
-        ;; it minus the visible prefix chars, otherwise wrap-text in
-        ;; draw-chat-bubble! will split the header across two lines.
-        label      (superscript-num iter-num)
-        usable-w   (max 1 (- code-width 1))  ;; 1 char right margin
-        pad-len    (max 0 (- usable-w (count label)))
+  (let [;; All marker-prefixed lines must have visible content ≤ (dec code-width)
+        ;; because wrap-text in draw-chat-bubble! wraps at code-width and the
+        ;; invisible 1-char marker prefix counts toward string length.
+        fill-w     (max 1 (dec code-width))
+        ;; Right-aligned superscript label with 1 char right margin
+        label      (str (smallcaps "iteration") " " (smallcaps (str iter-num)))
+        pad-len    (max 0 (- fill-w (count label) 1))
         header-line (str (apply str (repeat pad-len \space)) label " ")
         header [(str iter-hdr-marker header-line)]
 
         thinking-lines
         (when (and (string? thinking) (not (str/blank? thinking)))
-          (mapv #(str thinking-marker "> " %)
-            (wrap-text (str/trim thinking) (max 1 (- code-width 2)))))
+          (let [lines (mapv #(str thinking-marker %)
+                        (wrap-text (str/trim thinking) fill-w))]
+            (vec (concat [(str thinking-marker "")] lines [(str thinking-marker "")]))))
 
         code+result-lines
         (when (seq code)
           (into []
             (mapcat
               (fn [[idx form]]
-                (let [success?  (when successes (get successes idx))
+                (let [success?    (when successes (get successes idx))
                       has-status? (some? success?)
-                      dur-ms    (when durations (get durations idx))
-                      dur-str   (channels/format-duration dur-ms)
-                      ;; Status marker: ✓/✗ + duration on the first code line
-                      status-suffix (when has-status?
-                                      (str (if success? " ✓" " ✗")
-                                        (when dur-str (str " " dur-str))))
+                      is-error?   (and has-status? (not success?))
+                      dur-ms      (when durations (get durations idx))
+                      dur-str     (channels/format-duration dur-ms)
+                      ;; Right-aligned superscript code label with right padding
+                      expr-label  (str (smallcaps "code") " " (smallcaps (str (inc idx))))
+                      expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]
+                                    (str (apply str (repeat pl \space)) expr-label " "))
+                      ;; Right-aligned status line: ✓ 3ms or ✗ 3ms
+                      status-text (when has-status?
+                                    (str (if success? "✓" "✗")
+                                      (when dur-str (str " " dur-str))))
+                      status-line (when status-text
+                                    (let [s-marker (if success? code-ok-marker code-err-marker)
+                                          pl (max 0 (- fill-w (count status-text) 1))]
+                                      (str s-marker (apply str (repeat pl \space)) status-text " ")))
                       ;; Pick marker based on status
-                      c-marker  (cond
-                                  (not has-status?) code-marker
-                                  success?          code-ok-marker
-                                  :else             code-err-marker)
-                      ;; Code lines: '| ' prefix, wrapped
-                      code-text (str/trim (or form ""))
-                      wrapped   (wrap-text code-text (max 1 (- code-width 2
-                                                              (if status-suffix
-                                                                (+ 1 (count status-suffix))
-                                                                0))))
-                      ;; Append status suffix to last line of code
-                      c-lines   (if (and status-suffix (seq wrapped))
-                                  (let [last-idx (dec (count wrapped))
-                                        last-line (nth wrapped last-idx)
-                                        padded (str last-line status-suffix)]
-                                    (mapv #(str c-marker "› " %)
-                                      (assoc wrapped last-idx padded)))
-                                  (mapv #(str c-marker "› " %) wrapped))
+                      c-marker    (cond
+                                    (not has-status?) code-marker
+                                    success?          code-ok-marker
+                                    :else             code-err-marker)
+                      c-pad       (if is-error? code-err-pad-marker code-pad-marker)
+                      ;; Code lines: indented, no glyph prefix
+                      code-text   (str/trim (or form ""))
+                      wrapped     (wrap-text code-text (max 1 (- fill-w 2)))
+                      c-lines     (mapv #(str c-marker "  " %) wrapped)
                       ;; Result
-                      result-str (when results (get results idx))
-                      is-error?  (and has-status? (not success?))
-                      r-marker   (if is-error? err-result-marker result-marker)
-                      r-lines (when (and result-str (not (str/blank? (str result-str))))
-                                (mapv #(str r-marker "  => " %)
-                                  (wrap-text (str/trim (str result-str))
-                                    (max 1 (- code-width 5)))))
-                      ;; Stdout — separator + padding + right-aligned "stdout" label + text + padding
-                      stdout-str (when stdouts (get stdouts idx))
-                      s-lines (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                (let [label   "stdout"
-                                      sep-w   (max 1 (- code-width 2))
-                                      sep-ln  (str stdout-sep-marker (apply str (repeat sep-w \-)))
-                                      ;; First line: right-aligned "stdout" label
-                                      label-pad (max 0 (- code-width (count label)))
-                                      label-ln  (str stdout-marker (apply str (repeat label-pad \space)) label)
-                                      text-lines (mapv #(str stdout-marker "  " %)
-                                                   (wrap-text (str/trim (str stdout-str))
-                                                     (max 1 (- code-width 2))))
-                                      pad-ln  (str stdout-pad-marker "")]
-                                  (into [sep-ln pad-ln label-ln] (conj text-lines pad-ln))))]
-                  (concat c-lines r-lines s-lines))))
-            (map-indexed vector code)))]
-    (into (vec (concat header thinking-lines)) code+result-lines)))
+                      result-str  (when results (get results idx))
+                      r-marker    (if is-error? err-result-marker result-marker)
+                      r-lines     (when (and result-str (not (str/blank? (str result-str))))
+                                    (mapv #(str r-marker "  => " %)
+                                      (wrap-text (str/trim (str result-str))
+                                        (max 1 (- fill-w 5)))))
+                      ;; Code block = right-aligned header + pad-top + code + result + status + pad-bottom
+                      code-block  (vec (concat
+                                         [(str iter-hdr-marker expr-hdr)]  ;; right-aligned ᶜᵒᵈᵉ ¹
+                                         [(str c-pad "")]        ;; pad top
+                                         c-lines
+                                         r-lines
+                                         (when status-line [status-line])  ;; right-aligned ✓/✗
+                                         [(str c-pad "")]))
+                      ;; Stdout block with right-aligned header + padding
+                      stdout-str  (when stdouts (get stdouts idx))
+                      stdout-block (when (and stdout-str (not (str/blank? (str stdout-str))))
+                                     (let [slabel    (smallcaps "stdout")
+                                           slabel-pad (max 0 (- fill-w (count slabel) 1))
+                                           slabel-ln  (str iter-hdr-marker
+                                                        (apply str (repeat slabel-pad \space))
+                                                        slabel " ")
+                                           text-lines (mapv #(str stdout-marker "  " %)
+                                                        (wrap-text (str/trim (str stdout-str))
+                                                          (max 1 (- fill-w 2))))]
+                                       (vec (concat
+                                              [slabel-ln]               ;; right-aligned ˢᵗᵈᵒᵘᵗ
+                                              [(str stdout-pad-marker "")] ;; pad top
+                                              text-lines
+                                              [(str stdout-pad-marker "")]))))  ;; pad bottom
+                      ;; Iter-bg gap between code and stdout within the group
+                      margin      (when stdout-block [(str iter-pad-marker "")])]
+                  (concat code-block margin stdout-block))))
+            (map-indexed vector code)))
+        ;; Wrap all expressions in an iteration-bg group:
+        ;; iter-pad top + expression blocks + iter-pad bottom
+        grouped (when (seq code+result-lines)
+                  (vec (concat
+                         [(str iter-pad-marker "")] ;; group top
+                         code+result-lines
+                         [(str iter-pad-marker "")]))) ;; group bottom
+        ]
+    (into (vec (concat header thinking-lines)) grouped)))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -582,14 +679,90 @@
                         content-w (inc idx))))
             (map-indexed vector iterations)))))))
 
+(defn- markdown->lines
+  "Parse markdown text into marker-prefixed lines for styled rendering.
+   Supports: # headings, **bold**, ```code blocks```, - bullet lists.
+   `max-w` is the max visible width per line."
+  [text max-w]
+  (when (and text (not (str/blank? text)))
+    (let [input-lines (str/split-lines text)]
+      (loop [lines  (seq input-lines)
+             in-code? false
+             acc    []]
+        (if-not lines
+          acc
+          (let [line (first lines)
+                rst  (next lines)]
+            (cond
+              ;; Code fence toggle
+              (str/starts-with? (str/trim line) "```")
+              (if in-code?
+                (recur rst false (conj acc (str md-code-marker "")))
+                (recur rst true  (conj acc (str md-code-marker ""))))
+
+              ;; Inside code block
+              in-code?
+              (recur rst true
+                (into acc (mapv #(str md-code-marker "  " %)
+                            (wrap-text line (max 1 (- max-w 2))))))
+
+              ;; Heading 3
+              (str/starts-with? line "### ")
+              (recur rst false
+                (into acc (mapv #(str md-h3-marker %)
+                            (wrap-text (subs line 4) max-w))))
+
+              ;; Heading 2
+              (str/starts-with? line "## ")
+              (recur rst false
+                (into acc (mapv #(str md-h2-marker %)
+                            (wrap-text (subs line 3) max-w))))
+
+              ;; Heading 1
+              (str/starts-with? line "# ")
+              (recur rst false
+                (into acc (mapv #(str md-h1-marker %)
+                            (wrap-text (subs line 2) max-w))))
+
+              ;; Bullet list
+              (re-matches #"^\s*[-*]\s+.*" line)
+              (let [trimmed (str/replace line #"^\s*[-*]\s+" "")
+                    wrapped (wrap-text trimmed (max 1 (- max-w 4)))]
+                (recur rst false
+                  (into acc
+                    (into [(str md-bullet-marker "  • " (first wrapped))]
+                      (mapv #(str md-bullet-marker "    " %) (rest wrapped))))))
+
+              ;; Bold-only line: **text**
+              (and (str/starts-with? (str/trim line) "**")
+                   (str/ends-with? (str/trim line) "**"))
+              (let [inner (-> line str/trim (subs 2) (as-> s (subs s 0 (- (count s) 2))))]
+                (recur rst false
+                  (into acc (mapv #(str md-bold-marker %)
+                              (wrap-text inner max-w)))))
+
+              ;; Blank line
+              (str/blank? line)
+              (recur rst false (conj acc ""))
+
+              ;; Plain text — strip inline **bold** and `code` markers for display
+              :else
+              (let [clean (-> line
+                            (str/replace #"\*\*([^*]+)\*\*" "$1")
+                            (str/replace #"`([^`]+)`" "$1"))]
+                (recur rst false
+                  (into acc (wrap-text clean max-w)))))))))))
+
 (defn format-answer-with-thinking
   "Build the final bubble text: thinking trace + answer.
    `trace` is the progress iterations vec [{:thinking :code :results} ...].
    `settings` is `{:show-thinking bool :show-iterations bool}`.
-   Trace is visually separated from the answer by a dashed line."
+   Trace is visually separated from the answer by a right-aligned
+   'final answer' header."
   ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil))
   ([answer trace bubble-w settings]
    (let [content-w (max 10 (- bubble-w 4))
+         fill-w    (max 1 (dec content-w))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
          trace-lines (when (and show-iterations? (seq trace))
@@ -599,13 +772,29 @@
                                      (if show-thinking? entry (dissoc entry :thinking))
                                      content-w (inc idx))))
                          (map-indexed vector trace)))
-         answer-str (or answer "")]
+         answer-str  (or answer "")
+         ;; Right-aligned superscript "final answer" header
+         fa-label    (smallcaps "final answer")
+         fa-pad      (max 0 (- fill-w (count fa-label) 1))
+         fa-hdr      (str answer-hdr-marker (apply str (repeat fa-pad \space)) fa-label " ")
+         ;; Markdown-rendered answer lines
+         md-lines    (markdown->lines answer-str content-w)
+         answer-text (if (seq md-lines)
+                       (str/join "\n" md-lines)
+                       answer-str)]
      (if (seq trace-lines)
-       (let [sep-line (str answer-sep-marker (p/horiz-line content-w))
-             pad-line (str answer-sep-marker "")]
-         (str (str/join "\n" trace-lines)
-           "\n" pad-line "\n" sep-line "\n" pad-line "\n" answer-str))
-       answer-str))))
+       (str (str/join "\n" trace-lines)
+         "\n\n" fa-hdr "\n\n" answer-text)
+       (str fa-hdr "\n\n" answer-text)))))
+
+(defn format-answer-markdown
+  "Format a plain answer (no trace) with markdown support."
+  [answer bubble-w]
+  (let [content-w (max 10 (- bubble-w 4))
+        md-lines  (markdown->lines (or answer "") content-w)]
+    (if (seq md-lines)
+      (str/join "\n" md-lines)
+      (or answer ""))))
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 

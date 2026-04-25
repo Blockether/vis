@@ -267,3 +267,13 @@
 (def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    → stdout separator line
 (def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    → stdout empty padding line
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    → answer separator (trace→answer break)
+(def MARKER_CODE_PAD   "\u206A")  ;; ISS                    → code block empty padding line
+(def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   → error code block padding line
+(def MARKER_ITER_PAD   "\u206C")  ;; IAFS                   → iteration zone padding (margin between blocks)
+(def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   → final answer header
+(def MARKER_MD_H1      "\u206E")  ;; NADS                   → markdown heading 1
+(def MARKER_MD_H2      "\u2029")  ;; paragraph sep           → markdown heading 2
+(def MARKER_MD_H3      "\u2028")  ;; line sep                → markdown heading 3
+(def MARKER_MD_BOLD    "\u00AD")  ;; soft hyphen             → markdown bold line
+(def MARKER_MD_CODE    "\u034F")  ;; combining grapheme join → markdown inline code block
+(def MARKER_MD_BULLET  "\u2065")  ;; reserved                → markdown bullet list item
