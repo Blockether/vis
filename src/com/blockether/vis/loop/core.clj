@@ -370,6 +370,9 @@
 
 (defn build-system-prompt [{:keys [system-prompt]}] (or system-prompt ""))
 
+
+;; ── Legacy helpers (used by old iteration loop below, pending removal) ──────
+
 (def ^:const MAX_RESULT_DISPLAY_CHARS 30000)
 
 (defn- truncate [s n]
