@@ -433,6 +433,85 @@
 
               (recur))))))))
 
+;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
+
+(defn text-viewer-dialog!
+  "Show a scrollable read-only text viewer dialog.
+   `title` is the dialog header. `text` is a string (may contain newlines).
+   Returns nil on Esc. Supports ↑/↓/PgUp/PgDn scrolling and Ctrl+Y to copy."
+  [^TerminalScreen screen title text]
+  (let [scroll (atom 0)
+        cw     (max 40 (min 80 (+ 4 (apply max 1 (map count (str/split-lines (or text "")))))))
+        ch     20]
+    (loop []
+      (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols    (.getColumns size)
+            rows    (.getRows size)
+            g       (.newTextGraphics screen)
+            bounds  (draw-dialog-chrome! g cols rows title cw ch)
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            text-w  (max 1 (- inner-w 2))
+            lines   (vec (mapcat #(render/wrap-text % text-w)
+                           (str/split-lines (or text "(empty)"))))
+            total   (count lines)
+            max-scroll (max 0 (- total content-h))
+            _       (swap! scroll #(clamp % 0 max-scroll))
+            visible (subvec lines @scroll
+                      (min total (+ @scroll content-h)))]
+
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (doseq [[i line] (map-indexed vector visible)]
+          (let [row (+ content-top i)]
+            (when (< row (+ content-top content-h))
+              (p/fill-rect! g (inc left) row inner-w 1)
+              (p/put-str! g (+ left 2) row (ellipsize line text-w)))))
+        ;; Clear remaining rows
+        (doseq [row (range (+ content-top (count visible))
+                      (+ content-top content-h))]
+          (p/set-colors! g t/dialog-fg t/dialog-bg)
+          (p/fill-rect! g (inc left) row inner-w 1))
+
+        ;; Scroll indicator
+        (when (> total content-h)
+          (let [pct  (if (zero? max-scroll) 0 (/ (double @scroll) max-scroll))
+                bar-h (max 1 (int (* content-h (/ (double content-h) total))))
+                bar-y (+ content-top (int (* pct (- content-h bar-h))))]
+            (doseq [r (range bar-y (min (+ content-top content-h) (+ bar-y bar-h)))]
+              (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/set-char! g (+ left inner-w) r \|))))
+
+        (draw-hint-bar! g left hint-row inner-w
+          [["↑/↓" "scroll"] ["PgUp/Dn" "page"] ["^Y" "copy"] ["Esc" "close"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+
+        (let [key (.readInput screen)]
+          (when key
+            (condp = (.getKeyType key)
+              KeyType/Escape nil
+
+              KeyType/ArrowUp
+              (do (swap! scroll #(max 0 (dec %))) (recur))
+
+              KeyType/ArrowDown
+              (do (swap! scroll #(min max-scroll (inc %))) (recur))
+
+              KeyType/PageUp
+              (do (swap! scroll #(max 0 (- % content-h))) (recur))
+
+              KeyType/PageDown
+              (do (swap! scroll #(min max-scroll (+ % content-h))) (recur))
+
+              KeyType/Character
+              (let [c    (Character/toLowerCase (.getCharacter key))
+                    ctrl (.isCtrlDown key)]
+                (if (and ctrl (= c \y))
+                  (do (input/clipboard-copy! (or text "")) nil)
+                  (recur)))
+
+              (recur))))))))
+
 ;;; ── Copy dialog ─────────────────────────────────────────────────────────────
 
 (defn- role-label [role] (name (or role :assistant)))

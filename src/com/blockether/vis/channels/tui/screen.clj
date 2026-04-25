@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+P provider · Ctrl+T settings · Ctrl+C quit ")
+(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+P provider · Ctrl+T settings · Ctrl+I inspect · Ctrl+C quit ")
 
 (defn- with-dialog-lock
   [f]
@@ -196,6 +196,17 @@
                     (do (when-let [s (with-dialog-lock
                                       #(dlg/settings-dialog! screen (:settings @state/app-db)))]
                           (state/dispatch [:update-settings s]))
+                      (recur)))
+
+                  :show-system-prompt
+                  (if (:dialog-open? @state/app-db)
+                    (recur)
+                    (do (with-dialog-lock
+                          #(let [conv-id (get-in @state/app-db [:conv :id])
+                                 prompt  (when conv-id
+                                           (or (:system-prompt (conversations/by-id conv-id))
+                                             "(no system prompt)"))]
+                             (dlg/text-viewer-dialog! screen "System Prompt" (or prompt "(no conversation)"))))
                       (recur)))
 
                   :send
