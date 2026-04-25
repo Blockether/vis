@@ -55,7 +55,7 @@
   (case status
     (:success :done)                       "done"
     (:error :max-iterations
-     :error-budget-exhausted)              "error"
+            :error-budget-exhausted)              "error"
     (:cancelled :interrupted)              "interrupted"
     :running                               "running"
     ;; fallback
@@ -475,7 +475,7 @@
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
    Returns the iteration UUID."
   [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
-                    llm-messages llm-model]}]
+                   llm-messages llm-model]}]
   (when (ds db-info)
     (let [iter-id   (UUID/randomUUID)
           iter-id-s (str iter-id)
@@ -488,10 +488,10 @@
           ;; Need conversation_state_id for expression_soul
           conv-state-id (when query-state
                           (:conversation_state_id
-                            (query-one! db-info
-                              {:select [:conversation_state_id]
-                               :from   :query_soul
-                               :where  [:= :id query-soul-id-s]})))
+                           (query-one! db-info
+                             {:select [:conversation_state_id]
+                              :from   :query_soul
+                              :where  [:= :id query-soul-id-s]})))
           ;; Compute position (0-indexed within this query_state)
           position  (or (:cnt (query-one! db-info
                                 {:select [[[:count :*] :cnt]]
@@ -577,9 +577,9 @@
                                            :created_at            now}]})
                               new-id))
                   max-ver (or (:v (query-one! db-info
-                                   {:select [[[:max :version] :v]]
-                                    :from   :expression_state
-                                    :where  [:= :expression_soul_id soul-id]}))
+                                    {:select [[[:max :version] :v]]
+                                     :from   :expression_state
+                                     :where  [:= :expression_soul_id soul-id]}))
                             -1)]
               (execute! db-info
                 {:insert-into :expression_state
@@ -869,9 +869,9 @@
                                   (assoc m id (count (filter soul-ids
                                                        (get-in adj [id :depends-on])))))
                           {} soul-ids)
-              sorted    (loop [queue  (into (clojure.lang.PersistentQueue/EMPTY)
-                                       (sort-by (fn [id] (:created_at (get by-id id)))
-                                         (filter #(zero? (get in-degree % 0)) soul-ids)))
+              sorted    (loop [queue  (into clojure.lang.PersistentQueue/EMPTY
+                                        (sort-by (fn [id] (:created_at (get by-id id)))
+                                          (filter #(zero? (get in-degree % 0)) soul-ids)))
                                result []
                                deg    in-degree]
                           (if (empty? queue)

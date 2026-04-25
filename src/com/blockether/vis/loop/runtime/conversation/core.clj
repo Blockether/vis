@@ -1,9 +1,13 @@
 (ns com.blockether.vis.loop.runtime.conversation.core
   "Conversation lifecycle/send orchestration inside loop core."
-  (:require [com.blockether.svar.internal.llm :as llm]
+  (:require [clojure.string :as str]
+            [com.blockether.svar.internal.llm :as llm]
+            [com.blockether.svar.internal.spec :as svar-spec]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.core :as loop-core]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.core :as iterate]
             [com.blockether.vis.persistance.core :as db]
+            [com.blockether.vis.persistance.spec :as rlm-spec]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;; ---------------------------------------------------------------------------
@@ -99,6 +103,57 @@
 (defn env-for
   [id]
   (:environment (ensure-env! id)))
+
+(defn effective-system-prompt
+  "Return the full effective prompt the LLM sees for this conversation.
+   Reconstructs all four message layers:
+     1. System message: <objective> wrapping base + extension prompts
+     2. Per-iteration context: [iter N/M], <var_index>, journal, nudges
+     3. Spec schema: svar enforcement banner + BAML iteration spec
+   Returns nil when the conversation is not found."
+  [id]
+  (when-let [env (env-for id)]
+    (let [base   (or (:system-prompt (by-id id)) "")
+          ext-ps (when-let [exts (some-> (:extensions env) deref seq)]
+                   (->> exts
+                     (keep (fn [ext]
+                             (try
+                               (when ((:ext/activation-fn ext) env)
+                                 (let [p ((:ext/prompt ext) env)]
+                                   (when (and (string? p) (not (str/blank? p)))
+                                     (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+                                       (str "[namespace: " alias-sym " \u2192 " ns-sym "]\n" p)
+                                       p))))
+                               (catch Throwable _ nil))))
+                     seq))
+          combined (if ext-ps
+                     (str base "\n\n" (str/join "\n\n" ext-ps))
+                     base)
+          ;; 1. System message — svar wraps in <objective> tags
+          objective (str "<objective>\n" combined "\n</objective>")
+          ;; 2. Per-iteration context (live snapshot for current env state)
+          iter-ctx  (iterate/build-iteration-context env
+                      {:iteration 0
+                       :current-max-iterations rlm-spec/MAX_ITERATIONS
+                       :prior-thinking nil
+                       :prev-expressions nil
+                       :prev-iteration nil
+                       :call-counts-atom (atom {})})
+          ;; 3. Spec schema
+          has-reasoning? (loop-core/provider-has-reasoning? (:router env))
+          iter-spec (if has-reasoning?
+                      rlm-spec/ITERATION_SPEC_REASONING
+                      rlm-spec/ITERATION_SPEC_NON_REASONING)
+          spec-prompt (svar-spec/spec->prompt iter-spec)]
+      (str "═══ MESSAGE 1: System (role: system) ═══\n"
+        objective
+        "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
+        "<the user's message appears here>\n"
+        (when iter-ctx
+          (str "\n═══ MESSAGE 3: Iteration context (role: user, iter 1+) ═══\n"
+            iter-ctx "\n"))
+        "\n═══ MESSAGE 4: Spec schema (role: user, appended by svar) ═══\n"
+        spec-prompt))))
 
 (defn send!
   ([id messages] (send! id messages {}))

@@ -194,10 +194,11 @@
                             :inspect
                             (with-dialog-lock
                               #(let [conv-id (get-in @state/app-db [:conv :id])
-                                     prompt  (when conv-id
-                                               (or (:system-prompt (conversations/by-id conv-id))
-                                                 "(no system prompt)"))]
-                                 (dlg/text-viewer-dialog! screen "System Prompt" (or prompt "(no conversation)"))))
+                                     prompt  (if conv-id
+                                               (or (conversations/effective-system-prompt conv-id)
+                                                 "(no system prompt)")
+                                               "(no conversation)")]
+                                 (dlg/text-viewer-dialog! screen "System Prompt" prompt)))
 
                             :quit nil  ;; handled separately
                             nil)))]

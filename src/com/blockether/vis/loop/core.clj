@@ -61,7 +61,7 @@
   [router]
   (first (mapcat :models (:providers router))))
 
-(defn- provider-has-reasoning?
+(defn provider-has-reasoning?
   "True when the configured root model exposes reasoning support."
   [router]
   (boolean (:reasoning? (resolve-effective-model router))))
@@ -371,7 +371,7 @@
 (defn build-system-prompt [{:keys [system-prompt]}] (or system-prompt ""))
 
 
-;; ── Legacy helpers (used by old iteration loop below, pending removal) ──────
+;; ── Internal helpers (shared across iteration loop + context assembly) ────────
 
 (def ^:const MAX_RESULT_DISPLAY_CHARS 30000)
 
