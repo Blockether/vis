@@ -175,11 +175,18 @@
         :else
         (do (stdout! (str (:answer result)))
           (when (:duration-ms result)
-            (stdout! (str "\n[" (:iterations result) " iterations"
-                       ", " (:duration-ms result) "ms"
-                       (when-let [c (some-> result :cost :total-cost)]
-                         (str ", $" (String/format java.util.Locale/US "%.4f" (into-array Object [(double c)]))))
-                       "]")))))
+            (let [tokens (:tokens result)
+                  ctx-in  (some-> tokens :input)
+                  ctx-out (some-> tokens :output)
+                  cost    (some-> result :cost :total-cost)]
+              (stdout! (str "\n["
+                         (:iterations result) " iterations"
+                         (when ctx-in  (str ", ctx-in: "  ctx-in))
+                         (when ctx-out (str ", ctx-out: " ctx-out))
+                         ", " (:duration-ms result) "ms"
+                         (when cost
+                           (str ", ~$" (String/format java.util.Locale/US "%.4f" (into-array Object [(double cost)]))))
+                         "]"))))))
       (shutdown-agents))))
 
 ;;; ── CLI Presentation Helpers ───────────────────────────────────────────────

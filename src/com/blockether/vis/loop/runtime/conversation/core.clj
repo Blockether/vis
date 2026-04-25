@@ -17,16 +17,6 @@
   (swap! cache assoc id {:environment env :lock (Object.)})
   {:id id :environment env})
 
-(defn make-on-chunk-projector
-  ([] (make-on-chunk-projector nil))
-  ([{:keys [on-update]}]
-   (let [timeline-atom (atom [])]
-     (fn [chunk]
-       (let [entry {:event :chunk :chunk chunk}
-             timeline (swap! timeline-atom conj entry)]
-         (when on-update (on-update timeline chunk))
-         timeline)))))
-
 (defn error->user-message [^Throwable e]
   (or (ex-message e) "Internal error"))
 

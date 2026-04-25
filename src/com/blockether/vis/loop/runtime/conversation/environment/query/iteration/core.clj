@@ -244,8 +244,8 @@
       [])
     (catch Throwable t
       (tel/log! {:level :warn
-                   :data {:error (ex-message t) :query-id query-id}
-                   :msg "load-prior-thinking-chain failed"})
+                 :data {:error (ex-message t) :query-id query-id}
+                 :msg "load-prior-thinking-chain failed"})
       [])))
 
 (defn build-prior-thinking [_rlm-env db-info query-id]
@@ -280,8 +280,8 @@
                                final-answer)}))))
       (catch Throwable t
         (tel/log! {:level :warn
-                     :data {:error (ex-message t) :conversation-id conversation-id}
-                     :msg "build-cross-query-handover failed"})
+                   :data {:error (ex-message t) :conversation-id conversation-id}
+                   :msg "build-cross-query-handover failed"})
         nil))))
 
 ;; ---------------------------------------------------------------------------
@@ -421,15 +421,13 @@
         iteration (:iteration ctx)]
     (if (infrastructure-error? ex-data-map)
       (do (tel/log! {:level :error
-                       :data (assoc (format-exception-short e) :iteration iteration)
-                      }
-  "Provider infrastructure error — aborting iteration loop")
+                     :data  (assoc (format-exception-short e) :iteration iteration)}
+            "Provider infrastructure error — aborting iteration loop")
         (throw e))
       (let [iter-err (exception->iter-err e ctx)]
         (tel/log! {:level :warn
-                     :data (assoc (format-exception-short e) :iteration iteration)
-                    }
-  "RLM iteration failed, feeding error to LLM")
+                   :data (assoc (format-exception-short e) :iteration iteration)}
+          "RLM iteration failed, feeding error to LLM")
         {::iteration-error iter-err}))))
 
 ;; ---------------------------------------------------------------------------
@@ -449,8 +447,8 @@
           (transient {}) sandbox)))
     (catch Exception e
       (tel/log! {:level :warn :id ::get-locals-fallback
-                   :data {:error (ex-message e)}
-                   :msg "Failed to read sandbox locals, returning empty map"})
+                 :data {:error (ex-message e)}
+                 :msg "Failed to read sandbox locals, returning empty map"})
       {})))
 
 ;; ---------------------------------------------------------------------------
@@ -575,22 +573,22 @@
 
                                  mustache-missing)
               expressions (when expr-results
-                           (mapv (fn [idx code result]
-                                   {:id idx :code code
-                                    :result (:result result) :stdout (:stdout result)
-                                    :stderr (:stderr result) :error (:error result)
-                                    :execution-time-ms (:execution-time-ms result)
-                                    :repaired? (:repaired? result)})
-                             (range) code-blocks expr-results))]
+                            (mapv (fn [idx code result]
+                                    {:id idx :code code
+                                     :result (:result result) :stdout (:stdout result)
+                                     :stderr (:stderr result) :error (:error result)
+                                     :execution-time-ms (:execution-time-ms result)
+                                     :repaired? (:repaired? result)})
+                              (range) code-blocks expr-results))]
           (if validation-error
             {:thinking thinking
-               :next-model next-model :next-reasoning next-reasoning
-               :expressions (or expressions
-                             [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
-                               :error validation-error}])
-               :final-result nil :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :llm-messages messages :llm-model (str resolved-model)}
+             :next-model next-model :next-reasoning next-reasoning
+             :expressions (or expressions
+                            [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
+                              :error validation-error}])
+             :final-result nil :api-usage api-usage
+             :duration-ms (or (:duration-ms ask-result) 0)
+             :llm-messages messages :llm-model (str resolved-model)}
             (let [sources (vec (or (:sources parsed) []))
                   final-result (cond-> {:final? true
                                         :answer final-answer
@@ -629,16 +627,16 @@
               code-blocks (mapv :block executed)
               expression-results (mapv :result executed)
               expressions (mapv (fn [idx code result]
-                                 {:id idx
-                                  :code code
-                                  :result (:result result)
-                                  :stdout (:stdout result)
-                                  :stderr (:stderr result)
-                                  :error (:error result)
-                                  :execution-time-ms (:execution-time-ms result)
-                                  :timeout? (:timeout? result)
-                                  :repaired? (:repaired? result)})
-                           (range) code-blocks expression-results)]
+                                  {:id idx
+                                   :code code
+                                   :result (:result result)
+                                   :stdout (:stdout result)
+                                   :stderr (:stderr result)
+                                   :error (:error result)
+                                   :execution-time-ms (:execution-time-ms result)
+                                   :timeout? (:timeout? result)
+                                   :repaired? (:repaired? result)})
+                            (range) code-blocks expression-results)]
           {:thinking thinking
            :next-model next-model :next-reasoning next-reasoning
            :expressions (strip-noop-expressions expressions) :final-result nil :api-usage api-usage
