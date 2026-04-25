@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.storage.schema
+(ns com.blockether.vis.persistance.spec
   (:require
    [charred.api :as json]
    [clojure.java.process :as proc]
@@ -43,7 +43,7 @@
   (* 30 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
-  "Dynamic timeout in ms for SCI code eval. Bound per query-env! call via
+  "Dynamic timeout in ms for SCI code eval. Bound per vis! call via
    :eval-timeout-ms opt. Nested queries inherit outer binding. Clamped at
    the rlm.clj API boundary to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   DEFAULT_EVAL_TIMEOUT_MS)
@@ -53,12 +53,12 @@
 ;; =============================================================================
 
 (def DEFAULT_CONCURRENCY
-  "Default concurrency settings. Applied when :concurrency opt is absent from query-env!."
+  "Default concurrency settings. Applied when :concurrency opt is absent from vis!."
   {:max-parallel-llm   8
    :http-timeout-ms    20000})
 
 (def ^:dynamic *concurrency*
-  "Merged concurrency settings for the current query-env! session."
+  "Merged concurrency settings for the current vis! session."
   DEFAULT_CONCURRENCY)
 
 (defn clamp-eval-timeout-ms
@@ -268,23 +268,22 @@
    thinking/non-thinking variant, the second gates the :sources field.
 
    Keep this as the single call site — `ITERATION_SPEC_*` constants below
-   are legacy defaults kept for tests that don't thread env state."
+   are fixed variants for callers that need static shapes."
   [{:keys [has-reasoning? has-documents?]}]
   (make-iteration-spec {:include-thinking? (not has-reasoning?)
                         :include-sources?  (boolean has-documents?)}))
 
 (def ITERATION_SPEC_BASE
-  "Legacy default — :sources INCLUDED, no :thinking. Kept for backwards
-   compat with existing consumers; agent loop should use `iteration-spec`
-   so :sources tracks document-tool activation."
+  "Fixed variant — :sources INCLUDED, no :thinking.
+   Prefer `iteration-spec` so :sources tracks document-tool activation."
   (make-iteration-spec {:include-thinking? false :include-sources? true}))
 
 (def ITERATION_SPEC_NON_REASONING
-  "Legacy default with :thinking. See ITERATION_SPEC_BASE note."
+  "Fixed variant with :thinking. See ITERATION_SPEC_BASE note."
   (make-iteration-spec {:include-thinking? true :include-sources? true}))
 
 (def ITERATION_SPEC_REASONING
-  "Legacy default — alias for ITERATION_SPEC_BASE."
+  "Fixed reasoning variant — alias for ITERATION_SPEC_BASE."
   ITERATION_SPEC_BASE)
 
 ;; SUB_RLM_QUERY_SPEC was removed — sub-RLMs now run through the same
@@ -302,7 +301,7 @@
   [^bytes bs]
   (.encodeToString (Base64/getEncoder) bs))
 
-  "Dynamic var for max recursion depth. Bound per query-env! call."
+  "Dynamic var for max recursion depth. Bound per vis! call."
 
 (def ^:dynamic *rlm-ctx*
   "Dynamic context for RLM debug logging. Bind with {:rlm-debug? true :rlm-phase :phase-name :rlm-env-id \"...\"}."
@@ -377,7 +376,7 @@
                  ::spec/description "Question category"})))
 
 (def QUESTIONIFY_SPEC
-  "Spec for query-env-qa! Q&A generation output."
+  "Spec for vis-qa! Q&A generation output."
   (spec/spec
     {:refs [QUESTION_SPEC]}
     (spec/field {::spec/name :questions

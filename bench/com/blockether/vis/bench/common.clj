@@ -10,10 +10,9 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.core :as rlm]
-   [com.blockether.vis.loop.query.core :as rlm-query]
-   [com.blockether.vis.loop.storage.db :as rlm-db]
-   [com.blockether.vis.loop.storage.trajectory :as trajectory]
-   [taoensso.trove :as trove])
+   [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
+   [com.blockether.vis.persistance.core :as db]
+   [taoensso.telemere :as tel])
   (:import
    (java.nio.file Files)
    (java.time Instant)
@@ -53,38 +52,21 @@
     (.mkdirs (io/file dir))
     dir))
 
-(defn- pull-conversation
-  "Pulls the conversation entity associated with a query from db-info.
-   `conv-ref` is the :query/conversation value stored on the query
-   (either a UUID entity-id or an :entity/id lookup vector)."
-  [db-info conv-ref]
-  (when (and db-info conv-ref)
-    (let [conv-id (cond
-                    (uuid? conv-ref)   conv-ref
-                    (vector? conv-ref) (second conv-ref)
-                    :else              nil)]
-      (when conv-id
-        (rlm-db/db-get-conversation db-info conv-id)))))
-
 (defn persist-trajectory!
   "Extracts all queries and iteration snapshots from an RLM env's DB and
-   writes them to a fully denormalized EDN file. Conversation data (system-prompt,
-   model, env-id) is inlined into each query."
+   writes them to a denormalized EDN file."
   [env edn-path]
-  (when-let [db-info-atom (:db-info-atom env)]
-    (when-let [db-info @db-info-atom]
-      (let [queries (trajectory/list-queries db-info)]
-        (when (seq queries)
-          (let [enriched (mapv (fn [q]
-                                 (let [conv  (pull-conversation db-info (:query/conversation q))
-                                       iters (vec (trajectory/list-iterations db-info (:query/id q)))]
-                                   (-> q
-                                     (dissoc :query/conversation)
-                                     (assoc :conversation conv
-                                       :iterations (mapv #(dissoc % :iteration/query) iters)))))
-                           queries)]
-            (spit edn-path (pr-str enriched))
-            edn-path))))))
+  (when-let [db-info (:db-info env)]
+    (let [conv-id (:conversation-id env)
+          conv    (when conv-id (db/db-get-conversation db-info conv-id))
+          queries (when conv-id (db/db-list-conversation-queries db-info conv-id))]
+      (when (seq queries)
+        (let [enriched (mapv (fn [q]
+                               (let [iters (vec (db/db-list-query-iterations db-info [:id (:id q)]))]
+                                 (assoc q :conversation conv :iterations iters)))
+                         queries)]
+          (spit edn-path (pr-str enriched))
+          edn-path)))))
 
 (defn cleanup-temp-db!
   "Recursively deletes a temp DB directory. Safe to call on missing paths."
@@ -95,8 +77,8 @@
 (def ^:private DEFAULT_QUERY_ENV_OPTS
   {:max-iterations 20 :debug? true})
 
-(defn run-query-env-task!
-  "High-level wrapper that runs a single task through rlm-query/query-env! with full
+(defn run-vis-task!
+  "High-level wrapper that runs a single task through query/vis! with full
    trajectory plumbing: temp SQLite DB per task, trajectory persisted as EDN,
    DB cleaned up afterwards. Removes the boilerplate from every benchmark.
 
@@ -110,7 +92,7 @@
      :prompt-fn (task) -> String - builds the user prompt from the task
      :score-fn  (task result duration-ms) -> result-map - scores the outcome
                 and shapes the final per-task record
-     :query-opts Map, optional - extra opts merged into query-env! call
+     :query-opts Map, optional - extra opts merged into vis! call
                  (e.g. :system-prompt for bench-specific instructions)
 
    Returns whatever score-fn returns."
@@ -124,7 +106,7 @@
         env      (rlm/create-env router {:db db-path})
         start    (System/currentTimeMillis)]
     (try
-      (let [result   (rlm-query/query-env! env [(llm/user (prompt-fn task))]
+      (let [result   (query/vis! env [(llm/user (prompt-fn task))]
                        (merge DEFAULT_QUERY_ENV_OPTS {:model model} query-opts))
             duration (- (System/currentTimeMillis) start)]
         (persist-trajectory! env edn-path)
@@ -194,9 +176,10 @@
          :duration-ms (- (System/currentTimeMillis) start)
          :timed-out?  false})
       (catch Exception e
-        (trove/log! {:level :warn :id ::pi-local-error
+        (tel/log! {:level :warn :id ::pi-local-error
                      :data {:error (ex-message e)}
-                     :msg "Pi-local LLM call failed"})
+}
+                     "Pi-local LLM call failed")
         {:output nil :duration-ms (- (System/currentTimeMillis) start) :timed-out? true}))))
 
 ;; =============================================================================
@@ -217,7 +200,7 @@
         result-lines (map #(merge base {:type :result} %) results)
         content    (str/join "\n" (map pr-str result-lines))]
     (spit filename content)
-    (trove/log! {:level :info :id ::bench-saved :data {:file filename} :msg "Benchmark results saved"})
+    (tel/log! {:level :info :id ::bench-saved :data {:file filename} :msg "Benchmark results saved"})
     filename))
 
 ;; =============================================================================
@@ -304,7 +287,7 @@
 
    Args:
      bench-name  - benchmark name for results file
-     agent-name  - :query-env or :pi
+     agent-name  - :vis or :pi
      model       - model name
      items       - vector of items to evaluate
      total-ds    - total dataset size (for display)
@@ -332,19 +315,21 @@
                           (let [eval-result (try
                                               (eval-fn item)
                                               (catch Throwable e
-                                                (trove/log! {:level :warn :id ::bench-error
+                                                (tel/log! {:level :warn :id ::bench-error
                                                              :data {:idx idx
                                                                     :item (select-keys item [:id :title :task_id :instance_id])
                                                                     :error (ex-message e)}
-                                                             :msg "Evaluation failed"})
+}
+                                                             "Evaluation failed")
                                                 {:error (ex-message e) :correct? false :duration-ms 0}))]
                             [(inc idx) item eval-result])))
                       batch)]
         (doseq [[f [idx orig-item]] (map vector futures batch)]
           (let [[q-num item eval-result] (or (deref f problem-timeout-ms nil)
-                                           (do (trove/log! {:level :warn :id ::task-timeout
+                                           (do (tel/log! {:level :warn :id ::task-timeout
                                                             :data {:idx idx :item (select-keys orig-item [:id :title :task_id :instance_id])}
-                                                            :msg "Task timed out (10 min)"})
+}
+                                                            "Task timed out (10 min)")
                                              [(inc idx) orig-item {:error "Task timeout (10 min)" :correct? false :duration-ms 0}]))
                 correct?   (boolean (:correct? eval-result))
                 error?     (boolean (:error eval-result))
@@ -368,7 +353,7 @@
         (let [s         @state
               done      (:done s)
               avg-ms    (if (pos? done) (/ (double (:total-duration-ms s)) done) 0.0)
-              avg-iters (if (and (= agent-name :query-env) (pos? done))
+              avg-iters (if (and (= agent-name :vis) (pos? done))
                           (/ (double (:total-iterations s)) done)
                           nil)]
           (print-progress done total-q (:correct s) (:errors s) agent-name avg-iters avg-ms)
@@ -381,7 +366,7 @@
           avg-toks  {:input  (/ (double (:total-input-tokens s)) n)
                      :output (/ (double (:total-output-tokens s)) n)}
           accuracy  (if (pos? total-q) (/ (double (:correct s)) total-q) 0.0)
-          avg-iters (if (= agent-name :query-env)
+          avg-iters (if (= agent-name :vis)
                       (/ (double (:total-iterations s)) n)
                       nil)
           durations (sort (keep :duration-ms (:results s)))

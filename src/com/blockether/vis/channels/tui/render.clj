@@ -234,19 +234,12 @@
 
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 
-(def ^:private time-fmt (SimpleDateFormat. "HH:mm"))
-(def ^:private date-fmt (SimpleDateFormat. "MMM d, HH:mm"))
-
 (defn- format-timestamp
-  "Format timestamp for display. Shows 'HH:mm' for today, 'MMM d, HH:mm' for older."
+  "Format timestamp for display in local timezone. Always dd-MM-yyyy HH:mm."
   [^java.util.Date ts]
   (when ts
-    (let [now   (java.util.Date.)
-          today (.format (SimpleDateFormat. "yyyyMMdd") now)
-          day   (.format (SimpleDateFormat. "yyyyMMdd") ts)]
-      (if (= today day)
-        (.format time-fmt ts)
-        (.format date-fmt ts)))))
+    (let [tz (java.util.TimeZone/getDefault)]
+      (.format (doto (SimpleDateFormat. "dd-MM-yyyy HH:mm") (.setTimeZone tz)) ts))))
 
 (defn- format-duration
   "Format millisecond duration as human-readable. e.g. '2.3s', '1m 15s'"
@@ -259,35 +252,44 @@
                          s (quot (mod ms 60000) 1000)]
                      (str m "m " s "s")))))
 
+(def ^:private thinking-marker "\u200B") ;; zero-width space marks italic lines
+
 (defn draw-chat-bubble!
   "Draw a chat message bubble at the given row.
    `msg` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
    Optional `:duration-ms` for assistant response time.
    `left` and `max-w` define the horizontal bounds.
    Returns the number of screen rows consumed (including spacing)."
-  [g {:keys [role text timestamp duration-ms]} start-row left max-w]
+  [g {:keys [role text timestamp duration-ms model iterations tokens]} start-row left max-w]
   (let [user?     (= role :user)
         label     (if user? "you" "vis")
         label-w   (count label)
-        bubble-w  (min max-w (max 20 (+ 4 (min (count text) (- max-w 4)))))
+        bubble-w  (min max-w (max 60 (+ 4 (min (count text) (- max-w 4)))))
         content-w (- bubble-w 4)
         lines     (wrap-text text content-w)
         bubble-h  (+ (count lines) 2)
-        bx        (if user? (+ left (- max-w bubble-w)) left)
+        bx        (if user? left (+ left (- max-w bubble-w)))
         bg-color  (if user? t/user-bubble-bg t/ai-bubble-bg)
         fg-color  (if user? t/user-bubble-fg t/ai-bubble-fg)
         brd-color (if user? t/user-bubble-border t/ai-bubble-border)
         role-fg   (if user? t/user-role-fg t/ai-role-fg)
         inner-w   (- bubble-w 2)
-        ;; Metadata line below bubble (assistant only)
         time-str  (format-timestamp timestamp)
         dur-str   (format-duration duration-ms)
-        meta-str  (when (and (not user?) (or time-str dur-str))
-                    (str/join "  " (remove nil? [time-str (when dur-str (str "⏱ " dur-str))])))]
+        tok-in    (when-let [n (:input tokens)] (str "↑" n))
+        tok-out   (when-let [n (:output tokens)] (str "↓" n))
+        iter-str  (when (and (not user?) iterations) (str iterations (if (= 1 iterations) " iter" " iters")))
+        ;; Below-bubble meta (assistant only): model · iters · duration · tokens
+        meta-parts (when (not user?)
+                     (remove nil? [model iter-str (when dur-str (str "⏱ " dur-str)) tok-in tok-out]))
+        meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
-    ;; Role label (above bubble)
+    ;; Label row: role name left, timestamp right-aligned
     (p/set-colors! g role-fg t/terminal-bg)
-    (p/put-str! g (if user? (+ bx bubble-w (- label-w) -1) (inc bx)) start-row label)
+    (p/put-str! g (inc bx) start-row label)
+    (when time-str
+      (p/set-colors! g t/dialog-hint t/terminal-bg)
+      (p/put-str! g (+ bx (- bubble-w (count time-str) 1)) start-row time-str))
 
     (let [btop (inc start-row)]
       ;; Fill interior
@@ -307,17 +309,20 @@
         (p/set-char! g bx r Symbols/SINGLE_LINE_VERTICAL)
         (p/set-char! g (+ bx bubble-w -1) r Symbols/SINGLE_LINE_VERTICAL))
 
-      ;; Text content
-      (p/set-colors! g fg-color bg-color)
+      ;; Text content — lines prefixed with thinking-marker render italic
       (doseq [[i line] (map-indexed vector lines)]
-        (p/put-str! g (+ bx 2) (+ btop 1 i) line))
+        (if (str/starts-with? line thinking-marker)
+          (do (p/set-colors! g t/dialog-hint bg-color)
+            (p/styled g [p/ITALIC]
+              (p/put-str! g (+ bx 2) (+ btop 1 i) (subs line (count thinking-marker)))))
+          (do (p/set-colors! g fg-color bg-color)
+            (p/put-str! g (+ bx 2) (+ btop 1 i) line))))
 
-      ;; Metadata line (assistant only, offset left from bubble right edge)
+      ;; Below-bubble meta (assistant only): model · iters · duration · tokens
       (let [meta-row (+ btop bubble-h)]
         (when meta-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/styled g [p/ITALIC]
-            (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 2))) meta-row meta-str))))
+          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str)))
 
       ;; Total rows consumed: label(1) + bubble-h + meta(1) + gap(1)
       (+ 1 bubble-h 2))))
@@ -326,7 +331,7 @@
   "Calculate rows a chat bubble will consume without drawing.
    label(1) + border(2) + wrapped-lines + meta(1) + gap(1)."
   [{:keys [text]} max-w]
-  (let [bubble-w  (min max-w (max 20 (+ 4 (min (count text) (- max-w 4)))))
+  (let [bubble-w  (min max-w (max 60 (+ 4 (min (count text) (- max-w 4)))))
         content-w (- bubble-w 4)
         lines     (wrap-text text content-w)]
     (+ 1 (count lines) 2 2)))
@@ -355,28 +360,20 @@
           first-line)))))
 
 (defn- format-iteration-entry
-  "Turn one progress iteration into display lines mirroring the web's
-   iteration card: an `ITER N` header, the LLM's reasoning narrative
-   (wrapped to bubble width, indented), then one `❯ <code>` row per
-   streamed expression. Reasoning is shown verbatim — users were going
-   blind without it."
-  [{:keys [iteration thinking code final?]} code-width]
-  (let [header        (str "ITER " (inc iteration)
-                        (when final? "  · finalizing"))
-        thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
-                         (into [(str progress-thinking-prefix "» thinking")]
-                           (map #(str progress-thinking-prefix "  " %)
-                             (wrap-text (str/trim thinking)
-                               (max 1 (- code-width 4))))))
+  "Format one iteration's thinking + code into display lines.
+   Thinking lines get the thinking-marker prefix for italic rendering."
+  [{:keys [thinking code]} code-width]
+  (let [thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
+                         (mapv #(str thinking-marker "> " %)
+                           (wrap-text (str/trim thinking)
+                             (max 1 (- code-width 2)))))
         code-lines    (when (seq code)
                         (into []
                           (keep (fn [form]
                                   (when-let [one (truncate-single-line form code-width)]
                                     (str progress-code-prefix one))))
                           code))]
-    (-> [header]
-      (into thinking-lines)
-      (into code-lines))))
+    (into (or thinking-lines []) code-lines)))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -399,15 +396,32 @@
           (mapcat #(format-iteration-entry % content-w))
           iterations)))))
 
+(defn format-answer-with-thinking
+  "Build the final bubble text: thinking trace + answer.
+   `trace` is the progress iterations vec [{:thinking :code} ...]."
+  [answer trace bubble-w]
+  (let [content-w (max 10 (- bubble-w 4))
+        trace-lines (when (seq trace)
+                      (into []
+                        (mapcat #(format-iteration-entry % content-w))
+                        trace))
+        answer-str (or answer "")]
+    (if (seq trace-lines)
+      (str (str/join "\n" trace-lines) "\n\n" answer-str)
+      answer-str)))
+
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
+
+(def ^:private msg-margin-top 1)
+(def ^:private msg-margin-bottom 1)
 
 (defn draw-messages-area!
   "Draw structured chat messages as bubbles inside a bordered area with scroll.
    `messages` is a vec of {:role :user|:assistant, :text str}.
    `scroll` is a row offset into the virtual content, or nil for auto-bottom."
   [g messages box-top box-bottom cols scroll]
-  (let [inner-h   (- box-bottom box-top 1)
-        text-top  (inc box-top)
+  (let [inner-h   (- box-bottom box-top 1 msg-margin-top msg-margin-bottom)
+        text-top  (+ (inc box-top) msg-margin-top)
         bubble-w  (- cols 4)
         ;; Pre-compute cumulative heights for scroll math
         heights   (mapv #(bubble-height % bubble-w) messages)

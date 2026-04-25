@@ -1,10 +1,10 @@
-{:paths                                                                      ["src" "resources"]
+{:paths ["src" "resources"]
 
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
   hiccup/hiccup                             {:mvn/version "2.0.0"}
   ;; LLM structured output
-  com.blockether/svar                       {:local/root "../svar"}
+  com.blockether/svar                       {:mvn/version "0.3.8"}
   ;; Anomaly - standardized error categories (used by RLM)
   com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)
@@ -15,24 +15,12 @@
   metosin/reitit-ring                       {:mvn/version "0.10.1"}
   ;; nREPL — embedded in dev + prod
   nrepl/nrepl                               {:mvn/version "1.7.0"}
-  ;; Structural code editing — clojure-mcp (form editing core only)
-  io.github.bhauman/clojure-mcp             {:git/tag              "v0.3.1"
-                                             :git/sha    "81005ce"
-                                             :exclusions [io.modelcontextprotocol.sdk/mcp
-                                                          dev.langchain4j/langchain4j
-                                                          dev.langchain4j/langchain4j-open-ai
-                                                          dev.langchain4j/langchain4j-anthropic
-                                                          dev.langchain4j/langchain4j-google-ai-gemini
-                                                          org.apache.tika/tika-core
-                                                          pogonos/pogonos
-                                                          org.clojure/tools.cli
-                                                          org.clj-commons/pretty
-                                                          com.taoensso/timbre
-                                                          org.slf4j/slf4j-nop]}
-  ;; Structured logging — telemere for vis, trove for RLM
+  ;; Structured telemetry
   com.taoensso/telemere                     {:mvn/version "1.2.1"}
   com.taoensso/telemere-slf4j               {:mvn/version "1.2.1"}
-  com.taoensso/trove                        {:mvn/version "1.1.0"}
+
+  ;; Binary serialization for expression_state.result/error blobs
+  com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}
   ;; Fast EDN parsing
   io.github.tonsky/fast-edn                 {:mvn/version "1.1.3"}
   ;; i18n — pluralization and translations
@@ -44,7 +32,7 @@
   ;; JSON serialization (CLI output, agent results)
   com.cnuernber/charred                     {:mvn/version "1.038"}
   ;; Line-by-line diff (unified diff format for edit/write tool rendering)
-  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.16"}
+
   ;; ---- RLM stack (moved from svar) ----
   ;; Filesystem utilities
   babashka/fs                               {:mvn/version "0.5.32"}
@@ -80,12 +68,11 @@
   io.github.tonsky/clojure-plus             {:mvn/version "1.7.2"}
   ;; jmustache — Mustache templating (RLM answer interpolation)
   com.samskivert/jmustache                  {:mvn/version "1.16"}
-  ;; editscript — structural diff for Clojure data (var version diffs)
-  juji/editscript                           {:mvn/version "0.6.4"}
+
   ;; RE2/J — linear-time regex (ReDoS-safe). Used by the grep tool so
   ;; agent-supplied patterns can never burn the box with catastrophic
   ;; backtracking. No native deps, pure Java, license Go-BSD.
-  com.google.re2j/re2j                      {:mvn/version "1.8"}}
+}
 
  :aliases
  {:dev   {:extra-paths  ["dev"]

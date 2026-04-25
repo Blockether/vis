@@ -25,6 +25,7 @@
 ;; per-entrypoint dirs (~/.vis/sessions/<uuid>/, ~/.vis/telegram/<chat-id>/,
 ;; ~/.vis/agents/<name>/, ~/.vis/rlm/) — all collapsed here.
 (def db-path (str config-dir "/vis.mdb"))
+(def default-db-spec {:backend :sqlite :path db-path})
 
 ;; Logging path shared by TUI, CLI, Telegram, and web.
 (def ^:private log-path (str config-dir "/vis.log"))
@@ -189,17 +190,23 @@
                           :models   (mapv (fn [m] {:name m}) (:default-models be))}
                    (:api-key be) (assoc :api-key (:api-key be)))]}))
 
-(defn load-config
-  "Load config in svar-native syntax.
-   ~/.vis/config.edn takes priority. Falls back to BLOCKETHER_* env vars."
+(defn load-config-raw
+  "Load raw config.edn map (or nil on read/parse errors)."
   []
   (let [f (io/file config-path)]
-    (or (when (.exists f)
-          (try (let [raw (edn/read-string (slurp f))]
-                 (when (and (map? raw) (vector? (:providers raw)))
-                   raw))
-            (catch Exception _ nil)))
-      (blockether-env-config))))
+    (when (.exists f)
+      (try
+        (let [raw (edn/read-string (slurp f))]
+          (when (map? raw) raw))
+        (catch Exception _ nil)))))
+
+(defn load-config
+  "Load provider config in svar-native syntax.
+   ~/.vis/config.edn takes priority. Falls back to BLOCKETHER_* env vars."
+  []
+  (or (some-> (load-config-raw)
+        ((fn [raw] (when (vector? (:providers raw)) raw))))
+    (blockether-env-config)))
 
 (defn save-config!
   "Save svar-native config to ~/.vis/config.edn."
@@ -219,3 +226,21 @@
      (throw (ex-info (str "No provider config. Create ~/.vis/config.edn "
                        "(see SAMPLE_CONFIG.edn) or set BLOCKETHER_OPENAI_API_KEY env var.")
               {})))))
+
+(defn resolve-db-spec
+  "Resolve DB spec.
+
+   Priority:
+   1) explicit-db-spec arg
+   2) VIS_DB_PATH env var
+   3) :db-spec in ~/.vis/config.edn
+   4) default sqlite path (~/.vis/vis.mdb)
+
+   Returns a db-spec accepted by persistance/create-rlm-conn."
+  ([] (resolve-db-spec nil))
+  ([explicit-db-spec]
+   (or explicit-db-spec
+     (when-let [env-path (System/getenv "VIS_DB_PATH")]
+       {:backend :sqlite :path env-path})
+     (:db-spec (load-config-raw))
+     default-db-spec)))

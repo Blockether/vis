@@ -63,8 +63,10 @@
     (.refresh screen Screen$RefreshType/DELTA)))
 
 (defn run-chat!
-  "Start the fullscreen chat TUI. Blocks until user quits."
-  []
+  "Start the fullscreen chat TUI. Blocks until user quits.
+   Optional `opts` map: {:conversation-id uuid-string} to resume."
+  ([] (run-chat! {}))
+  ([opts]
   (state/init!)
 
   ;; Load persisted config
@@ -83,9 +85,13 @@
           (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
             (state/dispatch [:set-config c]))))
 
-      ;; Init conversation with config — fresh :vis conversation each boot.
+      ;; Init conversation: resume if --conversation-id given, else fresh.
       (when-let [config (:config @state/app-db)]
-        (let [{:keys [id history]} (chat/make-conversation config)]
+        (let [{:keys [id history]}
+              (if-let [cid (:conversation-id opts)]
+                (or (chat/resume-conversation cid)
+                    (throw (ex-info (str "Conversation not found: " cid) {:id cid})))
+                (chat/make-conversation config))]
           (state/dispatch [:init-conversation {:id id} history])))
 
       (loop []
@@ -152,7 +158,12 @@
 
                   :continue (recur)))))))
       (finally
-        (when-let [conv (:conv @state/app-db)]
-          (chat/dispose! conv))
-        (.setMouseCaptureMode terminal nil)
-        (.stopScreen screen)))))
+        (let [conv-id (some-> @state/app-db :conv :id)]
+          (when-let [conv (:conv @state/app-db)]
+            (chat/dispose! conv))
+          (.setMouseCaptureMode terminal nil)
+          (.stopScreen screen)
+          (when conv-id
+            (.println config/original-stdout
+              (str "\nResume this conversation with:\n"
+                   "  vis chat --conversation-id " conv-id "\n")))))))))

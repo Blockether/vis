@@ -61,7 +61,7 @@
     [com.blockether.vis.config :as config]
     [com.blockether.vis.loop.core :as rlm-core]
     [com.blockether.vis.loop.nudges :as nudges]
-    [com.blockether.vis.loop.storage.db :as rlm-db])
+    [com.blockether.vis.persistance.core :as rlm-db])
   (:import
     [com.knuddels.jtokkit Encodings]
     [com.knuddels.jtokkit.api EncodingType]))
@@ -158,7 +158,7 @@
   [db-info q-id]
   (try
     (let [fetch-entity (requiring-resolve
-                         'com.blockether.vis.loop.storage.sqlite.core/fetch-entity)
+                         'com.blockether.vis.persistance.core/fetch-entity)
           q-row        (fetch-entity db-info (->uuid q-id))
           conv-id      (:parent-id q-row)]
       (if conv-id

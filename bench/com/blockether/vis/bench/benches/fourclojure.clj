@@ -1,7 +1,7 @@
 (ns com.blockether.vis.bench.benches.fourclojure
   "4Clojure benchmark — 151 idiomatic Clojure coding problems.
 
-   Agents: :query-env (svar RLM) | :pi (Pi coding agent)
+   Agents: :vis (svar RLM) | :pi (Pi coding agent)
    Verification: babashka (bb) subprocess.
 
    Usage:
@@ -140,8 +140,8 @@
 ;; Agent eval functions
 ;; =============================================================================
 
-(defn- eval-query-env! [router problem model run-ts debug?]
-  (common/run-query-env-task!
+(defn- eval-vis! [router problem model run-ts debug?]
+  (common/run-vis-task!
     {:bench      "4clojure"
      :router     router
      :task       problem
@@ -216,7 +216,7 @@
   "Runs 4clojure benchmark.
    opts: :agent :model :limit :offset :router"
   [opts]
-  (let [agent-name (get opts :agent :query-env)
+  (let [agent-name (get opts :agent :vis)
         model      (get opts :model "gpt-4o")
         provider   (get opts :provider :blockether)
         pi-model   (str (name provider) "/" model)
@@ -225,8 +225,8 @@
         limit      (get opts :limit nil)
         run-ts     (str (java.time.Instant/now))
 
-        _ (if (and (= agent-name :query-env) (nil? router))
-            (throw (ex-info "Missing :router for query-env agent" {:type :bench/missing-router}))
+        _ (if (and (= agent-name :vis) (nil? router))
+            (throw (ex-info "Missing :router for vis agent" {:type :bench/missing-router}))
             nil)
 
         _ (trove/log! {:level :info :id ::bench-start
@@ -245,7 +245,7 @@
         debug?   (get opts :debug? false)
         local?   (contains? #{:lmstudio :ollama} provider)
         eval-fn  (case agent-name
-                   :query-env (fn [problem] (eval-query-env! router problem model run-ts debug?))
+                   :vis (fn [problem] (eval-vis! router problem model run-ts debug?))
                    :pi        (if local?
                                 (fn [problem] (eval-pi! problem pi-model :router router))
                                 (fn [problem] (eval-pi! problem pi-model))))]
