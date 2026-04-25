@@ -59,7 +59,7 @@
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box."
-  [screen g cols rows {:keys [messages msg-scroll input progress loading?]}]
+  [screen g cols rows {:keys [messages msg-scroll input progress loading? title]}]
   (let [text-rows   (input-text-rows input)
         input-box-h (+ text-rows 2)
         input-top   (- rows input-box-h)
@@ -68,7 +68,7 @@
         bubble-w    (- cols 4)
         effective-messages (messages-with-progress messages progress loading? bubble-w)]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll)
+    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (.refresh screen Screen$RefreshType/DELTA)))
