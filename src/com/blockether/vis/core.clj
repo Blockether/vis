@@ -76,6 +76,6 @@
    `opts`        — Optional map. See query.core/query! for all opts.
 
    Returns map with :answer, :trace, :iterations, :duration-ms,
-   :tokens, :cost, :confidence, :sources, :reasoning.
+   :tokens, :cost, :confidence, :reasoning.
    On failure also :status and :status-id."
   query/query!)

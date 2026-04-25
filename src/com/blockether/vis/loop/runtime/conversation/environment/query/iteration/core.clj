@@ -615,11 +615,9 @@
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages :llm-model (str resolved-model)}
-            (let [sources (vec (or (:sources parsed) []))
-                  final-result (cond-> {:final? true
+            (let [final-result (cond-> {:final? true
                                         :answer final-answer
                                         :confidence confidence}
-                                 (seq sources) (assoc :sources sources)
                                  (:reasoning parsed) (assoc :reasoning (:reasoning parsed)))]
               {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
