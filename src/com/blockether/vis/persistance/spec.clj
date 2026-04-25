@@ -226,7 +226,7 @@
                                           ::spec/type :spec.type/string
                                           ::spec/cardinality :spec.cardinality/one
                                           ::spec/required false
-                                           ::spec/description "Optional final answer for this iteration. NEVER use emoji or emoticons — plain text and standard punctuation only."})
+                                           ::spec/description "Optional final answer for this iteration. Never use emoji/emoticons."})
                              ;; Values-only enum (svar 0.3.2+). Mustache
                              ;; semantics are documented once in the ARCH
                              ;; section of `runtime.prompt`; no need to
@@ -257,7 +257,7 @@
                  (into [(spec/field {::spec/name :thinking
                                      ::spec/type :spec.type/string
                                      ::spec/cardinality :spec.cardinality/one
-                                      ::spec/description "Short reasoning for this iteration. No emoji or emoticons — plain text only."})]
+                                      ::spec/description "Short reasoning for this iteration. Never use emoji/emoticons."})]
                    base-fields)
                  base-fields)]
     (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC]} fields)))
