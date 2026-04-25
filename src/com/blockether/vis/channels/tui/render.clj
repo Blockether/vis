@@ -520,17 +520,11 @@
 
 
 
-(def ^:private subscript-digits
-  {\0 "\u2080" \1 "\u2081" \2 "\u2082" \3 "\u2083" \4 "\u2084"
-   \5 "\u2085" \6 "\u2086" \7 "\u2087" \8 "\u2088" \9 "\u2089"})
-
 (defn- label-text
-  "Format a label string: lowercase letters + subscript digits.
-   Clean, consistent, works in every monospace terminal font.
-   e.g. (label-text \"iteration\" 1) => \"iteration \u2081\""
+  "Format a label string: lowercase text + plain number.
+   e.g. (label-text \"iteration\" 1) => \"iteration 1\""
   ([s] (str/lower-case (str s)))
-  ([s n] (str (str/lower-case (str s)) " "
-           (apply str (map #(get subscript-digits % (str %)) (str n))))))
+  ([s n] (str (str/lower-case (str s)) " " n)))
 
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
