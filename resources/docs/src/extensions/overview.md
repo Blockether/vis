@@ -20,12 +20,15 @@ a single validated unit.
 
 ```mermaid
 flowchart TD
-    Build["1. Build extension<br/>ext/extension {...}"] --> Register
-    Register["2. Register into environment<br/>register-extension!"] --> Activate
-    Activate{"3. Per-query<br/>activation-fn?"}
-    Activate -->|active| Nudge["4. Per-iteration<br/>nudge-fn called"]
+    Build["1. Build extension<br/>ext/extension {...}"] --> Deps
+    Deps{"2. Dependencies met?<br/>ext/requires"}
+    Deps -->|yes| Register["3. Register into environment<br/>register-extension!"]
+    Deps -->|no| Fail(["Throws :extension/missing-dependencies"])
+    Register --> Activate
+    Activate{"4. Per-query<br/>activation-fn?"}
+    Activate -->|active| Nudge["5. Per-iteration<br/>nudge-fn called"]
     Activate -->|inactive| Skip(["Symbols unbound<br/>nudge skipped"])
-    Nudge --> Hooks["5. Per-call hooks<br/>before-fn, fn, after-fn"]
+    Nudge --> Hooks["6. Per-call hooks<br/>before-fn, fn, after-fn"]
 ```
 
 ## Quick Example

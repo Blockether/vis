@@ -26,12 +26,9 @@
 ;; where every per-iteration SYSTEM_NUDGE composer lives (built-in and
 ;; extension-contributed).
 
-(defn rlm-stage!
-  "Log an iteration lifecycle event."
+(defn- log-stage!
   [stage iteration data]
-  (tel/log! {:level :info :id ::rlm-stage
-             :data (merge {:stage stage :iteration iteration
-                           :env-id (:rlm-env-id *rlm-ctx*)} data)}))
+  (tel/log! {:level :info :data (merge {:stage stage :iteration iteration} data)}))
 
 (defn- status->id
   [status]
@@ -403,7 +400,7 @@
    In order:
    1. {:role \"system\"  :content system-prompt}
    2. {:role \"user\"    :content initial-user-content} — the
-      `{:requirement ...}` envelope for the CURRENT turn.
+      the user's query text for the CURRENT turn.
    3. Every entry of `:history-messages` verbatim. Plain-text transcripts
       and multimodal entries alike — the caller owns this slice and
       guarantees it contains NO current-turn message (the current turn
@@ -660,7 +657,7 @@
           model-reasoning (:reasoning ask-result)
           ;; Native reasoning takes priority over spec-parsed thinking
           thinking (or model-reasoning (:thinking parsed))
-          _ (rlm-stage! :llm-response iteration
+          _ (log-stage! :llm-response iteration
               {:has-reasoning (some? model-reasoning)
                :has-final (some? (:final parsed))
                :code-count (count (:code parsed))
@@ -823,15 +820,15 @@
               expression-results
               (map-indexed
                 (fn [idx {:keys [expr time-ms]}]
-                  (rlm-stage! :code-exec iteration
+                  (log-stage! :code-exec iteration
                     {:idx (inc idx) :total total-blocks
                      :code expr :time-ms time-ms})
                   (if-let [err (literal-code-block-error expr)]
-                    (do (rlm-stage! :code-result iteration
+                    (do (log-stage! :code-result iteration
                           {:idx (inc idx) :total total-blocks :error err})
                       {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
                     (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
-                      (rlm-stage! :code-result iteration
+                      (log-stage! :code-result iteration
                         {:idx (inc idx) :total total-blocks
                          :execution-time-ms (:execution-time-ms r)
                          :error (:error r)
@@ -1508,9 +1505,38 @@
               ;; Was last defined in a query that's NOT recent
               (not (contains? recent-ids defining-query-id))))))
       (keys sandbox-map))))
+
+(defn- auto-forget-stale-vars!
+  "Deterministic cleanup at query boundary: remove sandbox vars that
+  (a) have no docstring, and (b) were last defined/redefined more
+  than AUTO_FORGET_STALE_QUERIES queries ago. This replaces the
+  unreliable \"ask LLM to emit :forget\" pattern for scratch vars.
+  DB rows are untouched — (var-history 'sym) can inspect old values."
+  [{:keys [db-info conversation-id sci-ctx initial-ns-keys var-index-atom]}]
+  (when (and db-info conversation-id sci-ctx)
+    (try
+      (let [all-queries    (sort-by :created-at
+                             (db/db-list-conversation-queries db-info conversation-id))
+            recent-ids     (into #{} (map :id) (take-last AUTO_FORGET_STALE_QUERIES all-queries))
+            var-registry   (db/db-latest-var-registry db-info conversation-id)
+            sandbox-map    (get-in @(:env sci-ctx) [:namespaces 'sandbox])
+            candidates     (auto-forget-candidates sandbox-map initial-ns-keys
+                             var-registry recent-ids)]
+        (when (seq candidates)
+          (tel/log! {:level :info :id ::auto-forget
+                     :data {:forgotten (mapv str candidates) :count (count candidates)}
+                     :msg (str "Auto-forget: evicting " (count candidates) " stale vars without docstrings")})
+          (forget-vars! sci-ctx candidates)
+          (when var-index-atom
+            (swap! var-index-atom update :current-revision inc))))
+      (catch Exception e
+        (tel/log! {:level :warn :id ::auto-forget-failed
+                   :data {:error (ex-message e)}
+                   :msg "Auto-forget failed — skipping"})))))
+
 (defn iteration-loop [rlm-env query
                       {:keys [max-context-tokens system-prompt
-                              pre-fetched-context query-id history-messages
+                              query-id history-messages
                               max-iterations max-consecutive-errors max-restarts
                               hooks cancel-atom current-iteration-atom
                               reasoning-default routing]}]
@@ -1539,48 +1565,13 @@
                                             :system-prompt system-prompt
                                             :max-context-tokens max-context-tokens
                                             :env rlm-env})
-        initial-user-content (str "{:requirement " (pr-str query)
-                               (when pre-fetched-context
-                                 (str "\n :plan " (pr-str pre-fetched-context)))
-                               "}")
-        ;; Build initial messages: system + structured {:requirement ...} +
-        ;; caller's verbatim conversation history (plain text AND multimodal).
-        ;; See `assemble-initial-messages` — fix #1 removes the old
-        ;; multimodal-only gate that dropped web/Telegram transcripts.
+        initial-user-content query
         initial-messages (assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
                             :history-messages history-messages})
-        ;; Store initial messages if history tracking is enabled
         db-info (:db-info rlm-env)
-        ;; ── Auto-forget stale vars ──────────────────────────────────────
-        ;; Deterministic cleanup at query boundary: remove sandbox vars that
-        ;; (a) have no docstring, and (b) were last defined/redefined more
-        ;; than AUTO_FORGET_STALE_QUERIES queries ago. This replaces the
-        ;; unreliable "ask LLM to emit :forget" pattern for scratch vars.
-        ;; DB rows are untouched — (var-history 'sym) can inspect old values.
-        _ (when (and db-info (:conversation-id rlm-env) (:sci-ctx rlm-env))
-            (try
-              (let [all-queries (sort-by :created-at
-                                  (db/db-list-conversation-queries db-info (:conversation-id rlm-env)))
-                    recent-ids (into #{}
-                                 (map :id)
-                                 (take-last AUTO_FORGET_STALE_QUERIES all-queries))
-                    var-registry (db/db-latest-var-registry db-info (:conversation-id rlm-env))
-                    sandbox-map (get-in @(:env (:sci-ctx rlm-env)) [:namespaces 'sandbox])
-                    candidates (auto-forget-candidates sandbox-map (:initial-ns-keys rlm-env)
-                                 var-registry recent-ids)]
-                (when (seq candidates)
-                  (tel/log! {:level :info :id ::auto-forget
-                               :data {:forgotten (mapv str candidates) :count (count candidates)}
-                               :msg (str "Auto-forget: evicting " (count candidates) " stale vars without docstrings")})
-                  (forget-vars! (:sci-ctx rlm-env) candidates)
-                  (when-let [via (:var-index-atom rlm-env)]
-                    (swap! via update :current-revision inc))))
-              (catch Exception e
-                (tel/log! {:level :warn :id ::auto-forget-failed
-                             :data {:error (ex-message e)}
-                             :msg "Auto-forget failed — skipping"}))))
+        _ (auto-forget-stale-vars! rlm-env)
         ;; Cost tracking: accumulate token usage across all iterations
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
         accumulate-usage! (fn [api-usage]
@@ -1682,7 +1673,7 @@
           ;; Cooperative cancellation — caller-owned :cancel-atom from query!
           ;; (or an internal per-query atom when not supplied).
           (when cancel-atom @cancel-atom)
-          (do (rlm-stage! :error iteration {:reason :cancelled})
+          (do (log-stage! :error iteration {:reason :cancelled})
             (emit-hook! on-cancel {:iteration iteration
                                    :status :cancelled
                                    :status-id (status->id :cancelled)}
@@ -1709,7 +1700,7 @@
                                       (truncate last-thinking 800) "\n\n"))
                                   "**What to try:** Check the reasoning trace below for partial progress, "
                                   "or rephrase the question more narrowly so the agent can commit to an answer faster.")]
-            (rlm-stage! :error iteration {:reason :max-iterations :max max-iter})
+            (log-stage! :error iteration {:reason :max-iterations :max max-iter})
             (merge {:answer fallback-answer
                     :status :max-iterations
                     :status-id (status->id :max-iterations)
@@ -1727,10 +1718,9 @@
                                      (take 3)
                                      (map #(str "- " (get-in % [:error :message] (str (:error %)))))
                                      (str/join "\n"))
-                    restart-hint (str "{:strategy-restart true\n"
-                                   " :errors " (pr-str failed-summary) "\n"
-                                   " :instruction \"Start fresh with a DIFFERENT strategy. Do NOT repeat the same approach. Consider: different search terms, different tools, different data access pattern.\"\n"
-                                   " :requirement " (pr-str query) "}")
+                    restart-hint (str "Previous attempts failed with these errors:\n" failed-summary
+                                   "\n\nStart fresh with a DIFFERENT strategy. Do NOT repeat the same approach."
+                                   "\n\nOriginal request: " query)
                     restart-messages [{:role "system" :content system-prompt}
                                       {:role "user" :content restart-hint}]]
                 (tel/log! {:level :info :data {:iteration iteration :restarts (inc restarts)
@@ -1770,7 +1760,7 @@
                   reasoning-level (when has-reasoning?
                                     (or prev-next-reasoning
                                       (reasoning-level-for-errors base-reasoning-level consecutive-errors)))
-                   _ (rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
+                   _ (log-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
                    ;; `<prior_thinking>` shows ONLY the most recent
                    ;; iteration's reasoning + a breadcrumb pointing at
                    ;; `(var-history '*reasoning*)` for anything older.
@@ -1953,11 +1943,11 @@
                                    :expressions expressions
                                    :final? (boolean final-result)}]
                   (if final-result
-                    (do (rlm-stage! :final iteration
+                    (do (log-stage! :final iteration
                           {:answer (truncate (answer-str (:answer final-result)) 200)
                            :confidence (:confidence final-result)
                            :iterations (inc iteration)})
-                      (rlm-stage! :iter-end iteration
+                      (log-stage! :iter-end iteration
                         {:blocks (count expressions)
                          :errors (count (filter :error expressions))
                          :times (mapv :execution-time-ms expressions)})
@@ -1996,13 +1986,13 @@
                         ;; survives an empty "thinking only" blip (regression
                         ;; guarded by journal-preservation-test).
                          (do
-                           (rlm-stage! :empty iteration {})
+                           (log-stage! :empty iteration {})
                           ;; Close the telemetry frame even for empty
                           ;; turns so `:iter-start :empty :iter-end`
                           ;; triples show in logs without a stray
                           ;; open-start. `blocks=0 errors=0` mirrors
                           ;; the no-exec state.
-                          (rlm-stage! :iter-end iteration
+                          (log-stage! :iter-end iteration
                             {:blocks 0 :errors 0 :times []})
                           ;; Empty turn bumps `:iteration`, threads
                           ;; NEW model overrides, AND appends the
@@ -2037,7 +2027,7 @@
                         ;; instead of being appended and immediately
                         ;; trimmed away by trim-to-initial-history.
                         (do
-                        (rlm-stage! :iter-end iteration
+                        (log-stage! :iter-end iteration
                           {:blocks (count expressions)
                            :errors (count (filter :error expressions))
                            :times (mapv :execution-time-ms expressions)})
@@ -2149,16 +2139,31 @@
 (defn register-extension!
   "Register a validated extension into the environment.
 
-   The extension's symbols are bound into the SCI sandbox (via
-   `wrap-extension`), and the extension itself is appended to the
-   environment's `:extensions` atom so its `:ext/nudge-fn` (if any)
-   is invoked every iteration.
+   Checks `:ext/requires` — if the extension declares dependencies,
+   all listed extension namespaces must already be registered.
+   Throws on missing dependencies.
+
+   The extension itself is appended to the environment's `:extensions`
+   atom so its `:ext/nudge-fn` (if any) is invoked every iteration.
 
    Returns `environment` for chaining."
   [environment ext]
   (when-not (:extensions environment)
     (anomaly/incorrect! "Invalid RLM environment — missing :extensions atom"
       {:type :rlm/invalid-env}))
+  (when-let [requires (seq (:ext/requires ext))]
+    (let [registered (into #{} (map :ext/namespace) @(:extensions environment))
+          missing    (vec (remove registered requires))]
+      (when (seq missing)
+        (anomaly/incorrect!
+          (str "Extension '" (:ext/namespace ext)
+            "' requires " missing " but they are not registered. "
+            "Register dependencies first.")
+          {:type         :extension/missing-dependencies
+           :extension    (:ext/namespace ext)
+           :requires     (vec requires)
+           :missing      missing
+           :registered   (vec registered)}))))
   (swap! (:extensions environment) conj ext)
   environment)
 

@@ -120,8 +120,14 @@
 ;; Optional per-iteration nudge composer.
 ;; (fn [ctx] → string-or-nil). Called every iteration; return a
 ;; `[system_nudge] …` string to inject a nudge, nil to skip.
-;; See EXTENSION.md § Nudge Context for the ctx shape.
+;; See docs/src/extensions/nudges.md for the ctx shape.
 (s/def :ext/nudge-fn fn?)
+
+;; Optional dependency declaration.
+;; Vector of extension namespace symbols that must be registered
+;; before this extension. Checked at `register-extension!` time.
+;; e.g. ['filesystem 'git]
+(s/def :ext/requires (s/coll-of symbol? :kind vector?))
 
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
@@ -148,7 +154,7 @@
   (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
                 :ext/activation-fn :ext/prompt :ext/symbols
                 :ext/classes :ext/imports]
-    :opt [:ext/nudge-fn]))
+    :opt [:ext/nudge-fn :ext/requires]))
 
 ;; =============================================================================
 ;; Symbol helper
@@ -452,5 +458,6 @@
       (not (:ext/activation-fn spec)) (assoc :ext/activation-fn (constantly true))
       (not (:ext/subgroup spec))      (assoc :ext/subgroup (:ext/group spec))
       (not (:ext/classes spec))       (assoc :ext/classes {})
-      (not (:ext/imports spec))       (assoc :ext/imports {}))
+      (not (:ext/imports spec))       (assoc :ext/imports {})
+      (not (:ext/requires spec))      (assoc :ext/requires []))
     (validate!)))
