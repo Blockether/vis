@@ -418,37 +418,33 @@
 (defn extension
   "Build and validate an extension. The canonical constructor.
 
-   (def search-sym
-     (symbol 'search-documents search-fn
-       {:doc              \"Full-text search across documents.\"
-        :arglists         '([query] [query opts])
-        :examples         [\"(search-documents neural)\"]
-        :before-fn        my-before-fn
-        :after-fn         my-after-fn
-        :on-error-fn      my-on-error-fn}))
+   Keys:
+     :ext/namespace      — required, unique symbol name
+     :ext/doc            — required, extension-level description
+     :ext/group          — required, prompt group (e.g. \"knowledge\")
+     :ext/subgroup       — optional, defaults to :ext/group
+     :ext/activation-fn  — optional, (fn [env] → bool), default (constantly true)
+     :ext/prompt         — required, string or (fn [env] → string)
+     :ext/nudge-fn       — optional, (fn [ctx] → string|nil)
+     :ext/requires       — optional, vector of extension namespace symbols
+                           that must be registered first, default []
+     :ext/symbols        — required, vector of symbol entries
+     :ext/classes        — optional, {fq-symbol → Class}, default {}
+     :ext/imports        — optional, {short-symbol → fq-symbol}, default {}
 
-   (def fetch-sym
-     (symbol 'fetch-document-content fetch-fn
-       {:doc              \"Fetch content by lookup ref.\"
-        :arglists         '([lookup-id])
-        :examples         [\"(fetch-document-content [:node/id page-42])\"]}))
-
-   (def max-retries-sym
-     (value 'max-retries 3
-       {:doc \"Maximum retry attempts.\"}))
+   Example:
 
    (extension
      {:ext/namespace     'documents
       :ext/doc           \"Document search and retrieval\"
       :ext/group         \"knowledge\"
-      :ext/prompt        \"Full-text search across ingested documents...\"
-      :ext/activation-fn (fn [env] (seq (db/list-docs (:db-info env))))
+      :ext/requires      ['filesystem]
+      :ext/prompt        \"Use (search-documents query) to search.\"
+      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
       :ext/nudge-fn      (fn [{:keys [environment iteration]}]
                            (when (> iteration 8)
-                             \"[system_nudge] Consider narrowing search scope.\"))
-      :ext/symbols       [search-sym fetch-sym max-retries-sym]
-      :ext/classes       {'java.time.LocalDate java.time.LocalDate}
-      :ext/imports       {'LocalDate java.time.LocalDate}})
+                             \"[system_nudge] Narrow search scope.\"))
+      :ext/symbols       [search-sym max-results-sym]})
 
    Returns a validated extension map conforming to ::extension."
   [spec]

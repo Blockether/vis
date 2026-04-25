@@ -41,6 +41,7 @@ flowchart TD
     {:ext/namespace     'my-tool
      :ext/doc           "My custom tool"
      :ext/group         "tools"
+     :ext/requires      ['filesystem]
      :ext/prompt        "Use (my-tool query) to search things."
      :ext/symbols       [(ext/symbol 'my-tool search-fn
                            {:doc "Search for things"

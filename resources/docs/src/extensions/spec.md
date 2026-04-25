@@ -95,6 +95,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/doc           "Document search and retrieval"
      :ext/group         "knowledge"
      :ext/subgroup      "documents"
+     :ext/requires      ['filesystem]
      :ext/prompt        "Full-text search across ingested documents.
                          Use (search-documents query) to find relevant pages."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
