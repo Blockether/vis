@@ -168,6 +168,8 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
+          (and ctrl (= c \y)) {:action :copy-last :state state}
+
           :else {:action :continue :state (insert-char state c)}))
 
       KeyType/Enter

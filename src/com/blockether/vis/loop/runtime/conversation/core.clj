@@ -131,15 +131,37 @@
                      base)
           ;; 1. System message — svar wraps in <objective> tags
           objective (str "<objective>\n" combined "\n</objective>")
-          ;; 2. Per-iteration context (live snapshot for current env state)
-          iter-ctx  (iterate/build-iteration-context env
-                      {:iteration 0
-                       :current-max-iterations rlm-spec/MAX_ITERATIONS
-                       :prior-thinking nil
-                       :prev-expressions nil
-                       :prev-iteration nil
-                       :call-counts-atom (atom {})})
-          ;; 3. Spec schema
+          ;; --- pull last query for realistic context ---
+          queries  (when-let [di (:db-info env)]
+                     (try (db/db-list-conversation-queries di (:conversation-id env))
+                       (catch Throwable _ nil)))
+          last-q   (last queries)
+          query-id (:id last-q)
+          query-text (or (:query last-q) "<the user's message appears here>")
+          ;; 2. Cross-query handover (prior turn's thinking + answer)
+          handover (when (and (:db-info env) (:conversation-id env) query-id
+                           (> (count queries) 1))
+                     (try (iterate/build-cross-query-handover
+                            (:db-info env) (:conversation-id env) query-id nil)
+                       (catch Throwable _ nil)))
+          ;; 3. Prior thinking from current query's iterations
+          prior-thinking (when (and (:db-info env) query-id)
+                           (try (iterate/build-prior-thinking env (:db-info env) query-id)
+                             (catch Throwable _ nil)))
+          ;; 4. Iteration context (live var_index + handover + prior thinking)
+          combined-prior (cond
+                           (and handover prior-thinking)
+                           (str handover "\n\n" prior-thinking)
+                           handover handover
+                           :else prior-thinking)
+          iter-ctx (iterate/build-iteration-context env
+                     {:iteration 0
+                      :current-max-iterations rlm-spec/MAX_ITERATIONS
+                      :prior-thinking combined-prior
+                      :prev-expressions nil
+                      :prev-iteration nil
+                      :call-counts-atom (atom {})})
+          ;; 5. Spec schema
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
           iter-spec (if has-reasoning?
                       rlm-spec/ITERATION_SPEC_REASONING
@@ -148,11 +170,11 @@
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
         objective
         "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
-        "<the user's message appears here>\n"
+        query-text
         (when iter-ctx
-          (str "\n═══ MESSAGE 3: Iteration context (role: user, iter 1+) ═══\n"
-            iter-ctx "\n"))
-        "\n═══ MESSAGE 4: Spec schema (role: user, appended by svar) ═══\n"
+          (str "\n\n═══ MESSAGE 3: Iteration context (role: user, appended per iteration) ═══\n"
+            iter-ctx))
+        "\n\n═══ MESSAGE 4: Spec schema (role: user, appended by svar) ═══\n"
         spec-prompt))))
 
 (defn send!
