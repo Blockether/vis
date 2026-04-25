@@ -33,24 +33,28 @@
         new-size)
     (.getTerminalSize screen)))
 
-(defn- messages-with-progress
-  "When the RLM is mid-query, replace the assistant placeholder bubble's
-   text with a live per-iteration progress timeline built from
-   `progress`. The placeholder is always the last message in the vec (added
-   by the :send-message handler). On non-loading frames, returns messages
-   unchanged.
-
-   This keeps the renderer pure — it never sees the progress atom, only a
-   derived `:text` field on the last bubble."
+(defn- apply-settings
+  "Project messages for display: apply settings to all assistant messages
+   that carry a :trace, and replace the live placeholder with progress text.
+   This runs every frame so toggling settings is immediately reactive."
   [messages progress loading? bubble-w settings]
-  (if (and loading? (seq messages))
-    (let [last-idx (dec (count messages))
-          last-msg (get messages last-idx)]
-      (if (= :assistant (:role last-msg))
-        (assoc messages last-idx
-          (assoc last-msg :text (render/progress->text progress bubble-w settings)))
-        messages))
-    messages))
+  (let [;; Apply trace→text projection to every assistant msg with :trace
+        projected (mapv (fn [msg]
+                          (if (and (= :assistant (:role msg)) (:trace msg))
+                            (assoc msg :text
+                              (render/format-answer-with-thinking
+                                (:raw-answer msg) (:trace msg) bubble-w settings))
+                            msg))
+                    messages)]
+    ;; Replace loading placeholder with live progress
+    (if (and loading? (seq projected))
+      (let [last-idx (dec (count projected))
+            last-msg (get projected last-idx)]
+        (if (= :assistant (:role last-msg))
+          (assoc projected last-idx
+            (assoc last-msg :text (render/progress->text progress bubble-w settings)))
+          projected))
+      projected)))
 
 (defn- input-text-rows
   "Compute visible text rows for the input box based on content."
@@ -67,7 +71,7 @@
         msg-top     0
         msg-bottom  input-top
         bubble-w    (- cols 4)
-        effective-messages (messages-with-progress messages progress loading? bubble-w settings)]
+        effective-messages (apply-settings messages progress loading? bubble-w settings)]
     (render/fill-background! g cols rows)
     (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
@@ -124,7 +128,7 @@
               ;; Scroll math must account for the (possibly expanded)
               ;; progress placeholder — otherwise mid-stream the bubble
               ;; grows off-screen and the user can't scroll down to it.
-              displayed-messages (messages-with-progress
+              displayed-messages (apply-settings
                                    (:messages db) (:progress db) (:loading? db) bubble-w (:settings db))
               total-h  (render/total-messages-height displayed-messages bubble-w)]
 

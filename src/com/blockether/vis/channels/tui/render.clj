@@ -252,6 +252,7 @@
 (def ^:private iter-hdr-marker  p/MARKER_ITER_HDR)
 (def ^:private stdout-sep-marker p/MARKER_STDOUT_SEP)
 (def ^:private stdout-pad-marker p/MARKER_STDOUT_PAD)
+(def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
 
 (defn draw-chat-bubble!
   "Draw a chat message bubble at the given row.
@@ -313,100 +314,107 @@
         (p/set-char! g (+ bx bubble-w -1) r Symbols/SINGLE_LINE_VERTICAL))
 
       ;; Text content — per-line styling via invisible marker prefixes
-      (doseq [[i line] (map-indexed vector lines)]
-        (let [x (+ bx 2) y (+ btop 1 i)
-              inner-w (- bubble-w 4)]
-          (cond
-            ;; Iteration header — distinct background with colored badges
-            (str/starts-with? line iter-hdr-marker)
-            (let [raw (subs line 1)]
-              ;; Background fill + base text
-              (p/set-colors! g t/iter-header-fg t/iter-header-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/put-str! g x y raw)
-              ;; Overlay colored ✓N / ✗N fragments
-              (doseq [[pattern color] [["✓" t/code-success-fg] ["✗" t/code-error-fg]]]
-                (when-let [i (str/index-of raw pattern)]
-                  ;; Find the end of this badge (next space or end)
-                  (let [rest-str (subs raw i)
-                        sp       (str/index-of rest-str " ")
-                        badge    (if sp (subs rest-str 0 sp) rest-str)]
-                    (p/set-colors! g color t/iter-header-bg)
-                    (p/put-str! g (+ x i) y badge)))))
+      ;;
+      ;; Iteration zone: every marker-prefixed line gets iter-header-bg as
+      ;; its base background so the whole iteration block is visually
+      ;; distinct from the plain-text answer below.
+      (let [iter-bg t/iter-header-bg]
+        (doseq [[i line] (map-indexed vector lines)]
+          (let [x (+ bx 2) y (+ btop 1 i)
+                iw (- bubble-w 4)]
+            (cond
+              ;; ── Iteration header — right-aligned label ──
+              (str/starts-with? line iter-hdr-marker)
+              (do (p/set-colors! g t/iter-header-fg iter-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
 
-            ;; Thinking/reasoning — italic, dim
-            (str/starts-with? line thinking-marker)
-            (do (p/set-colors! g t/dialog-hint bg-color)
-              (p/styled g [p/ITALIC]
-                (p/put-str! g x y (subs line 1))))
+              ;; ── Thinking — italic, dim, on iteration bg ──
+              (str/starts-with? line thinking-marker)
+              (do (p/set-colors! g t/dialog-hint iter-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/styled g [p/ITALIC]
+                  (p/put-str! g x y (subs line 1))))
 
-            ;; Code with success status — code bg, green ✓ suffix
-            (str/starts-with? line code-ok-marker)
-            (let [raw (subs line 1)]
-              (p/set-colors! g t/code-block-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/put-str! g x y raw)
-              ;; Color the ✓ + duration suffix green
-              (when-let [ci (str/index-of raw "✓")]
-                (p/set-colors! g t/code-success-fg t/code-block-bg)
-                (p/put-str! g (+ x ci) y (subs raw ci))))
+              ;; ── Code (success) — neutral code bg, green ✓ suffix ──
+              (str/starts-with? line code-ok-marker)
+              (let [raw (subs line 1)]
+                (p/set-colors! g t/code-block-fg t/code-block-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y raw)
+                (when-let [ci (str/index-of raw "✓")]
+                  (p/set-colors! g t/code-success-fg t/code-block-bg)
+                  (p/put-str! g (+ x ci) y (subs raw ci))))
 
-            ;; Code with error status — code bg, red ✗ suffix
-            (str/starts-with? line code-err-marker)
-            (let [raw (subs line 1)]
-              (p/set-colors! g t/code-block-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/put-str! g x y raw)
-              ;; Color the ✗ + duration suffix red
-              (when-let [ci (str/index-of raw "✗")]
-                (p/set-colors! g t/code-error-fg t/code-block-bg)
-                (p/put-str! g (+ x ci) y (subs raw ci))))
+              ;; ── Code (error) — light red bg, red ✗ suffix ──
+              (str/starts-with? line code-err-marker)
+              (let [raw (subs line 1)]
+                (p/set-colors! g t/code-block-fg t/code-err-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y raw)
+                (when-let [ci (str/index-of raw "✗")]
+                  (p/set-colors! g t/code-error-fg t/code-err-bg)
+                  (p/put-str! g (+ x ci) y (subs raw ci))))
 
-            ;; Code (no status yet — streaming) — code bg
-            (str/starts-with? line code-marker)
-            (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/set-colors! g t/code-block-fg t/code-block-bg)
-              (p/put-str! g x y (subs line 1)))
+              ;; ── Code (streaming, no status yet) — neutral gray bg ──
+              (str/starts-with? line code-marker)
+              (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
 
-            ;; Duration annotation — code bg, muted
-            (str/starts-with? line duration-marker)
-            (do (p/set-colors! g t/code-duration-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/set-colors! g t/code-duration-fg t/code-block-bg)
-              (p/put-str! g x y (subs line 1)))
+              ;; ── Duration annotation ──
+              (str/starts-with? line duration-marker)
+              (do (p/set-colors! g t/code-duration-fg iter-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
 
-            ;; Success result — code bg, dim
-            (str/starts-with? line result-marker)
-            (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/set-colors! g t/code-result-fg t/code-block-bg)
-              (p/put-str! g x y (subs line 1)))
+              ;; ── Result (success) — dim on code bg ──
+              (str/starts-with? line result-marker)
+              (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
 
-            ;; Error result — code bg, red
-            (str/starts-with? line err-result-marker)
-            (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/set-colors! g t/code-error-result-fg t/code-block-bg)
-              (p/put-str! g x y (subs line 1)))
+              ;; ── Result (error) — red on light red bg ──
+              (str/starts-with? line err-result-marker)
+              (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
 
-            ;; Stdout — code bg, italic, dim
-            (str/starts-with? line stdout-marker)
-            (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-              (p/fill-rect! g (inc bx) y inner-w 1)
-              (p/set-colors! g t/code-result-fg t/code-block-bg)
-              (p/styled g [p/ITALIC]
-                (p/put-str! g x y (subs line 1))))
+              ;; ── Stdout text — distinct stdout bg, italic ──
+              (str/starts-with? line stdout-marker)
+              (do (p/set-colors! g t/stdout-fg t/stdout-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/styled g [p/ITALIC]
+                  (p/put-str! g x y (subs line 1))))
 
-            ;; Separator — dim
-            (str/starts-with? line sep-marker)
-            (do (p/set-colors! g t/dialog-hint bg-color)
-              (p/put-str! g x y (subs line 1)))
+              ;; ── Stdout separator (dashes) ──
+              (str/starts-with? line stdout-sep-marker)
+              (do (p/set-colors! g t/stdout-sep-fg t/stdout-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (p/put-str! g x y (subs line 1)))
 
-            ;; Plain text (answer) — normal
-            :else
-            (do (p/set-colors! g fg-color bg-color)
-              (p/put-str! g x y line)))))
+              ;; ── Stdout padding ──
+              (str/starts-with? line stdout-pad-marker)
+              (do (p/set-bg! g t/stdout-bg)
+                (p/fill-rect! g (inc bx) y iw 1))
+
+              ;; ── Answer separator — visual break between trace and answer ──
+              (str/starts-with? line answer-sep-marker)
+              (let [raw (subs line 1)]
+                (p/set-colors! g t/answer-sep-fg t/answer-sep-bg)
+                (p/fill-rect! g (inc bx) y iw 1)
+                (when (seq raw)
+                  (p/put-str! g x y raw)))
+
+              ;; ── Legacy separator — dim ──
+              (str/starts-with? line sep-marker)
+              (do (p/set-colors! g t/dialog-hint bg-color)
+                (p/put-str! g x y (subs line 1)))
+
+              ;; ── Plain text (answer) — normal bubble bg ──
+              :else
+              (do (p/set-colors! g fg-color bg-color)
+                (p/put-str! g x y line))))))
 
       ;; Below-bubble meta (assistant only): model · iters · duration · tokens
       (let [meta-row (+ btop bubble-h)]
@@ -441,6 +449,15 @@
 
 
 
+(def ^:private superscript-digits
+  {\0 "\u2070" \1 "\u00B9" \2 "\u00B2" \3 "\u00B3" \4 "\u2074"
+   \5 "\u2075" \6 "\u2076" \7 "\u2077" \8 "\u2078" \9 "\u2079"})
+
+(defn- superscript-num
+  "Convert an integer to its superscript string representation. e.g. 12 → ¹²"
+  [n]
+  (apply str (map #(get superscript-digits % (str %)) (str n))))
+
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
    Each line is prefixed with an invisible marker so draw-chat-bubble! can
@@ -455,23 +472,14 @@
       :durations [int ...]        ;; per-expression ms
       :successes [bool ...]}      ;; per-expression success? (nil = unknown / streaming)"
   [{:keys [thinking code results stdouts durations successes]} code-width iter-num]
-  (let [bar (p/horiz-line 3)
-        ;; Count successes/failures for the header badge
-        total-exprs  (count (or code []))
-        ok-count     (when successes (count (filter true? successes)))
-        err-count    (when successes (count (filter false? successes)))
-        badge        (cond
-                       (and ok-count err-count (pos? total-exprs))
-                       (str " ✓" ok-count
-                         (when (pos? err-count) (str " ✗" err-count)))
-                       (pos? total-exprs)
-                       (str " " total-exprs " expr")
-                       :else "")
-        left-text    (str bar " iter " iter-num " ")
-        right-text   (str badge " " bar)
-        ;; Pad middle to fill code-width
-        mid-len      (max 0 (- code-width (count left-text) (count right-text)))
-        header-line  (str left-text (apply str (repeat mid-len \space)) right-text)
+  (let [;; Right-aligned "iteration N" label — leave 1 char margin-right
+        ;; Note: code-width is the drawable content area. We must NOT exceed
+        ;; it minus the visible prefix chars, otherwise wrap-text in
+        ;; draw-chat-bubble! will split the header across two lines.
+        label      (superscript-num iter-num)
+        usable-w   (max 1 (- code-width 1))  ;; 1 char right margin
+        pad-len    (max 0 (- usable-w (count label)))
+        header-line (str (apply str (repeat pad-len \space)) label " ")
         header [(str iter-hdr-marker header-line)]
 
         thinking-lines
@@ -508,9 +516,9 @@
                                   (let [last-idx (dec (count wrapped))
                                         last-line (nth wrapped last-idx)
                                         padded (str last-line status-suffix)]
-                                    (mapv #(str c-marker "| " %)
+                                    (mapv #(str c-marker "› " %)
                                       (assoc wrapped last-idx padded)))
-                                  (mapv #(str c-marker "| " %) wrapped))
+                                  (mapv #(str c-marker "› " %) wrapped))
                       ;; Result
                       result-str (when results (get results idx))
                       is-error?  (and has-status? (not success?))
@@ -593,8 +601,10 @@
                          (map-indexed vector trace)))
          answer-str (or answer "")]
      (if (seq trace-lines)
-       (let [sep (str sep-marker (p/horiz-line (min 40 content-w)))]
-         (str (str/join "\n" trace-lines) "\n" sep "\n" answer-str))
+       (let [sep-line (str answer-sep-marker (p/horiz-line content-w))
+             pad-line (str answer-sep-marker "")]
+         (str (str/join "\n" trace-lines)
+           "\n" pad-line "\n" sep-line "\n" pad-line "\n" answer-str))
        answer-str))))
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────

@@ -39,20 +39,23 @@
 (def status-bad (TextColor$RGB. 220 50 50))    ;; red
 
 ;; Code block styling
-(def code-block-bg     (TextColor$RGB. 242 242 242))  ;; light gray background for code
+(def code-block-bg     (TextColor$RGB. 240 243 248))  ;; light blue-gray — code blocks
+(def code-err-bg       (TextColor$RGB. 253 235 235))  ;; very light red — failed code only
 (def code-block-fg     (TextColor$RGB. 30 30 30))     ;; near-black text in code
 (def code-success-fg   (TextColor$RGB. 40 160 60))    ;; green ✓ marker
 (def code-error-fg     (TextColor$RGB. 220 50 50))    ;; red ✗ marker
-(def code-duration-fg  (TextColor$RGB. 140 140 140))  ;; muted duration text
-(def code-result-fg    (TextColor$RGB. 80 80 80))     ;; dim result text
-(def code-error-result-fg (TextColor$RGB. 200 60 60)) ;; red-ish error result text
+(def code-duration-fg  (TextColor$RGB. 130 130 130))  ;; muted duration text
+(def code-result-fg    (TextColor$RGB. 70 70 70))     ;; dim result text
+(def code-error-result-fg (TextColor$RGB. 180 40 40)) ;; red result text (on red bg)
 (def code-border-fg    (TextColor$RGB. 200 200 200))  ;; subtle border for code section
-(def stdout-bg         (TextColor$RGB. 248 245 240))  ;; warm off-white for stdout
-(def stdout-fg         (TextColor$RGB. 90 90 90))     ;; dim text in stdout
-(def stdout-label-fg   (TextColor$RGB. 160 160 160))  ;; muted "stdout" label
-(def stdout-sep-fg     (TextColor$RGB. 210 210 210))  ;; light separator in stdout
-(def iter-header-fg    (TextColor$RGB. 100 100 100))  ;; iteration header
-(def iter-header-bg    (TextColor$RGB. 235 235 235))  ;; iteration header background
+(def stdout-bg         (TextColor$RGB. 247 244 238))  ;; warm beige — stdout output
+(def stdout-fg         (TextColor$RGB. 80 80 80))     ;; dim text in stdout
+(def stdout-label-fg   (TextColor$RGB. 155 155 155))  ;; muted "stdout" label
+(def stdout-sep-fg     (TextColor$RGB. 210 205 195))  ;; separator in stdout (warm)
+(def iter-header-fg    (TextColor$RGB. 120 120 120))  ;; iteration header label
+(def iter-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
+(def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
+(def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
 
 ;; Padding
 (def pad-x 1)
