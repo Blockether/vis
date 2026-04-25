@@ -8,7 +8,7 @@
    Two ways to register extensions:
 
    1. **Global registry** — `(register-global! ext)` at ns load time.
-      When an environment is created, `install-global-extensions!`
+      When an environment is created, `register-extensions!`
       topologically sorts by `:ext/requires` and registers them all.
 
    2. **Per-environment** — `(register-extension! environment ext)`
@@ -567,7 +567,7 @@
         (visit ns-sym)))
     @result))
 
-(defn install-global-extensions!
+(defn register-extensions!
   "Install all globally registered extensions into an environment.
 
    Topologically sorts by :ext/requires so dependencies are registered
@@ -592,7 +592,7 @@
      (ext/load-extension! 'my.company.ext.git)
 
    The loaded extension's `register-global!` fires during `require`,
-   making it available for the next `install-global-extensions!` call
+   making it available for the next `register-extensions!` call
    or for immediate `register-extension!` into a live environment.
 
    Returns the extension map, or throws if the namespace doesn't

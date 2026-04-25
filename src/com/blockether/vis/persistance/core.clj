@@ -68,7 +68,13 @@
 
 ;; --- Iteration lifecycle ---
 
-(defn store-iteration! [db-info opts] (sqlite/store-iteration! db-info opts))
+(defn store-iteration!
+  [db-info opts]
+  (when-not (map? opts)
+    (throw (ex-info "store-iteration! opts must be a map" {:got (type opts)})))
+  (when-not (:query-id opts)
+    (throw (ex-info "store-iteration! requires :query-id" {:opts (keys opts)})))
+  (sqlite/store-iteration! db-info opts))
 (defn db-list-query-iterations [db-info query-ref] (sqlite/db-list-query-iterations db-info query-ref))
 (defn db-list-iteration-vars [db-info iter-ref] (sqlite/db-list-iteration-vars db-info iter-ref))
 

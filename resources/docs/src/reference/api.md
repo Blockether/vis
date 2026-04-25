@@ -100,10 +100,10 @@ The old version is replaced in the environment's `:extensions` atom
 This is what a meta-extension calls to hot-reload another extension
 into running conversations without restart.
 
-### `install-global-extensions!`
+### `register-extensions!`
 
 ```clojure
-(ext/install-global-extensions! environment register-fn!) → environment
+(ext/register-extensions! environment register-fn!) → environment
 ```
 
 Topologically sorts all global extensions by `:ext/requires` and

@@ -2108,7 +2108,7 @@
     (reset! rlm-env-atom env)
     (swap! state-atom assoc :rlm-env env :conversation-id conversation-id)
     ;; Install all globally registered extensions in dependency order.
-    (ext/install-global-extensions! env register-extension!)
+    (ext/register-extensions! env register-extension!)
     env))
 
 (defn dispose-environment!
