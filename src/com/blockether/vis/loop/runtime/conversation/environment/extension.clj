@@ -104,8 +104,9 @@
 ;; Extension spec
 ;; =============================================================================
 
-;; Unique name for the extension, e.g. 'documents, 'git, 'filesystem.
-;; Used as the identity key in the extension registry.
+;; Fully qualified extension name, e.g. 'com.blockether.vis.ext.common.
+;; Used as the identity key in the extension registry and stored in
+;; iteration metadata for post-mortem / reproducibility.
 (s/def :ext/namespace symbol?)
 
 ;; Extension-level documentation - describes what this bundle provides.
@@ -448,7 +449,7 @@
   "Build and validate an extension. The canonical constructor.
 
    Keys:
-     :ext/namespace      — required, unique symbol name
+     :ext/namespace      — required, fully qualified symbol, e.g. 'com.blockether.vis.ext.common
      :ext/doc            — required, extension-level description
      :ext/group          — required, prompt group (e.g. \"knowledge\")
      :ext/subgroup       — optional, defaults to :ext/group
@@ -467,7 +468,7 @@
    Example:
 
    (extension
-     {:ext/namespace     'documents
+     {:ext/namespace     'com.blockether.vis.ext.documents
       :ext/doc           \"Document search and retrieval\"
       :ext/group         \"knowledge\"
       :ext/requires      ['filesystem]
@@ -510,20 +511,18 @@
 
      (ext/register-global!
        (ext/extension
-         {:ext/namespace 'git
-          :ext/requires  ['filesystem]
+         {:ext/namespace 'com.acme.ext.git
+          :ext/requires  ['com.blockether.vis.ext.common]
           ...}))
 
    Idempotent — re-registering the same :ext/namespace replaces
    the previous version. Returns the extension."
   [ext]
-  (let [ns-sym  (:ext/namespace ext)
-        src-ns  (str (ns-name *ns*))
-        ext     (assoc ext :ext/source-ns src-ns)]
+  (let [ns-sym (:ext/namespace ext)]
     (swap! global-registry assoc ns-sym ext)
     (tel/log! {:level :info :id ::register-global
-               :data {:ext ns-sym :source-ns src-ns}
-               :msg (str "Extension '" ns-sym "' registered globally from " src-ns)})
+               :data {:ext ns-sym}
+               :msg (str "Extension '" ns-sym "' registered globally")})
     ext))
 
 (defn deregister-global!

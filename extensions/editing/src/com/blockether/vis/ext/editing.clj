@@ -1,5 +1,5 @@
-(ns com.blockether.vis.ext.common
-  "Common filesystem extension — read, write, grep, list, patch.
+(ns com.blockether.vis.ext.editing
+  "Editing extension — read, write, grep, list, patch.
 
    Self-registers via `register-global!` at namespace load time.
    Drop on the classpath and every new environment gets it."
@@ -21,7 +21,7 @@
         abs  (.getCanonicalPath f)]
     (when-not (str/starts-with? abs cwd)
       (throw (ex-info (str "Path escapes working directory: " path)
-               {:type :ext.common/path-traversal :path path :resolved abs})))
+               {:type :ext.editing/path-traversal :path path :resolved abs})))
     f))
 
 (defn- read-file
@@ -31,9 +31,9 @@
   ([path offset limit]
    (let [f (safe-path path)]
      (when-not (.exists f)
-       (throw (ex-info (str "File not found: " path) {:type :ext.common/not-found :path path})))
+       (throw (ex-info (str "File not found: " path) {:type :ext.editing/not-found :path path})))
      (when (.isDirectory f)
-       (throw (ex-info (str "Path is a directory: " path) {:type :ext.common/is-directory :path path})))
+       (throw (ex-info (str "Path is a directory: " path) {:type :ext.editing/is-directory :path path})))
      (let [lines    (str/split-lines (slurp f))
            total    (count lines)
            off      (max 0 (dec (or offset 1)))
@@ -64,10 +64,10 @@
   ([path]
    (let [f (safe-path path)]
      (when-not (.exists f)
-       (throw (ex-info (str "Path not found: " path) {:type :ext.common/not-found :path path})))
+       (throw (ex-info (str "Path not found: " path) {:type :ext.editing/not-found :path path})))
      (if (.isDirectory f)
        (vec (sort (map #(.getName ^java.io.File %) (.listFiles f))))
-       (throw (ex-info (str "Not a directory: " path) {:type :ext.common/not-directory :path path}))))))
+       (throw (ex-info (str "Not a directory: " path) {:type :ext.editing/not-directory :path path}))))))
 
 (defn- grep-files
   "Search for pattern in files. Returns matches with file:line:content."
@@ -76,7 +76,7 @@
    (let [f   (safe-path path)
          pat (re-pattern (str pattern))]
      (when-not (.exists f)
-       (throw (ex-info (str "Path not found: " path) {:type :ext.common/not-found :path path})))
+       (throw (ex-info (str "Path not found: " path) {:type :ext.editing/not-found :path path})))
      (let [files (if (.isDirectory f)
                    (filter #(and (.isFile ^java.io.File %) (not (.isHidden ^java.io.File %)))
                      (file-seq f))
@@ -102,10 +102,10 @@
     (cond
       (zero? count)
       (throw (ex-info (str "old-text not found in " path)
-               {:type :ext.common/patch-no-match :path path}))
+               {:type :ext.editing/patch-no-match :path path}))
       (> count 1)
       (throw (ex-info (str "old-text matches " count " times in " path ". Must be unique.")
-               {:type :ext.common/patch-ambiguous :path path :matches count}))
+               {:type :ext.editing/patch-ambiguous :path path :matches count}))
       :else
       (let [patched (str/replace-first content old-text new-text)]
         (spit f patched)
@@ -115,9 +115,9 @@
 ;; Extension definition
 ;; =============================================================================
 
-(def common-extension
+(def editing-extension
   (ext/extension
-    {:ext/namespace 'common
+    {:ext/namespace 'com.blockether.vis.ext.editing
      :ext/doc       "Filesystem tools: read, write, grep, list, patch."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
@@ -153,4 +153,4 @@
          :examples ["(patch-file \"src/core.clj\" \"old code\" \"new code\")"]})]}))
 
 ;; Self-register at load time
-(ext/register-global! common-extension)
+(ext/register-global! editing-extension)

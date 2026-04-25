@@ -7,10 +7,17 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.persistance.core :as db]
-   [com.blockether.vis.loop.runtime.shared :as rt-shared]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
+
+(defn- truncate-str [s n]
+  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
+
+(defn- shape [v]
+  (cond (map? v) :map (vector? v) :vector (set? v) :set (list? v) :list
+    (string? v) :string (number? v) :number (keyword? v) :keyword
+    (symbol? v) :symbol (nil? v) :nil :else :value))
 
 (defn sci-update-binding!
   "Update a binding in an existing SCI context.
@@ -140,7 +147,7 @@
    'infinite? infinite?, 'NaN? NaN?,
    'url-encode (fn ^String url-encode [^String s] (java.net.URLEncoder/encode s "UTF-8")),
    'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8")),
-   'shape rt-shared/shape})
+   'shape shape})
 
 (defn create-sci-context
   "Creates the SCI sandbox context with all available bindings.
@@ -380,7 +387,7 @@
     system? SYSTEM_VAR_CODE_PLACEHOLDER
 
     (and (string? expr) (not (str/blank? expr)))
-    (let [trimmed (rt-shared/truncate (str/trim expr) MAX_VAR_INDEX_CODE_CHARS)]
+    (let [trimmed (truncate-str (str/trim expr) MAX_VAR_INDEX_CODE_CHARS)]
       (if time-ms
         (str trimmed " [" time-ms "ms]")
         trimmed))
@@ -522,8 +529,8 @@
                              {:name (str sym) :ver ver-str :type type-label :size size
                               :status status-col
                               :doc (cond
-                                     system? (rt-shared/truncate (system-doc sym) 80)
-                                     doc (rt-shared/truncate doc 80)
+                                     system? (truncate-str (system-doc sym) 80)
+                                     doc (truncate-str doc 80)
                                      :else "-")
                               :code code-col
                               :system? system?}))))]

@@ -16,7 +16,7 @@
 
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
-   [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
+
    [com.blockether.vis.loop.mustache :as mustache]
 
    [edamame.core :as edamame]
@@ -369,6 +369,37 @@
 ;; =============================================================================
 
 (defn build-system-prompt [{:keys [system-prompt]}] (or system-prompt ""))
+
+(def ^:const MAX_RESULT_DISPLAY_CHARS 30000)
+
+(defn- truncate [s n]
+  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
+
+(defn- truncate-with-marker [s n]
+  (let [s (str s)]
+    (if (> (count s) n) (str (subs s 0 (max 0 (- n 16))) " …[truncated]") s)))
+
+(defn- strip-sandbox-ns [s]
+  (-> (str s) (str/replace "sandbox/" "")))
+
+(defn- realize-value [v]
+  (cond
+    (instance? clojure.lang.IDeref v) @v
+    (map? v) (into {} (map (fn [[k vv]] [k (realize-value vv)])) v)
+    (vector? v) (mapv realize-value v)
+    (set? v) (set (map realize-value v))
+    (sequential? v) (doall (map realize-value v))
+    :else v))
+
+(defn- result->display
+  ([v] (result->display v :short))
+  ([v _mode] (truncate-with-marker (pr-str (realize-value v)) MAX_RESULT_DISPLAY_CHARS)))
+
+(defn- format-exception-short [^Throwable t]
+  {:class (.getName (class t)) :message (or (ex-message t) (str t))})
+
+(defn- format-exception [^Throwable t & [{:keys [context]}]]
+  (merge (format-exception-short t) {:data (ex-data t) :context context}))
 
 (defn- budget-warning [{:keys [iteration current-max-iterations]}]
   (let [remaining (- (long (or current-max-iterations 0)) (inc (long (or iteration 0))))]
@@ -982,10 +1013,10 @@
                                    var-name (name (.sym var-obj))
                                    raw-bound (.getRawRoot var-obj)]
                                (str "*" var-name "* = "
-                                 (rt-shared/result->display raw-bound :full)))
+                                 (result->display raw-bound :full)))
 
                              :else
-                             (rt-shared/result->display result :full))
+                             (result->display result :full))
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
@@ -1001,7 +1032,7 @@
 
 (def ^:private EXECUTION_SAFETY_CAP_CHARS
   "Cap for one value rendering in a journal entry. Aligned with the UI cap
-   (`runtime.shared/MAX_RESULT_DISPLAY_CHARS`, 30000) so the LLM and the
+   (`MAX_RESULT_DISPLAY_CHARS`, 30000) so the LLM and the
    web/TUI see the same horizon. The DB still stores uncapped values via
    `store-iteration!` so the debugger and corpus exporter retain ground
    truth — only the prompt-facing render is bounded.
@@ -1009,7 +1040,7 @@
    The `:truncated? true` flag (rather than an inline `…[truncated]…`
    marker) is preserved so the LLM can still pattern-match on it the way
    it always has."
-  rt-shared/MAX_RESULT_DISPLAY_CHARS)
+  MAX_RESULT_DISPLAY_CHARS)
 
 (def ^:private EXECUTION_STDERR_CHARS
   "Budget for captured stderr — diagnostics only, not a full data dump."
@@ -1020,7 +1051,7 @@
    Strips the `sandbox/` ns from var literals so the LLM sees `#'foo`
    instead of `#'sandbox/foo` — same cosmetic the UI applies."
   [v]
-  (let [s (rt-shared/strip-sandbox-ns (pr-str v))]
+  (let [s (strip-sandbox-ns (pr-str v))]
     (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
       [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
       [s false])))
@@ -1600,8 +1631,7 @@
                                 (when-let [exts (some-> (:extensions rlm-env) deref seq)]
                                   (mapv (fn [ext]
                                           (cond-> {:namespace (str (:ext/namespace ext))}
-                                            (:ext/source-ns ext) (assoc :source-ns (:ext/source-ns ext))
-                                            (:ext/version ext)   (assoc :version (:ext/version ext))))
+                                            (:ext/version ext) (assoc :version (:ext/version ext))))
                                     exts)))
         iter-metadata (fn []
                         (let [exts (active-extensions-meta)]
