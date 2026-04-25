@@ -114,6 +114,7 @@ CREATE TABLE iteration (
   thinking                 TEXT,
   error                    TEXT,
   duration_ms              INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+  metadata                 TEXT,
   created_at               INTEGER NOT NULL,
 
   UNIQUE (query_state_id, position)

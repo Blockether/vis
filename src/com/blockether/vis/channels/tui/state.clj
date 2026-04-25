@@ -3,7 +3,8 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
-            [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]))
+            [com.blockether.vis.channels.tui.render :as render]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -126,11 +127,17 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer]]
+  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens]}]]]
     (let [start    (:query-start-ms db)
-          dur-ms   (when start (- (System/currentTimeMillis) start))
-          response (-> (chat/assistant-msg answer)
-                     (cond-> dur-ms (assoc :duration-ms dur-ms)))]
+          wall-ms  (when start (- (System/currentTimeMillis) start))
+          trace    (get-in db [:progress :iterations])
+          bubble-w (max 60 (- (or (:last-cols db) 120) 4))
+          full-text (render/format-answer-with-thinking answer trace bubble-w)
+          response (-> (chat/assistant-msg full-text)
+                     (cond-> (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
+                             model      (assoc :model model)
+                             iterations (assoc :iterations iterations)
+                             tokens     (assoc :tokens tokens)))]
       (-> db
         (update :messages pop)
         (update :messages conj response)
@@ -142,11 +149,13 @@
 (reg-fx :rlm-query
   (fn [conv text]
     (future
-      (let [on-chunk (conv-shared/make-on-chunk-projector
+      (let [on-chunk (conversations/make-on-chunk-projector
                        {:on-update (fn [timeline _chunk]
-                                     (try (dispatch [:set-progress-iterations timeline])
+                                     (try (dispatch [:set-progress-iterations
+                                                      (mapv :chunk timeline)])
                                        (catch Throwable _ nil)))})
             result   (chat/query! conv text {:on-chunk on-chunk})]
         (if (:error result)
           (dispatch [:message-received (:error result)])
-          (dispatch [:message-received (:answer result)]))))))
+          (dispatch [:message-received (:answer result)
+                      (select-keys result [:model :iterations :duration-ms :tokens])]))))))

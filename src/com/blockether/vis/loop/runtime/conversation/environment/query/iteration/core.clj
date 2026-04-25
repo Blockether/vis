@@ -9,17 +9,338 @@
    failures."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.shared :as helpers]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.validate :as validate]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.execute :as execute]
-
+   [com.blockether.vis.loop.runtime.prompt :as prompt]
+   [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [truncate realize-value format-exception format-exception-short]]
-   [com.blockether.vis.loop.storage.schema :as schema
-    :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING *rlm-ctx*]]
+   [com.blockether.vis.persistance.core :as db]
+   [com.blockether.vis.persistance.spec :as rlm-spec
+    :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
+            *eval-timeout-ms* *rlm-ctx* clamp-eval-timeout-ms]]
    [com.blockether.vis.loop.mustache :as mustache]
    [com.blockether.svar.internal.llm :as llm]
+   [com.blockether.svar.internal.router :as router]
    [edamame.core :as edamame]
-   [taoensso.trove :as trove]))
+   [sci.core :as sci]
+   [taoensso.telemere :as tel]))
+
+;; ---------------------------------------------------------------------------
+;; Shared helpers (inlined from split iteration modules)
+;; ---------------------------------------------------------------------------
+
+(defn rlm-stage!
+  "Log an iteration lifecycle event."
+  [stage iteration data]
+  (tel/log! {:level :info :id ::rlm-stage
+             :data (merge {:stage stage :iteration iteration
+                           :env-id (:rlm-env-id *rlm-ctx*)} data)}))
+
+(defn normalize-reasoning-level [v]
+  (router/normalize-reasoning-level v))
+
+(defn reasoning-level-for-errors [base consecutive-errors]
+  (cond
+    (<= (long consecutive-errors) 0) base
+    (= 1 (long consecutive-errors)) (if (= base :quick) :balanced :deep)
+    :else :deep))
+
+(defn answer-str [answer]
+  (let [v (:result answer answer)]
+    (if (string? v) v (str v))))
+
+(def edamame-opts
+  {:all true
+   :readers (fn [_tag] (fn [val] (list 'do val)))})
+
+(defn check-syntax [code]
+  (edamame/parse-string-all code edamame-opts))
+
+(defn check-bare-list [forms]
+  (let [first-form (first forms)]
+    (when (and (= 1 (count forms))
+            (list? first-form) (seq first-form)
+            (let [head (first first-form)]
+              (not (or (symbol? head) (keyword? head)
+                     (list? head) (set? head) (map? head) (vector? head)))))
+      (str "Bare list literal: " (pr-str first-form)
+        ". Quote it: '(" (str/join " " first-form) ")"))))
+
+(defn parse-clojure-syntax [code]
+  (try
+    (let [forms (check-syntax code)]
+      (or (check-bare-list forms)
+        nil))
+    (catch Throwable e
+      (ex-message e))))
+
+(def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
+
+(defn bare-string-code-block? [expr]
+  (boolean (re-matches BARE_STRING_RE (str expr))))
+
+(defn- comment-only-block? [^String expr]
+  (try
+    (zero? (count (edamame/parse-string-all (str/trim expr) edamame-opts)))
+    (catch Throwable _ false)))
+
+(defn literal-code-block-error [expr]
+  (cond
+    (bare-string-code-block? expr)
+    "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."
+
+    (comment-only-block? expr)
+    "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
+
+(defn- detect-common-mistakes [code]
+  (let [s (str/trim code)]
+    (cond
+      (re-find #"#\([^)]*#\(" s)
+      "Nested #() is illegal in Clojure. Rewrite inner #() as (fn [...] ...)"
+      :else nil)))
+
+(defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns]}]
+  (let [stdout-writer (java.io.StringWriter.)
+        stderr-writer (java.io.StringWriter.)
+        err-pw       (java.io.PrintWriter. stderr-writer true)
+        exec-future (future
+                      (try
+                        (let [result (sci/binding [sci/out stdout-writer
+                                                   sci/err err-pw]
+                                       (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
+                                         (:val (sci/eval-string+ sci-ctx code
+                                                 (when ns {:ns ns})))))]
+                          {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :error nil})
+                        (catch Throwable e
+                          {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
+                           :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))})))
+        timeout-ms (long *eval-timeout-ms*)
+        execution-result (try
+                           (deref exec-future timeout-ms nil)
+                           (catch Throwable e
+                             {:result nil :stdout "" :stderr "" :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
+    (.close stdout-writer)
+    (.close stderr-writer)
+    (if (nil? execution-result)
+      (do (future-cancel exec-future)
+        {:result nil :stdout "" :stderr "" :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+      execution-result)))
+
+(defn execute-code [{:keys [sci-ctx sandbox-ns]} code & {:keys [timeout-ms]}]
+  (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
+    (let [start-time (System/currentTimeMillis)
+          lint-error (detect-common-mistakes code)]
+      (if lint-error
+        {:result nil :stdout "" :stderr "" :error lint-error
+         :execution-time-ms 0 :timeout? false}
+        (if-let [parse-error (parse-clojure-syntax code)]
+          {:result nil :stdout "" :stderr "" :error parse-error
+           :execution-time-ms 0 :timeout? false}
+          (let [execution-result (if timeout-ms
+                                   (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
+                                     (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                                   (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                execution-time (- (System/currentTimeMillis) start-time)]
+            (if (:timeout? execution-result)
+              (assoc execution-result :execution-time-ms execution-time :timeout? true)
+              (assoc execution-result :execution-time-ms execution-time :timeout? false))))))))
+
+(def ^:const SLOW_EXECUTION_MS 5000)
+(def ^:const EXECUTION_SAFETY_CAP_CHARS rt-shared/MAX_RESULT_DISPLAY_CHARS)
+(def ^:const EXECUTION_STDERR_CHARS 2000)
+(def ^:const HANDOVER_KEEP_LAST 2)
+(def ^:const PRIOR_THINKING_MAX_CHARS 4000)
+(def PRIOR_THINKING_BREADCRUMB
+  "[older reasonings] call `(var-history '*reasoning*)` from :code (oldest first; `take-last N` for a window).")
+
+(defn- formatted-str-of [v]
+  (when (instance? clojure.lang.IObj v)
+    (let [m (meta v)]
+      (or (:rlm/formatted m)
+        (when-let [f (:rlm/format m)]
+          (try (f v) (catch Throwable _ nil)))))))
+
+(defn- truncated-pr-str [v]
+  (let [s (rt-shared/strip-sandbox-ns (pr-str v))]
+    (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
+      [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
+      [s false])))
+
+(defn format-expression-results [expressions _iteration]
+  (when (seq expressions)
+    (str "<journal>\n"
+      (str/join "\n"
+        (map-indexed
+          (fn [idx {:keys [code error result stdout stderr execution-time-ms]}]
+            (let [code-str      (str/trim (or code ""))
+                  stdout-suffix (when-not (str/blank? stdout)
+                                  (str " :stdout " (pr-str stdout)))
+                  stderr-suffix (when-not (str/blank? stderr)
+                                  (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
+                  time-ms       (or execution-time-ms 0)
+                  slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
+                                  (str " (" time-ms "ms SLOW)"))
+                  value-part (if error
+                               (str "ERROR: " (truncate error 400))
+                               (let [pre-formatted (formatted-str-of result)
+                                     v (realize-value result)
+                                     [value-str truncated?]
+                                     (if pre-formatted
+                                       [pre-formatted false]
+                                       (truncated-pr-str v))]
+                                 (str value-str
+                                   (when truncated? " :truncated? true"))))]
+              (str "  [" (inc idx) "] " code-str " → " value-part
+                (or slow-suffix "")
+                (or stdout-suffix "")
+                (or stderr-suffix ""))))
+          expressions))
+      "\n</journal>")))
+
+(defn format-prior-thinking-chain [iterations]
+  (let [entries (->> iterations
+                  (keep (fn [{:keys [iteration thinking]}]
+                          (when (and (string? thinking)
+                                  (not (str/blank? thinking)))
+                            (str "[iter " iteration "] " (str/trim thinking))))))]
+    (when (seq entries)
+      (str/join "\n\n" entries))))
+
+(defn format-prior-turn-handover [{:keys [iterations final-answer]}]
+  (let [kept (take-last HANDOVER_KEEP_LAST iterations)]
+    (when (seq kept)
+      (let [thinking-lines (->> kept
+                             (keep (fn [{:keys [iteration thinking]}]
+                                     (when (and (string? thinking)
+                                             (not (str/blank? thinking)))
+                                       (str "  [iter " iteration "] "
+                                         (str/trim thinking))))))
+            final-line (when (and (string? final-answer)
+                               (not (str/blank? final-answer)))
+                         (str "  [final answer] " (str/trim final-answer)))]
+        (str/join "\n"
+          (concat ["[prior turn]"]
+            thinking-lines
+            (when final-line [final-line])
+            ["[new query]"]))))))
+
+(defn assemble-initial-messages [{:keys [system-prompt initial-user-content history-messages]}]
+  (into [{:role "system" :content system-prompt}
+         {:role "user"   :content initial-user-content}]
+    (or history-messages [])))
+
+(defn trim-to-initial-history [messages initial-count]
+  (vec (take initial-count messages)))
+
+(defn read-var-index-str [rlm-env]
+  (let [var-index-atom (or (:var-index-atom rlm-env)
+                         (atom {:index nil :revision -1 :current-revision 0}))
+        {:keys [index revision current-revision]} @var-index-atom]
+    (if (= revision current-revision)
+      index
+      (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env))
+                          [:namespaces 'sandbox])
+            idx         (sci-env/build-var-index
+                          (:sci-ctx rlm-env) (:initial-ns-keys rlm-env)
+                          sandbox-map
+                          (:db-info rlm-env) (:conversation-id rlm-env)
+                          {:include-persisted? true})
+            live-rev    (:current-revision @var-index-atom)]
+        (swap! var-index-atom assoc :index idx :revision live-rev)
+        idx))))
+
+(defn- load-prior-thinking-chain [db-info query-id]
+  (try
+    (if query-id
+      (let [iters (db/db-list-query-iterations db-info query-id)]
+        (vec (keep-indexed
+               (fn [idx it]
+                 (when-let [t (:thinking it)]
+                   {:iteration idx :thinking t}))
+               iters)))
+      [])
+    (catch Throwable t
+      (tel/log! {:level :warn
+                   :data {:error (ex-message t) :query-id query-id}
+                   :msg "load-prior-thinking-chain failed"})
+      [])))
+
+(defn build-prior-thinking [_rlm-env db-info query-id]
+  (let [chain (load-prior-thinking-chain db-info query-id)]
+    (when (seq chain)
+      (let [tail (vec (take-last 1 chain))
+            body (format-prior-thinking-chain tail)]
+        (if body
+          (str body "\n" PRIOR_THINKING_BREADCRUMB)
+          PRIOR_THINKING_BREADCRUMB)))))
+
+(defn build-cross-query-handover [db-info conversation-id current-query-id parent-iteration-id]
+  (when (and db-info conversation-id (nil? parent-iteration-id))
+    (try
+      (let [all-queries (sort-by :created-at
+                          (db/db-list-conversation-queries db-info conversation-id))
+            current-id  (second current-query-id)
+            prior       (last (remove #(= (:id %) current-id) all-queries))]
+        (when prior
+          (let [prior-id    [:id (:id prior)]
+                iters        (db/db-list-query-iterations db-info prior-id)
+                tagged-iters (vec (keep-indexed
+                                    (fn [idx it]
+                                      (when-let [t (:thinking it)]
+                                        {:iteration idx :thinking t}))
+                                    iters))
+                final-answer (:answer prior)]
+            (format-prior-turn-handover
+              {:iterations tagged-iters
+               :final-answer (when (and (string? final-answer)
+                                     (not (str/blank? final-answer)))
+                               final-answer)}))))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                     :data {:error (ex-message t) :conversation-id conversation-id}
+                     :msg "build-cross-query-handover failed"})
+        nil))))
+
+(defn build-iteration-context
+  [rlm-env {:keys [iteration current-max-iterations
+                   prior-thinking
+                   prev-expressions prev-iteration
+                   call-counts-atom]}]
+  (let [clamp (fn [s n] (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
+        iter-header (when (and iteration current-max-iterations)
+                      (str "[iter " (inc (long iteration)) "/"
+                        (long current-max-iterations) "]"))
+        prior-block (when (and (string? prior-thinking)
+                            (not (str/blank? prior-thinking)))
+                      (str "<prior_thinking>\n"
+                        (clamp prior-thinking PRIOR_THINKING_MAX_CHARS)
+                        "\n</prior_thinking>"))
+        var-index-str (read-var-index-str rlm-env)
+        var-block (when (and (string? var-index-str)
+                          (not (str/blank? var-index-str)))
+                    (str "<var_index>\n" var-index-str "\n</var_index>"))
+        expr-results (format-expression-results prev-expressions prev-iteration)
+        nudge-ctx {:environment          rlm-env
+                   :iteration            iteration
+                   :current-max-iterations current-max-iterations
+                   :prev-expressions      prev-expressions
+                   :prev-iteration       prev-iteration
+                   :user-var-count       0}
+        built-in-nudges (keep identity
+                          [(when (and iteration current-max-iterations)
+                             (prompt/budget-warning
+                               {:iteration              iteration
+                                :current-max-iterations current-max-iterations}))
+                           (prompt/repetition-warning call-counts-atom prev-expressions)])
+        ext-nudges (prompt/collect-extension-nudges
+                     (some-> (:extensions rlm-env) deref) nudge-ctx)
+        nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
+        parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
+                [iter-header prior-block expr-results var-block nudges-block])]
+    (when (seq parts)
+      (str/join "\n" parts))))
+
+(defn store-iteration! [env opts]
+  (rt-shared/validate! ::rt-shared/iteration-store-opts opts)
+  (db/store-iteration! (:db-info env) opts))
 
 ;; ---------------------------------------------------------------------------
 ;; Error normalization
@@ -62,14 +383,16 @@
   (let [ex-data-map (ex-data e)
         iteration (:iteration ctx)]
     (if (infrastructure-error? ex-data-map)
-      (do (trove/log! {:level :error
+      (do (tel/log! {:level :error
                        :data (assoc (format-exception-short e) :iteration iteration)
-                       :msg "Provider infrastructure error — aborting iteration loop"})
+                      }
+  "Provider infrastructure error — aborting iteration loop")
         (throw e))
       (let [iter-err (exception->iter-err e ctx)]
-        (trove/log! {:level :warn
+        (tel/log! {:level :warn
                      :data (assoc (format-exception-short e) :iteration iteration)
-                     :msg "RLM iteration failed, feeding error to LLM"})
+                    }
+  "RLM iteration failed, feeding error to LLM")
         {::iteration-error iter-err}))))
 
 ;; ---------------------------------------------------------------------------
@@ -88,10 +411,29 @@
                        (assoc! acc k (if (instance? clojure.lang.IDeref v) @v v))))
           (transient {}) sandbox)))
     (catch Exception e
-      (trove/log! {:level :warn :id ::get-locals-fallback
+      (tel/log! {:level :warn :id ::get-locals-fallback
                    :data {:error (ex-message e)}
                    :msg "Failed to read sandbox locals, returning empty map"})
       {})))
+
+;; ---------------------------------------------------------------------------
+;; Noop expression filter
+;; ---------------------------------------------------------------------------
+
+(def ^:private noop-exprs
+  "Expressions the LLM emits only to satisfy the 'must return code' constraint.
+   These carry no information — filter them before storage and display."
+  #{":ok" ":ok\n" "nil" ":noop"})
+
+(defn- noop-expr?
+  "True when an expression is a structural noop (e.g. `:ok`)."
+  [expr]
+  (contains? noop-exprs (str/trim (str expr))))
+
+(defn- strip-noop-expressions
+  "Remove noop expressions from a vec. Returns nil-safe vec."
+  [expressions]
+  (vec (remove #(noop-expr? (:code %)) (or expressions []))))
 
 ;; ---------------------------------------------------------------------------
 ;; run-iteration
@@ -99,12 +441,12 @@
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
-   Returns map with :thinking :executions :final-result :api-usage etc."
+   Returns map with :thinking :expressions :final-result :api-usage etc."
   [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
-                                (or (helpers/normalize-reasoning-level reasoning-level)
+                                (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
                                            {:type :rlm/invalid-reasoning-level
                                             :got reasoning-level}))))
@@ -118,7 +460,7 @@
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           thinking (or model-reasoning (:thinking parsed))
-          _ (helpers/rlm-stage! :llm-response iteration
+          _ (rlm-stage! :llm-response iteration
               {:has-reasoning (some? model-reasoning)
                :has-final (some? (:final parsed))
                :code-count (count (:code parsed))
@@ -127,7 +469,7 @@
                :thinking thinking})
           next-hint (:next parsed)
           next-model (when-let [m (:model next-hint)] (keyword m))
-          next-reasoning (helpers/normalize-reasoning-level (:reasoning next-hint))
+          next-reasoning (normalize-reasoning-level (:reasoning next-hint))
           api-usage {:prompt_tokens (get-in ask-result [:tokens :input] 0)
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
                      :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
@@ -144,15 +486,15 @@
                                               {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
                                   raw-code))
               code-blocks (mapv :expr code-entries)
-              exec-results (when (seq code-blocks)
+              expr-results (when (seq code-blocks)
                              (mapv (fn [{:keys [expr time-ms]}]
-                                      (if-let [err (validate/literal-code-block-error expr)]
-                                        {:result nil :error err
-                                         :stdout "" :stderr "" :execution-time-ms 0}
-                                        (execute/execute-code rlm-env expr :timeout-ms time-ms)))
-                                code-entries))
-              exec-errors (when exec-results
-                            (seq (clojure.core/filter :error exec-results)))
+                                     (if-let [err (literal-code-block-error expr)]
+                                       {:result nil :error err
+                                        :stdout "" :stderr "" :execution-time-ms 0}
+                                       (execute-code rlm-env expr :timeout-ms time-ms)))
+                               code-entries))
+              expr-errors (when expr-results
+                            (seq (clojure.core/filter :error expr-results)))
               raw-answer (str raw-final-answer)
               locals (try (get-locals rlm-env) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
@@ -178,40 +520,30 @@
               template-answer (:answer mustache-result)
               mustache-missing (:error mustache-result)
               raw-answer (or resolved-var-value template-answer raw-answer)
-              _ (when resolved-var-value
-                  (helpers/rlm-debug! {:token (str raw-final-answer)
-                                       :resolved-chars (count resolved-var-value)}
-                    "Single-word :answer resolved to var value"))
-              _ (when template-answer
-                  (helpers/rlm-debug! {:template (str raw-final-answer)
-                                       :resolved-chars (count template-answer)}
-                    "Mustache template rendered"))
               final-answer raw-answer
               confidence (or (:confidence parsed) :high)
               validation-error (or (when-not answer-type
                                      ":answer-type is required with :answer. Set mustache-text or mustache-markdown.")
-                                 (when exec-errors
-                                   (str "Code errors before final: " (:error (first exec-errors))))
+                                 (when expr-errors
+                                   (str "Code errors before final: " (:error (first expr-errors))))
 
                                  mustache-missing)
-              executions (when exec-results
+              expressions (when expr-results
                            (mapv (fn [idx code result]
                                    {:id idx :code code
                                     :result (:result result) :stdout (:stdout result)
                                     :stderr (:stderr result) :error (:error result)
                                     :execution-time-ms (:execution-time-ms result)
                                     :repaired? (:repaired? result)})
-                             (range) code-blocks exec-results))]
+                             (range) code-blocks expr-results))]
           (if validation-error
-            (do (helpers/rlm-debug! {:final-answer (truncate final-answer 200)
-                                     :validation-error validation-error} "FINAL rejected")
-              {:thinking thinking
+            {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
-               :executions (or executions
+               :expressions (or expressions
                              [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
                                :error validation-error}])
                :final-result nil :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)})
+               :duration-ms (or (:duration-ms ask-result) 0)}
             (let [sources (vec (or (:sources parsed) []))
                   final-result (cond-> {:final? true
                                         :answer final-answer
@@ -220,7 +552,7 @@
                                  (:reasoning parsed) (assoc :reasoning (:reasoning parsed)))]
               {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
-               :executions (or executions []) :final-result final-result :api-usage api-usage
+               :expressions (strip-noop-expressions expressions) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
         ;; Normal path: execute code blocks
         (let [normalized (vec (:code parsed))
@@ -234,21 +566,21 @@
                               (recur (rest remaining) (conj result (first remaining))))))
               total-blocks (count coalesced)
               executed (mapv (fn [idx {:keys [expr time-ms]}]
-                              (helpers/rlm-stage! :code-exec iteration
-                                {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms})
-                              (let [result (if-let [err (validate/literal-code-block-error expr)]
-                                             {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
-                                             (let [r (execute/execute-code rlm-env expr :timeout-ms time-ms)]
-                                               (helpers/rlm-stage! :code-result iteration
-                                                 {:idx (inc idx) :total total-blocks
-                                                  :execution-time-ms (:execution-time-ms r)
-                                                  :error (:error r) :timeout? (:timeout? r) :result (:result r)})
-                                               r))]
-                                {:block expr :result result}))
-                        (range) coalesced)
+                               (rlm-stage! :code-exec iteration
+                                 {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms})
+                               (let [result (if-let [err (literal-code-block-error expr)]
+                                              {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
+                                              (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
+                                                (rlm-stage! :code-result iteration
+                                                  {:idx (inc idx) :total total-blocks
+                                                   :execution-time-ms (:execution-time-ms r)
+                                                   :error (:error r) :timeout? (:timeout? r) :result (:result r)})
+                                                r))]
+                                 {:block expr :result result}))
+                         (range) coalesced)
               code-blocks (mapv :block executed)
-              execution-results (mapv :result executed)
-              executions (mapv (fn [idx code result]
+              expression-results (mapv :result executed)
+              expressions (mapv (fn [idx code result]
                                  {:id idx
                                   :code code
                                   :result (:result result)
@@ -258,8 +590,8 @@
                                   :execution-time-ms (:execution-time-ms result)
                                   :timeout? (:timeout? result)
                                   :repaired? (:repaired? result)})
-                           (range) code-blocks execution-results)]
-           {:thinking thinking
-            :next-model next-model :next-reasoning next-reasoning
-            :executions executions :final-result nil :api-usage api-usage
-            :duration-ms (or (:duration-ms ask-result) 0)})))))
+                           (range) code-blocks expression-results)]
+          {:thinking thinking
+           :next-model next-model :next-reasoning next-reasoning
+           :expressions (strip-noop-expressions expressions) :final-result nil :api-usage api-usage
+           :duration-ms (or (:duration-ms ask-result) 0)})))))
