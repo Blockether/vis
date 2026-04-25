@@ -394,7 +394,8 @@
    apply per-line styles (italic thinking, dim code, etc.).
    `iter-num` is the 1-based iteration number (for the header)."
   [{:keys [thinking code results stdouts]} code-width iter-num]
-  (let [header [(str sep-marker "--- iter " iter-num " ---")]
+  (let [bar (p/horiz-line 3)
+        header [(str sep-marker bar " iter " iter-num " " bar)]
 
         thinking-lines
         (when (and (string? thinking) (not (str/blank? thinking)))
@@ -461,7 +462,7 @@
                         (map-indexed vector trace)))
         answer-str (or answer "")]
     (if (seq trace-lines)
-      (let [sep (str sep-marker (apply str (repeat (min 40 content-w) "-")))]
+      (let [sep (str sep-marker (p/horiz-line (min 40 content-w)))]
         (str (str/join "\n" trace-lines) "\n" sep "\n" answer-str))
       answer-str)))
 
