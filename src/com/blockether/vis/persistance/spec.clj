@@ -11,20 +11,12 @@
    [java.util Base64]))
 
 (def MAX_ITERATIONS
-  "Default iteration budget before forcing termination.
-   Kept deliberately tight — the LLM must justify its budget. It can extend
-   this at runtime via (request-more-iterations n) up to MAX_ITERATION_CAP."
-  10)
-
-(def MAX_ITERATION_CAP
-  "Absolute ceiling for iterations. No amount of request-more-iterations
-   can exceed this. Safety valve against runaway loops."
-  500)
-
-(def MAX_EXTENSION_PER_REQUEST
-  "Maximum iterations that can be granted per single request-more-iterations call.
-   Prevents the LLM from requesting 500 iterations in one shot."
-  50)
+  "Default iteration budget per query. Deliberately tight (4) — the LLM
+   starts lean and calls `(request-more-iterations n)` when it genuinely
+   needs more. Most simple queries finalize in 1-2 iterations; complex
+   multi-step tasks request additional budget on demand. There is NO cap
+   on how high the budget can grow — the LLM is trusted to manage it."
+  4)
 
 (def DEFAULT_EVAL_TIMEOUT_MS
   "Default timeout in milliseconds for code evaluation in SCI sandbox."

@@ -70,12 +70,20 @@
 ;;; ── Help ────────────────────────────────────────────────────────────────
 
 (defn- print-help! []
-  (println "vis — AI assistant with svar RLM")
+  (println "vis — SCI powered RLM iterative coding harness")
+  (println)
+  (println "  No tool calls. No message accumulation. No compaction.")
+  (println "  The model writes Clojure. A sandboxed SCI interpreter executes it.")
+  (println "  Results flow back as a compact journal. State lives in named vars")
+  (println "  and SQLite, not in the token budget. One context message per")
+  (println "  iteration — constant size, never grows. Works with any model that")
+  (println "  outputs JSON.")
   (println)
   (println "Commands:")
   (println "  vis                                   Start new TUI chat")
   (println "  vis chat                              Start new TUI chat")
-  (println "  vis chat --conversation-id ID          Resume an existing conversation")
+  (println "  vis chat --conversation-id ID          Resume a specific conversation")
+  (println "  vis chat --resume                      Resume the latest conversation")
   (println "  vis conversations                     List all conversations")
   (println "  vis conversations telegram             List telegram conversations")
   (println "  vis run \"prompt\"                      Run a one-shot agent query")
@@ -88,6 +96,7 @@
   (println "  vis help                              Show this help")
   (println)
   (println "Run `vis run --help` for options.")
+  (println "Docs: cd resources/docs && mdbook serve --open")
   ;; Show extension commands if any are registered
   (let [cmds (channels/all-extension-cmds)]
     (when (seq cmds)
@@ -233,7 +242,7 @@
       (stdout! (str "No " channel " conversations found."))
       (let [rows (mapv (fn [c]
                          (let [queries (db/db-list-conversation-queries
-                                         d [:id (java.util.UUID/fromString (str (:id c)))])
+                                         d (:id c))
                                turns   (count queries)
                                last-q  (last queries)]
                            {:id         (str (:id c))
@@ -251,14 +260,16 @@
            {:key :created   :label "Created"    :width 16 :align :left}]
           rows)
         (stdout! (str "\n  " (count rows) " conversation(s)\n"))
-        (stdout! "  Resume with: vis chat --conversation-id <ID>")))))
+        (stdout! "  Resume with: vis chat --conversation-id <ID>")
+        (stdout! "  Or latest:   vis chat --resume")))))
 
 ;;; ── Chat Argument Parsing ─────────────────────────────────────────────────
 
 (defn- parse-chat-args
   "Parse `vis chat` arguments.
    Flags:
-     --conversation-id ID   Resume an existing conversation"
+     --conversation-id ID   Resume a specific conversation
+     --resume               Resume the latest :vis conversation"
   [args]
   (loop [args (seq args) opts {}]
     (if-not args
@@ -267,6 +278,7 @@
             more (next args)]
         (case arg
           "--conversation-id" (recur (next more) (assoc opts :conversation-id (first more)))
+          "--resume"          (recur more (assoc opts :resume true))
           ;; skip unknown
           (recur more opts))))))
 

@@ -16,7 +16,7 @@ Creates an RLM environment for querying.
 - `router` — LLM router from `config/make-router`
 - `opts`:
   - `:db` — `nil` | `:temp` | path string | `{:path p}` | `{:datasource ds}`
-  - `:conversation` — `nil` | `:latest` | uuid | `[:id uuid]`
+  - `:conversation` — `nil` | `:latest` | uuid | uuid-string
   - `:channel` — `:vis` | `:telegram` | `:cli`
   - `:external-id` — external identifier (e.g. Telegram chat-id)
   - `:title` — conversation title
@@ -126,7 +126,7 @@ Runs a query using iterative LLM code evaluation.
 - `environment` — from `create-environment`
 - `messages` — vector of message maps, e.g. `[(llm/user "...")]`
 - `opts` (all optional):
-  - `:max-iterations` — iteration budget (default 10)
+  - `:max-iterations` — initial iteration budget (default 4, no cap)
   - `:reasoning-default` — base reasoning level (default `:balanced`)
   - `:debug?` — enable verbose logging
   - `:hooks` — `{:on-iteration fn, :on-chunk fn, :on-cancel fn}`
@@ -156,7 +156,7 @@ Higher-level API used by channels. Wraps environment lifecycle + query
 execution with per-conversation locking and caching.
 
 ```clojure
-(create! channel)                    ;; → {:id "uuid" :channel :vis ...}
+(create! channel)                    ;; → {:id "uuid-string" :channel :vis ...}
 (create! channel {:title "..."})
 (send! id messages opts)             ;; → result-map (locked per conversation)
 (close! id)                          ;; dispose env, keep DB data

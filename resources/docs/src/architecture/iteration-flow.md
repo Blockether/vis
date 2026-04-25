@@ -52,10 +52,10 @@ flowchart LR
 
 ## Budget Extension
 
-The LLM can call `(request-more-iterations n)` from `:code` to extend
-its iteration budget at runtime. Each request is capped at
-`MAX_EXTENSION_PER_REQUEST` (50), and the total can never exceed
-`MAX_ITERATION_CAP` (500).
+The default budget is **4 iterations** — deliberately tight so the LLM
+must plan. When more work is genuinely needed, the LLM calls
+`(request-more-iterations n)` from `:code` to extend on demand.
+There is **no cap** on how high the budget can grow.
 
 ## Prior Thinking
 

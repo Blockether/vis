@@ -34,7 +34,7 @@
       (Thread/sleep 2)
       (let [id2    (db/store-conversation! s {:channel :vis})
             latest (db/db-resolve-conversation-id s :latest)]
-        (expect (= (second id2) (second latest))))))
+        (expect (= id2 latest)))))
 
   (it "lists by channel via metadata JSON"
     (let [s (store)]
@@ -47,7 +47,7 @@
   (it "finds by external-id via metadata JSON"
     (let [s  (store)
           id (db/store-conversation! s {:channel :telegram :external-id "chat-42"})]
-      (expect (= (second id) (second (db/db-find-conversation-by-external s :telegram "chat-42"))))
+      (expect (= id (db/db-find-conversation-by-external s :telegram "chat-42")))
       (expect (nil? (db/db-find-conversation-by-external s :telegram "nope")))))
 
   (it "updates title on conversation_state"
@@ -322,7 +322,7 @@
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (db/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}]
                                       :duration-ms 0 :vars [{:name "x" :value 1}]})]
-      (db/delete-conversation-tree! s (second cid))
+      (db/delete-conversation-tree! s cid)
       (expect (= 0 (raw-count s :conversation_soul)))
       (expect (= 0 (raw-count s :conversation_state)))
       (expect (= 0 (raw-count s :query_soul)))
@@ -1279,9 +1279,9 @@
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})]
       (db/log! s {:level :info :event "test.event" :data "{\"k\":1}"
-                  :conversation-soul-id (second cid)})
+                  :conversation-soul-id cid})
       (expect (= 1 (raw-count s :log)))
       (let [row (first (raw-query s {:select [:*] :from :log}))]
         (expect (= "info" (:level row)))
         (expect (= "test.event" (:event row)))
-        (expect (= (str (second cid)) (:conversation_soul_id row)))))))
+        (expect (= (str cid) (:conversation_soul_id row)))))))

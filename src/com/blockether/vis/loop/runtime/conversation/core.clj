@@ -4,8 +4,7 @@
             [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.core :as loop-core]
             [com.blockether.vis.persistance.core :as db]
-            [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core])
-  (:import [java.util UUID]))
+            [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;; ---------------------------------------------------------------------------
 ;; In-process conversation cache + channel utilities
@@ -23,10 +22,9 @@
 (defn- open-env!
   [id {:keys [channel external-id title]}]
   (let [router (query-core/get-router)
-        sel    (when id [:id (UUID/fromString id)])
         env    (loop-core/create-environment router
                  (cond-> {:db (config/resolve-db-spec)}
-                   sel         (assoc :conversation sel)
+                   id          (assoc :conversation id)
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
                    title       (assoc :title title)))]
@@ -58,7 +56,7 @@
    (let [env  (open-env! nil {:channel     channel
                               :external-id (some-> external-id str)
                               :title       title})
-         id   (str (second (:conversation-id env)))
+         id   (str (:conversation-id env))
          _    (cache-env! id env)]
      {:id          id
       :channel     channel
@@ -67,7 +65,7 @@
 
 (defn by-id
   [id]
-  (when-let [conv (db/db-get-conversation (db-info) [:id (java.util.UUID/fromString (str id))])]
+  (when-let [conv (db/db-get-conversation (db-info) id)]
     {:id            (str (:id conv))
      :channel       (:channel conv)
      :external-id   (:external-id conv)
@@ -95,7 +93,7 @@
 
 (defn set-title!
   [id title]
-  (db/db-update-conversation-title! (db-info) [:id (java.util.UUID/fromString (str id))] title)
+  (db/db-update-conversation-title! (db-info) id title)
   nil)
 
 (defn env-for
@@ -120,7 +118,7 @@
   [id]
   (close! id)
   (let [d (db-info)]
-    (try (db/delete-conversation-tree! d (java.util.UUID/fromString (str id)))
+    (try (db/delete-conversation-tree! d id)
       (catch Exception _ nil))))
 
 (defn sweep-orphaned-running-queries!
@@ -131,7 +129,7 @@
          answer  "⚠️ Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."]
      (doseq [{:keys [id iterations duration-ms]} orphans]
        (try
-         (db/update-query! db [:id id]
+         (db/update-query! db id
            {:answer      answer
             :iterations  (or iterations 0)
             :duration-ms (or duration-ms 0)
