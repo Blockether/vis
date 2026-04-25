@@ -16,6 +16,9 @@
 | `:ext/prompt` | ✓ | — | String or `(fn [env] → string)` — LLM-facing docs in system prompt |
 | `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
 | `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['filesystem 'git]` |
+| `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
+| `:ext/author` | ✗ | — | Author name or org, e.g. `"Blockether"` |
+| `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"` |
 | `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
 | `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
 | `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
@@ -93,6 +96,9 @@ Called internally by `extension`; safe to call standalone.
   (ext/extension
     {:ext/namespace     'documents
      :ext/doc           "Document search and retrieval"
+     :ext/version       "1.0.0"
+     :ext/author        "Blockether"
+     :ext/license       "EPL-2.0"
      :ext/group         "knowledge"
      :ext/subgroup      "documents"
      :ext/requires      ['filesystem]

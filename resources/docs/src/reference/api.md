@@ -82,6 +82,19 @@ Dynamically load an extension namespace. `require`s the namespace
 (triggering its `register-global!`), then returns the extension from
 the registry. Throws if the namespace doesn't register.
 
+### `reload-extension!`
+
+```clojure
+(ext/reload-extension! 'my.company.ext.git) → ext
+```
+
+Reload an extension namespace (`:reload` flag). Re-executes the
+`register-global!` call with the new code. Returns the updated
+extension.
+
+Note: updates the global registry only. Already-running environments
+keep the old version until recreated or re-registered manually.
+
 ### `install-global-extensions!`
 
 ```clojure
