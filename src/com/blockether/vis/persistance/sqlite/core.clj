@@ -142,9 +142,9 @@
       (:path db-spec)
       (assoc (open-sqlite-at-dir (:path db-spec)) :owned? false :mode :persistent)
       :else
-      (throw (ex-info "Invalid db-spec map" {:type :rlm/invalid-db-spec :db-spec db-spec})))
+      (throw (ex-info "Invalid db-spec map" {:type :vis/invalid-db-spec :db-spec db-spec})))
     :else
-    (throw (ex-info "Invalid db-spec" {:type :rlm/invalid-db-spec :db-spec db-spec}))))
+    (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec}))))
 
 (defn close-store [_store] nil)
 
@@ -431,7 +431,7 @@
 
 (defn- runtime-object?
   "True when `v` is a runtime-only object (function, SCI var, SCI internal)
-   that cannot be meaningfully serialized as data. These get a :rlm/ref marker
+   that cannot be meaningfully serialized as data. These get a :vis/ref marker
    so the system knows to re-eval from the `expr` column to reconstruct them."
   [v]
   (or (fn? v)
@@ -443,26 +443,26 @@
 
    Rules:
    - Realized collections (vectors, sets, maps, lists) → walk recursively, freeze.
-   - Lazy seqs → `{:rlm/ref :expr}`. A lazy seq IS a computation. Its durable
+   - Lazy seqs → `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
      form is the source code that produces it, not a materialized snapshot.
      Re-eval from :expr to reconstruct.
-   - Functions, SCI vars → `{:rlm/ref :expr}`. Same reason.
+   - Functions, SCI vars → `{:vis/ref :expr}`. Same reason.
    - Plain scalars (strings, numbers, keywords, etc.) → pass through."
   ([v] (freeze-safe v 8))
   ([v depth]
    (cond
      (nil? v)               nil
-     (zero? depth)          {:rlm/ref :depth-exceeded}
-     (runtime-object? v)    {:rlm/ref :expr}
+     (zero? depth)          {:vis/ref :depth-exceeded}
+     (runtime-object? v)    {:vis/ref :expr}
      ;; Lazy seq — not yet realized. Don't realize it, just ref.
-     (instance? clojure.lang.LazySeq v) {:rlm/ref :expr}
+     (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
      ;; Realized collections — walk recursively
      (map? v)    (persistent! (reduce-kv (fn [m k val] (assoc! m k (freeze-safe val (dec depth)))) (transient {}) v))
      (vector? v) (mapv #(freeze-safe % (dec depth)) v)
      (set? v)    (into #{} (map #(freeze-safe % (dec depth))) v)
      (list? v)   (doall (map #(freeze-safe % (dec depth)) v))
      ;; Other seqs (cons, range, iterate, etc.) — also lazy by nature
-     (seq? v)    {:rlm/ref :expr}
+     (seq? v)    {:vis/ref :expr}
      :else       v)))
 
 ;; =============================================================================
@@ -804,12 +804,12 @@
       :state-mode  'stateful'
       :version     int
       :expr        string (source code)
-      :result      <thawed value or {:rlm/ref :expr}>
+      :result      <thawed value or {:vis/ref :expr}>
       :depends-on  [upstream-soul-id ...]
       :depended-by [downstream-soul-id ...]}
 
    The caller evals entries in order: for each entry, if result is
-   {:rlm/ref :expr}, eval the :expr to reconstruct the value.
+   {:vis/ref :expr}, eval the :expr to reconstruct the value.
    Dependencies are guaranteed to appear before dependents."
   [db-info conversation-id]
   (when (ds db-info)

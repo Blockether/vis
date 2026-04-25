@@ -194,7 +194,7 @@
                                :where [:= :es.kind "call"]})]
         (expect (= {:a [1 2]} (thaw-blob (:result (first rows))))))))
 
-  (it "stores fn result as {:rlm/ref :expr}"
+  (it "stores fn result as {:vis/ref :expr}"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
@@ -205,7 +205,7 @@
                                :from [[:expression_state :est]]
                                :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
                                :where [:= :es.kind "call"]})]
-        (expect (= {:rlm/ref :expr} (thaw-blob (:result (first rows))))))))
+        (expect (= {:vis/ref :expr} (thaw-blob (:result (first rows))))))))
 
   (it "stores errors with success=0"
     (let [s   (store)
@@ -266,14 +266,14 @@
       (expect (= 1 (raw-count s :expression_soul [:= :kind "var"])))
       (expect (= 100 (:value (first (db/db-list-iteration-vars s i2)))))))
 
-  (it "fn var stores {:rlm/ref :expr}"
+  (it "fn var stores {:vis/ref :expr}"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                       :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
           v   (first (db/db-list-iteration-vars s iid))]
-      (expect (= {:rlm/ref :expr} (:value v)))
+      (expect (= {:vis/ref :expr} (:value v)))
       (expect (= "(defn f [x] x)" (:code v)))))
 
   (it "stores complex data via nippy"
@@ -654,7 +654,7 @@
       ;; No dependencies
       (expect (every? #(empty? (:depends-on %)) restored))))
 
-  (it "restores fn vars with {:rlm/ref :expr}"
+  (it "restores fn vars with {:vis/ref :expr}"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
@@ -664,7 +664,7 @@
           restored (db/db-restore-expressions s cid)
           entry    (first restored)]
       (expect (= "double-it" (:name entry)))
-      (expect (= {:rlm/ref :expr} (:result entry)))
+      (expect (= {:vis/ref :expr} (:result entry)))
       (expect (= "(defn double-it [x] (* x 2))" (:expr entry)))))
 
   (it "linear dependency chain A → B → C restored in correct order"
@@ -701,10 +701,10 @@
         ;; base-rate MUST come before calc-interest, calc-interest before monthly-payment
         (expect (< (.indexOf names "base-rate") (.indexOf names "calc-interest")))
         (expect (< (.indexOf names "calc-interest") (.indexOf names "monthly-payment")))
-        ;; base-rate has data, the fns have :rlm/ref :expr
+        ;; base-rate has data, the fns have :vis/ref :expr
         (expect (= 0.05 (:result (first restored))))
-        (expect (= {:rlm/ref :expr} (:result (second restored))))
-        (expect (= {:rlm/ref :expr} (:result (nth restored 2))))
+        (expect (= {:vis/ref :expr} (:result (second restored))))
+        (expect (= {:vis/ref :expr} (:result (nth restored 2))))
         ;; Dependency metadata is correct
         (let [calc (first (filter #(= "calc-interest" (:name %)) restored))]
           (expect (= [(soul-by "base-rate")] (:depends-on calc)))
@@ -748,7 +748,7 @@
         (expect (< (idx "fee-fn") (idx "total-fn")))
         ;; config is data, rest are fn refs
         (expect (= {:rate 0.1} (:result (nth restored (idx "config")))))
-        (expect (= {:rlm/ref :expr} (:result (nth restored (idx "total-fn")))))
+        (expect (= {:vis/ref :expr} (:result (nth restored (idx "total-fn")))))
         ;; total-fn depends on both tax-fn and fee-fn
         (let [total (nth restored (idx "total-fn"))]
           (expect (= 2 (count (:depends-on total))))
@@ -820,7 +820,7 @@
         ;; dataset is data
         (expect (= [{:x 1 :y 2} {:x 3 :y 4}] (:result (by-name "dataset"))))
         ;; summarize is fn ref
-        (expect (= {:rlm/ref :expr} (:result (by-name "summarize"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "summarize"))))
         ;; result is data (was computed)
         (expect (= [1 3] (:result (by-name "result"))))
         ;; Topological order: dataset before summarize, both before result
@@ -868,9 +868,9 @@
         (expect (< (idx "make-adder") (idx "add-10")))
         (expect (< (idx "add-10") (idx "result")))
         ;; make-adder is a fn -> ref
-        (expect (= {:rlm/ref :expr} (:result (by-name "make-adder"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "make-adder"))))
         ;; add-10 is ALSO a fn (returned by make-adder) -> ref
-        (expect (= {:rlm/ref :expr} (:result (by-name "add-10"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "add-10"))))
         ;; result is data (15)
         (expect (= 15 (:result (by-name "result")))))))
 
@@ -917,8 +917,8 @@
         (expect (< (idx "scale") (idx "scaled-data")))
         ;; config = data, make-scaler = fn ref, scale = fn ref, scaled-data = data
         (expect (= {:multiplier 3} (:result (by-name "config"))))
-        (expect (= {:rlm/ref :expr} (:result (by-name "make-scaler"))))
-        (expect (= {:rlm/ref :expr} (:result (by-name "scale"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "make-scaler"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "scale"))))
         (expect (= [3 6 9 12 15] (:result (by-name "scaled-data")))))))
 
   (it "multi-version var with dependency: changing upstream propagates ref"
@@ -926,7 +926,7 @@
     ;; Iter 2: (defn compute [x] (+ x base))
     ;; Iter 3: (def base 20)  -- base changes!
     ;; Iter 4: (def answer (compute 5)) -- should use new base
-    ;; At restore time, base=20 (latest version), compute has :rlm/ref :expr
+    ;; At restore time, base=20 (latest version), compute has :vis/ref :expr
     (let [s      (store)
           cid    (db/store-conversation! s {:channel :vis})
           qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
@@ -961,7 +961,7 @@
         (expect (= 20 (:result (by-name "base"))))
         (expect (= 1 (:version (by-name "base"))))
         ;; compute is fn ref, needs re-eval with new base
-        (expect (= {:rlm/ref :expr} (:result (by-name "compute"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "compute"))))
         (expect (= "(defn compute [x] (+ x base))" (:expr (by-name "compute"))))
         ;; answer is data
         (expect (= 25 (:result (by-name "answer"))))
@@ -1032,7 +1032,7 @@
         ;; raw-data from turn 1 is still data
         (expect (= [10 20 30] (:result (by-name "raw-data"))))
         ;; avg-fn is fn ref
-        (expect (= {:rlm/ref :expr} (:result (by-name "avg-fn"))))
+        (expect (= {:vis/ref :expr} (:result (by-name "avg-fn"))))
         ;; average is computed data
         (expect (= 20 (:result (by-name "average"))))
         ;; Order: raw-data before avg-fn before average
@@ -1044,7 +1044,7 @@
 ;; =============================================================================
 
 (defdescribe lazy-seq-safety-test
-  (it "infinite range → {:rlm/ref :expr} — never realized"
+  (it "infinite range → {:vis/ref :expr} — never realized"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
@@ -1052,19 +1052,19 @@
                                       :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
           v   (first (db/db-list-iteration-vars s iid))]
       ;; Must not hang!
-      (expect (= {:rlm/ref :expr} (:value v)))
+      (expect (= {:vis/ref :expr} (:value v)))
       (expect (= "(def nums (range))" (:code v)))))
 
-  (it "infinite repeat → {:rlm/ref :expr}"
+  (it "infinite repeat → {:vis/ref :expr}"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                       :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
           v   (first (db/db-list-iteration-vars s iid))]
-      (expect (= {:rlm/ref :expr} (:value v)))))
+      (expect (= {:vis/ref :expr} (:value v)))))
 
-  (it "iterate → {:rlm/ref :expr}"
+  (it "iterate → {:vis/ref :expr}"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
@@ -1072,9 +1072,9 @@
                                       :vars [{:name "nats" :value (iterate inc 0)
                                               :code "(def nats (iterate inc 0))"}]})
           v   (first (db/db-list-iteration-vars s iid))]
-      (expect (= {:rlm/ref :expr} (:value v)))))
+      (expect (= {:vis/ref :expr} (:value v)))))
 
-  (it "small lazy seq (map inc [1 2 3]) → {:rlm/ref :expr} — lazy is lazy"
+  (it "small lazy seq (map inc [1 2 3]) → {:vis/ref :expr} — lazy is lazy"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
@@ -1083,7 +1083,7 @@
                                               :code "(def small (map inc [1 2 3]))"}]})
           v   (first (db/db-list-iteration-vars s iid))]
       ;; Even small lazy seqs are refs — they're computations, not data
-      (expect (= {:rlm/ref :expr} (:value v)))))
+      (expect (= {:vis/ref :expr} (:value v)))))
 
   (it "realized vector is stored as data"
     (let [s   (store)
@@ -1118,8 +1118,8 @@
       (expect (map? m))
       (expect (= [1 2 3] (:data m)))
       ;; Both lazy seqs → ref, regardless of size
-      (expect (= {:rlm/ref :expr} (:lazy m)))
-      (expect (= {:rlm/ref :expr} (:infinite m)))))
+      (expect (= {:vis/ref :expr} (:lazy m)))
+      (expect (= {:vis/ref :expr} (:infinite m)))))
 
   (it "lazy seq as expression result → ref"
     (let [s   (store)
@@ -1135,7 +1135,7 @@
                             :where [:= :es.kind "call"]
                             :order-by [[:est.created_at :asc]]})]
       ;; (range) → ref
-      (expect (= {:rlm/ref :expr} (thaw-blob (:result (first rows)))))
+      (expect (= {:vis/ref :expr} (thaw-blob (:result (first rows)))))
       ;; (vec (range 5)) → realized vector, stored as data
       (expect (= [0 1 2 3 4] (thaw-blob (:result (second rows)))))))
 )
@@ -1171,7 +1171,7 @@
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          ;; Store a fn (result will be {:rlm/ref :expr})
+          ;; Store a fn (result will be {:vis/ref :expr})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                       :vars [{:name "double-it" :value (fn [x] (* x 2))
                                               :code "(defn double-it [x] (* x 2))"}]})

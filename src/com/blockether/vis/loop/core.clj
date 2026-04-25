@@ -368,7 +368,7 @@
 ;; System Prompt — delegates to loop.runtime.prompt
 ;; =============================================================================
 
-(def build-system-prompt prompt/build-system-prompt)
+(defn build-system-prompt [{:keys [system-prompt]}] (or system-prompt ""))
 
 ;; =============================================================================
 ;; Iteration message / context assembly (pure helpers — fully testable)
@@ -464,7 +464,7 @@
                                `prev-expressions`.
      :call-counts-atom       — mutable repetition-counter owned by
                                the iteration-loop. Swapped by
-                               `prompt/repetition-warning`.
+                               `repetition-warning`.
 
    Returns the joined block or nil when every component is blank."
   [rlm-env {:keys [iteration current-max-iterations
@@ -643,7 +643,7 @@
           effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level. Expected one of quick|balanced|deep."
-                                           {:type :rlm/invalid-reasoning-level
+                                           {:type :vis/invalid-reasoning-level
                                             :got reasoning-level}))))
           ;; ask! auto-translates :reasoning to the right provider extra-body
           ;; using the selected model's :reasoning? flag + provider :api-style.
@@ -920,8 +920,8 @@
   "Return the canonical formatted string for a tool-produced value.
 
    Lookup order:
-   1. `:rlm/formatted` from value metadata — precomputed by the tool wrapper.
-   2. `(:rlm/format meta) called on value` — meta was preserved but the cached
+   1. `:vis/formatted` from value metadata — precomputed by the tool wrapper.
+   2. `(:vis/format meta) called on value` — meta was preserved but the cached
       string wasn't (e.g. value was transformed but `vary-meta` carried the fn).
    3. nil — caller falls back to its own rendering (pr-str of realized value).
 
@@ -930,8 +930,8 @@
   [v]
   (when (instance? clojure.lang.IObj v)
     (let [m (meta v)]
-      (or (:rlm/formatted m)
-          (when-let [f (:rlm/format m)]
+      (or (:vis/formatted m)
+          (when-let [f (:vis/format m)]
             (try (f v) (catch Throwable _ nil)))))))
 
 (defn format-expressions
@@ -953,7 +953,7 @@
     (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
            (let [code-str (str/trim (or code ""))
                   hint (when error (error-hint error))
-                  var-surrogate? (and (map? result) (contains? result :rlm/var-id))
+                  var-surrogate? (and (map? result) (contains? result :vis/var-id))
                   val-part (cond
                              error
                              (str "ERROR: " error
@@ -963,7 +963,7 @@
                              (str "ERROR: " code-str " is a function object. Call it: (" code-str ")")
 
                              var-surrogate?
-                             (let [{var-name :rlm/var-id bound :rlm/var-value} result]
+                             (let [{var-name :vis/var-id bound :vis/var-value} result]
                                (str "*" var-name "* = "
                                  (or (formatted-str-of bound)
                                    (rt-shared/result->display bound :full))))
@@ -1157,7 +1157,7 @@
                   slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
                                   (str " (" time-ms "ms SLOW)"))
                   var-surrogate? (and (map? result)
-                                   (contains? result :rlm/var-id))
+                                   (contains? result :vis/var-id))
                   value-part
                   (cond
                     error
@@ -1167,7 +1167,7 @@
                     "ERROR: Result is a function, not a value"
 
                     var-surrogate?
-                    (let [{var-name :rlm/var-id bound :rlm/var-value} result
+                    (let [{var-name :vis/var-id bound :vis/var-value} result
                           pre-formatted (formatted-str-of bound)
                           bound* (realize-value bound)
                           [value-str truncated?]
@@ -1325,10 +1325,8 @@
    env. Uses the env-scoped `:var-index-atom` as a revision-keyed cache
    so a turn that touched nothing doesn't re-walk the sandbox map.
 
-   Sub-RLMs (env with `:parent-iteration-id`) render WITHOUT
-   `:include-persisted?` — their fork only exposes its own snapshot +
-   its own new vars; sibling queries in the same conversation stay
-   out of the sub's view. See `fork-rlm-env-for-sub`."
+   Persisted-but-evicted vars appear as placeholders so the LLM
+   knows they exist and can call `(var-history 'sym)` to inspect."
   [rlm-env]
   (let [var-index-atom (or (:var-index-atom rlm-env)
                          (atom {:index nil :revision -1 :current-revision 0}))
@@ -1341,7 +1339,7 @@
                           (:sci-ctx rlm-env) (:initial-ns-keys rlm-env)
                           sandbox-map
                           (:db-info rlm-env) (:conversation-id rlm-env)
-                          {:include-persisted? true})
+                          nil)
             live-rev    (:current-revision @var-index-atom)]
         (swap! var-index-atom assoc :index idx :revision live-rev)
         idx))))
@@ -1409,7 +1407,7 @@
                 (let [realized (realize-value value)
                       exec-info (get sym->exec sym)]
                   ;; Accept ALL values — freeze-safe in the persistence layer
-                  ;; handles non-serializable types (fns → {:rlm/ref :expr}).
+                  ;; handles non-serializable types (fns → {:vis/ref :expr}).
                   (cond-> {:name (str sym)
                              :value realized
                              :code (:expr exec-info)}
@@ -1584,7 +1582,7 @@
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
-         ;; Repetition detection — `prompt/repetition-warning`
+         ;; Repetition detection — `repetition-warning`
          ;; reads+swaps this atom from build-iteration-context each
          ;; turn. Keyed by both `[code result]` AND
          ;; `[:error-only msg]` so varying-input-same-error loops
@@ -2084,7 +2082,7 @@
    RLM environment map (component)."
   [router {:keys [db conversation channel external-id title]}]
   (when-not router
-    (anomaly/incorrect! "Missing router" {:type :rlm/missing-router}))
+    (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom (atom 0)
         db-info (create-rlm-conn db)
         var-index-atom (atom {:index nil :revision -1 :current-revision 0})
@@ -2154,7 +2152,7 @@
   [environment ext]
   (when-not (:extensions environment)
     (anomaly/incorrect! "Invalid RLM environment — missing :extensions atom"
-      {:type :rlm/invalid-env}))
+      {:type :vis/invalid-env}))
   (when-let [requires (seq (:ext/requires ext))]
     (let [registered (into #{} (map :ext/namespace) @(:extensions environment))
           missing    (vec (remove registered requires))]
