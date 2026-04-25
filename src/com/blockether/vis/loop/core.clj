@@ -1963,6 +1963,11 @@
                         (on-chunk {:iteration iteration
                                    :thinking thinking
                                    :code (mapv :code expressions)
+                                   :results (mapv (fn [{:keys [result error]}]
+                                                    (if error
+                                                      (str "ERROR: " error)
+                                                      (result->display result :full)))
+                                             expressions)
                                    :final {:answer (:answer final-result)
                                            :confidence (:confidence final-result)
                                            :summary (:summary final-result)
@@ -2044,6 +2049,11 @@
                           (on-chunk {:iteration iteration
                                      :thinking thinking
                                      :code (mapv :code expressions)
+                                     :results (mapv (fn [{:keys [result error]}]
+                                                      (if error
+                                                        (str "ERROR: " error)
+                                                        (result->display result :full)))
+                                               expressions)
                                      :done? false}))
                         (let [had-successful-execution? (some #(nil? (:error %)) expressions)
                               next-errors (if had-successful-execution? 0 (inc consecutive-errors))
