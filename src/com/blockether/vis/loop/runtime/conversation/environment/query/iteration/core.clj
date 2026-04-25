@@ -243,18 +243,18 @@
 (defn trim-to-initial-history [messages initial-count]
   (vec (take initial-count messages)))
 
-(defn- read-var-index-str [rlm-env]
-  (let [var-index-atom (or (:var-index-atom rlm-env)
+(defn- read-var-index-str [environment]
+  (let [var-index-atom (or (:var-index-atom environment)
                          (atom {:index nil :revision -1 :current-revision 0}))
         {:keys [index revision current-revision]} @var-index-atom]
     (if (= revision current-revision)
       index
-      (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env))
+      (let [sandbox-map (get-in @(:env (:sci-ctx environment))
                           [:namespaces 'sandbox])
             idx         (sci-env/build-var-index
-                          (:sci-ctx rlm-env) (:initial-ns-keys rlm-env)
+                          (:sci-ctx environment) (:initial-ns-keys environment)
                           sandbox-map
-                          (:db-info rlm-env) (:conversation-id rlm-env)
+                          (:db-info environment) (:conversation-id environment)
                           nil)
             live-rev    (:current-revision @var-index-atom)]
         (swap! var-index-atom assoc :index idx :revision live-rev)
@@ -276,7 +276,7 @@
                  :msg "load-prior-thinking-chain failed"})
       [])))
 
-(defn build-prior-thinking [_rlm-env db-info query-id]
+(defn build-prior-thinking [_environment db-info query-id]
   (let [chain (load-prior-thinking-chain db-info query-id)]
     (when (seq chain)
       (let [tail (vec (take-last 1 chain))
@@ -365,7 +365,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn build-iteration-context
-  [rlm-env {:keys [iteration current-max-iterations
+  [environment {:keys [iteration current-max-iterations
                    prior-thinking
                    prev-expressions prev-iteration
                    call-counts-atom]}]
@@ -378,12 +378,12 @@
                       (str "<prior_thinking>\n"
                         (clamp prior-thinking PRIOR_THINKING_MAX_CHARS)
                         "\n</prior_thinking>"))
-        var-index-str (read-var-index-str rlm-env)
+        var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
         expr-results (format-expression-results prev-expressions prev-iteration)
-        nudge-ctx {:environment          rlm-env
+        nudge-ctx {:environment          environment
                    :iteration            iteration
                    :current-max-iterations current-max-iterations
                    :prev-expressions      prev-expressions
@@ -396,7 +396,7 @@
                                 :current-max-iterations current-max-iterations}))
                            (repetition-warning call-counts-atom prev-expressions)])
         ext-nudges (collect-extension-nudges
-                     (some-> (:extensions rlm-env) deref) nudge-ctx)
+                     (some-> (:extensions environment) deref) nudge-ctx)
         nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [iter-header prior-block expr-results var-block nudges-block])]
@@ -503,7 +503,7 @@
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
    Returns map with :thinking :expressions :final-result :api-usage etc."
-  [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk]
+  [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
@@ -519,8 +519,8 @@
                                         :thinking  (some-> reasoning str)
                                         :code      nil
                                         :done?     (boolean done?)}))))
-          ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
-                       (llm/ask! (:router rlm-env)
+          ask-result (binding [llm/*log-context* {:query-id (:env-id environment) :iteration iteration}]
+                       (llm/ask! (:router environment)
                          (cond-> {:spec iteration-spec
                                   :messages messages
                                   :routing (or routing {})
@@ -561,12 +561,12 @@
                                      (if-let [err (literal-code-block-error expr)]
                                        {:result nil :error err
                                         :stdout "" :stderr "" :execution-time-ms 0}
-                                       (execute-code rlm-env expr :timeout-ms time-ms)))
+                                       (execute-code environment expr :timeout-ms time-ms)))
                                code-entries))
               expr-errors (when expr-results
                             (seq (clojure.core/filter :error expr-results)))
               raw-answer (str raw-final-answer)
-              locals (try (get-locals rlm-env) (catch Throwable _ {}))
+              locals (try (get-locals environment) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
                               (try (symbol? (read-string raw-answer)) (catch Throwable _ false)))
               resolved-var-value (when single-token?
@@ -640,7 +640,7 @@
                                  {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms})
                                (let [result (if-let [err (literal-code-block-error expr)]
                                               {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
-                                              (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
+                                              (let [r (execute-code environment expr :timeout-ms time-ms)]
                                                 (log-stage! :code-result iteration
                                                   {:idx (inc idx) :total total-blocks
                                                    :execution-time-ms (:execution-time-ms r)

@@ -3,7 +3,7 @@
 Nudges are short `[system_nudge]` strings injected into the iteration
 prompt to steer the LLM's behavior. They come from two sources:
 
-1. **Built-in nudges** — `prompt.clj` (budget warning, var-index overflow,
+1. **Built-in nudges** — `iteration/core.clj` (budget warning, var-index overflow,
    repetition detection)
 2. **Extension nudges** — any extension's `:ext/nudge-fn`
 
@@ -70,7 +70,7 @@ Inside `build-iteration-context` (called every iteration):
 
 ```
 1. Compute built-in nudges (budget, var-overflow, repetition)
-2. Call collect-extension-nudges (prompt.clj)
+2. Call collect-extension-nudges (iteration/core.clj)
    → for each registered extension with :ext/nudge-fn:
      a. Check :ext/activation-fn against environment
      b. If active, call :ext/nudge-fn with context

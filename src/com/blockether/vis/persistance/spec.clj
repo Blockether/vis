@@ -58,7 +58,7 @@
    :http-timeout-ms    20000})
 
 (def ^:dynamic *concurrency*
-  "Merged concurrency settings for the current vis! session."
+  "Merged concurrency settings for the current vis! process."
   DEFAULT_CONCURRENCY)
 
 (defn clamp-eval-timeout-ms

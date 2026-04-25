@@ -14,11 +14,6 @@ src/com/blockether/vis/
 │   │                                  run-iteration, execute-code)
 │   ├── mustache.clj                  Mustache template rendering for :answer
 │   └── runtime/
-│       ├── prompt.clj                system prompt builder + nudge composers
-│       │                             (budget-warning, var-index-overflow,
-│       │                              repetition-warning,
-│       │                              collect-extension-nudges)
-│       ├── shared.clj                realize-value, truncate, shape, format helpers
 │       └── conversation/
 │           ├── core.clj              conversation lifecycle
 │           │                         (create!, send!, close!, delete!,
@@ -46,19 +41,22 @@ src/com/blockether/vis/
 │       └── core.clj                  SQLite implementation (HoneySQL)
 │
 └── channels/
-    ├── web/                          Web adapter (Jetty + routes + SSE)
-    │   ├── app.clj                   process boot (Jetty start/stop)
-    │   ├── routes.clj                HTTP routes (no DB/env poking)
-    │   ├── conversations.clj         conversation list/page/title/cache
-    │   ├── executor.clj              async turn execution + live progress
-    │   └── presentation*.clj         pure rendering
+    ├── core.clj                      cross-channel provider mgmt,
+    │                                 streaming, extension CLI
     ├── tui/                          TUI adapter (Lanterna)
     │   ├── state.clj                 app state (re-frame pattern)
     │   ├── screen.clj                main loop + rendering
     │   ├── chat.clj                  LLM integration
     │   ├── input.clj                 keyboard handling
+    │   ├── render.clj                render helpers
+    │   ├── dialogs.clj               dialog components
+    │   ├── primitives.clj            TUI primitive widgets
+    │   ├── provider.clj              provider selection UI
     │   └── theme.clj                 colors + visual constants
     ├── telegram/                     Telegram adapter
-    │   └── bot.clj                   bot polling + message handling
+    │   ├── bot.clj                   bot polling + message handling
+    │   └── api.clj                   Telegram HTTP API client
     └── cli.clj                       CLI adapter (vis run/chat/web/doctor)
+    └── cli/
+        └── agent.clj                 one-shot CLI agent helper
 ```

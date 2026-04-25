@@ -532,7 +532,7 @@
                                `repetition-warning`.
 
    Returns the joined block or nil when every component is blank."
-  [rlm-env {:keys [iteration current-max-iterations
+  [environment {:keys [iteration current-max-iterations
                    prior-thinking
                    prev-expressions prev-iteration
                    call-counts-atom]}]
@@ -547,16 +547,16 @@
                       (str "<prior_thinking>\n"
                         (clamp prior-thinking PRIOR_THINKING_MAX_CHARS)
                         "\n</prior_thinking>"))
-        var-index-str (read-var-index-str rlm-env)
+        var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
         expr-results (format-expression-results prev-expressions prev-iteration)
-        user-var-count (read-user-var-count rlm-env)
+        user-var-count (read-user-var-count environment)
         ;; SYSTEM_NUDGE composers — built-in + extension-contributed.
         ;; Each returns a string or nil; `keep identity` drops nils,
         ;; `str/join` handles 0/1/many cleanly.
-        nudge-ctx {:environment          rlm-env
+        nudge-ctx {:environment          environment
                    :iteration            iteration
                    :current-max-iterations current-max-iterations
                    :prev-expressions      prev-expressions
@@ -570,7 +570,7 @@
                            (var-index-overflow user-var-count)
                            (repetition-warning call-counts-atom prev-expressions)])
         ext-nudges (collect-extension-nudges
-                     (some-> (:extensions rlm-env) deref) nudge-ctx)
+                     (some-> (:extensions environment) deref) nudge-ctx)
         nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [iter-header prior-block expr-results var-block nudges-block])]
@@ -696,15 +696,15 @@
    No regex fallback, no code-level FINAL detection.
 
    Params:
-   `rlm-env` - RLM environment map.
+   `environment` - environment map.
    `messages` - Vector of message maps for the LLM.
    `opts` - Map, optional:
       - :iteration-spec - Spec for ask! (default: ITERATION_SPEC_NON_REASONING).
                          For reasoning providers, pass ITERATION_SPEC_REASONING."
-  [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level]
+  [environment messages & [{:keys [iteration-spec routing iteration reasoning-level]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
-    (let [_model-name (:name (resolve-effective-model (:router rlm-env)))
+    (let [_model-name (:name (resolve-effective-model (:router environment)))
           effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level. Expected one of quick|balanced|deep."
@@ -712,8 +712,8 @@
                                             :got reasoning-level}))))
           ;; ask! auto-translates :reasoning to the right provider extra-body
           ;; using the selected model's :reasoning? flag + provider :api-style.
-          ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
-                       (llm/ask! (:router rlm-env)
+          ask-result (binding [llm/*log-context* {:query-id (:env-id environment) :iteration iteration}]
+                       (llm/ask! (:router environment)
                          (cond-> {:spec iteration-spec
                                   :messages messages
                                   :routing (or routing {})
@@ -763,7 +763,7 @@
                                       (if-let [err (literal-code-block-error expr)]
                                         {:result nil :error err
                                          :stdout "" :stderr "" :execution-time-ms 0}
-                                        (execute-code rlm-env expr :timeout-ms time-ms)))
+                                        (execute-code environment expr :timeout-ms time-ms)))
                                 code-entries))
               expr-errors (when expr-results
                             (seq (filter :error expr-results)))
@@ -774,7 +774,7 @@
                ;; 2. Mustache template: :answer contains {{var}} / {{#list}}...{{/list}} etc.
                ;;    Full Mustache via jmustache. Sandbox vars are the data context.
               raw-answer (str raw-final-answer)
-              locals (try (get-locals rlm-env) (catch Throwable _ {}))
+              locals (try (get-locals environment) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
                               (try (symbol? (read-string raw-answer)) (catch Throwable _ false)))
               resolved-var-value (when single-token?
@@ -886,7 +886,7 @@
                     (do (log-stage! :code-result iteration
                           {:idx (inc idx) :total total-blocks :error err})
                       {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
-                    (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
+                    (let [r (execute-code environment expr :timeout-ms time-ms)]
                       (log-stage! :code-result iteration
                         {:idx (inc idx) :total total-blocks
                          :execution-time-ms (:execution-time-ms r)
@@ -1295,7 +1295,7 @@
    `(var-history '*reasoning*)` (or `(take-last N (var-history
    '*reasoning*))`). Returns the string or nil when no prior
    iteration has produced thinking yet."
-  [_rlm-env db-info query-id]
+  [_environment db-info query-id]
   (let [chain (load-prior-thinking-chain db-info query-id)]
     (when (seq chain)
       (let [tail (vec (take-last 1 chain))
@@ -1311,10 +1311,10 @@
    and returns 0 so the overflow nudge never crashes the turn. Logs
    the failure so an agent silently missing var-overflow nudges is
    diagnosable, not invisible."
-  [rlm-env]
+  [environment]
   (try
-    (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env)) [:namespaces 'sandbox])
-          initials    (or (:initial-ns-keys rlm-env) #{})]
+    (let [sandbox-map (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
+          initials    (or (:initial-ns-keys environment) #{})]
       (count (filter (fn [[s _]]
                        (and (symbol? s) (not (contains? initials s))))
                sandbox-map)))
@@ -1334,18 +1334,18 @@
 
    Persisted-but-evicted vars appear as placeholders so the LLM
    knows they exist and can call `(var-history 'sym)` to inspect."
-  [rlm-env]
-  (let [var-index-atom (or (:var-index-atom rlm-env)
+  [environment]
+  (let [var-index-atom (or (:var-index-atom environment)
                          (atom {:index nil :revision -1 :current-revision 0}))
         {:keys [index revision current-revision]} @var-index-atom]
     (if (= revision current-revision)
       index
-      (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env))
+      (let [sandbox-map (get-in @(:env (:sci-ctx environment))
                           [:namespaces 'sandbox])
             idx         (sci-env/build-var-index
-                          (:sci-ctx rlm-env) (:initial-ns-keys rlm-env)
+                          (:sci-ctx environment) (:initial-ns-keys environment)
                           sandbox-map
-                          (:db-info rlm-env) (:conversation-id rlm-env)
+                          (:db-info environment) (:conversation-id environment)
                           nil)
             live-rev    (:current-revision @var-index-atom)]
         (swap! var-index-atom assoc :index idx :revision live-rev)
@@ -1394,7 +1394,7 @@
 
 (defn- restorable-var-snapshots
   "Returns serializable snapshots of user vars introduced by this iteration."
-  [rlm-env expressions]
+  [environment expressions]
   (let [execution->defs (mapv (fn [{:keys [error] :as execution}]
                                 [execution (when-not error
                                              (set (map symbol (extract-def-names [execution]))))])
@@ -1407,7 +1407,7 @@
                               acc))
                     {}
                     execution->defs)
-        locals (get-locals rlm-env)]
+        locals (get-locals environment)]
     (->> locals
       (keep (fn [[sym value]]
               (when (contains? defined sym)
@@ -1540,7 +1540,7 @@
                    :data {:error (ex-message e)}
                    :msg "Auto-forget failed — skipping"})))))
 
-(defn iteration-loop [rlm-env query
+(defn iteration-loop [environment query
                       {:keys [max-context-tokens system-prompt
                               query-id history-messages
                               max-iterations max-consecutive-errors max-restarts
@@ -1549,33 +1549,33 @@
   (let [max-iterations (or max-iterations rlm-spec/MAX_ITERATIONS)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
-        ;; Adaptive budget: if rlm-env has a max-iterations-atom (set by vis!),
+        ;; Adaptive budget: if environment has a max-iterations-atom (set by vis!),
         ;; read from it so the LLM can extend its own budget via (request-more-iterations n).
         ;; Otherwise use the static max-iterations parameter.
-        max-iter-atom (:max-iterations-atom rlm-env)
+        max-iter-atom (:max-iterations-atom environment)
         effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
         ;; Resolve effective model name for token counting
-        effective-model (:name (resolve-effective-model (:router rlm-env)))
+        effective-model (:name (resolve-effective-model (:router environment)))
         _ (assert effective-model "Router must resolve a root model — check provider config")
         ;; Default max-context-tokens to 60% of model's context window.
         ;; Prevents unbounded history accumulation (quadratic token growth over iterations).
         max-context-tokens (or max-context-tokens
                              (long (* 0.6 (router/context-limit effective-model))))
         ;; Check if root provider has native reasoning (thinking tokens)
-        has-reasoning? (provider-has-reasoning? (:router rlm-env))
+        has-reasoning? (provider-has-reasoning? (:router environment))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default)
                                balanced-reasoning)
         system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
                                             :system-prompt system-prompt
                                             :max-context-tokens max-context-tokens
-                                            :env rlm-env})
+                                            :env environment})
         initial-user-content query
         initial-messages (assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
                             :history-messages history-messages})
-        db-info (:db-info rlm-env)
-        _ (auto-forget-stale-vars! rlm-env)
+        db-info (:db-info environment)
+        _ (auto-forget-stale-vars! environment)
         ;; Cost tracking: accumulate token usage across all iterations
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
         accumulate-usage! (fn [api-usage]
@@ -1603,10 +1603,10 @@
                            :cost cost}))
         ;; Var-index cache lives on the env (`:var-index-atom`); the
         ;; rendering fn `read-var-index-str` + the count fn
-        ;; `read-user-var-count` both take rlm-env directly — no local
+        ;; `read-user-var-count` both take environment directly — no local
         ;; closure needed. Kept a default atom below only so envs built
         ;; without a shared var-index-atom still cache within this loop.
-        var-index-atom (or (:var-index-atom rlm-env)
+        var-index-atom (or (:var-index-atom environment)
                          (atom {:index nil :revision -1 :current-revision 0}))
         on-iteration (:on-iteration hooks)
         on-chunk (:on-chunk hooks)
@@ -1619,7 +1619,7 @@
                            (tel/log! {:level :warn :data {:error (ex-message e)}
                                         :msg log-msg})))))
         active-extensions-meta (fn []
-                                (when-let [exts (some-> (:extensions rlm-env) deref seq)]
+                                (when-let [exts (some-> (:extensions environment) deref seq)]
                                   (mapv (fn [ext]
                                           (cond-> {:namespace (str (:ext/namespace ext))}
                                             (:ext/version ext) (assoc :version (:ext/version ext))))
@@ -1634,13 +1634,13 @@
     ;; updates SCI AND invalidates the var-index cache — skipping the bump
     ;; causes turns with no `:code` (greetings) to serve a stale <var_index>
     ;; with a PRIOR turn's `*query*` value to the LLM.
-    (sci-env/bind-and-bump! rlm-env '*query* query)
+    (sci-env/bind-and-bump! environment '*query* query)
     ;; Fresh query, fresh parent-iteration-id. The env-scoped atom
     ;; may still hold the LAST iteration of the PREVIOUS query; sub-
     ;; RLMs spawned during iter 0 would otherwise inherit that stale
     ;; ref as their :parent. nil = fall back to conversation-level
     ;; parenting until store-iteration! runs.
-    (when-let [a (:current-iteration-id-atom rlm-env)]
+    (when-let [a (:current-iteration-id-atom environment)]
       (reset! a nil))
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       ;; `loop-state` is a single map threaded through every recur.
@@ -1694,7 +1694,7 @@
 
           (>= iteration (effective-max-iterations))
           (let [debug? (:rlm-debug? *rlm-ctx*)
-                locals (when debug? (get-locals rlm-env))
+                locals (when debug? (get-locals environment))
                 max-iter (effective-max-iterations)
                 last-thinking (some->> trace reverse
                                 (map :thinking)
@@ -1774,7 +1774,7 @@
                    ;; The agent pulls deeper context deliberately from
                    ;; :code, never automatically.
                    prior-thinking-body
-                   (build-prior-thinking rlm-env db-info query-id)
+                   (build-prior-thinking environment db-info query-id)
                    ;; Iteration 0 of a NEW query (in an ongoing
                    ;; conversation) prepends a `[prior turn]` handover
                    ;; with last 2 reasonings + final from the previous
@@ -1784,15 +1784,15 @@
                    cross-query-handover (when (zero? iteration)
                                           (build-cross-query-handover
                                             db-info
-                                            (:conversation-id rlm-env)
+                                            (:conversation-id environment)
                                             query-id
-                                            (:parent-iteration-id rlm-env)))
+                                            (:parent-iteration-id environment)))
                    prior-thinking (cond
                                     (and cross-query-handover prior-thinking-body)
                                     (str cross-query-handover "\n\n" prior-thinking-body)
                                     cross-query-handover cross-query-handover
                                     :else prior-thinking-body)
-                   iteration-context (build-iteration-context rlm-env
+                   iteration-context (build-iteration-context environment
                                        {:iteration              iteration
                                         :current-max-iterations (effective-max-iterations)
                                         :prior-thinking         prior-thinking
@@ -1813,7 +1813,7 @@
                     effective-routing (cond-> (or routing {})
                                         prev-next-model (assoc :optimize prev-next-model))
                      iteration-result (try
-                                        (run-iteration rlm-env effective-messages
+                                        (run-iteration environment effective-messages
                                           {:iteration-spec (if has-reasoning?
                                                              ITERATION_SPEC_REASONING
                                                              ITERATION_SPEC_NON_REASONING)
@@ -1850,7 +1850,7 @@
                                            :duration-ms 0
                                            :error iter-err
                                            :metadata (iter-metadata)})]
-                       (when-let [a (:current-iteration-id-atom rlm-env)]
+                       (when-let [a (:current-iteration-id-atom environment)]
                          (reset! a err-iter-id)))
                    ;; Global observer hook after store-iteration! (error path)
                    (emit-hook! on-iteration
@@ -1875,7 +1875,7 @@
                 (let [_ (accumulate-usage! (:api-usage iteration-result))
                       {:keys [thinking expressions final-result next-model next-reasoning forget]} iteration-result
                       _ (when (seq forget)
-                          (forget-vars! (:sci-ctx rlm-env) forget)
+                          (forget-vars! (:sci-ctx environment) forget)
                           (swap! var-index-atom update :current-revision inc))
                       ;; Auto-bind *reasoning* into the SCI sandbox after every iteration.
                       ;; The LLM (and var-history) can inspect prior reasoning via (var-history '*reasoning*).
@@ -1884,7 +1884,7 @@
                       ;; Otherwise a next turn that runs no `:code` would keep
                       ;; serving this turn's stale `<var_index>` to the LLM.
                        _ (when (seq thinking)
-                           (sci-env/bind-and-bump! rlm-env '*reasoning* thinking))
+                           (sci-env/bind-and-bump! environment '*reasoning* thinking))
 
                       ;; Auto-bind *answer* when the turn finalizes. Survives into the
                       ;; next turn in this conversation (vars persist across queries).
@@ -1892,8 +1892,8 @@
                       ;; recent lives under the bare *answer* var.
                       final-answer (when final-result (:answer final-result))
                       _ (when final-result
-                          (sci-env/bind-and-bump! rlm-env '*answer* final-answer))
-                      vars-snapshot (restorable-var-snapshots rlm-env expressions)
+                          (sci-env/bind-and-bump! environment '*answer* final-answer))
+                      vars-snapshot (restorable-var-snapshots environment expressions)
                       ;; Inject auto-vars (*query*, *reasoning*, *answer*) into the
                       ;; persisted snapshot so var-history can track them across
                       ;; queries and iterations.
@@ -1926,7 +1926,7 @@
                        ;; code that subsequently calls query
                        ;; can parent its sub-query under this iter
                        ;; (see `:current-iteration-id-atom` on env).
-                       _ (when-let [a (:current-iteration-id-atom rlm-env)]
+                       _ (when-let [a (:current-iteration-id-atom environment)]
                            (reset! a iter-id))
                       ;; Global observer hook after store-iteration! (success/empty/final)
                       _ (emit-hook! on-iteration
@@ -1969,6 +1969,7 @@
                                                       (result->display result :full)))
                                              expressions)
                                    :stdouts (mapv #(or (:stdout %) "") expressions)
+                                   :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                    :final {:answer (:answer final-result)
                                            :confidence (:confidence final-result)
                                            :summary (:summary final-result)
@@ -2056,6 +2057,7 @@
                                                         (result->display result :full)))
                                                expressions)
                                      :stdouts (mapv #(or (:stdout %) "") expressions)
+                                     :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                      :done? false}))
                         (let [had-successful-execution? (some #(nil? (:error %)) expressions)
                               next-errors (if had-successful-execution? 0 (inc consecutive-errors))
@@ -2105,14 +2107,10 @@
   (let [depth-atom (atom 0)
         db-info (create-rlm-conn db)
         var-index-atom (atom {:index nil :revision -1 :current-revision 0})
-        qa-corpus-atom (atom {:snapshot-cache nil
-                              :stats {:hits 0 :misses 0
-                                      :last-digest-ms nil
-                                      :last-revision 0}})
         state-atom (atom {:custom-bindings {}
-                          :rlm-env nil
+                          :environment nil
                           :conversation-id nil})
-        rlm-env-atom (atom nil)
+        environment-atom (atom nil)
                 env-id (str (util/uuid))
         root-model (or (:name (resolve-effective-model router)) "unknown")
         has-reasoning? (provider-has-reasoning? router)
@@ -2133,7 +2131,6 @@
              :depth-atom depth-atom
              :db-info db-info
              :var-index-atom var-index-atom
-             :qa-corpus-atom qa-corpus-atom
              :state-atom state-atom
              :sci-ctx sci-ctx
              :sandbox-ns sandbox-ns
@@ -2141,8 +2138,8 @@
              :router router
              :extensions (atom [])
 }]
-    (reset! rlm-env-atom env)
-    (swap! state-atom assoc :rlm-env env :conversation-id conversation-id)
+    (reset! environment-atom env)
+    (swap! state-atom assoc :environment env :conversation-id conversation-id)
     ;; Install all globally registered extensions in dependency order.
     (ext/register-extensions! env register-extension!)
     env))

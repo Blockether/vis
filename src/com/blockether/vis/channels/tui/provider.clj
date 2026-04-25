@@ -145,12 +145,8 @@
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
 ;; dlg/dlg/ellipsize, dlg/clamp, dlg/visible-window-start, dlg/clear-screen!
 
-(def ^:private circled-nums ["①" "②" "③" "④" "⑤" "⑥" "⑦" "⑧" "⑨" "⑩"])
-
 (defn- priority-label [idx]
-  (if (< idx (count circled-nums))
-    (nth circled-nums idx)
-    (str (inc idx) ".")))
+  (str "(" (inc idx) ")"))
 
 (defn- url-host
   "Extract host from URL for display. 'https://llm.blockether.com/v1' → 'llm.blockether.com'"

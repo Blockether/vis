@@ -57,6 +57,7 @@
 ;;                               ;;                  :code      [str]       ;; latest streamed forms
 ;;                               ;;                  :final?    bool}]}
 ;;                               ;; Cleared on :message-received.
+;;  :settings  {:show-thinking true :show-iterations true}
 ;;  :dialog-open? false}         ;; dialog singleton guard
 ;;
 
@@ -71,6 +72,7 @@
                   :input      (input/empty-input)
                   :loading?   false
                   :progress   nil
+                  :settings   {:show-thinking true :show-iterations true}
                   :dialog-open? false}))
 
 ;;; ── Pure event handlers ────────────────────────────────────────────────────
@@ -85,6 +87,10 @@
 (reg-event-db :set-dialog-open
   (fn [db [_ open?]]
     (assoc db :dialog-open? (boolean open?))))
+
+(reg-event-db :update-settings
+  (fn [db [_ new-settings]]
+    (assoc db :settings (merge (:settings db) new-settings))))
 
 (reg-event-db :init-conversation
   (fn [db [_ conv history]]
@@ -142,7 +148,7 @@
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
           bubble-w (max 60 (- (or (:last-cols db) 120) 4))
-          full-text (render/format-answer-with-thinking answer trace bubble-w)
+          full-text (render/format-answer-with-thinking answer trace bubble-w (:settings db))
           response (-> (chat/assistant-msg full-text)
                      (cond-> (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                              model      (assoc :model model)
