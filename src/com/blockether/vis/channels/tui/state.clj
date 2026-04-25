@@ -90,6 +90,10 @@
   (fn [db [_ conv history]]
     (assoc db :conv conv :messages (or history []))))
 
+(reg-event-db :set-title
+  (fn [db [_ title]]
+    (assoc db :title title)))
+
 (reg-event-db :update-input
   (fn [db [_ new-input]]
     (assoc db :input new-input)))

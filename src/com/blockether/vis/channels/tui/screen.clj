@@ -7,7 +7,8 @@
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.provider :as provider]
             [com.blockether.vis.channels.tui.render :as render]
-            [com.blockether.vis.channels.tui.state :as state])
+            [com.blockether.vis.channels.tui.state :as state]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
@@ -102,8 +103,13 @@
               (if-let [cid (:conversation-id opts)]
                 (or (chat/resume-conversation cid)
                     (throw (ex-info (str "Conversation not found: " cid) {:id cid})))
-                (chat/make-conversation config))]
+                (chat/make-conversation config))
+              ;; Set title from DB if resuming, else nil (auto-set on first turn)
+              conv-info (when-let [c (conversations/by-id id)] c)
+              title     (when conv-info (:title conv-info))]
           (state/dispatch [:init-conversation {:id id} history])
+          (when (and title (not (str/blank? title)))
+            (state/dispatch [:set-title title]))
           (channels/register-conversation-shutdown-hook! id)))
 
       (loop []

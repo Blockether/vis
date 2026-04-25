@@ -228,13 +228,17 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (rt-shared/format-exception-short e)} log-msg)))))
-        active-extension-names (fn []
-                                 (when-let [exts (some-> (:extensions rlm-env) deref seq)]
-                                   (mapv (comp str :ext/namespace) exts)))
+        active-extensions-meta (fn []
+                                (when-let [exts (some-> (:extensions rlm-env) deref seq)]
+                                  (mapv (fn [ext]
+                                          (cond-> {:namespace (str (:ext/namespace ext))}
+                                            (:ext/source-ns ext) (assoc :source-ns (:ext/source-ns ext))
+                                            (:ext/version ext)   (assoc :version (:ext/version ext))))
+                                    exts)))
         iter-metadata (fn []
-                        (let [ext-names (active-extension-names)]
-                          (when (seq ext-names)
-                            {:extensions ext-names})))]
+                        (let [exts (active-extensions-meta)]
+                          (when (seq exts)
+                            {:extensions exts})))]
     (sci-env/bind-and-bump! rlm-env '*query* query)
     (when-let [a (:current-iteration-id-atom rlm-env)] (reset! a nil))
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
