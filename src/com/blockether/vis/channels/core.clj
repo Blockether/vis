@@ -4,7 +4,8 @@
    This namespace provides the shared provider/config management layer
    used by TUI, web, CLI, and Telegram channels. Single source of truth
    for provider state — changes here are reflected everywhere."
-  (:require [com.blockether.vis.config :as config]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [taoensso.telemere :as tel]))
@@ -137,8 +138,23 @@
 ;;; ── Extension CLI ─────────────────────────────────────────────────────────
 ;;
 ;; Extensions export CLI commands via :ext/cli.
-;; `vis extensions` lists all registered extensions.
-;; `vis ext <cmd> [args...]` dispatches to the matching extension command.
+;;
+;; Command spec:
+;;   {:cmd     "name"                         ;; required
+;;    :doc     "Short description"             ;; required
+;;    :args    [{:name "path"                  ;; arg name for help
+;;               :type :string                 ;; :string | :int | :boolean | :file
+;;               :required true                ;; default false
+;;               :doc "Path to file"}          ;; arg description
+;;              {:name "--verbose"
+;;               :type :boolean
+;;               :doc "Enable verbose output"}]
+;;    :fn      (fn [parsed-args] ...)          ;; receives parsed map
+;;   }
+;;
+;; `vis ext help` shows all commands.
+;; `vis ext <cmd> --help` shows command-specific help with args.
+;; `vis ext <cmd> [args...]` validates then dispatches.
 
 (defn list-extensions
   "Return all registered extensions with their metadata."
@@ -148,7 +164,7 @@
            :doc       (:ext/doc e)
            :group     (:ext/group e)
            :version   (or (:ext/version e) "—")
-           :cli-cmds  (mapv :cmd (or (:ext/cli e) []))})
+           :cli-cmds  (str/join ", " (map :cmd (or (:ext/cli e) [])))})
     (ext/registered-extensions)))
 
 (defn find-extension-cmd
@@ -161,13 +177,119 @@
             (:ext/cli e)))
     (ext/registered-extensions)))
 
+(defn all-extension-cmds
+  "Return a flat vec of {:cmd :doc :ext-ns :args} for every registered extension CLI command."
+  []
+  (into []
+    (mapcat (fn [e]
+              (map (fn [c] (assoc c :ext-ns (str (:ext/namespace e))))
+                (or (:ext/cli e) []))))
+    (ext/registered-extensions)))
+
+;; ── Arg parsing & validation ───────────────────────────────────────────
+
+(defn- flag? [s] (str/starts-with? (str s) "--"))
+
+(defn- coerce-arg [value type]
+  (case (or type :string)
+    :string  value
+    :int     (if-let [n (parse-long value)] n
+               (throw (ex-info (str "Expected integer, got: " value) {:value value})))
+    :boolean (contains? #{"true" "1" "yes"} (str/lower-case (str value)))
+    :file    value
+    value))
+
+(defn parse-ext-args
+  "Parse CLI args against an arg spec. Returns a map of {arg-name value}.
+   Positional args are matched in order. Flags (--name) are matched by name."
+  [arg-specs raw-args]
+  (let [positional (vec (remove #(flag? (:name %)) arg-specs))
+        flags      (into {} (map (fn [a] [(:name a) a])) (filter #(flag? (:name %)) arg-specs))]
+    (loop [args     (seq raw-args)
+           pos-idx  0
+           result   {}]
+      (if-not args
+        result
+        (let [arg  (first args)
+              more (next args)]
+          (if (flag? arg)
+            ;; Flag arg
+            (if-let [spec (get flags arg)]
+              (if (= :boolean (:type spec))
+                (recur more pos-idx (assoc result arg true))
+                (recur (next more) pos-idx
+                  (assoc result arg (coerce-arg (first more) (:type spec)))))
+              (recur more pos-idx result)) ;; unknown flag, skip
+            ;; Positional arg
+            (if (< pos-idx (count positional))
+              (let [spec (nth positional pos-idx)]
+                (recur more (inc pos-idx)
+                  (assoc result (:name spec) (coerce-arg arg (:type spec)))))
+              (recur more pos-idx result))))))))
+
+(defn validate-ext-args
+  "Validate parsed args against spec. Returns nil on success, error string on failure."
+  [arg-specs parsed]
+  (let [required (filter :required arg-specs)
+        missing  (remove #(contains? parsed (:name %)) required)]
+    (when (seq missing)
+      (str "Missing required argument(s): "
+        (str/join ", " (map :name missing))))))
+
+;; ── Help rendering ───────────────────────────────────────────────────
+
+(defn- pad [s w]
+  (let [s (str s)] (if (>= (count s) w) s (str s (apply str (repeat (- w (count s)) \space))))))
+
+(defn format-cmd-help
+  "Build help text for a single extension CLI command."
+  [{:keys [cmd doc args ext-ns]}]
+  (let [usage-args (str/join " "
+                     (map (fn [{:keys [name required]}]
+                            (if required name (str "[" name "]")))
+                       (or args [])))
+        lines [(str "  vis ext " cmd (when (seq usage-args) (str " " usage-args)))
+               ""
+               (str "  " (or doc ""))
+               (when ext-ns (str "  Extension: " ext-ns))]]
+    (str (str/join "\n" (remove nil? lines))
+      (when (seq args)
+        (str "\n\n  Arguments:\n"
+          (str/join "\n"
+            (map (fn [{:keys [name type required doc]}]
+                   (str "    " (pad name 20)
+                     (pad (or (some-> type clojure.core/name) "string") 10)
+                     (if required "required  " "optional  ")
+                     (or doc "")))
+              args)))))))
+
+(defn extension-help
+  "Build help text for all extension CLI commands."
+  []
+  (let [cmds (all-extension-cmds)]
+    (if (empty? cmds)
+      "No extension commands available. Run 'vis extensions' to see registered extensions."
+      (str "Extension commands:\n\n"
+        (str/join "\n\n"
+          (map (fn [{:keys [cmd doc ext-ns] :as c}]
+                 (str "  vis ext " (pad cmd 20) (or doc "") "  (" ext-ns ")"))
+            cmds))))))
+
+;; ── Dispatch ───────────────────────────────────────────────────────
+
 (defn run-extension-cmd!
-  "Run an extension CLI command by name with args. Returns the result."
-  [cmd-name args]
+  "Parse args, validate, and run an extension CLI command.
+   Returns {:ok result} or {:error message}."
+  [cmd-name raw-args]
   (if-let [{:keys [cmd]} (find-extension-cmd cmd-name)]
-    ((:fn cmd) args)
-    (throw (ex-info (str "Unknown extension command: " cmd-name)
-             {:type :ext/unknown-cmd :cmd cmd-name
-              :available (into []
-                           (mapcat #(map :cmd (or (:ext/cli %) [])))
-                           (ext/registered-extensions))}))))
+    (let [arg-specs (or (:args cmd) [])
+          ;; --help on any command
+          help?    (some #{"--help" "-h"} raw-args)]
+      (if help?
+        {:help (format-cmd-help (assoc cmd :ext-ns (:ext-ns cmd)))}
+        (let [parsed (parse-ext-args arg-specs raw-args)
+              err    (validate-ext-args arg-specs parsed)]
+          (if err
+            {:error (str err "\n\n" (format-cmd-help cmd))}
+            {:ok ((:fn cmd) parsed)}))))
+    {:error (str "Unknown command: " cmd-name "\n\n" (extension-help))}))
