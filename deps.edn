@@ -27,6 +27,8 @@
   tongue/tongue                             {:mvn/version "0.4.4"}
   ;; Dependency injection
   org.clojars.darkleaf/di                   {:mvn/version "3.6.0"}
+  ;; Extensions
+  com.blockether.vis.ext/common            {:local/root "extensions/common"}
   ;; Terminal UI
   com.googlecode.lanterna/lanterna          {:mvn/version "3.1.5"}
   ;; JSON serialization (CLI output, agent results)

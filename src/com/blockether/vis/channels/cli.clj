@@ -183,9 +183,9 @@
                          (:iterations result) " iterations"
                          (when ctx-in  (str ", ctx-in: "  ctx-in))
                          (when ctx-out (str ", ctx-out: " ctx-out))
-                         ", " (:duration-ms result) "ms"
                          (when cost
-                           (str ", ~$" (String/format java.util.Locale/US "%.4f" (into-array Object [(double cost)]))))
+                           (str ", ~$" (String/format java.util.Locale/US "%.6f" (into-array Object [(double cost)]))))
+                         ", " (:duration-ms result) "ms"
                          "]"))))))
       (shutdown-agents))))
 

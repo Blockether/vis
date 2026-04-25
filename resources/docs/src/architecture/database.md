@@ -117,10 +117,19 @@ Constraints: `UNIQUE(query_state_id, position)`
 The `metadata` column stores per-iteration context as JSON:
 
 ```json
-{"extensions": ["documents", "git", "filesystem"]}
+{"extensions": [
+  {"namespace": "common",
+   "source-ns": "com.blockether.vis.ext.common",
+   "version": "0.1.0"},
+  {"namespace": "git",
+   "source-ns": "com.acme.ext.git",
+   "version": "2.3.0"}
+]}
 ```
 
-Records which extensions were active, enabling post-mortem analysis.
+Records which extensions (with full source namespace and version) were
+active when the iteration ran, enabling post-mortem analysis and
+reproducibility.
 
 ### 6) `expression_soul`
 Branch-local identity for var/call/literal expression nodes.
