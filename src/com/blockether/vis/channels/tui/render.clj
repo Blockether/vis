@@ -369,14 +369,14 @@
         (when (seq code)
           (into []
             (mapcat
-              (fn [idx form]
+              (fn [[idx form]]
                 (let [code-lines (mapv #(truncate-line % code-width)
                                   (str/split-lines (str/trim (or form ""))))
                       result-str (when results (get results idx))
                       result-lines (when (and result-str (not (str/blank? (str result-str))))
                                      [(truncate-line (str "-> " (str/trim (str result-str))) code-width)])]
                   (concat code-lines result-lines))))
-            (range) code))]
+            (map-indexed vector code)))]
     (into (or thinking-lines []) code+result-lines)))
 
 (defn progress->text
