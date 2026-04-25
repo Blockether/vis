@@ -4,8 +4,7 @@
    Define agents as data, run queries programmatically.
 
    Example:
-     (def reviewer (agent {:name \"reviewer\"
-                           :system-prompt \"You are a senior Clojure engineer.\"}))
+     (def reviewer (agent {:name \"reviewer\"}))
      (run! reviewer \"Review auth.clj\")
      ;; => {:answer \"...\" :iterations 5 :duration-ms 2340 :tokens {...} :cost {...}}"
   (:refer-clojure :exclude [agent run!])
@@ -25,7 +24,6 @@
    Options:
    - :name           — Agent name (string, default \"default\")
    - :description    — What the agent does
-   - :system-prompt  — System instructions for the agent
    - :constants      — Map of {symbol value} constants for SCI sandbox
    - :model          — Override default model selection
    - :max-iterations — Max iterations (default 50)
@@ -33,15 +31,13 @@
    Example:
      (agent {:name \"code-reviewer\"
              :description \"Reviews Clojure code for quality\"
-             :system-prompt \"You are a senior Clojure engineer.\"
              :model \"claude-sonnet-4-6\"
              :max-iterations 30})"
   [{:keys [name] :as opts}]
   (let [agent-name (or name "default")]
     (merge {:name           agent-name
             :constants      {}
-            :max-iterations spec/MAX_ITERATIONS
-            :system-prompt  (:system-prompt opts)}
+            :max-iterations spec/MAX_ITERATIONS}
       opts)))
 
 ;;; ── Execution ────────────────────────────────────────────────────────────
@@ -53,7 +49,7 @@
 
    Returns map with:
    - :conv-id      — Conversation ID (UUID string)
-   - :answer       — The agent's response (string or structured data if :spec)
+   - :answer       — The agent's response
    - :iterations   — Number of iterations executed
    - :duration-ms  — Total wall-clock time
    - :tokens       — {:input N :output N :reasoning N :cached N :total N}
@@ -64,20 +60,16 @@
    - :error        — Error message (only on failure)
 
    Options:
-   - :system-prompt  — Override agent's system prompt
    - :spec           — Output spec for structured responses
-   - :model          — Override model (agent-level or per-run)
+   - :model          — Override model
    - :max-iterations — Override max iterations
-   - :on-chunk       — Streaming callback fn. Receives:
-                        {:iteration N :thinking str
-                         :code [expr-strings] :final {:answer :confidence}
-                         :done? bool :timeline [events]}
+   - :on-chunk       — Streaming callback fn
    - :debug?         — Enable debug logging (default false)
    - :config         — Provider config override (skips ~/.vis/config.edn)
 
    Each call creates a fresh conversation in the `:cli` channel.
    Past runs are browsable via `(conversations/by-channel :cli)`."
-  [agent-def prompt & [{:keys [system-prompt spec model max-iterations on-chunk
+  [agent-def prompt & [{:keys [spec model max-iterations on-chunk
                                debug? config]
                         :as _opts}]]
   (let [_cfg      (config/resolve-config config)
@@ -87,14 +79,12 @@
         {conv-id :id} (conversations/create! :cli {:title title})
         iters     (or max-iterations (:max-iterations agent-def) spec/MAX_ITERATIONS)
         mdl       (or model (:model agent-def))
-        sys       (or system-prompt (:system-prompt agent-def))
         projector (when on-chunk
                     (conversations/make-on-chunk-projector))
         on-chunk* (when on-chunk
                     (fn [chunk]
                       (on-chunk (assoc chunk :timeline (projector chunk)))))
-        q-opts    (cond-> {:max-iterations iters
-                           :system-prompt  sys}
+        q-opts    (cond-> {:max-iterations iters}
                     spec      (assoc :spec spec)
                     mdl       (assoc :model mdl)
                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})

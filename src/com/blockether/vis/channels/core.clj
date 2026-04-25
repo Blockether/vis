@@ -5,6 +5,7 @@
    used by TUI, web, CLI, and Telegram channels. Single source of truth
    for provider state — changes here are reflected everywhere."
   (:require [com.blockether.vis.config :as config]
+            [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [taoensso.telemere :as tel]))
 
@@ -132,3 +133,41 @@
     (.format (doto (java.text.SimpleDateFormat. "dd-MM-yyyy HH:mm")
                (.setTimeZone (java.util.TimeZone/getDefault)))
       d)))
+
+;;; ── Extension CLI ─────────────────────────────────────────────────────────
+;;
+;; Extensions export CLI commands via :ext/cli.
+;; `vis extensions` lists all registered extensions.
+;; `vis ext <cmd> [args...]` dispatches to the matching extension command.
+
+(defn list-extensions
+  "Return all registered extensions with their metadata."
+  []
+  (mapv (fn [e]
+          {:namespace (str (:ext/namespace e))
+           :doc       (:ext/doc e)
+           :group     (:ext/group e)
+           :version   (or (:ext/version e) "—")
+           :cli-cmds  (mapv :cmd (or (:ext/cli e) []))})
+    (ext/registered-extensions)))
+
+(defn find-extension-cmd
+  "Find an extension CLI command by name. Returns {:ext ext :cmd cmd-map} or nil."
+  [cmd-name]
+  (some (fn [e]
+          (some (fn [cmd]
+                  (when (= (:cmd cmd) cmd-name)
+                    {:ext e :cmd cmd}))
+            (:ext/cli e)))
+    (ext/registered-extensions)))
+
+(defn run-extension-cmd!
+  "Run an extension CLI command by name with args. Returns the result."
+  [cmd-name args]
+  (if-let [{:keys [cmd]} (find-extension-cmd cmd-name)]
+    ((:fn cmd) args)
+    (throw (ex-info (str "Unknown extension command: " cmd-name)
+             {:type :ext/unknown-cmd :cmd cmd-name
+              :available (into []
+                           (mapcat #(map :cmd (or (:ext/cli %) [])))
+                           (ext/registered-extensions))}))))

@@ -151,6 +151,11 @@
 ;; SPDX license identifier, e.g. "MIT", "Apache-2.0", "EPL-2.0".
 (s/def :ext/license non-blank-string?)
 
+;; Optional CLI commands exported by this extension.
+;; Vector of {:cmd "name" :doc "description" :fn (fn [args] ...)}
+;; Enables `vis ext <cmd> [args...]` invocation from the terminal.
+(s/def :ext/cli (s/coll-of map? :kind vector?))
+
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
 
@@ -177,7 +182,8 @@
                 :ext/activation-fn :ext/prompt :ext/symbols
                 :ext/classes :ext/imports]
     :opt [:ext/nudge-fn :ext/requires
-          :ext/version :ext/author :ext/license]))
+          :ext/version :ext/author :ext/license
+          :ext/cli]))
 
 ;; =============================================================================
 ;; Symbol helper
