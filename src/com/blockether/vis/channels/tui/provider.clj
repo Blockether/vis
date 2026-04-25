@@ -468,7 +468,7 @@
                    (cond
                       ;; A — add provider
                      (= c \a)
-                     (do (when-let [p (add-provider! screen)]
+                     (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]
                            (swap! items conj p)
                            (reset! selected (dec (count @items))))
                        (recur))
