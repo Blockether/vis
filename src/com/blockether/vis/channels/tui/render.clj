@@ -146,10 +146,16 @@
         text-top   (+ (inc box-top) input-pad-y)
         text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
-        h-scroll   (max 0 (- ccol (dec text-w)))]
+        h-scroll   (max 0 (- ccol (dec text-w)))
+        icon       " \uD83D\uDD0D "  ;; magnifying glass icon
+        icon-len   4]               ;; " 🔍 " = space + emoji(2cells) + space
 
     (draw-box-border! g box-top box-bottom cols hint)
     (fill-box-interior! g box-top box-bottom cols)
+
+    ;; Inspect icon on top-right of border
+    (p/set-colors! g t/dialog-hint t/terminal-bg)
+    (p/put-str! g (- cols icon-len 2) box-top icon)
 
     ;; Text
     (dotimes [i text-rows]
