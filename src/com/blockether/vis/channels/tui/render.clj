@@ -514,26 +514,17 @@
 
 
 
-(def ^:private smallcaps-chars
-  "Unicode small caps (Phonetic Extensions block U+1D00–U+1D7F + friends).
-   All glyphs render at consistent lowercase x-height, unlike superscript
-   modifier letters which come from different blocks and vary in size."
-  {\A "\u1d00" \B "\u0299" \C "\u1d04" \D "\u1d05" \E "\u1d07"
-   \F "\ua730" \G "\u0262" \H "\u029c" \I "\u026a" \J "J"
-   \K "\u1d0b" \L "\u029f" \M "\u1d0d" \N "\u0274" \O "\u1d0f"
-   \P "\u1d18" \Q "Q"     \R "\u0280" \S "\ua731" \T "\u1d1b"
-   \U "\u1d1c" \V "\u1d20" \W "\u1d21" \X "X"     \Y "\u028f"
-   \Z "\u1d22"
-   \0 "0" \1 "1" \2 "2" \3 "3" \4 "4"
-   \5 "5" \6 "6" \7 "7" \8 "8" \9 "9"
-   \space " "})
+(def ^:private subscript-digits
+  {\0 "\u2080" \1 "\u2081" \2 "\u2082" \3 "\u2083" \4 "\u2084"
+   \5 "\u2085" \6 "\u2086" \7 "\u2087" \8 "\u2088" \9 "\u2089"})
 
-(defn- smallcaps
-  "Convert a string to small caps. Uses the Phonetic Extensions block
-   which renders at uniform size in monospace terminal fonts.
-   e.g. (smallcaps 'ITERATION 1') => \u026a\u1d1b\u1d07\u0280\u1d00\u1d1b\u026a\u1d0f\u0274 1"
-  [s]
-  (apply str (map #(get smallcaps-chars % (str %)) (str/upper-case (str s)))))
+(defn- label-text
+  "Format a label string: lowercase letters + subscript digits.
+   Clean, consistent, works in every monospace terminal font.
+   e.g. (label-text \"iteration\" 1) => \"iteration \u2081\""
+  ([s] (str/lower-case (str s)))
+  ([s n] (str (str/lower-case (str s)) " "
+           (apply str (map #(get subscript-digits % (str %)) (str n))))))
 
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
@@ -554,7 +545,7 @@
         ;; invisible 1-char marker prefix counts toward string length.
         fill-w     (max 1 (dec code-width))
         ;; Right-aligned superscript label with 1 char right margin
-        label      (str (smallcaps "iteration") " " (smallcaps (str iter-num)))
+        label      (label-text "iteration" iter-num)
         pad-len    (max 0 (- fill-w (count label) 1))
         header-line (str (apply str (repeat pad-len \space)) label " ")
         header [(str iter-hdr-marker header-line)]
@@ -576,7 +567,7 @@
                       dur-ms      (when durations (get durations idx))
                       dur-str     (channels/format-duration dur-ms)
                       ;; Right-aligned superscript code label with right padding
-                      expr-label  (str (smallcaps "code") " " (smallcaps (str (inc idx))))
+                      expr-label  (label-text "code" (inc idx))
                       expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]
                                     (str (apply str (repeat pl \space)) expr-label " "))
                       ;; Right-aligned status line: ✓ 3ms or ✗ 3ms
@@ -615,7 +606,7 @@
                       ;; Stdout block with right-aligned header + padding
                       stdout-str  (when stdouts (get stdouts idx))
                       stdout-block (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                     (let [slabel    (smallcaps "stdout")
+                                     (let [slabel    (label-text "stdout")
                                            slabel-pad (max 0 (- fill-w (count slabel) 1))
                                            slabel-ln  (str iter-hdr-marker
                                                         (apply str (repeat slabel-pad \space))
@@ -774,7 +765,7 @@
                          (map-indexed vector trace)))
          answer-str  (or answer "")
          ;; Right-aligned superscript "final answer" header
-         fa-label    (smallcaps "final answer")
+         fa-label    (label-text "final answer")
          fa-pad      (max 0 (- fill-w (count fa-label) 1))
          fa-hdr      (str answer-hdr-marker (apply str (repeat fa-pad \space)) fa-label " ")
          ;; Markdown-rendered answer lines
