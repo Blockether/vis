@@ -2,7 +2,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.primitives :as p]
-            [com.blockether.vis.channels.tui.theme :as t])
+            [com.blockether.vis.channels.tui.theme :as t]
+)
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]))
 
 ;;; ── Text wrapping ───────────────────────────────────────────────────────────
@@ -521,10 +522,10 @@
 
 
 (defn- label-text
-  "Format a label string: lowercase text + plain number.
-   e.g. (label-text \"iteration\" 1) => \"iteration 1\""
-  ([s] (str/lower-case (str s)))
-  ([s n] (str (str/lower-case (str s)) " " n)))
+  "Format a label string: UPPERCASED text + plain number.
+   e.g. (label-text \"iteration\" 1) => \"ITERATION 1\""
+  ([s] (str/upper-case (str s)))
+  ([s n] (str (str/upper-case (str s)) " " n)))
 
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
@@ -584,10 +585,11 @@
                                     success?          code-ok-marker
                                     :else             code-err-marker)
                       c-pad       (if is-error? code-err-pad-marker code-pad-marker)
-                      ;; Code lines: indented, no glyph prefix
+                      ;; Code lines: pretty-printed, indented
                       code-text   (str/trim (or form ""))
-                      wrapped     (wrap-text code-text (max 1 (- fill-w 2)))
-                      c-lines     (mapv #(str c-marker "  " %) wrapped)
+                      formatted   (channels/format-clojure code-text (max 1 (- fill-w 2)))
+                      code-lines  (str/split-lines formatted)
+                      c-lines     (mapv #(str c-marker "  " %) code-lines)
                       ;; Result
                       result-str  (when results (get results idx))
                       r-marker    (if is-error? err-result-marker result-marker)

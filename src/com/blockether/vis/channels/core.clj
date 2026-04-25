@@ -135,6 +135,17 @@
                (.setTimeZone (java.util.TimeZone/getDefault)))
       d)))
 
+(defn format-clojure
+  "Pretty-print a Clojure code string using zprint.
+   Falls back to the original string on any error."
+  [code-str width]
+  (try
+    (let [formatted ((requiring-resolve 'zprint.core/zprint-str)
+                      code-str width {:parse-string? true
+                                      :style :community})]
+      (if (clojure.string/blank? formatted) code-str (clojure.string/trimr formatted)))
+    (catch Exception _ code-str)))
+
 (defn format-duration
   "Format millisecond duration as human-readable. e.g. '2.3s', '1m 15s'."
   [ms]
