@@ -32,19 +32,6 @@ else is one function call away.
 | **[Public API](reference/api.md)** | `create-environment`, `query!`, `register-extension!` |
 | **[Database](architecture/database.md)** | Entity tree and SQLite schema |
 
-## Channels
-
-Vis exposes the same core through multiple surfaces:
-
-| Channel | Entry point | Description |
-|---------|------------|-------------|
-| **Web** | `channels/web/` | Jetty + SSE streaming |
-| **TUI** | `channels/tui/` | Lanterna terminal UI |
-| **Telegram** | `channels/telegram/` | Bot polling |
-| **CLI** | `channels/cli.clj` | One-shot `vis run` |
-
-All channels share the same conversation layer, environment, and SQLite DB.
-
 ## Rules for Contributors
 
 > Any change to source code that affects architecture, environment shape,
