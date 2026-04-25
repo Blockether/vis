@@ -280,10 +280,10 @@
         tok-out   (when-let [n (:output tokens)] (str "ctx-out: " n))
         iter-str  (when (and (not user?) iterations) (str iterations (if (= 1 iterations) " iter" " iters")))
         cost-str  (when-let [c (some-> cost :total-cost)]
-                    (str "~$" (String/format java.util.Locale/US "%.4f" (into-array Object [(double c)]))))
-        ;; Below-bubble meta (assistant only): model · iters · ctx-in · ctx-out · duration · ~cost
+                    (str "~$" (String/format java.util.Locale/US "%.6f" (into-array Object [(double c)]))))
+        ;; Below-bubble meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration
         meta-parts (when (not user?)
-                     (remove nil? [model iter-str tok-in tok-out (when dur-str (str "⏱ " dur-str)) cost-str]))
+                     (remove nil? [model iter-str tok-in tok-out cost-str (when dur-str (str "⏱ " dur-str))]))
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
     ;; Label row: role name left, timestamp right-aligned
@@ -366,9 +366,9 @@
    Thinking lines get the thinking-marker prefix for italic rendering."
   [{:keys [thinking code]} code-width]
   (let [thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
-                         (mapv #(str thinking-marker "> " %)
+                         (mapv #(str thinking-marker %)
                            (wrap-text (str/trim thinking)
-                             (max 1 (- code-width 2)))))
+                             (max 1 code-width))))
         code-lines    (when (seq code)
                         (into []
                           (keep (fn [form]

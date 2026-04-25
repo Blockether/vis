@@ -8,7 +8,9 @@
   (:require
    [com.blockether.vis.loop.core :as loop-core]
    [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
-   [com.blockether.vis.persistance.spec :as rlm-spec]))
+   [com.blockether.vis.persistance.spec :as rlm-spec]
+   ;; Extensions — require triggers register-global! at load time
+   [com.blockether.vis.ext.common]))
 
 ;; =============================================================================
 ;; Unified entrypoint
