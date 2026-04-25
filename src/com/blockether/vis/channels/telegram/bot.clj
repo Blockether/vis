@@ -7,10 +7,9 @@
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.loop.runtime.conversation.core`."
   (:require [com.blockether.vis.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis.loop.runtime.conversation.shared :as conv-shared]
-            [com.blockether.vis.loop.runtime.conversation.environment.query.shared :as query-shared]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [com.blockether.vis.channels.telegram.api :as tg]
-            [taoensso.trove :as trove]))
+            [taoensso.telemere :as tel]))
 
 (defonce ^:private running? (atom false))
 (defonce ^:private poll-thread (atom nil))
@@ -52,15 +51,15 @@
                                   :max-iterations 12})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
                   env          (conversations/env-for id)
-                  model-name   (:name (query-shared/resolve-effective-model (:router env)))]
+                  model-name   (:name (query-core/resolve-effective-model (:router env)))]
               (tg/send-message! token chat-id
                 (str answer (format-footer result model-name))))
             (catch Exception e
-              (trove/log! {:level :error :id ::handle-message
+              (tel/log! {:level :error :id ::handle-message
                            :data {:sender sender :chat-id chat-id :error (ex-message e)}
                            :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (str "⚠️ " (conv-shared/error->user-message e)))
+                     (str "⚠️ " (conversations/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]
@@ -71,7 +70,7 @@
                       (tg/get-updates token offset poll-timeout-seconds)
                       (catch InterruptedException _ ::interrupted)
                       (catch Exception e
-                        (trove/log! {:level :error :id ::poll-error
+                        (tel/log! {:level :error :id ::poll-error
                                       :data {:error (ex-message e)}
                                       :msg "poll error"})
                         (Thread/sleep 2000)
@@ -96,7 +95,8 @@
       (.setDaemon t true)
       (.start t)
       (reset! poll-thread t)
-      (trove/log! {:level :info :id ::started :msg "Telegram bot running"}))))
+      (tel/log! {:level :info :id ::started}
+  "Telegram bot running"))))
 
 (defn stop! []
   (when (compare-and-set! running? true false)
@@ -104,12 +104,14 @@
       (.interrupt ^Thread t)
       (reset! poll-thread nil))
     (conversations/close-all!)
-    (trove/log! {:level :info :id ::stopped :msg "Telegram bot stopped"})))
+    (tel/log! {:level :info :id ::stopped}
+  "Telegram bot stopped")))
 
 (defn -main [& _]
   (.addShutdownHook (Runtime/getRuntime)
     (Thread. ^Runnable (fn []
-                         (trove/log! {:level :info :id ::shutdown :msg "Shutting down Telegram bot"})
+                         (tel/log! {:level :info :id ::shutdown}
+  "Shutting down Telegram bot")
                          (stop!))
       "vis-telegram-shutdown"))
   (start!)

@@ -6,126 +6,41 @@
    [com.blockether.svar.internal.router :as router]
    [com.blockether.svar.internal.util :as util]
 
-   [com.blockether.vis.loop.storage.db :as rlm-db
-    :refer [create-rlm-conn dispose-rlm-conn!
-            db-list-documents
-            db-store-pageindex-document!]]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.shared
-    :as query-shared]
-   [com.blockether.vis.loop.storage.schema :as schema
+   [com.blockether.vis.persistance.core :as db
+    :refer [create-rlm-conn dispose-rlm-conn!]]
+   [com.blockether.vis.persistance.spec :as rlm-spec
     :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
             *eval-timeout-ms*
             *rlm-ctx*]]
 
-   [com.blockether.vis.loop.nudges :as nudges]
-
    [com.blockether.vis.loop.runtime.prompt :as prompt]
-   [com.blockether.vis.loop.runtime.conversation.environment.base
-    :refer [create-sci-context build-var-index]]
-   [com.blockether.vis.loop.runtime.conversation.environment.core :as rlm-tools]
+   [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
-   [com.blockether.vis.loop.tool :as sci-tool]
    [com.blockether.vis.loop.mustache :as mustache]
 
    [edamame.core :as edamame]
    [sci.core :as sci]
-   [taoensso.trove :as trove]))
+   [taoensso.telemere :as tel]))
 
-;; `bump-and-detect-repetition` moved to `com.blockether.vis.loop.nudges`
-;; where every per-iteration SYSTEM_NUDGE composer lives. Kept here as
-;; a breadcrumb so the ns alias reads straight.
-
-(defn rlm-debug!
-  "Logs at :info level only when :rlm-debug? is true in *rlm-ctx*.
-   Includes :rlm-phase from context automatically in data."
-  [data msg]
-  (when (:rlm-debug? *rlm-ctx*)
-    (trove/log! {:level :info :data (assoc data :rlm-phase (:rlm-phase *rlm-ctx*)) :msg msg})))
+;; `bump-and-detect-repetition` moved to `com.blockether.vis.loop.runtime.prompt`
+;; where every per-iteration SYSTEM_NUDGE composer lives (built-in and
+;; extension-contributed).
 
 (defn rlm-stage!
-  "Always-on structured stage log for RLM pipeline visibility.
-   Produces a single compact line per event with visual hierarchy."
+  "Log an iteration lifecycle event."
   [stage iteration data]
-  (let [fmt (fn [& parts] (str/join "  " (remove nil? parts)))
-        msg (case stage
-              :query-start
-              (fmt "── RLM START"
-                (str "model=" (:model data))
-                (str "max-iter=" (:max-iterations data))
-                (when (:reasoning? data) "reasoning=true")
-                (str "query=\"" (str/replace (str (:query data)) #"\s+" " ") "\""))
-
-              :iter-start
-              (fmt (str "┌─ ITER " iteration)
-                (str "msgs=" (:msg-count data))
-                (when-let [r (:reasoning data)] (str "reasoning=" r)))
-
-              :llm-response
-              (let [thinking (str (:thinking data))]
-                (fmt "│  ⇐ LLM"
-                  (str "code=" (:code-count data))
-                  (when (:has-final data) "FINAL=true")
-                  (when (seq thinking)
-                    (str "\n│     reasoning: " (str/replace thinking #"\s+" " ")))))
-
-              :code-exec
-              (let [code-1line (str/replace (str (:code data)) #"\s+" " ")]
-                (fmt (str "│  ▶ EXEC [" (:idx data) "/" (:total data) "]")
-                  code-1line
-                  (str "budget=" (:time-ms data) "ms")))
-
-              :code-result
-              (fmt (str "│  ◀ EXEC [" (:idx data) "/" (:total data) "]")
-                (str (:execution-time-ms data) "ms")
-                (when (:error data) (str "ERROR: " (truncate (str/replace (str (:error data)) #"\s+" " ") 80)))
-                (when (:timeout? data) "TIMEOUT")
-                (when (and (not (:error data)) (not (:timeout? data)))
-                  (let [r (:result data)]
-                    (cond
-                      (nil? r) "result=✓"
-                      (fn? r) "result=fn"
-                      :else (str "result=" (truncate (str/replace (pr-str r) #"\s+" " ") 80))))))
-
-              :iter-end
-              (fmt (str "└─ ITER " iteration)
-                (str "blocks=" (:blocks data))
-                (str "errors=" (:errors data))
-                (str "total=" (reduce + 0 (map #(or % 0) (or (:times data) []))) "ms"))
-
-              :final
-              (fmt "│  ══ FINAL"
-                (str "answer=\"" (str/replace (str (:answer data)) #"\s+" " ") "\"")
-                (str "confidence=" (:confidence data))
-                (str "iters=" (:iterations data)))
-
-              :query-end
-              (fmt "── RLM END"
-                (str (:duration-ms data) "ms")
-                (str "iters=" (:iterations data))
-                (when (:cost data) (str "cost=$" (:cost data))))
-
-              :error
-              (fmt "│  ✘ ERR"
-                (str "reason=" (:reason data))
-                (when (:max data) (str "max=" (:max data))))
-
-              :empty
-              (fmt "│  ⚠ EMPTY" "no code blocks")
-
-              ;; fallback
-              (fmt (str "│  " (name stage)) (pr-str data)))
-        env-id (:rlm-env-id *rlm-ctx*)
-        prefix (when env-id (str "[q=" env-id " i=" iteration "] "))]
-    (trove/log! {:level :info :id ::rlm-stage :msg (str prefix msg)})))
+  (tel/log! {:level :info :id ::rlm-stage
+             :data (merge {:stage stage :iteration iteration
+                           :env-id (:rlm-env-id *rlm-ctx*)} data)}))
 
 (defn- status->id
   [status]
   (when status
     (keyword "rlm.status" (name status))))
 
-(def ^:private reasoning-quick :quick)
-(def ^:private reasoning-balanced :balanced)
-(def ^:private reasoning-deep :deep)
+(def ^:private quick-reasoning :quick)
+(def ^:private balanced-reasoning :balanced)
+(def ^:private deep-reasoning :deep)
 
 (defn- normalize-reasoning-level
   "Returns canonical :quick | :balanced | :deep, or nil for unknown input.
@@ -140,56 +55,19 @@
   [base consecutive-errors]
   (cond
     (<= (long consecutive-errors) 0) base
-    (= 1 (long consecutive-errors)) (if (= base reasoning-quick) reasoning-balanced reasoning-deep)
-    :else reasoning-deep))
+    (= 1 (long consecutive-errors)) (if (= base quick-reasoning) balanced-reasoning deep-reasoning)
+    :else deep-reasoning))
 
-;; =============================================================================
-;; RLM Environment
-;; =============================================================================
+(defn- resolve-effective-model
+  "Best-effort root model descriptor from router config."
+  [router]
+  (first (mapcat :models (:providers router))))
 
-(defn create-rlm-env
-  "Creates an RLM execution environment (internal use only).
+(defn- provider-has-reasoning?
+  "True when the configured root model exposes reasoning support."
+  [router]
+  (boolean (:reasoning? (resolve-effective-model router))))
 
-   Params:
-   `depth-atom` - Atom tracking recursion depth.
-   `router` - Router from llm/make-router. Required.
-   `opts` - Map, optional:
-     - :db - DB spec: nil (no DB), :temp, path string, {:conn c}, {:path p}
-     - :documents - Vector of PageIndex documents to preload (stored exactly as-is).
-
-   Returns:
-   Map with :sci-ctx, :db-info, :router."
-  ([depth-atom router]
-   (create-rlm-env depth-atom router {}))
-  ([depth-atom router {:keys [db documents]}]
-   (when-not router
-     (throw (ex-info "Router is required for RLM environment" {:type :rlm/missing-router})))
-   (let [db-info (create-rlm-conn db)
-         _ (when (and db-info (seq documents))
-             (doseq [doc documents]
-               (db-store-pageindex-document! db-info doc)))
-         {:keys [sci-ctx sandbox-ns initial-ns-keys]} (create-sci-context nil)
-         tool-registry-atom (atom {})
-         state-atom (atom {:custom-bindings {} :custom-docs []})
-          env {:sci-ctx sci-ctx :sandbox-ns sandbox-ns :initial-ns-keys initial-ns-keys
-               :tool-registry-atom tool-registry-atom
-               :state-atom state-atom
-               :db-info db-info
-               :router router
-               ;; Refreshed by iteration-loop after every successful
-               ;; store-iteration!. Sub-RLM invocations read this to
-               ;; parent their :query entity under the INVOKING
-               ;; iteration rather than under the conversation, so the
-               ;; full recursion tree is recoverable from the DB.
-               :current-iteration-id-atom (atom nil)
-               ;; Revision-keyed cache for the rendered <var_index>
-               ;; block. `read-var-index-str` reads this; SCI mutations
-               ;; bump `:current-revision` via `bind-and-bump!`.
-               :var-index-atom (atom {:index nil :revision -1 :current-revision 0})}]
-     env)))
-
-(defn dispose-rlm-env! [{:keys [db-info]}]
-  (when db-info (dispose-rlm-conn! db-info)))
 
 (defn get-locals
   "Returns {sym → val} of user-defined vars in SCI sandbox (excludes built-ins).
@@ -204,7 +82,7 @@
                        (assoc! acc k (if (instance? clojure.lang.IDeref v) @v v))))
           (transient {}) sandbox)))
     (catch Exception e
-      (trove/log! {:level :warn :id ::get-locals-fallback
+      (tel/log! {:level :warn :id ::get-locals-fallback
                    :data {:error (ex-message e)}
                    :msg "Failed to read sandbox locals, returning empty map"})
       {})))
@@ -222,13 +100,8 @@
   "Current custom SCI bindings {sym -> value}."
   [env]
   (some-> (:state-atom env) deref :custom-bindings))
-
-(defn custom-docs
-  "Current custom doc entries (vec of tool-defs)."
-  [env]
-  (some-> (:state-atom env) deref :custom-docs))
 ;; =============================================================================
-;; Code Execution
+;; Code Evaluation
 ;; =============================================================================
 
 (defn- run-sci-code
@@ -280,33 +153,6 @@
   {:all true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
-;; =============================================================================
-;; Redundant-call filter (tool-native via :superseded-by-fn)
-;; =============================================================================
-
-(defn- extract-tool-call
-  "Best-effort parse of the dominant tool call from a code block expr.
-   Returns {:tool symbol :path string :args vec} or nil. Only detects
-   top-level `(tool-name \"path\" ...)` shapes — good enough for the
-   batch filter.
-
-   Comments (`;; …`) and discard reader macros (`#_ x`) at the head of
-   the expression are stripped by edamame during parse, so a block like
-   `;; check auth\\n(read-file \"x\")` still produces `{:tool read-file …}`
-   and participates in the supersession optimization. Only edamame's
-   parsed forms matter — no string preprocessing, no fragile prefix
-   heuristic on the raw text."
-  [^String expr]
-  (try
-    (let [forms (edamame/parse-string-all (str/trim expr) edamame-opts)]
-      (when (and (= 1 (count forms)) (list? (first forms)))
-        (let [[sym & args] (first forms)]
-          (when (symbol? sym)
-            {:tool sym
-             :path (when (string? (first args)) (first args))
-             :args (vec args)}))))
-    (catch Throwable _ nil)))
-
 (defn- check-syntax
   "Parses code with edamame. Returns parsed forms or throws."
   [code]
@@ -343,24 +189,19 @@
           start-time (System/currentTimeMillis)
           lint-error (detect-common-mistakes code)]
       (if lint-error
-        ;; Pre-exec lint caught a known mistake - return clear error without eval
-        (do (rlm-debug! {:lint-error lint-error} "Pre-exec lint caught mistake")
-          {:result nil :stdout "" :stderr "" :error lint-error
-           :execution-time-ms 0 :timeout? false})
+        {:result nil :stdout "" :stderr "" :error lint-error
+         :execution-time-ms 0 :timeout? false}
         (if-let [parse-error (parse-clojure-syntax code)]
-          ;; Pre-parse failed — attempt paren repair before giving up
           (let [repaired (try code (catch Throwable _ code))]
             (if (and (not= repaired code) (nil? (parse-clojure-syntax repaired)))
-              (do (rlm-debug! {:parse-error parse-error :repaired-len (count repaired)} "Edamame pre-parse failed, paren repair recovered")
-                (let [result (run-sci-code sci-ctx repaired :sandbox-ns sandbox-ns)
-                      t (- (System/currentTimeMillis) start-time)]
-                  (assoc result :execution-time-ms t :timeout? false :repaired? true)))
-              (do (rlm-debug! {:parse-error parse-error} "Edamame pre-parse failed, repair did not help")
-                {:result nil :stdout "" :stderr "" :error parse-error
-                 :execution-time-ms 0 :timeout? false})))
+              (let [result (run-sci-code sci-ctx repaired :sandbox-ns sandbox-ns)
+                    t (- (System/currentTimeMillis) start-time)]
+                (assoc result :execution-time-ms t :timeout? false :repaired? true))
+              {:result nil :stdout "" :stderr "" :error parse-error
+               :execution-time-ms 0 :timeout? false}))
         ;; Normal execution path
           (let [execution-result (if timeout-ms
-                                   (binding [*eval-timeout-ms* (schema/clamp-eval-timeout-ms timeout-ms)]
+                                   (binding [*eval-timeout-ms* (rlm-spec/clamp-eval-timeout-ms timeout-ms)]
                                      (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
                                    (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
                 execution-time (- (System/currentTimeMillis) start-time)]
@@ -371,13 +212,13 @@
                                    (try
                                      (let [repaired code]
                                        (if (= repaired code)
-                                         (do (trove/log! {:level :debug :id ::repair-noop
+                                         (do (tel/log! {:level :debug :id ::repair-noop
                                                           :data {:code-len (count code) :error error}
                                                           :msg "Paren repair: no change needed"})
                                            execution-result)
                                          (let [retry (run-sci-code sci-ctx repaired :sandbox-ns sandbox-ns)]
                                            (if (:error retry)
-                                             (do (trove/log! {:level :warn :id ::repair-retry-failed
+                                             (do (tel/log! {:level :warn :id ::repair-retry-failed
                                                               :data {:original-error error
                                                                      :retry-error (:error retry)
                                                                      :code-len (count code)
@@ -387,7 +228,7 @@
                                                               :msg "Paren repair changed code but retry still failed"})
                                                execution-result)
                                              (do
-                                               (trove/log! {:level :info :id ::repair-applied
+                                               (tel/log! {:level :info :id ::repair-applied
                                                             :data {:original code :repaired repaired :sci-error error}
                                                             :msg "Paren repair applied successfully"})
                                                (assoc retry :repaired? true))))))
@@ -511,78 +352,6 @@
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
-;; =============================================================================
-;; Sequential execute-then-filter (tool-native via :superseded-by-fn)
-;; =============================================================================
-
-(defn- block-superseded?
-  "Check if a single parsed call is superseded given already-executed
-   calls. Only successful prior executions count — a failed read-file
-   does NOT supersede a subsequent grep (we don't have the content)."
-  [parsed-call executed-calls tool-registry]
-  (when-let [{:keys [tool]} parsed-call]
-    (when-let [superseded-by (get-in tool-registry [tool :superseded-by-fn])]
-      (try (superseded-by parsed-call executed-calls)
-        (catch Throwable t
-          (trove/log! {:level :warn
-                       :data {:tool tool :error (ex-message t)}
-                       :msg ":superseded-by-fn threw; keeping block"})
-          false)))))
-
-(defn- execute-and-filter-blocks
-  "Sequential execute-then-filter: run block N, then check if remaining
-   blocks are superseded by what already succeeded. Blocks superseded by
-   a SUCCESSFUL prior execution are skipped. Failed executions do NOT
-   trigger supersession (the data was never produced).
-
-   Returns {:executed-blocks [code-str ...] :executed-results [result ...]}.
-   Skipped blocks are logged but excluded from both vectors."
-  [rlm-env coalesced tool-registry iteration total-blocks]
-  (loop [remaining coalesced
-         idx 0
-         executed-calls []   ;; parsed calls of SUCCESSFUL prior blocks
-         out-blocks []
-         out-results []]
-    (if (empty? remaining)
-      {:executed-blocks out-blocks :executed-results out-results}
-      (let [{:keys [expr time-ms]} (first remaining)
-            parsed (extract-tool-call expr)
-            superseded? (and (seq executed-calls)
-                             (block-superseded? parsed executed-calls tool-registry))]
-        (if superseded?
-          ;; Skip this block — log and move to next
-          (do (trove/log! {:level :info
-                           :data {:idx (inc idx) :total total-blocks
-                                  :expr (subs expr 0 (min 80 (count expr)))}
-                           :msg "[filter] Skipped superseded block"})
-            (recur (rest remaining) (inc idx) executed-calls out-blocks out-results))
-          ;; Execute this block
-          (do (rlm-stage! :code-exec iteration
-                {:idx (inc idx) :total total-blocks
-                 :code expr :time-ms time-ms})
-            (let [result (if-let [err (literal-code-block-error expr)]
-                           (do (rlm-stage! :code-result iteration
-                                 {:idx (inc idx) :total total-blocks :error err})
-                             {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
-                           (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
-                             (rlm-stage! :code-result iteration
-                               {:idx (inc idx) :total total-blocks
-                                :execution-time-ms (:execution-time-ms r)
-                                :error (:error r)
-                                :timeout? (:timeout? r)
-                                :result (:result r)})
-                             r))
-                  ;; Only add to executed-calls if execution SUCCEEDED.
-                  ;; Failed/timed-out blocks don't supersede anything.
-                  new-executed (if (and (nil? (:error result))
-                                       (not (:timeout? result))
-                                       parsed)
-                                 (conj executed-calls parsed)
-                                 executed-calls)]
-              (recur (rest remaining) (inc idx) new-executed
-                (conj out-blocks expr)
-                (conj out-results result)))))))))
-
 (def ^:private PLACEHOLDER_WORDS
   "Single-word placeholders the LLM sometimes emits as :answer instead of
    the real content. Checked AFTER var-resolve — if the word matches a def, it
@@ -667,7 +436,7 @@
 ;; Forward-declared so `build-iteration-context` can call them — the
 ;; concrete bodies live further down in this file next to the other
 ;; rendering helpers (they depend on vars defined later).
-(declare read-var-index-str read-user-var-count format-execution-results literal-code-block-error)
+(declare read-var-index-str read-user-var-count format-expression-results)
 
 (defn build-iteration-context
   "Assemble the trailing user message appended to the base prompt on
@@ -677,7 +446,7 @@
    <var_index> from the env-scoped cache, counts USER vars for the
    overflow nudge, formats the previous iteration's <journal>, calls
    nudge composers. The iteration-loop hands in the minimal state
-   (iteration counters + prev-executions) and gets back the assembled
+   (iteration counters + prev-expressions) and gets back the assembled
    string (or nil when there's nothing to say).
 
    State (all optional):
@@ -689,20 +458,20 @@
                                nudges.
      :prior-thinking         — `<prior_thinking>` body string (sliced
                                to latest + requested reasonings).
-     :prev-executions        — `[{:code :result :error …}]` from the
+     :prev-expressions        — `[{:code :result :error …}]` from the
                                previous iteration; feeds the
                                <journal> render AND the repetition
                                nudge (fed through `call-counts-atom`).
      :prev-iteration         — iteration number that produced
-                               `prev-executions`.
+                               `prev-expressions`.
      :call-counts-atom       — mutable repetition-counter owned by
                                the iteration-loop. Swapped by
-                               `nudges/repetition-warning`.
+                               `prompt/repetition-warning`.
 
    Returns the joined block or nil when every component is blank."
   [rlm-env {:keys [iteration current-max-iterations
                    prior-thinking
-                   prev-executions prev-iteration
+                   prev-expressions prev-iteration
                    call-counts-atom]}]
   (let [clamp (fn [s n] (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
         ;; Always-on iteration marker so the LLM knows where it is in
@@ -719,22 +488,29 @@
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
-        exec-results (format-execution-results prev-executions prev-iteration)
+        expr-results (format-expression-results prev-expressions prev-iteration)
         user-var-count (read-user-var-count rlm-env)
-        ;; SYSTEM_NUDGE composers. Each returns a string or nil;
-        ;; `keep identity` drops nils, `str/join` handles 0/1/many
-        ;; cleanly. Add new nudges here as they graduate from inline
-        ;; ad-hoc strings.
-        nudges-block (str/join "\n"
-                       (keep identity
-                         [(when (and iteration current-max-iterations)
-                            (nudges/budget-warning
-                              {:iteration              iteration
-                               :current-max-iterations current-max-iterations}))
-                          (nudges/var-index-overflow user-var-count)
-                          (nudges/repetition-warning call-counts-atom prev-executions)]))
+        ;; SYSTEM_NUDGE composers — built-in + extension-contributed.
+        ;; Each returns a string or nil; `keep identity` drops nils,
+        ;; `str/join` handles 0/1/many cleanly.
+        nudge-ctx {:environment          rlm-env
+                   :iteration            iteration
+                   :current-max-iterations current-max-iterations
+                   :prev-expressions      prev-expressions
+                   :prev-iteration       prev-iteration
+                   :user-var-count       user-var-count}
+        built-in-nudges (keep identity
+                          [(when (and iteration current-max-iterations)
+                             (prompt/budget-warning
+                               {:iteration              iteration
+                                :current-max-iterations current-max-iterations}))
+                           (prompt/var-index-overflow user-var-count)
+                           (prompt/repetition-warning call-counts-atom prev-expressions)])
+        ext-nudges (prompt/collect-extension-nudges
+                     (some-> (:extensions rlm-env) deref) nudge-ctx)
+        nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [iter-header prior-block exec-results var-block nudges-block])]
+                [iter-header prior-block expr-results var-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -748,7 +524,7 @@
    next turn can't trust what the previous one produced. Defining
    this once at namespace level keeps the recur sites short and the
    reset semantics in a single place."
-  {:prev-executions      nil
+  {:prev-expressions      nil
    :prev-iteration       -1
    :prev-next-model      nil
    :prev-next-reasoning  nil})
@@ -837,16 +613,17 @@
   (let [ex-data-map (ex-data e)
         iteration (:iteration ctx)]
     (if (infrastructure-error? ex-data-map)
-      (do (trove/log! {:level :error
+      (do (tel/log! {:level :error
                        :data {:iteration iteration
                               :error (ex-message e)
                               :type (:type ex-data-map)}
                        :msg "Provider infrastructure error — aborting iteration loop"})
         (throw e))
       (let [iter-err (exception->iter-err e ctx)]
-        (trove/log! {:level :warn
+        (tel/log! {:level :warn
                      :data (assoc iter-err :iteration iteration)
-                     :msg "RLM iteration failed, feeding error to LLM"})
+                    }
+  "RLM iteration failed, feeding error to LLM")
         {::iteration-error iter-err}))))
 
 (defn run-iteration
@@ -864,7 +641,7 @@
   [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
-    (let [_model-name (:name (query-shared/resolve-effective-model (:router rlm-env)))
+    (let [_model-name (:name (resolve-effective-model (:router rlm-env)))
           effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level. Expected one of quick|balanced|deep."
@@ -918,15 +695,15 @@
               code-blocks (mapv :expr code-entries)
                ;; Execute code blocks in SCI — ALWAYS when present, regardless of answer-type.
                ;; MUST run BEFORE single-token :answer resolve so freshly-def'd vars are visible.
-              exec-results (when (seq code-blocks)
+              expr-results (when (seq code-blocks)
                              (mapv (fn [{:keys [expr time-ms]}]
                                       (if-let [err (literal-code-block-error expr)]
                                         {:result nil :error err
                                          :stdout "" :stderr "" :execution-time-ms 0}
                                         (execute-code rlm-env expr :timeout-ms time-ms)))
                                 code-entries))
-              exec-errors (when exec-results
-                            (seq (filter :error exec-results)))
+              expr-errors (when expr-results
+                            (seq (filter :error expr-results)))
                ;; NOW read sandbox — code has executed, (def reply ...) is visible.
                ;; Var-resolve mechanic (two modes):
                ;; 1. Single-word: :answer is one token matching a sandbox var → substitute entirely.
@@ -961,44 +738,34 @@
               template-answer (:answer mustache-result)
               mustache-missing (:error mustache-result)
               raw-answer (or resolved-var-value template-answer raw-answer)
-              _ (when resolved-var-value
-                  (rlm-debug! {:token (str raw-final-answer)
-                               :resolved-chars (count resolved-var-value)}
-                    "Single-word :answer resolved to var value"))
-              _ (when template-answer
-                  (rlm-debug! {:template (str raw-final-answer)
-                               :resolved-chars (count template-answer)}
-                    "Mustache template rendered"))
               final-answer raw-answer
               confidence (or (:confidence parsed) :high)
               validation-error (or (when-not answer-type
                                      ":answer-type is required with :answer. Set mustache-text or mustache-markdown.")
-                                 (when exec-errors
-                                   (str "Code errors before final: " (:error (first exec-errors))))
+                                 (when expr-errors
+                                   (str "Code errors before final: " (:error (first expr-errors))))
                                  (when (cleanup-claim-without-forget? final-answer forget-names)
                                    "You claimed vars/index cleanup in the final answer, but this iteration did not emit :forget. Emit :forget with the concrete var names first, then finalize.")
                                  (when (placeholder-final-answer? raw-final-answer (or (some? resolved-var-value) (some? template-answer)))
                                    (str "Placeholder word '" (str/trim (str raw-final-answer)) "' is not a real answer. Put the actual content in :answer, or def the result and use its var name."))
                                  mustache-missing)
-              executions (when exec-results
+              expressions (when expr-results
                            (mapv (fn [idx code result]
                                    {:id idx :code code
                                     :result (:result result) :stdout (:stdout result)
                                     :stderr (:stderr result) :error (:error result)
                                     :execution-time-ms (:execution-time-ms result)
                                     :repaired? (:repaired? result)})
-                             (range) code-blocks exec-results))]
+                             (range) code-blocks expr-results))]
           (if validation-error
-            (do (rlm-debug! {:final-answer (truncate final-answer 200)
-                             :validation-error validation-error} "FINAL rejected")
-              {:thinking thinking
+            {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
                :forget forget-names
-               :executions (or executions
+               :expressions (or expressions
                              [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
                                :error validation-error}])
                :final-result nil :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)})
+               :duration-ms (or (:duration-ms ask-result) 0)}
             (let [sources (vec (or (:sources parsed) []))
                   final-result (cond-> {:final? true
                                         ;; `:text` for plain strings (was `String` class — mixing
@@ -1013,7 +780,7 @@
               {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
                :forget forget-names
-               :executions (or executions []) :final-result final-result :api-usage api-usage
+               :expressions (or expressions []) :final-result final-result :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)})))
         ;; Normal path: execute code blocks.
         ;;
@@ -1051,19 +818,29 @@
                                     (conj result {:expr joined-expr
                                                   :time-ms joined-time})))
                                 (recur (rest remaining) (conj result (first remaining)))))))
-              ;; Sequential execute-then-filter: run block N, then use
-              ;; its :superseded-by-fn to prune remaining blocks BEFORE
-              ;; running them. This is strictly more powerful than
-              ;; upfront filtering because a failed execution does NOT
-              ;; trigger supersession (we don't have the content).
-              tool-reg (some-> rlm-env :tool-registry-atom deref)
               total-blocks (count coalesced)
-              {:keys [executed-blocks executed-results]}
-              (execute-and-filter-blocks rlm-env coalesced tool-reg iteration total-blocks)
-              code-blocks executed-blocks
-              execution-results executed-results
+              code-blocks (mapv :expr coalesced)
+              expression-results
+              (map-indexed
+                (fn [idx {:keys [expr time-ms]}]
+                  (rlm-stage! :code-exec iteration
+                    {:idx (inc idx) :total total-blocks
+                     :code expr :time-ms time-ms})
+                  (if-let [err (literal-code-block-error expr)]
+                    (do (rlm-stage! :code-result iteration
+                          {:idx (inc idx) :total total-blocks :error err})
+                      {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0})
+                    (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
+                      (rlm-stage! :code-result iteration
+                        {:idx (inc idx) :total total-blocks
+                         :execution-time-ms (:execution-time-ms r)
+                         :error (:error r)
+                         :timeout? (:timeout? r)
+                         :result (:result r)})
+                      r)))
+                coalesced)
               ;; Combine code blocks with their execution results
-              executions (mapv (fn [idx code result]
+              expressions (mapv (fn [idx code result]
                                  {:id idx
                                   :code code
                                   :result (:result result)
@@ -1073,10 +850,10 @@
                                   :execution-time-ms (:execution-time-ms result)
                                   :timeout? (:timeout? result)
                                   :repaired? (:repaired? result)})
-                           (range) code-blocks execution-results)]
+                           (range) code-blocks expression-results)]
            {:thinking thinking
             :next-model next-model :next-reasoning next-reasoning
-            :executions executions :final-result nil :api-usage api-usage
+            :expressions expressions :final-result nil :api-usage api-usage
             :duration-ms (or (:duration-ms ask-result) 0)})))))
 
 (defn- error-hint
@@ -1159,8 +936,8 @@
           (when-let [f (:rlm/format m)]
             (try (f v) (catch Throwable _ nil)))))))
 
-(defn format-executions
-  "Formats executions as compact per-block receipts for LLM feedback in the
+(defn format-expressions
+  "Formats expressions as compact per-block receipts for LLM feedback in the
    error-recovery / iteration-accumulation path. One line per block:
 
      <code> → <value>                          ;; success
@@ -1173,7 +950,7 @@
    LLM derives from Clojure syntax. Only `:hint` (pattern-based error
    guidance) and `:warning \"auto-repaired delimiters\"` carry real
    signal not in the value itself."
-  [executions]
+  [expressions]
   (str/join "\n"
     (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
            (let [code-str (str/trim (or code ""))
@@ -1215,7 +992,7 @@
                (or slow-part "")
                (or stdout-part "")
                (or warning-part ""))))
-      executions)))
+      expressions)))
 
 (def ^:private EXECUTION_SAFETY_CAP_CHARS
   "Cap for one value rendering in a journal entry. Aligned with the UI cap
@@ -1330,8 +1107,8 @@
             (when final-line [final-line])
             ["[new query]"]))))))
 
-(defn- format-execution-results
-  "Formats the previous iteration's executions as the `<journal>` block
+(defn- format-expression-results
+  "Formats the previous iteration's expressions as the `<journal>` block
    shown at the top of the next iteration's user message.
 
    Minimal one-line-per-block format (as of 2026-04):
@@ -1367,8 +1144,8 @@
 
    Semantic equivalence: every signal the earlier format carried is still
    reachable from the new format; redundancy was stripped, not content."
-  [executions _iteration]
-  (when (seq executions)
+  [expressions _iteration]
+  (when (seq expressions)
     (str "<journal>\n"
       (str/join "\n"
         (map-indexed
@@ -1431,7 +1208,7 @@
                 (or slow-suffix "")
                 (or stdout-suffix "")
                 (or stderr-suffix ""))))
-          executions))
+          expressions))
       "\n</journal>")))
 
 ;; NOTE (2025-04): the accumulating `execution_journal` block was removed.
@@ -1442,15 +1219,15 @@
 ;;   - `*reasoning*` — current iteration's thinking, auto-def'd per iteration.
 ;;   - `conversation-history` / `conversation-code` / `conversation-results`
 ;;     — on-demand access to prior turns across queries.
-;;   - `var-history` / `var-diff` — on-demand access to var evolution.
-;; The `<journal>` block (was `<execution_results>`) carries only the PREVIOUS
-;; iteration's executions. Pulling anything further back is the LLM's job via
+;;   - `var-history` — on-demand access to var evolution.
+;; The `<journal>` block (was `<expression_results>`) carries only the PREVIOUS
+;; iteration's expressions. Pulling anything further back is the LLM's job via
 ;; the tools above. This makes the per-iteration prompt O(1) instead of O(n).
 
 (defn- extract-def-names
   "Extracts var names from code blocks via EDN parsing of def-like forms."
-  [executions]
-  (->> executions
+  [expressions]
+  (->> expressions
     (mapcat (fn [{:keys [code error]}]
               (when-not error
                 (try
@@ -1463,7 +1240,7 @@
                                   name)))))
                     distinct)
                   (catch Exception e
-                    (trove/log! {:level :debug :id ::extract-def-names-fallback
+                    (tel/log! {:level :debug :id ::extract-def-names-fallback
                                  :data {:error (ex-message e)}
                                  :msg "Failed to parse code forms for def names, returning empty"})
                     [])))))
@@ -1481,7 +1258,7 @@
   [db-info query-id]
   (try
     (if query-id
-      (let [iters (rlm-db/db-list-query-iterations db-info query-id)]
+      (let [iters (db/db-list-query-iterations db-info query-id)]
         (vec (keep-indexed
                (fn [idx it]
                  (when-let [t (:thinking it)]
@@ -1489,7 +1266,7 @@
                iters)))
       [])
     (catch Throwable t
-      (trove/log! {:level :warn
+      (tel/log! {:level :warn
                    :data {:error (ex-message t)
                           :ex-data (ex-data t)
                           :class (.getName (class t))
@@ -1537,7 +1314,7 @@
                        (and (symbol? s) (not (contains? initials s))))
                sandbox-map)))
     (catch Throwable t
-      (trove/log! {:level :warn
+      (tel/log! {:level :warn
                    :data {:error (ex-message t)
                           :ex-data (ex-data t)
                           :class (.getName (class t))
@@ -1562,13 +1339,11 @@
       index
       (let [sandbox-map (get-in @(:env (:sci-ctx rlm-env))
                           [:namespaces 'sandbox])
-            tool-reg    (some-> rlm-env :tool-registry-atom deref)
-            idx         (build-var-index
+            idx         (sci-env/build-var-index
                           (:sci-ctx rlm-env) (:initial-ns-keys rlm-env)
                           sandbox-map
                           (:db-info rlm-env) (:conversation-id rlm-env)
-                          {:include-persisted? true
-                           :tool-registry      tool-reg})
+                          {:include-persisted? true})
             live-rev    (:current-revision @var-index-atom)]
         (swap! var-index-atom assoc :index idx :revision live-rev)
         idx))))
@@ -1587,12 +1362,12 @@
   (when (and db-info conversation-id (nil? parent-iteration-id))
     (try
       (let [all-queries (sort-by :created-at
-                          (rlm-db/db-list-conversation-queries db-info conversation-id))
+                          (db/db-list-conversation-queries db-info conversation-id))
             current-id  (second current-query-id)
             prior       (last (remove #(= (:id %) current-id) all-queries))]
         (when prior
           (let [prior-id    [:id (:id prior)]
-                iters        (rlm-db/db-list-query-iterations db-info prior-id)
+                iters        (db/db-list-query-iterations db-info prior-id)
                 tagged-iters (vec (keep-indexed
                                     (fn [idx it]
                                       (when-let [t (:thinking it)]
@@ -1605,7 +1380,7 @@
                                      (not (str/blank? final-answer)))
                                final-answer)}))))
       (catch Throwable t
-        (trove/log! {:level :warn
+        (tel/log! {:level :warn
                      :data {:error (ex-message t)
                             :ex-data (ex-data t)
                             :class (.getName (class t))
@@ -1614,106 +1389,34 @@
                      :msg "build-cross-query-handover failed — new query missing [prior turn] context"})
         nil))))
 
-(defn- parse-top-level-tool-call
-  "Given a defining expression string, surface the top-level tool
-   symbol and its raw literal args — or nil when the form is not a
-   direct tool call.
-
-   Recognizes:
-     (def NAME (tool-sym arg1 arg2 …))
-     (tool-sym arg1 arg2 …)              ;; bare top-level form
-
-   Args come back as their parsed literals (strings, numbers,
-   keywords, maps). If the form isn't a direct tool call (e.g. the
-   body wraps the call in `let`/`->>`/etc.), we return nil — the
-   agent gets no freshness tracking for that binding by design.
-   Sourcing args from literal call sites keeps the contract simple:
-   `(def x (read-file \"path\"))` works; `(def x (let [p \"path\"] …))`
-   doesn't."
-  [expr]
-  (when (and (string? expr) (not (str/blank? expr)))
-    (try
-      (let [form (read-string {:read-cond :allow :features #{:clj}} expr)
-            body (if (and (seq? form) (= 'def (first form)))
-                   (nth form 2 nil)
-                   form)]
-        (when (and (seq? body) (symbol? (first body)))
-          {:tool-sym (first body)
-           :args     (vec (rest body))}))
-      (catch Throwable _ nil))))
-
-(defn- seed-var-metadata
-  "Invoke the producing tool's `:metadata-fn` fn to seed a var snapshot's
-   metadata. Returns `{:tool <sym-str> …}` merged with whatever the
-   fn's `:metadata` map is, or nil when the tool doesn't require
-   freshness tracking or the expr isn't a literal tool call.
-
-   Logs (not throws) when the tool's fn blows up — freshness metadata
-   is best-effort; a faulty :metadata-fn should never break the turn."
-  [tool-registry expr result]
-  (when-let [{:keys [tool-sym args]} (parse-top-level-tool-call expr)]
-    (when-let [tool-def (get tool-registry tool-sym)]
-      (when (:metadata-fn tool-def)
-        (try
-          (let [seed ((:metadata-fn tool-def)
-                      {:args args :result result :metadata nil})]
-            (when (map? (:metadata seed))
-              (assoc (:metadata seed) :tool (name tool-sym))))
-          (catch Throwable t
-            (trove/log! {:level :warn
-                         :data {:tool tool-sym :error (ex-message t)}
-                         :msg "Tool :metadata-fn seed failed — metadata dropped for this var"})
-            nil))))))
-
 (defn- restorable-var-snapshots
-  "Returns serializable snapshots of user vars introduced by this iteration.
-
-   Each snapshot:
-     {:name     str
-      :value    any
-      :code     str                 ;; the :expr from the producing block
-      :time-ms  int-or-nil          ;; :execution-time-ms from same block
-      :metadata {:tool <str> + tool-specific keys} or nil}
-
-   `:metadata` is populated only when the defining expression is a
-   literal tool call AND the tool's registration declares
-   ``. The tool's own `:metadata-fn` fn
-   decides what goes in the map — see `seed-var-metadata`."
-  [rlm-env executions]
+  "Returns serializable snapshots of user vars introduced by this iteration."
+  [rlm-env expressions]
   (let [execution->defs (mapv (fn [{:keys [error] :as execution}]
-                                [execution (when-not error (set (map symbol (extract-def-names [execution]))))])
-                          executions)
+                                [execution (when-not error
+                                             (set (map symbol (extract-def-names [execution]))))])
+                          expressions)
         defined (into #{} (mapcat second) execution->defs)
         sym->exec (reduce (fn [acc [{:keys [code execution-time-ms]} defs]]
                             (if (and code (seq defs))
-                              (reduce #(assoc %1 %2 {:expr code :time-ms execution-time-ms}) acc defs)
+                              (reduce #(assoc %1 %2 {:expr code :time-ms execution-time-ms})
+                                acc defs)
                               acc))
                     {}
                     execution->defs)
-        tool-registry (some-> rlm-env :tool-registry-atom deref)
         locals (get-locals rlm-env)]
     (->> locals
       (keep (fn [[sym value]]
               (when (contains? defined sym)
                 (let [realized (realize-value value)
-                      exec-info (get sym->exec sym)
-                      metadata (seed-var-metadata tool-registry (:expr exec-info) realized)]
-                  (when (or (nil? realized)
-                          (string? realized)
-                          (number? realized)
-                          (keyword? realized)
-                          (boolean? realized)
-                          (symbol? realized)
-                          (map? realized)
-                          (vector? realized)
-                          (set? realized)
-                          (list? realized)
-                          (sequential? realized))
-                    (cond-> {:name (str sym)
+                      exec-info (get sym->exec sym)]
+                  ;; Accept ALL values — freeze-safe in the persistence layer
+                  ;; handles non-serializable types (fns → {:rlm/ref :expr}).
+                  (cond-> {:name (str sym)
                              :value realized
                              :code (:expr exec-info)}
-                      (:time-ms exec-info) (assoc :time-ms (:time-ms exec-info))
-                      metadata             (assoc :metadata metadata)))))))
+                      (:time-ms exec-info)
+                      (assoc :time-ms (:time-ms exec-info)))))))
       vec)))
 
 (defn- earmuffed-sym?
@@ -1727,7 +1430,7 @@
   "Unmap `names` from the SCI sandbox namespace. Mirrors what the LLM asked
    for via the `:forget` iteration-spec field — removes the bindings so they
    stop showing up in <var_index>. The persisted :iteration-var rows in the
-   DB are not touched; `(restore-var 'sym)` can bring one back later.
+   DB rows are not touched; `(var-history 'sym)` can inspect old values.
 
    HARD GUARD: earmuffed SYSTEM vars (*query*, *reasoning*, *answer*, …)
    can NEVER be forgotten — silently filtered out of `names`. These are
@@ -1742,7 +1445,7 @@
                    names)
         {system-syms true user-syms false} (group-by (comp boolean earmuffed-sym?) raw-syms)]
     (when (seq system-syms)
-      (trove/log! {:level :info :id ::forget-system-var-idused
+      (tel/log! {:level :info :id ::forget-system-var-idused
                    :data {:requested (mapv str system-syms)}
                    :msg "Refusing to forget SYSTEM vars (*foo*) — ignoring those names"}))
     (when (seq user-syms)
@@ -1750,7 +1453,7 @@
         (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
           (fn [ns-map] (apply dissoc ns-map user-syms)))
         (catch Throwable e
-          (trove/log! {:level :debug :id ::forget-vars-failed
+          (tel/log! {:level :debug :id ::forget-vars-failed
                        :data {:error (ex-message e) :syms (mapv str user-syms)}
                        :msg "forget-vars! failed — skipping"}))))))
 
@@ -1762,7 +1465,7 @@
   "Number of recent queries a var must have been defined/redefined in to survive
    auto-forget. Vars without a docstring that were last touched more than this
    many queries ago are automatically removed from the live sandbox at the start
-   of each new query. DB rows are untouched — (restore-var 'sym) can bring them back."
+   of each new query. DB rows are untouched — (var-history 'sym) can inspect old values."
   3)
 
 (defn auto-forget-candidates
@@ -1806,46 +1509,36 @@
               (not (contains? recent-ids defining-query-id))))))
       (keys sandbox-map))))
 (defn iteration-loop [rlm-env query
-                      {:keys [output-spec max-context-tokens custom-docs system-prompt
+                      {:keys [max-context-tokens system-prompt
                               pre-fetched-context query-id history-messages
                               max-iterations max-consecutive-errors max-restarts
                               hooks cancel-atom current-iteration-atom
                               reasoning-default routing]}]
-  (let [max-iterations (or max-iterations schema/MAX_ITERATIONS)
+  (let [max-iterations (or max-iterations rlm-spec/MAX_ITERATIONS)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
-        ;; Adaptive budget: if rlm-env has a max-iterations-atom (set by query-env!),
+        ;; Adaptive budget: if rlm-env has a max-iterations-atom (set by vis!),
         ;; read from it so the LLM can extend its own budget via (request-more-iterations n).
         ;; Otherwise use the static max-iterations parameter.
         max-iter-atom (:max-iterations-atom rlm-env)
         effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
         ;; Resolve effective model name for token counting
-        effective-model (:name (query-shared/resolve-effective-model (:router rlm-env)))
+        effective-model (:name (resolve-effective-model (:router rlm-env)))
         _ (assert effective-model "Router must resolve a root model — check provider config")
         ;; Default max-context-tokens to 60% of model's context window.
         ;; Prevents unbounded history accumulation (quadratic token growth over iterations).
         max-context-tokens (or max-context-tokens
                              (long (* 0.6 (router/context-limit effective-model))))
         ;; Check if root provider has native reasoning (thinking tokens)
-        has-reasoning? (boolean (query-shared/provider-has-reasoning? (:router rlm-env)))
+        has-reasoning? (provider-has-reasoning? (:router rlm-env))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default)
-                               reasoning-quick)
+                               balanced-reasoning)
         ;; `:has-documents?` is the only activation flag that still matters
         ;; at this level — it drives the RESPONSE FORMAT's :sources field in
-        ;; the iteration spec. Every other tool-group is rendered entirely
-        ;; through the data-driven <tools> block below.
-        has-docs? (when-let [db (:db-info rlm-env)]
-                    (pos? (count (db-list-documents db {:limit 1 :include-toc? false}))))
-        system-prompt (build-system-prompt {:output-spec output-spec
-                                            :custom-docs custom-docs
-                                            :has-documents? has-docs?
-                                            :has-reasoning? has-reasoning?
+        system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
                                             :system-prompt system-prompt
                                             :max-context-tokens max-context-tokens
-                                            :env rlm-env
-                                            :tool-defs (when-let [a (:tool-registry-atom rlm-env)]
-                                                         (vals @a))
-                                            })
+                                            :env rlm-env})
         initial-user-content (str "{:requirement " (pr-str query)
                                (when pre-fetched-context
                                  (str "\n :plan " (pr-str pre-fetched-context)))
@@ -1865,27 +1558,27 @@
         ;; (a) have no docstring, and (b) were last defined/redefined more
         ;; than AUTO_FORGET_STALE_QUERIES queries ago. This replaces the
         ;; unreliable "ask LLM to emit :forget" pattern for scratch vars.
-        ;; DB rows are untouched — (restore-var 'sym) can bring them back.
+        ;; DB rows are untouched — (var-history 'sym) can inspect old values.
         _ (when (and db-info (:conversation-id rlm-env) (:sci-ctx rlm-env))
             (try
               (let [all-queries (sort-by :created-at
-                                  (rlm-db/db-list-conversation-queries db-info (:conversation-id rlm-env)))
+                                  (db/db-list-conversation-queries db-info (:conversation-id rlm-env)))
                     recent-ids (into #{}
                                  (map :id)
                                  (take-last AUTO_FORGET_STALE_QUERIES all-queries))
-                    var-registry (rlm-db/db-latest-var-registry db-info (:conversation-id rlm-env))
+                    var-registry (db/db-latest-var-registry db-info (:conversation-id rlm-env))
                     sandbox-map (get-in @(:env (:sci-ctx rlm-env)) [:namespaces 'sandbox])
                     candidates (auto-forget-candidates sandbox-map (:initial-ns-keys rlm-env)
                                  var-registry recent-ids)]
                 (when (seq candidates)
-                  (trove/log! {:level :info :id ::auto-forget
+                  (tel/log! {:level :info :id ::auto-forget
                                :data {:forgotten (mapv str candidates) :count (count candidates)}
                                :msg (str "Auto-forget: evicting " (count candidates) " stale vars without docstrings")})
                   (forget-vars! (:sci-ctx rlm-env) candidates)
                   (when-let [via (:var-index-atom rlm-env)]
                     (swap! via update :current-revision inc))))
               (catch Exception e
-                (trove/log! {:level :warn :id ::auto-forget-failed
+                (tel/log! {:level :warn :id ::auto-forget-failed
                              :data {:error (ex-message e)}
                              :msg "Auto-forget failed — skipping"}))))
         ;; Cost tracking: accumulate token usage across all iterations
@@ -1899,7 +1592,7 @@
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
-         ;; Repetition detection — `nudges/repetition-warning`
+         ;; Repetition detection — `prompt/repetition-warning`
          ;; reads+swaps this atom from build-iteration-context each
          ;; turn. Keyed by both `[code result]` AND
          ;; `[:error-only msg]` so varying-input-same-error loops
@@ -1928,15 +1621,22 @@
                        (try
                          (hook-fn payload)
                          (catch Exception e
-                           (trove/log! {:level :warn :data {:error (ex-message e)}
-                                        :msg log-msg})))))]
+                           (tel/log! {:level :warn :data {:error (ex-message e)}
+                                        :msg log-msg})))))
+        active-extension-names (fn []
+                                 (when-let [exts (some-> (:extensions rlm-env) deref seq)]
+                                   (mapv (comp str :ext/namespace) exts)))
+        iter-metadata (fn []
+                        (let [ext-names (active-extension-names)]
+                          (when (seq ext-names)
+                            {:extensions ext-names})))]
     ;; query-start is logged in query.clj — don't duplicate
     ;; Auto-bind *query* into the SCI sandbox so the LLM (and var-history)
     ;; can always see the current user query. `bind-and-bump!` atomically
     ;; updates SCI AND invalidates the var-index cache — skipping the bump
     ;; causes turns with no `:code` (greetings) to serve a stale <var_index>
     ;; with a PRIOR turn's `*query*` value to the LLM.
-    (rlm-tools/bind-and-bump! rlm-env '*query* query)
+    (sci-env/bind-and-bump! rlm-env '*query* query)
     ;; Fresh query, fresh parent-iteration-id. The env-scoped atom
     ;; may still hold the LAST iteration of the PREVIOUS query; sub-
     ;; RLMs spawned during iter 0 would otherwise inherit that stale
@@ -1958,12 +1658,12 @@
       ;;   :trace                — per-iteration trace entries.
       ;;   :consecutive-errors   — error counter for strategy-restart.
       ;;   :restarts             — completed restart count.
-      ;;   :prev-executions      — previous iter's executions, for
+      ;;   :prev-expressions      — previous iter's expressions, for
       ;;                           <journal>. Nilled on error/restart
       ;;                           so the next turn doesn't cite a
       ;;                           dead result as its baseline.
       ;;   :prev-iteration       — iteration index that produced the
-      ;;                           prev-executions journal entry.
+      ;;                           prev-expressions journal entry.
       ;;   :prev-next-model      — the LLM's :next.model override for
       ;;                           the NEXT iteration's routing.
       ;;   :prev-next-reasoning  — the LLM's :next.reasoning override.
@@ -1974,12 +1674,12 @@
                                 :restarts           0}
                           FRESH_ITER_CARRY)]
         (let [{:keys [iteration messages trace consecutive-errors restarts
-                      prev-executions prev-iteration
+                      prev-expressions prev-iteration
                       prev-next-model prev-next-reasoning]} loop-state]
         (when current-iteration-atom
           (reset! current-iteration-atom iteration))
         (cond
-          ;; Cooperative cancellation — caller-owned :cancel-atom from query-env!
+          ;; Cooperative cancellation — caller-owned :cancel-atom from query!
           ;; (or an internal per-query atom when not supplied).
           (when cancel-atom @cancel-atom)
           (do (rlm-stage! :error iteration {:reason :cancelled})
@@ -2033,10 +1733,9 @@
                                    " :requirement " (pr-str query) "}")
                     restart-messages [{:role "system" :content system-prompt}
                                       {:role "user" :content restart-hint}]]
-                (trove/log! {:level :info :data {:iteration iteration :restarts (inc restarts)
+                (tel/log! {:level :info :data {:iteration iteration :restarts (inc restarts)
                                                  :errors consecutive-errors}
                              :msg "Strategy restart — resetting with anti-knowledge"})
-                (rlm-debug! {:failed-summary failed-summary} "Strategy restart triggered")
                 (recur (merge loop-state
                          {:iteration          (inc iteration)
                           :messages           restart-messages
@@ -2044,7 +1743,7 @@
                           :consecutive-errors 0
                           :restarts           (inc restarts)}
                          FRESH_ITER_CARRY)))
-              (do (trove/log! {:level :warn :data {:iteration iteration :consecutive-errors consecutive-errors
+              (do (tel/log! {:level :warn :data {:iteration iteration :consecutive-errors consecutive-errors
                                                    :restarts restarts}
                                :msg "Error budget exhausted — too many consecutive errors across restarts. Simplify your code or break the task into smaller steps."})
                 (let [recent-errors (->> trace reverse
@@ -2100,7 +1799,7 @@
                                        {:iteration              iteration
                                         :current-max-iterations (effective-max-iterations)
                                         :prior-thinking         prior-thinking
-                                        :prev-executions        prev-executions
+                                        :prev-expressions        prev-expressions
                                         :prev-iteration         prev-iteration
                                         :call-counts-atom       call-counts-atom})
                   ;; Preserve the FULL initial prompt (system + requirement +
@@ -2146,13 +1845,14 @@
                      ;; (:data iter-err) — see the catch block above.
                      (let [empty-content-reasoning (when (= :svar.llm/empty-content (:type iter-err))
                                                      (:reasoning (:data iter-err)))
-                           err-iter-id (rlm-db/store-iteration! db-info
+                           err-iter-id (db/store-iteration! db-info
                                           {:query-id query-id
                                            :vars []
-                                           :executions nil
+                                           :expressions nil
                                            :thinking empty-content-reasoning
                                            :duration-ms 0
-                                           :error iter-err})]
+                                           :error iter-err
+                                           :metadata (iter-metadata)})]
                        (when-let [a (:current-iteration-id-atom rlm-env)]
                          (reset! a err-iter-id)))
                    ;; Global observer hook after store-iteration! (error path)
@@ -2162,7 +1862,7 @@
                       :status-id (status->id :error)
                       :thinking (when (= :svar.llm/empty-content (:type iter-err))
                                   (:reasoning (:data iter-err)))
-                      :executions nil
+                      :expressions nil
                       :final-result nil
                       :error iter-err
                       :duration-ms 0}
@@ -2176,7 +1876,7 @@
                            FRESH_ITER_CARRY)))
                 ;; Normal path — accumulate token usage
                 (let [_ (accumulate-usage! (:api-usage iteration-result))
-                      {:keys [thinking executions final-result next-model next-reasoning forget]} iteration-result
+                      {:keys [thinking expressions final-result next-model next-reasoning forget]} iteration-result
                       _ (when (seq forget)
                           (forget-vars! (:sci-ctx rlm-env) forget)
                           (swap! var-index-atom update :current-revision inc))
@@ -2187,7 +1887,7 @@
                       ;; Otherwise a next turn that runs no `:code` would keep
                       ;; serving this turn's stale `<var_index>` to the LLM.
                        _ (when (seq thinking)
-                           (rlm-tools/bind-and-bump! rlm-env '*reasoning* thinking))
+                           (sci-env/bind-and-bump! rlm-env '*reasoning* thinking))
 
                       ;; Auto-bind *answer* when the turn finalizes. Survives into the
                       ;; next turn in this conversation (vars persist across queries).
@@ -2195,8 +1895,8 @@
                       ;; recent lives under the bare *answer* var.
                       final-answer (when final-result (:answer final-result))
                       _ (when final-result
-                          (rlm-tools/bind-and-bump! rlm-env '*answer* final-answer))
-                      vars-snapshot (restorable-var-snapshots rlm-env executions)
+                          (sci-env/bind-and-bump! rlm-env '*answer* final-answer))
+                      vars-snapshot (restorable-var-snapshots rlm-env expressions)
                       ;; Inject auto-vars (*query*, *reasoning*, *answer*) into the
                       ;; persisted snapshot so var-history can track them across
                       ;; queries and iterations.
@@ -2217,13 +1917,14 @@
                                       final-result
                                       (conj {:name "*answer*" :value final-answer :code ";; SYSTEM var — bound by agent loop, never forgotten"}))
                        ;; Store iteration snapshot — exact input/output for fine-tuning
-                       iter-id (rlm-db/store-iteration! db-info
+                       iter-id (db/store-iteration! db-info
                                   {:query-id query-id
-                                   :executions executions
+                                   :expressions expressions
                                    :vars vars-snapshot
                                    :thinking thinking
                                    :answer (when final-result (answer-str (:answer final-result)))
-                                   :duration-ms (or (:duration-ms iteration-result) 0)})
+                                   :duration-ms (or (:duration-ms iteration-result) 0)
+                                   :metadata (iter-metadata)})
                        ;; Publish the fresh iteration ref so any SCI
                        ;; code that subsequently calls query
                        ;; can parent its sub-query under this iter
@@ -2235,21 +1936,21 @@
                           {:iteration iteration
                            :status (cond
                                      final-result :final
-                                     (empty? executions) :empty
+                                     (empty? expressions) :empty
                                      :else :success)
                            :status-id (status->id (cond
                                                     final-result :final
-                                                    (empty? executions) :empty
+                                                    (empty? expressions) :empty
                                                     :else :success))
                            :thinking thinking
-                           :executions executions
+                           :expressions expressions
                            :final-result final-result
                            :error nil
                            :duration-ms (or (:duration-ms iteration-result) 0)}
                           "on-iteration hook threw (success branch) — swallowing")
                       trace-entry {:iteration iteration
                                    :thinking thinking
-                                   :executions executions
+                                   :expressions expressions
                                    :final? (boolean final-result)}]
                   (if final-result
                     (do (rlm-stage! :final iteration
@@ -2257,14 +1958,14 @@
                            :confidence (:confidence final-result)
                            :iterations (inc iteration)})
                       (rlm-stage! :iter-end iteration
-                        {:blocks (count executions)
-                         :errors (count (filter :error executions))
-                         :times (mapv :execution-time-ms executions)})
+                        {:blocks (count expressions)
+                         :errors (count (filter :error expressions))
+                         :times (mapv :execution-time-ms expressions)})
                         ;; Fire final streaming callback
                       (when on-chunk
                         (on-chunk {:iteration iteration
                                    :thinking thinking
-                                   :code (mapv :code executions)
+                                   :code (mapv :code expressions)
                                    :final {:answer (:answer final-result)
                                            :confidence (:confidence final-result)
                                            :summary (:summary final-result)
@@ -2279,7 +1980,7 @@
                                (:sources final-result)   (assoc :sources (:sources final-result))
                                (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
                         (finalize-cost)))
-                       (if (empty? executions)
+                       (if (empty? expressions)
                         ;; Empty iteration — spec-level `:code` is required so
                         ;; this branch should almost never fire; svar rejects
                         ;; responses missing the field via
@@ -2288,7 +1989,7 @@
                         ;; svar 0.3.6+). It survives only as defence against a
                         ;; provider that silently skips enforcement. We do NOT
                         ;; re-persist (the iteration was already stored above
-                        ;; with :executions []) and we do NOT scold — the old
+                        ;; with :expressions []) and we do NOT scold — the old
                         ;; soft nudge was dead weight duplicating what the
                         ;; spec description already says. All we do is
                         ;; propagate state so the agent's last real journal
@@ -2319,7 +2020,7 @@
                           ;; 2e3bf18c). Regression guarded by
                           ;; trace-empty-iter-test. Every other
                           ;; value in `loop-state` carries through
-                          ;; verbatim — including `prev-executions`
+                          ;; verbatim — including `prev-expressions`
                           ;; so the last real journal survives a
                           ;; "thinking only" blip.
                           (recur (merge loop-state
@@ -2327,7 +2028,7 @@
                                    :trace               (conj trace trace-entry)
                                    :prev-next-model     next-model
                                    :prev-next-reasoning next-reasoning})))
-                        ;; Normal iteration with executions. No
+                        ;; Normal iteration with expressions. No
                         ;; user-message composition here — every nudge
                         ;; that used to live inline (`repetition`,
                         ;; `budget`, `last-iteration`) now flows
@@ -2337,40 +2038,40 @@
                         ;; trimmed away by trim-to-initial-history.
                         (do
                         (rlm-stage! :iter-end iteration
-                          {:blocks (count executions)
-                           :errors (count (filter :error executions))
-                           :times (mapv :execution-time-ms executions)})
+                          {:blocks (count expressions)
+                           :errors (count (filter :error expressions))
+                           :times (mapv :execution-time-ms expressions)})
                         ;; Fire streaming callback so the web UI (and any
                         ;; other adapter) gets live updates per iteration,
                         ;; not just at finalize.
                         (when on-chunk
                           (on-chunk {:iteration iteration
                                      :thinking thinking
-                                     :code (mapv :code executions)
+                                     :code (mapv :code expressions)
                                      :done? false}))
-                        (let [had-successful-execution? (some #(nil? (:error %)) executions)
+                        (let [had-successful-execution? (some #(nil? (:error %)) expressions)
                               next-errors (if had-successful-execution? 0 (inc consecutive-errors))
                               _ (when had-successful-execution?
                                   (swap! var-index-atom update :current-revision inc))]
                           ;; Normal success: next loop-state absorbs
-                          ;; this iter's executions as the journal for
+                          ;; this iter's expressions as the journal for
                           ;; the next turn and threads model overrides.
                           (recur (merge loop-state
                                    {:iteration            (inc iteration)
                                     :messages             messages
                                     :trace                (conj trace trace-entry)
                                     :consecutive-errors   next-errors
-                                    :prev-executions      executions
+                                    :prev-expressions      expressions
                                     :prev-iteration       iteration
                                     :prev-next-model      next-model
                                     :prev-next-reasoning  next-reasoning}))))))))))))))))
 
 ;; =============================================================================
-;; Public API — environment lifecycle, tool registration
+;; Public API — environment lifecycle
 ;; =============================================================================
 ;; Placed after iteration-loop so all internal fns are resolved without declare.
 
-(defn create-env
+(defn create-environment
   "Creates an RLM environment (component) for document ingestion and querying.
 
    The environment holds:
@@ -2389,12 +2090,11 @@
      {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns:
-   RLM environment map (component). Pass to register-env-fn!, register-env-def!, ingest-to-env!, query-env!, dispose-env!."
+   RLM environment map (component)."
   [router {:keys [db conversation channel external-id title]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :rlm/missing-router}))
   (let [depth-atom (atom 0)
-        tool-registry-atom (atom {})
         db-info (create-rlm-conn db)
         var-index-atom (atom {:index nil :revision -1 :current-revision 0})
         qa-corpus-atom (atom {:snapshot-cache nil
@@ -2402,29 +2102,27 @@
                                       :last-digest-ms nil
                                       :last-revision 0}})
         state-atom (atom {:custom-bindings {}
-                          :custom-docs []
                           :rlm-env nil
                           :conversation-id nil})
         rlm-env-atom (atom nil)
                 env-id (str (util/uuid))
-        root-model (or (:name (query-shared/resolve-effective-model router)) "unknown")
-        has-reasoning? (boolean (query-shared/provider-has-reasoning? router))
+        root-model (or (:name (resolve-effective-model router)) "unknown")
+        has-reasoning? (provider-has-reasoning? router)
         system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
                                             })
-        resolved-conversation-id (rlm-db/db-resolve-conversation-id db-info conversation)
+        resolved-conversation-id (db/db-resolve-conversation-id db-info conversation)
         conversation-id (or resolved-conversation-id
-                           (rlm-db/store-conversation! db-info
+                           (db/store-conversation! db-info
                              {:channel       (or channel :vis)
                               :external-id   external-id
                               :model         root-model
                               :title         title
                               :system-prompt system-prompt}))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (create-sci-context (:custom-bindings @state-atom))
+        (sci-env/create-sci-context (:custom-bindings @state-atom))
         env {:env-id env-id
              :conversation-id conversation-id
              :depth-atom depth-atom
-             :tool-registry-atom tool-registry-atom
              :db-info db-info
              :var-index-atom var-index-atom
              :qa-corpus-atom qa-corpus-atom
@@ -2433,81 +2131,36 @@
              :sandbox-ns sandbox-ns
              :initial-ns-keys initial-ns-keys
              :router router
+             :extensions (atom [])
 }]
     (reset! rlm-env-atom env)
     (swap! state-atom assoc :rlm-env env :conversation-id conversation-id)
-    ;; Register all built-in tools with proper activation-fns
-    (reset! rlm-env-atom env)
     env))
 
-(defn dispose-env!
+(defn dispose-environment!
   "Disposes an RLM environment and releases resources.
 
    For persistent DBs (created with :path), data is preserved.
    For disposable DBs, all data is deleted."
-  [env]
-  (when-let [db-info (:db-info env)]
+  [environment]
+  (when-let [db-info (:db-info environment)]
     (dispose-rlm-conn! db-info)))
 
-(defn register-env-fn!
-  "Registers a function in the RLM environment's SCI sandbox."
-  [env sym f tool-def]
-  (when-not (:state-atom env)
-    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
-  (when-not (symbol? sym)
-    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
-  (when-not (fn? f)
-    (anomaly/incorrect! "f must be a function" {:type :rlm/invalid-fn}))
-  (when-not (map? tool-def)
-    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
-  (let [canonical-tool-def (sci-tool/make-tool-def sym f tool-def)]
-    (rlm-tools/register-tool-def! (:tool-registry-atom env) sym canonical-tool-def)
-    (when-let [sci-ctx (:sci-ctx env)]
-      (rlm-tools/sci-update-binding! sci-ctx sym
-        (rlm-tools/wrap-tool-for-sci env sym f (:tool-registry-atom env))))
-    ;; Tool-defs live in `:tool-registry-atom` only — they flow into the
-    ;; <tools> prompt block via `render-active-tools` with activation-fn
-    ;; filtering. `:custom-docs` is now reserved for `:type :def` constants
-    ;; registered via `register-env-def!`.
-    )
-  env)
+(defn register-extension!
+  "Register a validated extension into the environment.
 
-(defn register-env-def!
-  "Registers a constant/value in the RLM environment's SCI sandbox."
-  [env sym value tool-def]
-  (when-not (:state-atom env)
-    (anomaly/incorrect! "Invalid RLM environment" {:type :rlm/invalid-env}))
-  (when-not (symbol? sym)
-    (anomaly/incorrect! "sym must be a symbol" {:type :rlm/invalid-sym :sym sym}))
-  (when-not (map? tool-def)
-    (anomaly/incorrect! "tool-def must be a map" {:type :rlm/invalid-tool-def}))
-  (swap! (:state-atom env) update :custom-bindings assoc sym value)
-  (when-let [sci-ctx (:sci-ctx env)]
-    (rlm-tools/sci-update-binding! sci-ctx sym value))
-  (swap! (:state-atom env) update :custom-docs conj (assoc tool-def :type :def :sym sym))
-  env)
+   The extension's symbols are bound into the SCI sandbox (via
+   `wrap-extension`), and the extension itself is appended to the
+   environment's `:extensions` atom so its `:ext/nudge-fn` (if any)
+   is invoked every iteration.
 
-(defn register-hook!
-  "Attach a hook to an existing tool's chain."
-  [env sym {:keys [stage id fn]}]
-  (rlm-tools/register-tool-def! (:tool-registry-atom env) sym
-    {stage [{:id id :fn fn}]})
-  env)
-
-(defn unregister-hook!
-  "Remove a per-tool hook entry by :id."
-  [env sym stage id]
-  (rlm-tools/unregister-hook! (:tool-registry-atom env) sym stage id))
-
-(defn list-tool-hooks
-  "Return hook chains registered for `sym`, or nil when missing."
-  [env sym]
-  (rlm-tools/list-tool-hooks (:tool-registry-atom env) sym))
-
-(defn list-registered-tools
-  "Return a vec of {:sym :hook-counts} maps for registered tools."
-  [env]
-  (rlm-tools/list-registered-tools (:tool-registry-atom env)))
+   Returns `environment` for chaining."
+  [environment ext]
+  (when-not (:extensions environment)
+    (anomaly/incorrect! "Invalid RLM environment — missing :extensions atom"
+      {:type :rlm/invalid-env}))
+  (swap! (:extensions environment) conj ext)
+  environment)
 
 ;; =============================================================================
 ;; Entity Extraction — delegates to loop.knowledge.entity

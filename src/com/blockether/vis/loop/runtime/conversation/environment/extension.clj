@@ -9,7 +9,7 @@
   (:refer-clojure :exclude [symbol])
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [taoensso.trove :as trove]))
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Predicates
@@ -39,20 +39,31 @@
 ;; concrete call patterns, e.g. ["(search-documents \"neural\")"]
 (s/def :ext.symbol/examples (s/and vector? seq #(every? non-blank-string? %)))
 
-;; Before hook: (fn [env f args] args'). Runs before :fn.
-;; Receives the env, the implementation fn, and the original args.
-;; Returns the (possibly transformed) args vector to pass to :fn.
-;; Throw to abort the call.
+;; Before hook: (fn [env f args] → map). Runs before :fn.
+;; Receives the environment, the implementation fn, and the original args.
+;; Returns a map — see Hook Protocol in EXTENSION.md:
+;;   {:args [...]}    — override args passed to :fn
+;;   {:fn f'}         — override the implementation fn
+;;   {:env env'}      — override env for the call
+;;   {:result val}    — short-circuit: skip :fn entirely, return val
+;; Missing keys keep the current value. Throw to abort.
 (s/def :ext.symbol/before-fn fn?)
 
-;; After hook: (fn [env f args result] result'). Runs after :fn returns.
-;; Receives the env, the implementation fn, the args, and the raw result.
-;; Returns the (possibly transformed) result.
+;; After hook: (fn [env f args result] → map). Runs after :fn returns.
+;; Receives the environment, the implementation fn, the args, and the raw result.
+;; Returns a map — see Hook Protocol in EXTENSION.md:
+;;   {:result val}    — override the result
+;;   {:env :fn :args} — override (rarely needed)
+;; Missing keys keep the current value.
 (s/def :ext.symbol/after-fn fn?)
 
-;; Error handler: (fn [err env f args] result-or-throw). Called when :fn throws.
-;; Receives the exception, env, the implementation fn, and the original args.
-;; Can return a fallback value, re-invoke f with different args, or re-throw.
+;; Error handler: (fn [err env f args] → map). Called when :fn throws.
+;; Receives the exception, environment, the implementation fn, and the original args.
+;; Returns a map — see Hook Protocol in EXTENSION.md:
+;;   {:result val}    — use as fallback result
+;;   {:error err}     — throw this error instead
+;;   {:fn f' :args a'} — retry with (possibly different) fn and args
+;; If no :on-error-fn is defined, the original exception propagates.
 (s/def :ext.symbol/on-error-fn fn?)
 
 ;; Plain value bound in the sandbox (constant, data, config).
@@ -106,6 +117,12 @@
 ;; and normalize strings to (constantly s).
 (s/def :ext/prompt fn?)
 
+;; Optional per-iteration nudge composer.
+;; (fn [ctx] → string-or-nil). Called every iteration; return a
+;; `[system_nudge] …` string to inject a nudge, nil to skip.
+;; See EXTENSION.md § Nudge Context for the ctx shape.
+(s/def :ext/nudge-fn fn?)
+
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
 
@@ -130,7 +147,8 @@
 (s/def ::extension
   (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
                 :ext/activation-fn :ext/prompt :ext/symbols
-                :ext/classes :ext/imports]))
+                :ext/classes :ext/imports]
+    :opt [:ext/nudge-fn]))
 
 ;; =============================================================================
 ;; Symbol helper
@@ -166,10 +184,11 @@
      {:doc      \"Full-text search across documents.\"
       :arglists '([query] [query opts])
       :examples [\"(search-documents \\\"neural\\\")\"]
-      ;; Optional hooks:
-      :before-fn   (fn [env f args] args')          ;; transform args before call
-      :after-fn    (fn [env f args result] result')  ;; transform result after call
-      :on-error-fn (fn [err env f args] ...)})       ;; handle error, can retry via (apply f args')"
+      ;; Optional hooks — each returns a MAP, not a direct value.
+      ;; See Hook Protocol in EXTENSION.md for every return key.
+      :before-fn   (fn [env f args] {:args (transform args)})    ;; override args/fn/env, or {:result v} to short-circuit
+      :after-fn    (fn [env f args result] {:result (transform result)})  ;; override result
+      :on-error-fn (fn [err env f args] {:result fallback})})    ;; recover, retry, or {:error e} to re-throw"
   [sym-name f opts]
   (let [arglists (:arglists opts)
         arglists (when arglists (if (seq? arglists) (vec arglists) arglists))
@@ -262,7 +281,7 @@
 (defn- elapsed-ms [t0] (/ (- (System/nanoTime) t0) 1e6))
 
 (defn- log! [level id ext-ns sym phase ms extra-msg]
-  (trove/log! {:level level :id id
+  (tel/log! {:level level :id id
                :data {:ext ext-ns :sym sym :phase phase :ms ms}
                :msg (str ext-ns "/" sym " :invoke"
                       (when phase (str " " phase))
@@ -373,8 +392,8 @@
   "Wrap all function symbols in an extension into invocation fns.
 
    Returns a map of {sym → (fn [& args] result)} where each fn
-   closes over the extension and symbol entry, routes through
-   invoke-symbol-wrapper, and takes env as the last arg.
+   closes over the extension, symbol entry, and environment, then
+   routes through `invoke-symbol-wrapper`.
 
    Value symbols are returned as {sym → value}."
   [ext env]
@@ -418,6 +437,9 @@
       :ext/group         \"knowledge\"
       :ext/prompt        \"Full-text search across ingested documents...\"
       :ext/activation-fn (fn [env] (seq (db/list-docs (:db-info env))))
+      :ext/nudge-fn      (fn [{:keys [environment iteration]}]
+                           (when (> iteration 8)
+                             \"[system_nudge] Consider narrowing search scope.\"))
       :ext/symbols       [search-sym fetch-sym max-retries-sym]
       :ext/classes       {'java.time.LocalDate java.time.LocalDate}
       :ext/imports       {'LocalDate java.time.LocalDate}})

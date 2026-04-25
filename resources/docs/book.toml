@@ -1,0 +1,27 @@
+[book]
+title = "Vis"
+description = "Iterative coding agent built on svar RLM"
+authors = ["Blockether"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/blockether/vis"
+edit-url-template = "https://github.com/blockether/vis/edit/main/docs/src/{path}"
+no-section-label = true
+additional-css = ["theme/custom.css"]
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.search]
+enable = true
+limit-results = 20
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.fold]
+enable = true
+level = 1

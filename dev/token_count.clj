@@ -8,7 +8,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.loop.core :as core]
    [com.blockether.vis.loop.runtime.prompt :as prompt]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.base :as routing])
+   [com.blockether.vis.loop.runtime.conversation.environment.query.core :as routing])
   (:import
    [com.knuddels.jtokkit Encodings]
    [com.knuddels.jtokkit.api EncodingType]))
@@ -34,7 +34,7 @@
                      :models [{:name "gpt-5-mini"}]}]))
 
 (defn- fresh-env []
-  (core/create-env (stub-router) {:db :temp}))
+  (core/create-environment (stub-router) {:db :temp}))
 
 (defn- render-prompt
   "Render the system prompt exactly like iteration-loop does."
@@ -91,4 +91,4 @@
         (println)
         (println "Full prompt written to /tmp/vis-system-prompt.txt"))
       (finally
-        (core/dispose-env! env)))))
+        (core/dispose-environment! env)))))

@@ -27,3 +27,4 @@ schema-therapy.pageindex/
 # Sessions / runtime data
 .omc/
 .agents/
+resources/docs/book/
