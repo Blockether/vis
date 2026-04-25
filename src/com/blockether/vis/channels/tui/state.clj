@@ -5,7 +5,8 @@
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.render :as render]
-            [com.blockether.vis.loop.runtime.conversation.core :as conversations]))
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -75,6 +76,9 @@
 
 (reg-event-db :set-config
   (fn [db [_ config]]
+    (channels/reload-config!)
+    (when (seq (:providers config))
+      (query-core/rebuild-router! config))
     (assoc db :config config)))
 
 (reg-event-db :set-dialog-open

@@ -38,7 +38,6 @@
      --model MODEL        override LLM model
      --max-iterations N   override iteration budget
      --name NAME          agent name
-     --system-prompt STR  system instructions for the agent
      --db PATH|:memory    override DB target for this command
 
    Everything else is concatenated as the prompt."
@@ -64,7 +63,6 @@
                                  :max-iterations-provided? true)
                                prompt-parts)
           "--name"           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
-          "--system-prompt"  (recur (next more) (assoc opts :system-prompt (first more)) prompt-parts)
           "--db"             (recur (next more) (assoc opts :db (first more)) prompt-parts)
           ;; Not a flag → part of the prompt
           (recur more opts (conj prompt-parts arg)))))))
@@ -83,6 +81,8 @@
   (println "  vis run \"prompt\"                      Run a one-shot agent query")
   (println "  vis web [PORT]                        Start web server (default port 3000)")
   (println "  vis telegram                          Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)")
+  (println "  vis extensions                        List registered extensions")
+  (println "  vis ext <cmd> [args...]                Run an extension command")
   (println "  vis doctor                            Show environment diagnostics")
   (println "  vis help                              Show this help")
   (println)
@@ -99,13 +99,12 @@
   (stdout! "  --model MODEL       Override LLM model")
   (stdout! "  --max-iterations N  Override iteration budget (default 50, min 1)")
   (stdout! "  --name NAME         Agent name")
-  (stdout! "  --system-prompt STR System instructions for the agent")
   (stdout! "  --db PATH|:memory   Override DB target for this command")
   (stdout! "")
   (stdout! "Examples:")
   (stdout! "  vis run \"What is 2+2?\"")
   (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis run --system-prompt \"You are a code reviewer\" \"Review auth.clj\""))
+  (stdout! "  vis run --model gpt-4o --max-iterations 10 \"Explain auth flow\""))
 
 ;;; ── Run Command ─────────────────────────────────────────────────────────
 
@@ -343,6 +342,40 @@
       (= cmd "conversations")
       (do (config/init-cli!)
         (cli-conversations! (rest args))
+        (shutdown-agents))
+
+      ;; Extensions list
+      (= cmd "extensions")
+      (do (config/init-cli!)
+        (let [exts (channels/list-extensions)]
+          (if (empty? exts)
+            (stdout! "No extensions registered.")
+            (do
+              (stdout! "\n  Extensions\n")
+              (print-table!
+                [{:key :namespace :label "Namespace" :width 24 :align :left}
+                 {:key :doc       :label "Description" :width 40 :align :left}
+                 {:key :group     :label "Group"   :width 14 :align :left}
+                 {:key :version   :label "Version" :width 10 :align :left}
+                 {:key :cli-cmds  :label "CLI"     :width 20 :align :left}]
+                exts)
+              (stdout! (str "\n  " (count exts) " extension(s)\n")))))
+        (shutdown-agents))
+
+      ;; Extension CLI command
+      (= cmd "ext")
+      (do (config/init-cli!)
+        (let [ext-cmd (second args)
+              ext-args (vec (drop 2 args))]
+          (if (nil? ext-cmd)
+            (do (stdout! "Usage: vis ext <command> [args...]")
+              (stdout! "Run 'vis extensions' to list available commands."))
+            (try
+              (let [result (channels/run-extension-cmd! ext-cmd ext-args)]
+                (when (some? result)
+                  (stdout! (str result))))
+              (catch Exception e
+                (stdout! (str "Error: " (ex-message e)))))))
         (shutdown-agents))
 
       ;; TUI chat (explicit or no args)

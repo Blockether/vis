@@ -138,9 +138,7 @@
                     (recur)
                     (do
                       (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                        (state/dispatch [:set-config c])
-                        (let [{:keys [id history]} (chat/make-conversation c)]
-                          (state/dispatch [:init-conversation {:id id} history])))
+                        (state/dispatch [:set-config c]))
                       (recur)))
 
                   :show-copy
