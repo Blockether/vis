@@ -15,6 +15,7 @@
 
    [com.blockether.vis.loop.runtime.prompt :as prompt]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
+   [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
    [com.blockether.vis.loop.mustache :as mustache]
 
@@ -2125,6 +2126,8 @@
 }]
     (reset! rlm-env-atom env)
     (swap! state-atom assoc :rlm-env env :conversation-id conversation-id)
+    ;; Install all globally registered extensions in dependency order.
+    (ext/install-global-extensions! env register-extension!)
     env))
 
 (defn dispose-environment!

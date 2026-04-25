@@ -38,10 +38,62 @@ open for sibling environments.
 (register-extension! environment ext) → environment
 ```
 
-Registers a validated extension. Appends to the environment's
-`:extensions` atom. Returns the environment for chaining.
+Registers a validated extension into a specific environment. Checks
+`:ext/requires` dependencies. Returns the environment for chaining.
 
-See [Extension Spec](../extensions/spec.md).
+## Extension Registry
+
+> **Namespace:** `com.blockether.vis.loop.runtime.conversation.environment.extension`
+
+### `register-global!`
+
+```clojure
+(ext/register-global! ext) → ext
+```
+
+Register an extension in the process-level global registry. Call at
+namespace load time. Idempotent — re-registering replaces the previous
+version. All global extensions are installed into every new environment
+automatically.
+
+### `deregister-global!`
+
+```clojure
+(ext/deregister-global! ns-sym) → nil
+```
+
+Remove an extension from the global registry.
+
+### `registered-extensions`
+
+```clojure
+(ext/registered-extensions) → [ext ...]
+```
+
+Returns all globally registered extensions.
+
+### `load-extension!`
+
+```clojure
+(ext/load-extension! 'my.company.ext.git) → ext
+```
+
+Dynamically load an extension namespace. `require`s the namespace
+(triggering its `register-global!`), then returns the extension from
+the registry. Throws if the namespace doesn't register.
+
+### `install-global-extensions!`
+
+```clojure
+(ext/install-global-extensions! environment register-fn!) → environment
+```
+
+Topologically sorts all global extensions by `:ext/requires` and
+registers them into the environment. Called automatically by
+`create-environment`. Throws on circular dependencies or missing
+requirements.
+
+See [Extension System](../extensions/overview.md).
 
 ## Query Execution
 

@@ -5,6 +5,19 @@
    and docs to the SCI sandbox. Extensions are the ONLY way to extend
    the sandbox.
 
+   Two ways to register extensions:
+
+   1. **Global registry** — `(register-global! ext)` at ns load time.
+      When an environment is created, `install-global-extensions!`
+      topologically sorts by `:ext/requires` and registers them all.
+
+   2. **Per-environment** — `(register-extension! environment ext)`
+      from `loop.core` for ad-hoc registration.
+
+   Extensions can dynamically load other extensions via
+   `(load-extension! 'some.ext.ns)` which `require`s the namespace
+   (triggering its `register-global!` call) and returns the extension.
+
    Use `(extension spec)` to build and validate."
   (:refer-clojure :exclude [symbol])
   (:require [clojure.spec.alpha :as s]
@@ -457,3 +470,119 @@
       (not (:ext/imports spec))       (assoc :ext/imports {})
       (not (:ext/requires spec))      (assoc :ext/requires []))
     (validate!)))
+
+;; =============================================================================
+;; Global Extension Registry
+;; =============================================================================
+
+(defonce ^:private global-registry
+  "Process-level atom holding all globally registered extensions.
+   Keyed by :ext/namespace to prevent duplicates."
+  (atom {}))
+
+(defn register-global!
+  "Register an extension in the global process-level registry.
+
+   Call this at namespace load time so the extension is available
+   to every environment created afterwards:
+
+     (ns my.company.ext.git
+       (:require [....extension :as ext]))
+
+     (ext/register-global!
+       (ext/extension
+         {:ext/namespace 'git
+          :ext/requires  ['filesystem]
+          ...}))
+
+   Idempotent — re-registering the same :ext/namespace replaces
+   the previous version. Returns the extension."
+  [ext]
+  (let [ns-sym (:ext/namespace ext)]
+    (swap! global-registry assoc ns-sym ext)
+    (tel/log! {:level :info :id ::register-global
+               :data {:ext ns-sym}
+               :msg (str "Extension '" ns-sym "' registered globally")})
+    ext))
+
+(defn deregister-global!
+  "Remove an extension from the global registry by namespace symbol."
+  [ns-sym]
+  (swap! global-registry dissoc ns-sym)
+  nil)
+
+(defn registered-extensions
+  "Returns all globally registered extensions as a vector."
+  []
+  (vec (vals @global-registry)))
+
+(defn- topo-sort-extensions
+  "Topologically sort extensions by :ext/requires.
+   Throws on missing dependencies or cycles."
+  [extensions]
+  (let [by-ns   (into {} (map (juxt :ext/namespace identity)) extensions)
+        visited (volatile! #{})
+        path    (volatile! #{})
+        result  (volatile! [])]
+    (letfn [(visit [ns-sym]
+              (when (contains? @path ns-sym)
+                (throw (ex-info (str "Circular extension dependency: " ns-sym
+                                  " → ... → " ns-sym)
+                         {:type :extension/circular-dependency
+                          :extension ns-sym
+                          :path @path})))
+              (when-not (contains? @visited ns-sym)
+                (vswap! path conj ns-sym)
+                (let [ext (get by-ns ns-sym)]
+                  (when-not ext
+                    (throw (ex-info (str "Extension '" ns-sym "' required but not registered")
+                             {:type :extension/missing-dependency
+                              :extension ns-sym
+                              :available (vec (keys by-ns))})))
+                  (doseq [dep (:ext/requires ext)]
+                    (visit dep)))
+                (vswap! path disj ns-sym)
+                (vswap! visited conj ns-sym)
+                (vswap! result conj (get by-ns ns-sym))))]
+      (doseq [ns-sym (keys by-ns)]
+        (visit ns-sym)))
+    @result))
+
+(defn install-global-extensions!
+  "Install all globally registered extensions into an environment.
+
+   Topologically sorts by :ext/requires so dependencies are registered
+   before dependents. Throws on missing dependencies or cycles.
+
+   Called by `create-environment` automatically. Returns environment."
+  [environment register-fn!]
+  (let [exts   (registered-extensions)
+        sorted (when (seq exts) (topo-sort-extensions exts))]
+    (doseq [ext sorted]
+      (register-fn! environment ext))
+    environment))
+
+(defn load-extension!
+  "Dynamically load an extension from a Clojure namespace.
+
+   Requires the namespace (which should call `register-global!` at
+   load time), then returns the extension from the global registry.
+
+   This is how an extension loads another extension at runtime:
+
+     (ext/load-extension! 'my.company.ext.git)
+
+   The loaded extension's `register-global!` fires during `require`,
+   making it available for the next `install-global-extensions!` call
+   or for immediate `register-extension!` into a live environment.
+
+   Returns the extension map, or throws if the namespace doesn't
+   register an extension."
+  [ns-sym]
+  (require ns-sym)
+  (or (get @global-registry ns-sym)
+    (throw (ex-info (str "Namespace '" ns-sym
+                      "' was loaded but did not call register-global!")
+             {:type :extension/no-registration
+              :namespace ns-sym
+              :registered (vec (keys @global-registry))}))))

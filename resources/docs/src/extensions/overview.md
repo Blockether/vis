@@ -16,19 +16,66 @@ a single validated unit.
 5. **Expose Java classes** — enable `(LocalDate/now)` style interop
 6. **Guard activation** — conditionally enable/disable based on env state
 
+## Registration
+
+Two ways to register extensions:
+
+### Global Registry (recommended)
+
+Call `register-global!` at namespace load time. When any environment
+is created, all global extensions are automatically installed in
+dependency order.
+
+```clojure
+(ns my.company.ext.git
+  (:require [....extension :as ext]))
+
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'git
+     :ext/requires  ['filesystem]
+     :ext/doc       "Git integration"
+     ...}))
+```
+
+Drop the jar on the classpath → namespace loads → extension
+self-registers → every new environment gets it.
+
+### Dynamic Loading
+
+An extension can load other extensions at runtime:
+
+```clojure
+(ext/load-extension! 'my.company.ext.git)
+;; => requires the ns, triggers register-global!, returns the ext
+```
+
+This is how meta-extensions (extension packs) work — one extension
+`require`s others dynamically.
+
+### Per-Environment (ad-hoc)
+
+```clojure
+(register-extension! environment my-ext)
+```
+
+For extensions that shouldn't be global.
+
 ## Lifecycle
 
 ```mermaid
 flowchart TD
-    Build["1. Build extension<br/>ext/extension {...}"] --> Deps
-    Deps{"2. Dependencies met?<br/>ext/requires"}
-    Deps -->|yes| Register["3. Register into environment<br/>register-extension!"]
-    Deps -->|no| Fail(["Throws :extension/missing-dependencies"])
-    Register --> Activate
-    Activate{"4. Per-query<br/>activation-fn?"}
-    Activate -->|active| Nudge["5. Per-iteration<br/>nudge-fn called"]
+    Build["1. Build extension<br/>ext/extension {...}"] --> Global
+    Global["2. register-global!<br/>or register-extension!"] --> Topo
+    Topo["3. Topo-sort by ext/requires"] --> Deps
+    Deps{"4. Dependencies met?"}
+    Deps -->|yes| Install["5. Install into environment"]
+    Deps -->|no| Fail(["Throws missing-dependencies"])
+    Install --> Activate
+    Activate{"6. Per-query<br/>activation-fn?"}
+    Activate -->|active| Nudge["7. Per-iteration<br/>nudge-fn called"]
     Activate -->|inactive| Skip(["Symbols unbound<br/>nudge skipped"])
-    Nudge --> Hooks["6. Per-call hooks<br/>before-fn, fn, after-fn"]
+    Nudge --> Hooks["8. Per-call hooks<br/>before-fn, fn, after-fn"]
 ```
 
 ## Quick Example
