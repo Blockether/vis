@@ -246,3 +246,16 @@
   "Create a TerminalPosition for cursor placement."
   [col row]
   (TerminalPosition. (int col) (int row)))
+
+;;; ── Bubble line markers ────────────────────────────────────────────────────────────
+;;
+;; Zero-width invisible prefixes on bubble text lines.
+;; The bubble renderer checks these to apply per-line styles
+;; (italic for thinking, dim for code, bold for headers, etc.)
+;; without visible noise.
+
+(def MARKER_THINKING "\u200B")  ;; zero-width space       → italic, dim (reasoning)
+(def MARKER_CODE     "\u200C")  ;; zero-width non-joiner  → code style
+(def MARKER_RESULT   "\u200D")  ;; zero-width joiner      → result/return value
+(def MARKER_STDOUT   "\uFEFF")  ;; byte-order mark        → stdout output
+(def MARKER_SEP      "\u2060")  ;; word-joiner            → separator line
