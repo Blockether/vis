@@ -136,12 +136,15 @@
 
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 
+(def input-pad-y 1)  ;; internal vertical padding (rows above/below text)
+(def ^:private input-pad-x 2)  ;; internal horizontal padding (cols left/right of text)
+
 (defn draw-input-box!
-  "Draw bordered input area. Returns [cursor-col cursor-row] in screen coords."
+  "Draw bordered input area with internal padding. Returns [cursor-col cursor-row] in screen coords."
   [g {:keys [lines crow ccol]} box-top text-rows cols hint]
-  (let [text-top   (inc box-top)
-        box-bottom (+ box-top text-rows 1)
-        text-w     (- cols 2 (* 2 t/pad-x))
+  (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
+        text-top   (+ (inc box-top) input-pad-y)
+        text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
         h-scroll   (max 0 (- ccol (dec text-w)))]
 
@@ -158,11 +161,11 @@
             (when (< offset len)
               (.setForegroundColor g t/box-fg)
               (.setBackgroundColor g t/box-bg)
-              (.putString g (inc t/pad-x) (+ text-top i)
+              (.putString g input-pad-x (+ text-top i)
                 (subs line offset (min len (+ offset text-w)))))))))
 
     ;; Cursor position
-    [(+ (inc t/pad-x) (- ccol h-scroll))
+    [(+ input-pad-x (- ccol h-scroll))
      (+ text-top (- crow v-scroll))]))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────

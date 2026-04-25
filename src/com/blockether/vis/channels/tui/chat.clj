@@ -4,7 +4,8 @@
    On startup the TUI resumes the latest `:vis` conversation if one exists,
    otherwise creates a fresh one. Conversation data is persisted in
    `~/.vis/vis.mdb` so you can come back to it."
-  (:require [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+  (:require [com.blockether.vis.channels.tui.render :as render]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.persistance.core :as db]
             [taoensso.telemere :as t]))
 
@@ -22,7 +23,8 @@
 
 (defn- rebuild-history
   "Reconstruct message history from DB for a conversation.
-   Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}."
+   Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}.
+   Assistant messages include the code execution trace from all iterations."
   [conv-id]
   (try
     (let [d       (conversations/db-info)
@@ -38,10 +40,30 @@
                                    (:output-tokens q) (assoc :output (:output-tokens q)))
                         iters     (:iterations q)
                         dur-ms    (:duration-ms q)
-                        ai-msg    (cond-> (assistant-msg answer (or (:created-at q) (java.util.Date.)))
+                        cost      (when (:cost q) {:total-cost (:cost q)})
+                        ;; Rebuild trace from iterations + expressions
+                        query-iters (db/db-list-query-iterations d [:id (:id q)])
+                        trace (into []
+                                (map (fn [it]
+                                       (let [exprs (db/db-list-iteration-expressions d [:id (:id it)])
+                                             result-strs (mapv (fn [{:keys [result error]}]
+                                                                 (if error
+                                                                   (str "ERROR: " error)
+                                                                   (pr-str result)))
+                                                           exprs)]
+                                         {:thinking (:thinking it)
+                                          :code     (mapv :code exprs)
+                                          :results  result-strs})))
+                                query-iters)
+                        ;; Bake trace into the bubble text so code+results show
+                        full-text (if (seq trace)
+                                   (render/format-answer-with-thinking answer trace 120)
+                                   answer)
+                        ai-msg    (cond-> (assistant-msg full-text (or (:created-at q) (java.util.Date.)))
                                     model  (assoc :model model)
                                     iters  (assoc :iterations iters)
                                     dur-ms (assoc :duration-ms dur-ms)
+                                    cost   (assoc :cost cost)
                                     (seq tokens) (assoc :tokens tokens))]
                     [user-msg ai-msg])))
         queries))

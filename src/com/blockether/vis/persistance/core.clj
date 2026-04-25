@@ -77,6 +77,7 @@
   (sqlite/store-iteration! db-info opts))
 (defn db-list-query-iterations [db-info query-ref] (sqlite/db-list-query-iterations db-info query-ref))
 (defn db-list-iteration-vars [db-info iter-ref] (sqlite/db-list-iteration-vars db-info iter-ref))
+(defn db-list-iteration-expressions [db-info iter-ref] (sqlite/db-list-iteration-expressions db-info iter-ref))
 
 ;; --- Var registry & history ---
 

@@ -62,7 +62,7 @@
   "Draw one frame: background, messages area (bubbles), input box."
   [screen g cols rows {:keys [messages msg-scroll input progress loading? title]}]
   (let [text-rows   (input-text-rows input)
-        input-box-h (+ text-rows 2)
+        input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         input-top   (- rows input-box-h)
         msg-top     0
         msg-bottom  input-top
@@ -120,7 +120,7 @@
               g     (.newTextGraphics screen)
               bubble-w (- cols 4)
               text-rows (input-text-rows (:input db))
-              inner-h  (- (- rows (+ text-rows 2)) 0 1)
+              inner-h  (- (- rows (+ text-rows 2 (* 2 render/input-pad-y))) 0 1)
               ;; Scroll math must account for the (possibly expanded)
               ;; progress placeholder — otherwise mid-stream the bubble
               ;; grows off-screen and the user can't scroll down to it.
