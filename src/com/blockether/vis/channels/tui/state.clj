@@ -65,6 +65,7 @@
   []
   (reset! app-db {:config     nil
                   :conv       nil
+                  :title      nil
                   :messages   []
                   :msg-scroll nil
                   :input      (input/empty-input)
@@ -132,7 +133,7 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens]}]]]
+  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost]}]]]
     (let [start    (:query-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
@@ -142,11 +143,25 @@
                      (cond-> (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                              model      (assoc :model model)
                              iterations (assoc :iterations iterations)
-                             tokens     (assoc :tokens tokens)))]
+                             tokens     (assoc :tokens tokens)
+                             cost       (assoc :cost cost)))
+          ;; Auto-generate title from first user message if not yet set
+          conv-id  (get-in db [:conv :id])
+          first-turn? (= 2 (count (:messages db)))  ;; user msg + placeholder
+          first-user-text (when first-turn?
+                            (:text (first (:messages db))))]
+      (when (and first-turn? first-user-text conv-id)
+        (future
+          (try
+            (let [title (subs first-user-text 0 (min (count first-user-text) 80))]
+              (conversations/set-title! conv-id title))
+            (catch Throwable _ nil))))
       (-> db
         (update :messages pop)
         (update :messages conj response)
         (assoc :msg-scroll nil :loading? false :progress nil)
+        (cond-> (and first-turn? first-user-text)
+          (assoc :title (subs first-user-text 0 (min (count first-user-text) 60))))
         (dissoc :query-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
@@ -163,4 +178,4 @@
         (if (:error result)
           (dispatch [:message-received (str "⚠️ Error: " (:error result))])
           (dispatch [:message-received (:answer result)
-                      (select-keys result [:model :iterations :duration-ms :tokens])]))))))
+                      (select-keys result [:model :iterations :duration-ms :tokens :cost])]))))))

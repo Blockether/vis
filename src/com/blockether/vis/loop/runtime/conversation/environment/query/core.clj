@@ -334,7 +334,7 @@
                         trace-entry {:iteration iteration :error iter-err :final? false}
                         empty-reasoning (when (= :svar.llm/empty-content (:type iter-err))
                                           (:reasoning (:data iter-err)))
-                        err-iter-id (iterate/store-iteration! rlm-env
+                        err-iter-id (db/store-iteration! (:db-info rlm-env)
                                       {:query-id query-id :vars [] :expressions nil
                                        :thinking empty-reasoning :duration-ms 0 :error iter-err
                                        :llm-messages effective-messages
@@ -361,7 +361,7 @@
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
                                          :final-result final-result :final-answer final-answer})
-                        iter-id (iterate/store-iteration! rlm-env
+                        iter-id (db/store-iteration! (:db-info rlm-env)
                                   {:query-id query-id :expressions expressions :vars vars-snapshot
                                    :thinking thinking
                                    :answer (when final-result (iterate/answer-str (:answer final-result)))

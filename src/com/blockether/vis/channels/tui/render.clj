@@ -260,7 +260,7 @@
    Optional `:duration-ms` for assistant response time.
    `left` and `max-w` define the horizontal bounds.
    Returns the number of screen rows consumed (including spacing)."
-  [g {:keys [role text timestamp duration-ms model iterations tokens]} start-row left max-w]
+  [g {:keys [role text timestamp duration-ms model iterations tokens cost]} start-row left max-w]
   (let [user?     (= role :user)
         label     (if user? "you" "vis")
         label-w   (count label)
@@ -276,12 +276,14 @@
         inner-w   (- bubble-w 2)
         time-str  (format-timestamp timestamp)
         dur-str   (format-duration duration-ms)
-        tok-in    (when-let [n (:input tokens)] (str "↑" n))
-        tok-out   (when-let [n (:output tokens)] (str "↓" n))
+        tok-in    (when-let [n (:input tokens)] (str "ctx-in: " n))
+        tok-out   (when-let [n (:output tokens)] (str "ctx-out: " n))
         iter-str  (when (and (not user?) iterations) (str iterations (if (= 1 iterations) " iter" " iters")))
-        ;; Below-bubble meta (assistant only): model · iters · duration · tokens
+        cost-str  (when-let [c (some-> cost :total-cost)]
+                    (str "~$" (String/format java.util.Locale/US "%.4f" (into-array Object [(double c)]))))
+        ;; Below-bubble meta (assistant only): model · iters · ctx-in · ctx-out · duration · ~cost
         meta-parts (when (not user?)
-                     (remove nil? [model iter-str (when dur-str (str "⏱ " dur-str)) tok-in tok-out]))
+                     (remove nil? [model iter-str tok-in tok-out (when dur-str (str "⏱ " dur-str)) cost-str]))
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
     ;; Label row: role name left, timestamp right-aligned
@@ -428,8 +430,11 @@
 (defn draw-messages-area!
   "Draw structured chat messages as bubbles inside a bordered area with scroll.
    `messages` is a vec of {:role :user|:assistant, :text str}.
-   `scroll` is a row offset into the virtual content, or nil for auto-bottom."
-  [g messages box-top box-bottom cols scroll]
+   `scroll` is a row offset into the virtual content, or nil for auto-bottom.
+   `opts` may contain `:title` for the box header."
+  ([g messages box-top box-bottom cols scroll]
+   (draw-messages-area! g messages box-top box-bottom cols scroll nil))
+  ([g messages box-top box-bottom cols scroll {:keys [title]}]
   (let [inner-h   (- box-bottom box-top 1 msg-margin-top msg-margin-bottom)
         text-top  (+ (inc box-top) msg-margin-top)
         bubble-w  (- cols 4)
@@ -443,7 +448,10 @@
         offsets   (reductions + 0 heights)]
 
     ;; Draw the container
-    (draw-box-border! g box-top box-bottom cols " messages ")
+    (draw-box-border! g box-top box-bottom cols
+      (if title
+        (str " " (subs title 0 (min (count title) (- cols 6))) " ")
+        " messages "))
     (fill-box-interior! g box-top box-bottom cols)
 
     ;; Clip to interior so bubbles never overflow into borders or input box
@@ -459,4 +467,4 @@
           ;; Draw only if bubble overlaps the visible viewport
           (when (and (> (+ msg-top msg-h) 0)
                   (< msg-top inner-h))
-            (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)))))))
+            (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w))))))))

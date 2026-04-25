@@ -79,12 +79,14 @@
            result (conversations/send! id text send-opts)
            answer (or (:answer result) "[empty response]")
            model  (or (get-in result [:cost :model]) (get result :model))
-           tokens (:tokens result)]
+           tokens (:tokens result)
+           cost   (:cost result)]
        (cond-> {:answer      (if (string? answer) answer (pr-str answer))
                 :iterations  (or (:iterations result) 1)
                 :duration-ms (:duration-ms result)}
          model  (assoc :model model)
-         tokens (assoc :tokens tokens)))
+         tokens (assoc :tokens tokens)
+         cost   (assoc :cost cost)))
      (catch Exception e
        (t/log! :error (str "Query failed: " (ex-message e)))
        {:error (conversations/error->user-message e)}))))

@@ -47,10 +47,10 @@
   {:all true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
-(defn check-syntax [code]
+(defn- check-syntax [code]
   (edamame/parse-string-all code edamame-opts))
 
-(defn check-bare-list [forms]
+(defn- check-bare-list [forms]
   (let [first-form (first forms)]
     (when (and (= 1 (count forms))
             (list? first-form) (seq first-form)
@@ -60,7 +60,7 @@
       (str "Bare list literal: " (pr-str first-form)
         ". Quote it: '(" (str/join " " first-form) ")"))))
 
-(defn parse-clojure-syntax [code]
+(defn- parse-clojure-syntax [code]
   (try
     (let [forms (check-syntax code)]
       (or (check-bare-list forms)
@@ -70,7 +70,7 @@
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 
-(defn bare-string-code-block? [expr]
+(defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
 
 (defn- comment-only-block? [^String expr]
@@ -78,7 +78,7 @@
     (zero? (count (edamame/parse-string-all (str/trim expr) edamame-opts)))
     (catch Throwable _ false)))
 
-(defn literal-code-block-error [expr]
+(defn- literal-code-block-error [expr]
   (cond
     (bare-string-code-block? expr)
     "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."
@@ -120,7 +120,7 @@
         {:result nil :stdout "" :stderr "" :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
-(defn execute-code [{:keys [sci-ctx sandbox-ns]} code & {:keys [timeout-ms]}]
+(defn- execute-code [{:keys [sci-ctx sandbox-ns]} code & {:keys [timeout-ms]}]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
           lint-error (detect-common-mistakes code)]
@@ -154,7 +154,7 @@
       [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
       [s false])))
 
-(defn format-expression-results [expressions _iteration]
+(defn- format-expression-results [expressions _iteration]
   (when (seq expressions)
     (str "<journal>\n"
       (str/join "\n"
@@ -181,7 +181,7 @@
           expressions))
       "\n</journal>")))
 
-(defn format-prior-thinking-chain [iterations]
+(defn- format-prior-thinking-chain [iterations]
   (let [entries (->> iterations
                   (keep (fn [{:keys [iteration thinking]}]
                           (when (and (string? thinking)
@@ -190,7 +190,7 @@
     (when (seq entries)
       (str/join "\n\n" entries))))
 
-(defn format-prior-turn-handover [{:keys [iterations final-answer]}]
+(defn- format-prior-turn-handover [{:keys [iterations final-answer]}]
   (let [kept (take-last HANDOVER_KEEP_LAST iterations)]
     (when (seq kept)
       (let [thinking-lines (->> kept
@@ -216,7 +216,7 @@
 (defn trim-to-initial-history [messages initial-count]
   (vec (take initial-count messages)))
 
-(defn read-var-index-str [rlm-env]
+(defn- read-var-index-str [rlm-env]
   (let [var-index-atom (or (:var-index-atom rlm-env)
                          (atom {:index nil :revision -1 :current-revision 0}))
         {:keys [index revision current-revision]} @var-index-atom]
@@ -376,8 +376,7 @@
     (when (seq parts)
       (str/join "\n" parts))))
 
-(defn store-iteration! [env opts]
-  (db/store-iteration! (:db-info env) opts))
+
 
 ;; ---------------------------------------------------------------------------
 ;; Error normalization
@@ -402,7 +401,7 @@
           " …<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
         s))))
 
-(defn exception->iter-err
+(defn- exception->iter-err
   "Normalize an exception into the iter-err map stored on the query row.
    Delegates to the unified `format-exception` and adds iteration context."
   [^Throwable e ctx]
