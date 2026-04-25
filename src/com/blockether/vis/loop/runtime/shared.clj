@@ -1,11 +1,6 @@
-(ns com.blockether.vis.loop.runtime.shared
-  (:require [clojure.spec.alpha :as s]))
+(ns com.blockether.vis.loop.runtime.shared)
 
 (def MAX_RESULT_DISPLAY_CHARS 30000)
-
-(s/def ::env map?)
-(s/def ::non-blank-string (s/and string? (complement clojure.string/blank?)))
-
 
 (defn truncate
   ([s n]
