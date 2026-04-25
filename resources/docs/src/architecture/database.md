@@ -120,8 +120,7 @@ The `metadata` column stores per-iteration context as JSON:
 {"extensions": [
   {"namespace": "com.blockether.vis.ext.editing",
    "version": "0.1.0"},
-  {"namespace": "git",
-   "source-ns": "com.acme.ext.git",
+  {"namespace": "com.acme.ext.git",
    "version": "2.3.0"}
 ]}
 ```

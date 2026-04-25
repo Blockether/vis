@@ -121,7 +121,7 @@
      :ext/doc       "Filesystem tools: read, write, grep, list, patch."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
-     :ext/license   "EPL-2.0"
+     :ext/license   "Apache-2.0"
      :ext/group     "filesystem"
      :ext/prompt    "Filesystem tools available in the sandbox:
 - (read-file path) or (read-file path offset limit) — read file with line numbers (1-indexed)

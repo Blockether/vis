@@ -32,8 +32,8 @@ dependency order.
 
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'git
-     :ext/requires  ['filesystem]
+    {:ext/namespace 'com.acme.ext.git
+     :ext/requires  ['com.blockether.vis.ext.editing]
      :ext/doc       "Git integration"
      ...}))
 ```
@@ -85,12 +85,12 @@ flowchart TD
 
 (def my-ext
   (ext/extension
-    {:ext/namespace     'my-tool
+    {:ext/namespace     'com.acme.ext.my-tool
      :ext/doc           "My custom tool"
      :ext/group         "tools"
-     :ext/requires      ['filesystem]
+     :ext/requires      ['com.blockether.vis.ext.editing]
      :ext/prompt        "Use (my-tool query) to search things."
-     :ext/symbols       [(ext/symbol 'my-tool search-fn
+     :ext/symbols       [(ext/symbol 'com.acme.ext.my-tool search-fn
                            {:doc "Search for things"
                             :arglists '([query])})]
      :ext/nudge-fn      (fn [{:keys [iteration prev-expressions]}]
