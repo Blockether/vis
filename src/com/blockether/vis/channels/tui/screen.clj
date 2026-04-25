@@ -201,11 +201,6 @@
                   (case action
                   :quit nil
 
-                  :show-provider       (do (run-command! :provider) (recur))
-                  :show-copy           (do (run-command! :copy) (recur))
-                  :show-settings       (do (run-command! :settings) (recur))
-                  :show-system-prompt  (do (run-command! :inspect) (recur))
-
                   :show-palette
                   (if (:dialog-open? @state/app-db)
                     (recur)
