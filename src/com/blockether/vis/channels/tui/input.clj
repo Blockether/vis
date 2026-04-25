@@ -172,6 +172,8 @@
 
           (and ctrl (= c \t)) {:action :show-settings :state state}
 
+          (and ctrl (= c \i)) {:action :show-system-prompt :state state}
+
           :else {:action :continue :state (insert-char state c)}))
 
       KeyType/Enter
