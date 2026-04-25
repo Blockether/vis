@@ -105,20 +105,32 @@ For extensions that shouldn't be global.
 
 ```mermaid
 flowchart TD
-    Discover["0. discover-extensions!<br/>scan META-INF/vis/extensions.edn"] --> Build
-    Build["1. Build extension<br/>ext/extension {...}"] --> Global
-    Global["2. register-global!<br/>or register-extension!"] --> Topo
-    Topo["3. Topo-sort by ext/requires"] --> Deps
-    Deps{"4. Dependencies met?"}
-    Deps -->|yes| Install["5. Install into environment<br/>bind symbols into aliased ns<br/>auto-require alias in sandbox"]
-    Deps -->|no| Fail(["Throws missing-dependencies"])
-    Install --> Prompt["6. ext/prompt appended<br/>to system prompt with<br/>[namespace: alias → ns] header"]
-    Prompt --> Activate
-    Activate{"7. Per-query<br/>activation-fn?"}
-    Activate -->|active| Nudge["8. Per-iteration<br/>nudge-fn called"]
-    Activate -->|inactive| Skip(["Symbols unbound<br/>nudge skipped"])
-    Nudge --> Hooks["9. Per-call hooks<br/>before-fn, fn, after-fn"]
+    Discover["0. discover-extensions!"]
+    Discover --> Build["1. ext/extension"]
+    Build --> Global["2. register-global!"]
+    Global --> Topo["3. Topo-sort by ext/requires"]
+    Topo --> Deps{"4. Dependencies met?"}
+    Deps -- yes --> Install["5. Install into environment"]
+    Deps -- no --> Fail(["Throws missing-dependencies"])
+    Install --> Prompt["6. Append ext/prompt to system prompt"]
+    Prompt --> Activate{"7. Per-query activation-fn?"}
+    Activate -- active --> Nudge["8. Per-iteration nudge-fn"]
+    Activate -- inactive --> Skip(["Symbols unbound, nudge skipped"])
+    Nudge --> Hooks["9. before-fn, fn, after-fn"]
 ```
+
+**Step details:**
+
+0. **discover-extensions!** — scan `META-INF/vis/extensions.edn` on classpath
+1. **ext/extension** — build and validate extension spec
+2. **register-global!** — add to process-level registry
+3. **Topo-sort** — order by `:ext/requires` dependencies
+4. **Dependencies** — all required extensions must be registered
+5. **Install** — bind symbols into aliased SCI namespace, auto-require alias in sandbox
+6. **Prompt** — append `[namespace: alias → ns]` header + `:ext/prompt` to system prompt
+7. **Activation** — per-query `activation-fn` check
+8. **Nudge** — per-iteration `nudge-fn` called
+9. **Hooks** — per-call `before-fn`, `fn`, `after-fn`, `on-error-fn`
 
 ## Namespace Aliases (required)
 

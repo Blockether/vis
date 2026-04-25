@@ -6,48 +6,61 @@ What happens when the user sends a message, end to end.
 
 ```mermaid
 flowchart TD
-    User(["User Message"]) --> Send
+    User(["User Message"])
+    User --> Send
 
     subgraph Conversation["conversation/core.clj"]
-        Send["send!<br/>acquire lock, build history"]
+        Send["send! — acquire lock, build history"]
     end
 
     Send --> QueryFn
 
     subgraph Query["query/core.clj"]
-        QueryFn["query!<br/>validate, store query, enter loop"]
+        QueryFn["query! — validate, store query, enter loop"]
     end
 
     QueryFn --> BuildCtx
 
     subgraph Loop["iteration-loop"]
-        BuildCtx["1. Build Context<br/>iter header, prior_thinking<br/>journal, var_index, nudges"]
-        AskLLM["2. Ask LLM<br/>svar ask - structured JSON<br/>code blocks + optional final"]
-        Execute["3. Execute Code<br/>lint · SCI eval with timeout<br/>capture stdout/stderr/result"]
-        Persist["4. Persist + Decide<br/>store-iteration!, extension metadata"]
+        direction TB
+        BuildCtx["1. Build Context"]
+        AskLLM["2. Ask LLM"]
+        Execute["3. Execute Code"]
+        Persist["4. Persist + Decide"]
 
-        BuildCtx --> AskLLM --> Execute --> Persist
-        Persist -->|":code, no :final"| BuildCtx
+        BuildCtx --> AskLLM
+        AskLLM --> Execute
+        Execute --> Persist
+        Persist -- "has :code, no :final" --> BuildCtx
     end
 
-    Persist -->|":final"| Answer(["Answer + metadata<br/>trace, tokens, cost"])
-    Persist -->|"errors"| FeedBack["Feed error back to LLM"] --> BuildCtx
+    Persist -- ":final present" --> Answer(["Answer + metadata"])
+    Persist -- "errors" --> FeedBack["Feed error to LLM"]
+    FeedBack --> BuildCtx
 ```
+
+**Step details:**
+
+1. **Build Context** — iter header, `<prior_thinking>`, `<journal>`, `<var_index>`, nudges (built-in + extension)
+2. **Ask LLM** — svar structured JSON output: code blocks + optional `:final`
+3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
+4. **Persist + Decide** — `store-iteration!`, attach extension metadata, route to next step
 
 ## Error Recovery
 
 ```mermaid
 flowchart LR
-    Error["Iteration throws"] --> Classify{Infrastructure?}
-    Classify -->|Yes| Abort["Re-throw<br/>turn aborts"]
-    Classify -->|No| Normalize["Normalize error<br/>compact description"]
+    Error["Iteration throws"]
+    Error --> Classify{"Infrastructure?"}
+    Classify -- Yes --> Abort["Re-throw, turn aborts"]
+    Classify -- No --> Normalize["Normalize error"]
     Normalize --> FeedBack["Append as user message"]
-    FeedBack --> NextIter["Next iteration<br/>LLM adjusts strategy"]
-    NextIter --> Budget{"consecutive<br/>errors >= 5?"}
-    Budget -->|No| Continue["Continue loop"]
-    Budget -->|Yes| Restart{"restarts < 3?"}
-    Restart -->|Yes| Reset["Strategy restart<br/>anti-knowledge prompt"]
-    Restart -->|No| GiveUp["Error budget exhausted<br/>fallback answer"]
+    FeedBack --> NextIter["Next iteration"]
+    NextIter --> Budget{"consecutive errors >= 5?"}
+    Budget -- No --> Continue["Continue loop"]
+    Budget -- Yes --> Restart{"restarts < 3?"}
+    Restart -- Yes --> Reset["Strategy restart"]
+    Restart -- No --> GiveUp["Budget exhausted"]
 ```
 
 ## Budget Extension
