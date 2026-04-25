@@ -255,7 +255,12 @@
                          s (quot (mod ms 60000) 1000)]
                      (str m "m " s "s")))))
 
-(def ^:private thinking-marker "\u200B") ;; zero-width space marks italic lines
+;; Line markers live in primitives — aliases for local readability.
+(def ^:private thinking-marker p/MARKER_THINKING)
+(def ^:private code-marker     p/MARKER_CODE)
+(def ^:private result-marker   p/MARKER_RESULT)
+(def ^:private stdout-marker   p/MARKER_STDOUT)
+(def ^:private sep-marker      p/MARKER_SEP)
 
 (defn draw-chat-bubble!
   "Draw a chat message bubble at the given row.
@@ -316,14 +321,41 @@
         (p/set-char! g bx r Symbols/SINGLE_LINE_VERTICAL)
         (p/set-char! g (+ bx bubble-w -1) r Symbols/SINGLE_LINE_VERTICAL))
 
-      ;; Text content — lines prefixed with thinking-marker render italic
+      ;; Text content — per-line styling via invisible marker prefixes
       (doseq [[i line] (map-indexed vector lines)]
-        (if (str/starts-with? line thinking-marker)
-          (do (p/set-colors! g t/dialog-hint bg-color)
-            (p/styled g [p/ITALIC]
-              (p/put-str! g (+ bx 2) (+ btop 1 i) (subs line (count thinking-marker)))))
-          (do (p/set-colors! g fg-color bg-color)
-            (p/put-str! g (+ bx 2) (+ btop 1 i) line))))
+        (let [x (+ bx 2) y (+ btop 1 i)]
+          (cond
+            ;; Thinking/reasoning — italic, dim
+            (str/starts-with? line thinking-marker)
+            (do (p/set-colors! g t/dialog-hint bg-color)
+              (p/styled g [p/ITALIC]
+                (p/put-str! g x y (subs line 1))))
+
+            ;; Code — normal fg, no style change
+            (str/starts-with? line code-marker)
+            (do (p/set-colors! g fg-color bg-color)
+              (p/put-str! g x y (subs line 1)))
+
+            ;; Result/return value — dim
+            (str/starts-with? line result-marker)
+            (do (p/set-colors! g t/dialog-hint bg-color)
+              (p/put-str! g x y (subs line 1)))
+
+            ;; Stdout — italic, dim
+            (str/starts-with? line stdout-marker)
+            (do (p/set-colors! g t/dialog-hint bg-color)
+              (p/styled g [p/ITALIC]
+                (p/put-str! g x y (subs line 1))))
+
+            ;; Separator — dim
+            (str/starts-with? line sep-marker)
+            (do (p/set-colors! g t/dialog-hint bg-color)
+              (p/put-str! g x y (subs line 1)))
+
+            ;; Plain text (answer) — normal
+            :else
+            (do (p/set-colors! g fg-color bg-color)
+              (p/put-str! g x y line)))))
 
       ;; Below-bubble meta (assistant only): model · iters · duration · tokens
       (let [meta-row (+ btop bubble-h)]
@@ -357,25 +389,37 @@
       s)))
 
 (defn- format-iteration-entry
-  "Format one iteration's thinking + code + results into display lines.
-   Thinking lines get the thinking-marker prefix for italic rendering.
-   Code is prefixed with '| ', results with '  -> '."
-  [{:keys [thinking code results]} code-width]
-  (let [thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
-                         (mapv #(str thinking-marker "> " %)
-                           (wrap-text (str/trim thinking)
-                             (max 1 (- code-width 2)))))
+  "Format one iteration's thinking + code + results + stdout into display lines.
+   Each line is prefixed with an invisible marker so draw-chat-bubble! can
+   apply per-line styles (italic thinking, dim code, etc.)."
+  [{:keys [thinking code results stdouts]} code-width]
+  (let [thinking-lines
+        (when (and (string? thinking) (not (str/blank? thinking)))
+          (mapv #(str thinking-marker %)
+            (wrap-text (str/trim thinking) (max 1 code-width))))
+
         code+result-lines
         (when (seq code)
           (into []
             (mapcat
               (fn [[idx form]]
-                (let [code-lines (mapv #(str "| " (truncate-line % (- code-width 2)))
-                                  (str/split-lines (str/trim (or form ""))))
+                (let [;; Code: wrap each line
+                      c-lines (mapv #(str code-marker %)
+                                (wrap-text (str/trim (or form ""))
+                                  (max 1 code-width)))
+                      ;; Result
                       result-str (when results (get results idx))
-                      result-lines (when (and result-str (not (str/blank? (str result-str))))
-                                     [(str "  -> " (truncate-line (str/trim (str result-str)) (- code-width 5)))])]
-                  (concat code-lines result-lines))))
+                      r-lines (when (and result-str (not (str/blank? (str result-str))))
+                                (mapv #(str result-marker %)
+                                  (wrap-text (str "-> " (str/trim (str result-str)))
+                                    (max 1 code-width))))
+                      ;; Stdout
+                      stdout-str (when stdouts (get stdouts idx))
+                      s-lines (when (and stdout-str (not (str/blank? (str stdout-str))))
+                                (mapv #(str stdout-marker %)
+                                  (wrap-text (str/trim (str stdout-str))
+                                    (max 1 code-width))))]
+                  (concat c-lines r-lines s-lines))))
             (map-indexed vector code)))]
     (into (or thinking-lines []) code+result-lines)))
 
@@ -412,7 +456,7 @@
                         trace))
         answer-str (or answer "")]
     (if (seq trace-lines)
-      (let [sep (apply str (repeat (min 40 content-w) "-"))]
+      (let [sep (str sep-marker (apply str (repeat (min 40 content-w) "-")))]
         (str (str/join "\n" trace-lines) "\n" sep "\n" answer-str))
       answer-str)))
 
