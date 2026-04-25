@@ -3,7 +3,7 @@
 </h2>
 
 <div align="center">
-<i>vis</i> — an <a href="https://arxiv.org/abs/2512.24601">RLM-inspired</a> coding agent built from the ground up. Works with any text-based model.
+— an <a href="https://arxiv.org/abs/2512.24601">RLM-inspired</a> coding agent built from the ground up. Works with any text-based model.
 <br/>
 <sub>Code-eval over tool-calls. O(1) context per iteration. Secure-by-default SCI sandbox.</sub>
 </div>
