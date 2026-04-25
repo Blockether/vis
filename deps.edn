@@ -95,5 +95,9 @@
           :jvm-opts    ["-Xmx8g"]
           :main-opts   ["-m" "com.blockether.vis.bench.runner"]}
 
+  :build {:deps  {io.github.clojure/tools.build {:mvn/version "0.10.7"}
+                  slipset/deps-deploy           {:mvn/version "0.2.2"}}
+          :ns-default build}
+
   :antq  {:deps  {com.github.liquidz/antq {:mvn/version "RELEASE"}}
           :main-opts ["-m" "antq.core"]}}}
