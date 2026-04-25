@@ -266,3 +266,4 @@
 (def MARKER_ITER_HDR   "\u2066")  ;; LRI                    → iteration header with bg
 (def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    → stdout separator line
 (def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    → stdout empty padding line
+(def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    → answer separator (trace→answer break)

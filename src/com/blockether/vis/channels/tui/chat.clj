@@ -60,11 +60,8 @@
                                           :durations dur-strs
                                           :successes (mapv #(nil? (:error %)) exprs)})))
                                 query-iters)
-                        ;; Bake trace into the bubble text so code+results show
-                        full-text (if (seq trace)
-                                   (render/format-answer-with-thinking answer trace 120)
-                                   answer)
-                        ai-msg    (cond-> (assistant-msg full-text (or (:created-at q) (java.util.Date.)))
+                        ai-msg    (cond-> (assistant-msg (or answer "") (or (:created-at q) (java.util.Date.)))
+                                    (seq trace) (assoc :trace trace :raw-answer (or answer ""))
                                     model  (assoc :model model)
                                     iters  (assoc :iterations iters)
                                     dur-ms (assoc :duration-ms dur-ms)
