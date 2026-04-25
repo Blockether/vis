@@ -171,7 +171,9 @@
           (let [key (.pollInput screen)]
             (if (nil? key)
               (do (Thread/sleep 16) (recur))
-              (let [{:keys [action state]} (input/handle-key key (:input db))]
+              (let [{:keys [action state col row]} (input/handle-key key (:input db))
+                    input-top (- rows (+ text-rows 2 (* 2 render/input-pad-y)))
+                    icon-col  (- cols 6)]
                 (state/dispatch [:update-input state])
                 (let [run-command!
                       (fn [cmd]
@@ -209,6 +211,14 @@
                         nil
                         (do (when cmd (run-command! cmd))
                           (recur)))))
+
+                  :mouse-click
+                  (if (and (= row input-top)
+                        (>= col icon-col)
+                        (< col (+ icon-col 4)))
+                    ;; Clicked the 🔍 icon
+                    (do (run-command! :inspect) (recur))
+                    (recur))
 
                   :send
                   (let [text (input/input->text state)]

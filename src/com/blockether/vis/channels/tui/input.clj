@@ -184,10 +184,13 @@
       KeyType/PageDown   {:action :scroll-down :state state}
 
       KeyType/MouseEvent
-      (let [^MouseAction mouse key]
+      (let [^MouseAction mouse key
+            col (.getColumn (.getPosition mouse))
+            row (.getRow (.getPosition mouse))]
         (condp = (.getActionType mouse)
           MouseActionType/SCROLL_UP   {:action :scroll-up :state state}
           MouseActionType/SCROLL_DOWN {:action :scroll-down :state state}
+          MouseActionType/CLICK_RELEASE {:action :mouse-click :state state :col col :row row}
           {:action :continue :state state}))
 
       {:action :continue :state state})))
