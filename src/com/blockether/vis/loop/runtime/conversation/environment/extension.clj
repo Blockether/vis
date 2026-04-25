@@ -142,6 +142,15 @@
 ;; e.g. ['filesystem 'git]
 (s/def :ext/requires (s/coll-of symbol? :kind vector?))
 
+;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
+(s/def :ext/version non-blank-string?)
+
+;; Author name or org, e.g. "Blockether", "Jane Doe <jane@example.com>".
+(s/def :ext/author non-blank-string?)
+
+;; SPDX license identifier, e.g. "MIT", "Apache-2.0", "EPL-2.0".
+(s/def :ext/license non-blank-string?)
+
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
 
@@ -167,7 +176,8 @@
   (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
                 :ext/activation-fn :ext/prompt :ext/symbols
                 :ext/classes :ext/imports]
-    :opt [:ext/nudge-fn :ext/requires]))
+    :opt [:ext/nudge-fn :ext/requires
+          :ext/version :ext/author :ext/license]))
 
 ;; =============================================================================
 ;; Symbol helper
@@ -441,6 +451,9 @@
      :ext/nudge-fn       — optional, (fn [ctx] → string|nil)
      :ext/requires       — optional, vector of extension namespace symbols
                            that must be registered first, default []
+     :ext/version        — optional, semver string, e.g. \"1.0.0\"
+     :ext/author         — optional, author name/org
+     :ext/license        — optional, SPDX identifier, e.g. \"MIT\"
      :ext/symbols        — required, vector of symbol entries
      :ext/classes        — optional, {fq-symbol → Class}, default {}
      :ext/imports        — optional, {short-symbol → fq-symbol}, default {}
@@ -583,6 +596,29 @@
   (or (get @global-registry ns-sym)
     (throw (ex-info (str "Namespace '" ns-sym
                       "' was loaded but did not call register-global!")
+             {:type :extension/no-registration
+              :namespace ns-sym
+              :registered (vec (keys @global-registry))}))))
+
+(defn reload-extension!
+  "Reload an extension namespace and update the global registry.
+
+   Forces a re-require of the namespace (`:reload` flag), which
+   re-executes the `register-global!` call with the new code.
+   Returns the updated extension.
+
+   Use during development to pick up code changes without restarting:
+
+     (ext/reload-extension! 'my.company.ext.git)
+
+   Note: this updates the global registry only. Already-running
+   environments keep the old version until they are recreated or
+   the extension is re-registered via `register-extension!`."
+  [ns-sym]
+  (require ns-sym :reload)
+  (or (get @global-registry ns-sym)
+    (throw (ex-info (str "Namespace '" ns-sym
+                      "' was reloaded but did not call register-global!")
              {:type :extension/no-registration
               :namespace ns-sym
               :registered (vec (keys @global-registry))}))))
