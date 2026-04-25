@@ -359,7 +359,7 @@
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results into display lines.
    Thinking lines get the thinking-marker prefix for italic rendering.
-   Code lines are shown in full (wrapped). Results follow each code block."
+   Code is prefixed with '| ', results with '  -> '."
   [{:keys [thinking code results]} code-width]
   (let [thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
                          (mapv #(str thinking-marker "> " %)
@@ -370,11 +370,11 @@
           (into []
             (mapcat
               (fn [[idx form]]
-                (let [code-lines (mapv #(truncate-line % code-width)
+                (let [code-lines (mapv #(str "| " (truncate-line % (- code-width 2)))
                                   (str/split-lines (str/trim (or form ""))))
                       result-str (when results (get results idx))
                       result-lines (when (and result-str (not (str/blank? (str result-str))))
-                                     [(truncate-line (str "-> " (str/trim (str result-str))) code-width)])]
+                                     [(str "  -> " (truncate-line (str/trim (str result-str)) (- code-width 5)))])]
                   (concat code-lines result-lines))))
             (map-indexed vector code)))]
     (into (or thinking-lines []) code+result-lines)))
@@ -402,7 +402,8 @@
 
 (defn format-answer-with-thinking
   "Build the final bubble text: thinking trace + answer.
-   `trace` is the progress iterations vec [{:thinking :code} ...]."
+   `trace` is the progress iterations vec [{:thinking :code :results} ...].
+   Trace is visually separated from the answer by a dashed line."
   [answer trace bubble-w]
   (let [content-w (max 10 (- bubble-w 4))
         trace-lines (when (seq trace)
@@ -411,7 +412,8 @@
                         trace))
         answer-str (or answer "")]
     (if (seq trace-lines)
-      (str (str/join "\n" trace-lines) "\n\n" answer-str)
+      (let [sep (apply str (repeat (min 40 content-w) "-"))]
+        (str (str/join "\n" trace-lines) "\n" sep "\n" answer-str))
       answer-str)))
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
