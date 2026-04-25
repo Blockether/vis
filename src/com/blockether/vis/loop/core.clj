@@ -13,7 +13,7 @@
             *eval-timeout-ms*
             *rlm-ctx*]]
 
-   [com.blockether.vis.loop.runtime.prompt :as prompt]
+
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
    [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
@@ -23,7 +23,7 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
 
-;; `bump-and-detect-repetition` moved to `com.blockether.vis.loop.runtime.prompt`
+;; `bump-and-detect-repetition` moved to iteration/core.clj nudges
 ;; where every per-iteration SYSTEM_NUDGE composer lives (built-in and
 ;; extension-contributed).
 
@@ -365,10 +365,44 @@
     (contains? PLACEHOLDER_WORDS (str/lower-case (str/trim (str raw-answer))))))
 
 ;; =============================================================================
-;; System Prompt — delegates to loop.runtime.prompt
+;; System Prompt + Nudges
 ;; =============================================================================
 
 (defn build-system-prompt [{:keys [system-prompt]}] (or system-prompt ""))
+
+(defn- budget-warning [{:keys [iteration current-max-iterations]}]
+  (let [remaining (- (long (or current-max-iterations 0)) (inc (long (or iteration 0))))]
+    (when (<= remaining 2)
+      (str "[system_nudge] Iteration budget nearly exhausted (remaining="
+        (max 0 remaining) "). If you can finalize safely, do it now."))))
+
+(defn- var-index-overflow [user-var-count]
+  (when (> (long (or user-var-count 0)) 150)
+    (str "[system_nudge] <var_index> is large (" user-var-count " vars). Prefer :forget for scratch vars.")))
+
+(defn- repetition-warning [call-counts-atom prev-expressions]
+  (when (and call-counts-atom (seq prev-expressions))
+    (let [keys* (mapv (fn [{:keys [code error result]}]
+                        (if error [:error-only (str/trim (str error))]
+                          [(str/trim (str code)) (pr-str result)]))
+                  prev-expressions)
+          max-count (swap! call-counts-atom
+                      (fn [m] (reduce (fn [acc k] (update acc k (fnil inc 0))) (or m {}) keys*)))
+          seen (apply max 0 (map #(get max-count % 0) keys*))]
+      (when (>= seen 3)
+        "[system_nudge] You are repeating the same expression pattern. Change strategy."))))
+
+(defn- collect-extension-nudges [extensions ctx]
+  (when (seq extensions)
+    (into []
+      (keep (fn [ext]
+              (when-let [nudge-fn (:ext/nudge-fn ext)]
+                (try
+                  (when ((:ext/activation-fn ext) (:environment ctx))
+                    (let [result (nudge-fn ctx)]
+                      (when (and (string? result) (not (str/blank? result))) result)))
+                  (catch Throwable _ nil)))))
+      extensions)))
 
 ;; =============================================================================
 ;; Iteration message / context assembly (pure helpers — fully testable)
@@ -499,12 +533,12 @@
                    :user-var-count       user-var-count}
         built-in-nudges (keep identity
                           [(when (and iteration current-max-iterations)
-                             (prompt/budget-warning
+                             (budget-warning
                                {:iteration              iteration
                                 :current-max-iterations current-max-iterations}))
-                           (prompt/var-index-overflow user-var-count)
-                           (prompt/repetition-warning call-counts-atom prev-expressions)])
-        ext-nudges (prompt/collect-extension-nudges
+                           (var-index-overflow user-var-count)
+                           (repetition-warning call-counts-atom prev-expressions)])
+        ext-nudges (collect-extension-nudges
                      (some-> (:extensions rlm-env) deref) nudge-ctx)
         nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
@@ -916,24 +950,6 @@
   "Threshold in ms above which execution time is flagged as slow."
   5000)
 
-(defn- formatted-str-of
-  "Return the canonical formatted string for a tool-produced value.
-
-   Lookup order:
-   1. `:vis/formatted` from value metadata — precomputed by the tool wrapper.
-   2. `(:vis/format meta) called on value` — meta was preserved but the cached
-      string wasn't (e.g. value was transformed but `vary-meta` carried the fn).
-   3. nil — caller falls back to its own rendering (pr-str of realized value).
-
-   Returns nil for non-IObj values (primitives cannot carry meta). The caller
-   is responsible for the default-string fallback so this fn stays pure."
-  [v]
-  (when (instance? clojure.lang.IObj v)
-    (let [m (meta v)]
-      (or (:vis/formatted m)
-          (when-let [f (:vis/format m)]
-            (try (f v) (catch Throwable _ nil)))))))
-
 (defn format-expressions
   "Formats expressions as compact per-block receipts for LLM feedback in the
    error-recovery / iteration-accumulation path. One line per block:
@@ -953,7 +969,6 @@
     (map (fn [{:keys [code error result stdout repaired? execution-time-ms]}]
            (let [code-str (str/trim (or code ""))
                   hint (when error (error-hint error))
-                  var-surrogate? (and (map? result) (contains? result :vis/var-id))
                   val-part (cond
                              error
                              (str "ERROR: " error
@@ -962,23 +977,15 @@
                              (fn? result)
                              (str "ERROR: " code-str " is a function object. Call it: (" code-str ")")
 
-                             var-surrogate?
-                             (let [{var-name :vis/var-id bound :vis/var-value} result]
-                               (str "*" var-name "* = "
-                                 (or (formatted-str-of bound)
-                                   (rt-shared/result->display bound :full))))
-
                              (instance? clojure.lang.Var result)
                              (let [^clojure.lang.Var var-obj result
                                    var-name (name (.sym var-obj))
                                    raw-bound (.getRawRoot var-obj)]
                                (str "*" var-name "* = "
-                                 (or (formatted-str-of raw-bound)
-                                   (rt-shared/result->display raw-bound :full))))
+                                 (rt-shared/result->display raw-bound :full)))
 
                              :else
-                             (str (or (formatted-str-of result)
-                                    (rt-shared/result->display result :full))))
+                             (rt-shared/result->display result :full))
                  stdout-part (when-not (str/blank? stdout)
                                (str " :stdout " (pr-str stdout)))
                  warning-part (when repaired?
@@ -1156,8 +1163,6 @@
                   time-ms       (or execution-time-ms 0)
                   slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
                                   (str " (" time-ms "ms SLOW)"))
-                  var-surrogate? (and (map? result)
-                                   (contains? result :vis/var-id))
                   value-part
                   (cond
                     error
@@ -1166,40 +1171,18 @@
                     (fn? result)
                     "ERROR: Result is a function, not a value"
 
-                    var-surrogate?
-                    (let [{var-name :vis/var-id bound :vis/var-value} result
-                          pre-formatted (formatted-str-of bound)
-                          bound* (realize-value bound)
-                          [value-str truncated?]
-                          (if pre-formatted
-                            [pre-formatted false]
-                            (truncated-pr-str bound*))]
-                      (str "*" var-name "* = " value-str
-                        (when truncated? " :truncated? true")))
-
                     (instance? clojure.lang.Var result)
                     (let [^clojure.lang.Var var-obj result
                           var-name (name (.sym var-obj))
                           raw-bound (.getRawRoot var-obj)
-                          ;; Check meta on the RAW bound value before
-                          ;; realize-value strips it (realize-value rebuilds
-                          ;; maps/vecs/sets, losing meta).
-                          pre-formatted (formatted-str-of raw-bound)
                           bound (realize-value raw-bound)
-                          [value-str truncated?]
-                          (if pre-formatted
-                            [pre-formatted false]
-                            (truncated-pr-str bound))]
+                          [value-str truncated?] (truncated-pr-str bound)]
                       (str "*" var-name "* = " value-str
                         (when truncated? " :truncated? true")))
 
                     :else
-                    (let [pre-formatted (formatted-str-of result)
-                          v (realize-value result)
-                          [value-str truncated?]
-                          (if pre-formatted
-                            [pre-formatted false]
-                            (truncated-pr-str v))]
+                    (let [v (realize-value result)
+                          [value-str truncated?] (truncated-pr-str v)]
                        (str value-str
                          (when truncated? " :truncated? true"))))]
               (str "  [" (inc idx) "] " code-str " → " value-part

@@ -103,25 +103,8 @@
                     "staleness between iterations.")
            {:type :tool/banned :tool 'slurp})))
 
-(defn- format-printable
-  "If `v` carries :vis/format / :vis/formatted metadata (attached by the tool
-   wrapper), return its formatted string. Otherwise return `v` unchanged.
-
-   Used by the sandbox `println` / `print` overrides to render tool results
-   with their tool-specific formatter instead of pr-str'ing the raw map.
-   Non-IObj values (strings, numbers, keywords) pass through untouched —
-   they can't carry metadata and usually render cleanly with plain println."
-  [v]
-  (if (instance? clojure.lang.IObj v)
-    (or (:vis/formatted (meta v))
-      (when-let [f (:vis/format (meta v))]
-        (try (f v) (catch Throwable _ v)))
-      v)
-    v))
-
 (defn- sandbox-println
-  "Sandbox replacement for clojure.core/println. Substitutes formatted strings
-   for any arg that was produced by a tool with a :format-result-fn formatter.
+  "Sandbox replacement for clojure.core/println.
 
    SCI rebinds `sci.core/out` (NOT Clojure's `*out*`) per-iteration via
    `sci/binding`. SCI's built-in println handles this by rebinding `*out*`
@@ -129,14 +112,14 @@
    capture keeps working with our override in place."
   [& args]
   (binding [*out* @sci/out]
-    (apply println (map format-printable args))))
+    (apply println args)))
 
 (defn- sandbox-print
-  "Sandbox replacement for clojure.core/print. Same substitution as
-   sandbox-println, without the trailing newline."
+  "Sandbox replacement for clojure.core/print.
+   Rebinds `*out*` from SCI's out for stdout capture."
   [& args]
   (binding [*out* @sci/out]
-    (apply print (map format-printable args))))
+    (apply print args)))
 
 ;; =============================================================================
 ;; SCI namespace / binding helpers (moved from shared.clj — sandbox-only)
@@ -165,9 +148,7 @@
    Params:
    `custom-bindings` - Map of symbol->value for custom bindings (can be nil)"
   [custom-bindings]
-  (let [base-bindings {;; Formatter-aware println/print — substitute the tool's
-                       ;; :format-result-fn output for args carrying :vis/format meta.
-                       ;; prn is intentionally NOT overridden: it's for data
+  (let [base-bindings {;; prn is intentionally NOT overridden: it's for data
                        ;; round-trip and must stay verbatim pr-str.
                        'println sandbox-println
                        'print sandbox-print
@@ -473,7 +454,7 @@
                              :doc (:doc (meta v))
                              :arglists (:arglists (meta v))
                              :version (get-in var-registry [s :version] 1)
-                             :expr (or (:expr rich) (:vis/def-source (meta v)))
+                             :expr (:expr rich)
                              :time-ms (:time-ms rich)}])))
          persisted-info (when var-registry
                           (into {}
