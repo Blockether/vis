@@ -1,6 +1,6 @@
 (ns com.blockether.vis.loop.auto-forget-test
-  "Tests for auto-forget: the pure candidate selection and the effectful
-   auto-forget-stale-vars! function that wires DB + SCI sandbox cleanup."
+  "Auto-forget 🧹 — the janitor that keeps the sandbox from turning into
+   a hoarder's attic. Pure candidate selection + full DB→SCI integration."
   (:require
    [com.blockether.vis.loop.core :as loop]
    [com.blockether.vis.persistance.core :as db]
@@ -50,42 +50,42 @@
 
 (defdescribe auto-forget-candidates-test
 
-  (it "returns empty set when sandbox is empty"
+  (it "🫙 empty sandbox → nothing to forget, move along"
     (expect (= #{} (loop/auto-forget-candidates {} #{} {} #{q1}))))
 
-  (it "keeps vars that are in initial-ns-keys (built-ins)"
+  (it "🛡️ built-ins are untouchable — hands off initial-ns-keys"
     (let [sandbox   (make-sandbox [['fetch 42]])
           initials  #{'fetch}
           registry  (make-registry [['fetch q1]])
           recent    #{q1}]
       (expect (= #{} (loop/auto-forget-candidates sandbox initials registry recent)))))
 
-  (it "keeps earmuffed system vars"
+  (it "🎧 earmuffed *system* vars are sacred — never forgotten"
     (let [sandbox   (make-sandbox [['*query* "hello"]])
           registry  (make-registry [['*query* q1]])
           recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not earmuffed
       (expect (= #{} (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
-  (it "keeps vars with a docstring"
+  (it "📝 documented vars survive any purge — docstrings are armor"
     (let [sandbox   (make-sandbox [['important 99 "This var is documented"]])
           registry  (make-registry [['important q1]])
           recent    #{q2}]  ;; q1 is NOT recent
       (expect (= #{} (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
-  (it "keeps vars defined in a recent query"
+  (it "🕐 recently-touched vars stay alive within the recency window"
     (let [sandbox   (make-sandbox [['scratch 1]])
           registry  (make-registry [['scratch q2]])
           recent    #{q1 q2 q3}]
       (expect (= #{} (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
-  (it "forgets undocumented user vars from old queries"
+  (it "🗑️ stale undocumented scratch vars get swept without mercy"
     (let [sandbox   (make-sandbox [['scratch 1] ['tmp 2]])
           registry  (make-registry [['scratch q1] ['tmp q1]])
           recent    #{q3 q4}]
       (expect (= #{'scratch 'tmp}
                 (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
-  (it "mixed: forgets stale, keeps documented and recent"
+  (it "🎯 full gauntlet: stale→gone, documented→safe, recent→safe, system→safe, builtin→safe"
     (let [sandbox   (make-sandbox [['stale-a 1]
                                    ['stale-b 2]
                                    ['documented 3 "keep me"]
@@ -103,13 +103,13 @@
       (expect (= #{'stale-a 'stale-b}
                 (loop/auto-forget-candidates sandbox initials registry recent)))))
 
-  (it "ignores vars not in the registry (never persisted)"
+  (it "👻 ephemeral vars with no DB footprint are invisible to the janitor"
     (let [sandbox   (make-sandbox [['ephemeral 99]])
           registry  {}
           recent    #{q1}]
       (expect (= #{} (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
-  (it "treats single-char * as a normal var, not earmuffed"
+  (it "⚡ bare * is just a symbol, not an earmuff — gets forgotten like any mortal var"
     ;; The * symbol has length 1, below the earmuffed threshold
     (let [sandbox   (make-sandbox [['* 42]])
           registry  (make-registry [['* q1]])
@@ -135,7 +135,7 @@
 
 (defdescribe auto-forget-stale-vars-test
 
-  (it "removes stale undocumented vars from the SCI sandbox"
+  (it "🔥 stale var evicted from live SCI sandbox, fresh var untouched, revision bumped"
     (let [s       (store)
           cid     (db/store-conversation! s {:channel :vis})
           ;; Create 4 queries — only last 3 are "recent" (AUTO_FORGET_STALE_QUERIES=3)
@@ -166,7 +166,7 @@
       ;; var-index revision bumped
       (expect (= 1 (:current-revision @via)))))
 
-  (it "does nothing when all vars are recent"
+  (it "😴 all vars recent → janitor naps, sandbox untouched, no revision bump"
     (let [s       (store)
           cid     (db/store-conversation! s {:channel :vis})
           qid     (db/store-query! s {:parent-conversation-id cid :query "q1" :status :done})
@@ -184,7 +184,7 @@
       ;; No bump — nothing was forgotten
       (expect (= 0 (:current-revision @via)))))
 
-  (it "preserves documented vars even when stale"
+  (it "📖 docstring = immortality shield — stale but documented vars survive the purge"
     (let [s       (store)
           cid     (db/store-conversation! s {:channel :vis})
           old-qid (db/store-query! s {:parent-conversation-id cid :query "old" :status :done})
@@ -208,7 +208,7 @@
       (expect (contains? (sandbox-syms sci-ctx) 'keeper))
       (expect (= 0 (:current-revision @via)))))
 
-  (it "is safe when db-info is nil (no-op)"
+  (it "🚫 nil db-info → graceful no-op, nothing explodes, vars stay put"
     (let [sci-ctx (make-sci-ctx [['x 1]])
           rlm-env {:db-info nil :conversation-id nil :sci-ctx sci-ctx
                    :initial-ns-keys #{} :var-index-atom (atom {:current-revision 0})}]
@@ -216,7 +216,7 @@
       ;; Nothing exploded, var still there
       (expect (contains? (sandbox-syms sci-ctx) 'x))))
 
-  (it "never forgets earmuffed system vars even when stale"
+  (it "🏰 *reasoning* and friends are fortress vars — stale or not, the janitor can't touch them"
     (let [s       (store)
           cid     (db/store-conversation! s {:channel :vis})
           old-qid (db/store-query! s {:parent-conversation-id cid :query "old" :status :done})

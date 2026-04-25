@@ -83,10 +83,16 @@
   (println "  vis telegram                          Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)")
   (println "  vis extensions                        List registered extensions")
   (println "  vis ext <cmd> [args...]                Run an extension command")
+  (println "  vis ext help                           Show extension commands")
   (println "  vis doctor                            Show environment diagnostics")
   (println "  vis help                              Show this help")
   (println)
-  (println "Run `vis run --help` for options."))
+  (println "Run `vis run --help` for options.")
+  ;; Show extension commands if any are registered
+  (let [cmds (channels/all-extension-cmds)]
+    (when (seq cmds)
+      (println)
+      (println (channels/extension-help)))))
 
 (defn- print-run-usage! []
   (stdout! "Usage: vis run [FLAGS] \"prompt\"")
@@ -367,15 +373,15 @@
       (do (config/init-cli!)
         (let [ext-cmd (second args)
               ext-args (vec (drop 2 args))]
-          (if (nil? ext-cmd)
-            (do (stdout! "Usage: vis ext <command> [args...]")
-              (stdout! "Run 'vis extensions' to list available commands."))
-            (try
-              (let [result (channels/run-extension-cmd! ext-cmd ext-args)]
-                (when (some? result)
-                  (stdout! (str result))))
-              (catch Exception e
-                (stdout! (str "Error: " (ex-message e)))))))
+          (if (or (nil? ext-cmd) (= ext-cmd "help"))
+            (stdout! (channels/extension-help))
+            (let [{:keys [ok error help]} (channels/run-extension-cmd! ext-cmd ext-args)]
+              (cond
+                help  (stdout! help)
+                error (do (stdout! (str "Error: " error))
+                        (System/exit 1))
+                :else (when (some? ok)
+                        (stdout! (str ok)))))))
         (shutdown-agents))
 
       ;; TUI chat (explicit or no args)
