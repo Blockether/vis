@@ -12,6 +12,7 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
+   [com.blockether.vis.channels.core :as channels]
    [com.blockether.vis.loop.runtime.conversation.core :as conversations]
    [com.blockether.vis.persistance.spec :as spec]
    [com.blockether.vis.config :as config]))
@@ -79,11 +80,9 @@
         {conv-id :id} (conversations/create! :cli {:title title})
         iters     (or max-iterations (:max-iterations agent-def) spec/MAX_ITERATIONS)
         mdl       (or model (:model agent-def))
-        projector (when on-chunk
-                    (conversations/make-on-chunk-projector))
-        on-chunk* (when on-chunk
-                    (fn [chunk]
-                      (on-chunk (assoc chunk :timeline (projector chunk)))))
+        tracker   (when on-chunk
+                    (channels/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
+        on-chunk* (when tracker (:on-chunk tracker))
         q-opts    (cond-> {:max-iterations iters}
                     spec      (assoc :spec spec)
                     mdl       (assoc :model mdl)
