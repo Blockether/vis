@@ -85,15 +85,18 @@ the registry. Throws if the namespace doesn't register.
 ### `reload-extension!`
 
 ```clojure
-(ext/reload-extension! 'my.company.ext.git) → ext
+(ext/reload-extension! 'my.company.ext.git)               ;; global only
+(ext/reload-extension! 'my.company.ext.git environment)   ;; global + hot-swap
+(ext/reload-extension! 'my.company.ext.git [env1 env2])   ;; global + hot-swap all
 ```
 
-Reload an extension namespace (`:reload` flag). Re-executes the
-`register-global!` call with the new code. Returns the updated
-extension.
+Reload an extension namespace (`:reload` flag), update the global
+registry, and optionally hot-swap into live environments immediately.
+The old version is replaced in the environment's `:extensions` atom
+— the next iteration picks up the new code.
 
-Note: updates the global registry only. Already-running environments
-keep the old version until recreated or re-registered manually.
+This is what a meta-extension calls to hot-reload another extension
+into running conversations without restart.
 
 ### `install-global-extensions!`
 

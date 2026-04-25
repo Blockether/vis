@@ -601,24 +601,50 @@
               :registered (vec (keys @global-registry))}))))
 
 (defn reload-extension!
-  "Reload an extension namespace and update the global registry.
+  "Reload an extension namespace and hot-swap it everywhere.
 
-   Forces a re-require of the namespace (`:reload` flag), which
-   re-executes the `register-global!` call with the new code.
-   Returns the updated extension.
+   1. Forces `(require ns :reload)` — re-executes `register-global!`
+   2. Updates the global registry (automatic via register-global!)
+   3. If `environments` are provided, replaces the old version in
+      each live environment's `:extensions` atom immediately.
 
-   Use during development to pick up code changes without restarting:
+   Arity:
+     (reload-extension! ns-sym)
+       Reload + update global registry only.
 
-     (ext/reload-extension! 'my.company.ext.git)
+     (reload-extension! ns-sym environment)
+       Reload + update global + hot-swap into one environment.
 
-   Note: this updates the global registry only. Already-running
-   environments keep the old version until they are recreated or
-   the extension is re-registered via `register-extension!`."
-  [ns-sym]
-  (require ns-sym :reload)
-  (or (get @global-registry ns-sym)
-    (throw (ex-info (str "Namespace '" ns-sym
-                      "' was reloaded but did not call register-global!")
-             {:type :extension/no-registration
-              :namespace ns-sym
-              :registered (vec (keys @global-registry))}))))
+     (reload-extension! ns-sym environments)
+       Reload + update global + hot-swap into all environments.
+
+   This is what a meta-extension calls to hot-reload another
+   extension into running conversations without restart:
+
+     (ext/reload-extension! 'my.company.ext.git environment)
+
+   Returns the updated extension."
+  ([ns-sym]
+   (reload-extension! ns-sym nil))
+  ([ns-sym env-or-envs]
+   (require ns-sym :reload)
+   (let [ext (or (get @global-registry ns-sym)
+               (throw (ex-info (str "Namespace '" ns-sym
+                                 "' was reloaded but did not call register-global!")
+                        {:type :extension/no-registration
+                         :namespace ns-sym
+                         :registered (vec (keys @global-registry))})))
+         envs (cond
+                (nil? env-or-envs)  nil
+                (map? env-or-envs)  [env-or-envs]
+                (sequential? env-or-envs) env-or-envs)]
+     (doseq [environment envs]
+       (when-let [ext-atom (:extensions environment)]
+         (swap! ext-atom
+           (fn [exts]
+             (let [without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
+               (conj without ext))))
+         (tel/log! {:level :info :id ::reload-hot-swap
+                    :data {:ext ns-sym :env-id (:env-id environment)}
+                    :msg (str "Hot-swapped '" ns-sym "' into environment " (:env-id environment))})))
+     ext)))

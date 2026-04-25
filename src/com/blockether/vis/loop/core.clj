@@ -2167,7 +2167,11 @@
            :requires     (vec requires)
            :missing      missing
            :registered   (vec registered)}))))
-  (swap! (:extensions environment) conj ext)
+  (swap! (:extensions environment)
+    (fn [exts]
+      (let [ns-sym  (:ext/namespace ext)
+            without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
+        (conj without ext))))
   environment)
 
 ;; =============================================================================
