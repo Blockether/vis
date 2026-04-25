@@ -9,8 +9,8 @@ a single validated unit.
 
 ## What an Extension Can Do
 
-1. **Bind functions** into the sandbox — the LLM calls them from `:code`
-2. **Bind constants** — data the LLM can reference by name
+1. **Bind functions** into an aliased namespace — the LLM calls `(alias/fn ...)` from `:code`
+2. **Bind constants** — data the LLM references via the alias prefix
 3. **Inject prompt context** — LLM-facing docs in the system prompt
 4. **Emit per-iteration nudges** — situational hints (budget, errors, etc.)
 5. **Expose Java classes** — enable `(LocalDate/now)` style interop
@@ -110,9 +110,9 @@ flowchart TD
     Global["2. register-global!<br/>or register-extension!"] --> Topo
     Topo["3. Topo-sort by ext/requires"] --> Deps
     Deps{"4. Dependencies met?"}
-    Deps -->|yes| Install["5. Install into environment"]
+    Deps -->|yes| Install["5. Install into environment<br/>bind symbols into aliased ns<br/>auto-require alias in sandbox"]
     Deps -->|no| Fail(["Throws missing-dependencies"])
-    Install --> Prompt["6. ext/prompt appended<br/>to system prompt"]
+    Install --> Prompt["6. ext/prompt appended<br/>to system prompt with<br/>[namespace: alias → ns] header"]
     Prompt --> Activate
     Activate{"7. Per-query<br/>activation-fn?"}
     Activate -->|active| Nudge["8. Per-iteration<br/>nudge-fn called"]
@@ -120,12 +120,13 @@ flowchart TD
     Nudge --> Hooks["9. Per-call hooks<br/>before-fn, fn, after-fn"]
 ```
 
-## Namespace Aliases
+## Namespace Aliases (required)
 
-By default, extension symbols are bound into the `sandbox` namespace
-(the LLM’s working namespace). Optionally, an extension can declare
-`:ext/ns-alias` to also bind its symbols into a dedicated namespace
-with a short alias:
+Every extension **must** declare `:ext/ns-alias` — a map with `:ns`
+(the full SCI namespace symbol) and `:alias` (the short alias the LLM
+uses). Extension symbols are bound **only** into this dedicated
+namespace, **never** into the `sandbox` namespace directly. The LLM
+must always use the alias prefix.
 
 ```clojure
 (ext/extension
@@ -134,9 +135,21 @@ with a short alias:
    ...})
 ```
 
-This lets the LLM call `(fs/read-file "x")` or `(read-file "x")` —
-both work. The alias is registered in the SCI context at
-`register-extension!` time.
+At `register-extension!` time:
+1. A SCI namespace `vis.ext.fs` is created with all wrapped symbols
+2. The alias `fs` is registered in the SCI context
+3. `(require '[vis.ext.fs :as fs])` is auto-evaluated in the sandbox
+4. The LLM calls `(fs/read-file ...)`, `(fs/list-files ...)`, etc.
+5. Bare `(read-file ...)` does **not** resolve — the alias is mandatory
+
+The system prompt auto-prepends a namespace header to each extension’s
+prompt block:
+
+```
+[namespace: fs → vis.ext.fs]
+Filesystem tools (use fs/ prefix):
+- (fs/read-file path) ...
+```
 
 Extension-declared `:ext/classes` and `:ext/imports` are also injected
 into the SCI context, so `(LocalDate/now)` works if an extension
@@ -162,25 +175,38 @@ format) and that extension’s prompt is skipped — the query still runs.
 ## Quick Example
 
 ```clojure
-(require '[c.b.vis.loop.runtime.conversation.environment.extension :as ext])
+(ns com.acme.ext.search
+  (:require [c.b.vis.loop.runtime.conversation.environment.extension :as ext]))
 
-(def my-ext
+(defn- search-fn [query] ...)
+
+(def search-ext
   (ext/extension
-    {:ext/namespace     'com.acme.ext.my-tool
-     :ext/doc           "My custom tool"
-     :ext/group         "tools"
-     :ext/requires      ['com.blockether.vis.ext.editing]
-     :ext/prompt        "Use (my-tool query) to search things."
-     :ext/symbols       [(ext/symbol 'com.acme.ext.my-tool search-fn
-                           {:doc "Search for things"
-                            :arglists '([query])})]
-     :ext/nudge-fn      (fn [{:keys [iteration prev-expressions]}]
-                          (when (and (> iteration 5)
-                                    (some :timeout? prev-expressions))
-                            "[system_nudge] my-tool is timing out. Use smaller queries."))}))
+    {:ext/namespace     'com.acme.ext.search
+     :ext/doc           "Document search"
+     :ext/group         "knowledge"
+     :ext/ns-alias      {:ns 'vis.ext.search :alias 'search}
+     :ext/prompt        "Document search tools (use search/ prefix):
+- (search/find query) — full-text search across documents"
+     :ext/symbols       [(ext/symbol 'find search-fn
+                           {:doc      "Full-text search."
+                            :arglists '([query])
+                            :examples ["(search/find \"neural\")"]})]}))
 
-(register-extension! environment my-ext)
+;; Self-register at load time
+(ext/register-global! search-ext)
 ```
+
+The LLM sees in the system prompt:
+
+```
+[namespace: search → vis.ext.search]
+Document search tools (use search/ prefix):
+- (search/find query) — full-text search across documents
+```
+
+And calls `(search/find "neural")` from `:code` blocks. Bare
+`(find "neural")` does not resolve.
 
 ## Sections
 

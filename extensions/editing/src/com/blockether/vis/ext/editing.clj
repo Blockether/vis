@@ -122,34 +122,34 @@
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
      :ext/group     "filesystem"
-     :ext/prompt    "Filesystem tools available in the sandbox:
-- (read-file path) or (read-file path offset limit) — read file with line numbers (1-indexed)
-- (write-file path content) — write/overwrite file, creates parent dirs
-- (list-files) or (list-files path) — list directory contents
-- (grep-files pattern) or (grep-files pattern path) — search for regex, returns file:line:match
-- (patch-file path old-text new-text) — exact search-and-replace (old-text must be unique)"
+     :ext/prompt    "Filesystem tools (use fs/ prefix):
+- (fs/read-file path) or (fs/read-file path offset limit) — read file with line numbers (1-indexed)
+- (fs/write-file path content) — write/overwrite file, creates parent dirs
+- (fs/list-files) or (fs/list-files path) — list directory contents
+- (fs/grep-files pattern) or (fs/grep-files pattern path) — search for regex, returns file:line:match
+- (fs/patch-file path old-text new-text) — exact search-and-replace (old-text must be unique)"
      :ext/symbols
      [(ext/symbol 'read-file read-file
         {:doc      "Read file contents with optional line offset/limit."
          :arglists '([path] [path offset] [path offset limit])
-         :examples ["(read-file \"src/core.clj\")"
-                    "(read-file \"big.log\" 100 50)"]})
+         :examples ["(fs/read-file \"src/core.clj\")"
+                    "(fs/read-file \"big.log\" 100 50)"]})
       (ext/symbol 'write-file write-file
         {:doc      "Write content to file. Creates parent dirs."
          :arglists '([path content])
-         :examples ["(write-file \"out.txt\" \"hello\")"]})
+         :examples ["(fs/write-file \"out.txt\" \"hello\")"]})
       (ext/symbol 'list-files list-files
         {:doc      "List files/dirs at path."
          :arglists '([] [path])
-         :examples ["(list-files)" "(list-files \"src\")"]})
+         :examples ["(fs/list-files)" "(fs/list-files \"src\")"]})
       (ext/symbol 'grep-files grep-files
         {:doc      "Search for regex pattern in files."
          :arglists '([pattern] [pattern path])
-         :examples ["(grep-files \"TODO\")" "(grep-files \"defn\" \"src\")"]})
+         :examples ["(fs/grep-files \"TODO\")" "(fs/grep-files \"defn\" \"src\")"]})
       (ext/symbol 'patch-file patch-file
         {:doc      "Exact search-and-replace in file. old-text must match once."
          :arglists '([path old-text new-text])
-         :examples ["(patch-file \"src/core.clj\" \"old code\" \"new code\")"]})]}))
+         :examples ["(fs/patch-file \"src/core.clj\" \"old code\" \"new code\")"]})]}))
 
 ;; Self-register at load time
 (ext/register-global! editing-extension)

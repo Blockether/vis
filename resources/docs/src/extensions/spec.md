@@ -28,7 +28,7 @@ for the full convention.
 | `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
 | `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
 | `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
-| `:ext/ns-alias` | ✗ | — | `{:ns 'vis.ext.fs :alias 'fs}` — creates a dedicated SCI namespace with alias so the LLM can call `(fs/read-file ...)` in addition to `(read-file ...)` |
+| `:ext/ns-alias` | ✓ | — | `{:ns 'vis.ext.fs :alias 'fs}` — **required**. Creates a dedicated SCI namespace with alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file ...)` — bare `(read-file ...)` does not resolve. |
 
 ## `symbol` — function binding
 
@@ -82,21 +82,25 @@ Called internally by `extension`; safe to call standalone.
 ## Full Example
 
 ```clojure
-(require '[c.b.vis.loop.runtime.conversation.environment.extension :as ext])
+(ns com.blockether.vis.ext.documents
+  (:require [c.b.vis.loop.runtime.conversation.environment.extension :as ext]))
+
+(defn- search-fn [query] ...)
+(defn- search-with-opts [query opts] ...)
 
 (def search-sym
-  (ext/symbol 'search-documents search-fn
+  (ext/symbol 'search search-fn
     {:doc        "Full-text search across ingested documents."
      :arglists  '([query] [query opts])
-     :examples  ["(search-documents \"neural\")"
-                 "(search-documents \"attention\" {:limit 5})"]
+     :examples  ["(docs/search \"neural\")"
+                 "(docs/search \"attention\" {:limit 5})"]
      :before-fn (fn [env f args]
                   {:args (update args 0 str/lower-case)})
      :after-fn  (fn [env f args result]
                   {:result (take 10 result)})}))
 
 (def max-results-sym
-  (ext/value 'max-search-results 50
+  (ext/value 'max-results 50
     {:doc "Maximum number of search results returned."}))
 
 (def docs-ext
@@ -108,9 +112,11 @@ Called internally by `extension`; safe to call standalone.
      :ext/license       "Apache-2.0"
      :ext/group         "knowledge"
      :ext/subgroup      "documents"
+     :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
      :ext/requires      ['com.blockether.vis.ext.editing]
-     :ext/prompt        "Full-text search across ingested documents.
-                         Use (search-documents query) to find relevant pages."
+     :ext/prompt        "Document search (use docs/ prefix):
+- (docs/search query) — full-text search across documents
+- docs/max-results — max results constant (default 50)"
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
      :ext/nudge-fn      (fn [{:keys [environment iteration prev-expressions]}]
                           (when (and (> iteration 5)
@@ -119,4 +125,19 @@ Called internally by `extension`; safe to call standalone.
      :ext/symbols       [search-sym max-results-sym]
      :ext/classes       {'java.time.LocalDate java.time.LocalDate}
      :ext/imports       {'LocalDate 'java.time.LocalDate}}))
+
+;; Self-register at load time
+(ext/register-global! docs-ext)
 ```
+
+The LLM sees in the system prompt:
+
+```
+[namespace: docs → vis.ext.docs]
+Document search (use docs/ prefix):
+- (docs/search query) — full-text search across documents
+- docs/max-results — max results constant (default 50)
+```
+
+And calls `(docs/search "neural")` from `:code` blocks.
+Bare `(search "neural")` does **not** resolve.

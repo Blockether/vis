@@ -147,16 +147,9 @@
         text-top   (+ (inc box-top) input-pad-y)
         text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
-        h-scroll   (max 0 (- ccol (dec text-w)))
-        icon       " [?] "         ;; inspect prompt icon
-        icon-len   5]               ;; " [?] " = 5 chars
-
+        h-scroll   (max 0 (- ccol (dec text-w)))]
     (draw-box-border! g box-top box-bottom cols hint)
     (fill-box-interior! g box-top box-bottom cols)
-
-    ;; Inspect icon on top-right of border
-    (p/set-colors! g t/dialog-hint t/terminal-bg)
-    (p/put-str! g (- cols icon-len 2) box-top icon)
 
     ;; Text
     (dotimes [i text-rows]
@@ -517,15 +510,21 @@
                 (p/set-colors! g line-fg line-bg)
                 (p/put-str! g x y line))))))
 
-      ;; Below-bubble meta (assistant only): model · iters · duration · tokens
+      ;; Below-bubble meta row
       (p/clear-styles! g)
-      (let [meta-row (+ btop bubble-h)]
+      (let [meta-row (+ btop bubble-h)
+            icon-pos (when (not user?)
+                       ;; Draw [?] icon left-aligned on meta row
+                       (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+                       (p/put-str! g (inc bx) meta-row "[?]")
+                       ;; Return screen coords for click detection
+                       {:col (inc bx) :row meta-row :w 3})]
         (when meta-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str)))
-
-      ;; Total rows consumed: label(1) + bubble-h + meta(1) + gap(1)
-      (+ 1 bubble-h 2))))
+          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str))
+        ;; Return: rows consumed + icon position (or nil for user bubbles)
+        {:rows (+ 1 bubble-h 2)
+         :icon icon-pos})))
 
 (defn bubble-height
   "Calculate rows a chat bubble will consume without drawing.
@@ -863,29 +862,31 @@
                  (TerminalPosition. 0 text-top)
                  (TerminalSize. cols inner-h))]
       ;; Render visible bubbles inside clipped region
-      ;; Coordinates passed to draw-chat-bubble! are in screen space,
-      ;; but the clip offsets them — so we adjust to clip-local coords.
-      (doseq [idx (range (count messages))]
-        (let [msg-top    (- (long (nth offsets idx)) eff-scroll)
-              msg-h      (nth heights idx)]
-          ;; Draw only if bubble overlaps the visible viewport
-          (when (and (> (+ msg-top msg-h) 0)
-                  (< msg-top inner-h))
-            (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)))))
+      ;; Collect [?] icon screen positions for click detection.
+      (let [icons (atom [])]
+        (doseq [idx (range (count messages))]
+          (let [msg-top    (- (long (nth offsets idx)) eff-scroll)
+                msg-h      (nth heights idx)]
+            (when (and (> (+ msg-top msg-h) 0)
+                    (< msg-top inner-h))
+              (let [result (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)]
+                (when-let [icon (:icon result)]
+                  ;; Convert clip-local row to screen row
+                  (swap! icons conj (update icon :row + text-top)))))))
 
-    ;; Scrollbar on the right border column
-    (when (> total-h inner-h)
-      (let [max-scroll (max 1 (- total-h inner-h))
-            track-h    inner-h
-            thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
-            thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
-            bar-col    (dec cols)
-            bar-top    text-top]
-        ;; Track (light vertical line)
-        (doseq [r (range track-h)]
-          (p/set-colors! g t/border-fg t/terminal-bg)
-          (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
-        ;; Thumb (solid block)
-        (doseq [r (range thumb-h)]
-          (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-          (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588)))))))
+        ;; Scrollbar on the right border column
+        (when (> total-h inner-h)
+          (let [max-scroll (max 1 (- total-h inner-h))
+                track-h    inner-h
+                thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
+                thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
+                bar-col    (dec cols)
+                bar-top    text-top]
+            (doseq [r (range track-h)]
+              (p/set-colors! g t/border-fg t/terminal-bg)
+              (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
+            (doseq [r (range thumb-h)]
+              (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+              (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588))))
+
+        @icons))))))

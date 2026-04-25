@@ -86,10 +86,11 @@
         bubble-w    (- cols 4)
         effective-messages (apply-settings messages progress loading? bubble-w settings)]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})
-    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
-      (.setCursorPosition screen (TerminalPosition. cx cy)))
-    (.refresh screen Screen$RefreshType/DELTA)))
+    (let [icons (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})]
+      (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
+        (.setCursorPosition screen (TerminalPosition. cx cy)))
+      (.refresh screen Screen$RefreshType/DELTA)
+      icons)))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -166,15 +167,14 @@
                                    (:messages db) (:progress db) (:loading? db) bubble-w (:settings db))
               total-h  (render/total-messages-height displayed-messages bubble-w)]
 
-          (render-frame! screen g cols rows db)
+          (let [icons (render-frame! screen g cols rows db)]
 
           ;; Always poll (non-blocking) so terminal resize is detected immediately.
           (let [key (.pollInput screen)]
             (if (nil? key)
               (do (Thread/sleep 16) (recur))
               (let [{:keys [action state col row]} (input/handle-key key (:input db))
-                    input-top (- rows (+ text-rows 2 (* 2 render/input-pad-y)))
-                    icon-col  (- cols 7)]
+                    input-top (- rows (+ text-rows 2 (* 2 render/input-pad-y)))]
                 (state/dispatch [:update-input state])
                 (let [run-command!
                       (fn [cmd]
@@ -214,11 +214,12 @@
                           (recur)))))
 
                   :mouse-click
-                  (if (and (= row input-top)
-                        (>= col icon-col)
-                        (< col (+ icon-col 5)))
-                    ;; Clicked the 🔍 icon
-                    (do (run-command! :inspect) (recur))
+                  (if-let [hit (some (fn [{:keys [row-start row-end col-start col-end cmd]}]
+                                       (when (and (>= row row-start) (< row row-end)
+                                                  (>= col col-start) (< col col-end))
+                                         cmd))
+                                     icons)]
+                    (do (run-command! hit) (recur))
                     (recur))
 
                   :send
@@ -238,7 +239,7 @@
                   (do (state/dispatch [:scroll-down 3 total-h inner-h])
                     (recur))
 
-                  :continue (recur))))))))
+                  :continue (recur)))))))))
       (finally
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
