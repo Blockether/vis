@@ -120,6 +120,7 @@
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
+     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
      :ext/group     "filesystem"
      :ext/prompt    "Filesystem tools available in the sandbox:
 - (read-file path) or (read-file path offset limit) — read file with line numbers (1-indexed)

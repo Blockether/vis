@@ -120,6 +120,28 @@ flowchart TD
     Nudge --> Hooks["9. Per-call hooks<br/>before-fn, fn, after-fn"]
 ```
 
+## Namespace Aliases
+
+By default, extension symbols are bound into the `sandbox` namespace
+(the LLM’s working namespace). Optionally, an extension can declare
+`:ext/ns-alias` to also bind its symbols into a dedicated namespace
+with a short alias:
+
+```clojure
+(ext/extension
+  {:ext/namespace 'com.blockether.vis.ext.editing
+   :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+   ...})
+```
+
+This lets the LLM call `(fs/read-file "x")` or `(read-file "x")` —
+both work. The alias is registered in the SCI context at
+`register-extension!` time.
+
+Extension-declared `:ext/classes` and `:ext/imports` are also injected
+into the SCI context, so `(LocalDate/now)` works if an extension
+exposes `java.time.LocalDate`.
+
 ## Prompt Injection
 
 Every active extension’s `:ext/prompt` is appended to the **system
