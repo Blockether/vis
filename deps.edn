@@ -27,8 +27,6 @@
   tongue/tongue                             {:mvn/version "0.4.4"}
   ;; Dependency injection
   org.clojars.darkleaf/di                   {:mvn/version "3.6.0"}
-  ;; Extensions
-  com.blockether.vis.ext/common            {:local/root "extensions/common"}
   ;; Terminal UI
   com.googlecode.lanterna/lanterna          {:mvn/version "3.1.5"}
   ;; JSON serialization (CLI output, agent results)
@@ -74,14 +72,16 @@
   ;; RE2/J — linear-time regex (ReDoS-safe). Used by the grep tool so
   ;; agent-supplied patterns can never burn the box with catastrophic
   ;; backtracking. No native deps, pure Java, license Go-BSD.
-}
+  }
 
  :aliases
  {:dev   {:extra-paths  ["dev"]
           :extra-deps {cider/cider-nrepl             {:mvn/version "0.59.0"}
-                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}}}
+                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
+                       com.blockether.vis.ext/editing {:local/root "extensions/editing"}}}
 
   :run   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
+          :extra-deps {com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
           :main-opts ["-m" "com.blockether.vis.channels.cli"]}
 
   :web   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]

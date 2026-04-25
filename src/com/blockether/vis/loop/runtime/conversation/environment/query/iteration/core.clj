@@ -10,7 +10,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
-   [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [truncate realize-value format-exception format-exception-short]]
+
    [com.blockether.vis.persistance.core :as db]
    [com.blockether.vis.persistance.spec :as rlm-spec
     :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
@@ -23,7 +23,34 @@
    [taoensso.telemere :as tel]))
 
 ;; ---------------------------------------------------------------------------
-;; Shared helpers (inlined from split iteration modules)
+;; Core helpers
+;; ---------------------------------------------------------------------------
+
+(def ^:const MAX_RESULT_DISPLAY_CHARS 30000)
+
+(defn- truncate [s n]
+  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
+
+(defn- strip-sandbox-ns [s]
+  (-> (str s) (str/replace "sandbox/" "")))
+
+(defn- realize-value [v]
+  (cond
+    (instance? clojure.lang.IDeref v) @v
+    (map? v) (into {} (map (fn [[k vv]] [k (realize-value vv)])) v)
+    (vector? v) (mapv realize-value v)
+    (set? v) (set (map realize-value v))
+    (sequential? v) (doall (map realize-value v))
+    :else v))
+
+(defn- format-exception-short [^Throwable t]
+  {:class (.getName (class t))
+   :message (or (ex-message t) (str t))})
+
+(defn- format-exception [^Throwable t & [{:keys [context]}]]
+  (merge (format-exception-short t)
+    {:data (ex-data t) :context context}))
+
 ;; ---------------------------------------------------------------------------
 
 (defn log-stage!
@@ -140,7 +167,7 @@
               (assoc execution-result :execution-time-ms execution-time :timeout? false))))))))
 
 (def ^:const SLOW_EXECUTION_MS 5000)
-(def ^:const EXECUTION_SAFETY_CAP_CHARS rt-shared/MAX_RESULT_DISPLAY_CHARS)
+(def ^:const EXECUTION_SAFETY_CAP_CHARS MAX_RESULT_DISPLAY_CHARS)
 (def ^:const EXECUTION_STDERR_CHARS 2000)
 (def ^:const HANDOVER_KEEP_LAST 2)
 (def ^:const PRIOR_THINKING_MAX_CHARS 4000)
@@ -149,7 +176,7 @@
   "[older reasonings] call `(var-history '*reasoning*)` from :code (oldest first; `take-last N` for a window).")
 
 (defn- truncated-pr-str [v]
-  (let [s (rt-shared/strip-sandbox-ns (pr-str v))]
+  (let [s (strip-sandbox-ns (pr-str v))]
     (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
       [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
       [s false])))

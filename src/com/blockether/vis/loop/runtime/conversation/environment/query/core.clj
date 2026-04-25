@@ -8,7 +8,7 @@
    [com.blockether.vis.config :as config]
    [com.blockether.vis.loop.core :as loop-core]
    [com.blockether.vis.persistance.core :as db]
-   [com.blockether.vis.loop.runtime.shared :as rt-shared :refer [realize-value truncate]]
+
    [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.core :as iterate]
    [com.blockether.vis.persistance.spec :as rlm-spec
     :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING *rlm-ctx*]]
@@ -18,6 +18,26 @@
    [taoensso.telemere :as tel])
   (:import
    [java.util.concurrent ConcurrentHashMap Semaphore]))
+
+;; -----------------------------------------------------------------------------
+;; Core helpers
+;; -----------------------------------------------------------------------------
+
+(defn- truncate [s n]
+  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
+
+(defn- realize-value [v]
+  (cond
+    (instance? clojure.lang.IDeref v) @v
+    (map? v) (into {} (map (fn [[k vv]] [k (realize-value vv)])) v)
+    (vector? v) (mapv realize-value v)
+    (set? v) (set (map realize-value v))
+    (sequential? v) (doall (map realize-value v))
+    :else v))
+
+(defn- format-exception-short [^Throwable t]
+  {:class (.getName (class t))
+   :message (or (ex-message t) (str t))})
 
 ;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (query single-file API)
@@ -227,13 +247,12 @@
                      (when hook-fn
                        (try (hook-fn payload)
                          (catch Exception e
-                           (tel/log! {:level :warn :data (rt-shared/format-exception-short e)} log-msg)))))
+                           (tel/log! {:level :warn :data (format-exception-short e)} log-msg)))))
         active-extensions-meta (fn []
                                 (when-let [exts (some-> (:extensions rlm-env) deref seq)]
                                   (mapv (fn [ext]
                                           (cond-> {:namespace (str (:ext/namespace ext))}
-                                            (:ext/source-ns ext) (assoc :source-ns (:ext/source-ns ext))
-                                            (:ext/version ext)   (assoc :version (:ext/version ext))))
+                                            (:ext/version ext) (assoc :version (:ext/version ext))))
                                     exts)))
         iter-metadata (fn []
                         (let [exts (active-extensions-meta)]
@@ -639,7 +658,7 @@
                :tokens      @total-tokens-atom
                :cost        cost-with-model})
             (catch Exception e
-              (tel/log! {:level :warn :data (rt-shared/format-exception-short e)
+              (tel/log! {:level :warn :data (format-exception-short e)
                          :msg   "Failed to update query (max iterations)"})))
           (cond-> {:answer      fallback-answer
                    :status      status
@@ -664,7 +683,7 @@
              :tokens      @total-tokens-atom
              :cost        cost-with-model})
           (catch Exception e
-            (tel/log! {:level :warn :data (rt-shared/format-exception-short e)
+            (tel/log! {:level :warn :data (format-exception-short e)
                        :msg   "Failed to update query (success)"})))
         (cond-> {:answer      answer
                  :trace       trace
