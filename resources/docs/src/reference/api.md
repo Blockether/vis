@@ -39,7 +39,9 @@ open for sibling environments.
 ```
 
 Registers a validated extension into a specific environment. Checks
-`:ext/requires` dependencies. Returns the environment for chaining.
+`:ext/requires` dependencies. If an extension with the same
+`:ext/namespace` already exists, it is **replaced** (not duplicated).
+Returns the environment for chaining.
 
 ## Extension Registry
 

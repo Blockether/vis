@@ -2146,8 +2146,9 @@
    all listed extension namespaces must already be registered.
    Throws on missing dependencies.
 
-   The extension itself is appended to the environment's `:extensions`
-   atom so its `:ext/nudge-fn` (if any) is invoked every iteration.
+   If an extension with the same `:ext/namespace` is already registered,
+   it is replaced (not duplicated). This enables hot-swap via
+   `reload-extension!`.
 
    Returns `environment` for chaining."
   [environment ext]
