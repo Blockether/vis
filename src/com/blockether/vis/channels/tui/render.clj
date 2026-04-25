@@ -286,9 +286,11 @@
                      (remove nil? [model iter-str tok-in tok-out cost-str dur-str]))
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
-    ;; Label row: role name left, timestamp right-aligned
+    ;; Label row: role name left (bold), timestamp right-aligned
     (p/set-colors! g role-fg t/terminal-bg)
+    (p/enable! g p/BOLD)
     (p/put-str! g (inc bx) start-row label)
+    (p/disable! g p/BOLD)
     (when time-str
       (p/set-colors! g t/dialog-hint t/terminal-bg)
       (p/put-str! g (+ bx (- bubble-w (count time-str) 1)) start-row time-str))
