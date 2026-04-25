@@ -194,8 +194,7 @@
         has-reasoning? (boolean (provider-has-reasoning? (:router rlm-env)))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
         system-prompt (prompt/build-system-prompt
-                        {:has-reasoning? has-reasoning?
-                         :system-prompt system-prompt})
+                        {:system-prompt system-prompt})
         initial-user-content query
         initial-messages (iterate/assemble-initial-messages
                            {:system-prompt system-prompt
