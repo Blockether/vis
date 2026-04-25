@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+K commands ")
+(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+Y copy · Ctrl+K commands · Shift+drag select ")
 
 (defn- with-dialog-lock
   [f]
@@ -238,6 +238,16 @@
 
                   :scroll-down
                   (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                    (recur))
+
+                  :copy-last
+                  (let [msgs (:messages @state/app-db)
+                        last-asst (->> msgs reverse
+                                    (filter #(= :assistant (:role %)))
+                                    first)]
+                    (when-let [text (or (:raw-answer last-asst)
+                                     (:text last-asst))]
+                      (input/clipboard-copy! text))
                     (recur))
 
                   :continue (recur)))))))))
