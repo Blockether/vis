@@ -147,13 +147,6 @@
 (def PRIOR_THINKING_BREADCRUMB
   "[older reasonings] call `(var-history '*reasoning*)` from :code (oldest first; `take-last N` for a window).")
 
-(defn- formatted-str-of [v]
-  (when (instance? clojure.lang.IObj v)
-    (let [m (meta v)]
-      (or (:vis/formatted m)
-        (when-let [f (:vis/format m)]
-          (try (f v) (catch Throwable _ nil)))))))
-
 (defn- truncated-pr-str [v]
   (let [s (rt-shared/strip-sandbox-ns (pr-str v))]
     (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
@@ -176,12 +169,8 @@
                                   (str " (" time-ms "ms SLOW)"))
                   value-part (if error
                                (str "ERROR: " (truncate error 400))
-                               (let [pre-formatted (formatted-str-of result)
-                                     v (realize-value result)
-                                     [value-str truncated?]
-                                     (if pre-formatted
-                                       [pre-formatted false]
-                                       (truncated-pr-str v))]
+                               (let [v (realize-value result)
+                                     [value-str truncated?] (truncated-pr-str v)]
                                  (str value-str
                                    (when truncated? " :truncated? true"))))]
               (str "  [" (inc idx) "] " code-str " → " value-part

@@ -240,7 +240,7 @@ Build docs: `cd resources/docs && mdbook serve --open`
 - `src/com/blockether/vis/core.clj` - public API facade (`create-environment`, `query!`, `dispose-environment!`)
 - `src/com/blockether/vis/config.clj` - config and router construction only
 - `src/com/blockether/vis/loop/core.clj` - environment lifecycle + iteration loop
-- `src/com/blockether/vis/loop/runtime/prompt.clj` - system prompt + nudge composers
+- `src/com/blockether/vis/channels/core.clj` - cross-channel provider mgmt, streaming, extension CLI
 - `src/com/blockether/vis/loop/runtime/conversation/core.clj` - conversation lifecycle (create!/send!/close!)
 - `src/com/blockether/vis/loop/runtime/conversation/environment/core.clj` - SCI sandbox + var-index
 - `src/com/blockether/vis/loop/runtime/conversation/environment/extension.clj` - extension spec + hooks
