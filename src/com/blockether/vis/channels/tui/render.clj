@@ -391,37 +391,40 @@
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
    Each line is prefixed with an invisible marker so draw-chat-bubble! can
-   apply per-line styles (italic thinking, dim code, etc.)."
-  [{:keys [thinking code results stdouts]} code-width]
-  (let [thinking-lines
+   apply per-line styles (italic thinking, dim code, etc.).
+   `iter-num` is the 1-based iteration number (for the header)."
+  [{:keys [thinking code results stdouts]} code-width iter-num]
+  (let [header [(str sep-marker "--- iter " iter-num " ---")]
+
+        thinking-lines
         (when (and (string? thinking) (not (str/blank? thinking)))
-          (mapv #(str thinking-marker %)
-            (wrap-text (str/trim thinking) (max 1 code-width))))
+          (mapv #(str thinking-marker "> " %)
+            (wrap-text (str/trim thinking) (max 1 (- code-width 2)))))
 
         code+result-lines
         (when (seq code)
           (into []
             (mapcat
               (fn [[idx form]]
-                (let [;; Code: wrap each line
-                      c-lines (mapv #(str code-marker %)
+                (let [;; Code: visible '| ' prefix, wrapped
+                      c-lines (mapv #(str code-marker "| " %)
                                 (wrap-text (str/trim (or form ""))
-                                  (max 1 code-width)))
-                      ;; Result
+                                  (max 1 (- code-width 2))))
+                      ;; Result: '  => ' prefix
                       result-str (when results (get results idx))
                       r-lines (when (and result-str (not (str/blank? (str result-str))))
-                                (mapv #(str result-marker %)
-                                  (wrap-text (str "-> " (str/trim (str result-str)))
-                                    (max 1 code-width))))
-                      ;; Stdout
+                                (mapv #(str result-marker "  => " %)
+                                  (wrap-text (str/trim (str result-str))
+                                    (max 1 (- code-width 5)))))
+                      ;; Stdout: '  [out] ' prefix
                       stdout-str (when stdouts (get stdouts idx))
                       s-lines (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                (mapv #(str stdout-marker %)
+                                (mapv #(str stdout-marker "  [out] " %)
                                   (wrap-text (str/trim (str stdout-str))
-                                    (max 1 code-width))))]
+                                    (max 1 (- code-width 8)))))]
                   (concat c-lines r-lines s-lines))))
             (map-indexed vector code)))]
-    (into (or thinking-lines []) code+result-lines)))
+    (into (vec (concat header thinking-lines)) code+result-lines)))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -441,8 +444,9 @@
       "..."
       (str/join "\n"
         (into []
-          (mapcat #(format-iteration-entry % content-w))
-          iterations)))))
+          (mapcat (fn [[idx entry]]
+                    (format-iteration-entry entry content-w (inc idx))))
+          (map-indexed vector iterations))))))
 
 (defn format-answer-with-thinking
   "Build the final bubble text: thinking trace + answer.
@@ -452,8 +456,9 @@
   (let [content-w (max 10 (- bubble-w 4))
         trace-lines (when (seq trace)
                       (into []
-                        (mapcat #(format-iteration-entry % content-w))
-                        trace))
+                        (mapcat (fn [[idx entry]]
+                                  (format-iteration-entry entry content-w (inc idx))))
+                        (map-indexed vector trace)))
         answer-str (or answer "")]
     (if (seq trace-lines)
       (let [sep (str sep-marker (apply str (repeat (min 40 content-w) "-")))]
