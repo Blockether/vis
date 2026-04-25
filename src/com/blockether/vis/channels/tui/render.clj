@@ -432,12 +432,11 @@
               (do (p/set-bg! g bg-color)
                 (p/fill-rect! g (inc bx) y iw 1))
 
-              ;; ── Answer separator — visual break between trace and answer ──
+              ;; ── Answer separator — bold horizontal rule between iterations and answer ──
               (str/starts-with? line answer-sep-marker)
-              (let [raw (subs line 1)]
-                (p/set-colors! g t/answer-sep-fg bg-color)
-                (when (seq raw)
-                  (p/put-str! g x y raw)))
+              (do (p/set-colors! g t/answer-sep-fg bg-color)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g (inc bx) y (apply str (repeat iw \u2500)))))
 
               ;; ── Answer header — right-aligned superscript on bubble bg ──
               (str/starts-with? line answer-hdr-marker)
@@ -524,7 +523,7 @@
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str))
         ;; Return: rows consumed + icon position (or nil for user bubbles)
         {:rows (+ 1 bubble-h 2)
-         :icon icon-pos})))
+         :icon icon-pos}))))
 
 (defn bubble-height
   "Calculate rows a chat bubble will consume without drawing.
@@ -653,7 +652,10 @@
                                               [(str stdout-pad-marker "")]))))  ;; pad bottom
                       ;; Iter-bg gap between code and stdout within the group
                       margin      (when stdout-block [(str iter-pad-marker "")])]
-                  (concat code-block margin stdout-block))))
+                  (concat
+                    ;; Spacer between consecutive code blocks (not before the first)
+                    (when (pos? idx) [(str iter-pad-marker "")])
+                    code-block margin stdout-block))))
             (map-indexed vector code)))
         ;; Wrap all expressions in an iteration-bg group:
         ;; iter-pad top + expression blocks + iter-pad bottom
@@ -810,10 +812,11 @@
          ans-lines   (if (seq md-lines)
                        md-lines
                        (wrap-text answer-str (max 1 (- fill-w 2))))
-         ans-pad     (str answer-pad-marker "")]
+         ans-pad     (str answer-pad-marker "")
+         ans-sep     (str answer-sep-marker "")]
      (if (seq trace-lines)
        (str/join "\n" (concat trace-lines
-                        [""] [fa-hdr] [ans-pad] ans-lines [ans-pad]))
+                        [ans-sep] [fa-hdr] [ans-pad] ans-lines [ans-pad]))
        (str/join "\n" (concat [fa-hdr] [ans-pad] ans-lines [ans-pad]))))))
 
 (defn format-answer-markdown
@@ -870,9 +873,14 @@
             (when (and (> (+ msg-top msg-h) 0)
                     (< msg-top inner-h))
               (let [result (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)]
-                (when-let [icon (:icon result)]
-                  ;; Convert clip-local row to screen row
-                  (swap! icons conj (update icon :row + text-top)))))))
+                (when-let [{:keys [col row w]} (:icon result)]
+                  ;; Convert clip-local row to screen row and normalize shape
+                  (let [screen-row (+ row text-top)]
+                    (swap! icons conj {:row-start screen-row
+                                       :row-end   (inc screen-row)
+                                       :col-start col
+                                       :col-end   (+ col w)
+                                       :cmd       :inspect})))))))
 
         ;; Scrollbar on the right border column
         (when (> total-h inner-h)
@@ -889,4 +897,4 @@
               (p/set-colors! g t/dialog-hint-key t/terminal-bg)
               (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588))))
 
-        @icons))))))
+        @icons)))))

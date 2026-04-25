@@ -465,8 +465,10 @@
    Returns nil on Esc. Supports ↑/↓/PgUp/PgDn scrolling and Ctrl+Y to copy."
   [^TerminalScreen screen title text]
   (let [scroll (atom 0)
-        cw     (max 40 (min 80 (+ 4 (apply max 1 (map count (str/split-lines (or text "")))))))
-        ch     20]
+        term-size (.getTerminalSize screen)
+        max-w  (- (.getColumns term-size) 6)
+        cw     (max 40 (min max-w (+ 4 (apply max 1 (map count (str/split-lines (or text "")))))))
+        ch     (max 20 (- (.getRows term-size) 8))]
     (loop []
       (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols    (.getColumns size)

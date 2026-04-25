@@ -75,7 +75,7 @@
   }
 
  :aliases
- {:dev   {:extra-paths  ["dev"]
+ {:dev   {:extra-paths  []
           :extra-deps {cider/cider-nrepl             {:mvn/version "0.59.0"}
                        io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
                        com.blockether.vis.ext/editing {:local/root "extensions/editing"}}}
