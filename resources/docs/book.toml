@@ -12,6 +12,8 @@ build-dir = "book"
 git-repository-url = "https://github.com/blockether/vis"
 edit-url-template = "https://github.com/blockether/vis/edit/main/docs/src/{path}"
 no-section-label = true
+default-theme = "light"
+preferred-dark-theme = "light"
 additional-css = ["theme/custom.css"]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 

@@ -1,5 +1,11 @@
 /* Vis docs — clean overrides for mdBook */
 
+/* Light theme only — hide the theme picker */
+#theme-list,
+#theme-toggle {
+  display: none !important;
+}
+
 :root {
   --sidebar-width: 260px;
 }

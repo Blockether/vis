@@ -1,2 +1,2 @@
-{:paths ["src"]
+{:paths ["src" "resources"]
  :deps {com.blockether/vis {:local/root "../.."}}}

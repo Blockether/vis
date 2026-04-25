@@ -105,6 +105,14 @@
                      "claude-3-opus-20240229"]}
    {:id :openai     :label "OpenAI"     :base-url "https://api.openai.com/v1"
     :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini" "gpt-4-turbo" "gpt-4"]}
+   {:id :github-models :label "GitHub Models" :base-url "https://models.github.ai/inference"
+    :default-models ["openai/gpt-4o" "openai/gpt-4o-mini" "openai/o3-mini"
+                     "meta/llama-4-scout-17b-16e-instruct"
+                     "deepseek/DeepSeek-R1" "mistralai/mistral-small-2503"]}
+   {:id :github-copilot :label "GitHub Copilot" :base-url "https://api.githubcopilot.com"
+    :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini"
+                     "claude-sonnet-4-20250514" "claude-3.5-sonnet"
+                     "gemini-2.0-flash-001"]}
    {:id :openrouter :label "OpenRouter" :base-url "https://openrouter.ai/api/v1"
     :default-models ["openai/gpt-4o" "anthropic/claude-sonnet-4-20250514" "google/gemini-2.0-flash-001"
                      "meta-llama/llama-3.1-70b-instruct"]}
@@ -169,15 +177,23 @@
     {:name n}))
 
 (defn ->svar-provider
-  "Coerce a provider map to svar-native shape (only :id, :api-key, :base-url, :models)."
+  "Coerce a provider map to svar-native shape (only :id, :api-key, :base-url, :models).
+   For :github-copilot without an explicit :api-key, installs a dynamic
+   :api-key-fn that auto-refreshes the Copilot OAuth token."
   [provider]
   (let [pid      (:id provider)
         api-key  (:api-key provider)
         models   (->> (:models provider) (keep ->svar-model) vec)
         base-url (provider-base-url provider)]
-    (cond-> {:id pid :models models}
-      (some? api-key)  (assoc :api-key api-key)
-      (some? base-url) (assoc :base-url base-url))))
+    (if (and (= pid :github-copilot) (nil? api-key))
+      ;; Resolve Copilot API token from OAuth flow — auto-refreshes internally
+      (let [get-token (requiring-resolve 'com.blockether.vis.providers.github-copilot/get-copilot-token!)
+            {:keys [token api-url]} (get-token)]
+        (cond-> {:id pid :models models :api-key token}
+          (some? (or base-url api-url)) (assoc :base-url (or base-url api-url))))
+      (cond-> {:id pid :models models}
+        (some? api-key)  (assoc :api-key api-key)
+        (some? base-url) (assoc :base-url base-url)))))
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 

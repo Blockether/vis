@@ -24,8 +24,3 @@
 - [Environment Map](extensions/environment.md)
 - [Nudge System](extensions/nudges.md)
 
-# Reference
-
-- [Public API](reference/api.md)
-- [Reasoning Levels](reference/reasoning.md)
-- [Ubiquitous Language](reference/language.md)

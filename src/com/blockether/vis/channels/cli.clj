@@ -92,6 +92,9 @@
   (println "  vis extensions                        List registered extensions")
   (println "  vis ext <cmd> [args...]                Run an extension command")
   (println "  vis ext help                           Show extension commands")
+  (println "  vis auth github-copilot               Authenticate with GitHub Copilot (OAuth device flow)")
+  (println "  vis auth github-copilot --status       Show Copilot auth status")
+  (println "  vis auth github-copilot --logout       Clear Copilot tokens")
   (println "  vis doctor                            Show environment diagnostics")
   (println "  vis help                              Show this help")
   (println)
@@ -282,6 +285,79 @@
           ;; skip unknown
           (recur more opts))))))
 
+;;; ── Auth ────────────────────────────────────────────────────────────────
+
+(defn- cli-auth!
+  "Handle `vis auth <provider> [flags]`."
+  [args]
+  (let [provider (first args)
+        flags    (set (rest args))]
+    (case provider
+      "github-copilot"
+      (let [copilot-status (requiring-resolve 'com.blockether.vis.providers.github-copilot/status)
+            copilot-logout (requiring-resolve 'com.blockether.vis.providers.github-copilot/logout!)
+            copilot-detect (requiring-resolve 'com.blockether.vis.providers.github-copilot/detect-oauth-token)
+            copilot-start  (requiring-resolve 'com.blockether.vis.providers.github-copilot/start-device-flow!)
+            copilot-poll   (requiring-resolve 'com.blockether.vis.providers.github-copilot/poll-for-token!)
+            copilot-exchange (requiring-resolve 'com.blockether.vis.providers.github-copilot/get-copilot-token!)]
+        (cond
+          (contains? flags "--status")
+          (let [s (copilot-status)]
+            (stdout! "\n  GitHub Copilot Auth Status")
+            (stdout! "  ───────────────────────────")
+            (if (:authenticated? s)
+              (do
+                (stdout! "  Authenticated: yes")
+                (stdout! (str "  Source:        " (name (:source s))))
+                (stdout! (str "  Token:         " (:oauth-token-preview s)))
+                (when (contains? s :copilot-token-valid?)
+                  (stdout! (str "  API token:     " (if (:copilot-token-valid? s) "valid" "expired")))
+                  (when (:copilot-token-valid? s)
+                    (stdout! (str "  Expires in:    " (int (/ (:expires-in-ms s) 60000)) " min")))))
+              (stdout! "  Authenticated: no"))
+            (stdout! ""))
+
+          (contains? flags "--logout")
+          (do (copilot-logout)
+            (stdout! "  Logged out of GitHub Copilot. Tokens cleared."))
+
+          :else
+          ;; Interactive device flow
+          (if (copilot-detect)
+            (do
+              (stdout! "  Already authenticated with GitHub Copilot.")
+              (stdout! "  Run `vis auth github-copilot --status` for details.")
+              (stdout! "  Run `vis auth github-copilot --logout` first to re-authenticate."))
+            (do
+              (stdout! "\n  GitHub Copilot — OAuth Device Flow")
+              (stdout! "  ───────────────────────────────────")
+              (let [{:keys [user-code verification-uri device-code interval expires-in]}
+                    (copilot-start)]
+                (stdout! "")
+                (stdout! (str "  1. Open: " verification-uri))
+                (stdout! (str "  2. Enter code: " user-code))
+                (stdout! "")
+                (stdout! "  Waiting for authorization...")
+                (.flush ^java.io.PrintStream config/original-stdout)
+                (try
+                  (copilot-poll device-code interval expires-in)
+                  (copilot-exchange)
+                  (stdout! "  ✓ Authenticated! GitHub Copilot is ready.")
+                  (stdout! "")
+                  (stdout! "  Add to ~/.vis/config.edn:")
+                  (stdout! "    {:providers [{:id :github-copilot")
+                  (stdout! "                  :models [{:name \"gpt-4o\"} {:name \"claude-sonnet-4-20250514\"}]}]}")
+                  (stdout! "")
+                  (stdout! "  The OAuth token is persisted in ~/.vis/github-copilot-auth.json")
+                  (stdout! "  and Copilot API tokens are refreshed automatically.")
+                  (catch Exception e
+                    (stdout! (str "  ✗ Authentication failed: " (ex-message e))))))))))
+
+      ;; Unknown provider
+      (do
+        (stdout! (str "Unknown auth provider: " (or provider "<none>")))
+        (stdout! "Available: github-copilot")))))
+
 ;;; ── TUI ─────────────────────────────────────────────────────────────────
 
 (defn- run-tui!
@@ -321,6 +397,12 @@
       (= cmd "telegram")
       (do (config/init-cli!)
         (telegram/-main))
+
+      ;; Auth commands
+      (= cmd "auth")
+      (do (config/init-cli!)
+        (cli-auth! (rest args))
+        (shutdown-agents))
 
       ;; Doctor — environment diagnostics
       (= cmd "doctor")
