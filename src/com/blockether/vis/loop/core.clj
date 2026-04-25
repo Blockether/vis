@@ -829,16 +829,9 @@
                                :error validation-error}])
                :final-result nil :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)}
-            (let [sources (vec (or (:sources parsed) []))
-                  final-result (cond-> {:final? true
-                                        ;; `:text` for plain strings (was `String` class — mixing
-                                        ;; Java Class with `:markdown` keyword across the
-                                        ;; success vs fallback branches made consumers eat the
-                                        ;; ambiguity). Fallback branches use `:markdown` to flag
-                                        ;; rendered markdown (⚠️ warnings).
+            (let [final-result (cond-> {:final? true
                                         :answer final-answer
                                         :confidence confidence}
-                                 (seq sources) (assoc :sources sources)
                                  (:reasoning parsed) (assoc :reasoning (:reasoning parsed)))]
               {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
@@ -1572,8 +1565,6 @@
         has-reasoning? (provider-has-reasoning? (:router rlm-env))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default)
                                balanced-reasoning)
-        ;; `:has-documents?` is the only activation flag that still matters
-        ;; at this level — it drives the RESPONSE FORMAT's :sources field in
         system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
                                             :system-prompt system-prompt
                                             :max-context-tokens max-context-tokens
@@ -1983,7 +1974,6 @@
                                       :trace (conj trace trace-entry)
                                       :iterations (inc iteration)
                                       :confidence (:confidence final-result)}
-                               (:sources final-result)   (assoc :sources (:sources final-result))
                                (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
                         (finalize-cost)))
                        (if (empty? expressions)

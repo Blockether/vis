@@ -197,11 +197,6 @@
      :include-thinking? — true for non-reasoning providers (CoT goes
        in JSON), false for reasoning providers (CoT is native, no
        duplication).
-     :include-sources?  — true when at least one document-retrieval
-       tool is active in the current env (has-documents? in the agent
-       loop). When false, the :sources field is omitted entirely — no
-       tool name leaks into the spec and the LLM isn't nudged to
-       produce source IDs it cannot possibly have.
 
    The iteration loop ALWAYS sends only the previous iteration's
    `:thinking` under `<prior_thinking>`. There is no spec knob to
@@ -209,9 +204,8 @@
    and the agent reaches them on demand from `:code`. This keeps the
    per-iteration prompt O(1) and forces the agent to be deliberate
    about what historical context it actually needs."
-  [{:keys [include-thinking? include-sources?]}]
+  [{:keys [include-thinking?]}]
   (let [base-fields
-        (cond->
           [(spec/field {::spec/name        :code
                         ::spec/type        :spec.type/ref
                         ::spec/target      :code_block
@@ -244,15 +238,6 @@
                         ::spec/required    false
                         ::spec/description "Optional confidence level."
                         ::spec/values      ["high" "medium" "low"]})]
-          ;; :sources only shows up when document-retrieval tools are
-          ;; actually callable this turn. Otherwise the LLM would be
-          ;; told to cite sources it cannot fetch.
-          include-sources?
-          (conj (spec/field {::spec/name        :sources
-                             ::spec/type        :spec.type/string
-                             ::spec/cardinality :spec.cardinality/many
-                             ::spec/required    false
-                             ::spec/description "Optional source IDs used to ground the answer."})))
 
         fields
         (if include-thinking?
@@ -265,24 +250,18 @@
     (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC]} fields)))
 
 (defn iteration-spec
-  "Compose the iteration response spec for the CURRENT env state. Callers
-   pass :has-reasoning? and :has-documents?; the first selects the
-   thinking/non-thinking variant, the second gates the :sources field.
-
-   Keep this as the single call site — `ITERATION_SPEC_*` constants below
-   are fixed variants for callers that need static shapes."
-  [{:keys [has-reasoning? has-documents?]}]
-  (make-iteration-spec {:include-thinking? (not has-reasoning?)
-                        :include-sources?  (boolean has-documents?)}))
+  "Compose the iteration response spec for the CURRENT env state.
+   `:has-reasoning?` selects the thinking/non-thinking variant."
+  [{:keys [has-reasoning?]}]
+  (make-iteration-spec {:include-thinking? (not has-reasoning?)}))
 
 (def ITERATION_SPEC_BASE
-  "Fixed variant — :sources INCLUDED, no :thinking.
-   Prefer `iteration-spec` so :sources tracks document-tool activation."
-  (make-iteration-spec {:include-thinking? false :include-sources? true}))
+  "Fixed variant — no :thinking (reasoning providers)."
+  (make-iteration-spec {:include-thinking? false}))
 
 (def ITERATION_SPEC_NON_REASONING
-  "Fixed variant with :thinking. See ITERATION_SPEC_BASE note."
-  (make-iteration-spec {:include-thinking? true :include-sources? true}))
+  "Fixed variant with :thinking (non-reasoning providers)."
+  (make-iteration-spec {:include-thinking? true}))
 
 (def ITERATION_SPEC_REASONING
   "Fixed reasoning variant — alias for ITERATION_SPEC_BASE."

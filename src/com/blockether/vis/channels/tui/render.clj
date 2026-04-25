@@ -393,18 +393,8 @@
   [progress bubble-w]
   (let [iterations (:iterations progress)
         content-w  (max 10 (- bubble-w 4))]
-    (cond
-      (empty? iterations)
-      "Waiting for model response..."
-
-      ;; Only thinking, no code yet
-      (and (= 1 (count iterations))
-           (nil? (:code (first iterations)))
-           (some? (:thinking (first iterations))))
-      (let [lines (format-iteration-entry (first iterations) content-w)]
-        (str/join "\n" (cons "Reasoning..." lines)))
-
-      :else
+    (if (empty? iterations)
+      "..."
       (str/join "\n"
         (into []
           (mapcat #(format-iteration-entry % content-w))
