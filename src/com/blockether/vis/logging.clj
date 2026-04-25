@@ -42,7 +42,7 @@
   "Telemere handler that persists signals to the SQLite `log` table.
 
    The handler reads `:db-info` from the signal's telemere context (`*ctx*`).
-   When `:db-info` is absent (no DB session active), the signal is silently
+   When `:db-info` is absent (no DB connection active), the signal is silently
    dropped — console handler still prints it.
 
    Usage:

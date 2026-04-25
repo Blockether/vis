@@ -1,9 +1,9 @@
 (ns com.blockether.vis.channels.tui.render
   (:require [clojure.string :as str]
+            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.primitives :as p]
             [com.blockether.vis.channels.tui.theme :as t])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
-           [java.text SimpleDateFormat]))
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]))
 
 ;;; ── Text wrapping ───────────────────────────────────────────────────────────
 
@@ -237,30 +237,21 @@
 
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 
-(defn- format-timestamp
-  "Format timestamp for display in local timezone. Always dd-MM-yyyy HH:mm."
-  [^java.util.Date ts]
-  (when ts
-    (let [tz (java.util.TimeZone/getDefault)]
-      (.format (doto (SimpleDateFormat. "dd-MM-yyyy HH:mm") (.setTimeZone tz)) ts))))
 
-(defn- format-duration
-  "Format millisecond duration as human-readable. e.g. '2.3s', '1m 15s'"
-  [ms]
-  (when (and ms (pos? ms))
-    (cond
-      (< ms 1000)  (str ms "ms")
-      (< ms 60000) (format "%.1fs" (/ ms 1000.0))
-      :else        (let [m (quot ms 60000)
-                         s (quot (mod ms 60000) 1000)]
-                     (str m "m " s "s")))))
 
 ;; Line markers live in primitives — aliases for local readability.
-(def ^:private thinking-marker p/MARKER_THINKING)
-(def ^:private code-marker     p/MARKER_CODE)
-(def ^:private result-marker   p/MARKER_RESULT)
-(def ^:private stdout-marker   p/MARKER_STDOUT)
-(def ^:private sep-marker      p/MARKER_SEP)
+(def ^:private thinking-marker  p/MARKER_THINKING)
+(def ^:private code-marker      p/MARKER_CODE)
+(def ^:private result-marker    p/MARKER_RESULT)
+(def ^:private stdout-marker    p/MARKER_STDOUT)
+(def ^:private sep-marker       p/MARKER_SEP)
+(def ^:private code-ok-marker   p/MARKER_CODE_OK)
+(def ^:private code-err-marker  p/MARKER_CODE_ERR)
+(def ^:private err-result-marker p/MARKER_ERR_RESULT)
+(def ^:private duration-marker  p/MARKER_DURATION)
+(def ^:private iter-hdr-marker  p/MARKER_ITER_HDR)
+(def ^:private stdout-sep-marker p/MARKER_STDOUT_SEP)
+(def ^:private stdout-pad-marker p/MARKER_STDOUT_PAD)
 
 (defn draw-chat-bubble!
   "Draw a chat message bubble at the given row.
@@ -282,8 +273,8 @@
         brd-color (if user? t/user-bubble-border t/ai-bubble-border)
         role-fg   (if user? t/user-role-fg t/ai-role-fg)
         inner-w   (- bubble-w 2)
-        time-str  (format-timestamp timestamp)
-        dur-str   (format-duration duration-ms)
+        time-str  (channels/format-date timestamp)
+        dur-str   (channels/format-duration duration-ms)
         tok-in    (when-let [n (:input tokens)] (str "↑" n))
         tok-out   (when-let [n (:output tokens)] (str "↓" n))
         iter-str  (when (and (not user?) iterations) (str iterations (if (= 1 iterations) " iter" " iters")))
@@ -323,27 +314,87 @@
 
       ;; Text content — per-line styling via invisible marker prefixes
       (doseq [[i line] (map-indexed vector lines)]
-        (let [x (+ bx 2) y (+ btop 1 i)]
+        (let [x (+ bx 2) y (+ btop 1 i)
+              inner-w (- bubble-w 4)]
           (cond
+            ;; Iteration header — distinct background with colored badges
+            (str/starts-with? line iter-hdr-marker)
+            (let [raw (subs line 1)]
+              ;; Background fill + base text
+              (p/set-colors! g t/iter-header-fg t/iter-header-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/put-str! g x y raw)
+              ;; Overlay colored ✓N / ✗N fragments
+              (doseq [[pattern color] [["✓" t/code-success-fg] ["✗" t/code-error-fg]]]
+                (when-let [i (str/index-of raw pattern)]
+                  ;; Find the end of this badge (next space or end)
+                  (let [rest-str (subs raw i)
+                        sp       (str/index-of rest-str " ")
+                        badge    (if sp (subs rest-str 0 sp) rest-str)]
+                    (p/set-colors! g color t/iter-header-bg)
+                    (p/put-str! g (+ x i) y badge)))))
+
             ;; Thinking/reasoning — italic, dim
             (str/starts-with? line thinking-marker)
             (do (p/set-colors! g t/dialog-hint bg-color)
               (p/styled g [p/ITALIC]
                 (p/put-str! g x y (subs line 1))))
 
-            ;; Code — normal fg, no style change
+            ;; Code with success status — code bg, green ✓ suffix
+            (str/starts-with? line code-ok-marker)
+            (let [raw (subs line 1)]
+              (p/set-colors! g t/code-block-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/put-str! g x y raw)
+              ;; Color the ✓ + duration suffix green
+              (when-let [ci (str/index-of raw "✓")]
+                (p/set-colors! g t/code-success-fg t/code-block-bg)
+                (p/put-str! g (+ x ci) y (subs raw ci))))
+
+            ;; Code with error status — code bg, red ✗ suffix
+            (str/starts-with? line code-err-marker)
+            (let [raw (subs line 1)]
+              (p/set-colors! g t/code-block-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/put-str! g x y raw)
+              ;; Color the ✗ + duration suffix red
+              (when-let [ci (str/index-of raw "✗")]
+                (p/set-colors! g t/code-error-fg t/code-block-bg)
+                (p/put-str! g (+ x ci) y (subs raw ci))))
+
+            ;; Code (no status yet — streaming) — code bg
             (str/starts-with? line code-marker)
-            (do (p/set-colors! g fg-color bg-color)
+            (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/set-colors! g t/code-block-fg t/code-block-bg)
               (p/put-str! g x y (subs line 1)))
 
-            ;; Result/return value — dim
+            ;; Duration annotation — code bg, muted
+            (str/starts-with? line duration-marker)
+            (do (p/set-colors! g t/code-duration-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/set-colors! g t/code-duration-fg t/code-block-bg)
+              (p/put-str! g x y (subs line 1)))
+
+            ;; Success result — code bg, dim
             (str/starts-with? line result-marker)
-            (do (p/set-colors! g t/dialog-hint bg-color)
+            (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/set-colors! g t/code-result-fg t/code-block-bg)
               (p/put-str! g x y (subs line 1)))
 
-            ;; Stdout — italic, dim
+            ;; Error result — code bg, red
+            (str/starts-with? line err-result-marker)
+            (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/set-colors! g t/code-error-result-fg t/code-block-bg)
+              (p/put-str! g x y (subs line 1)))
+
+            ;; Stdout — code bg, italic, dim
             (str/starts-with? line stdout-marker)
-            (do (p/set-colors! g t/dialog-hint bg-color)
+            (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+              (p/fill-rect! g (inc bx) y inner-w 1)
+              (p/set-colors! g t/code-result-fg t/code-block-bg)
               (p/styled g [p/ITALIC]
                 (p/put-str! g x y (subs line 1))))
 
@@ -388,14 +439,40 @@
       (str (subs s 0 (max 0 (- max-len 1))) "...")
       s)))
 
+
+
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
    Each line is prefixed with an invisible marker so draw-chat-bubble! can
    apply per-line styles (italic thinking, dim code, etc.).
-   `iter-num` is the 1-based iteration number (for the header)."
-  [{:keys [thinking code results stdouts]} code-width iter-num]
+   `iter-num` is the 1-based iteration number (for the header).
+
+   Entry shape:
+     {:thinking  str-or-nil
+      :code      [str ...]        ;; code expressions
+      :results   [str ...]        ;; per-expression result strings
+      :stdouts   [str ...]        ;; per-expression stdout
+      :durations [int ...]        ;; per-expression ms
+      :successes [bool ...]}      ;; per-expression success? (nil = unknown / streaming)"
+  [{:keys [thinking code results stdouts durations successes]} code-width iter-num]
   (let [bar (p/horiz-line 3)
-        header [(str sep-marker bar " iter " iter-num " " bar)]
+        ;; Count successes/failures for the header badge
+        total-exprs  (count (or code []))
+        ok-count     (when successes (count (filter true? successes)))
+        err-count    (when successes (count (filter false? successes)))
+        badge        (cond
+                       (and ok-count err-count (pos? total-exprs))
+                       (str " ✓" ok-count
+                         (when (pos? err-count) (str " ✗" err-count)))
+                       (pos? total-exprs)
+                       (str " " total-exprs " expr")
+                       :else "")
+        left-text    (str bar " iter " iter-num " ")
+        right-text   (str badge " " bar)
+        ;; Pad middle to fill code-width
+        mid-len      (max 0 (- code-width (count left-text) (count right-text)))
+        header-line  (str left-text (apply str (repeat mid-len \space)) right-text)
+        header [(str iter-hdr-marker header-line)]
 
         thinking-lines
         (when (and (string? thinking) (not (str/blank? thinking)))
@@ -407,22 +484,55 @@
           (into []
             (mapcat
               (fn [[idx form]]
-                (let [;; Code: visible '| ' prefix, wrapped
-                      c-lines (mapv #(str code-marker "| " %)
-                                (wrap-text (str/trim (or form ""))
-                                  (max 1 (- code-width 2))))
-                      ;; Result: '  => ' prefix
+                (let [success?  (when successes (get successes idx))
+                      has-status? (some? success?)
+                      dur-ms    (when durations (get durations idx))
+                      dur-str   (channels/format-duration dur-ms)
+                      ;; Status marker: ✓/✗ + duration on the first code line
+                      status-suffix (when has-status?
+                                      (str (if success? " ✓" " ✗")
+                                        (when dur-str (str " " dur-str))))
+                      ;; Pick marker based on status
+                      c-marker  (cond
+                                  (not has-status?) code-marker
+                                  success?          code-ok-marker
+                                  :else             code-err-marker)
+                      ;; Code lines: '| ' prefix, wrapped
+                      code-text (str/trim (or form ""))
+                      wrapped   (wrap-text code-text (max 1 (- code-width 2
+                                                              (if status-suffix
+                                                                (+ 1 (count status-suffix))
+                                                                0))))
+                      ;; Append status suffix to last line of code
+                      c-lines   (if (and status-suffix (seq wrapped))
+                                  (let [last-idx (dec (count wrapped))
+                                        last-line (nth wrapped last-idx)
+                                        padded (str last-line status-suffix)]
+                                    (mapv #(str c-marker "| " %)
+                                      (assoc wrapped last-idx padded)))
+                                  (mapv #(str c-marker "| " %) wrapped))
+                      ;; Result
                       result-str (when results (get results idx))
+                      is-error?  (and has-status? (not success?))
+                      r-marker   (if is-error? err-result-marker result-marker)
                       r-lines (when (and result-str (not (str/blank? (str result-str))))
-                                (mapv #(str result-marker "  => " %)
+                                (mapv #(str r-marker "  => " %)
                                   (wrap-text (str/trim (str result-str))
                                     (max 1 (- code-width 5)))))
-                      ;; Stdout: '  [out] ' prefix
+                      ;; Stdout — separator + padding + right-aligned "stdout" label + text + padding
                       stdout-str (when stdouts (get stdouts idx))
                       s-lines (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                (mapv #(str stdout-marker "  [out] " %)
-                                  (wrap-text (str/trim (str stdout-str))
-                                    (max 1 (- code-width 8)))))]
+                                (let [label   "stdout"
+                                      sep-w   (max 1 (- code-width 2))
+                                      sep-ln  (str stdout-sep-marker (apply str (repeat sep-w \-)))
+                                      ;; First line: right-aligned "stdout" label
+                                      label-pad (max 0 (- code-width (count label)))
+                                      label-ln  (str stdout-marker (apply str (repeat label-pad \space)) label)
+                                      text-lines (mapv #(str stdout-marker "  " %)
+                                                   (wrap-text (str/trim (str stdout-str))
+                                                     (max 1 (- code-width 2))))
+                                      pad-ln  (str stdout-pad-marker "")]
+                                  (into [sep-ln pad-ln label-ln] (conj text-lines pad-ln))))]
                   (concat c-lines r-lines s-lines))))
             (map-indexed vector code)))]
     (into (vec (concat header thinking-lines)) code+result-lines)))
@@ -433,38 +543,59 @@
    `progress` is the `:progress` slot from app-db: `{:iterations [...]}`.
    `bubble-w` is the outer bubble width in chars — we size inner content
    conservatively so wrap-text inside draw-chat-bubble! doesn't blow up.
+   `settings` is the display settings map: `{:show-thinking bool :show-iterations bool}`.
    Returns a single string with newlines separating lines.
 
-   Returns the literal \"thinking...\" string when the progress timeline is
+   Returns the literal \"...\" string when the progress timeline is
    empty, so the placeholder still shows *something* in the first 100ms
    before the first chunk arrives."
-  [progress bubble-w]
+  [progress bubble-w settings]
   (let [iterations (:iterations progress)
-        content-w  (max 10 (- bubble-w 4))]
+        content-w  (max 10 (- bubble-w 4))
+        show-thinking?  (get settings :show-thinking true)
+        show-iterations? (get settings :show-iterations true)]
     (if (empty? iterations)
       "..."
-      (str/join "\n"
-        (into []
-          (mapcat (fn [[idx entry]]
-                    (format-iteration-entry entry content-w (inc idx))))
-          (map-indexed vector iterations))))))
+      (if-not show-iterations?
+        ;; When iterations hidden, just show a compact status line
+        (let [n (count iterations)
+              last-iter (last iterations)
+              thinking? (and show-thinking?
+                          (some? (:thinking last-iter))
+                          (not (str/blank? (:thinking last-iter))))]
+          (if thinking?
+            (str "thinking... (iter " n ")")
+            (str "working... (iter " n ")")))
+        (str/join "\n"
+          (into []
+            (mapcat (fn [[idx entry]]
+                      (format-iteration-entry
+                        (if show-thinking? entry (dissoc entry :thinking))
+                        content-w (inc idx))))
+            (map-indexed vector iterations)))))))
 
 (defn format-answer-with-thinking
   "Build the final bubble text: thinking trace + answer.
    `trace` is the progress iterations vec [{:thinking :code :results} ...].
+   `settings` is `{:show-thinking bool :show-iterations bool}`.
    Trace is visually separated from the answer by a dashed line."
-  [answer trace bubble-w]
-  (let [content-w (max 10 (- bubble-w 4))
-        trace-lines (when (seq trace)
-                      (into []
-                        (mapcat (fn [[idx entry]]
-                                  (format-iteration-entry entry content-w (inc idx))))
-                        (map-indexed vector trace)))
-        answer-str (or answer "")]
-    (if (seq trace-lines)
-      (let [sep (str sep-marker (p/horiz-line (min 40 content-w)))]
-        (str (str/join "\n" trace-lines) "\n" sep "\n" answer-str))
-      answer-str)))
+  ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil))
+  ([answer trace bubble-w settings]
+   (let [content-w (max 10 (- bubble-w 4))
+         show-thinking?   (get settings :show-thinking true)
+         show-iterations? (get settings :show-iterations true)
+         trace-lines (when (and show-iterations? (seq trace))
+                       (into []
+                         (mapcat (fn [[idx entry]]
+                                   (format-iteration-entry
+                                     (if show-thinking? entry (dissoc entry :thinking))
+                                     content-w (inc idx))))
+                         (map-indexed vector trace)))
+         answer-str (or answer "")]
+     (if (seq trace-lines)
+       (let [sep (str sep-marker (p/horiz-line (min 40 content-w)))]
+         (str (str/join "\n" trace-lines) "\n" sep "\n" answer-str))
+       answer-str))))
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 

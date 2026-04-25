@@ -140,7 +140,7 @@
 
 (defn restorable-var-snapshots
   "Returns serializable snapshots of user vars introduced by this iteration."
-  [rlm-env expressions]
+  [environment expressions]
   (let [execution->defs (mapv (fn [{:keys [error] :as execution}]
                                 [execution (when-not error
                                              (set (map symbol (extract-def-names [execution]))))])
@@ -152,7 +152,7 @@
                               acc))
                     {}
                     execution->defs)
-        locals (iterate/get-locals rlm-env)]
+        locals (iterate/get-locals environment)]
     (->> locals
       (keep (fn [[sym value]]
               (when (contains? defined sym)
@@ -166,11 +166,11 @@
 
 (defn update-system-vars!
   "Bind *reasoning* and *answer* into the SCI sandbox after an iteration."
-  [rlm-env {:keys [thinking final-result final-answer]}]
+  [environment {:keys [thinking final-result final-answer]}]
   (when (seq thinking)
-    (sci-env/bind-and-bump! rlm-env '*reasoning* thinking))
+    (sci-env/bind-and-bump! environment '*reasoning* thinking))
   (when final-result
-    (sci-env/bind-and-bump! rlm-env '*answer* final-answer)))
+    (sci-env/bind-and-bump! environment '*answer* final-answer)))
 
 (defn inject-system-var-snapshots
   "Append SYSTEM var entries to a vars-snapshot vec for persistence."
@@ -195,7 +195,7 @@
 
 (defn iteration-loop
   "The core iteration loop. Runs N iterations of: assemble → ask LLM → execute → persist."
-  [rlm-env query
+  [environment query
    {:keys [output-spec max-context-tokens system-prompt
            query-id history-messages
            max-iterations max-consecutive-errors max-restarts
@@ -204,13 +204,13 @@
   (let [max-iterations (or max-iterations rlm-spec/MAX_ITERATIONS)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
-        max-iter-atom (:max-iterations-atom rlm-env)
+        max-iter-atom (:max-iterations-atom environment)
         effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
-        effective-model (:name (resolve-effective-model (:router rlm-env)))
+        effective-model (:name (resolve-effective-model (:router environment)))
         _ (assert effective-model "Router must resolve a root model")
         max-context-tokens (or max-context-tokens
                              (long (* 0.6 (router/context-limit effective-model))))
-        has-reasoning? (boolean (provider-has-reasoning? (:router rlm-env)))
+        has-reasoning? (boolean (provider-has-reasoning? (:router environment)))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
         system-prompt (or system-prompt "")
         initial-user-content query
@@ -218,7 +218,7 @@
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
                             :history-messages history-messages})
-        db-info (:db-info rlm-env)
+        db-info (:db-info environment)
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
         accumulate-usage! (fn [api-usage]
                             (when api-usage
@@ -238,7 +238,7 @@
                                     :reasoning reasoning-tokens :cached cached-tokens
                                     :total total-tokens}
                            :cost cost}))
-        var-index-atom (or (:var-index-atom rlm-env)
+        var-index-atom (or (:var-index-atom environment)
                          (atom {:index nil :revision -1 :current-revision 0}))
         on-iteration (:on-iteration hooks)
         on-chunk (:on-chunk hooks)
@@ -249,7 +249,7 @@
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-msg)))))
         active-extensions-meta (fn []
-                                (when-let [exts (some-> (:extensions rlm-env) deref seq)]
+                                (when-let [exts (some-> (:extensions environment) deref seq)]
                                   (mapv (fn [ext]
                                           (cond-> {:namespace (str (:ext/namespace ext))}
                                             (:ext/version ext) (assoc :version (:ext/version ext))))
@@ -258,8 +258,8 @@
                         (let [exts (active-extensions-meta)]
                           (when (seq exts)
                             {:extensions exts})))]
-    (sci-env/bind-and-bump! rlm-env '*query* query)
-    (when-let [a (:current-iteration-id-atom rlm-env)] (reset! a nil))
+    (sci-env/bind-and-bump! environment '*query* query)
+    (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
       (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                 :trace [] :consecutive-errors 0 :restarts 0}
@@ -313,17 +313,17 @@
                                       (or prev-next-reasoning
                                         (iterate/reasoning-level-for-errors base-reasoning-level consecutive-errors)))
                     _ (iterate/log-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
-                    prior-thinking-body (iterate/build-prior-thinking rlm-env db-info query-id)
+                    prior-thinking-body (iterate/build-prior-thinking environment db-info query-id)
                     cross-query-handover (when (zero? iteration)
                                            (iterate/build-cross-query-handover
-                                             db-info (:conversation-id rlm-env) query-id
-                                             (:parent-iteration-id rlm-env)))
+                                             db-info (:conversation-id environment) query-id
+                                             (:parent-iteration-id environment)))
                     prior-thinking (cond
                                      (and cross-query-handover prior-thinking-body)
                                      (str cross-query-handover "\n\n" prior-thinking-body)
                                      cross-query-handover cross-query-handover
                                      :else prior-thinking-body)
-                    iteration-context (iterate/build-iteration-context rlm-env
+                    iteration-context (iterate/build-iteration-context environment
                                         {:iteration iteration
                                          :current-max-iterations (effective-max-iterations)
                                          :prior-thinking prior-thinking
@@ -337,10 +337,10 @@
                     effective-overrides (cond-> {}
                                           prev-next-model (assoc :optimize prev-next-model)
                                           prev-next-reasoning (assoc :reasoning prev-next-reasoning))
-                    resolved-model (resolve-effective-model (:router rlm-env) effective-overrides)
+                    resolved-model (resolve-effective-model (:router environment) effective-overrides)
                     effective-routing (merge (or routing {}) effective-overrides)
                     iteration-result (try
-                                       (iterate/run-iteration rlm-env effective-messages
+                                       (iterate/run-iteration environment effective-messages
                                          {:iteration-spec (if has-reasoning? ITERATION_SPEC_REASONING ITERATION_SPEC_NON_REASONING)
                                           :iteration iteration :reasoning-level reasoning-level
                                           :routing effective-routing
@@ -357,13 +357,13 @@
                         trace-entry {:iteration iteration :error iter-err :final? false}
                         empty-reasoning (when (= :svar.llm/empty-content (:type iter-err))
                                           (:reasoning (:data iter-err)))
-                        err-iter-id (db/store-iteration! (:db-info rlm-env)
+                        err-iter-id (db/store-iteration! (:db-info environment)
                                       {:query-id query-id :vars [] :expressions nil
                                        :thinking empty-reasoning :duration-ms 0 :error iter-err
                                        :llm-messages effective-messages
                                        :llm-model (str (:name resolved-model))
                                        :metadata (iter-metadata)})]
-                    (when-let [a (:current-iteration-id-atom rlm-env)] (reset! a err-iter-id))
+                    (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iter-id))
                     (emit-hook! on-iteration
                       {:iteration iteration :status :error :status-id (status->id :error)
                        :thinking empty-reasoning :expressions nil :final-result nil
@@ -378,13 +378,13 @@
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking expressions final-result next-model next-reasoning]} iteration-result
                         final-answer (when final-result (:answer final-result))
-                        _ (update-system-vars! rlm-env
+                        _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
-                        vars-snapshot (restorable-var-snapshots rlm-env expressions)
+                        vars-snapshot (restorable-var-snapshots environment expressions)
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
                                          :final-result final-result :final-answer final-answer})
-                        iter-id (db/store-iteration! (:db-info rlm-env)
+                        iter-id (db/store-iteration! (:db-info environment)
                                   {:query-id query-id :expressions expressions :vars vars-snapshot
                                    :thinking thinking
                                    :answer (when final-result (iterate/answer-str (:answer final-result)))
@@ -392,7 +392,7 @@
                                    :llm-messages (:llm-messages iteration-result)
                                    :llm-model (:llm-model iteration-result)
                                    :metadata (iter-metadata)})
-                        _ (when-let [a (:current-iteration-id-atom rlm-env)] (reset! a iter-id))
+                        _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iter-id))
                         _ (emit-hook! on-iteration
                             {:iteration iteration
                              :status (cond final-result :final (empty? expressions) :empty :else :success)
@@ -412,6 +412,10 @@
                         (when on-chunk
                           (on-chunk {:iteration iteration :thinking thinking
                                      :code (mapv :code expressions)
+                                     :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (pr-str (:result %))) expressions)
+                                     :stdouts (mapv #(or (:stdout %) "") expressions)
+                                     :durations (mapv #(or (:execution-time-ms %) 0) expressions)
+                                     :successes (mapv #(nil? (:error %)) expressions)
                                      :final {:answer (:answer final-result) :confidence (:confidence final-result)
                                              :iterations (inc iteration) :status :success}
                                      :done? true}))
@@ -432,7 +436,12 @@
                                :times (mapv :execution-time-ms expressions)})
                           (when on-chunk
                             (on-chunk {:iteration iteration :thinking thinking
-                                       :code (mapv :code expressions) :done? false}))
+                                       :code (mapv :code expressions)
+                                       :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (pr-str (:result %))) expressions)
+                                       :stdouts (mapv #(or (:stdout %) "") expressions)
+                                       :durations (mapv #(or (:execution-time-ms %) 0) expressions)
+                                       :successes (mapv #(nil? (:error %)) expressions)
+                                       :done? false}))
                           (let [had-success? (some #(nil? (:error %)) expressions)
                                 next-errors (if had-success? 0 (inc consecutive-errors))
                                 _ (when had-success? (swap! var-index-atom update :current-revision inc))]
@@ -530,8 +539,8 @@
           history-messages       (if last-user-idx
                                    (vec (take last-user-idx messages))
                                    (vec messages))
-          rlm-router             (:router env)
-          root-model             (or (when rlm-router (:name (resolve-effective-model rlm-router))) model)
+          env-router             (:router env)
+          root-model             (or (when env-router (:name (resolve-effective-model env-router))) model)
           db-info                (:db-info env)
           custom-bindings        (loop-core/custom-bindings env)
           current-iteration-atom (atom 0)
@@ -557,16 +566,16 @@
                                      (when val
                                        (sci-env/sci-update-binding! sci-ctx sym val))))
           _                      (sci-env/bump-var-index! env)
-          rlm-env                (assoc env :max-iterations-atom max-iterations-atom)
+          environment            (assoc env :max-iterations-atom max-iterations-atom)
           env-id                 (:env-id env)]
       {:cancel-atom            cancel-atom
        :query-str              query-str
-       :rlm-router             rlm-router
+       :router                 env-router
        :root-model             root-model
        :db-info                db-info
        :current-iteration-atom current-iteration-atom
        :max-iterations-atom    max-iterations-atom
-       :rlm-env                rlm-env
+       :environment             environment
        :env-id                 env-id
        :spec                   spec
        :max-iterations         max-iterations
@@ -587,11 +596,11 @@
 (defn- run-iteration-phase
   "Runs the main iteration loop via run-query!.
    Returns iteration-result, query-id, cost atoms, and merge-cost! fn."
-  [{:keys [rlm-env query-str messages history-messages spec max-iterations
+  [{:keys [environment query-str messages history-messages spec max-iterations
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom db-info
            reasoning-default routing]}]
-  (let [iteration-result (run-query! rlm-env query-str
+  (let [iteration-result (run-query! environment query-str
                            (cond-> {:max-iterations         max-iterations
                                     :output-spec            spec
                                     :max-context-tokens     max-context-tokens

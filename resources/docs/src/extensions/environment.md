@@ -7,6 +7,10 @@ is the runtime map that represents one live conversation context.
 
 ## All Keys
 
+### Conversation-scoped (set at `create-environment` time)
+
+These keys exist on every environment for its entire lifetime:
+
 | Key | Type | Description |
 |-----|------|-------------|
 | `:env-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
@@ -18,11 +22,19 @@ is the runtime map that represents one live conversation context.
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |
 | `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. Bump via `bump-var-index!` after mutating sandbox bindings. |
 | `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for nudges. |
-| `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :rlm-env <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
+| `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :environment <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
 | `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level queries. |
-| `:qa-corpus-atom` | `atom` | QA corpus cache. Internal bookkeeping. |
-| `:max-iterations-atom` | `atom of int` | **Query-scoped.** Live iteration budget — extendable via `request-more-iterations`. |
-| `:current-iteration-id-atom` | `atom` | **Query-scoped.** Entity ID of the most recent `store-iteration!`. Used for sub-RLM parenting. |
+
+### Query-scoped (added by the query engine per turn)
+
+These keys are `assoc`'d onto the environment map when a query starts
+(`query/core.clj :: prepare-query-context`). They do **not** exist on
+the base environment returned by `create-environment`.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `:max-iterations-atom` | `atom of int` | Live iteration budget — extendable via `request-more-iterations`. Reset each query. |
+| `:current-iteration-id-atom` | `atom` | Entity ID of the most recent `store-iteration!`. Used for sub-RLM parenting. Reset each query. |
 | `:parent-iteration-id` | `uuid or nil` | Non-nil for sub-RLM forks. Points to the parent iteration. |
 
 ## Safe Operations

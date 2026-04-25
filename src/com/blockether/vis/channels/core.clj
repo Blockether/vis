@@ -135,6 +135,17 @@
                (.setTimeZone (java.util.TimeZone/getDefault)))
       d)))
 
+(defn format-duration
+  "Format millisecond duration as human-readable. e.g. '2.3s', '1m 15s'."
+  [ms]
+  (when (and ms (pos? ms))
+    (cond
+      (< ms 1000)  (str ms "ms")
+      (< ms 60000) (format "%.1fs" (/ ms 1000.0))
+      :else        (let [m (quot ms 60000)
+                         s (quot (mod ms 60000) 1000)]
+                     (str m "m " s "s")))))
+
 ;;; ── Extension CLI ─────────────────────────────────────────────────────────
 ;;
 ;; Extensions export CLI commands via :ext/cli.

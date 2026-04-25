@@ -51,11 +51,14 @@
                                                                    (str "ERROR: " error)
                                                                    (pr-str result)))
                                                            exprs)
-                                             stdout-strs (mapv #(or (:stdout %) "") exprs)]
-                                         {:thinking (:thinking it)
-                                          :code     (mapv :code exprs)
-                                          :results  result-strs
-                                          :stdouts  stdout-strs})))
+                                             stdout-strs (mapv #(or (:stdout %) "") exprs)
+                                             dur-strs    (mapv #(or (:duration-ms %) 0) exprs)]
+                                         {:thinking  (:thinking it)
+                                          :code      (mapv :code exprs)
+                                          :results   result-strs
+                                          :stdouts   stdout-strs
+                                          :durations dur-strs
+                                          :successes (mapv #(nil? (:error %)) exprs)})))
                                 query-iters)
                         ;; Bake trace into the bubble text so code+results show
                         full-text (if (seq trace)

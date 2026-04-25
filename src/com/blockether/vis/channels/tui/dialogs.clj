@@ -370,6 +370,69 @@
                 (cond (= c \y) true (= c \n) false :else (recur)))
               (recur))))))))
 
+;;; ── Settings dialog ─────────────────────────────────────────────────────────
+
+(defn settings-dialog!
+  "Show a settings dialog with toggleable options.
+   `settings` is a map like `{:show-thinking true :show-iterations true}`.
+   Returns the updated settings map, or nil on Esc."
+  [^TerminalScreen screen settings]
+  (let [options [{:key :show-thinking   :label "Show thinking / reasoning"}
+                 {:key :show-iterations :label "Show iteration trace"}]
+        n       (count options)
+        selected (atom 0)
+        values   (atom (or settings {:show-thinking true :show-iterations true}))
+        cw       (max (+ 6 (apply max (map (comp count :label) options))) (+ (count "Settings") 4))
+        ch       (count options)]
+    (loop []
+      (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols   (.getColumns size)
+            rows   (.getRows size)
+            g      (.newTextGraphics screen)
+            bounds (draw-dialog-chrome! g cols rows "Settings" cw ch)
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds n)]
+
+        (dotimes [i n]
+          (let [opt      (nth options i)
+                row      (+ content-top i)
+                checked? (get @values (:key opt) true)]
+            (when (< row (+ content-top content-h))
+              (draw-checkbox-item! g left row inner-w (= i @selected)
+                checked? (:label opt)))))
+
+        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Space" "toggle"] ["Esc" "done"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+
+        (let [key (.readInput screen)]
+          (when key
+            (condp = (.getKeyType key)
+              KeyType/Escape @values
+
+              KeyType/ArrowUp
+              (do (swap! selected #(clamp (dec %) 0 (max 0 (dec n))))
+                (recur))
+
+              KeyType/ArrowDown
+              (do (swap! selected #(clamp (inc %) 0 (max 0 (dec n))))
+                (recur))
+
+              KeyType/Character
+              (let [c (.getCharacter key)]
+                (if (= c \space)
+                  (let [k (:key (nth options @selected))]
+                    (swap! values update k not)
+                    (recur))
+                  (recur)))
+
+              KeyType/Enter
+              (let [k (:key (nth options @selected))]
+                (swap! values update k not)
+                (recur))
+
+              (recur))))))))
+
 ;;; ── Copy dialog ─────────────────────────────────────────────────────────────
 
 (defn- role-label [role] (name (or role :assistant)))

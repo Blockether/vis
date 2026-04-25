@@ -9,10 +9,9 @@
 | SCI sandbox | `environment :sci-ctx` | Conversation |
 | Extensions | `environment :extensions` | Conversation |
 | Var-index cache | `environment :var-index-atom` | Conversation |
-| QA corpus cache | `environment :qa-corpus-atom` | Conversation |
 | Recursion depth | `environment :depth-atom` | Conversation |
-| Iteration budget | `environment :max-iterations-atom` | Query |
-| Current iteration ref | `environment :current-iteration-id-atom` | Query |
+| Iteration budget | `environment :max-iterations-atom` (query-scoped, assoc'd by query engine) | Query |
+| Current iteration ref | `environment :current-iteration-id-atom` (query-scoped, assoc'd by query engine) | Query |
 | Token usage | `usage-atom` (local in iteration-loop) | Query |
 | Repetition counts | `call-counts-atom` (local in iteration-loop) | Query |
 

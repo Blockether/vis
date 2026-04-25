@@ -4,6 +4,10 @@ Inspired by [Recursive Language Models](https://arxiv.org/abs/2512.24601)
 (Zhang, Kraska & Khattab, 2025). Built from the ground up. Works with
 any text-based model.
 
+The model writes Clojure. A sandboxed [SCI](https://github.com/babashka/sci)
+interpreter executes it. Results flow back as a compact journal. State
+lives in named vars and SQLite, not in the token budget.
+
 ## The Problem
 
 Every coding agent (Claude Code, OpenCode, Pi, Hermes) runs the same loop:

@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+P provider · Ctrl+C quit ")
+(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+P provider · Ctrl+T settings · Ctrl+C quit ")
 
 (defn- with-dialog-lock
   [f]
@@ -42,13 +42,13 @@
 
    This keeps the renderer pure — it never sees the progress atom, only a
    derived `:text` field on the last bubble."
-  [messages progress loading? bubble-w]
+  [messages progress loading? bubble-w settings]
   (if (and loading? (seq messages))
     (let [last-idx (dec (count messages))
           last-msg (get messages last-idx)]
       (if (= :assistant (:role last-msg))
         (assoc messages last-idx
-          (assoc last-msg :text (render/progress->text progress bubble-w)))
+          (assoc last-msg :text (render/progress->text progress bubble-w settings)))
         messages))
     messages))
 
@@ -60,14 +60,14 @@
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box."
-  [screen g cols rows {:keys [messages msg-scroll input progress loading? title]}]
+  [screen g cols rows {:keys [messages msg-scroll input progress loading? title settings]}]
   (let [text-rows   (input-text-rows input)
         input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         input-top   (- rows input-box-h)
         msg-top     0
         msg-bottom  input-top
         bubble-w    (- cols 4)
-        effective-messages (messages-with-progress messages progress loading? bubble-w)]
+        effective-messages (messages-with-progress messages progress loading? bubble-w settings)]
     (render/fill-background! g cols rows)
     (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
@@ -125,7 +125,7 @@
               ;; progress placeholder — otherwise mid-stream the bubble
               ;; grows off-screen and the user can't scroll down to it.
               displayed-messages (messages-with-progress
-                                   (:messages db) (:progress db) (:loading? db) bubble-w)
+                                   (:messages db) (:progress db) (:loading? db) bubble-w (:settings db))
               total-h  (render/total-messages-height displayed-messages bubble-w)]
 
           (render-frame! screen g cols rows db)
@@ -151,6 +151,14 @@
                   (if (:dialog-open? @state/app-db)
                     (recur)
                     (do (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
+                      (recur)))
+
+                  :show-settings
+                  (if (:dialog-open? @state/app-db)
+                    (recur)
+                    (do (when-let [s (with-dialog-lock
+                                      #(dlg/settings-dialog! screen (:settings @state/app-db)))]
+                          (state/dispatch [:update-settings s]))
                       (recur)))
 
                   :send

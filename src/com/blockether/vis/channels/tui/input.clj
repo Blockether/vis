@@ -170,6 +170,8 @@
 
           (and ctrl (= c \y)) {:action :show-copy :state state}
 
+          (and ctrl (= c \t)) {:action :show-settings :state state}
+
           :else {:action :continue :state (insert-char state c)}))
 
       KeyType/Enter
