@@ -144,6 +144,7 @@
 (def ^:const EXECUTION_STDERR_CHARS 2000)
 (def ^:const HANDOVER_KEEP_LAST 2)
 (def ^:const PRIOR_THINKING_MAX_CHARS 4000)
+
 (def PRIOR_THINKING_BREADCRUMB
   "[older reasonings] call `(var-history '*reasoning*)` from :code (oldest first; `take-last N` for a window).")
 
