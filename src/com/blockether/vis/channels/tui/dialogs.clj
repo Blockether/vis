@@ -439,7 +439,6 @@
   "Command palette entries. Each is {:id keyword :label str}."
   [{:id :provider       :label "Provider"}
    {:id :settings       :label "Settings"}
-   {:id :inspect        :label "System Prompt"}
    {:id :copy           :label "Copy Messages"}
    {:id :quit           :label "Quit"}])
 
