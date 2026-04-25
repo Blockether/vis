@@ -11,8 +11,8 @@
    Without Docker/swebench: predictions are still saved, but :correct?
    will be nil. Run the harness manually on the saved predictions.jsonl.
 
-   Agents: :query-env (svar RLM) | :pi (Pi coding agent)
-   Usage: clojure -M:bench -- --bench swebench-verified --agent query-env ..."
+   Agents: :vis (svar RLM) | :pi (Pi coding agent)
+   Usage: clojure -M:bench -- --bench swebench-verified --agent vis ..."
   (:require
    [charred.api :as json]
    [clojure.java.io :as io]
@@ -120,8 +120,8 @@
 ;; Phase 1: Collect predictions
 ;; =============================================================================
 
-(defn- collect-query-env-prediction! [router task model run-ts]
-  (common/run-query-env-task!
+(defn- collect-vis-prediction! [router task model run-ts]
+  (common/run-vis-task!
     {:bench     "swebench-verified"
      :router    router
      :task      task
@@ -169,8 +169,8 @@
         state   (atom {:done 0 :total-duration-ms 0 :total-iterations 0 :results []})
 
         collect-fn (case agent-name
-                     :query-env (fn [task]
-                                  (collect-query-env-prediction! router task model run-ts))
+                     :vis (fn [task]
+                                  (collect-vis-prediction! router task model run-ts))
                      :pi        (fn [task]
                                   (collect-pi-prediction! task pi-model)))]
 
@@ -217,7 +217,7 @@
         (let [s    @state
               done (:done s)
               avg-ms (if (pos? done) (/ (double (:total-duration-ms s)) done) 0.0)
-              avg-iters (when (= agent-name :query-env)
+              avg-iters (when (= agent-name :vis)
                           (/ (double (:total-iterations s)) (max 1 done)))]
           (common/print-progress done total-q 0 0 agent-name avg-iters avg-ms)
           (flush))))
@@ -379,7 +379,7 @@
     (println)
     (println "swebench-verified Benchmark Results")
     (println "=======================")
-    (println (format "Mode:       %s" (if (= agent-name :query-env) "query-env! (RLM)" (str agent-name))))
+    (println (format "Mode:       %s" (if (= agent-name :vis) "vis! (RLM)" (str agent-name))))
     (println (format "Model:      %s" model))
     (println (format "Tasks:      %d/%d" total-q total-q))
     (println (format "Resolved:   %d (%.1f%%)" resolved pct))
@@ -399,7 +399,7 @@
   "Runs SWE-bench Verified benchmark using the official SWE-bench harness.
    opts: :agent :model :provider :limit :offset :router :run-ts"
   [opts]
-  (let [agent-name (get opts :agent :query-env)
+  (let [agent-name (get opts :agent :vis)
         model      (get opts :model "gpt-4o")
         provider   (get opts :provider :blockether)
         router     (:router opts)
@@ -409,8 +409,8 @@
         run-id     (str "svar-" (sanitize-run-id run-ts))
         report-dir (str predictions-root "/" run-id "/report")
 
-        _ (if (and (= agent-name :query-env) (nil? router))
-            (throw (ex-info "Missing :router for query-env agent" {:type :bench/missing-router}))
+        _ (if (and (= agent-name :vis) (nil? router))
+            (throw (ex-info "Missing :router for vis agent" {:type :bench/missing-router}))
             nil)
 
         _ (trove/log! {:level :info :id ::bench-start
@@ -462,7 +462,7 @@
           total-dur  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
           avg-dur    (if (pos? total-q) (/ (double total-dur) total-q) 0.0)
           total-cost (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
-          avg-iters  (when (= agent-name :query-env)
+          avg-iters  (when (= agent-name :vis)
                        (let [iters (keep :iterations predictions)]
                          (when (seq iters)
                            (/ (double (reduce + 0 iters)) (count iters)))))]

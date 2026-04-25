@@ -24,6 +24,11 @@ PLAN.md
 schema-therapy.pdf
 schema-therapy.pageindex/
 
+# Bench trajectories / results / data (large, generated)
+bench/trajectories/
+bench/results/
+bench/data/
+
 # Sessions / runtime data
 .omc/
 .agents/

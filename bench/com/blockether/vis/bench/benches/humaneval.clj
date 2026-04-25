@@ -1,7 +1,7 @@
 (ns com.blockether.vis.bench.benches.humaneval
   "HumanEval benchmark — 164 Python coding tasks.
 
-   Agents: :query-env (svar RLM) | :pi (Pi coding agent)
+   Agents: :vis (svar RLM) | :pi (Pi coding agent)
    Verification: python3 subprocess.
 
    Usage:
@@ -70,8 +70,8 @@
 ;; Agent eval functions
 ;; =============================================================================
 
-(defn- eval-query-env! [router task model run-ts]
-  (common/run-query-env-task!
+(defn- eval-vis! [router task model run-ts]
+  (common/run-vis-task!
     {:bench     "humaneval"
      :router    router
      :task      task
@@ -131,7 +131,7 @@
   "Runs HumanEval benchmark.
    opts: :agent :model :limit :offset :router"
   [opts]
-  (let [agent-name (get opts :agent :query-env)
+  (let [agent-name (get opts :agent :vis)
         model      (get opts :model "gpt-4o")
         provider   (get opts :provider :blockether)
         pi-model   (str (name provider) "/" model)
@@ -140,8 +140,8 @@
         limit      (get opts :limit nil)
         run-ts     (str (java.time.Instant/now))
 
-        _ (if (and (= agent-name :query-env) (nil? router))
-            (throw (ex-info "Missing :router for query-env agent" {:type :bench/missing-router}))
+        _ (if (and (= agent-name :vis) (nil? router))
+            (throw (ex-info "Missing :router for vis agent" {:type :bench/missing-router}))
             nil)
 
         _ (trove/log! {:level :info :id ::bench-start
@@ -157,7 +157,7 @@
         tasks   (vec (cond->> (shuffle filtered) limit (take limit)))
 
         eval-fn (case agent-name
-                  :query-env (fn [task] (eval-query-env! router task model run-ts))
+                  :vis (fn [task] (eval-vis! router task model run-ts))
                   :pi        (fn [task] (eval-pi! task pi-model)))]
 
     (common/run-parallel-bench! "humaneval" agent-name model tasks total-ds eval-fn make-result-rec)))
