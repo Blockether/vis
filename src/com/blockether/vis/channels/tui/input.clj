@@ -166,14 +166,6 @@
 
           (and ctrl (= c \x)) {:action :send :state state}
 
-          (and ctrl (= c \p)) {:action :show-provider :state state}
-
-          (and ctrl (= c \y)) {:action :show-copy :state state}
-
-          (and ctrl (= c \t)) {:action :show-settings :state state}
-
-          (and ctrl (= c \i)) {:action :show-system-prompt :state state}
-
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
           :else {:action :continue :state (insert-char state c)}))

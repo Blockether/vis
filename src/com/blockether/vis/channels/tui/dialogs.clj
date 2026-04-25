@@ -436,21 +436,27 @@
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
 (def palette-commands
-  "Command palette entries. Each is {:id keyword :label str :hint str}."
-  [{:id :provider       :label "Provider"        :hint "Ctrl+P"}
-   {:id :settings       :label "Settings"        :hint "Ctrl+T"}
-   {:id :inspect        :label "System Prompt"   :hint "Ctrl+I"}
-   {:id :copy           :label "Copy Messages"   :hint "Ctrl+Y"}
-   {:id :quit           :label "Quit"            :hint "Ctrl+C"}])
+  "Command palette entries. Each is {:id keyword :label str}."
+  [{:id :provider       :label "Provider"}
+   {:id :settings       :label "Settings"}
+   {:id :inspect        :label "System Prompt"}
+   {:id :copy           :label "Copy Messages"}
+   {:id :quit           :label "Quit"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc."
   [^TerminalScreen screen]
-  (let [items (mapv (fn [{:keys [label hint]}]
-                      {:label (str label "  " hint)})
-                palette-commands)]
-    (when-let [choice (select-dialog! screen "Commands" items)]
-      (:id (nth palette-commands (.indexOf (mapv :label items) (:label choice)))))))
+  (let [items (mapv (fn [cmd] {:label (:label cmd)}) palette-commands)
+        ;; Force a minimum width so the palette feels roomy
+        size  (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+        cols  (.getColumns size)
+        min-w (min (- cols 12) (max 50 (int (* cols 0.45))))
+        padded-items (mapv (fn [{:keys [label]}]
+                             {:label (str label
+                                       (apply str (repeat (max 0 (- min-w (count label))) \space)))})
+                       items)]
+    (when-let [choice (select-dialog! screen "Commands" padded-items)]
+      (:id (nth palette-commands (.indexOf (mapv :label padded-items) (:label choice)))))))
 
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 
