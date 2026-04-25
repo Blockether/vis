@@ -388,9 +388,19 @@
    before the first chunk arrives."
   [progress bubble-w]
   (let [iterations (:iterations progress)
-        content-w  (max 10 (- bubble-w 4))] ;; room for prefix + padding
-    (if (empty? iterations)
-      "thinking..."
+        content-w  (max 10 (- bubble-w 4))]
+    (cond
+      (empty? iterations)
+      "⏳ Waiting for model response..."
+
+      ;; Only thinking, no code yet
+      (and (= 1 (count iterations))
+           (nil? (:code (first iterations)))
+           (some? (:thinking (first iterations))))
+      (let [lines (format-iteration-entry (first iterations) content-w)]
+        (str/join "\n" (cons "🧠 Reasoning..." lines)))
+
+      :else
       (str/join "\n"
         (into []
           (mapcat #(format-iteration-entry % content-w))
@@ -436,14 +446,17 @@
     (draw-box-border! g box-top box-bottom cols " messages ")
     (fill-box-interior! g box-top box-bottom cols)
 
-    ;; Render visible bubbles (clipped to inner area)
-    (doseq [idx (range (count messages))]
-      (let [msg-top    (- (long (nth offsets idx)) eff-scroll)
-            msg-h      (nth heights idx)
-            screen-row (+ text-top msg-top)]
-        ;; Draw only if bubble overlaps the visible viewport
-        (when (and (> (+ msg-top msg-h) 0)
-                (< msg-top inner-h)
-                (< screen-row box-bottom)
-                (>= (+ screen-row msg-h) text-top))
-          (draw-chat-bubble! g (nth messages idx) screen-row (inc t/pad-x) bubble-w))))))
+    ;; Clip to interior so bubbles never overflow into borders or input box
+    (let [clip (.newTextGraphics g
+                 (TerminalPosition. 0 text-top)
+                 (TerminalSize. cols inner-h))]
+      ;; Render visible bubbles inside clipped region
+      ;; Coordinates passed to draw-chat-bubble! are in screen space,
+      ;; but the clip offsets them — so we adjust to clip-local coords.
+      (doseq [idx (range (count messages))]
+        (let [msg-top    (- (long (nth offsets idx)) eff-scroll)
+              msg-h      (nth heights idx)]
+          ;; Draw only if bubble overlaps the visible viewport
+          (when (and (> (+ msg-top msg-h) 0)
+                  (< msg-top inner-h))
+            (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)))))))

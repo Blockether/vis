@@ -4,6 +4,7 @@
             [com.blockether.vis.config :as config]
             [com.blockether.vis.channels.telegram.bot :as telegram]
             [com.blockether.vis.loop.runtime.conversation.core :as conv-core]
+            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.primitives :as p]
             [com.blockether.vis.persistance.core :as db]
             [honey.sql :as sql]
@@ -187,9 +188,8 @@
       (str (subs s 0 (- max-len 1)) "…")
       s)))
 
-(defn- format-date [^java.util.Date d]
-  (when d
-    (.format (java.text.SimpleDateFormat. "dd-MM-yyyy HH:mm") d)))
+(defn- format-date [d]
+  (channels/format-date d))
 
 (defn- print-table!
   "Print a formatted table to stdout!.

@@ -10,7 +10,7 @@
 ;; Boxes (messages + input)
 (def box-bg         (TextColor$RGB. 255 255 255))  ;; white
 (def box-fg         (TextColor$RGB. 30 30 30))     ;; near-black
-(def border-fg      (TextColor$RGB. 140 140 140))  ;; visible mid-gray border
+(def border-fg      (TextColor$RGB. 80 80 80))     ;; dark gray border — very visible
 
 ;; Dialog
 (def dialog-bg       (TextColor$RGB. 248 248 248))  ;; very light gray
@@ -25,13 +25,13 @@
 ;; Chat bubbles — user (white bg, just bordered)
 (def user-bubble-bg    (TextColor$RGB. 255 255 255))  ;; white — same as terminal
 (def user-bubble-fg    (TextColor$RGB. 30 30 30))     ;; near-black text
-(def user-bubble-border (TextColor$RGB. 160 160 160)) ;; visible gray border
+(def user-bubble-border (TextColor$RGB. 120 120 120)) ;; dark gray border
 (def user-role-fg      (TextColor$RGB. 80 80 80))     ;; dark gray "you" label
 
 ;; Chat bubbles — assistant (white bg, just bordered)
 (def ai-bubble-bg      (TextColor$RGB. 255 255 255))  ;; white — same as terminal
 (def ai-bubble-fg      (TextColor$RGB. 30 30 30))     ;; near-black text
-(def ai-bubble-border  (TextColor$RGB. 170 170 170))  ;; visible gray border
+(def ai-bubble-border  (TextColor$RGB. 130 130 130))  ;; dark gray border
 (def ai-role-fg        (TextColor$RGB. 80 160 80))    ;; green "vis" label
 
 ;; Status indicators

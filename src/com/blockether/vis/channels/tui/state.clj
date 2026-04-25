@@ -1,7 +1,8 @@
 (ns com.blockether.vis.channels.tui.state
   "Re-frame-like state management for the TUI.
    Single app-db atom, pure event handlers, side effects via reg-fx."
-  (:require [com.blockether.vis.channels.tui.chat :as chat]
+  (:require [com.blockether.vis.channels.core :as channels]
+            [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]))
@@ -114,7 +115,7 @@
   (fn [db [_ text]]
     {:db (-> db
            (update :messages conj (chat/user-msg text))
-           (update :messages conj (chat/assistant-msg "thinking..."))
+           (update :messages conj (chat/assistant-msg "⏳ Sending request..."))
            (assoc :msg-scroll nil :loading? true
              :progress {:iterations []}
              :query-start-ms (System/currentTimeMillis)))
@@ -149,13 +150,13 @@
 (reg-fx :rlm-query
   (fn [conv text]
     (future
-      (let [on-chunk (conversations/make-on-chunk-projector
-                       {:on-update (fn [timeline _chunk]
-                                     (try (dispatch [:set-progress-iterations
-                                                      (mapv :chunk timeline)])
-                                       (catch Throwable _ nil)))})
-            result   (chat/query! conv text {:on-chunk on-chunk})]
+      (let [{:keys [on-chunk get-timeline]}
+            (channels/make-progress-tracker
+              {:on-update (fn [timeline _chunk]
+                            (try (dispatch [:set-progress-iterations timeline])
+                              (catch Throwable _ nil)))})
+            result (chat/query! conv text {:on-chunk on-chunk})]
         (if (:error result)
-          (dispatch [:message-received (:error result)])
+          (dispatch [:message-received (str "⚠️ Error: " (:error result))])
           (dispatch [:message-received (:answer result)
                       (select-keys result [:model :iterations :duration-ms :tokens])]))))))

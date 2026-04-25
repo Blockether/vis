@@ -472,7 +472,8 @@
 (defn store-iteration!
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
    Returns [:id iteration-uuid]."
-  [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata]}]
+  [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
+                    llm-messages llm-model]}]
   (when (ds db-info)
     (let [iter-id   (UUID/randomUUID)
           iter-id-s (str iter-id)
@@ -502,6 +503,10 @@
                    :query_state_id       query-state-id-s
                    :position             position
                    :status               (normalize-status (cond answer :done error :error :else :done))
+                   :llm_system_prompt    (when (seq llm-messages)
+                                           (:content (first (filter #(= "system" (:role %)) llm-messages))))
+                   :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
+                   :llm_model            llm-model
                    :llm_thinking         (or thinking "")
                    :llm_full_duration_ms (or duration-ms 0)
                    :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
@@ -697,11 +702,15 @@
                    {:value      (<-blob (:result r))
                     :code       (:expr r)
                     :version    (:version r)
+                    :query-id   (->uuid (:query_soul_id r))
                     :created-at (->date (:created_at r))}]))
            (query! db-info
-             {:select [:es.name :est.result :est.expr :est.version :est.created_at]
+             {:select [:es.name :est.result :est.expr :est.version :est.created_at
+                       :qst.query_soul_id]
               :from   [[:expression_soul :es]]
-              :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]]
+              :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
+                       [:iteration :it]         [:= :it.id :est.iteration_id]
+                       [:query_state :qst]      [:= :qst.id :it.query_state_id]]
               :where  [:and
                        [:= :es.conversation_state_id state-id-s]
                        [:= :es.kind "var"]

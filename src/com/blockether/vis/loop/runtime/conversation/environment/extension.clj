@@ -489,8 +489,8 @@
 ;; =============================================================================
 
 (defonce ^:private global-registry
-  "Process-level atom holding all globally registered extensions.
-   Keyed by :ext/namespace to prevent duplicates."
+  ;; Process-level atom holding all globally registered extensions.
+  ;; Keyed by :ext/namespace to prevent duplicates.
   (atom {}))
 
 (defn register-global!

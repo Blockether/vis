@@ -27,12 +27,9 @@
 ;; Shared helpers (inlined from split iteration modules)
 ;; ---------------------------------------------------------------------------
 
-(defn rlm-stage!
-  "Log an iteration lifecycle event."
+(defn log-stage!
   [stage iteration data]
-  (tel/log! {:level :info :id ::rlm-stage
-             :data (merge {:stage stage :iteration iteration
-                           :env-id (:rlm-env-id *rlm-ctx*)} data)}))
+  (tel/log! {:level :info :data (merge {:stage stage :iteration iteration} data)}))
 
 (defn normalize-reasoning-level [v]
   (router/normalize-reasoning-level v))
@@ -442,7 +439,7 @@
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
    Returns map with :thinking :expressions :final-result :api-usage etc."
-  [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level]
+  [rlm-env messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk]
                         :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
@@ -450,17 +447,26 @@
                                   (throw (ex-info "Invalid :reasoning-level."
                                            {:type :rlm/invalid-reasoning-level
                                             :got reasoning-level}))))
+          ;; Stream reasoning chunks to the TUI while the LLM is thinking
+          streaming-fn (when on-chunk
+                         (fn [{:keys [reasoning done?] :as chunk}]
+                           (when (or (some? reasoning) done?)
+                             (on-chunk {:iteration iteration
+                                        :thinking  (some-> reasoning str)
+                                        :code      nil
+                                        :done?     (boolean done?)}))))
           ask-result (binding [llm/*log-context* {:query-id (:env-id rlm-env) :iteration iteration}]
                        (llm/ask! (:router rlm-env)
                          (cond-> {:spec iteration-spec
                                   :messages messages
                                   :routing (or routing {})
                                   :check-context? false}
-                           effective-reasoning (assoc :reasoning effective-reasoning))))
+                           effective-reasoning (assoc :reasoning effective-reasoning)
+                           streaming-fn       (assoc :on-chunk streaming-fn))))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           thinking (or model-reasoning (:thinking parsed))
-          _ (rlm-stage! :llm-response iteration
+          _ (log-stage! :llm-response iteration
               {:has-reasoning (some? model-reasoning)
                :has-final (some? (:final parsed))
                :code-count (count (:code parsed))
@@ -543,7 +549,8 @@
                              [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
                                :error validation-error}])
                :final-result nil :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)}
+               :duration-ms (or (:duration-ms ask-result) 0)
+               :llm-messages messages :llm-model (str resolved-model)}
             (let [sources (vec (or (:sources parsed) []))
                   final-result (cond-> {:final? true
                                         :answer final-answer
@@ -553,7 +560,8 @@
               {:thinking thinking
                :next-model next-model :next-reasoning next-reasoning
                :expressions (strip-noop-expressions expressions) :final-result final-result :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)})))
+               :duration-ms (or (:duration-ms ask-result) 0)
+               :llm-messages messages :llm-model (str resolved-model)})))
         ;; Normal path: execute code blocks
         (let [normalized (vec (:code parsed))
               ;; Coalesce fragments: join unbalanced blocks with the next
@@ -566,12 +574,12 @@
                               (recur (rest remaining) (conj result (first remaining))))))
               total-blocks (count coalesced)
               executed (mapv (fn [idx {:keys [expr time-ms]}]
-                               (rlm-stage! :code-exec iteration
+                               (log-stage! :code-exec iteration
                                  {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms})
                                (let [result (if-let [err (literal-code-block-error expr)]
                                               {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
                                               (let [r (execute-code rlm-env expr :timeout-ms time-ms)]
-                                                (rlm-stage! :code-result iteration
+                                                (log-stage! :code-result iteration
                                                   {:idx (inc idx) :total total-blocks
                                                    :execution-time-ms (:execution-time-ms r)
                                                    :error (:error r) :timeout? (:timeout? r) :result (:result r)})
@@ -594,4 +602,5 @@
           {:thinking thinking
            :next-model next-model :next-reasoning next-reasoning
            :expressions (strip-noop-expressions expressions) :final-result nil :api-usage api-usage
-           :duration-ms (or (:duration-ms ask-result) 0)})))))
+           :duration-ms (or (:duration-ms ask-result) 0)
+           :llm-messages messages :llm-model (str resolved-model)})))))
