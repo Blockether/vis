@@ -1577,7 +1577,10 @@
                                   (try
                                     (when ((:ext/activation-fn ext) environment)
                                       (let [p ((:ext/prompt ext) environment)]
-                                        (when (and (string? p) (not (str/blank? p))) p)))
+                                        (when (and (string? p) (not (str/blank? p)))
+                                          (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+                                            (str "[namespace: " alias-sym " → " ns-sym "]\n" p)
+                                            p))))
                                     (catch Throwable t
                                       (tel/log! {:level :error :id ::ext-prompt-error
                                                  :data (assoc (format-exception-short t)
@@ -2218,27 +2221,36 @@
       (let [ns-sym  (:ext/namespace ext)
             without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
         (conj without ext))))
-  ;; Bind wrapped extension symbols into the SCI sandbox and custom-bindings.
+  ;; Bind extension symbols ONLY into the aliased namespace — never into sandbox.
+  ;; The LLM must always use the alias: (fs/read-file ...), not (read-file ...).
   (let [wrapped (ext/wrap-extension ext environment)
         sci-ctx (:sci-ctx environment)]
-    (doseq [[sym val] wrapped]
-      (sci-env/sci-update-binding! sci-ctx sym val))
-    (when-let [sa (:state-atom environment)]
-      (swap! sa update :custom-bindings merge wrapped))
+    ;; Bind symbols into a dedicated SCI namespace when ns-alias is set.
+    (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+      (let [ext-ns  (sci/create-ns ns-sym)
+            ns-bindings (into {} (map (fn [[sym val]]
+                                        [sym (sci/new-var sym val {:ns ext-ns})]))
+                          wrapped)]
+        ;; Register the namespace and its alias.
+        (swap! (:env sci-ctx) update :namespaces assoc ns-sym ns-bindings)
+        (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))
+      ;; Auto-require the alias in sandbox so the LLM never needs to
+      ;; call (require ...) manually — it just works.
+      (try
+        (sci/eval-string+ sci-ctx
+          (str "(require '[" ns-sym " :as " alias-sym "])")
+          {:ns (sci/find-ns sci-ctx 'sandbox)})
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::ext-alias-require-failed
+                     :data (assoc (format-exception-short t)
+                             :ext (:ext/namespace ext)
+                             :alias alias-sym)}
+            (str "Auto-require of alias '" alias-sym "' failed")))))
     ;; Inject extension-declared Java classes and imports into the SCI context.
     (when-let [classes (seq (:ext/classes ext))]
       (swap! (:env sci-ctx) update :classes merge (into {} classes)))
     (when-let [imports (seq (:ext/imports ext))]
-      (swap! (:env sci-ctx) update :imports merge (into {} imports)))
-    ;; Create a dedicated SCI namespace + alias when :ext/ns-alias is set.
-    ;; This lets the LLM call (fs/read-file ...) in addition to (read-file ...).
-    (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-      (let [ext-ns (sci/create-ns ns-sym)
-            ns-bindings (into {} (map (fn [[sym val]]
-                                        [sym (sci/new-var sym val {:ns ext-ns})]))
-                          wrapped)]
-        (swap! (:env sci-ctx) update :namespaces assoc ns-sym ns-bindings)
-        (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))))
+      (swap! (:env sci-ctx) update :imports merge (into {} imports))))
   environment)
 
 ;; =============================================================================

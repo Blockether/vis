@@ -221,7 +221,11 @@
                                   (try
                                     (when ((:ext/activation-fn ext) environment)
                                       (let [p ((:ext/prompt ext) environment)]
-                                        (when (and (string? p) (not (str/blank? p))) p)))
+                                        (when (and (string? p) (not (str/blank? p)))
+                                          ;; Prepend alias header so the LLM knows the namespace.
+                                          (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+                                            (str "[namespace: " alias-sym " → " ns-sym "]\n" p)
+                                            p))))
                                     (catch Throwable t
                                       (tel/log! {:level :error :id ::ext-prompt-error
                                                  :data (assoc (format-exception-short t)

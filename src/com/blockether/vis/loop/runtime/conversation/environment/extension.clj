@@ -187,13 +187,21 @@
     #(symbol? (:ns %))
     #(symbol? (:alias %))))
 
+(defn- ns-alias-required-when-symbols?
+  "When :ext/symbols is non-empty, :ext/ns-alias must be present."
+  [ext]
+  (or (empty? (:ext/symbols ext))
+      (some? (:ext/ns-alias ext))))
+
 (s/def ::extension
-  (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
-                :ext/activation-fn :ext/prompt :ext/symbols
-                :ext/classes :ext/imports]
-    :opt [:ext/nudge-fn :ext/requires
-          :ext/version :ext/author :ext/license
-          :ext/cli :ext/ns-alias]))
+  (s/and
+    (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
+                  :ext/activation-fn :ext/prompt :ext/symbols
+                  :ext/classes :ext/imports]
+      :opt [:ext/ns-alias :ext/nudge-fn :ext/requires
+            :ext/version :ext/author :ext/license
+            :ext/cli])
+    ns-alias-required-when-symbols?))
 
 ;; =============================================================================
 ;; Symbol helper
@@ -473,7 +481,8 @@
      :ext/symbols        — required, vector of symbol entries
      :ext/classes        — optional, {fq-symbol → Class}, default {}
      :ext/imports        — optional, {short-symbol → fq-symbol}, default {}
-     :ext/ns-alias       — optional, {:ns 'vis.ext.fs :alias 'fs}
+     :ext/ns-alias       — required when :ext/symbols is non-empty,
+                           {:ns 'vis.ext.fs :alias 'fs}
                            Creates a dedicated SCI namespace with an alias
                            so the LLM can call (fs/read-file ...) in addition
                            to (read-file ...). Symbols are always also bound
