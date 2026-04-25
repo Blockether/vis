@@ -174,6 +174,8 @@
 
           (and ctrl (= c \i)) {:action :show-system-prompt :state state}
 
+          (and ctrl (= c \k)) {:action :show-palette :state state}
+
           :else {:action :continue :state (insert-char state c)}))
 
       KeyType/Enter

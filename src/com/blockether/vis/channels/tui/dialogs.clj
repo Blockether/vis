@@ -433,6 +433,25 @@
 
               (recur))))))))
 
+;;; ── Command palette ─────────────────────────────────────────────────────────
+
+(def palette-commands
+  "Command palette entries. Each is {:id keyword :label str :hint str}."
+  [{:id :provider       :label "Provider"        :hint "Ctrl+P"}
+   {:id :settings       :label "Settings"        :hint "Ctrl+T"}
+   {:id :inspect        :label "System Prompt"   :hint "Ctrl+I"}
+   {:id :copy           :label "Copy Messages"   :hint "Ctrl+Y"}
+   {:id :quit           :label "Quit"            :hint "Ctrl+C"}])
+
+(defn command-palette!
+  "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc."
+  [^TerminalScreen screen]
+  (let [items (mapv (fn [{:keys [label hint]}]
+                      {:label (str label "  " hint)})
+                palette-commands)]
+    (when-let [choice (select-dialog! screen "Commands" items)]
+      (:id (nth palette-commands (.indexOf (mapv :label items) (:label choice)))))))
+
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 
 (defn text-viewer-dialog!

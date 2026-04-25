@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+P provider · Ctrl+T settings · Ctrl+I inspect · Ctrl+C quit ")
+(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+K commands ")
 
 (defn- with-dialog-lock
   [f]
@@ -173,41 +173,47 @@
               (do (Thread/sleep 16) (recur))
               (let [{:keys [action state]} (input/handle-key key (:input db))]
                 (state/dispatch [:update-input state])
-                (case action
+                (let [run-command!
+                      (fn [cmd]
+                        (when-not (:dialog-open? @state/app-db)
+                          (case cmd
+                            :provider
+                            (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                              (state/dispatch [:set-config c]))
+
+                            :copy
+                            (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
+
+                            :settings
+                            (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
+                              (state/dispatch [:update-settings s]))
+
+                            :inspect
+                            (with-dialog-lock
+                              #(let [conv-id (get-in @state/app-db [:conv :id])
+                                     prompt  (when conv-id
+                                               (or (:system-prompt (conversations/by-id conv-id))
+                                                 "(no system prompt)"))]
+                                 (dlg/text-viewer-dialog! screen "System Prompt" (or prompt "(no conversation)"))))
+
+                            :quit nil  ;; handled separately
+                            nil)))]
+                  (case action
                   :quit nil
 
-                  :show-provider
-                  (if (:dialog-open? @state/app-db)
-                    (recur)
-                    (do
-                      (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                        (state/dispatch [:set-config c]))
-                      (recur)))
+                  :show-provider       (do (run-command! :provider) (recur))
+                  :show-copy           (do (run-command! :copy) (recur))
+                  :show-settings       (do (run-command! :settings) (recur))
+                  :show-system-prompt  (do (run-command! :inspect) (recur))
 
-                  :show-copy
+                  :show-palette
                   (if (:dialog-open? @state/app-db)
                     (recur)
-                    (do (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
-                      (recur)))
-
-                  :show-settings
-                  (if (:dialog-open? @state/app-db)
-                    (recur)
-                    (do (when-let [s (with-dialog-lock
-                                      #(dlg/settings-dialog! screen (:settings @state/app-db)))]
-                          (state/dispatch [:update-settings s]))
-                      (recur)))
-
-                  :show-system-prompt
-                  (if (:dialog-open? @state/app-db)
-                    (recur)
-                    (do (with-dialog-lock
-                          #(let [conv-id (get-in @state/app-db [:conv :id])
-                                 prompt  (when conv-id
-                                           (or (:system-prompt (conversations/by-id conv-id))
-                                             "(no system prompt)"))]
-                             (dlg/text-viewer-dialog! screen "System Prompt" (or prompt "(no conversation)"))))
-                      (recur)))
+                    (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
+                      (if (= cmd :quit)
+                        nil
+                        (do (when cmd (run-command! cmd))
+                          (recur)))))
 
                   :send
                   (let [text (input/input->text state)]
@@ -226,7 +232,7 @@
                   (do (state/dispatch [:scroll-down 3 total-h inner-h])
                     (recur))
 
-                  :continue (recur)))))))
+                  :continue (recur))))))))
       (finally
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
