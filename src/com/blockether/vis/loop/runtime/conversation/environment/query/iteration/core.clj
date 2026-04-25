@@ -377,7 +377,6 @@
       (str/join "\n" parts))))
 
 (defn store-iteration! [env opts]
-  (rt-shared/validate! ::rt-shared/iteration-store-opts opts)
   (db/store-iteration! (:db-info env) opts))
 
 ;; ---------------------------------------------------------------------------

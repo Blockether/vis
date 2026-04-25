@@ -5,12 +5,7 @@
 
 (s/def ::env map?)
 (s/def ::non-blank-string (s/and string? (complement clojure.string/blank?)))
-(s/def ::iteration-store-opts map?)
 
-(defn validate! [spec v]
-  (when-not (s/valid? spec v)
-    (throw (ex-info "Validation failed" {:spec spec :value v :explain (s/explain-data spec v)})))
-  v)
 
 (defn truncate
   ([s n]

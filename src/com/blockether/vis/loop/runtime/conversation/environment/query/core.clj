@@ -423,8 +423,10 @@
 (defn run-query!
   "Store query → iteration-loop → update query → return result."
   [env query loop-opts]
-  (rt-shared/validate! ::rt-shared/env env)
-  (rt-shared/validate! ::rt-shared/non-blank-string query)
+  (when-not (map? env)
+    (throw (ex-info "run-query! requires an env map" {:got (type env)})))
+  (when (clojure.string/blank? query)
+    (throw (ex-info "run-query! requires a non-blank query string" {:got query})))
   (let [query-id (db/store-query! (:db-info env)
                    {:parent-conversation-id (:conversation-id env)
                     :query query
