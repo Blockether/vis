@@ -17,7 +17,7 @@ is the runtime map that represents one live conversation context.
 | `:sandbox-ns` | `SCI ns` | The `'sandbox` namespace object. Used internally by `eval-string+`. |
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |
 | `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. Bump via `bump-var-index!` after mutating sandbox bindings. |
-| `:extensions` | `atom of vector` | All registered extensions. Appended to by `register-extension!`. Read by the iteration loop for nudges. |
+| `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for nudges. |
 | `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :rlm-env <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
 | `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level queries. |
 | `:qa-corpus-atom` | `atom` | QA corpus cache. Internal bookkeeping. |
