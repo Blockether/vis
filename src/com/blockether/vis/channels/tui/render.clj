@@ -347,37 +347,34 @@
 
 ;;; ── Progress timeline formatting ───────────────────────────────────────────
 
-(def ^:private progress-code-prefix "❯ ")
-(def ^:private progress-thinking-prefix "  ")
-
-(defn- truncate-single-line
-  "Collapse multi-line text to a single line (first non-blank) and cap length."
-  [s max-len]
-  (when (string? s)
-    (let [first-line (->> (str/split-lines s)
-                       (map str/trim)
-                       (remove str/blank?)
-                       first)]
-      (when first-line
-        (if (> (count first-line) max-len)
-          (str (subs first-line 0 (max 0 (- max-len 1))) "…")
-          first-line)))))
+(defn- truncate-line [s max-len]
+  (let [s (str s)]
+    (if (> (count s) max-len)
+      (str (subs s 0 (max 0 (- max-len 1))) "...")
+      s)))
 
 (defn- format-iteration-entry
-  "Format one iteration's thinking + code into display lines.
-   Thinking lines get the thinking-marker prefix for italic rendering."
-  [{:keys [thinking code]} code-width]
+  "Format one iteration's thinking + code + results into display lines.
+   Thinking lines get the thinking-marker prefix for italic rendering.
+   Code lines are shown in full (wrapped). Results follow each code block."
+  [{:keys [thinking code results]} code-width]
   (let [thinking-lines (when (and (string? thinking) (not (str/blank? thinking)))
                          (mapv #(str thinking-marker "> " %)
                            (wrap-text (str/trim thinking)
                              (max 1 (- code-width 2)))))
-        code-lines    (when (seq code)
-                        (into []
-                          (keep (fn [form]
-                                  (when-let [one (truncate-single-line form code-width)]
-                                    (str progress-code-prefix one))))
-                          code))]
-    (into (or thinking-lines []) code-lines)))
+        code+result-lines
+        (when (seq code)
+          (into []
+            (mapcat
+              (fn [idx form]
+                (let [code-lines (mapv #(truncate-line % code-width)
+                                  (str/split-lines (str/trim (or form ""))))
+                      result-str (when results (get results idx))
+                      result-lines (when (and result-str (not (str/blank? (str result-str))))
+                                     [(truncate-line (str "-> " (str/trim (str result-str))) code-width)])]
+                  (concat code-lines result-lines))))
+            (range) code))]
+    (into (or thinking-lines []) code+result-lines)))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
