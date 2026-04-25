@@ -8,10 +8,8 @@
             [taoensso.telemere :as tel]))
 
 (defn build-system-prompt
-  [{:keys [system-prompt has-reasoning?]}]
-  (str (or system-prompt "You are a helpful coding assistant.")
-    (when has-reasoning?
-      "\nUse concise iterative reasoning and finalize when ready.")))
+  [{:keys [system-prompt]}]
+  (or system-prompt ""))
 
 ;; ---------------------------------------------------------------------------
 ;; Nudges — system nudge composers used by iteration prompt assembly
