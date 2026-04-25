@@ -434,7 +434,7 @@
 ;; Forward-declared so `build-iteration-context` can call them — the
 ;; concrete bodies live further down in this file next to the other
 ;; rendering helpers (they depend on vars defined later).
-(declare read-var-index-str read-user-var-count format-expression-results)
+(declare read-var-index-str read-user-var-count format-expression-results register-extension!)
 
 (defn build-iteration-context
   "Assemble the trailing user message appended to the base prompt on

@@ -14,8 +14,8 @@
 (defonce cache (atom {}))
 
 (defn cache-env! [id env]
-  (swap! cache assoc id {:env env :lock (Object.)})
-  {:id id :env env})
+  (swap! cache assoc id {:environment env :lock (Object.)})
+  {:id id :environment env})
 
 (defn make-on-chunk-projector
   ([] (make-on-chunk-projector nil))
@@ -51,7 +51,7 @@
         (fn [m]
           (if (contains? m id)
             m
-            (assoc m id {:env env :lock (Object.)}))))
+            (assoc m id {:environment env :lock (Object.)}))))
       (get @cache id))))
 
 (defonce ^:private shared-db (atom nil))
@@ -110,20 +110,20 @@
 
 (defn env-for
   [id]
-  (:env (ensure-env! id)))
+  (:environment (ensure-env! id)))
 
 (defn send!
   ([id messages] (send! id messages {}))
   ([id messages opts]
-   (let [{:keys [env lock]} (ensure-env! id)
+   (let [{:keys [environment lock]} (ensure-env! id)
          msgs (if (string? messages) [(llm/user messages)] messages)]
      (locking lock
-       (query-core/query! env msgs opts)))))
+       (query-core/query! environment msgs opts)))))
 
 (defn close!
   [id]
-  (when-let [{:keys [env]} (clojure.core/get @cache id)]
-    (try (loop-core/dispose-environment! env) (catch Exception _ nil)))
+  (when-let [{:keys [environment]} (clojure.core/get @cache id)]
+    (try (loop-core/dispose-environment! environment) (catch Exception _ nil)))
   (swap! cache dissoc id))
 
 (defn delete!
@@ -151,8 +151,8 @@
 
 (defn close-all!
   []
-  (doseq [[_ {:keys [env]}] @cache]
-    (try (loop-core/dispose-environment! env) (catch Exception _ nil)))
+  (doseq [[_ {:keys [environment]}] @cache]
+    (try (loop-core/dispose-environment! environment) (catch Exception _ nil)))
   (reset! cache {})
   (when-let [d @shared-db]
     (try (db/dispose-rlm-conn! d) (catch Exception _ nil))

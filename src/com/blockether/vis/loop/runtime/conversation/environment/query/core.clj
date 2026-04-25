@@ -39,6 +39,13 @@
   []
   (reset! router-atom nil))
 
+(defn rebuild-router!
+  "Rebuild the router from the given config. Used when provider settings change."
+  [config]
+  (let [r (llm/make-router (:providers config))]
+    (reset! router-atom r)
+    r))
+
 (defn ask!
   [opts]
   (llm/ask! (get-router) opts))
@@ -171,7 +178,7 @@
   "The core iteration loop. Runs N iterations of: assemble → ask LLM → execute → persist."
   [rlm-env query
    {:keys [output-spec max-context-tokens system-prompt
-           pre-fetched-context query-id history-messages
+           query-id history-messages
            max-iterations max-consecutive-errors max-restarts
            hooks cancel-atom current-iteration-atom
            reasoning-default routing]}]
@@ -189,9 +196,7 @@
         system-prompt (prompt/build-system-prompt
                         {:has-reasoning? has-reasoning?
                          :system-prompt system-prompt})
-        initial-user-content (str "{:requirement " (pr-str query)
-                               (when pre-fetched-context (str "\n :plan " (pr-str pre-fetched-context)))
-                               "}")
+        initial-user-content query
         initial-messages (iterate/assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
@@ -245,7 +250,7 @@
           (when current-iteration-atom (reset! current-iteration-atom iteration))
           (cond
             (when cancel-atom @cancel-atom)
-            (do (iterate/rlm-stage! :error iteration {:reason :cancelled})
+            (do (iterate/log-stage! :error iteration {:reason :cancelled})
               (emit-hook! on-cancel {:iteration iteration :status :cancelled
                                      :status-id (status->id :cancelled)} "on-cancel hook threw")
               (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
@@ -258,7 +263,7 @@
                   fallback (str "⚠️ Iteration limit (" iteration "/" max-iter ") reached.\n\n"
                              (when last-thinking (str "**Last reasoning:**\n\n" (truncate last-thinking 800) "\n\n"))
                              "**What to try:** Rephrase more narrowly.")]
-              (iterate/rlm-stage! :error iteration {:reason :max-iterations :max max-iter})
+              (iterate/log-stage! :error iteration {:reason :max-iterations :max max-iter})
               (merge {:answer fallback
                       :status :max-iterations :status-id (status->id :max-iterations)
                       :trace trace :iterations iteration} (finalize-cost)))
@@ -269,9 +274,8 @@
                 (let [failed (->> trace (filter :error) (take 3)
                                (map #(str "- " (get-in % [:error :message] (str (:error %)))))
                                (str/join "\n"))
-                      hint (str "{:strategy-restart true\n :errors " (pr-str failed)
-                             "\n :instruction \"Start fresh with a DIFFERENT strategy.\"\n :requirement "
-                             (pr-str query) "}")
+                      hint (str "Previous attempts failed with these errors:\n" failed
+                             "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " query)
                       msgs [{:role "system" :content system-prompt} {:role "user" :content hint}]]
                   (recur (merge loop-state {:iteration (inc iteration) :messages msgs
                                             :trace trace :consecutive-errors 0 :restarts (inc restarts)}
@@ -288,7 +292,7 @@
               (let [reasoning-level (when has-reasoning?
                                       (or prev-next-reasoning
                                         (iterate/reasoning-level-for-errors base-reasoning-level consecutive-errors)))
-                    _ (iterate/rlm-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
+                    _ (iterate/log-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
                     prior-thinking-body (iterate/build-prior-thinking rlm-env db-info query-id)
                     cross-query-handover (when (zero? iteration)
                                            (iterate/build-cross-query-handover
@@ -320,7 +324,8 @@
                                          {:iteration-spec (if has-reasoning? ITERATION_SPEC_REASONING ITERATION_SPEC_NON_REASONING)
                                           :iteration iteration :reasoning-level reasoning-level
                                           :routing effective-routing
-                                          :resolved-model resolved-model})
+                                          :resolved-model resolved-model
+                                          :on-chunk on-chunk})
                                        (catch Exception e
                                          (iterate/handle-iteration-exception! e
                                            {:iteration iteration :messages effective-messages
@@ -335,7 +340,9 @@
                         err-iter-id (iterate/store-iteration! rlm-env
                                       {:query-id query-id :vars [] :expressions nil
                                        :thinking empty-reasoning :duration-ms 0 :error iter-err
-                       :metadata (iter-metadata)})]
+                                       :llm-messages effective-messages
+                                       :llm-model (str (:name resolved-model))
+                                       :metadata (iter-metadata)})]
                     (when-let [a (:current-iteration-id-atom rlm-env)] (reset! a err-iter-id))
                     (emit-hook! on-iteration
                       {:iteration iteration :status :error :status-id (status->id :error)
@@ -362,6 +369,8 @@
                                    :thinking thinking
                                    :answer (when final-result (iterate/answer-str (:answer final-result)))
                                    :duration-ms (or (:duration-ms iteration-result) 0)
+                                   :llm-messages (:llm-messages iteration-result)
+                                   :llm-model (:llm-model iteration-result)
                                    :metadata (iter-metadata)})
                         _ (when-let [a (:current-iteration-id-atom rlm-env)] (reset! a iter-id))
                         _ (emit-hook! on-iteration
@@ -374,10 +383,10 @@
                         trace-entry {:iteration iteration :thinking thinking
                                      :expressions expressions :final? (boolean final-result)}]
                     (if final-result
-                      (do (iterate/rlm-stage! :final iteration
+                      (do (iterate/log-stage! :final iteration
                             {:answer (truncate (iterate/answer-str (:answer final-result)) 200)
                              :confidence (:confidence final-result) :iterations (inc iteration)})
-                        (iterate/rlm-stage! :iter-end iteration
+                        (iterate/log-stage! :iter-end iteration
                           {:blocks (count expressions) :errors (count (filter :error expressions))
                            :times (mapv :execution-time-ms expressions)})
                         (when on-chunk
@@ -392,13 +401,13 @@
                           (finalize-cost)))
 
                       (if (empty? expressions)
-                        (do (iterate/rlm-stage! :empty iteration {})
-                          (iterate/rlm-stage! :iter-end iteration {:blocks 0 :errors 0 :times []})
+                        (do (iterate/log-stage! :empty iteration {})
+                          (iterate/log-stage! :iter-end iteration {:blocks 0 :errors 0 :times []})
                           (recur (merge loop-state
                                    {:iteration (inc iteration) :trace (conj trace trace-entry)
                                     :prev-next-model next-model :prev-next-reasoning next-reasoning})))
 
-                        (do (iterate/rlm-stage! :iter-end iteration
+                        (do (iterate/log-stage! :iter-end iteration
                               {:blocks (count expressions) :errors (count (filter :error expressions))
                                :times (mapv :execution-time-ms expressions)})
                           (when on-chunk
@@ -615,7 +624,7 @@
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
       (do
-        (loop-core/rlm-stage! :query-end 0
+        (iterate/log-stage! :query-end 0
           {:duration-ms duration-ms :iterations iterations :status status})
         (let [fallback-answer (:result answer answer)]
           (try
@@ -640,7 +649,7 @@
             (some? locals) (assoc :locals locals))))
       ;; success path
       (do
-        (loop-core/rlm-stage! :query-end 0
+        (iterate/log-stage! :query-end 0
           {:duration-ms duration-ms :iterations iterations
            :cost (str (:total-cost cost-with-model))})
         (try
@@ -717,7 +726,7 @@
                rlm-spec/*concurrency*           merged-concurrency]
        (tel/with-ctx+ {:db-info db-info
                        :conversation-soul-id (some-> environment :conversation-id second)}
-         (loop-core/rlm-stage! :query-start 0
+         (iterate/log-stage! :query-start 0
            {:model root-model
             :max-iterations max-iterations
             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))

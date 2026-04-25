@@ -205,7 +205,7 @@
    ~/.vis/config.edn takes priority. Falls back to BLOCKETHER_* env vars."
   []
   (or (some-> (load-config-raw)
-        ((fn [raw] (when (vector? (:providers raw)) raw))))
+        ((fn [raw] (when (seq (:providers raw)) raw))))
     (blockether-env-config)))
 
 (defn save-config!

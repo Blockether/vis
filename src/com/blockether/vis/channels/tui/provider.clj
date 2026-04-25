@@ -3,6 +3,7 @@
    Config I/O and data helpers live in tui/config.clj."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.channels.tui.dialogs :as dlg]
             [com.blockether.vis.channels.tui.primitives :as p]
@@ -111,29 +112,34 @@
     (select-model! screen (config/provider-base-url provider) (:api-key provider) defaults)))
 
 (defn- add-provider!
-  [^TerminalScreen screen]
-  (when-let [preset (dlg/select-dialog! screen "Add Provider" (config/provider-presets))]
-    (let [pid        (:id preset)
-          base-url   (:base-url preset)
-          has-key?   (some? (:api-key preset))
-          needs-key? (not (or has-key? (= pid :ollama)))
-          raw-key    (cond
-                       has-key?   (:api-key preset)
-                       needs-key? (dlg/text-input-dialog! screen
-                                    (str (:label preset) " Setup")
-                                    "API Key:"
-                                    :mask \*)
-                       :else nil)
-          api-key    (when-not (str/blank? raw-key) raw-key)]
-      (when (or (not needs-key?) api-key)
-        (when-let [model (select-provider-model! screen (cond-> {:id (:id preset)
-                                                                 :base-url base-url
-                                                                 :default-models (:default-models preset)}
-                                                          api-key (assoc :api-key api-key)))]
-          (cond-> {:id (:id preset)
-                   :base-url base-url
-                   :models [{:name model}]}
-            api-key (assoc :api-key api-key)))))))
+  "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
+  [^TerminalScreen screen existing-ids]
+  (let [available (vec (remove #(contains? existing-ids (:id %)) (config/provider-presets)))]
+    (if (empty? available)
+      (do (dlg/confirm-dialog! screen "Add Provider" "All providers already configured.") nil)
+      (when-let [preset (dlg/select-dialog! screen "Add Provider" available)]
+        (let [pid        (:id preset)
+              base-url   (:base-url preset)
+              has-key?   (some? (:api-key preset))
+              needs-key? (not (or has-key? (= pid :ollama)))
+              raw-key    (cond
+                           has-key?   (:api-key preset)
+                           needs-key? (dlg/text-input-dialog! screen
+                                        (str (:label preset) " Setup")
+                                        "API Key:"
+                                        :mask \*)
+                           :else nil)
+              api-key    (when-not (str/blank? raw-key) raw-key)]
+          (when (or (not needs-key?) api-key)
+            (when-let [model (select-provider-model! screen (cond-> {:id (:id preset)
+                                                                     :base-url base-url
+                                                                     :default-models (:default-models preset)}
+                                                              api-key (assoc :api-key api-key)))]
+              (cond-> {:id (:id preset)
+                       :base-url base-url
+                       :models [{:name model}]}
+                api-key (assoc :api-key api-key)))))))))
+
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,

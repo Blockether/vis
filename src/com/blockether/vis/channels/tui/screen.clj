@@ -1,5 +1,6 @@
 (ns com.blockether.vis.channels.tui.screen
   (:require [clojure.string :as str]
+            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.channels.tui.dialogs :as dlg]
@@ -13,7 +14,8 @@
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
            [java.nio.charset Charset]))
 
-(def ^:private input-height 5)
+(def ^:private input-min-lines 3)
+(def ^:private input-max-lines 8)
 (def ^:private hint " Enter send · Alt+Enter newline · Ctrl+P provider · Ctrl+C quit ")
 
 (defn- with-dialog-lock
@@ -25,7 +27,9 @@
       (state/dispatch [:set-dialog-open false]))))
 
 (defn- screen-size [^TerminalScreen screen]
-  (or (.doResizeIfNecessary screen)
+  (if-let [new-size (.doResizeIfNecessary screen)]
+    (do (.refresh screen Screen$RefreshType/COMPLETE)
+        new-size)
     (.getTerminalSize screen)))
 
 (defn- messages-with-progress
@@ -47,10 +51,17 @@
         messages))
     messages))
 
+(defn- input-text-rows
+  "Compute visible text rows for the input box based on content."
+  [{:keys [lines]}]
+  (let [n (count lines)]
+    (min input-max-lines (max input-min-lines n))))
+
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box."
   [screen g cols rows {:keys [messages msg-scroll input progress loading?]}]
-  (let [input-box-h (+ input-height 2)
+  (let [text-rows   (input-text-rows input)
+        input-box-h (+ text-rows 2)
         input-top   (- rows input-box-h)
         msg-top     0
         msg-bottom  input-top
@@ -58,7 +69,7 @@
         effective-messages (messages-with-progress messages progress loading? bubble-w)]
     (render/fill-background! g cols rows)
     (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll)
-    (let [[cx cy] (render/draw-input-box! g input input-top input-height cols hint)]
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (.refresh screen Screen$RefreshType/DELTA)))
 
@@ -92,7 +103,8 @@
                 (or (chat/resume-conversation cid)
                     (throw (ex-info (str "Conversation not found: " cid) {:id cid})))
                 (chat/make-conversation config))]
-          (state/dispatch [:init-conversation {:id id} history])))
+          (state/dispatch [:init-conversation {:id id} history])
+          (channels/register-conversation-shutdown-hook! id)))
 
       (loop []
         (let [db    @state/app-db
@@ -101,7 +113,8 @@
               rows  (.getRows size)
               g     (.newTextGraphics screen)
               bubble-w (- cols 4)
-              inner-h  (- (- rows (+ input-height 2)) 0 1)
+              text-rows (input-text-rows (:input db))
+              inner-h  (- (- rows (+ text-rows 2)) 0 1)
               ;; Scroll math must account for the (possibly expanded)
               ;; progress placeholder — otherwise mid-stream the bubble
               ;; grows off-screen and the user can't scroll down to it.
@@ -111,13 +124,10 @@
 
           (render-frame! screen g cols rows db)
 
-          ;; pollInput while loading (non-blocking), readInput otherwise
-          (let [key (if (:loading? db)
-                      (.pollInput screen)
-                      (.readInput screen))]
+          ;; Always poll (non-blocking) so terminal resize is detected immediately.
+          (let [key (.pollInput screen)]
             (if (nil? key)
-              ;; No input — sleep briefly and re-render (keeps UI alive during loading)
-              (do (Thread/sleep 50) (recur))
+              (do (Thread/sleep 16) (recur))
               (let [{:keys [action state]} (input/handle-key key (:input db))]
                 (state/dispatch [:update-input state])
                 (case action
@@ -158,12 +168,7 @@
 
                   :continue (recur)))))))
       (finally
-        (let [conv-id (some-> @state/app-db :conv :id)]
-          (when-let [conv (:conv @state/app-db)]
-            (chat/dispose! conv))
-          (.setMouseCaptureMode terminal nil)
-          (.stopScreen screen)
-          (when conv-id
-            (.println config/original-stdout
-              (str "\nResume this conversation with:\n"
-                   "  vis chat --conversation-id " conv-id "\n")))))))))
+        (when-let [conv (:conv @state/app-db)]
+          (chat/dispose! conv))
+        (.setMouseCaptureMode terminal nil)
+        (.stopScreen screen))))))
