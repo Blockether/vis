@@ -41,6 +41,46 @@ dependency order.
 Drop the jar on the classpath → namespace loads → extension
 self-registers → every new environment gets it.
 
+### Auto-Discovery from Classpath (recommended)
+
+Extensions can be discovered **automatically** without any manual
+`require`. Place a `META-INF/vis/extensions.edn` file in your
+extension’s `resources/` directory:
+
+```edn
+[com.acme.ext.git
+ com.acme.ext.search]
+```
+
+When `create-environment` runs, it calls `discover-extensions!` which:
+
+1. Scans the classpath for **all** `META-INF/vis/extensions.edn` files
+   (via `ClassLoader.getResources`)
+2. Reads each file as a vector of namespace symbols
+3. `require`s each namespace (triggering its `register-global!` call)
+4. Skips namespaces that are already registered
+5. Logs every success at `:info` and every failure at `:error`
+
+This means: add the extension jar/local-root to your deps.edn aliases,
+ensure it has a `META-INF/vis/extensions.edn` in its resources, and
+it will be loaded automatically. No imports, no requires, no wiring.
+
+**Directory layout for an extension:**
+
+```
+extensions/my-ext/
+├── deps.edn                         ;; {:paths ["src" "resources"] ...}
+├── resources/
+│   └── META-INF/vis/extensions.edn   ;; [com.acme.ext.my-tool]
+└── src/com/acme/ext/my_tool.clj     ;; calls register-global! at load time
+```
+
+**deps.edn alias:**
+
+```clojure
+:run {:extra-deps {com.acme.ext/my-tool {:local/root "extensions/my-ext"}}}
+```
+
 ### Dynamic Loading
 
 An extension can load other extensions at runtime:
@@ -65,18 +105,37 @@ For extensions that shouldn't be global.
 
 ```mermaid
 flowchart TD
+    Discover["0. discover-extensions!<br/>scan META-INF/vis/extensions.edn"] --> Build
     Build["1. Build extension<br/>ext/extension {...}"] --> Global
     Global["2. register-global!<br/>or register-extension!"] --> Topo
     Topo["3. Topo-sort by ext/requires"] --> Deps
     Deps{"4. Dependencies met?"}
     Deps -->|yes| Install["5. Install into environment"]
     Deps -->|no| Fail(["Throws missing-dependencies"])
-    Install --> Activate
-    Activate{"6. Per-query<br/>activation-fn?"}
-    Activate -->|active| Nudge["7. Per-iteration<br/>nudge-fn called"]
+    Install --> Prompt["6. ext/prompt appended<br/>to system prompt"]
+    Prompt --> Activate
+    Activate{"7. Per-query<br/>activation-fn?"}
+    Activate -->|active| Nudge["8. Per-iteration<br/>nudge-fn called"]
     Activate -->|inactive| Skip(["Symbols unbound<br/>nudge skipped"])
-    Nudge --> Hooks["8. Per-call hooks<br/>before-fn, fn, after-fn"]
+    Nudge --> Hooks["9. Per-call hooks<br/>before-fn, fn, after-fn"]
 ```
+
+## Prompt Injection
+
+Every active extension’s `:ext/prompt` is appended to the **system
+prompt** at the start of each query. This is how the LLM knows which
+tools are available in the sandbox.
+
+At query start:
+1. Base system prompt is assembled
+2. For each extension where `(:ext/activation-fn ext) environment` is truthy:
+   - `(:ext/prompt ext) environment` is called
+   - If it returns a non-blank string, it’s appended
+3. All active prompts are joined with `\n\n` and appended to the system prompt
+
+If an extension’s `activation-fn` or `prompt` fn throws, the error is
+logged at `:error` level (with the unified `format-exception-short`
+format) and that extension’s prompt is skipped — the query still runs.
 
 ## Quick Example
 

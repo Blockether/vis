@@ -2,8 +2,6 @@
   <img src="logo.png" alt="Vis logo" width="200">
 </p>
 
-# Vis
-
 **A from-the-ground-up coding agent inspired by
 [Recursive Language Models](https://arxiv.org/abs/2512.24601) (Zhang,
 Kraska & Khattab, 2025). Works with any text-based model.**
@@ -29,7 +27,6 @@ else is one function call away.
 | **[Architecture](architecture/overview.md)** | How the layers fit together |
 | **[Iteration Flow](architecture/iteration-flow.md)** | Step-by-step: message to answer |
 | **[Extensions](extensions/overview.md)** | How to extend the agent with tools and nudges |
-| **[Public API](reference/api.md)** | `create-environment`, `query!`, `register-extension!` |
 | **[Database](architecture/database.md)** | Entity tree and SQLite schema |
 
 ## Rules for Contributors

@@ -1,5 +1,11 @@
 # Extension Spec
 
+## Auto-Discovery
+
+Extensions are auto-discovered from `META-INF/vis/extensions.edn` on
+the classpath. See [Overview — Auto-Discovery](overview.md#auto-discovery-from-classpath-recommended)
+for the full convention.
+
 ## `extension` — build and validate
 
 ```clojure

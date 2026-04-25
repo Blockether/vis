@@ -1570,6 +1570,24 @@
                                             :system-prompt system-prompt
                                             :max-context-tokens max-context-tokens
                                             :env environment})
+        ;; Append active extension prompts to the system prompt.
+        ext-prompts   (when-let [exts (some-> (:extensions environment) deref seq)]
+                        (->> exts
+                          (keep (fn [ext]
+                                  (try
+                                    (when ((:ext/activation-fn ext) environment)
+                                      (let [p ((:ext/prompt ext) environment)]
+                                        (when (and (string? p) (not (str/blank? p))) p)))
+                                    (catch Throwable t
+                                      (tel/log! {:level :error :id ::ext-prompt-error
+                                                 :data (assoc (format-exception-short t)
+                                                         :ext (:ext/namespace ext))}
+                                        (str "Extension '" (:ext/namespace ext) "' prompt/activation failed"))
+                                      nil))))
+                          seq))
+        system-prompt (if ext-prompts
+                        (str system-prompt "\n\n" (str/join "\n\n" ext-prompts))
+                        system-prompt)
         initial-user-content query
         initial-messages (assemble-initial-messages
                            {:system-prompt system-prompt
@@ -2151,6 +2169,8 @@
                      :data {:error (ex-message t)
                             :conversation-id conversation-id}
                      :msg "Failed to restore sandbox from DB — starting with empty sandbox"}))))
+    ;; Auto-discover extensions from META-INF/vis/extensions.edn on classpath.
+    (ext/discover-extensions!)
     ;; Install all globally registered extensions in dependency order.
     (ext/register-extensions! env register-extension!)
     env))
@@ -2198,6 +2218,18 @@
       (let [ns-sym  (:ext/namespace ext)
             without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
         (conj without ext))))
+  ;; Bind wrapped extension symbols into the SCI sandbox and custom-bindings.
+  (let [wrapped (ext/wrap-extension ext environment)
+        sci-ctx (:sci-ctx environment)]
+    (doseq [[sym val] wrapped]
+      (sci-env/sci-update-binding! sci-ctx sym val))
+    (when-let [sa (:state-atom environment)]
+      (swap! sa update :custom-bindings merge wrapped))
+    ;; Inject extension-declared Java classes and imports into the SCI context.
+    (when-let [classes (seq (:ext/classes ext))]
+      (swap! (:env sci-ctx) update :classes merge (into {} classes)))
+    (when-let [imports (seq (:ext/imports ext))]
+      (swap! (:env sci-ctx) update :imports merge (into {} imports))))
   environment)
 
 ;; =============================================================================

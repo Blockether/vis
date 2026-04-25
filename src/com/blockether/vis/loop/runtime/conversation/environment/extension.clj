@@ -655,3 +655,57 @@
                     :data {:ext ns-sym :env-id (:env-id environment)}
                     :msg (str "Hot-swapped '" ns-sym "' into environment " (:env-id environment))})))
      ext)))
+
+;; =============================================================================
+;; Classpath auto-discovery
+;; =============================================================================
+
+(def ^:private EXTENSIONS_RESOURCE "META-INF/vis/extensions.edn")
+
+(defn discover-extensions!
+  "Scan the classpath for `META-INF/vis/extensions.edn` resources.
+
+   Each file contains a vector of namespace symbols, e.g.:
+     [com.blockether.vis.ext.editing
+      com.acme.ext.git]
+
+   Every discovered namespace is `require`d (which triggers its
+   `register-global!` call). Already-registered namespaces are
+   skipped. Returns the count of newly loaded extensions.
+
+   Convention: drop a `META-INF/vis/extensions.edn` into your
+   extension's resources/ and it will be picked up automatically
+   on any classpath that includes it — no manual `require` needed."
+  []
+  (let [urls  (try
+                (enumeration-seq
+                  (.getResources
+                    (.getContextClassLoader (Thread/currentThread))
+                    EXTENSIONS_RESOURCE))
+                (catch Exception _ nil))
+        already (into #{} (keys @global-registry))
+        loaded  (atom 0)]
+    (doseq [^java.net.URL url urls]
+      (try
+        (let [content (slurp url)
+              ns-syms (clojure.edn/read-string content)]
+          (when (and (sequential? ns-syms) (seq ns-syms))
+            (doseq [ns-sym ns-syms]
+              (when (and (symbol? ns-sym) (not (contains? already ns-sym)))
+                (try
+                  (require ns-sym)
+                  (swap! loaded inc)
+                  (tel/log! {:level :info :id ::discover-ext
+                             :data {:ext ns-sym :source (str url)}
+                             :msg (str "Auto-discovered extension '" ns-sym "' from " url)})
+                  (catch Throwable t
+                    (tel/log! {:level :error :id ::discover-ext-failed
+                               :data {:ext ns-sym :source (str url)
+                                      :class (.getName (class t))
+                                      :message (ex-message t)}
+                               :msg (str "Failed to load auto-discovered extension '" ns-sym "': " (ex-message t))})))))))
+        (catch Throwable t
+          (tel/log! {:level :error :id ::discover-ext-parse-failed
+                     :data {:source (str url) :message (ex-message t)}
+                     :msg (str "Failed to parse " url ": " (ex-message t))}))))
+    @loaded))

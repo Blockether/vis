@@ -224,12 +224,11 @@
       (dlg/ellipsize (str "   ★ " root-name "  " suffix) text-w))))
 
 (defn- draw-model-card!
-  [g left row inner-w idx selected? is-root? provider-id model]
+  [g left row inner-w idx selected? is-root? _provider-id model]
   (let [model-name   (:name model)
         text-w       (max 0 (- inner-w 2))
         text-x       (+ left 2)
-        root-mark    (if is-root? "* " "  ")
-        provider-line (str "  " (or (some-> provider-id name) "provider"))
+        root-mark    (if is-root? "★ " "  ")
         bg           (if selected? t/dialog-title-bg t/dialog-bg)]
     (p/set-bg! g bg)
     (doseq [r (range card-rows)]
@@ -238,8 +237,10 @@
     (p/styled g [p/BOLD]
       (p/put-str! g text-x row
         (dlg/ellipsize (str root-mark (or model-name (str "model-" (inc idx)))) text-w)))
-    (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-hint))
-    (p/put-str! g text-x (inc row) (dlg/ellipsize provider-line text-w))))
+    ;; Line 2: root indicator hint only
+    (when is-root?
+      (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-hint))
+      (p/put-str! g text-x (inc row) (dlg/ellipsize "   primary model" text-w)))))
 
 (defn- move-model-to-front
   [models idx]

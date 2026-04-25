@@ -6,6 +6,13 @@ src/com/blockether/vis/
 │                                     (create-environment, query!,
 │                                      dispose-environment!)
 ├── config.clj                        config I/O, provider presets
+├── logging.clj                       Telemere setup: console + SQLite
+│                                     DB handler (auto-persists signals)
+│
+├── providers/
+│   └── github_copilot.clj            GitHub Copilot OAuth device flow,
+│                                     token exchange, auto-refresh,
+│                                     VS Code / env var / keychain detection
 │
 ├── loop/
 │   ├── core.clj                      environment lifecycle + code eval
@@ -36,6 +43,7 @@ src/com/blockether/vis/
 │
 ├── persistance/
 │   ├── core.clj                      public persistence API (delegates to sqlite)
+│   ├── base.clj                      shared persistence helpers (ds, now-ms, ->id)
 │   ├── spec.clj                      iteration specs, constants, dynamic vars
 │   └── sqlite/
 │       └── core.clj                  SQLite implementation (HoneySQL)

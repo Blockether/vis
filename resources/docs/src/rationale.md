@@ -93,7 +93,7 @@ sequenceDiagram
 | **Context at iter 50** | All 50 iterations accumulated | Same size as iter 1 |
 | **Compaction** | Required | Never needed |
 | **Ops per LLM call** | N tools (harness-dispatched) | N code blocks (LLM-composed, async-native via futures) |
-| **API requirement** | `function_calling` / `tool_use` | Any model that outputs JSON |
+| **API requirement** | `function_calling` / `tool_use` | Any text-based model |
 | **State** | In context window only | Named vars + SQLite |
 | **Async** | Harness decides parallelism | LLM decides via `future`/`deref`/`pmap` |
 | **Security** | Permission prompts / trust policies | Deny-by-default sandbox, extensions grant access |
