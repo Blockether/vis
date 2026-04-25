@@ -29,7 +29,12 @@
 
 (defn- screen-size [^TerminalScreen screen]
   (if-let [new-size (.doResizeIfNecessary screen)]
-    (do (.refresh screen Screen$RefreshType/COMPLETE)
+    (do (try (.refresh screen Screen$RefreshType/COMPLETE)
+          (catch NullPointerException _
+            ;; Lanterna buffer may have null cells after resize before first
+            ;; full render.  DELTA is safe because it only touches dirty cells.
+            (try (.refresh screen Screen$RefreshType/DELTA)
+              (catch Exception _ nil))))
         new-size)
     (.getTerminalSize screen)))
 
@@ -38,13 +43,20 @@
    that carry a :trace, and replace the live placeholder with progress text.
    This runs every frame so toggling settings is immediately reactive."
   [messages progress loading? bubble-w settings]
-  (let [;; Apply trace→text projection to every assistant msg with :trace
+  (let [;; Apply trace→text projection and markdown to assistant messages
         projected (mapv (fn [msg]
-                          (if (and (= :assistant (:role msg)) (:trace msg))
+                          (cond
+                            ;; Has trace: full iteration + answer rendering
+                            (and (= :assistant (:role msg)) (:trace msg))
                             (assoc msg :text
                               (render/format-answer-with-thinking
                                 (:raw-answer msg) (:trace msg) bubble-w settings))
-                            msg))
+                            ;; Plain assistant message: apply markdown
+                            (= :assistant (:role msg))
+                            (assoc msg :text
+                              (render/format-answer-markdown (:text msg) bubble-w))
+                            ;; User messages: unchanged
+                            :else msg))
                     messages)]
     ;; Replace loading placeholder with live progress
     (if (and loading? (seq projected))
@@ -80,7 +92,9 @@
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
-   Optional `opts` map: {:conversation-id uuid-string} to resume."
+   Optional `opts` map:
+     :conversation-id uuid-string — resume a specific conversation
+     :resume          true        — resume the latest :vis conversation"
   ([] (run-chat! {}))
   ([opts]
   (state/init!)
@@ -107,10 +121,29 @@
               (if-let [cid (:conversation-id opts)]
                 (or (chat/resume-conversation cid)
                     (throw (ex-info (str "Conversation not found: " cid) {:id cid})))
-                (chat/make-conversation config))
+                (if (:resume opts)
+                  ;; --resume: pick up the latest :vis conversation
+                  (if-let [latest (first (conversations/by-channel :vis))]
+                    (or (chat/resume-conversation (:id latest))
+                        (chat/make-conversation config))
+                    (chat/make-conversation config))
+                  (chat/make-conversation config)))
               ;; Set title from DB if resuming, else nil (auto-set on first turn)
               conv-info (when-let [c (conversations/by-id id)] c)
-              title     (when conv-info (:title conv-info))]
+              db-title  (when conv-info (:title conv-info))
+              ;; Backfill title from first user message if conversation has
+              ;; history but no persisted title (pre-title-feature conversations).
+              title     (or (when-not (str/blank? db-title) db-title)
+                            (when-let [first-user (->> history
+                                                    (filter #(= :user (:role %)))
+                                                    first
+                                                    :text)]
+                              (when-not (str/blank? first-user)
+                                (let [t (subs first-user 0 (min (count first-user) 80))]
+                                  (future
+                                    (try (conversations/set-title! id t)
+                                      (catch Throwable _ nil)))
+                                  t))))]
           (state/dispatch [:init-conversation {:id id} history])
           (when (and title (not (str/blank? title)))
             (state/dispatch [:set-title title]))

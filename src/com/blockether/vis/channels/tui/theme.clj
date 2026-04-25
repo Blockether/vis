@@ -52,7 +52,7 @@
 (def stdout-fg         (TextColor$RGB. 80 80 80))     ;; dim text in stdout
 (def stdout-label-fg   (TextColor$RGB. 155 155 155))  ;; muted "stdout" label
 (def stdout-sep-fg     (TextColor$RGB. 210 205 195))  ;; separator in stdout (warm)
-(def iter-header-fg    (TextColor$RGB. 120 120 120))  ;; iteration header label
+(def iter-header-fg    (TextColor$RGB. 170 170 170))  ;; iteration header label (subtle)
 (def iter-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
 (def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
 (def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
