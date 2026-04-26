@@ -298,9 +298,9 @@
                       hint (str "Previous attempts failed with these errors:\n" failed
                              "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " query)
                       msgs [{:role "system" :content system-prompt} {:role "user" :content hint}]]
-                  (recur (merge loop-state {:iteration (inc iteration) :messages msgs
-                                            :trace trace :consecutive-errors 0 :restarts (inc restarts)}
-                           FRESH_ITER_CARRY)))
+                  (recur (assoc loop-state
+                           :iteration (inc iteration) :messages msgs
+                           :trace trace :consecutive-errors 0 :restarts (inc restarts))))
                 (let [errs (->> trace reverse (keep :error) (take 3)
                              (map #(str "- " (or (:message %) (str %)))) (str/join "\n"))
                       fallback (str "Warning: Too many errors (" consecutive-errors ") across "
@@ -369,12 +369,11 @@
                       {:iteration iteration :status :error :status-id (status->id :error)
                        :thinking empty-reasoning :expressions nil :final-result nil
                        :error iter-err :duration-ms 0} "on-iteration (error)")
-                    (recur (merge loop-state
-                             {:iteration (inc iteration)
-                              :messages (conj messages {:role "user" :content error-feedback})
-                              :trace (conj trace trace-entry)
-                              :consecutive-errors (inc consecutive-errors) :restarts restarts}
-                             FRESH_ITER_CARRY)))
+                    (recur (assoc loop-state
+                             :iteration (inc iteration)
+                             :messages (conj messages {:role "user" :content error-feedback})
+                             :trace (conj trace trace-entry)
+                             :consecutive-errors (inc consecutive-errors) :restarts restarts)))
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking expressions final-result next-model next-reasoning]} iteration-result

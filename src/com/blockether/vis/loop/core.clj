@@ -1859,13 +1859,12 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                 (tel/log! {:level :info :data {:iteration iteration :restarts (inc restarts)
                                                  :errors consecutive-errors}
                              :msg "Strategy restart — resetting with anti-knowledge"})
-                (recur (merge loop-state
-                         {:iteration          (inc iteration)
-                          :messages           restart-messages
-                          :trace              trace
-                          :consecutive-errors 0
-                          :restarts           (inc restarts)}
-                         FRESH_ITER_CARRY)))
+                (recur (assoc loop-state
+                         :iteration          (inc iteration)
+                         :messages           restart-messages
+                         :trace              trace
+                         :consecutive-errors 0
+                         :restarts           (inc restarts))))
               (do (tel/log! {:level :warn :data {:iteration iteration :consecutive-errors consecutive-errors
                                                    :restarts restarts}
                                :msg "Error budget exhausted — too many consecutive errors across restarts. Simplify your code or break the task into smaller steps."})
@@ -1991,12 +1990,11 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                       :duration-ms 0}
                      "on-iteration hook threw (error branch) — swallowing")
                   (recur (merge loop-state
-                           {:iteration          (inc iteration)
-                            :messages           (conj messages {:role "user" :content error-feedback})
-                            :trace              (conj trace trace-entry)
-                            :consecutive-errors (inc consecutive-errors)
-                            :restarts           restarts}
-                           FRESH_ITER_CARRY)))
+                           :iteration          (inc iteration)
+                           :messages           (conj messages {:role "user" :content error-feedback})
+                           :trace              (conj trace trace-entry)
+                           :consecutive-errors (inc consecutive-errors)
+                           :restarts           restarts)))
                 ;; Normal path — accumulate token usage
                 (let [_ (accumulate-usage! (:api-usage iteration-result))
                       {:keys [thinking expressions final-result next-model next-reasoning forget]} iteration-result
