@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · ↑↓ history · Ctrl+Y copy · Ctrl+K commands ")
+(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+↑↓ history · Ctrl+K commands ")
 
 (defn- with-dialog-lock
   [f]
@@ -108,10 +108,15 @@
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)
-    ;; Disable mouse capture so the terminal handles scroll natively.
-    ;; Without this, Lanterna intercepts mouse wheel events and the
-    ;; terminal never sees them — scroll doesn't work.
-    (.setMouseCaptureMode terminal nil)
+    ;; Enable normal mouse tracking (?1000h) for scroll + click.
+    ;; Lanterna auto-adds ?1005h (UTF-8 ext) on UTF-8 terminals, which
+    ;; breaks Shift+Drag native selection in many emulators. We disable
+    ;; ?1005 and enable ?1006 (SGR) instead — SGR properly respects
+    ;; Shift+Drag bypass for native text selection.
+    (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE)
+    (let [^java.io.OutputStream out @config/tty-out]
+      (.write out (.getBytes "\u001b[?1005l\u001b[?1006h"))
+      (.flush out))
     (try
       ;; Show provider dialog on first launch if no config
       (when-not (:config @state/app-db)
@@ -265,4 +270,9 @@
       (finally
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
+        ;; Disable SGR mouse ext before resetting mouse mode.
+        (let [^java.io.OutputStream out @config/tty-out]
+          (.write out (.getBytes "\u001b[?1006l"))
+          (.flush out))
+        (.setMouseCaptureMode terminal nil)
         (.stopScreen screen))))))

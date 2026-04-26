@@ -37,6 +37,9 @@
 ;; Status indicators
 (def status-ok  (TextColor$RGB. 40 160 60))    ;; green
 (def status-bad (TextColor$RGB. 220 50 50))    ;; red
+(def warning-bg (TextColor$RGB. 255 245 180))  ;; soft yellow warning background
+(def warning-fg (TextColor$RGB. 80 60 0))      ;; dark amber warning text
+(def warning-border (TextColor$RGB. 190 150 40)) ;; amber warning border
 
 ;; Code block styling
 (def code-block-bg     (TextColor$RGB. 240 243 248))  ;; light blue-gray — code blocks
