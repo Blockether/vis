@@ -411,8 +411,7 @@ EVERY ITERATION:
 
   STEP 2 — COMPUTE in :code. State the missing piece as a CLAIM and verify it.
     `(doc fn)` for tool docs. `(shape x)` for schema-only view of any value.
-    CRITICAL: if a `[system_nudge]` says the budget is nearly exhausted but more work is genuinely needed,
-    call `(request-more-iterations N)` IMMEDIATELY from :code instead of pretending you can finish in time.
+    CRITICAL: always follow `[system_nudge]` instructions exactly when they appear.
 
   STEP 3 — PERSIST or DON'T:
     • One-shot value used only this iter         → bare expression in :code, no def.
@@ -647,7 +646,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
    State (all optional):
      :iteration              — 0-indexed iteration number.
      :current-max-iterations — LIVE cap (includes extensions granted
-                               via `request-more-iterations`). Pairs
+                               via budget extension). Pairs
                                with `:iteration` for the always-on
                                `[iter N/M]` header and for the budget
                                nudges.
@@ -1680,7 +1679,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
         ;; Adaptive budget: if environment has a max-iterations-atom (set by vis!),
-        ;; read from it so the LLM can extend its own budget via (request-more-iterations n).
+        ;; read from it so the LLM can extend its own budget via system nudge.
         ;; Otherwise use the static max-iterations parameter.
         max-iter-atom (:max-iterations-atom environment)
         effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
@@ -1827,7 +1826,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                                 (map :thinking)
                                 (filter #(and (string? %) (not (str/blank? %))))
                                 first)
-                fallback-answer (str "⚠️ Iteration limit reached (" iteration "/" max-iter
+                fallback-answer (str "Warning: Iteration limit reached (" iteration "/" max-iter
                                   ") without finalizing.\n\n"
                                   (when last-thinking
                                     (str "**Last reasoning step:**\n\n"
@@ -1875,7 +1874,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                                       (take 3)
                                       (map (fn [e] (str "- " (or (:message e) (str e)))))
                                       (str/join "\n"))
-                      fallback-answer (str "⚠️ Too many consecutive errors (" consecutive-errors
+                      fallback-answer (str "Warning: Too many consecutive errors (" consecutive-errors
                                         ") across " (inc restarts) " restart attempt"
                                         (when (not= restarts 0) "s")
                                         ". Giving up.\n\n"

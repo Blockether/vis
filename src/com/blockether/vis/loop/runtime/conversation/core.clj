@@ -184,7 +184,7 @@
   ([db]
    (let [orphans (try (db/db-list-queries-by-status db :running)
                    (catch Exception _ []))
-         answer  "⚠️ Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."]
+         answer  "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."]
      (doseq [{:keys [id iterations duration-ms]} orphans]
        (try
          (db/update-query! db id

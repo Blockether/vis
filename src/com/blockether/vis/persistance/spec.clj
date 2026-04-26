@@ -11,11 +11,10 @@
    [java.util Base64]))
 
 (def MAX_ITERATIONS
-  "Default iteration budget per query. Deliberately tight (4) — the LLM
-   starts lean and calls `(request-more-iterations n)` when it genuinely
-   needs more. Most simple queries finalize in 1-2 iterations; complex
-   multi-step tasks request additional budget on demand. There is NO cap
-   on how high the budget can grow — the LLM is trusted to manage it."
+  "Default iteration budget per query. Deliberately tight (4). Most simple
+   queries finalize in 1-2 iterations. When the budget is nearly exhausted
+   a system nudge tells the LLM how to extend it on demand. There is no
+   cap on how high the budget can grow."
   4)
 
 (def DEFAULT_EVAL_TIMEOUT_MS

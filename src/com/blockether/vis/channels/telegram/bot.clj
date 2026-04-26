@@ -59,7 +59,7 @@
                            :data {:sender sender :chat-id chat-id :error (ex-message e)}
                            :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (str "⚠️ " (conversations/error->user-message e)))
+                     (str "Warning: " (conversations/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]

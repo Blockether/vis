@@ -281,7 +281,7 @@
             (let [max-iter (effective-max-iterations)
                   last-thinking (some->> trace reverse (map :thinking)
                                   (filter #(and (string? %) (not (str/blank? %)))) first)
-                  fallback (str "⚠️ Iteration limit (" iteration "/" max-iter ") reached.\n\n"
+                  fallback (str "Warning: Iteration limit (" iteration "/" max-iter ") reached.\n\n"
                              (when last-thinking (str "**Last reasoning:**\n\n" (truncate last-thinking 800) "\n\n"))
                              "**What to try:** Rephrase more narrowly.")]
               (iterate/log-stage! :error iteration {:reason :max-iterations :max max-iter})
@@ -303,7 +303,7 @@
                            FRESH_ITER_CARRY)))
                 (let [errs (->> trace reverse (keep :error) (take 3)
                              (map #(str "- " (or (:message %) (str %)))) (str/join "\n"))
-                      fallback (str "⚠️ Too many errors (" consecutive-errors ") across "
+                      fallback (str "Warning: Too many errors (" consecutive-errors ") across "
                                  (inc restarts) " restart(s).\n\n"
                                  (when-not (str/blank? errs) (str "**Recent errors:**\n\n" errs "\n\n")))]
                   (merge {:answer fallback
@@ -721,8 +721,8 @@
    `opts` - Map, optional:
      - :spec - Output spec for structured answers.
      - :model - Override config's default model.
-     - :max-iterations - Initial iteration budget (default: 4). The LLM
-       can extend on demand via (request-more-iterations n) — no cap.
+     - :max-iterations - Initial iteration budget (default: 4). No cap —
+       system nudges tell the LLM how to extend when needed.
       - :max-context-tokens - Token budget for context.
       - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
         code evaluation, LLM responses at :info level with :rlm-phase context.

@@ -19,6 +19,56 @@
 (def ^:private default-read-char-limit 1500)
 (def ^:private default-respect-gitignore? true)
 
+;; =============================================================================
+;; Error rescue helpers
+;; =============================================================================
+
+(defn- absolute->relative
+  "Strip CWD prefix from an absolute path to make it relative."
+  [^String path]
+  (let [cwd (System/getProperty "user.dir")]
+    (if (str/starts-with? path cwd)
+      (let [rel (subs path (inc (count cwd)))]
+        (if (str/blank? rel) "." rel))
+      ;; Not under CWD — try stripping leading /
+      (str/replace path #"^/+" ""))))
+
+(defn- rescue-path-args
+  "on-error-fn: if the error is about a non-relative path, retry with
+   the path made relative. Works for any tool whose first arg is a path."
+  [err _env f args]
+  (let [msg (ex-message err)]
+    (if (and msg (or (str/includes? msg "not a relative path")
+                     (str/includes? msg "Path escapes working directory")))
+      (let [fixed-path (absolute->relative (str (first args)))]
+        {:fn f :args (vec (cons fixed-path (rest args)))})
+      {:error err})))
+
+(defn- rescue-grep-args
+  "on-error-fn: rescue common grep mistakes — bad regex escapes and
+   absolute paths. Retries with fixed arguments."
+  [err _env f args]
+  (let [msg (ex-message err)]
+    (cond
+      ;; Bad escape like \| — SCI/edamame rejects it before we even see it,
+      ;; but if the pattern string arrives with literal backslash-pipe,
+      ;; RE2/J will reject it too. Strip the backslashes.
+      (and msg (str/includes? msg "Unsupported escape character"))
+      (let [fixed-pattern (str/replace (str (first args)) #"\\\\([|(){}\[\].+*?^$])" "$1")]
+        {:fn f :args (vec (cons fixed-pattern (rest args)))})
+
+      ;; Absolute path in the second arg
+      (and msg (or (str/includes? msg "not a relative path")
+                   (str/includes? msg "Path escapes working directory")))
+      (let [fixed-args (if (>= (count args) 2)
+                         (vec (cons (first args)
+                                (cons (absolute->relative (str (second args)))
+                                  (drop 2 args))))
+                         args)]
+        {:fn f :args fixed-args})
+
+      :else {:error err})))
+
 (defn- safe-path
   "Resolve path relative to CWD. Rejects traversal outside CWD."
   ^java.io.File [^String path]
@@ -398,7 +448,8 @@ RULES:
         {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
          :arglists '([path] [path offset] [path offset limit])
          :examples ["(fs/read-file \"src/core.clj\")"
-                    "(fs/read-file \"big.log\" 100 50)"]})
+                    "(fs/read-file \"big.log\" 100 50)"]
+         :on-error-fn rescue-path-args})
       (ext/symbol 'list-files list-files
         {:doc "List files/dirs as structured maps {:name :path :type :size :hidden?}. One level by default. Respects .gitignore by default. Positional args only."
          :arglists '([] [path] [path recursive?] [path recursive? hidden?] [path recursive? hidden? respect-gitignore?])
@@ -406,7 +457,8 @@ RULES:
                     "(fs/list-files \"src\")"
                     "(fs/list-files \"src\" true)"
                     "(fs/list-files \"src\" true true)"
-                    "(fs/list-files \"src\" true true false)"]})
+                    "(fs/list-files \"src\" true true false)"]
+         :on-error-fn rescue-path-args})
       (ext/symbol 'grep-files grep-files
         {:doc "Search files with RE2/J (linear-time regex, ReDoS-safe). Always returns structured maps. Respects .gitignore by default. Positional args only."
          :arglists '([pattern] [pattern path] [pattern path limit] [pattern path limit hidden?] [pattern path limit hidden? respect-gitignore?])
@@ -414,12 +466,14 @@ RULES:
                     "(fs/grep-files \"defn\" \"src\")"
                     "(fs/grep-files \"defn|defmacro\" \"src\" 50)"
                     "(fs/grep-files \"defn\" \"src\" 50 true)"
-                    "(fs/grep-files \"defn\" \"src\" 50 true false)"]})
+                    "(fs/grep-files \"defn\" \"src\" 50 true false)"]
+         :on-error-fn rescue-grep-args})
       (ext/symbol 'patch-file patch-file
         {:doc "Patch an existing file. Preferred form is Codex-style SEARCH/REPLACE patch text; old 3-arg exact replacement remains supported. Use empty SEARCH to create a new file."
          :arglists '([path patch-text] [path old-text new-text])
          :examples ["(fs/patch-file \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
                     "(fs/patch-file \"src/core.clj\" \"old code\" \"new code\")"
-                    "(fs/patch-file \"new-file.txt\" \"<<<<<<< SEARCH\n=======\nhello\n>>>>>>> REPLACE\")"]})]}))
+                    "(fs/patch-file \"new-file.txt\" \"<<<<<<< SEARCH\n=======\nhello\n>>>>>>> REPLACE\")"]
+         :on-error-fn rescue-path-args})]}))
 
 (ext/register-global! editing-extension)
