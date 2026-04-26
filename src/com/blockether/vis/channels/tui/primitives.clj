@@ -63,10 +63,16 @@
 
 ;;; ── Text ───────────────────────────────────────────────────────────────────
 
+(defn- sanitize-for-lanterna
+  "Strip control characters (0x00-0x1F except tab/newline) that Lanterna
+   rejects with IllegalArgumentException. Replaces them with spaces."
+  ^String [^String s]
+  (.replaceAll s "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " "))
+
 (defn put-str!
-  "Draw a string at (col, row)."
+  "Draw a string at (col, row). Control characters are sanitized."
   [g col row text]
-  (.putString g (int col) (int row) (str text))
+  (.putString g (int col) (int row) (sanitize-for-lanterna (str text)))
   g)
 
 (defn set-char!

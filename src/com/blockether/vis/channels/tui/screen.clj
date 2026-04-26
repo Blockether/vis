@@ -11,13 +11,12 @@
             [com.blockether.vis.loop.runtime.conversation.core :as conversations])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
-           [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
            [java.nio.charset Charset]))
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+↑↓ history · Ctrl+K commands ")
+(def ^:private hint " Enter send · Alt+Enter newline · ↑↓ scroll · Ctrl+P/N history · Ctrl+K commands ")
 
 (defn- with-dialog-lock
   [f]
@@ -108,11 +107,6 @@
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)
-    ;; Mouse capture OFF. When enabled, Lanterna intercepts mouse wheel
-    ;; events and the terminal can't scroll. Raw escape sequences also
-    ;; leak as garbage characters into the input box. Leave mouse
-    ;; handling entirely to the terminal.
-    (.setMouseCaptureMode terminal nil)
     (try
       ;; Show provider dialog on first launch if no config
       (when-not (:config @state/app-db)
@@ -198,7 +192,7 @@
                             (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
                               (state/dispatch [:update-settings s]))
 
-                            :inspect
+                            :system-prompt
                             (with-dialog-lock
                               #(let [conv-id (get-in @state/app-db [:conv :id])
                                      msgs    (:messages @state/app-db)
@@ -239,10 +233,6 @@
 
                   :history-down
                   (do (state/dispatch [:history-down])
-                    (recur))
-
-                  :inspect
-                  (do (run-command! :inspect)
                     (recur))
 
                   :send

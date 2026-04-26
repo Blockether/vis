@@ -167,6 +167,10 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
+          ;; Ctrl+P / Ctrl+N — input history (Emacs-style)
+          (and ctrl (= c \p)) {:action :history-up :state state}
+          (and ctrl (= c \n)) {:action :history-down :state state}
+
           :else {:action :continue :state (insert-char state c)}))
 
       KeyType/Enter
@@ -174,30 +178,17 @@
         {:action :continue :state (insert-newline state)}
         {:action :send :state state})
 
-      KeyType/F2         {:action :inspect :state state}
+      KeyType/F2         {:action :continue :state state}
       KeyType/Backspace  {:action :continue :state (delete-backward state)}
       KeyType/ArrowLeft  {:action :continue :state (move-left state)}
       KeyType/ArrowRight {:action :continue :state (move-right state)}
-      KeyType/ArrowUp
-      (if (.isCtrlDown key)
-        {:action :history-up :state state}
-        (if (pos? (:crow state))
-          {:action :continue :state (move-up state)}
-          {:action :continue :state state}))
-
-      KeyType/ArrowDown
-      (if (.isCtrlDown key)
-        {:action :history-down :state state}
-        (if (< (:crow state) (dec (count (:lines state))))
-          {:action :continue :state (move-down state)}
-          {:action :continue :state state}))
+      ;; Arrow Up/Down — scroll messages
+      KeyType/ArrowUp    {:action :scroll-up :state state}
+      KeyType/ArrowDown  {:action :scroll-down :state state}
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 
-      ;; Mouse capture is OFF — mouse events should not arrive, but
-      ;; if they do, ignore them completely.
-      KeyType/MouseEvent {:action :continue :state state}
-
+      ;; Ignore everything else (including mouse events)
       {:action :continue :state state})))
 
 ;;; ── Message formatting ─────────────────────────────────────────────────────
