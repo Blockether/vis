@@ -119,6 +119,10 @@
           (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
             (state/dispatch [:set-config c]))))
 
+      ;; Sweep orphaned running queries from previous crashes so they
+      ;; don't show raw query text in the rebuilt history.
+      (try (conversations/sweep-orphaned-running-queries!) (catch Throwable _ nil))
+
       ;; Init conversation: resume if --conversation-id given, else fresh.
       (when-let [config (:config @state/app-db)]
         (let [{:keys [id history]}
