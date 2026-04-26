@@ -21,7 +21,12 @@ user message
 **Step details:**
 
 1. **Build Context** — iter header, `<prior_thinking>`, `<journal>`, `<var_index>` (compact pseudo-source index of defs/defns), nudges (built-in + extension)
-2. **Ask LLM** — svar structured JSON output: code blocks + optional `:final`
+2. **Ask LLM** — svar structured JSON output: code blocks + optional
+   `:final`. The call site is `(llm/ask! (:router environment) …)`,
+   i.e. the env's snapshot router — NOT the global
+   `query-core/router-atom`. See
+   [Router Lifecycle](state.md#router-lifecycle) for why this matters
+   when provider/model is switched mid-session.
 3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
 4. **Persist + Decide** — `store-iteration!`, attach extension metadata, route to next step
 

@@ -16,7 +16,7 @@ These keys exist on every environment for its entire lifetime:
 | `:environment-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
 | `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every query/iteration/var is parented under this. |
 | `:db-info` | `map` | Database connection handle (`{:datasource ds …}`). Pass to `persistance.core` functions for reads. **Do not close it.** |
-| `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only. |
+| `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only from extensions, but the runtime itself **reseats** this key when provider config changes mid-conversation — see [Router Lifecycle](../architecture/state.md#router-lifecycle). Always read it fresh from the env handed to your callback; never cache `(:router env)` across iterations. |
 | `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Do not mutate directly** — use `bind-and-bump!`. |
 | `:sandbox-ns` | `SCI ns` | The `'sandbox` namespace object. Used internally by `eval-string+`. |
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |

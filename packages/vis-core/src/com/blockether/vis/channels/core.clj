@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [taoensso.telemere :as tel]))
 
@@ -43,8 +44,12 @@
         new-cfg {:providers updated}]
     (config/save-config! new-cfg)
     (reset! active-config new-cfg)
-    ;; Rebuild the router so the current conversation picks up the change
-    (try (query-core/rebuild-router! new-cfg)
+    ;; Rebuild the global router AND reseat it on every cached env.
+    ;; Skipping the second step lets long-lived envs (TUI session,
+    ;; Telegram bot) keep talking to the previous model even though
+    ;; the singleton already advertises the new one.
+    (try (let [r (query-core/rebuild-router! new-cfg)]
+           (conversations/refresh-cached-routers! r))
       (catch Exception e
         (tel/log! {:level :warn :data {:error (ex-message e)}}
           "Failed to rebuild router after provider change")))
@@ -147,15 +152,24 @@
     (catch Exception _ code-str)))
 
 (defn format-duration
-  "Format millisecond duration as human-readable. e.g. '2.3s', '1m 15s'."
+  "Format millisecond duration as human-readable. e.g. '2.3s', '1m 15s'.
+
+  Always uses `Locale/US` so the decimal separator is a dot regardless
+  of the JVM default locale (otherwise pl_PL etc. would print '7,3s').
+  Coerces `ms` to a long up-front because callers routinely pass a
+  double (svar's `elapsed-since` divides by `1e6`), and `(quot 67000.0
+  60000)` is `1.0` — which would render as '1.0m 7.0s' instead of
+  '1m 7s'."
   [ms]
   (when (and ms (pos? ms))
-    (cond
-      (< ms 1000)  (str ms "ms")
-      (< ms 60000) (format "%.1fs" (/ ms 1000.0))
-      :else        (let [m (quot ms 60000)
-                         s (quot (mod ms 60000) 1000)]
-                     (str m "m " s "s")))))
+    (let [ms (long ms)]
+      (cond
+        (< ms 1000)  (str ms "ms")
+        (< ms 60000) (String/format java.util.Locale/US "%.1fs"
+                       (into-array Object [(double (/ ms 1000.0))]))
+        :else        (let [m (quot ms 60000)
+                           s (quot (mod ms 60000) 1000)]
+                       (str m "m " s "s"))))))
 
 ;;; ── Extension CLI ─────────────────────────────────────────────────────────
 ;;

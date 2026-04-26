@@ -443,8 +443,21 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                                       :model         root-model
                                       :title         title
                                       :system-prompt system-prompt}))
+        ;; Bind sandbox helpers that need env identity (db-info +
+        ;; conversation-id). They go through `custom-bindings` so they
+        ;; land in `initial-ns-keys` and therefore stay out of
+        ;; `<var_index>` (matches the treatment of every other system
+        ;; binding shipped via EXTRA_BINDINGS).
+        var-history-fn           (fn var-history [sym]
+                                   (db/db-var-history db-info conversation-id
+                                     (cond
+                                       (symbol? sym) sym
+                                       (string? sym) (symbol sym)
+                                       :else (symbol (str sym)))))
+        env-bindings             {'var-history var-history-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (sci-env/create-sci-context (:custom-bindings @state-atom))
+        (sci-env/create-sci-context (merge env-bindings
+                                      (:custom-bindings @state-atom)))
         env {:environment-id  environment-id
              :conversation-id conversation-id
              :depth-atom      depth-atom

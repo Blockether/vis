@@ -279,9 +279,30 @@
 (def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   → final answer header
 (def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   → answer text line (with answer bg)
 (def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   → answer padding line
-(def MARKER_MD_H1      "\u206E")  ;; NADS                   → markdown heading 1
-(def MARKER_MD_H2      "\u2029")  ;; paragraph sep           → markdown heading 2
-(def MARKER_MD_H3      "\u2028")  ;; line sep                → markdown heading 3
-(def MARKER_MD_BOLD    "\u00AD")  ;; soft hyphen             → markdown bold line
-(def MARKER_MD_CODE    "\u034F")  ;; combining grapheme join → markdown inline code block
-(def MARKER_MD_BULLET  "\u2065")  ;; reserved                → markdown bullet list item
+;; Markdown markers (PUA \uE000+) — guaranteed unique, never collide
+;; with the iteration/answer markers above. Two parallel sets:
+;;   - MARKER_MD_*    → answer-zone markdown (answer-bg)
+;;   - MARKER_TH_MD_* → thinking-zone markdown (iter-header-bg, italic)
+(def MARKER_MD_H1         "\uE001") ;; markdown heading 1 (answer)
+(def MARKER_MD_H2         "\uE002") ;; markdown heading 2 (answer)
+(def MARKER_MD_H3         "\uE003") ;; markdown heading 3 (answer)
+(def MARKER_MD_BOLD       "\uE004") ;; markdown bold line (answer)
+(def MARKER_MD_CODE       "\uE005") ;; markdown fenced code (answer)
+(def MARKER_MD_BULLET     "\uE006") ;; markdown bullet list item (answer)
+(def MARKER_MD_TABLE_HEAD "\uE007") ;; markdown table header row (answer)
+(def MARKER_MD_TABLE_SEP  "\uE008") ;; markdown table border / separator (answer)
+(def MARKER_MD_TABLE_ROW  "\uE009") ;; markdown table data row (answer)
+(def MARKER_MD_QUOTE      "\uE00A") ;; markdown blockquote (answer)
+(def MARKER_MD_HR         "\uE00B") ;; markdown horizontal rule (answer)
+
+(def MARKER_TH_MD_H1         "\uE021") ;; markdown heading 1 (thinking)
+(def MARKER_TH_MD_H2         "\uE022") ;; markdown heading 2 (thinking)
+(def MARKER_TH_MD_H3         "\uE023") ;; markdown heading 3 (thinking)
+(def MARKER_TH_MD_BOLD       "\uE024") ;; markdown bold line (thinking)
+(def MARKER_TH_MD_CODE       "\uE025") ;; markdown fenced code (thinking)
+(def MARKER_TH_MD_BULLET     "\uE026") ;; markdown bullet list item (thinking)
+(def MARKER_TH_MD_TABLE_HEAD "\uE027") ;; markdown table header row (thinking)
+(def MARKER_TH_MD_TABLE_SEP  "\uE028") ;; markdown table border (thinking)
+(def MARKER_TH_MD_TABLE_ROW  "\uE029") ;; markdown table data row (thinking)
+(def MARKER_TH_MD_QUOTE      "\uE02A") ;; markdown blockquote (thinking)
+(def MARKER_TH_MD_HR         "\uE02B") ;; markdown horizontal rule (thinking)

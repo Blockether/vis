@@ -41,7 +41,27 @@
   ;; extensions, persistance backends, and every commandline plug-in
   ;; (including vis-core's built-ins) at startup. vis-core is just
   ;; one of those plug-ins.
-  :vis   {:jvm-opts   ["--enable-native-access=ALL-UNNAMED"]
+  :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI
+          ;; (Lanterna) is not corrupted by JVM-emitted warnings:
+          ;;   --enable-native-access=ALL-UNNAMED
+          ;;       Silences JEP 472 "restricted method" warnings from
+          ;;       JNI/native libs (e.g. SQLite native, jline).
+          ;;   --sun-misc-unsafe-memory-access=allow
+          ;;       Silences JEP 498 "terminally deprecated method in
+          ;;       sun.misc.Unsafe has been called" warnings emitted
+          ;;       by io.airlift.aircompressor (LZ4, pulled in via
+          ;;       com.taoensso/nippy → vis-persistance-sqlite). The
+          ;;       warning fires on first compress, which can happen
+          ;;       AFTER Lanterna has taken the screen — even with
+          ;;       System.err redirected to ~/.vis/vis.log it still
+          ;;       garbles the TUI on some code paths. Killing it at
+          ;;       the JVM level is the only reliable fix.
+          ;;   -XX:+IgnoreUnrecognizedVMOptions
+          ;;       Lets older JDKs that don't know the two flags above
+          ;;       boot anyway instead of refusing to start.
+          :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
+                       "--enable-native-access=ALL-UNNAMED"
+                       "--sun-misc-unsafe-memory-access=allow"]
           :extra-deps {com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
           :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
