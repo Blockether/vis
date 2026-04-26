@@ -384,7 +384,15 @@
 ;;; ── Main ────────────────────────────────────────────────────────────────
 
 (defn -main [& args]
+  ;; Redirect stderr immediately for TUI paths — before any class loading
+  ;; triggers JVM warnings (e.g. sun.misc.Unsafe deprecation from aircompressor).
   (let [cmd (first args)]
+    (when (or (nil? cmd) (= cmd "chat"))
+      (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
+        (when-not (.exists log-dir) (.mkdirs log-dir))
+        (System/setErr (java.io.PrintStream.
+                         (java.io.FileOutputStream.
+                           (str log-dir "/vis.log") true) true))))
     (cond
       ;; Explicit run — stdout stays connected, logs go to file only
       (= cmd "run")

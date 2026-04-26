@@ -290,7 +290,7 @@
         dur-str   (channels/format-duration duration-ms)
         tok-in    (when-let [n (:input tokens)] (str "↑" n))
         tok-out   (when-let [n (:output tokens)] (str "↓" n))
-        iter-str  (when (and (not user?) iterations) (str iterations (if (= 1 iterations) " iter" " iters")))
+        iter-str  (when (and (not user?) iterations (pos? iterations)) (str iterations (if (= 1 iterations) " iter" " iters")))
         cost-str  (when-let [c (some-> cost :total-cost)]
                     (str "~$" (String/format java.util.Locale/US "%.6f" (into-array Object [(double c)]))))
         ;; Below-bubble meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration
