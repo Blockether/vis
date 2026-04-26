@@ -132,8 +132,8 @@
                      (str base "\n\n" (str/join "\n\n" ext-ps))
                      base)
 
-          ;; 1. System message — svar wraps in <objective> tags
-          objective (str "<objective>\n" combined "\n</objective>")
+          ;; 1. System message (sent as-is to the LLM)
+          objective combined
           ;; --- pull last query for realistic context ---
           queries  (when-let [di (:db-info env)]
                      (try (db/db-list-conversation-queries di (:conversation-id env))
