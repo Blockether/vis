@@ -20,7 +20,8 @@
 
    Use `(extension spec)` to build and validate."
   (:refer-clojure :exclude [symbol])
-  (:require [clojure.spec.alpha :as s]
+  (:require [clojure.java.io :as io]
+            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [taoensso.telemere :as tel]))
 
@@ -441,6 +442,18 @@
         (log! :info ::invoke-done ext-ns sym nil ms nil)
         result))))
 
+(def ^:private ^:dynamic *log-writer*
+  "Writer that sends output to the log file instead of stdout/stderr.
+   Bound during extension invocations so tool fns never bleed into the TUI."
+  nil)
+
+(defn- get-log-writer []
+  (or *log-writer*
+    (let [log-path (str (System/getProperty "user.home") "/.vis/vis.log")]
+      (alter-var-root #'*log-writer*
+        (fn [cur] (or cur (io/writer log-path :append true))))
+      *log-writer*)))
+
 (defn wrap-extension
   "Wrap all function symbols in an extension into invocation fns.
 
@@ -448,13 +461,19 @@
    closes over the extension, symbol entry, and environment, then
    routes through `invoke-symbol-wrapper`.
 
+   All stdout/stderr from extension calls is redirected to the log
+   file so nothing bleeds into the TUI.
+
    Value symbols are returned as {sym → value}."
   [ext env]
   (into {}
     (map (fn [sym-entry]
            (let [sym (:ext.symbol/sym sym-entry)]
              (if (contains? sym-entry :ext.symbol/fn)
-               [sym (fn [& args] (invoke-symbol-wrapper ext sym-entry (vec args) env))]
+               [sym (fn [& args]
+                      (let [w (get-log-writer)]
+                        (binding [*out* w *err* w]
+                          (invoke-symbol-wrapper ext sym-entry (vec args) env))))]
                [sym (:ext.symbol/val sym-entry)]))))
     (:ext/symbols ext)))
 
