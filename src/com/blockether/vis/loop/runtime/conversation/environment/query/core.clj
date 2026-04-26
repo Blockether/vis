@@ -212,7 +212,7 @@
                              (long (* 0.6 (router/context-limit effective-model))))
         has-reasoning? (boolean (provider-has-reasoning? (:router environment)))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
-        system-prompt (or system-prompt "")
+        system-prompt (loop-core/build-system-prompt {:system-prompt system-prompt})
         ;; Append active extension prompts to the system prompt.
         ;; Each ext with a truthy activation-fn contributes its :ext/prompt.
         ext-prompts   (when-let [exts (some-> (:extensions environment) deref seq)]
