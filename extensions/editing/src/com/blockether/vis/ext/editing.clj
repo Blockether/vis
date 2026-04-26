@@ -388,9 +388,11 @@
 - (fs/patch-file path patch-text) — preferred Codex-style patch for editing existing files. Use SEARCH/REPLACE blocks
 - (fs/patch-file path old-text new-text) — backward-compatible exact single replacement
 
-There is NO write-file tool. Use fs/patch-file ALWAYS.
-To create a new file, use fs/patch-file with an EMPTY SEARCH block.
-Prefer the smallest unique SEARCH block that matches exactly once."
+RULES:
+- NEVER guess file paths. Always discover paths first with (fs/list-files) or (fs/grep-files pattern).
+- There is NO write-file tool. Use fs/patch-file ALWAYS.
+- To create a new file, use fs/patch-file with an EMPTY SEARCH block.
+- Prefer the smallest unique SEARCH block that matches exactly once."
      :ext/symbols
      [(ext/symbol 'read-file read-file
         {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
