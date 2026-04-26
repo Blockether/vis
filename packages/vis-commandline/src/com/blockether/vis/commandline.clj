@@ -250,7 +250,11 @@
     (str s)))
 
 (defn- bold    [s] (ansi "1" s))
-(defn- dim     [s] (ansi "2" s))
+;; Bright-black (`90`) instead of dim (`2`) — the standard ANSI "dim"
+;; renders almost invisibly on most terminal themes (especially dark
+;; ones with low-contrast palettes). Bright-black is the universal
+;; "muted but visible" choice used by gh, kubectl, cargo, etc.
+(defn- dim     [s] (ansi "90" s))
 (defn- cyan    [s] (ansi "36" s))
 (defn- yellow  [s] (ansi "33" s))
 (defn- magenta [s] (ansi "35" s))
