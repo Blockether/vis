@@ -2,7 +2,6 @@
   "Public API facade for the Vis RLM (Recursive Language Model).
 
    Sections:
-   - Unified entrypoint
    - Environment lifecycle
    - Query execution
 
@@ -18,32 +17,14 @@
    [com.blockether.vis.persistance.spec :as rlm-spec]))
 
 ;; =============================================================================
-;; Unified entrypoint
-;; =============================================================================
-
-(defn -main
-  "Unified entrypoint for all Vis channels.
-
-   Dispatches to the appropriate channel based on the first argument:
-
-     vis chat              TUI chat interface (default when no args)
-     vis run <prompt>      One-shot CLI query
-     vis web [port]        Start web server (default port 3000)
-     vis telegram          Start Telegram bot
-     vis help              Show usage
-
-   Examples:
-     (com.blockether.vis.core/-main)                        ;; → TUI
-     (com.blockether.vis.core/-main \"run\" \"What is 2+2?\")  ;; → CLI
-     (com.blockether.vis.core/-main \"web\" \"8080\")          ;; → Web on port 8080
-     (com.blockether.vis.core/-main \"telegram\")             ;; → Telegram bot"
-  [& args]
-  ;; Require at call time to avoid loading all channels eagerly
-  (require 'com.blockether.vis.channels.cli)
-  (apply (resolve 'com.blockether.vis.channels.cli/-main) args))
-
-;; =============================================================================
 ;; Constants
+;; =============================================================================
+;;
+;; The CLI entrypoint lives in `com.blockether.vis.commandline.main`
+;; (the `:vis` alias / `bin/vis` wrapper). vis-core is a library
+;; namespace — not a `-main` host. Use `create-environment` /
+;; `query!` / `dispose-environment!` from this namespace, or
+;; `bin/vis <cmd>` from the shell.
 ;; =============================================================================
 
 (def MAX_ITERATIONS

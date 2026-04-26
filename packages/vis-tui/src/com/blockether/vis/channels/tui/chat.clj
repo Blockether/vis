@@ -154,7 +154,7 @@
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in
-   `~/.vis/vis.mdb` so the web server (same `:vis` channel) can still see
-   it."
+   `~/.vis/vis.mdb` so other consumers of the `:vis` channel
+   (e.g. `vis conversations vis`, future inspectors) still see it."
   [{:keys [id]}]
   (when id (conversations/close! id)))

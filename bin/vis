@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Vis CLI launcher.
+#
+# Thin wrapper around `clojure -M:vis` so day-to-day invocation is
+# just `vis <subcommand>` instead of the full Clojure incantation.
+#
+# Install:
+#   1. Clone the repo.
+#   2. Add the repo's bin/ dir to your PATH, e.g.:
+#        echo 'export PATH="$HOME/path/to/vis/bin:$PATH"' >> ~/.zshrc
+#      (or symlink: ln -s "$PWD/bin/vis" /usr/local/bin/vis)
+#   3. Run `vis help` to confirm.
+#
+# This script always invokes Clojure from the repo root that contains
+# THIS script, regardless of where the user runs it from. That keeps
+# `:local/root` deps resolving correctly.
+
+set -euo pipefail
+
+# Resolve the directory of this script, following symlinks.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ "$src" != /* ]] && src="$dir/$src"
+done
+bin_dir="$(cd -P "$(dirname "$src")" && pwd)"
+repo_root="$(cd -P "$bin_dir/.." && pwd)"
+
+cd "$repo_root"
+exec clojure -M:vis "$@"

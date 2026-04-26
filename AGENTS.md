@@ -173,16 +173,19 @@ Only AFTER the DB has been inspected may you form a hypothesis, propose a fix, o
 ### Running
 
 ```bash
-clojure -M:run                # default channel (TUI) via channels.cli dispatcher
-clojure -M:run telegram       # explicit channel sub-command
-clojure -M:run run "prompt"   # one-shot agent query
-clojure -M:test               # aggregate test runner across packages
+bin/vis                        # prints the help tree (no implicit "default channel")
+bin/vis channel tui            # TUI chat
+bin/vis channel telegram       # Telegram bot
+bin/vis run "prompt"           # one-shot agent query
+clojure -M:test                # aggregate test runner across packages
 ```
 
-Available aliases (root `deps.edn`): `:run`, `:test`, `:bench`,
-`:build`, `:dev`, `:antq`. The `:web` alias is reserved but the
-`channels.web.app` namespace is not in tree yet — do not document a
-web channel as if it ships.
+`bin/vis` is the checked-in wrapper that `exec`s `clojure -M:vis "$@"`
+from the repo root. Add `bin/` to your `PATH` once and daily use is
+just `vis <subcommand>`.
+
+Available aliases (root `deps.edn`): `:vis` (the `vis` CLI), `:test`,
+`:bench`, `:build`, `:dev`, `:antq`.
 
 ### Project Structure
 
@@ -309,7 +312,7 @@ Use `find`/`grep` to explore the tree — no static directory doc exists.
 - Do not turn `loop.core` into a dumping ground for unrelated behavior.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
 - Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It now lives at `packages/vis-core/src/com/blockether/vis/channels/cli/agent.clj` alongside `channels/cli.clj`.
-- Do not introduce new top-level `channels/web/*` files. There is no web channel package today; if one is added it ships as its own `packages/vis-web` jar with its own `channel/register-global!`.
+
 - Prefer extracting a deep module first, then renaming callers, then deleting stale code.
 - Remove `requiring-resolve` cycles instead of spreading them further.
 - Keep slices small and shippable; no big-bang folder shuffle.

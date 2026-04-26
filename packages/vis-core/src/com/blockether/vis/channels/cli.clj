@@ -225,8 +225,8 @@
            {:key :created   :label "Created"   :width 16 :align :left}]
           rows)
         (stdout! (str "\n  " (count rows) " conversation(s)\n"))
-        (stdout! "  Resume with: vis channel tui --conversation-id <ID>  (full or short)")
-        (stdout! "  Or latest:   vis channel tui --resume"))))
+        (stdout! "  Resume with: vis channels tui --conversation-id <ID>  (full or short)")
+        (stdout! "  Or latest:   vis channels tui --resume"))))
   (shutdown-agents))
 
 ;;; ── `vis auth` ──────────────────────────────────────────────────────────
@@ -404,8 +404,13 @@
           :cmd/usage "vis doctor"
           :cmd/run-fn cli-doctor!}
 
-         {:cmd/name  "extensions"
-          :cmd/doc   "List every registered extension."
-          :cmd/usage "vis extensions"
+         ;; `list` mounts UNDER `vis extensions` (the parent registered
+         ;; by vis-extension/extension.clj). vis-core has no top-level
+         ;; `extensions` command anymore — listing extensions is just
+         ;; another subcommand of the extensions parent.
+         {:cmd/name   "list"
+          :cmd/parent ["extensions"]
+          :cmd/doc    "List every registered extension with metadata."
+          :cmd/usage  "vis extensions list"
           :cmd/run-fn cli-extensions!}]]
   (cmd/register-global! spec))

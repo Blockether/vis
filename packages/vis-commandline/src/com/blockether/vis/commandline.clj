@@ -5,7 +5,7 @@
 
      {:cmd/name        \"tui\"                 ;; required
       :cmd/doc         \"Run the TUI.\"        ;; required
-      :cmd/usage       \"vis channel tui …\"   ;; optional
+      :cmd/usage       \"vis channels tui …\"  ;; optional
       :cmd/args        [{…arg-spec…}]          ;; optional
       :cmd/run-fn      (fn [parsed-args raw-residual] …) ;; optional
       :cmd/subcommands [child …]               ;; optional, vector OR (fn [] vector)
@@ -23,8 +23,8 @@
    built-in subcommands (`run`, `auth`, `doctor`, \u2026) with two
    delegating parents:
 
-     - `vis ext <cmd>`     \u2192 children come from extension `:ext/cli`
-     - `vis channel <cmd>` \u2192 children come from `vis-extension/channel` registry
+     - `vis extensions <cmd>` \u2192 children come from extension `:ext/cli`
+     - `vis channels <name>`  \u2192 children come from the channel registry
 
    Both parents pass a 0-arg fn for `:cmd/subcommands` so help and
    dispatch always see the latest registrations. The dispatcher and
@@ -51,8 +51,8 @@
 ;; command-names from the root, EXCLUDING the root itself and the
 ;; command's own `:cmd/name`. Examples:
 ;;   []                  — top-level (`vis <name>`)
-;;   ["ext"]             — nested under `vis ext` (default for ext-shipped cmds)
-;;   ["channel"]         — nested under `vis channel`
+;;   ["extensions"]      — nested under `vis extensions`
+;;   ["channels"]        — nested under `vis channels`
 ;;   ["foo" "bar"]       — nested as `vis foo bar <name>`
 ;; Used by the CLI dispatcher's auto-mount via `registered-under`.
 (s/def :cmd/parent (s/coll-of string? :kind vector?))
@@ -459,7 +459,7 @@
 ;;
 ;;     (cmd/register-global!
 ;;       {:cmd/name   "git-status"
-;;        :cmd/parent ["ext"]                ;; mounts under `vis ext git-status`
+;;        :cmd/parent ["extensions"]         ;; mounts under `vis extensions git-status`
 ;;        :cmd/doc    "Show git working tree status."
 ;;        :cmd/run-fn (fn [_parsed _residual] (println (status)))})
 ;;

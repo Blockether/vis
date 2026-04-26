@@ -45,9 +45,6 @@
           :extra-deps {com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
           :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
-  :web   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
-          :main-opts ["-m" "com.blockether.vis.channels.web.app"]}
-
   ;; Aggregate test runner. Lists every package test tree containing
   ;; `*_test.clj` files — lazytest errors out on "no namespaces to
   ;; run" if a listed dir is empty, so add new packages here only
