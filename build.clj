@@ -51,6 +51,7 @@
    {:lib 'com.blockether/vis-persistance-sqlite        :dir "packages/vis-persistance-sqlite"}
    {:lib 'com.blockether/vis-persistance-sqlite-flyway :dir "packages/vis-persistance-sqlite-flyway"}
    {:lib 'com.blockether/vis-provider                  :dir "packages/vis-provider"}
+   {:lib 'com.blockether/vis-provider-github-copilot   :dir "packages/vis-provider-github-copilot"}
    {:lib 'com.blockether/vis-logging                   :dir "packages/vis-logging"}
    {:lib 'com.blockether/vis-core                      :dir "packages/vis-core"}
    {:lib 'com.blockether/vis-telegram                  :dir "packages/vis-telegram"}
@@ -118,7 +119,9 @@
    'com.blockether/vis-persistance-sqlite-flyway
    "Flyway migrator for the SQLite backend — applies vis-persistance's V*__schema.sql files."
    'com.blockether/vis-provider
-   "Provider auth (currently GitHub Copilot OAuth device flow)."
+   "Generic LLM provider registry — plug-in spec, no concrete provider."
+   'com.blockether/vis-provider-github-copilot
+   "GitHub Copilot OAuth device-flow provider for the vis-provider registry."
    'com.blockether/vis-tui
    "Lanterna-based TUI channel — registers as `vis channel tui`."
    'com.blockether/vis-telegram

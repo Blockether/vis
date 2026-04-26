@@ -16,7 +16,8 @@
    `META-INF/vis/commandline.edn` lists this namespace so dropping
    the vis-core jar onto the classpath is enough to get every
    built-in. No caller wiring required."
-  (:require [clojure.string :as str]
+  (:require [borkdude.dynaload :as dl]
+            [clojure.string :as str]
             [com.blockether.vis.channels.cli.agent :as agent]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.commandline :as cmd]
@@ -28,6 +29,16 @@
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
             [taoensso.telemere :as tel]))
+
+;;; ── vis-provider lookup (dynaload — zero compile-time dep on it) ───────
+
+(def ^:private provider-by-id
+  (dl/dynaload 'com.blockether.vis.provider/by-id
+    {:default (constantly nil)}))
+
+(def ^:private registered-providers
+  (dl/dynaload 'com.blockether.vis.provider/registered-providers
+    {:default (constantly [])}))
 
 ;;; ── Output helpers ──────────────────────────────────────────────────────
 
@@ -220,65 +231,69 @@
 
 ;;; ── `vis auth` ──────────────────────────────────────────────────────────
 
-(defn- cli-auth! [_parsed residual]
+(defn- print-auth-status! [provider]
+  (let [s ((:provider/status-fn provider))]
+    (stdout! (str "\n  " (:provider/label provider) " Auth Status"))
+    (stdout! "  ─────────────────────────────────")
+    (if (:authenticated? s)
+      (do (stdout! "  Authenticated: yes")
+        (when-let [src (:source s)]
+          (stdout! (str "  Source:        " (name src))))
+        (when-let [tp (:oauth-token-preview s)]
+          (stdout! (str "  Token:         " tp)))
+        (when (contains? s :copilot-token-valid?)
+          (stdout! (str "  API token:     "
+                     (if (:copilot-token-valid? s) "valid" "expired")))
+          (when (:copilot-token-valid? s)
+            (stdout! (str "  Expires in:    "
+                       (int (/ (:expires-in-ms s) 60000)) " min")))))
+      (stdout! "  Authenticated: no"))
+    (stdout! "")))
+
+(defn- cli-auth!
+  "Look the requested provider up through the registry and dispatch
+   --status / --logout / interactive auth via its registered fns.
+   Concrete providers live in their own packages
+   (`vis-provider-github-copilot`, future `vis-provider-anthropic`,
+   …); vis-core never references them by namespace."
+  [_parsed residual]
   (config/init-cli!)
-  (let [provider (first residual)
-        flags    (set (rest residual))]
-    (case provider
-      "github-copilot"
-      (let [copilot-status   (requiring-resolve 'com.blockether.vis.providers.github-copilot/status)
-            copilot-logout   (requiring-resolve 'com.blockether.vis.providers.github-copilot/logout!)
-            copilot-detect   (requiring-resolve 'com.blockether.vis.providers.github-copilot/detect-oauth-token)
-            copilot-start    (requiring-resolve 'com.blockether.vis.providers.github-copilot/start-device-flow!)
-            copilot-poll     (requiring-resolve 'com.blockether.vis.providers.github-copilot/poll-for-token!)
-            copilot-exchange (requiring-resolve 'com.blockether.vis.providers.github-copilot/get-copilot-token!)]
-        (cond
-          (contains? flags "--status")
-          (let [s (copilot-status)]
-            (stdout! "\n  GitHub Copilot Auth Status")
-            (stdout! "  ───────────────────────────")
-            (if (:authenticated? s)
-              (do (stdout! "  Authenticated: yes")
-                (stdout! (str "  Source:        " (name (:source s))))
-                (stdout! (str "  Token:         " (:oauth-token-preview s)))
-                (when (contains? s :copilot-token-valid?)
-                  (stdout! (str "  API token:     "
-                             (if (:copilot-token-valid? s) "valid" "expired")))
-                  (when (:copilot-token-valid? s)
-                    (stdout! (str "  Expires in:    "
-                               (int (/ (:expires-in-ms s) 60000)) " min")))))
-              (stdout! "  Authenticated: no"))
-            (stdout! ""))
+  (let [provider-id (some-> (first residual) keyword)
+        flags       (set (rest residual))
+        provider    (when provider-id (provider-by-id provider-id))
+        all         (registered-providers)]
+    (cond
+      (nil? provider-id)
+      (do (stdout! "Usage: vis auth <provider> [--status | --logout]")
+        (stdout! "")
+        (if (seq all)
+          (do (stdout! "Available providers:")
+            (doseq [p (sort-by :provider/id all)]
+              (stdout! (str "  " (cmd/pad-right (name (:provider/id p)) 22)
+                         (:provider/label p)))))
+          (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")))
 
-          (contains? flags "--logout")
-          (do (copilot-logout)
-            (stdout! "  Logged out of GitHub Copilot. Tokens cleared."))
+      (nil? provider)
+      (do (stdout! (str "Unknown auth provider: " (name provider-id)))
+        (when (seq all)
+          (stdout! (str "Available: "
+                     (str/join ", " (map (comp name :provider/id)
+                                      (sort-by :provider/id all)))))))
 
-          :else
-          (if (copilot-detect)
-            (do (stdout! "  Already authenticated with GitHub Copilot.")
-              (stdout! "  Run `vis auth github-copilot --status` for details.")
-              (stdout! "  Run `vis auth github-copilot --logout` first to re-authenticate."))
-            (do (stdout! "\n  GitHub Copilot — OAuth Device Flow")
-              (stdout! "  ───────────────────────────────────")
-              (let [{:keys [user-code verification-uri device-code interval expires-in]}
-                    (copilot-start)]
-                (stdout! "")
-                (stdout! (str "  1. Open: " verification-uri))
-                (stdout! (str "  2. Enter code: " user-code))
-                (stdout! "")
-                (stdout! "  Waiting for authorization...")
-                (.flush ^java.io.PrintStream config/original-stdout)
-                (try
-                  (copilot-poll device-code interval expires-in)
-                  (copilot-exchange)
-                  (stdout! "  ✓ Authenticated! GitHub Copilot is ready.")
-                  (catch Exception e
-                    (stdout! (str "  ✗ Authentication failed: " (ex-message e))))))))))
+      (contains? flags "--status")
+      (when (:provider/status-fn provider)
+        (print-auth-status! provider))
 
-      ;; Unknown provider
-      (do (stdout! (str "Unknown auth provider: " (or provider "<none>")))
-        (stdout! "Available: github-copilot"))))
+      (contains? flags "--logout")
+      (when-let [f (:provider/logout-fn provider)]
+        (f)
+        (stdout! (str "  Logged out of " (:provider/label provider) ". Tokens cleared.")))
+
+      :else
+      (when-let [auth-fn (:provider/auth-fn provider)]
+        (try (auth-fn stdout!)
+          (catch Exception e
+            (stdout! (str "  ✗ Authentication failed: " (ex-message e))))))))
   (shutdown-agents))
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────

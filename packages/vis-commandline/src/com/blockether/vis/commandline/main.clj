@@ -34,6 +34,10 @@
   (dl/dynaload 'com.blockether.vis.persistance.core/discover-backends!
     {:default (constantly 0)}))
 
+(def ^:private discover-providers!
+  (dl/dynaload 'com.blockether.vis.provider/discover-providers!
+    {:default (constantly 0)}))
+
 (defn discover-all!
   "Run every plug-in surface's classpath autodiscovery. Each call is
    guarded against missing jars via `borkdude.dynaload` defaults so a
@@ -41,6 +45,7 @@
   []
   (try (discover-extensions!)            (catch Throwable _ nil))
   (try (discover-channels!)              (catch Throwable _ nil))
+  (try (discover-providers!)             (catch Throwable _ nil))
   (try (discover-persistance-backends!)  (catch Throwable _ nil))
   (cmd/discover-commands!)
   nil)

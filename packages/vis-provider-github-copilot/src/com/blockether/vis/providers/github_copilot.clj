@@ -358,3 +358,47 @@
   (reset! token-cache nil)
   (delete-auth-file!)
   :logged-out)
+
+;; =============================================================================
+;; Provider registration
+;;
+;; Loading this namespace plugs the GitHub Copilot provider into the
+;; generic registry. The CLI's `vis auth` lists every registered
+;; provider; the runtime's token-resolution path looks providers up
+;; by id. Drop this jar (or pick another `vis-provider-*` package)
+;; to swap providers without touching vis-core.
+;; =============================================================================
+
+(require '[com.blockether.vis.provider :as provider])
+
+(defn- interactive-auth!
+  "Wrap the multi-step device flow into one fn the CLI / TUI can
+   call uniformly. `printer-fn` is invoked for every status line so
+   the caller controls the output channel (stdout, TUI dialog, …)."
+  [printer-fn]
+  (let [print! (or printer-fn (constantly nil))]
+    (if (detect-oauth-token)
+      (do (print! "  Already authenticated with GitHub Copilot.")
+        (print! "  Run `vis auth github-copilot --status` for details.")
+        (print! "  Run `vis auth github-copilot --logout` first to re-authenticate.")
+        :already-authenticated)
+      (let [{:keys [user-code verification-uri device-code interval expires-in]}
+            (start-device-flow!)]
+        (print! "")
+        (print! (str "  1. Open: " verification-uri))
+        (print! (str "  2. Enter code: " user-code))
+        (print! "")
+        (print! "  Waiting for authorization...")
+        (poll-for-token! device-code interval expires-in)
+        (get-copilot-token!)
+        (print! "  ✓ Authenticated! GitHub Copilot is ready.")
+        :ok))))
+
+(provider/register-global!
+  {:provider/id           :github-copilot
+   :provider/label        "GitHub Copilot"
+   :provider/status-fn    #'status
+   :provider/logout-fn    #'logout!
+   :provider/detect-fn    #'detect-oauth-token
+   :provider/auth-fn      #'interactive-auth!
+   :provider/get-token-fn #'get-copilot-token!})

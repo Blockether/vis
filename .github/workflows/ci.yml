@@ -85,6 +85,7 @@ jobs:
           - packages/vis-persistance
           - packages/vis-persistance-sqlite
           - packages/vis-provider
+          - packages/vis-provider-github-copilot
           - packages/vis-telegram
           - packages/vis-tui
           - extensions/editing

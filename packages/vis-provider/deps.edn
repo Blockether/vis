@@ -1,17 +1,20 @@
 {:paths ["src"]
- ;; Standalone provider package — vendor-specific auth/token plumbing
- ;; (currently GitHub Copilot OAuth + device flow + token exchange).
+ ;; Generic LLM provider registry — same plug-in pattern as channels,
+ ;; extensions, commandline, persistance backends. Concrete providers
+ ;; (e.g. `vis-provider-github-copilot`) self-register into this
+ ;; registry at namespace load time. vis-core looks providers up
+ ;; through the registry by id; it never references a concrete
+ ;; provider namespace directly.
  ;;
- ;; ZERO vis-core deps on purpose. vis-core resolves these via
- ;; `requiring-resolve` so the runtime stays decoupled from any
- ;; particular provider's auth shape.
+ ;; ZERO non-clojure deps beyond telemere on purpose — the provider
+ ;; surface stays cheap so adding a third-party provider package is
+ ;; a one-jar drop.
  :deps
  {org.clojure/clojure   {:mvn/version "1.12.4"}
-  com.cnuernber/charred {:mvn/version "1.038"}
   com.taoensso/telemere {:mvn/version "1.2.1"}}
 
  :aliases
  {:test
   {:extra-paths ["test"]
    :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :main-opts  ["-m" "lazytest.main"]}}}
+   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}
