@@ -454,6 +454,9 @@ RULES:
 OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over prose.")
 
 (defn build-system-prompt
+  "Build the core system prompt (iteration instructions + env block).
+   Does NOT include extension prompts — use `assemble-system-prompt` for the
+   full prompt with extensions."
   [{:keys [system-prompt]}]
   (str CORE_SYSTEM_PROMPT
     "\n\nDate: " (.truncatedTo (java.time.LocalDateTime/now) java.time.temporal.ChronoUnit/SECONDS)
@@ -461,6 +464,33 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
     (environment-block)
     (when (and system-prompt (not (str/blank? system-prompt)))
       (str "\nINSTRUCTIONS:\n" system-prompt "\n"))))
+
+(defn assemble-system-prompt
+  "Build the full system prompt: core instructions + active extension prompts.
+   This is the SINGLE source of truth for what goes into {:role \"system\"} —
+   both iteration loops and effective-system-prompt must call this."
+  [environment {:keys [system-prompt]}]
+  (let [base (build-system-prompt {:system-prompt system-prompt})
+        ext-ps (when-let [exts (some-> (:extensions environment) deref seq)]
+                 (->> exts
+                   (keep (fn [ext]
+                           (try
+                             (when ((:ext/activation-fn ext) environment)
+                               (let [p ((:ext/prompt ext) environment)]
+                                 (when (and (string? p) (not (str/blank? p)))
+                                   (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+                                     (str "[namespace: " alias-sym " \u2192 " ns-sym "]\n" p)
+                                     p))))
+                             (catch Throwable t
+                               (tel/log! {:level :error :id ::ext-prompt-error
+                                          :data {:ext (:ext/namespace ext)
+                                                 :error (ex-message t)}}
+                                 (str "Extension '" (:ext/namespace ext) "' prompt/activation failed"))
+                               nil))))
+                   seq))]
+    (if ext-ps
+      (str base "\n\n" (str/join "\n\n" ext-ps))
+      base)))
 
 
 ;; ── Internal helpers (shared across iteration loop + context assembly) ────────
@@ -1658,31 +1688,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
         has-reasoning? (provider-has-reasoning? (:router environment))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default)
                                balanced-reasoning)
-        system-prompt (build-system-prompt {:has-reasoning? has-reasoning?
-                                            :system-prompt system-prompt
-                                            :max-context-tokens max-context-tokens
-                                            :env environment})
-        ;; Append active extension prompts to the system prompt.
-        ext-prompts   (when-let [exts (some-> (:extensions environment) deref seq)]
-                        (->> exts
-                          (keep (fn [ext]
-                                  (try
-                                    (when ((:ext/activation-fn ext) environment)
-                                      (let [p ((:ext/prompt ext) environment)]
-                                        (when (and (string? p) (not (str/blank? p)))
-                                          (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-                                            (str "[namespace: " alias-sym " → " ns-sym "]\n" p)
-                                            p))))
-                                    (catch Throwable t
-                                      (tel/log! {:level :error :id ::ext-prompt-error
-                                                 :data (assoc (format-exception-short t)
-                                                         :ext (:ext/namespace ext))}
-                                        (str "Extension '" (:ext/namespace ext) "' prompt/activation failed"))
-                                      nil))))
-                          seq))
-        system-prompt (if ext-prompts
-                        (str system-prompt "\n\n" (str/join "\n\n" ext-prompts))
-                        system-prompt)
+        system-prompt (assemble-system-prompt environment {:system-prompt system-prompt})
         initial-user-content query
         initial-messages (assemble-initial-messages
                            {:system-prompt system-prompt
