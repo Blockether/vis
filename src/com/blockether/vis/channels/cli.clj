@@ -363,6 +363,14 @@
 (defn- run-tui!
   "Start TUI chat with logging redirected to file (stdout reserved for Lanterna)."
   [opts]
+  ;; Redirect stderr immediately — before any requires — so JVM warnings
+  ;; (e.g. sun.misc.Unsafe deprecation from aircompressor) don't bleed
+  ;; into the Lanterna TUI.
+  (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
+    (when-not (.exists log-dir) (.mkdirs log-dir))
+    (System/setErr (java.io.PrintStream.
+                     (java.io.FileOutputStream.
+                       (str log-dir "/vis.log") true) true)))
   (config/init!)
   (try
     ((requiring-resolve 'com.blockether.vis.channels.tui.screen/run-chat!) opts)
