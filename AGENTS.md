@@ -2,6 +2,17 @@
 
 ## MANDATORY: Agent Rules
 
+### Never bind Ctrl+Y in the TUI
+
+`Ctrl+Y` sends `SIGTSTP` (or the `DSUSP` character on macOS) which
+**suspends the entire process** and drops the user to a stopped-job
+shell prompt. Lanterna cannot intercept it before the kernel acts on it.
+Do NOT bind `Ctrl+Y` to any action — clipboard copy, yank, or anything
+else. It will never work. Any PR that re-introduces a `Ctrl+Y` binding
+in `input.clj`, `dialogs.clj`, or `screen.clj` must be rejected.
+
+Use the copy dialog (`Ctrl+K` → Copy) for clipboard operations instead.
+
 ### Always use HoneySQL for SQL — no raw strings, no next.jdbc.sql
 
 Every SQL query in the codebase MUST use `honey.sql` data maps.

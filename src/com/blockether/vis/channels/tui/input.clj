@@ -180,26 +180,18 @@
       KeyType/ArrowLeft  {:action :continue :state (move-left state)}
       KeyType/ArrowRight {:action :continue :state (move-right state)}
       KeyType/ArrowUp
-      (cond
-        ;; Alt+Up always = input history
-        (.isAltDown key) {:action :history-up :state state}
-        ;; Single-line input at top row: plain Up = history
-        (and (= 1 (count (:lines state))) (zero? (:crow state)))
+      (if (.isCtrlDown key)
         {:action :history-up :state state}
-        ;; Multi-line: cursor move
-        (pos? (:crow state)) {:action :continue :state (move-up state)}
-        :else {:action :continue :state state})
+        (if (pos? (:crow state))
+          {:action :continue :state (move-up state)}
+          {:action :continue :state state}))
 
       KeyType/ArrowDown
-      (cond
-        ;; Alt+Down always = input history
-        (.isAltDown key) {:action :history-down :state state}
-        ;; Single-line input at bottom row: plain Down = history
-        (and (= 1 (count (:lines state))) (= (:crow state) (dec (count (:lines state)))))
+      (if (.isCtrlDown key)
         {:action :history-down :state state}
-        ;; Multi-line: cursor move
-        (< (:crow state) (dec (count (:lines state)))) {:action :continue :state (move-down state)}
-        :else {:action :continue :state state})
+        (if (< (:crow state) (dec (count (:lines state))))
+          {:action :continue :state (move-down state)}
+          {:action :continue :state state}))
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 

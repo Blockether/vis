@@ -462,7 +462,7 @@
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
    `title` is the dialog header. `text` is a string (may contain newlines).
-   Returns nil on Esc. Supports ↑/↓/PgUp/PgDn scrolling and Ctrl+Y to copy."
+   Returns nil on Esc. Supports ↑/↓/PgUp/PgDn scrolling."
   [^TerminalScreen screen title text]
   (let [scroll (atom 0)
         term-size (.getTerminalSize screen)
@@ -508,7 +508,7 @@
               (p/set-char! g (+ left inner-w) r \|))))
 
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "scroll"] ["PgUp/Dn" "page"] ["^Y" "copy"] ["Esc" "close"]])
+          [["↑/↓" "scroll"] ["PgUp/Dn" "page"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -529,12 +529,7 @@
               KeyType/PageDown
               (do (swap! scroll #(min max-scroll (+ % content-h))) (recur))
 
-              KeyType/Character
-              (let [c    (Character/toLowerCase (.getCharacter key))
-                    ctrl (.isCtrlDown key)]
-                (if (and ctrl (= c \y))
-                  (do (input/clipboard-copy! (or text "")) nil)
-                  (recur)))
+              KeyType/Character (recur)
 
               (recur))))))))
 
@@ -554,14 +549,10 @@
              (str (role-label role) ": " (or text "")))))
     (str/join "\n\n")))
 
-(defn- copy-last-assistant! [messages]
-  (when-let [m (last (filter #(= (:role %) :assistant) messages))]
-    (input/clipboard-copy! (or (:text m) ""))
-    true))
 
 (defn copy-dialog!
   "Show copy dialog for chat messages.
-   Space toggles, A toggles all, Enter copies selected, Ctrl+Y copies last assistant, Esc cancels."
+   Space toggles, A toggles all, Enter copies selected, Esc cancels."
   [^TerminalScreen screen messages]
   (let [items       (vec messages)
         selected    (atom 0)
@@ -570,7 +561,7 @@
         max-preview (apply max 1 (map (comp count :text) items))
         cw          (max (+ 4 (min max-preview 50)) (+ (count "Copy Messages") 4))
         ch          (count items)]
-    (loop [status [["Space" "toggle"] ["A" "all"] ["Enter" "copy"] ["^Y" "last"] ["Esc" "cancel"]]]
+    (loop [status [["Space" "toggle"] ["A" "all"] ["Enter" "copy"] ["Esc" "cancel"]]]
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
             rows   (.getRows size)
@@ -610,13 +601,8 @@
                   (recur status))
 
                 KeyType/Character
-                (let [c    (Character/toLowerCase (.getCharacter key))
-                      ctrl (.isCtrlDown key)]
+                (let [c (Character/toLowerCase (.getCharacter key))]
                   (cond
-                    (and ctrl (= c \y))
-                    (if (copy-last-assistant! items) true
-                      (recur "No assistant response available"))
-
                     (= c \space)
                     (do (when (pos? total)
                           (swap! checked (fn [s] (if (contains? s @selected)

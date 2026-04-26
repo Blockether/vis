@@ -113,28 +113,36 @@
           (.parse in))))))
 
 (defn- ignored-by-gitignore?
+  "Check if a file or any of its ancestor directories is gitignored.
+   For each directory between root and target, checks that directory's
+   name against parent's .gitignore as a DIRECTORY match. If any
+   ancestor is ignored, the file is ignored."
   [^java.io.File f]
   (when-let [root (repo-root)]
-    (let [root   (.getCanonicalFile root)
-          target (.getCanonicalFile f)]
-      (when (str/starts-with? (.getPath target) (.getPath root))
-        (loop [dir (.getParentFile target)
-               ignored? nil]
-          (if (nil? dir)
-            (boolean ignored?)
-            (let [dir         (.getCanonicalFile dir)
-                  next-parent (.getParentFile dir)
-                  in-root?    (str/starts-with? (.getPath dir) (.getPath root))
-                  node        (when in-root? (load-ignore-node dir))
-                  rel         (when in-root?
-                                (-> (str (.relativize (.toPath dir) (.toPath target)))
-                                  (str/replace java.io.File/separator "/")))
-                  result      (when (and node rel (not (str/blank? rel)))
-                                (.checkIgnored node rel (.isDirectory target)))
-                  ignored?    (if (nil? result) ignored? result)]
-              (if (or (not in-root?) (= dir root))
-                (boolean ignored?)
-                (recur next-parent ignored?)))))))))
+    (let [root-path (.getPath (.getCanonicalFile root))
+          target    (.getCanonicalFile f)]
+      (when (str/starts-with? (.getPath target) root-path)
+        ;; Walk from target up to root. For each segment, check if
+        ;; its NAME is ignored by its PARENT's .gitignore.
+        (loop [current target]
+          (let [parent (.getParentFile current)]
+            (cond
+              (nil? parent) false
+              ;; Reached or passed root — not ignored
+              (not (str/starts-with? (.getPath (.getCanonicalFile parent)) root-path)) false
+              :else
+              (let [parent-canon (.getCanonicalFile parent)
+                    node         (load-ignore-node parent-canon)
+                    name         (.getName current)
+                    is-dir?      (.isDirectory current)
+                    ignored?     (when (and node (not (str/blank? name)))
+                                   (let [r (.checkIgnored node name is-dir?)]
+                                     (true? r)))]
+                (if ignored?
+                  true
+                  (if (.equals parent-canon (.getCanonicalFile root))
+                    false
+(recur parent)))))))))))
 
 (defn- read-file
   "Read file contents with optional offset/limit (1-indexed lines).

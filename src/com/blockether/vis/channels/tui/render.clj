@@ -266,6 +266,9 @@
 (def ^:private md-code-marker    p/MARKER_MD_CODE)
 (def ^:private md-bullet-marker  p/MARKER_MD_BULLET)
 
+(defn- warning-message? [text]
+  (and (string? text) (str/starts-with? text "Warning:")))
+
 (defn draw-chat-bubble!
   "Draw a chat message bubble at the given row.
    `msg` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -274,6 +277,7 @@
    Returns the number of screen rows consumed (including spacing)."
   [g {:keys [role text timestamp duration-ms model iterations tokens cost]} start-row left max-w]
   (let [user?     (= role :user)
+        warning?  (warning-message? text)
         label     (if user? "you" "vis")
         label-w   (count label)
         bubble-w  (min max-w (max 60 (+ 4 (min (count text) (- max-w 4)))))
@@ -281,9 +285,18 @@
         lines     (wrap-text text content-w)
         bubble-h  (+ (count lines) 2)
         bx        (if user? left (+ left (- max-w bubble-w)))
-        bg-color  (if user? t/user-bubble-bg t/ai-bubble-bg)
-        fg-color  (if user? t/user-bubble-fg t/ai-bubble-fg)
-        brd-color (if user? t/user-bubble-border t/ai-bubble-border)
+        bg-color  (cond
+                    warning? t/warning-bg
+                    user? t/user-bubble-bg
+                    :else t/ai-bubble-bg)
+        fg-color  (cond
+                    warning? t/warning-fg
+                    user? t/user-bubble-fg
+                    :else t/ai-bubble-fg)
+        brd-color (cond
+                    warning? t/warning-border
+                    user? t/user-bubble-border
+                    :else t/ai-bubble-border)
         role-fg   (if user? t/user-role-fg t/ai-role-fg)
         inner-w   (- bubble-w 2)
         time-str  (channels/format-date timestamp)
