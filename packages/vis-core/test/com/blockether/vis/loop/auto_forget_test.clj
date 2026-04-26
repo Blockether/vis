@@ -60,10 +60,10 @@
           recent    #{q1}]
       (expect (= #{} (loop/auto-forget-candidates sandbox initials registry recent)))))
 
-  (it "🎧 earmuffed *system* vars are sacred — never forgotten"
-    (let [sandbox   (make-sandbox [['*query* "hello"]])
-          registry  (make-registry [['*query* q1]])
-          recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not earmuffed
+  (it "🎧 SYSTEM vars (QUERY/ANSWER/REASONING) are sacred — never forgotten"
+    (let [sandbox   (make-sandbox [['QUERY "hello"]])
+          registry  (make-registry [['QUERY q1]])
+          recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not in SYSTEM_VAR_NAMES
       (expect (= #{} (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "📝 documented vars survive any purge — docstrings are armor"
@@ -90,14 +90,14 @@
                                    ['stale-b 2]
                                    ['documented 3 "keep me"]
                                    ['recent-var 4]
-                                   ['*system* 5]
+                                   ['REASONING 5]            ;; SYSTEM_VAR_NAMES — protected
                                    ['builtin 6]])
           initials  #{'builtin}
           registry  (make-registry [['stale-a q1]
                                     ['stale-b q1]
                                     ['documented q1]
                                     ['recent-var q3]
-                                    ['*system* q1]
+                                    ['REASONING q1]
                                     ['builtin q1]])
           recent    #{q3 q4}]
       (expect (= #{'stale-a 'stale-b}
@@ -109,12 +109,14 @@
           recent    #{q1}]
       (expect (= #{} (loop/auto-forget-candidates sandbox #{} registry recent)))))
 
-  (it "⚡ bare * is just a symbol, not an earmuff — gets forgotten like any mortal var"
-    ;; The * symbol has length 1, below the earmuffed threshold
-    (let [sandbox   (make-sandbox [['* 42]])
-          registry  (make-registry [['* q1]])
+  (it "⚡ a non-registered uppercase var (e.g. CONFIG) gets forgotten like any mortal var"
+    ;; SYSTEM_VAR_NAMES is a fixed set #{QUERY ANSWER REASONING};
+    ;; user-defined uppercase names (CONFIG, MAX_FOO, ...) are NOT system
+    ;; vars and get the normal stale-sweep treatment.
+    (let [sandbox   (make-sandbox [['CONFIG 42]])
+          registry  (make-registry [['CONFIG q1]])
           recent    #{q2}]
-      (expect (= #{'*} (loop/auto-forget-candidates sandbox #{} registry recent))))))
+      (expect (= #{'CONFIG} (loop/auto-forget-candidates sandbox #{} registry recent))))))
 
 ;; ---------------------------------------------------------------------------
 ;; auto-forget-stale-vars! (effectful, DB + SCI)
@@ -216,7 +218,7 @@
       ;; Nothing exploded, var still there
       (expect (contains? (sandbox-syms sci-ctx) 'x))))
 
-  (it "🏰 *reasoning* and friends are fortress vars — stale or not, the janitor can't touch them"
+  (it "🏰 REASONING and friends are fortress vars — stale or not, the janitor can't touch them"
     (let [s       (store)
           cid     (db/store-conversation! s {:channel :vis})
           old-qid (db/store-query! s {:parent-conversation-id cid :query "old" :status :done})
@@ -227,8 +229,8 @@
           _       (Thread/sleep 5)
           _       (db/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
           _       (db/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
-                                          :vars [{:name "*reasoning*" :value "think" :code "(def *reasoning* \"think\")"}]})
-          sci-ctx (make-sci-ctx [['*reasoning* "think"]])
+                                          :vars [{:name "REASONING" :value "think" :code "(def REASONING \"think\")"}]})
+          sci-ctx (make-sci-ctx [['REASONING "think"]])
           via     (atom {:current-revision 0})
           rlm-env {:db-info          s
                    :conversation-id  cid
@@ -236,5 +238,5 @@
                    :initial-ns-keys  #{}
                    :var-index-atom   via}]
       (#'loop/auto-forget-stale-vars! rlm-env)
-      (expect (contains? (sandbox-syms sci-ctx) '*reasoning*))
+      (expect (contains? (sandbox-syms sci-ctx) 'REASONING))
       (expect (= 0 (:current-revision @via))))))

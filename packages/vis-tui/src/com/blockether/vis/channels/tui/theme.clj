@@ -22,17 +22,18 @@
 (def dialog-hint     (TextColor$RGB. 120 120 120))  ;; muted hint text
 (def dialog-hint-key (TextColor$RGB. 50 50 50))     ;; near-black key labels
 
-;; Chat bubbles — user (white bg, just bordered)
-(def user-bubble-bg    (TextColor$RGB. 255 255 255))  ;; white — same as terminal
-(def user-bubble-fg    (TextColor$RGB. 30 30 30))     ;; near-black text
-(def user-bubble-border (TextColor$RGB. 120 120 120)) ;; dark gray border
-(def user-role-fg      (TextColor$RGB. 80 80 80))     ;; dark gray "you" label
+;; Chat messages — user (visible blue-gray block, distinct from assistant)
+(def user-bubble-bg    (TextColor$RGB. 224 232 245))  ;; soft blue-gray block — user input clearly stands out
+(def user-bubble-fg    (TextColor$RGB. 25 35 55))     ;; near-black with cool tint
+(def user-bubble-border (TextColor$RGB. 215 225 240)) ;; (unused — kept for back-compat)
+(def user-role-fg      (TextColor$RGB. 40 95 185))    ;; bold blue accent "you" label
 
-;; Chat bubbles — assistant (white bg, just bordered)
+;; Chat messages — assistant (no background fill, terminal bg shows through)
 (def ai-bubble-bg      (TextColor$RGB. 255 255 255))  ;; white — same as terminal
 (def ai-bubble-fg      (TextColor$RGB. 30 30 30))     ;; near-black text
-(def ai-bubble-border  (TextColor$RGB. 130 130 130))  ;; dark gray border
+(def ai-bubble-border  (TextColor$RGB. 130 130 130))  ;; (unused — kept for back-compat)
 (def ai-role-fg        (TextColor$RGB. 80 160 80))    ;; green "vis" label
+
 
 ;; Status indicators
 (def status-ok  (TextColor$RGB. 40 160 60))    ;; green

@@ -390,35 +390,51 @@
   (and (string? text) (str/starts-with? text "Warning:")))
 
 (defn draw-chat-bubble!
-  "Draw a chat message bubble at the given row.
+  "Draw a chat message at the given row. No border, no bubble container.
    `msg` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
    Optional `:duration-ms` for assistant response time.
    `left` and `max-w` define the horizontal bounds.
+
+   Layout (NO border, both roles left-anchored):
+     [role-label]                              [timestamp]
+     [content lines, each with role bg fill]
+     [meta line, dimmed]
+     [blank gap]
+
+   User content rows get a subtle blue-gray background block
+   (`user-bubble-bg`) to visually separate user input from the rest of
+   the conversation. Assistant content rows render on terminal bg —
+   the only fills come from inline marker zones (code blocks,
+   answer-bg, stdout, etc.).
+
    Returns the number of screen rows consumed (including spacing)."
   [g {:keys [role text timestamp duration-ms model iterations tokens cost]} start-row left max-w]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
         label     (if user? "you" "vis")
-        label-w   (count label)
-        bubble-w  (min max-w (max 60 (+ 4 (min (count text) (- max-w 4)))))
-        content-w (- bubble-w 4)
+        bubble-w  max-w
+        ;; Symmetric inner padding (2 cols each side) inside the
+        ;; message column. Applies to plain text AND to every
+        ;; styled-marker zone (code blocks, stdout, answer, iteration
+        ;; headers) so right-aligned labels like "ITERATION 1" /
+        ;; "FINAL ANSWER" sit nicely inset from the right edge
+        ;; instead of mashed against it.
+        h-pad     2
+        content-w (max 1 (- bubble-w (* 2 h-pad)))
         lines     (wrap-text text content-w)
-        bubble-h  (+ (count lines) 2)
-        bx        (if user? left (+ left (- max-w bubble-w)))
+        bubble-h  (count lines)
+        bx        left
+        ;; No bg fill on plain user / assistant text — we sit on
+        ;; terminal-bg. Only `:warning` messages still get a tinted
+        ;; block so they're impossible to miss in the timeline.
         bg-color  (cond
                     warning? t/warning-bg
-                    user? t/user-bubble-bg
-                    :else t/ai-bubble-bg)
+                    :else    t/terminal-bg)
         fg-color  (cond
                     warning? t/warning-fg
-                    user? t/user-bubble-fg
-                    :else t/ai-bubble-fg)
-        brd-color (cond
-                    warning? t/warning-border
-                    user? t/user-bubble-border
-                    :else t/ai-bubble-border)
+                    user?    t/user-bubble-fg
+                    :else    t/ai-bubble-fg)
         role-fg   (if user? t/user-role-fg t/ai-role-fg)
-        inner-w   (- bubble-w 2)
         time-str  (channels/format-date timestamp)
         dur-str   (channels/format-duration duration-ms)
         tok-in    (when-let [n (:input tokens)] (str "↑" n))
@@ -426,37 +442,37 @@
         iter-str  (when (and (not user?) iterations (pos? iterations)) (str iterations (if (= 1 iterations) " iter" " iters")))
         cost-str  (when-let [c (some-> cost :total-cost)]
                     (str "~$" (String/format java.util.Locale/US "%.6f" (into-array Object [(double c)]))))
-        ;; Below-bubble meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration
+        ;; Below-message meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration
         meta-parts (when (not user?)
                      (remove nil? [model iter-str tok-in tok-out cost-str dur-str]))
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
-    ;; Label row: role name left (bold), timestamp right-aligned
+    ;; Row 0: label (bold, role-colored) + timestamp (dim, right-aligned).
     (p/clear-styles! g)
     (p/set-colors! g role-fg t/terminal-bg)
     (p/styled g [p/BOLD]
-      (p/put-str! g (inc bx) start-row label))
+      (p/put-str! g bx start-row label))
     (when time-str
       (p/set-colors! g t/dialog-hint t/terminal-bg)
-      (p/put-str! g (+ bx (- bubble-w (count time-str) 1)) start-row time-str))
+      (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str))
 
-    (let [btop (inc start-row)]
-      ;; Fill interior
-      (p/set-bg! g bg-color)
-      (p/fill-rect! g bx btop bubble-w bubble-h)
+    ;; Row 1: horizontal rule directly under the label. Hard divider
+    ;; so the user/assistant header reads as a banner above its
+    ;; content instead of floating in space.
+    (p/set-colors! g t/border-fg t/terminal-bg)
+    (p/put-str! g bx (+ start-row 1) (repeat-str \u2500 bubble-w))
 
-      ;; Border
-      (p/set-colors! g brd-color bg-color)
-      (p/set-char! g bx btop Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-      (p/set-char! g (+ bx bubble-w -1) btop Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
-      (p/put-str! g (inc bx) btop (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w))
-      (let [bbot (+ btop bubble-h -1)]
-        (p/set-char! g bx bbot Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-        (p/set-char! g (+ bx bubble-w -1) bbot Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
-        (p/put-str! g (inc bx) bbot (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)))
-      (doseq [r (range (inc btop) (+ btop bubble-h -1))]
-        (p/set-char! g bx r Symbols/SINGLE_LINE_VERTICAL)
-        (p/set-char! g (+ bx bubble-w -1) r Symbols/SINGLE_LINE_VERTICAL))
+    ;; Row 2: blank breathing room between the rule and the content.
+    ;; Content begins on row 3 (= start-row + 3).
+    (let [btop (+ start-row 3)]
+      ;; No bubble-wide background fill. Plain user / assistant text
+      ;; renders directly on terminal bg — the only fills come from
+      ;; structured-trace marker zones (code blocks, stdout, answer
+      ;; section). Roles are visually distinguished by the colored
+      ;; label above the rule.
+      (when warning?
+        (p/set-bg! g bg-color)
+        (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
 
       ;; Text content — per-line styling via invisible marker prefixes
       ;;
@@ -469,12 +485,18 @@
         (doseq [[i line] (map-indexed vector lines)]
           (p/clear-styles! g)
           (let [in-answer? (> i answer-start)
-                x (+ bx 2) y (+ btop 1 i)
-                iw (- bubble-w 4)]
+                ;; Symmetric inner padding: text + marker fills both
+                ;; start at `bx + h-pad` and span `content-w` cols
+                ;; (= bubble-w - 2*h-pad). Right-aligned labels in
+                ;; format-iteration-entry inherit the same column,
+                ;; so they're inset from the right edge by h-pad.
+                x   (+ bx h-pad) y (+ btop i)
+                iw  content-w
+                fbx (+ bx h-pad)]
             ;; Pre-fill answer zone bg so ALL line types get it
             (when in-answer?
               (p/set-bg! g t/answer-bg)
-              (p/fill-rect! g (inc bx) y iw 1))
+              (p/fill-rect! g fbx y iw 1))
             (cond
               ;; ── Iteration header — right-aligned, subtle ──
               (str/starts-with? line iter-hdr-marker)
@@ -484,7 +506,7 @@
               ;; ── Thinking — dimmed bg, italic ──
               (str/starts-with? line thinking-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
@@ -492,7 +514,7 @@
               (str/starts-with? line code-ok-marker)
               (let [raw (subs line 1)]
                 (p/set-colors! g t/code-block-fg t/code-block-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y raw)
                 (when-let [ci (str/index-of raw "✓")]
                   (p/set-colors! g t/code-success-fg t/code-block-bg)
@@ -502,7 +524,7 @@
               (str/starts-with? line code-err-marker)
               (let [raw (subs line 1)]
                 (p/set-colors! g t/code-block-fg t/code-err-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y raw)
                 (when-let [ci (str/index-of raw "✗")]
                   (p/set-colors! g t/code-error-fg t/code-err-bg)
@@ -511,65 +533,65 @@
               ;; ── Code (streaming, no status yet) — neutral gray bg ──
               (str/starts-with? line code-marker)
               (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Duration annotation ──
               (str/starts-with? line duration-marker)
               (do (p/set-colors! g t/code-duration-fg iter-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Result (success) — dim on code bg ──
               (str/starts-with? line result-marker)
               (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Result (error) — red on light red bg ──
               (str/starts-with? line err-result-marker)
               (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Stdout text — distinct stdout bg, italic ──
               (str/starts-with? line stdout-marker)
               (do (p/set-colors! g t/stdout-fg t/stdout-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               ;; ── Stdout separator (dashes) ──
               (str/starts-with? line stdout-sep-marker)
               (do (p/set-colors! g t/stdout-sep-fg t/stdout-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Stdout padding ──
               (str/starts-with? line stdout-pad-marker)
               (do (p/set-bg! g t/stdout-bg)
-                (p/fill-rect! g (inc bx) y iw 1))
+                (p/fill-rect! g fbx y iw 1))
 
               ;; ── Code block padding (success) ──
               (str/starts-with? line code-pad-marker)
               (do (p/set-bg! g t/code-block-bg)
-                (p/fill-rect! g (inc bx) y iw 1))
+                (p/fill-rect! g fbx y iw 1))
 
               ;; ── Code block padding (error) ──
               (str/starts-with? line code-err-pad-marker)
               (do (p/set-bg! g t/code-err-bg)
-                (p/fill-rect! g (inc bx) y iw 1))
+                (p/fill-rect! g fbx y iw 1))
 
               ;; ── Iteration zone padding (margin between blocks) ──
               (str/starts-with? line iter-pad-marker)
               (do (p/set-bg! g bg-color)
-                (p/fill-rect! g (inc bx) y iw 1))
+                (p/fill-rect! g fbx y iw 1))
 
               ;; ── Answer separator — bold horizontal rule between iterations and answer ──
               (str/starts-with? line answer-sep-marker)
               (do (p/set-colors! g t/answer-sep-fg bg-color)
                 (p/styled g [p/BOLD]
-                  (p/put-str! g (inc bx) y (repeat-str \u2500 iw))))
+                  (p/put-str! g fbx y (repeat-str \u2500 iw))))
 
               ;; ── Answer header — right-aligned superscript on bubble bg ──
               (str/starts-with? line answer-hdr-marker)
@@ -580,53 +602,53 @@
               (str/starts-with? line md-h1-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g fg-color lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line md-h2-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g fg-color lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line md-h3-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g t/dialog-hint lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line md-bold-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g fg-color lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line md-code-marker)
               (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               (str/starts-with? line md-bullet-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g fg-color lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               (str/starts-with? line md-quote-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g t/dialog-hint lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line md-hr-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g t/answer-sep-fg lbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Markdown table (answer) ── grid on code-block bg
@@ -639,7 +661,7 @@
                     head? (str/starts-with? line md-table-head-marker)
                     border? (str/starts-with? line md-table-sep-marker)]
                 (p/set-colors! g (if border? t/code-border-fg tfg) tbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (if head?
                   (p/styled g [p/BOLD] (p/put-str! g x y (subs line 1)))
                   (p/put-str! g x y (subs line 1))))
@@ -647,50 +669,50 @@
               ;; ── Thinking-mode markdown headings ── dim italic on iter bg
               (str/starts-with? line th-md-h1-marker)
               (do (p/set-colors! g t/iter-header-fg t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line th-md-h2-marker)
               (do (p/set-colors! g t/iter-header-fg t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line th-md-h3-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line th-md-bold-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
               (str/starts-with? line th-md-code-marker)
               (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line th-md-bullet-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line th-md-quote-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
                   (p/put-str! g x y (subs line 1))))
 
               (str/starts-with? line th-md-hr-marker)
               (do (p/set-colors! g t/answer-sep-fg t/iter-header-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Markdown table (thinking) ── grid on code-block bg, italic body
@@ -702,7 +724,7 @@
                     border? (str/starts-with? line th-md-table-sep-marker)
                     tfg     (if border? t/code-border-fg t/code-result-fg)]
                 (p/set-colors! g tfg tbg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (cond
                   head?   (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x y (subs line 1)))
                   border? (p/put-str! g x y (subs line 1))
@@ -716,13 +738,13 @@
               ;; ── Answer text — answer bg ──
               (str/starts-with? line answer-txt-marker)
               (do (p/set-colors! g t/answer-fg t/answer-bg)
-                (p/fill-rect! g (inc bx) y iw 1)
+                (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Answer padding ──
               (str/starts-with? line answer-pad-marker)
               (do (p/set-bg! g t/answer-bg)
-                (p/fill-rect! g (inc bx) y iw 1))
+                (p/fill-rect! g fbx y iw 1))
 
               ;; ── Plain text — answer bg if in answer zone, else bubble bg ──
               :else
@@ -730,27 +752,39 @@
                     line-fg (if in-answer? t/answer-fg fg-color)]
                 (when in-answer?
                   (p/set-bg! g line-bg)
-                  (p/fill-rect! g (inc bx) y iw 1))
+                  (p/fill-rect! g fbx y iw 1))
                 (p/set-colors! g line-fg line-bg)
                 (p/put-str! g x y line))))))
 
-      ;; Below-bubble meta row
+      ;; Below-content meta row.
+      ;;
+      ;; Final per-message layout (no outer box, no bg fill):
+      ;;   row 0          : label + timestamp
+      ;;   row 1          : horizontal rule directly below the label
+      ;;   row 2          : blank breathing row between rule and content
+      ;;   row 3 … 2+N    : wrapped content (with marker-zone fills)
+      ;;   row 3+N        : meta (right-aligned, dim)
+      ;;   row 4+N        : single blank gap before the next message
       (p/clear-styles! g)
       (let [meta-row (+ btop bubble-h)]
         (when meta-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str))
+          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) meta-row meta-str))
         ;; Return: rows consumed
-        (+ 1 bubble-h 2)))))
+        ;;   = label(1) + rule(1) + post-rule-gap(1) + content(N) + meta(1) + gap(1)
+        (+ 1 1 1 bubble-h 1 1)))))
 
 (defn bubble-height*
-  "Uncached calculation: rows a chat bubble will consume without drawing.
-   label(1) + border(2) + wrapped-lines + meta(1) + gap(1)."
+  "Uncached calculation: rows a chat message will consume without drawing.
+   label(1) + rule(1) + post-rule-gap(1) + wrapped-lines + meta(1) + gap(1).
+   Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
+   layout math stays consistent across the height calc and the draw."
   [{:keys [text]} max-w]
-  (let [bubble-w  (min max-w (max 60 (+ 4 (min (count text) (- max-w 4)))))
-        content-w (- bubble-w 4)
+  (let [bubble-w  max-w
+        h-pad     2
+        content-w (max 1 (- bubble-w (* 2 h-pad)))
         lines     (wrap-text text content-w)]
-    (+ 1 (count lines) 2 2)))
+    (+ 1 1 1 (count lines) 1 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by `:text` identity + width — same
@@ -986,70 +1020,83 @@
         ]
     (into (vec (concat header thinking-lines error-lines)) grouped)))
 
-(defn- live-status-line
-  "Compose a one-line live status describing what the agent is currently
-   doing: sending the request, thinking, executing code, or recovering
-   from an iteration error. Always ends with the elapsed wall-clock time
-   and a cancel hint."
-  [{:keys [iterations cancelling? query-start-ms]}]
-  (let [elapsed-ms  (when query-start-ms
-                      (max 0 (- (System/currentTimeMillis) query-start-ms)))
-        elapsed-str (or (channels/format-duration elapsed-ms) "0ms")
-        n           (count iterations)
-        last-iter   (last iterations)
-        errored?    (some? (:error last-iter))
-        thinking?   (and (not errored?)
-                      (some? (:thinking last-iter))
-                      (not (str/blank? (:thinking last-iter))))
-        executing?  (and (not errored?) last-iter (seq (:code last-iter)))
-        phase       (cond
-                      cancelling? "cancelling"
-                      errored?    (str "iter " n " failed — retrying")
-                      (zero? n)   "sending request to provider"
-                      thinking?   (str "thinking (iter " n ")")
-                      executing?  (str "executing code (iter " n ")")
-                      :else       (str "working (iter " n ")"))]
-    (str phase "… " elapsed-str " · Esc to cancel")))
+;;; ── Spinner glyph (used by the in-bubble “working…” row) ──────────────────
+
+(def ^:private spinner-frames
+  "Braille-dot spinner frames; one frame advances every ~100ms."
+  ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
+(defn spinner-frame
+  "Pick the spinner glyph for `now-ms`. Pure — same input always
+   returns the same frame, which makes the render loop testable."
+  ^String [^long now-ms]
+  (nth spinner-frames (mod (quot now-ms 100) (count spinner-frames))))
+
+(defn- progress-phase
+  "Human-readable phase label for the current iteration state. Drives
+   the spinner row text so the user can tell whether we're waiting on
+   the provider, thinking, executing, or recovering."
+  [iterations cancelling?]
+  (let [n          (count iterations)
+        last-iter  (last iterations)
+        errored?   (some? (:error last-iter))
+        thinking?  (and (not errored?)
+                     (some? (:thinking last-iter))
+                     (not (str/blank? (:thinking last-iter))))
+        executing? (and (not errored?) last-iter (seq (:code last-iter)))]
+    (cond
+      cancelling? "cancelling"
+      errored?    (str "iter " n " failed — retrying")
+      (zero? n)   "sending request to provider"
+      thinking?   (str "thinking (iter " n ")")
+      executing?  (str "executing code (iter " n ")")
+      :else       (str "working (iter " n ")"))))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
 
-   `progress` is the `:progress` slot from app-db: `{:iterations [...]}`.
-   `bubble-w` is the outer bubble width in chars — we size inner content
-   conservatively so wrap-text inside draw-chat-bubble! doesn't blow up.
-   `settings` is the display settings map: `{:show-thinking bool :show-iterations bool}`.
-   `extra` (optional) carries:
-     :query-start-ms — wall-clock start for elapsed time
-     :cancelling?    — true once Esc was pressed
-   Returns a single string with newlines separating lines.
+   The bubble lives in the assistant slot (right where the final
+   answer will land), so the user sees the agent thinking/working in
+   place instead of a status line wedged into the input box.
 
-   Always emits a top status line so the user knows whether we're
-   sending the request, thinking, executing, or cancelling — and how
-   long it's been running."
+   Layout while loading:
+     [spinner] phase… elapsed · Esc to cancel
+     <blank>
+     <iteration trace, if iterations exist and not hidden>
+
+   `progress` is the `:progress` slot from app-db: `{:iterations [...]}`.
+   `bubble-w` is the outer bubble width in chars (we subtract the
+   bubble's symmetric inner padding to match draw-chat-bubble!).
+   `settings` is the display settings map: `{:show-thinking bool :show-iterations bool}`.
+   `extra` carries:
+     :now-ms         — `System/currentTimeMillis` from the render thread
+                       (drives the spinner frame); defaults to current ms
+     :query-start-ms — wall-clock start, used for elapsed time
+     :cancelling?    — true once Esc was pressed"
   ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
   ([progress bubble-w settings extra]
-   (let [iterations       (:iterations progress)
+   (let [iterations       (vec (:iterations progress))
          content-w        (max 10 (- bubble-w 4))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
-         status-line      (live-status-line (assoc extra :iterations iterations))]
-     (cond
-       ;; No iterations yet — first 100ms before any chunk arrives.
-       (empty? iterations)
-       status-line
-
-       ;; Iterations hidden — keep it to a single compact line.
-       (not show-iterations?)
-       status-line
-
-       :else
-       (str/join "\n"
-         (into [status-line ""]
-           (mapcat (fn [[idx entry]]
-                     (format-iteration-entry
-                       (if show-thinking? entry (dissoc entry :thinking))
-                       content-w (inc idx))))
-           (collapse-repeated-error-runs iterations)))))))
+         {:keys [now-ms query-start-ms cancelling?]} extra
+         now-ms           (long (or now-ms (System/currentTimeMillis)))
+         elapsed-ms       (when query-start-ms
+                            (max 0 (- now-ms (long query-start-ms))))
+         elapsed-str      (or (channels/format-duration elapsed-ms) "0ms")
+         spinner-line     (str (spinner-frame now-ms) "  "
+                            (progress-phase iterations cancelling?) "…  "
+                            elapsed-str "  ·  Esc to cancel")
+         trace-lines      (when (and show-iterations? (seq iterations))
+                            (into []
+                              (mapcat (fn [[idx entry]]
+                                        (format-iteration-entry
+                                          (if show-thinking? entry (dissoc entry :thinking))
+                                          content-w (inc idx))))
+                              (collapse-repeated-error-runs iterations)))]
+     (if (seq trace-lines)
+       (str/join "\n" (into [spinner-line ""] trace-lines))
+       spinner-line))))
 
 ;;; ── Markdown table parsing ───────────────────────────────────────────────
 
@@ -1374,31 +1421,38 @@
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 
-(def ^:private msg-margin-top 1)
-(def ^:private msg-margin-bottom 1)
+(def ^:private msg-margin-top    1)  ;; rows above first message
+(def ^:private msg-margin-bottom 1)  ;; rows below last message
+(def ^:private msg-margin-left   3)  ;; cols left gutter (matches input box gutter)
+(def ^:private msg-margin-right  3)  ;; cols right gutter (room for scrollbar + air)
 
 (defn draw-messages-area!
-  "Draw structured chat messages as bubbles inside a bordered area with scroll.
+  "Draw structured chat messages as left-aligned blocks inside a clean,
+   border-less scrolling area.
+
+   No outer box, no title bar — just a vertical column of messages with
+   generous side gutters. The right gutter doubles as scrollbar space
+   when the conversation overflows. The conversation title (if any) is
+   surfaced via the input-box bottom status line, not here.
+
    `messages` is a vec of {:role :user|:assistant, :text str}.
    `scroll` is a row offset into the virtual content, or nil for auto-bottom.
-   `opts` may contain `:title` for the box header."
+   `opts` is currently unused (kept for back-compat)."
   ([g messages box-top box-bottom cols scroll]
    (draw-messages-area! g messages box-top box-bottom cols scroll nil))
-  ([g messages box-top box-bottom cols scroll {:keys [title]}]
-   (let [inner-h   (- box-bottom box-top 1 msg-margin-top msg-margin-bottom)
-         text-top  (+ (inc box-top) msg-margin-top)
-         bubble-w  (- cols 4)
-         heights   (mapv #(bubble-height % bubble-w) messages)
-         total-h   (reduce + 0 heights)
+  ([g messages box-top box-bottom cols scroll _opts]
+   (let [text-top   (+ box-top msg-margin-top)
+         inner-h    (max 0 (- box-bottom text-top msg-margin-bottom))
+         bubble-w   (max 1 (- cols msg-margin-left msg-margin-right))
+         heights    (mapv #(bubble-height % bubble-w) messages)
+         total-h    (reduce + 0 heights)
          eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
                       (min s (max 0 (- total-h inner-h))))
-         offsets   (reductions + 0 heights)]
+         offsets    (reductions + 0 heights)]
 
-     (draw-box-border! g box-top box-bottom cols
-       (if title
-         (str " " (subs title 0 (min (count title) (- cols 6))) " ")
-         ""))
-     (fill-box-interior! g box-top box-bottom cols)
+     ;; Background fill (no border, no title bar).
+     (p/set-colors! g t/text-fg t/terminal-bg)
+     (p/fill-rect! g 0 box-top cols (max 0 (- box-bottom box-top)))
 
      (let [clip (.newTextGraphics g
                   (TerminalPosition. 0 text-top)
@@ -1408,14 +1462,16 @@
                msg-h   (nth heights idx)]
            (when (and (> (+ msg-top msg-h) 0)
                    (< msg-top inner-h))
-             (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w))))
+             (draw-chat-bubble! clip (nth messages idx) msg-top msg-margin-left bubble-w))))
 
        (when (> total-h inner-h)
          (let [max-scroll (max 1 (- total-h inner-h))
                track-h    inner-h
                thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
                thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
-               bar-col    (dec cols)
+               ;; Place the scrollbar inside the right gutter so it
+               ;; never overlaps message content.
+               bar-col    (- cols 2)
                bar-top    text-top]
            (doseq [r (range track-h)]
              (p/set-colors! g t/border-fg t/terminal-bg)

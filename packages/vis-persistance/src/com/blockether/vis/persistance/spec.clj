@@ -181,6 +181,63 @@
                  ::spec/description "Thinking depth for the next iteration"
                  ::spec/values ["quick" "balanced" "deep"]})))
 
+;; =============================================================================
+;; PHASE 1 — Plan as first-class slot (PLAN.md §5.1)
+;; =============================================================================
+
+(def PLAN_ITEM_SPEC
+  "One TODO item in the agent's structured plan. Item :id is monotonic
+   across iters; once assigned, never reused for a different content."
+  (spec/spec :plan_item
+    (spec/field {::spec/name        :id
+                 ::spec/type        :spec.type/int
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required    true
+                 ::spec/description "Stable item id, monotonic, unchanged across iters."})
+    (spec/field {::spec/name        :content
+                 ::spec/type        :spec.type/string
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required    true
+                 ::spec/description "Imperative one-liner describing the task."})
+    (spec/field {::spec/name        :status
+                 ::spec/type        :spec.type/keyword
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required    true
+                 ::spec/values      ["pending" "in_progress" "done" "blocked"]
+                 ::spec/description "Item status. Exactly ONE :in_progress at a time across the whole plan."})
+    (spec/field {::spec/name        :evidence
+                 ::spec/type        :spec.type/string
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required    false
+                 ::spec/description "What proved completion / blockage (e.g. iN.K result id, var name)."})))
+
+(def PLAN_STATE_SPEC
+  "Full structured plan. Sticky across iters — the loop carries it forward
+   verbatim until the model re-emits :plan with deliberate changes."
+  (spec/spec :plan_state
+    {:refs [PLAN_ITEM_SPEC]}
+    (spec/field {::spec/name        :goal
+                 ::spec/type        :spec.type/string
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required    true
+                 ::spec/description "One-line task framing. Set on iter 0; rarely changes."})
+    (spec/field {::spec/name        :items
+                 ::spec/type        :spec.type/ref
+                 ::spec/target      :plan_item
+                 ::spec/cardinality :spec.cardinality/many
+                 ::spec/required    true
+                 ::spec/description "Ordered TODO list. ≤20 items. EXACTLY ONE :in_progress at a time (or zero if all done)."})
+    (spec/field {::spec/name        :open
+                 ::spec/type        :spec.type/string
+                 ::spec/cardinality :spec.cardinality/many
+                 ::spec/required    false
+                 ::spec/description "Unanswered questions held for later."})
+    (spec/field {::spec/name        :decided
+                 ::spec/type        :spec.type/string
+                 ::spec/cardinality :spec.cardinality/many
+                 ::spec/required    false
+                 ::spec/description "Eliminated approaches with rationale."})))
+
 (defn- make-iteration-spec
   "Builds an iteration response spec.
 
@@ -189,12 +246,21 @@
        in JSON), false for reasoning providers (CoT is native, no
        duplication).
 
-   The iteration loop ALWAYS sends only the previous iteration's
-   `:thinking` under `<prior_thinking>`. There is no spec knob to
-   request more — older reasonings live in `(var-history '*reasoning*)`
-   and the agent reaches them on demand from `:code`. This keeps the
-   per-iteration prompt O(1) and forces the agent to be deliberate
-   about what historical context it actually needs."
+   ## Plan slot (Phase 1)
+
+   Iteration responses MAY include a structured `:plan` (see
+   `PLAN_STATE_SPEC`) and `:breadcrumb` (≤120c past-tense one-liner).
+   Both are sticky: the loop carries the most recent `:plan` verbatim
+   across iterations until the model re-emits one. Breadcrumbs are
+   appended to a bounded chain (last K=20) and presented in
+   `<breadcrumbs>`. The model never has to call `(var-history)` to
+   recover its own plan; the projection always shows the live plan +
+   the last K breadcrumbs + the most recent `:thinking` text.
+
+   When `:answer` is set with any plan item still :pending or
+   :in_progress, `:abandon-reason` is required. The iteration handler
+   enforces this cross-field rule (svar's spec engine doesn't model
+   conditional requireds)."
   [{:keys [include-thinking?]}]
   (let [base-fields
           [(spec/field {::spec/name        :code
@@ -209,11 +275,27 @@
                         ::spec/cardinality :spec.cardinality/one
                         ::spec/required    false
                         ::spec/description "Optional steering for the next iteration."})
+           (spec/field {::spec/name        :plan
+                        ::spec/type        :spec.type/ref
+                        ::spec/target      :plan_state
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "Structured plan. EMIT ON ITER 0. Carried verbatim across iters until you re-emit. Re-emit only when reality forces a real change. Max 20 items. Exactly one :in_progress."})
+           (spec/field {::spec/name        :breadcrumb
+                        ::spec/type        :spec.type/string
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "≤120 char single line summarizing what THIS iteration accomplished, in the strategic frame of <plan>. Past tense. Mention which item id you advanced."})
            (spec/field {::spec/name        :answer
                         ::spec/type        :spec.type/string
                         ::spec/cardinality :spec.cardinality/one
                         ::spec/required    false
                         ::spec/description "Optional final answer for this iteration. Never use emoji/emoticons."})
+           (spec/field {::spec/name        :abandon-reason
+                        ::spec/type        :spec.type/string
+                        ::spec/cardinality :spec.cardinality/one
+                        ::spec/required    false
+                        ::spec/description "Required when emitting :answer with open <plan> items. Concrete reason this turn cannot complete the plan (e.g. 'blocked: missing access to X')."})
            ;; Values-only enum (svar 0.3.2+). Mustache semantics are
            ;; documented once in the ARCH section; no need to re-paste
            ;; them per iteration into the JSON schema.
@@ -238,7 +320,7 @@
                               ::spec/description "Short reasoning for this iteration. Never use emoji/emoticons."})]
             base-fields)
           base-fields)]
-    (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC]} fields)))
+    (apply spec/spec {:refs [CODE_BLOCK_SPEC NEXT_SPEC PLAN_STATE_SPEC]} fields)))
 
 (defn iteration-spec
   "Compose the iteration response spec for the CURRENT env state.

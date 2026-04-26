@@ -458,36 +458,36 @@
 ;; =============================================================================
 
 (defdescribe system-var-versioning-test
-  (it "*reasoning* gets a new version each iteration, all under same soul"
+  (it "REASONING gets a new version each iteration, all under same soul"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "Explain monads" :status :running})
           _   (db/store-iteration! s {:query-id qid :expressions [{:code "(+ 1 1)" :result 2}]
                                       :duration-ms 100
-                                      :vars [{:name "*reasoning*" :value "First I need to understand what a monad is" :code ";; SYSTEM var"}
-                                             {:name "*query*" :value "Explain monads" :code ";; SYSTEM var"}]})
+                                      :vars [{:name "REASONING" :value "First I need to understand what a monad is" :code ";; SYSTEM var"}
+                                             {:name "QUERY" :value "Explain monads" :code ";; SYSTEM var"}]})
           _   (db/store-iteration! s {:query-id qid :expressions [{:code "(str \"A monad is\")" :result "A monad is"}]
                                       :duration-ms 200
-                                      :vars [{:name "*reasoning*" :value "Now I can explain: a monad wraps computation" :code ";; SYSTEM var"}]})
+                                      :vars [{:name "REASONING" :value "Now I can explain: a monad wraps computation" :code ";; SYSTEM var"}]})
           _   (db/store-iteration! s {:query-id qid :expressions []
                                       :duration-ms 50
-                                      :vars [{:name "*reasoning*" :value "Final check: the explanation covers functor, applicative, monad" :code ";; SYSTEM var"}
-                                             {:name "*answer*" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
-      ;; Only 1 expression_soul for *reasoning* (reused across iterations)
-      (expect (= 1 (raw-count s :expression_soul [:and [:= :kind "var"] [:= :name "*reasoning*"]])))
-      ;; 3 versions of *reasoning*
-      (let [history (db/db-var-history s cid '*reasoning*)]
+                                      :vars [{:name "REASONING" :value "Final check: the explanation covers functor, applicative, monad" :code ";; SYSTEM var"}
+                                             {:name "ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
+      ;; Only 1 expression_soul for REASONING (reused across iterations)
+      (expect (= 1 (raw-count s :expression_soul [:and [:= :kind "var"] [:= :name "REASONING"]])))
+      ;; 3 versions of REASONING
+      (let [history (db/db-var-history s cid 'REASONING)]
         (expect (= 3 (count history)))
         (expect (= [0 1 2] (mapv :version history)))
         (expect (= "First I need to understand what a monad is" (:value (nth history 0))))
         (expect (= "Now I can explain: a monad wraps computation" (:value (nth history 1))))
         (expect (= "Final check: the explanation covers functor, applicative, monad" (:value (nth history 2)))))
-      ;; *query* has only 1 version (set once on first iteration)
-      (let [qh (db/db-var-history s cid '*query*)]
+      ;; QUERY has only 1 version (set once on first iteration)
+      (let [qh (db/db-var-history s cid 'QUERY)]
         (expect (= 1 (count qh)))
         (expect (= "Explain monads" (:value (first qh)))))
-      ;; *answer* has only 1 version (set on final iteration)
-      (let [ah (db/db-var-history s cid '*answer*)]
+      ;; ANSWER has only 1 version (set on final iteration)
+      (let [ah (db/db-var-history s cid 'ANSWER)]
         (expect (= 1 (count ah)))
         (expect (= "A monad is a design pattern..." (:value (first ah)))))))
 
@@ -496,20 +496,20 @@
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "test" :status :running})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*query*" :value "test" :code ";; SYSTEM"}
-                                             {:name "*reasoning*" :value "step 1" :code ";; SYSTEM"}]})
+                                      :vars [{:name "QUERY" :value "test" :code ";; SYSTEM"}
+                                             {:name "REASONING" :value "step 1" :code ";; SYSTEM"}]})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*reasoning*" :value "step 2" :code ";; SYSTEM"}]})
+                                      :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}]})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*reasoning*" :value "step 3" :code ";; SYSTEM"}
-                                             {:name "*answer*" :value "42" :code ";; SYSTEM"}]})
+                                      :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
+                                             {:name "ANSWER" :value "42" :code ";; SYSTEM"}]})
           reg (db/db-latest-var-registry s cid)]
-      (expect (= "test" (:value (get reg '*query*))))
-      (expect (= 0 (:version (get reg '*query*))))
-      (expect (= "step 3" (:value (get reg '*reasoning*))))
-      (expect (= 2 (:version (get reg '*reasoning*))))
-      (expect (= "42" (:value (get reg '*answer*))))
-      (expect (= 0 (:version (get reg '*answer*))))))
+      (expect (= "test" (:value (get reg 'QUERY))))
+      (expect (= 0 (:version (get reg 'QUERY))))
+      (expect (= "step 3" (:value (get reg 'REASONING))))
+      (expect (= 2 (:version (get reg 'REASONING))))
+      (expect (= "42" (:value (get reg 'ANSWER))))
+      (expect (= 0 (:version (get reg 'ANSWER))))))
 
   (it "user vars and system vars coexist, each with independent version chains"
     (let [s   (store)
@@ -519,14 +519,14 @@
                                       :expressions [{:code "(def data [1 2 3])" :result [1 2 3]}]
                                       :duration-ms 10
                                       :vars [{:name "data" :value [1 2 3] :code "(def data [1 2 3])"}
-                                             {:name "*query*" :value "compute" :code ";; SYSTEM"}
-                                             {:name "*reasoning*" :value "I need to sum the data" :code ";; SYSTEM"}]})
+                                             {:name "QUERY" :value "compute" :code ";; SYSTEM"}
+                                             {:name "REASONING" :value "I need to sum the data" :code ";; SYSTEM"}]})
           _   (db/store-iteration! s {:query-id qid
                                       :expressions [{:code "(def result (reduce + data))" :result 6}]
                                       :duration-ms 5
                                       :vars [{:name "result" :value 6 :code "(def result (reduce + data))"}
-                                             {:name "*reasoning*" :value "Sum is 6, done" :code ";; SYSTEM"}
-                                             {:name "*answer*" :value "6" :code ";; SYSTEM"}]})
+                                             {:name "REASONING" :value "Sum is 6, done" :code ";; SYSTEM"}
+                                             {:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
           reg (db/db-latest-var-registry s cid)]
       ;; 5 distinct var souls
       (expect (= 5 (count reg)))
@@ -536,10 +536,10 @@
       (expect (= 6 (:value (get reg 'result))))
       (expect (= 0 (:version (get reg 'result))))
       ;; System vars
-      (expect (= "compute" (:value (get reg '*query*))))
-      (expect (= "Sum is 6, done" (:value (get reg '*reasoning*))))
-      (expect (= 1 (:version (get reg '*reasoning*))))
-      (expect (= "6" (:value (get reg '*answer*))))))
+      (expect (= "compute" (:value (get reg 'QUERY))))
+      (expect (= "Sum is 6, done" (:value (get reg 'REASONING))))
+      (expect (= 1 (:version (get reg 'REASONING))))
+      (expect (= "6" (:value (get reg 'ANSWER))))))
 
   (it "system vars version across multiple queries in same conversation"
     (let [s   (store)
@@ -547,25 +547,25 @@
           ;; Turn 1
           q1  (db/store-query! s {:parent-conversation-id cid :query "What is 2+2?" :status :done})
           _   (db/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
-                                      :vars [{:name "*query*" :value "What is 2+2?" :code ";; SYSTEM"}
-                                             {:name "*reasoning*" :value "Simple math" :code ";; SYSTEM"}
-                                             {:name "*answer*" :value "4" :code ";; SYSTEM"}]})
+                                      :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM"}
+                                             {:name "REASONING" :value "Simple math" :code ";; SYSTEM"}
+                                             {:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
           ;; Turn 2
           q2  (db/store-query! s {:parent-conversation-id cid :query "And 3+3?" :status :done})
           _   (db/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
-                                      :vars [{:name "*query*" :value "And 3+3?" :code ";; SYSTEM"}
-                                             {:name "*reasoning*" :value "Another simple one" :code ";; SYSTEM"}
-                                             {:name "*answer*" :value "6" :code ";; SYSTEM"}]})
+                                      :vars [{:name "QUERY" :value "And 3+3?" :code ";; SYSTEM"}
+                                             {:name "REASONING" :value "Another simple one" :code ";; SYSTEM"}
+                                             {:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
           reg (db/db-latest-var-registry s cid)]
       ;; Each system var should have version 1 (v0 from turn 1, v1 from turn 2)
-      (expect (= "And 3+3?" (:value (get reg '*query*))))
-      (expect (= 1 (:version (get reg '*query*))))
-      (expect (= "Another simple one" (:value (get reg '*reasoning*))))
-      (expect (= 1 (:version (get reg '*reasoning*))))
-      (expect (= "6" (:value (get reg '*answer*))))
-      (expect (= 1 (:version (get reg '*answer*))))
-      ;; Full history for *answer* shows both turns
-      (let [h (db/db-var-history s cid '*answer*)]
+      (expect (= "And 3+3?" (:value (get reg 'QUERY))))
+      (expect (= 1 (:version (get reg 'QUERY))))
+      (expect (= "Another simple one" (:value (get reg 'REASONING))))
+      (expect (= 1 (:version (get reg 'REASONING))))
+      (expect (= "6" (:value (get reg 'ANSWER))))
+      (expect (= 1 (:version (get reg 'ANSWER))))
+      ;; Full history for ANSWER shows both turns
+      (let [h (db/db-var-history s cid 'ANSWER)]
         (expect (= 2 (count h)))
         (expect (= ["4" "6"] (mapv :value h)))))))
 
@@ -591,33 +591,33 @@
         ;; Verify it's in the JSON metadata, not pr-str'd
         (expect (clojure.string/includes? (:metadata raw) "\"answer\":\"4\"")))))
 
-  (it "*answer* var tracks across turns"
+  (it "ANSWER var tracks across turns"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           ;; Turn 1: answer is 4
           q1  (db/store-query! s {:parent-conversation-id cid :query "2+2?" :status :done})
           _   (db/store-iteration! s {:query-id q1 :expressions [{:code "(+ 2 2)" :result 4}]
                                       :duration-ms 100 :answer "4"
-                                      :vars [{:name "*answer*" :value "4" :code ";; SYSTEM"}]})
+                                      :vars [{:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
           _   (db/update-query! s q1 {:answer "4" :status :success :iterations 1})
           ;; Turn 2: answer changes to 6
           q2  (db/store-query! s {:parent-conversation-id cid :query "3+3?" :status :done})
           _   (db/store-iteration! s {:query-id q2 :expressions [{:code "(+ 3 3)" :result 6}]
                                       :duration-ms 80 :answer "6"
-                                      :vars [{:name "*answer*" :value "6" :code ";; SYSTEM"}]})
+                                      :vars [{:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
           _   (db/update-query! s q2 {:answer "6" :status :success :iterations 1})
           ;; Turn 3: answer changes to 10
           q3  (db/store-query! s {:parent-conversation-id cid :query "5+5?" :status :done})
           _   (db/store-iteration! s {:query-id q3 :expressions [{:code "(+ 5 5)" :result 10}]
                                       :duration-ms 60 :answer "10"
-                                      :vars [{:name "*answer*" :value "10" :code ";; SYSTEM"}]})
+                                      :vars [{:name "ANSWER" :value "10" :code ";; SYSTEM"}]})
           _   (db/update-query! s q3 {:answer "10" :status :success :iterations 1})]
       ;; Latest registry shows final answer
       (let [reg (db/db-latest-var-registry s cid)]
-        (expect (= "10" (:value (get reg '*answer*))))
-        (expect (= 2 (:version (get reg '*answer*)))))
+        (expect (= "10" (:value (get reg 'ANSWER))))
+        (expect (= 2 (:version (get reg 'ANSWER)))))
       ;; Full history shows all 3 answers in order
-      (let [h (db/db-var-history s cid '*answer*)]
+      (let [h (db/db-var-history s cid 'ANSWER)]
         (expect (= 3 (count h)))
         (expect (= ["4" "6" "10"] (mapv :value h)))
         (expect (= [0 1 2] (mapv :version h))))
@@ -781,17 +781,17 @@
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "analyze data" :status :done})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*query*" :value "analyze data" :code ";; SYSTEM"}
-                                             {:name "*reasoning*" :value "step 1" :code ";; SYSTEM"}
+                                      :vars [{:name "QUERY" :value "analyze data" :code ";; SYSTEM"}
+                                             {:name "REASONING" :value "step 1" :code ";; SYSTEM"}
                                              {:name "dataset" :value [{:x 1 :y 2} {:x 3 :y 4}]
                                               :code "(def dataset [{:x 1 :y 2} {:x 3 :y 4}])"}]})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*reasoning*" :value "step 2" :code ";; SYSTEM"}
+                                      :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}
                                              {:name "summarize" :value (fn [ds] ds)
                                               :code "(defn summarize [ds] (map :x ds))"}]})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*reasoning*" :value "step 3" :code ";; SYSTEM"}
-                                             {:name "*answer*" :value "[1 3]" :code ";; SYSTEM"}
+                                      :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
+                                             {:name "ANSWER" :value "[1 3]" :code ";; SYSTEM"}
                                              {:name "result" :value [1 3]
                                               :code "(def result (summarize dataset))"}]})
           ;; Wire: dataset → summarize (it reads dataset), dataset + summarize → result
@@ -814,9 +814,9 @@
         ;; All 6 vars present (3 system + 3 user)
         (expect (= 6 (count restored)))
         ;; System vars have data values, latest versions
-        (expect (= "analyze data" (:result (by-name "*query*"))))
-        (expect (= "step 3" (:result (by-name "*reasoning*"))))
-        (expect (= "[1 3]" (:result (by-name "*answer*"))))
+        (expect (= "analyze data" (:result (by-name "QUERY"))))
+        (expect (= "step 3" (:result (by-name "REASONING"))))
+        (expect (= "[1 3]" (:result (by-name "ANSWER"))))
         ;; dataset is data
         (expect (= [{:x 1 :y 2} {:x 3 :y 4}] (:result (by-name "dataset"))))
         ;; summarize is fn ref
@@ -1251,24 +1251,24 @@
       ;; add-5 works (closure created by make-adder, restored via eval)
       (expect (= 12 (:val (sci/eval-string+ sci-ctx "(add-5 7)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))))
 
-  (it "system vars are restored: *query*, *reasoning*, *answer*"
+  (it "system vars are restored: QUERY, REASONING, ANSWER"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "*query*" :value "What is 2+2?" :code ";; SYSTEM var"}
-                                             {:name "*reasoning*" :value "Simple math" :code ";; SYSTEM var"}
-                                             {:name "*answer*" :value "4" :code ";; SYSTEM var"}]})
+                                      :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM var"}
+                                             {:name "REASONING" :value "Simple math" :code ";; SYSTEM var"}
+                                             {:name "ANSWER" :value "4" :code ";; SYSTEM var"}]})
           {:keys [sci-ctx]} (sci-env/create-sci-context nil)]
       (let [results (sci-env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
         ;; SYSTEM vars with ;; SYSTEM var code are data-restored
-        (expect (= :data (:restored-via (by-name "*query*"))))
-        (expect (= :data (:restored-via (by-name "*reasoning*"))))
-        (expect (= :data (:restored-via (by-name "*answer*"))))
+        (expect (= :data (:restored-via (by-name "QUERY"))))
+        (expect (= :data (:restored-via (by-name "REASONING"))))
+        (expect (= :data (:restored-via (by-name "ANSWER"))))
         (expect (every? :success? results)))
-      (expect (= "What is 2+2?" (:val (sci/eval-string+ sci-ctx "*query*" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
-      (expect (= "4" (:val (sci/eval-string+ sci-ctx "*answer*" {:ns (sci/find-ns sci-ctx 'sandbox)})))))))
+      (expect (= "What is 2+2?" (:val (sci/eval-string+ sci-ctx "QUERY" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
+      (expect (= "4" (:val (sci/eval-string+ sci-ctx "ANSWER" {:ns (sci/find-ns sci-ctx 'sandbox)})))))))
 
 ;; =============================================================================
 ;; Log

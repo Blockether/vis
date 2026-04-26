@@ -208,11 +208,12 @@
 
 (defn- apply-settings
   "Project messages for display: apply settings to all assistant messages
-   that carry a :trace, and replace the live placeholder with progress text.
-   This runs every frame so toggling settings is immediately reactive.
+   that carry a :trace, and replace the live placeholder with the
+   spinner-led progress text while loading. Runs every frame so
+   toggling settings is immediately reactive.
 
-   `progress-extra` is forwarded to `render/progress->text` so the live
-   status line can show elapsed time and a cancelling marker."
+   `progress-extra` carries the wall-clock start, cancelling flag, and
+   `:now-ms` so `progress->text` can render the spinner frame."
   [messages progress loading? bubble-w settings progress-extra]
   (let [;; Apply trace→text projection and markdown to assistant messages
         projected (mapv (fn [msg]
@@ -230,7 +231,8 @@
                             ;; User messages: unchanged
                             :else msg))
                     messages)]
-    ;; Replace loading placeholder with live progress
+    ;; Replace the loading placeholder with the live progress block
+    ;; (spinner + phase + iteration trace).
     (if (and loading? (seq projected))
       (let [last-idx (dec (count projected))
             last-msg (get projected last-idx)]
@@ -254,7 +256,8 @@
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box.
    The input box's top border carries keybinding hints and the bottom
-   border carries the live model/context status line.
+   border carries either the live model/context status line (idle) or
+   an animated spinner + phase + elapsed time (loading).
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -263,29 +266,31 @@
    it twice per frame, which doubled cost on long traces."
   [^TerminalScreen screen cols rows
    {:keys [messages msg-scroll input progress loading? cancelling?
-           query-start-ms title settings conv] :as db}]
-  (let [g           (.newTextGraphics screen)
-        text-rows   (input-text-rows input)
-        input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
-        input-top   (- rows input-box-h)
-        msg-top     0
-        msg-bottom  input-top
-        bubble-w    (- cols 4)
-        progress-extra {:query-start-ms query-start-ms
+           query-start-ms settings] :as db}
+   now-ms]
+  (let [now-ms       (long now-ms)
+        g            (.newTextGraphics screen)
+        text-rows    (input-text-rows input)
+        input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
+        input-top    (- rows input-box-h)
+        msg-top      0
+        msg-bottom   input-top
+        ;; Mirror `draw-messages-area!`'s gutter math so width
+        ;; calculations match the renderer exactly.
+        msg-side-pad 6 ;; 3 left + 3 right gutter
+        bubble-w     (max 1 (- cols msg-side-pad))
+        progress-extra {:now-ms         now-ms
+                        :query-start-ms query-start-ms
                         :cancelling?    (boolean cancelling?)}
         effective-messages (apply-settings messages progress loading? bubble-w settings progress-extra)
-        sid         (short-id (get conv :id))
-        display-title (when-not (str/blank? title)
-                        (if sid
-                          (str title " · " sid)
-                          title))
-        status-line (input-status-line db (max 0 (- cols 2)))
-        ;; Inner messages-box height — mirrors `draw-messages-area!`'s
-        ;; computation so scroll math in the input thread stays correct.
-        inner-h     (max 0 (- msg-bottom msg-top 1 2)) ;; -1 border, -2 margins
-        total-h     (render/total-messages-height effective-messages bubble-w)]
+        ;; Title used to live on the messages-area top border; now
+        ;; that the border is gone the conversation list / [?] dialog
+        ;; carry that information instead.
+        status-line  (input-status-line db (max 0 (- cols 2)))
+        inner-h      (max 0 (- msg-bottom msg-top 2)) ;; top + bottom margins
+        total-h      (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title display-title})
+    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll nil)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db) status-line)]
       (.setCursorPosition screen (TerminalPosition. cx cy)))
@@ -294,40 +299,53 @@
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
+(def ^:private spinner-tick-ms
+  "How often the spinner advances while a query is in flight. Drives
+   both the wait-timeout cap and the animate? predicate, so a quiet
+   render thread still repaints on the same cadence as the spinner."
+  100)
+
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
-   only paints when `:render-version` advances (or the terminal got
-   resized). Skips painting entirely while a dialog is up by failing to
-   acquire `draw-lock`."
+   only paints when `:render-version` advances, the terminal gets
+   resized, or — while loading — the spinner frame advances. Skips
+   painting entirely while a dialog is up by failing to acquire
+   `draw-lock`."
   [^TerminalScreen screen]
-  (loop [last-v -1 last-cols -1 last-rows -1]
+  (loop [last-v -1 last-cols -1 last-rows -1 last-frame-ms 0]
     (let [db @state/app-db]
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version db) 0))
               ;; tryLock so a dialog session (which holds the lock for
               ;; seconds) doesn't pin us. Time out fast and re-poll.
               got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
-              [rendered? new-cols new-rows]
+              [rendered? new-cols new-rows new-frame-ms]
               (if-not got-lock?
-                [false last-cols last-rows]
+                [false last-cols last-rows last-frame-ms]
                 (try
                   ;; Re-read AFTER acquiring the lock — dialog state
                   ;; could have flipped while we were waiting.
-                  (let [db   @state/app-db
-                        size (screen-size screen)
-                        cols (.getColumns size)
-                        rows (.getRows size)]
+                  (let [db       @state/app-db
+                        size     (screen-size screen)
+                        cols     (.getColumns size)
+                        rows     (.getRows size)
+                        now-ms   (System/currentTimeMillis)
+                        loading? (boolean (:loading? db))
+                        animate? (and loading?
+                                   (>= (- now-ms (long last-frame-ms))
+                                       spinner-tick-ms))]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
                           (or (not= last-v version)
                             (not= last-cols cols)
-                            (not= last-rows rows)))
-                      (let [layout (render-frame! screen cols rows db)]
+                            (not= last-rows rows)
+                            animate?))
+                      (let [layout (render-frame! screen cols rows db now-ms)]
                         ;; Publish layout back to app-db without
                         ;; bumping the version (see no-render-bump-events).
                         (state/dispatch [:set-layout layout])
-                        [true cols rows])
-                      [false cols rows]))
+                        [true cols rows now-ms])
+                      [false cols rows last-frame-ms]))
                   (catch Throwable t
                     ;; Drawing must never crash the thread — a stray
                     ;; resize race or null cell will recover next frame.
@@ -335,28 +353,25 @@
                       ((resolve 'taoensso.telemere/log!)
                         :warn (str "render frame failed: " (or (ex-message t) (str t))))
                       (catch Throwable _ nil))
-                    [false last-cols last-rows])
+                    [false last-cols last-rows last-frame-ms])
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
-            ;; Park until the next dispatch wakes us. The 100ms ceiling
-            ;; is just defensive — every state mutation calls
-            ;; notifyAll, so we should never actually time out except
-            ;; while a dialog is up (in which case the tryLock 50ms
-            ;; backoff also kicks in on the next iteration).
-            ;;
-            ;; The re-check while holding the monitor is the standard
-            ;; lost-wakeup guard: a dispatch that called notifyAll
-            ;; between our outer version read and acquiring the
-            ;; monitor would otherwise be missed and we'd sit out the
-            ;; full 100ms timeout.
+            ;; Park until the next dispatch wakes us, or until the
+            ;; spinner needs to tick. Idle conversations sleep up to
+            ;; ~250ms (defensive cap on lost wakeups); active queries
+            ;; sleep no longer than the spinner tick so the animation
+            ;; stays smooth without spamming repaints.
             (locking state/render-monitor
-              (let [v-now (long (or (:render-version @state/app-db) 0))]
+              (let [v-now (long (or (:render-version @state/app-db) 0))
+                    loading? (boolean (:loading? @state/app-db))]
                 (when (= v-now version)
-                  (try (.wait state/render-monitor 100)
+                  (try (.wait state/render-monitor
+                         (long (if loading? spinner-tick-ms 250)))
                     (catch InterruptedException _ nil))))))
           (recur (if rendered? version last-v)
             (long (or new-cols last-cols))
-            (long (or new-rows last-rows))))))))
+            (long (or new-rows last-rows))
+            (long new-frame-ms)))))))
 
 (defn- start-render-thread!
   "Spawn the render thread. Daemon so the JVM can still exit even if a

@@ -8,6 +8,7 @@
    Also contains error-normalization helpers for infrastructure vs recoverable
    failures."
   (:require
+   [clojure.set]
    [clojure.string :as str]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
 
@@ -169,11 +170,10 @@
 (def ^:const SLOW_EXECUTION_MS 5000)
 (def ^:const EXECUTION_SAFETY_CAP_CHARS MAX_RESULT_DISPLAY_CHARS)
 (def ^:const EXECUTION_STDERR_CHARS 2000)
-(def ^:const HANDOVER_KEEP_LAST 2)
-(def ^:const PRIOR_THINKING_MAX_CHARS 4000)
-
-(def PRIOR_THINKING_BREADCRUMB
-  "[older reasonings] call `(var-history '*reasoning*)` from :code (oldest first; `take-last N` for a window).")
+(def ^:const RECENT_THOUGHT_MAX_CHARS 4000)
+(def ^:const BREADCRUMBS_KEEP_LAST 20)
+(def ^:const RECENT_KEEP_ITERS 1)
+(def ^:const PLAN_MAX_ITEMS 20)
 
 (defn- truncated-pr-str [v]
   (let [s (strip-sandbox-ns (pr-str v))]
@@ -181,59 +181,248 @@
       [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
       [s false])))
 
-(defn- format-expression-results [expressions _iteration]
-  (when (seq expressions)
-    (str "<journal>\n"
-      (str/join "\n"
-        (map-indexed
-          (fn [idx {:keys [code error result stdout stderr execution-time-ms]}]
-            (let [code-str      (str/trim (or code ""))
-                  stdout-suffix (when-not (str/blank? stdout)
-                                  (str " :stdout " (pr-str stdout)))
-                  stderr-suffix (when-not (str/blank? stderr)
-                                  (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
-                  time-ms       (or execution-time-ms 0)
-                  slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
-                                  (str " (" time-ms "ms SLOW)"))
-                  value-part (if error
-                               (str "ERROR: " (truncate error 400))
-                               (let [v (realize-value result)
-                                     [value-str truncated?] (truncated-pr-str v)]
-                                 (str value-str
-                                   (when truncated? " :truncated? true"))))]
-              (str "  [" (inc idx) "] " code-str " → " value-part
-                (or slow-suffix "")
-                (or stdout-suffix "")
-                (or stderr-suffix ""))))
-          expressions))
-      "\n</journal>")))
+(defn- format-recent-block
+  "Render the last `RECENT_KEEP_ITERS` iterations of expression results
+   with iN.K addressable ids.
 
-(defn- format-prior-thinking-chain [iterations]
-  (let [entries (->> iterations
-                  (keep (fn [{:keys [iteration thinking]}]
-                          (when (and (string? thinking)
-                                  (not (str/blank? thinking)))
-                            (str "[iter " iteration "] " (str/trim thinking))))))]
-    (when (seq entries)
-      (str/join "\n\n" entries))))
-
-(defn- format-prior-turn-handover [{:keys [iterations final-answer]}]
-  (let [kept (take-last HANDOVER_KEEP_LAST iterations)]
+   `expressions-by-iteration` is a seq of `[iteration-position [exprs]]` pairs, ordered
+   oldest-first. Phase 1 ships only the most recent iteration (RECENT_KEEP_ITERS=1)
+   to keep the projection bounded; the breadcrumb chain (one line per iteration)
+   plus the addressable `iN.K` ids in <attempts> (Phase 2) cover everything
+   else the model needs to reference."
+  [expressions-by-iteration]
+  (let [kept (take-last RECENT_KEEP_ITERS (or expressions-by-iteration []))]
     (when (seq kept)
-      (let [thinking-lines (->> kept
-                             (keep (fn [{:keys [iteration thinking]}]
-                                     (when (and (string? thinking)
-                                             (not (str/blank? thinking)))
-                                       (str "  [iter " iteration "] "
-                                         (str/trim thinking))))))
-            final-line (when (and (string? final-answer)
-                               (not (str/blank? final-answer)))
-                         (str "  [final answer] " (str/trim final-answer)))]
-        (str/join "\n"
-          (concat ["[prior turn]"]
-            thinking-lines
-            (when final-line [final-line])
-            ["[new query]"]))))))
+      (let [lines (for [[iteration-position exprs] kept
+                        [k expr]         (map-indexed vector exprs)
+                        :let [{:keys [code error result stdout stderr execution-time-ms]} expr]]
+                    (let [code-str      (str/trim (or code ""))
+                          stdout-suffix (when-not (str/blank? stdout)
+                                          (str " :stdout " (pr-str stdout)))
+                          stderr-suffix (when-not (str/blank? stderr)
+                                          (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
+                          time-ms       (or execution-time-ms 0)
+                          slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
+                                          (str " (" time-ms "ms SLOW)"))
+                          value-part    (if error
+                                          (str "ERROR: " (truncate error 400))
+                                          (let [v (realize-value result)
+                                                [value-str truncated?] (truncated-pr-str v)]
+                                            (str value-str
+                                              (when truncated? " :truncated? true"))))]
+                      (str "  i" iteration-position "." (inc k) "  " code-str " → " value-part
+                        (or slow-suffix "")
+                        (or stdout-suffix "")
+                        (or stderr-suffix ""))))]
+        (when (seq lines)
+          (str "<recent>\n" (str/join "\n" lines) "\n</recent>"))))))
+
+;; -- Plan-as-first-class-slot helpers (Phase 1) --------------------------
+;;
+;; Two complementary projections of the agent's reasoning state:
+;;
+;;   <plan>          sticky structured TODO list, carried verbatim from
+;;                   the most-recent iteration row that emitted a :plan. The
+;;                   model only re-emits it when reality forces a real
+;;                   change; otherwise the loop carries it forward.
+;;
+;;   <breadcrumbs>   bounded one-liner chain (last K=20). Built from
+;;                   the :breadcrumb column of recent iteration rows, ordered
+;;                   oldest-first, prefixed by "iN ".
+;;
+;; The pair replaces the lossy <prior_thinking> Markov chain (CRITIQUE §7.2):
+;; the plan never gets re-summarized through tactical iters, and the
+;; breadcrumbs preserve the strategic frame at one line per iteration.
+
+(def ^:private PLAN_STATUS_DISPLAY
+  {:in_progress "in_progress"
+   :in-progress "in_progress"  ;; tolerate Clojurey kebab-case from spec
+   :pending     "pending"
+   :done        "done"
+   :blocked     "blocked"})
+
+(defn- normalize-plan-status [s]
+  (cond (keyword? s) (or (PLAN_STATUS_DISPLAY s)
+                       (PLAN_STATUS_DISPLAY (-> s name (str/replace "_" "-") keyword))
+                       (name s))
+    (string? s)  (or (PLAN_STATUS_DISPLAY (keyword s)) s)
+    :else        "pending"))
+
+(defn- plan-item-line [{:keys [id content status evidence]}]
+  (let [status-s (normalize-plan-status status)
+        ev-s    (when (and evidence (not (str/blank? (str evidence))))
+                  (str "  (" (str/trim (str evidence)) ")"))]
+    (str "  [" id "] " status-s " — " (str/trim (str content)) (or ev-s ""))))
+
+(defn- format-plan-block
+  "Render structured plan as the model-facing `<plan>` block. Returns nil
+   when no plan ever emitted (model has not decomposed yet) so the model
+   sees a clean iteration-0 prompt instead of an empty wrapper."
+  [plan-state]
+  (when (and (map? plan-state) (or (:goal plan-state) (seq (:items plan-state))))
+    (let [{:keys [goal items open decided]} plan-state
+          item-lines (map plan-item-line (or items []))
+          open-lines (when (seq open) (map #(str "  - " (str/trim (str %))) open))
+          decided-lines (when (seq decided) (map #(str "  - " (str/trim (str %))) decided))]
+      (str "<plan>\n"
+        (when goal (str "  goal: " (str/trim (str goal)) "\n"))
+        (when (seq item-lines) (str (str/join "\n" item-lines) "\n"))
+        (when (seq open-lines)
+          (str "  open:\n" (str/join "\n" (map #(str "  " %) open-lines)) "\n"))
+        (when (seq decided-lines)
+          (str "  decided:\n" (str/join "\n" (map #(str "  " %) decided-lines)) "\n"))
+        "</plan>"))))
+
+(defn- format-breadcrumbs-block
+  "Render the cumulative breadcrumb chain as `<breadcrumbs>`. Each entry
+   is a one-line breadcrumb authored by the model in :breadcrumb. Bounded
+   at last K=20. Ordered oldest-first (matches reading order)."
+  [breadcrumb-rows]
+  (let [entries (->> breadcrumb-rows
+                  (keep (fn [{:keys [position breadcrumb]}]
+                          (when (and breadcrumb (not (str/blank? breadcrumb)))
+                            (str "  i" position "  " (str/trim breadcrumb)))))
+                  (take-last BREADCRUMBS_KEEP_LAST))]
+    (when (seq entries)
+      (str "<breadcrumbs>\n" (str/join "\n" entries) "\n</breadcrumbs>"))))
+
+(defn- format-recent-thought-block
+  "Render the most-recent iteration's :thinking text under <recent_thought>.
+   Hard-capped at RECENT_THOUGHT_MAX_CHARS to keep the projection bounded.
+
+   This replaces the old <prior_thinking> wrapper. The semantic shift:
+   <recent_thought> is explicitly the *current* tactical step's free-form
+   text; the strategic frame lives in <plan> + <breadcrumbs> instead."
+  [thinking]
+  (when (and (string? thinking) (not (str/blank? thinking)))
+    (str "<recent_thought>\n"
+      (truncate thinking RECENT_THOUGHT_MAX_CHARS)
+      "\n</recent_thought>")))
+
+(defn- format-system-state-block
+  "Render the always-present <system_state> block: SYSTEM-var current
+   values + bounded prior-turn digest (PLAN.md §5.5).
+
+   Names follow `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no earmuffs):
+   QUERY, ANSWER, REASONING. Plus PRIOR_TURN as a digest pseudo-name
+   (not a real sandbox binding) for cross-turn handover.
+
+   Bounded by construction — only :goal, item bucket counts, :outcome,
+   and :abandon-reason from the prior turn (no full plan body, no full
+   transcript). Multi-turn conversations don't accumulate stale plan
+   context here."
+  [{:keys [system-vars prior-turn]}]
+  (let [vars-lines (->> [["QUERY"     (:QUERY system-vars)]
+                         ["ANSWER"    (:ANSWER system-vars)]
+                         ["REASONING" (:REASONING system-vars)]]
+                     (keep (fn [[label v]]
+                             (when (some? v)
+                               (let [s (pr-str v)]
+                                 (str "  " label "  " (truncate s 500)))))))
+        prior-lines (when (seq prior-turn)
+                      [(str "  PRIOR_TURN {:goal "
+                         (pr-str (or (:goal prior-turn) ""))
+                         " :outcome " (or (:outcome prior-turn) :unknown)
+                         (when (:abandon-reason prior-turn)
+                           (str " :abandon-reason " (pr-str (:abandon-reason prior-turn))))
+                         (when (:counts prior-turn)
+                           (str " :counts " (pr-str (:counts prior-turn))))
+                         "}")])
+        all-lines (concat vars-lines prior-lines)]
+    (when (seq all-lines)
+      (str "<system_state>\n" (str/join "\n" all-lines) "\n</system_state>"))))
+
+;; -- Cross-field plan validation -----------------------------------------
+;;
+;; svar's spec engine validates *structural* shape per the iteration spec.
+;; PLAN.md §5.1 calls out three cross-field rules svar can't model: ≤20
+;; items, exactly-one :in_progress, monotonic :id. The iteration handler
+;; calls `validate-plan-state!` after svar parse and either re-prompts
+;; (returning {:plan-validation-error msg}) or records the failure.
+
+(defn validate-plan-state
+  "Returns nil when valid, or a structured error map otherwise.
+   Side-effect-free; caller decides what to do with the error."
+  [plan-state]
+  (when (map? plan-state)
+    (let [items (or (:items plan-state) [])]
+      (cond
+        (> (count items) PLAN_MAX_ITEMS)
+        {:type :vis/plan-too-large
+         :item-count (count items)
+         :max PLAN_MAX_ITEMS
+         :nudge (str "<plan>.items has " (count items) " entries; max is "
+                  PLAN_MAX_ITEMS ". Merge or drop items.")}
+
+        (let [in-progress (filter #(= :in_progress
+                                     (-> % :status keyword
+                                       ((fn [k]
+                                          (case k
+                                            :in-progress :in_progress
+                                            k)))))
+                            items)]
+          (> (count in-progress) 1))
+        {:type :vis/plan-multiple-in-progress
+         :nudge "<plan> has more than one :in_progress item. Set exactly one in_progress at a time."}
+
+        (let [ids (mapv :id items)]
+          (and (seq ids) (not= ids (sort ids))))
+        {:type :vis/plan-non-monotonic-ids
+         :ids (mapv :id items)
+         :nudge "<plan>.items :id values must be monotonic and unique. Don't reuse ids."}))))
+
+;; -- Plan diff (Phase 0b: plan-edit-distance metric) ---------------------
+
+(defn item-status-key
+  "Public helper: normalize a plan item's :status to a canonical keyword
+   (`:pending`, `:in_progress`, `:done`, `:blocked`). Tolerates both
+   keyword and string inputs from svar's parsed JSON."
+  [item]
+  (let [s (:status item)
+        k (cond (keyword? s) s
+            (string? s) (keyword s)
+            :else :pending)]
+    (case k
+      :in-progress :in_progress
+      k)))
+
+(defn compute-plan-diff
+  "Diff two plan-state maps. Returns nil when identical, or a map
+   `{:added [ids] :removed [ids] :status-changed [{id :from :to}] :goal-changed? bool}`.
+   Callers compute `(count added)+(count removed)+(count status-changed)`
+   for the Phase 0b `plan-edit-distance` metric."
+  [previous-plan new-plan]
+  (when (or (some? previous-plan) (some? new-plan))
+    (let [previous-items (into {} (map (juxt :id identity) (or (:items previous-plan) [])))
+          new-items  (into {} (map (juxt :id identity) (or (:items new-plan) [])))
+          previous-ids   (set (keys previous-items))
+          new-ids    (set (keys new-items))
+          added      (sort (clojure.set/difference new-ids previous-ids))
+          removed    (sort (clojure.set/difference previous-ids new-ids))
+          shared     (sort (clojure.set/intersection previous-ids new-ids))
+          status-changes (vec
+                           (keep (fn [id]
+                                   (let [from (item-status-key (get previous-items id))
+                                         to   (item-status-key (get new-items id))]
+                                     (when (not= from to)
+                                       {:id id :from from :to to})))
+                             shared))
+          goal-changed? (not= (:goal previous-plan) (:goal new-plan))
+          changed? (or (seq added) (seq removed) (seq status-changes) goal-changed?)]
+      (when changed?
+        {:added (vec added)
+         :removed (vec removed)
+         :status-changed status-changes
+         :goal-changed? goal-changed?}))))
+
+(defn plan-edit-distance
+  "Sum of additions, removals, and status changes. 0 → plan unchanged."
+  [diff]
+  (if (nil? diff)
+    0
+    (+ (count (:added diff))
+      (count (:removed diff))
+      (count (:status-changed diff)))))
 
 (defn assemble-initial-messages [{:keys [system-prompt initial-user-content history-messages]}]
   (into [{:role "system" :content system-prompt}
@@ -243,97 +432,140 @@
 (defn trim-to-initial-history [messages initial-count]
   (vec (take initial-count messages)))
 
-(defn- read-var-index-str [environment]
-  (let [var-index-atom (or (:var-index-atom environment)
-                         (atom {:index nil :revision -1 :current-revision 0}))
-        {:keys [index revision current-revision]} @var-index-atom]
-    (if (= revision current-revision)
-      index
-      (let [sandbox-map (get-in @(:env (:sci-ctx environment))
-                          [:namespaces 'sandbox])
-            idx         (sci-env/build-var-index
-                          (:sci-ctx environment) (:initial-ns-keys environment)
-                          sandbox-map
-                          (:db-info environment) (:conversation-id environment)
-                          nil)
-            live-rev    (:current-revision @var-index-atom)]
-        (swap! var-index-atom assoc :index idx :revision live-rev)
-        idx))))
+(defn- read-var-index-str
+  "Lazily build (and cache) the `<var_index>` body for the active env.
+   Returns nil when the env has no SCI context (test fixtures that exercise
+   only the projection layer)."
+  [environment]
+  (when-let [sci-ctx (:sci-ctx environment)]
+    (let [var-index-atom (or (:var-index-atom environment)
+                           (atom {:index nil :revision -1 :current-revision 0}))
+          {:keys [index revision current-revision]} @var-index-atom]
+      (if (= revision current-revision)
+        index
+        (let [sandbox-map (get-in @(:env sci-ctx)
+                            [:namespaces 'sandbox])
+              idx         (sci-env/build-var-index
+                            sci-ctx (:initial-ns-keys environment)
+                            sandbox-map
+                            (:db-info environment) (:conversation-id environment)
+                            nil)
+              live-rev    (:current-revision @var-index-atom)]
+          (swap! var-index-atom assoc :index idx :revision live-rev)
+          idx)))))
 
-(defn- load-prior-thinking-chain [db-info query-id]
-  (try
-    (if query-id
+;; -- Sticky-plan loader (Phase 1) ---------------------------------------
+;;
+;; The plan slot is sticky: the model writes it once and the loop carries
+;; the most-recent persisted plan forward across iterations until the model
+;; re-emits one. This loader returns the latest non-nil plan_state from the
+;; current query's iteration rows; nil when no plan has ever been emitted.
+
+(defn load-effective-plan
+  "Most-recent persisted :plan-state for this query, or nil. Reads the
+   iteration rows in DB-time order; takes the last row whose plan-state
+   is non-nil. This is the implementation of sticky-carry semantics:
+   when iteration K omits :plan, we still know what the model's plan was."
+  [db-info query-id]
+  (when (and db-info query-id)
+    (try
       (let [iters (db/db-list-query-iterations db-info query-id)]
-        (vec (keep-indexed
-               (fn [idx it]
-                 (when-let [t (:thinking it)]
-                   {:iteration idx :thinking t}))
-               iters)))
-      [])
-    (catch Throwable t
-      (tel/log! {:level :warn
-                 :data {:error (ex-message t) :query-id query-id}
-                 :msg "load-prior-thinking-chain failed"})
-      [])))
+        (some :plan-state (reverse iters)))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                   :data {:error (ex-message t) :query-id query-id}
+                   :msg "load-effective-plan failed"})
+        nil))))
 
-(defn build-prior-thinking [_environment db-info query-id]
-  (let [chain (load-prior-thinking-chain db-info query-id)]
-    (when (seq chain)
-      (let [tail (vec (take-last 1 chain))
-            body (format-prior-thinking-chain tail)]
-        (if body
-          (str body "\n" PRIOR_THINKING_BREADCRUMB)
-          PRIOR_THINKING_BREADCRUMB)))))
+(defn load-breadcrumb-chain
+  "Vector of `{:position int :breadcrumb str}` for this query, oldest-first,
+   capped at last `BREADCRUMBS_KEEP_LAST` entries. Skips iters with no
+   breadcrumb so the chain is dense."
+  [db-info query-id]
+  (when (and db-info query-id)
+    (try
+      (let [iters (db/db-list-query-iterations db-info query-id)]
+        (->> iters
+          (keep-indexed (fn [idx it]
+                          (when (and (:breadcrumb it)
+                                  (not (str/blank? (:breadcrumb it))))
+                            {:position idx :breadcrumb (:breadcrumb it)})))
+          (take-last BREADCRUMBS_KEEP_LAST)
+          vec))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                   :data {:error (ex-message t) :query-id query-id}
+                   :msg "load-breadcrumb-chain failed"})
+        []))))
 
-(defn build-cross-query-handover [db-info conversation-id current-query-id parent-iteration-id]
-  (when (and db-info conversation-id (nil? parent-iteration-id))
+(defn load-prior-turn-digest
+  "Bounded handover digest for the previous query in the same conversation.
+   Returns nil when there is no prior turn (first turn of conversation).
+   Replaces the old `build-cross-query-handover` which shipped raw
+   thinking strings; PLAN.md §5.5 caps this at goal/counts/outcome only."
+  [db-info conversation-id current-query-id]
+  (when (and db-info conversation-id)
     (try
       (let [all-queries (sort-by :created-at
                           (db/db-list-conversation-queries db-info conversation-id))
             prior       (last (remove #(= (:id %) current-query-id) all-queries))]
         (when prior
-          (let [iters        (db/db-list-query-iterations db-info (:id prior))
-                tagged-iters (vec (keep-indexed
-                                    (fn [idx it]
-                                      (when-let [t (:thinking it)]
-                                        {:iteration idx :thinking t}))
-                                    iters))
-                final-answer (:answer prior)]
-            (format-prior-turn-handover
-              {:iterations tagged-iters
-               :final-answer (when (and (string? final-answer)
-                                     (not (str/blank? final-answer)))
-                               final-answer)}))))
+          (let [final-plan   (load-effective-plan db-info (:id prior))
+                items        (or (:items final-plan) [])
+                bucket       (frequencies (map item-status-key items))
+                outcome      (or (:prior-outcome prior)
+                               ;; legacy rows lacked the column — derive
+                               ;; from query status.
+                               (case (:status prior)
+                                 :done :complete
+                                 :error :error
+                                 :interrupted :cancelled
+                                 :unknown))
+                abandon-reason (when (and (= outcome :abandoned)
+                                       (not (str/blank? (str (:answer prior)))))
+                                 (str (:answer prior)))]
+            {:goal           (:goal final-plan)
+             :counts         (-> {}
+                               (assoc :done (or (:done bucket) 0))
+                               (assoc :pending (or (:pending bucket) 0))
+                               (assoc :in_progress (or (:in_progress bucket) 0))
+                               (assoc :blocked (or (:blocked bucket) 0)))
+             :outcome        outcome
+             :abandon-reason abandon-reason})))
       (catch Throwable t
         (tel/log! {:level :warn
                    :data {:error (ex-message t) :conversation-id conversation-id}
-                   :msg "build-cross-query-handover failed"})
+                   :msg "load-prior-turn-digest failed"})
         nil))))
+
+
 
 ;; ---------------------------------------------------------------------------
 ;; Nudges — per-iteration system hints injected into the iteration context
 ;; ---------------------------------------------------------------------------
 
 (def ^:private BUDGET_WARNING_WINDOW 2)
-(def ^:private REPETITION_THRESHOLD 3)
+;; Phase 2 lowered this from 3 → 1: with <attempts> in the projection,
+;; a single repeat is enough signal that the model should change strategy.
+(def ^:private REPETITION_THRESHOLD 1)
 
 (defn- budget-warning
   [{:keys [iteration current-max-iterations]}]
-  (let [iter (long (or iteration 0))
+  (let [iteration (long (or iteration 0))
         max-iters (long (or current-max-iterations 0))
-        remaining (- max-iters (inc iter))]
+        remaining (- max-iters (inc iteration))]
     (when (<= remaining BUDGET_WARNING_WINDOW)
       (str "[system_nudge] " (max 0 remaining) " iteration(s) left. "
         "Either finalize with :answer NOW, or call (request-more-iterations N) in :code alongside your other operations to extend."))))
 
 (defn- repetition-warning
-  [call-counts-atom prev-expressions]
-  (when (and call-counts-atom (seq prev-expressions))
+  [call-counts-atom previous-expressions]
+  (when (and call-counts-atom (seq previous-expressions))
     (let [keys* (mapv (fn [{:keys [code error result]}]
                         (if error
                           [:error-only (str/trim (str error))]
                           [(str/trim (str code)) (pr-str result)]))
-                  prev-expressions)
+                  previous-expressions)
           max-count (swap! call-counts-atom
                       (fn [m]
                         (reduce (fn [acc k] (update acc k (fnil inc 0)))
@@ -367,59 +599,79 @@
 ;; ---------------------------------------------------------------------------
 
 (defn build-iteration-context
-  "Assemble the per-iteration trailing user message: iter header,
-   `<prior_thinking>`, `<journal>`, `<var_index>`, and built-in +
-   extension `[system_nudge]` lines.
+  "Assemble the per-iteration trailing user message.
+
+   Phase 1 layered shape (PLAN.md §5.3):
+     [iteration N/M]
+     <plan>          — sticky structured TODO list (PLAN_STATE_SPEC)
+     <breadcrumbs>   — last K=20 one-liners, oldest-first
+     <recent>        — last iteration's expressions with iN.K addressable ids
+     <recent_thought> — last iteration's :thinking text (≤4000c)
+     <system_state>  — SYSTEM vars + bounded prior-turn digest
+     <var_index>     — user-defined vars (Phase 3 will reshape rendering)
+     [system_nudge]  — budget / repetition / extension nudges
 
    Required opts:
      `:active-extensions` — vec returned by `(loop-core/active-extensions env)`.
-        Caller MUST compute this exactly ONCE per query and thread it
-        through every iteration. This fn does NOT re-evaluate
-        `:ext/activation-fn`. Pass `[]` when the env has no extensions.
+        Caller MUST compute this exactly ONCE per query and thread it through
+        every iteration. This fn does NOT re-evaluate `:ext/activation-fn`.
 
    Optional:
-     `:iteration`, `:current-max-iterations`, `:prior-thinking`,
-     `:prev-expressions`, `:prev-iteration`, `:call-counts-atom`.
+     `:iteration`, `:current-max-iterations`, `:plan-state`, `:breadcrumbs`,
+     `:expressions-by-iteration`, `:recent-thought`, `:system-vars`,
+     `:prior-turn`, `:call-counts-atom`.
 
    Returns the joined block or nil when every component is blank."
   [environment {:keys [iteration current-max-iterations
-                       prior-thinking
-                       prev-expressions prev-iteration
+                       plan-state breadcrumbs
+                       expressions-by-iteration recent-thought
+                       system-vars prior-turn
                        call-counts-atom
                        active-extensions] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions — compute once per query via (loop-core/active-extensions env)"
              {:type :vis/missing-active-extensions})))
-  (let [clamp (fn [s n] (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
-        iter-header (when (and iteration current-max-iterations)
-                      (str "[iter " (inc (long iteration)) "/"
+  (let [iteration-header (when (and iteration current-max-iterations)
+                      (str "[iteration " (inc (long iteration)) "/"
                         (long current-max-iterations) "]"))
-        prior-block (when (and (string? prior-thinking)
-                            (not (str/blank? prior-thinking)))
-                      (str "<prior_thinking>\n"
-                        (clamp prior-thinking PRIOR_THINKING_MAX_CHARS)
-                        "\n</prior_thinking>"))
+        plan-block (format-plan-block plan-state)
+        breadcrumbs-block (format-breadcrumbs-block breadcrumbs)
+        recent-block (format-recent-block expressions-by-iteration)
+        ;; Repetition warning still consumes flat (last-iteration) expressions —
+        ;; pluck them out of the canonical pairs once.
+        last-iteration-expressions (some-> expressions-by-iteration last second)
+        recent-thought-block (format-recent-thought-block recent-thought)
+        system-state-block (format-system-state-block
+                             {:system-vars system-vars
+                              :prior-turn  prior-turn})
         var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
-        expr-results (format-expression-results prev-expressions prev-iteration)
         nudge-ctx {:environment            environment
                    :iteration              iteration
                    :current-max-iterations current-max-iterations
-                   :prev-expressions       prev-expressions
-                   :prev-iteration         prev-iteration
+                   :previous-expressions       last-iteration-expressions
+                   :plan-state             plan-state
                    :user-var-count         0}
         built-in-nudges (keep identity
                           [(when (and iteration current-max-iterations)
                              (budget-warning
                                {:iteration              iteration
                                 :current-max-iterations current-max-iterations}))
-                           (repetition-warning call-counts-atom prev-expressions)])
+                           (repetition-warning call-counts-atom last-iteration-expressions)])
         ext-nudges (collect-extension-nudges active-extensions nudge-ctx)
-        nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
+        nudges-block (when (seq (concat built-in-nudges ext-nudges))
+                       (str/join "\n" (concat built-in-nudges ext-nudges)))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [iter-header prior-block expr-results var-block nudges-block])]
+                [iteration-header
+                 plan-block
+                 breadcrumbs-block
+                 recent-block
+                 recent-thought-block
+                 system-state-block
+                 var-block
+                 nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -448,8 +700,8 @@
           " …<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
         s))))
 
-(defn- exception->iter-err
-  "Normalize an exception into the iter-err map stored on the query row.
+(defn- exception->iteration-error-data
+  "Normalize an exception into the iteration-error-data map stored on the query row.
    Delegates to the unified `format-exception` and adds iteration context."
   [^Throwable e ctx]
   (format-exception e
@@ -470,11 +722,11 @@
                      :data  (assoc (format-exception-short e) :iteration iteration)}
             "Provider infrastructure error — aborting iteration loop")
         (throw e))
-      (let [iter-err (exception->iter-err e ctx)]
+      (let [iteration-error-data (exception->iteration-error-data e ctx)]
         (tel/log! {:level :warn
                    :data (assoc (format-exception-short e) :iteration iteration)}
           "RLM iteration failed, feeding error to LLM")
-        {::iteration-error iter-err}))))
+        {::iteration-error iteration-error-data}))))
 
 ;; ---------------------------------------------------------------------------
 ;; get-locals (read sandbox vars)
@@ -563,7 +815,13 @@
           api-usage {:prompt_tokens (get-in ask-result [:tokens :input] 0)
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
                      :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
-                     :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}]
+                     :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}
+          ;; Phase 1 — surface plan slot fields from svar parse so
+          ;; downstream `store-iteration!` can persist them. Keep keys
+          ;; absent when blank/missing so legacy callers behave the same.
+          plan-state-raw  (:plan parsed)
+          breadcrumb-raw  (:breadcrumb parsed)
+          abandon-reason  (some-> (:abandon-reason parsed) str str/trim not-empty)]
       (if-let [raw-final-answer (:answer parsed)]
         ;; FINAL path
         (let [answer-type (some-> (:answer-type parsed) keyword)
@@ -576,15 +834,15 @@
                                               {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
                                   raw-code))
               code-blocks (mapv :expr code-entries)
-              expr-results (when (seq code-blocks)
+              expression-results (when (seq code-blocks)
                              (mapv (fn [{:keys [expr time-ms]}]
                                      (if-let [err (literal-code-block-error expr)]
                                        {:result nil :error err
                                         :stdout "" :stderr "" :execution-time-ms 0}
                                        (execute-code environment expr :timeout-ms time-ms)))
                                code-entries))
-              expr-errors (when expr-results
-                            (seq (clojure.core/filter :error expr-results)))
+              expression-errors (when expression-results
+                            (seq (clojure.core/filter :error expression-results)))
               raw-answer (str raw-final-answer)
               locals (try (get-locals environment) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
@@ -614,18 +872,18 @@
               confidence (or (:confidence parsed) :high)
               validation-error (or (when-not answer-type
                                      ":answer-type is required with :answer. Set mustache-text or mustache-markdown.")
-                                 (when expr-errors
-                                   (str "Code errors before final: " (:error (first expr-errors))))
+                                 (when expression-errors
+                                   (str "Code errors before final: " (:error (first expression-errors))))
 
                                  mustache-missing)
-              expressions (when expr-results
+              expressions (when expression-results
                             (mapv (fn [idx code result]
                                     {:id idx :code code
                                      :result (:result result) :stdout (:stdout result)
                                      :stderr (:stderr result) :error (:error result)
                                      :execution-time-ms (:execution-time-ms result)
                                      :repaired? (:repaired? result)})
-                              (range) code-blocks expr-results))]
+                              (range) code-blocks expression-results))]
           (if validation-error
             {:thinking thinking
              :next-model next-model :next-reasoning next-reasoning
@@ -638,12 +896,16 @@
             (let [final-result (cond-> {:final? true
                                         :answer final-answer
                                         :confidence confidence}
-                                 (:reasoning parsed) (assoc :reasoning (:reasoning parsed)))]
-              {:thinking thinking
-               :next-model next-model :next-reasoning next-reasoning
-               :expressions (strip-noop-expressions expressions) :final-result final-result :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :llm-messages messages :llm-model (str resolved-model)})))
+                                 (:reasoning parsed)  (assoc :reasoning (:reasoning parsed))
+                                 abandon-reason       (assoc :abandon-reason abandon-reason))]
+              (cond-> {:thinking thinking
+                       :next-model next-model :next-reasoning next-reasoning
+                       :expressions (strip-noop-expressions expressions)
+                       :final-result final-result :api-usage api-usage
+                       :duration-ms (or (:duration-ms ask-result) 0)
+                       :llm-messages messages :llm-model (str resolved-model)}
+                plan-state-raw (assoc :plan-state plan-state-raw)
+                breadcrumb-raw (assoc :breadcrumb breadcrumb-raw)))))
         ;; Normal path: execute code blocks
         (let [normalized (vec (:code parsed))
               ;; Coalesce fragments: join unbalanced blocks with the next
@@ -681,8 +943,10 @@
                                    :timeout? (:timeout? result)
                                    :repaired? (:repaired? result)})
                             (range) code-blocks expression-results)]
-          {:thinking thinking
-           :next-model next-model :next-reasoning next-reasoning
-           :expressions (strip-noop-expressions expressions) :final-result nil :api-usage api-usage
-           :duration-ms (or (:duration-ms ask-result) 0)
-           :llm-messages messages :llm-model (str resolved-model)})))))
+          (cond-> {:thinking thinking
+                   :next-model next-model :next-reasoning next-reasoning
+                   :expressions (strip-noop-expressions expressions) :final-result nil :api-usage api-usage
+                   :duration-ms (or (:duration-ms ask-result) 0)
+                   :llm-messages messages :llm-model (str resolved-model)}
+            plan-state-raw (assoc :plan-state plan-state-raw)
+            breadcrumb-raw (assoc :breadcrumb breadcrumb-raw)))))))

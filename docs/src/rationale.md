@@ -99,13 +99,30 @@ sequenceDiagram
 | **Security** | Permission prompts / trust policies | Deny-by-default sandbox, extensions grant access |
 
 The model sees **one context message** per iteration:
-- `<journal>` — previous iteration's results (not accumulated)
-- `<var_index>` — all named vars rendered as compact pseudo-source, e.g. `(def ^{:v 3 :s :l :t :map :n 12} foo ...)`; `:v` means persisted version count and full history is available via `(var-history 'sym)`
-- `[system_nudge]` — budget, repetition, extension hints
-- `<prior_thinking>` — previous iteration's reasoning only
+- `<plan>` — sticky structured TODO list (Phase 1). Schema:
+  `{:goal :items [{:id :content :status :evidence}] :open :decided}`.
+  Max 20 items, exactly one `:in_progress`. Carried verbatim across
+  iterations until the model re-emits.
+- `<breadcrumbs>` — cumulative one-liner per iteration (last K=20),
+  authored by the model in `:breadcrumb`. Tactical "what I just did".
+- `<recent>` — last iteration's expression results with `iN.K`
+  addressable ids.
+- `<recent_thought>` — last iteration's `:thinking` text (≤4000 chars).
+- `<system_state>` — SYSTEM vars (`QUERY`, `REASONING`, `ANSWER`)
+  inlined with current values + `PRIOR_TURN` digest of the previous
+  turn (`{:goal :counts :outcome :abandon-reason}`). SYSTEM vars are
+  UPPERCASE — not earmuffed — to match the Clojure constant idiom
+  and avoid implying dynamic-var semantics.
+- `<var_index>` — user-defined vars only, rendered as compact
+  pseudo-source (e.g. `(def ^{:v 3 :s :l :t :map :n 12} foo ...)`).
+  SYSTEM vars are excluded; they live in `<system_state>` instead.
+- `[system_nudge]` — budget, repetition, extension hints.
 
-Everything older is one function call away: `(var-history 'x)`,
-`(conversation-history)`.
+Older reasonings live in the breadcrumb chain (one line per iteration)
+and the persisted plan slot. The optional `vis-ext-self-debug`
+extension adds `(self/breadcrumbs N)` / `(self/turn-history N)` /
+`(self/attempts)` / `(self/var-history 'sym)` for programmatic
+introspection.
 
 ## Secure by Default
 
