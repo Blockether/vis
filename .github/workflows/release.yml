@@ -65,9 +65,14 @@ jobs:
       - name: Check if version exists on Clojars
         id: check-clojars
         run: |
+          # The monorepo publishes 9 artifacts — vis-core, vis-commandline,
+          # vis-extension, vis-logging, vis-persistance, vis-persistance-sqlite,
+          # vis-provider, vis-telegram, vis-tui. Probe vis-core as the
+          # bellwether — every release deploys the whole set together so
+          # vis-core's presence implies the rest landed too.
           VERSION="${GITHUB_REF_NAME#v}"
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://repo.clojars.org/com/blockether/vis/$VERSION/vis-$VERSION.jar")
+            "https://repo.clojars.org/com/blockether/vis-core/$VERSION/vis-core-$VERSION.jar")
           if [ "$STATUS" = "200" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Version $VERSION already exists on Clojars — skipping deploy"
@@ -75,7 +80,7 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build & Deploy to Clojars
+      - name: Build & Deploy all 9 packages to Clojars
         if: steps.check-clojars.outputs.exists != 'true'
         env:
           VERSION: ${{ github.ref_name }}
