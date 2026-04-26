@@ -19,19 +19,7 @@ The model sees exactly what it needs: the previous iteration's results,
 a var index of everything it has defined, and system nudges. Everything
 else is one function call away.
 
-## Quick Links
-
-📖 **Full docs site:** <https://blockether.github.io/vis/>
-
-| | |
-|---|---|
-| **[Rationale](https://blockether.github.io/vis/rationale.html)** | Why code-eval over tool-calls. Why SCI. What we learned. |
-| **[Architecture](https://blockether.github.io/vis/architecture/overview.html)** | How the layers fit together |
-| **[Packages](https://blockether.github.io/vis/architecture/packages.html)** | What every `packages/vis-*` jar does, dependency direction, auto-discovery |
-| **[Iteration Flow](https://blockether.github.io/vis/architecture/iteration-flow.html)** | Step-by-step: message to answer |
-| **[Extensions](https://blockether.github.io/vis/extensions/overview.html)** | How to extend the agent with tools and nudges |
-| **[Channels](https://blockether.github.io/vis/architecture/channels.html)** | Plug-in front-ends (TUI, Telegram, your own) |
-| **[Database](https://blockether.github.io/vis/architecture/database.html)** | Entity tree and SQLite schema |
+📖 **Docs:** <https://blockether.github.io/vis/>
 
 ## Rules for Contributors
 
