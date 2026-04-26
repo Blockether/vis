@@ -1,17 +1,26 @@
 (ns com.blockether.vis.extension-api-test
+  "Tests pinning the public extension contract.
+
+   Note the split: extension authoring (`symbol`, `value`, `extension`,
+   `render-prompt`, `register-global!`) lives in
+   `com.blockether.vis.extension` (standalone library). Runtime
+   composition (`active-extensions`, `assemble-system-prompt`) stays in
+   `com.blockether.vis.core`. The two are intentionally separate so
+   extensions can pull just the contract without dragging the vis
+   runtime."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
+   [com.blockether.vis.extension :as ext]
    [lazytest.core :refer [defdescribe it expect]]))
 
 (def read-symbol
-  (vis/symbol 'read-file (fn [& _] nil)
+  (ext/symbol 'read-file (fn [& _] nil)
     {:doc "Read a file preview."
      :arglists '([path] [path offset limit])}))
 
 (def retries-value
-  (vis/value 'max-retries 3
+  (ext/value 'max-retries 3
     {:doc "Maximum retry attempts."}))
 
 (defdescribe extension-prompt-rendering-test
@@ -19,7 +28,7 @@
   (it "renders canonical prompt text from symbol docstrings + arglists"
     (expect
       (= "Filesystem tools (use fs/ prefix; positional args only)\n- (fs/read-file path) or (fs/read-file path offset limit) — Read a file preview.\n- fs/max-retries — Maximum retry attempts.\nRULES:\n- Discover paths first."
-        (vis/render-extension-prompt
+        (ext/render-prompt
           {:ext/doc "Filesystem tools"
            :ext/ns-alias {:ns 'vis.ext.fs :alias 'fs}
            :ext/symbols [read-symbol retries-value]
@@ -27,7 +36,7 @@
            :notes ["RULES:" "- Discover paths first."]}))))
 
   (it "assembles canonical extension prompt inside the loop and appends extra notes"
-    (let [environment {:extensions (atom [(vis/extension
+    (let [environment {:extensions (atom [(ext/extension
                                            {:ext/namespace 'com.acme.ext.fs
                                             :ext/doc "Filesystem tools"
                                             :ext/group "filesystem"
@@ -45,14 +54,11 @@
       (expect (str/includes? system-prompt "- fs/max-retries — Maximum retry attempts."))
       (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))))
 
-  (it "re-exports extension helpers from com.blockether.vis.core"
-    (expect (identical? ext/extension vis/extension))
-    (expect (identical? ext/symbol vis/symbol))
-    (expect (identical? ext/value vis/value))
-    (expect (identical? ext/render-prompt vis/render-extension-prompt))
-    (expect (identical? ext/render-prompt vis/preview-extension-prompt))
-    (expect (identical? ext/register-global! vis/register-global!))
-    (expect (identical? ext/registered-extensions vis/registered-extensions))
-    (expect (identical? ext/discover-extensions! vis/discover-extensions!))
-    (expect (identical? ext/load-extension! vis/load-extension!))
-    (expect (identical? ext/reload-extension! vis/reload-extension!))))
+  (it "vis.core no longer re-exports the extension contract"
+    ;; The split lives forever — if these come back, the extension
+    ;; library got dragged into the runtime again. Fail loud.
+    (expect (not (some #{'extension 'symbol 'value 'register-global!
+                         'registered-extensions 'discover-extensions!
+                         'load-extension! 'reload-extension!
+                         'render-extension-prompt 'preview-extension-prompt}
+                   (keys (ns-publics 'com.blockether.vis.core)))))))

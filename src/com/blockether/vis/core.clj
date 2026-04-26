@@ -4,10 +4,16 @@
    Sections:
    - Unified entrypoint
    - Environment lifecycle
-   - Query execution"
+   - Query execution
+
+   NOTE: the extension contract (extension/symbol/value/register-global!
+   and friends) is NOT re-exported here anymore. It lives in the
+   standalone `com.blockether/vis-extension` library so extensions can
+   depend on a tiny surface (telemere + clojure.spec only) without
+   pulling the whole vis runtime. Extensions should require
+   `com.blockether.vis.extension` directly."
   (:require
    [com.blockether.vis.loop.core :as loop-core]
-   [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
    [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
    [com.blockether.vis.persistance.spec :as rlm-spec]))
 
@@ -83,53 +89,14 @@
   loop-core/assemble-system-prompt)
 
 ;; =============================================================================
-;; Extension helpers
-;; =============================================================================
-
-(def extension
-  "Build and validate an extension spec. Re-exported from environment.extension."
-  ext/extension)
-
-(def symbol
-  "Build a function symbol entry for an extension. Re-exported from environment.extension."
-  ext/symbol)
-
-(def value
-  "Build a value symbol entry for an extension. Re-exported from environment.extension."
-  ext/value)
-
-(def render-extension-prompt
-  "Render canonical extension prompt text from symbol docstrings + arglists.
-   Kept as a compatibility alias for `preview-extension-prompt`."
-  ext/render-prompt)
-
-(def preview-extension-prompt
-  "Preview the canonical extension prompt text exactly as loop-side prompt
-   assembly renders its symbol-derived block."
-  ext/render-prompt)
-
-(def register-global!
-  "Register an extension in the process-level global registry."
-  ext/register-global!)
-
-(def registered-extensions
-  "Return all globally registered extensions."
-  ext/registered-extensions)
-
-(def discover-extensions!
-  "Discover extension namespaces from META-INF/vis/extensions.edn on the classpath."
-  ext/discover-extensions!)
-
-(def load-extension!
-  "Require an extension namespace and return the registered extension."
-  ext/load-extension!)
-
-(def reload-extension!
-  "Reload an extension namespace and optionally hot-swap it into live environments."
-  ext/reload-extension!)
-
-;; =============================================================================
 ;; Query execution
+;; =============================================================================
+;;
+;; Extension helpers (extension, symbol, value, register-global!,
+;; registered-extensions, discover-extensions!, load-extension!,
+;; reload-extension!, render-prompt) intentionally removed from this
+;; namespace. They live in `com.blockether.vis.extension` now — require
+;; that namespace directly when authoring an extension.
 ;; =============================================================================
 
 (def query!

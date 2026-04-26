@@ -1,11 +1,21 @@
 # Extension System
 
-> **Namespace:** `com.blockether.vis.loop.runtime.conversation.environment.extension`
+> **Library:** `com.blockether/vis-extension` (standalone Clojure deps
+> alias: `{:local/root "vis-extension"}` or, when published, the Maven
+> coordinate). Single namespace: `com.blockether.vis.extension`.
 >
-> **Public facade:** `com.blockether.vis.core` re-exports the extension
-> constructors/registry helpers (`extension`, `symbol`, `value`,
-> `render-extension-prompt`, `register-extension!`, etc.) so extension
-> authors do not need to require the deep runtime namespace directly.
+> **Why a separate library:** the extension contract is intentionally
+> decoupled from the vis runtime. An extension only needs telemere +
+> clojure.spec, NOT the SCI sandbox, the SQLite stack, or any of the
+> channels. Older versions re-exported the contract through
+> `com.blockether.vis.core` — that re-export is **gone**. Authoring
+> code must require `com.blockether.vis.extension` directly.
+>
+> **What stays in vis-core:** the runtime composition helpers that
+> need a live environment (`active-extensions`, `assemble-system-prompt`,
+> `register-extension!` for ad-hoc per-env registration). Those live
+> on `com.blockether.vis.core` because they need the runtime they
+> compose against.
 
 Extensions are the **only** way to add symbols, classes, and documentation
 to the SCI sandbox. An extension is a namespace-like bundle that groups
@@ -209,18 +219,21 @@ the query still runs.
 
 ```clojure
 (ns com.acme.ext.search
-  (:require [com.blockether.vis.core :as vis]))
+  ;; Require the slim contract directly. The full vis runtime is NOT
+  ;; needed (and not on the classpath) when this jar is consumed by
+  ;; another extension or a sandbox host.
+  (:require [com.blockether.vis.extension :as ext]))
 
 (defn- search-fn [query] ...)
 
 (def find-symbol
-  (vis/symbol 'find search-fn
+  (ext/symbol 'find search-fn
     {:doc      "Full-text search."
      :arglists '([query])
      :examples ["(search/find \"neural\")"]}))
 
 (def search-ext
-  (vis/extension
+  (ext/extension
     {:ext/namespace     'com.acme.ext.search
      :ext/doc           "Document search"
      :ext/group         "knowledge"
@@ -229,7 +242,7 @@ the query still runs.
      :ext/symbols       [find-symbol]}))
 
 ;; Self-register at load time
-(vis/register-global! search-ext)
+(ext/register-global! search-ext)
 ```
 
 The LLM sees in the system prompt:

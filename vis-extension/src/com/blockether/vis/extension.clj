@@ -1,4 +1,4 @@
-(ns com.blockether.vis.loop.runtime.conversation.environment.extension
+(ns com.blockether.vis.extension
   "Extension specification for the SCI sandbox environment.
 
    An extension is a namespace-like bundle that adds symbols, classes,
