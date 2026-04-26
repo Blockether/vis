@@ -27,11 +27,17 @@
 
 (defn- format-footer [result model-name]
   (let [{:keys [iterations duration-ms tokens cost]} result
-        sec (if duration-ms (format "%.1f" (/ duration-ms 1000.0)) "?")
+        sec (if duration-ms
+              (String/format java.util.Locale/US "%.1f"
+                (into-array Object [(double (/ duration-ms 1000.0))]))
+              "?")
         ctx-in  (or (:input tokens) 0)
         ctx-out (or (:output tokens) 0)
         c       (or (:total-cost cost) 0)
-        c-str   (if (pos? c) (format "$%.4f" c) "—")]
+        c-str   (if (pos? c)
+                  (String/format java.util.Locale/US "$%.4f"
+                    (into-array Object [(double c)]))
+                  "—")]
     (str "\n\n_"
       (tg/escape-markdown-v2 (str iterations " iters · " sec "s · " (or model-name "?")))
       "\n"

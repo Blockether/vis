@@ -19,6 +19,30 @@
   (swap! cache assoc id {:environment env :lock (Object.)})
   {:id id :environment env})
 
+(defn refresh-cached-routers!
+  "Reseat `:router` on every cached env's environment map.
+
+  `loop-core/create-environment` snapshots the router into
+  `(:router env)` at construction time, and the iteration loop calls
+  `(llm/ask! (:router environment) ...)` — not the global
+  `query-core/router-atom`. So when a frontend changes provider
+  config and rebuilds the global router, every long-lived env in the
+  cache (TUI keeps one for the whole session) keeps talking to the
+  *previous* model until disposed.
+
+  Call this immediately after `query-core/rebuild-router!` so the
+  next `send!` on any cached conversation picks up the new router."
+  [router]
+  (when router
+    (swap! cache
+      (fn [m]
+        (reduce-kv
+          (fn [acc id {:keys [environment] :as entry}]
+            (assoc acc id
+              (assoc entry :environment (assoc environment :router router))))
+          {} m))))
+  nil)
+
 (defn error->user-message [^Throwable e]
   (or (ex-message e) "Internal error"))
 

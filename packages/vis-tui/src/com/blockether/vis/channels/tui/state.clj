@@ -6,6 +6,7 @@
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.render :as render]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
@@ -13,6 +14,34 @@
 (defonce app-db (atom nil))
 (defonce ^:private event-registry (atom {}))
 (defonce ^:private fx-registry (atom {}))
+
+;;; Render thread coordination.
+;;
+;; The TUI runs a dedicated render thread (see `screen/start-render-thread!`).
+;; It sleeps on `render-monitor.wait` and wakes whenever a state-mutating
+;; event is dispatched. `:render-version` on app-db is the dirty counter:
+;; render thread compares it against the version of the last frame it drew
+;; and skips work entirely if nothing changed. That's why the input thread
+;; can poll at 16ms without the box-drawing CPU melting.
+;;
+;; Some events are pure side-projections back from the render thread
+;; (`:set-layout`) and must NOT bump the version, otherwise we'd
+;; livelock: render writes layout → version bumps → render wakes → same
+;; layout → same version bump → …
+
+(defonce render-monitor
+  ^{:doc "Monitor object the render thread .waits on. Notify-all on every
+          dispatch that changes display state."}
+  (Object.))
+
+(def ^:private no-render-bump-events
+  "Events that update app-db without requesting a redraw. Right now this
+   is just `:set-layout`, which is the render thread itself pushing back
+   computed sizes for the input thread to read."
+  #{:set-layout})
+
+(defn- notify-render! []
+  (locking render-monitor (.notifyAll render-monitor)))
 
 (defn reg-event-db
   "Register a pure event handler: (fn [db event-vec] new-db)"
@@ -30,17 +59,28 @@
   [id handler-fn]
   (swap! fx-registry assoc id handler-fn))
 
+(defn- bump-version [db]
+  (update db :render-version (fnil inc 0)))
+
 (defn dispatch
-  "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"])."
+  "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"]).
+   Bumps `:render-version` and wakes the render thread for every event
+   except those in `no-render-bump-events`."
   [[id :as event-vec]]
   (if-let [{:keys [type] :as handler} (get @event-registry id)]
-    (case type
-      :db (swap! app-db (:fn handler) event-vec)
-      :fx (let [{:keys [db fx]} ((:fn handler) @app-db event-vec)]
-            (when db (reset! app-db db))
-            (doseq [[fx-id & args] fx]
-              (when-let [fx-fn (get @fx-registry fx-id)]
-                (apply fx-fn args)))))
+    (let [bump? (not (no-render-bump-events id))]
+      (case type
+        :db (swap! app-db
+              (fn [db]
+                (let [db' ((:fn handler) db event-vec)]
+                  (if bump? (bump-version db') db'))))
+        :fx (let [{:keys [db fx]} ((:fn handler) @app-db event-vec)]
+              (when db
+                (reset! app-db (if bump? (bump-version db) db)))
+              (doseq [[fx-id & args] fx]
+                (when-let [fx-fn (get @fx-registry fx-id)]
+                  (apply fx-fn args)))))
+      (when bump? (notify-render!)))
     (throw (ex-info (str "No handler registered for event: " id) {:event event-vec}))))
 
 ;;; ── State shape ────────────────────────────────────────────────────────────
@@ -86,7 +126,14 @@
                   :cancelling? false
                   :progress   nil
                   :settings   {:show-thinking true :show-iterations true}
-                  :dialog-open? false}))
+                  :dialog-open? false
+                  ;; Render thread coordination — see render-monitor docstring.
+                  :render-version 0
+                  :shutdown? false
+                  ;; Populated by the render thread after each frame so the
+                  ;; input thread's scroll handlers know how big the
+                  ;; messages area is right now. nil before the first paint.
+                  :layout nil}))
 
 ;;; ── Pure event handlers ────────────────────────────────────────────────────
 
@@ -94,7 +141,12 @@
   (fn [db [_ config]]
     (channels/reload-config!)
     (when (seq (:providers config))
-      (query-core/rebuild-router! config))
+      ;; rebuild-router! only swaps the global singleton; cached envs
+      ;; keep the snapshot they were created with. Reseat them too,
+      ;; otherwise the next query runs against the previous model
+      ;; even though the status bar already shows the new one.
+      (let [r (query-core/rebuild-router! config)]
+        (conversations/refresh-cached-routers! r)))
     (assoc db :config config)))
 
 (reg-event-db :set-dialog-open
@@ -103,7 +155,23 @@
 
 (reg-event-db :update-settings
   (fn [db [_ new-settings]]
+    ;; Settings (show-thinking?, show-iterations?) are part of every
+    ;; format-answer cache key, so toggling them already invalidates
+    ;; cache entries naturally. But the OLD entries linger until the
+    ;; cache fills — which on a quiet conversation never happens. Drop
+    ;; them so we don't leak memory across many toggles.
+    (render/invalidate-cache!)
     (assoc db :settings (merge (:settings db) new-settings))))
+
+(reg-event-db :set-layout
+  (fn [db [_ layout]]
+    ;; Pushed in by the render thread; intentionally does NOT bump
+    ;; render-version (see no-render-bump-events).
+    (assoc db :layout layout)))
+
+(reg-event-db :shutdown
+  (fn [db _]
+    (assoc db :shutdown? true)))
 
 (reg-event-db :init-conversation
   (fn [db [_ conv history]]

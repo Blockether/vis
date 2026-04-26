@@ -15,7 +15,34 @@
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
-           [java.nio.charset Charset]))
+           [java.nio.charset Charset]
+           [java.util.concurrent TimeUnit]
+           [java.util.concurrent.locks ReentrantLock]))
+
+;;; ── Threading model ─────────────────────────────────────────────────────────────
+;;
+;; The TUI now runs two threads against the Lanterna screen:
+;;
+;;   1. Input thread (the original main loop): polls keys, dispatches
+;;      events into app-db, opens modal dialogs. Never draws the chat
+;;      view itself — just mutates state.
+;;
+;;   2. Render thread: sleeps on `state/render-monitor`, wakes on
+;;      every dispatched event, and only repaints if `:render-version`
+;;      moved or the terminal got resized. While a dialog is up the
+;;      input thread holds `draw-lock` for the dialog's whole session
+;;      so the render thread cannot scribble underneath it.
+;;
+;; `screen-size`/`doResizeIfNecessary`, `setCharacter`, `refresh`, and
+;; `setCursorPosition` are owned EXCLUSIVELY by the holder of
+;; `draw-lock`. `pollInput` lives on its own input queue inside
+;; Lanterna and is safe to call concurrently from the input thread.
+
+(defonce ^:private draw-lock
+  ^{:doc "Single screen-mutation lock. Held by the render thread for the
+          duration of one paint, and by `with-dialog-lock` for the
+          duration of a modal dialog session."}
+  (ReentrantLock.))
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
@@ -144,14 +171,31 @@
             (recur (vec (butlast parts)))))))))
 
 (defn- with-dialog-lock
+  "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
+   whole session. Holding the lock blocks the render thread cleanly
+   regardless of timing: even if the version bump from
+   `:set-dialog-open true` races a render in flight, the dialog can't
+   start drawing until the render thread releases the lock, and once
+   we hold it, the render thread's next attempt blocks until we're
+   done. After the dialog returns we release the lock and the
+   `:set-dialog-open false` dispatch wakes the render thread to
+   repaint over the dialog area."
   [f]
-  (state/dispatch [:set-dialog-open true])
+  (.lock draw-lock)
   (try
-    (f)
+    (state/dispatch [:set-dialog-open true])
+    (try
+      (f)
+      (finally
+        (state/dispatch [:set-dialog-open false])))
     (finally
-      (state/dispatch [:set-dialog-open false]))))
+      (.unlock draw-lock))))
 
-(defn- screen-size [^TerminalScreen screen]
+(defn- screen-size
+  "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
+   held (or before the render thread is started) because
+   `doResizeIfNecessary` reallocates the back buffer."
+  [^TerminalScreen screen]
   (if-let [new-size (.doResizeIfNecessary screen)]
     (do (try (.refresh screen Screen$RefreshType/COMPLETE)
           (catch NullPointerException _
@@ -210,10 +254,18 @@
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box.
    The input box's top border carries keybinding hints and the bottom
-   border carries the live model/context status line."
-  [screen g cols rows {:keys [messages msg-scroll input progress loading? cancelling?
-                              query-start-ms title settings conv] :as db}]
-  (let [text-rows   (input-text-rows input)
+   border carries the live model/context status line.
+
+   Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
+   render thread can publish it back into app-db for the input thread's
+   scroll handlers. `apply-settings` runs ONCE here and feeds both the
+   layout calculation and the actual draw — the old code path computed
+   it twice per frame, which doubled cost on long traces."
+  [^TerminalScreen screen cols rows
+   {:keys [messages msg-scroll input progress loading? cancelling?
+           query-start-ms title settings conv] :as db}]
+  (let [g           (.newTextGraphics screen)
+        text-rows   (input-text-rows input)
         input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         input-top   (- rows input-box-h)
         msg-top     0
@@ -227,13 +279,95 @@
                         (if sid
                           (str title " · " sid)
                           title))
-        status-line (input-status-line db (max 0 (- cols 2)))]
+        status-line (input-status-line db (max 0 (- cols 2)))
+        ;; Inner messages-box height — mirrors `draw-messages-area!`'s
+        ;; computation so scroll math in the input thread stays correct.
+        inner-h     (max 0 (- msg-bottom msg-top 1 2)) ;; -1 border, -2 margins
+        total-h     (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
     (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title display-title})
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db) status-line)]
       (.setCursorPosition screen (TerminalPosition. cx cy)))
-    (.refresh screen Screen$RefreshType/DELTA)))
+    (.refresh screen Screen$RefreshType/DELTA)
+    {:cols cols :rows rows :total-h total-h :inner-h inner-h}))
+
+;;; ── Render thread ───────────────────────────────────────────────────────────────
+
+(defn- render-loop!
+  "The render thread's main loop. Sleeps on `state/render-monitor` and
+   only paints when `:render-version` advances (or the terminal got
+   resized). Skips painting entirely while a dialog is up by failing to
+   acquire `draw-lock`."
+  [^TerminalScreen screen]
+  (loop [last-v -1 last-cols -1 last-rows -1]
+    (let [db @state/app-db]
+      (when-not (:shutdown? db)
+        (let [version (long (or (:render-version db) 0))
+              ;; tryLock so a dialog session (which holds the lock for
+              ;; seconds) doesn't pin us. Time out fast and re-poll.
+              got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
+              [rendered? new-cols new-rows]
+              (if-not got-lock?
+                [false last-cols last-rows]
+                (try
+                  ;; Re-read AFTER acquiring the lock — dialog state
+                  ;; could have flipped while we were waiting.
+                  (let [db   @state/app-db
+                        size (screen-size screen)
+                        cols (.getColumns size)
+                        rows (.getRows size)]
+                    (if (and (not (:shutdown? db))
+                          (not (:dialog-open? db))
+                          (or (not= last-v version)
+                            (not= last-cols cols)
+                            (not= last-rows rows)))
+                      (let [layout (render-frame! screen cols rows db)]
+                        ;; Publish layout back to app-db without
+                        ;; bumping the version (see no-render-bump-events).
+                        (state/dispatch [:set-layout layout])
+                        [true cols rows])
+                      [false cols rows]))
+                  (catch Throwable t
+                    ;; Drawing must never crash the thread — a stray
+                    ;; resize race or null cell will recover next frame.
+                    (try (require 'taoensso.telemere)
+                      ((resolve 'taoensso.telemere/log!)
+                        :warn (str "render frame failed: " (or (ex-message t) (str t))))
+                      (catch Throwable _ nil))
+                    [false last-cols last-rows])
+                  (finally (.unlock draw-lock))))]
+          (when-not rendered?
+            ;; Park until the next dispatch wakes us. The 100ms ceiling
+            ;; is just defensive — every state mutation calls
+            ;; notifyAll, so we should never actually time out except
+            ;; while a dialog is up (in which case the tryLock 50ms
+            ;; backoff also kicks in on the next iteration).
+            ;;
+            ;; The re-check while holding the monitor is the standard
+            ;; lost-wakeup guard: a dispatch that called notifyAll
+            ;; between our outer version read and acquiring the
+            ;; monitor would otherwise be missed and we'd sit out the
+            ;; full 100ms timeout.
+            (locking state/render-monitor
+              (let [v-now (long (or (:render-version @state/app-db) 0))]
+                (when (= v-now version)
+                  (try (.wait state/render-monitor 100)
+                    (catch InterruptedException _ nil))))))
+          (recur (if rendered? version last-v)
+            (long (or new-cols last-cols))
+            (long (or new-rows last-rows))))))))
+
+(defn- start-render-thread!
+  "Spawn the render thread. Daemon so the JVM can still exit even if a
+   bug ever traps it in the loop."
+  ^Thread [^TerminalScreen screen]
+  (let [t (Thread.
+            ^Runnable (fn [] (render-loop! screen))
+            "vis-tui-render")]
+    (.setDaemon t true)
+    (.start t)
+    t))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -250,7 +384,11 @@
 
   (let [terminal (UnixTerminal. @config/tty-in @config/tty-out (Charset/defaultCharset))
         _        (input/register-custom-patterns! terminal)
-        screen   (TerminalScreen. terminal)]
+        screen   (TerminalScreen. terminal)
+        ;; Render thread handle is held in a volatile so the `finally`
+        ;; clause can join it. (Locals from the `try` body aren't in
+        ;; scope inside `finally`.)
+        render-thread (volatile! nil)]
     (.startScreen screen)
     (try
       ;; Show provider dialog on first launch if no config
@@ -285,32 +423,25 @@
             (state/dispatch [:set-title title]))
           (channels/register-conversation-shutdown-hook! id)))
 
+      ;; Spawn the render thread BEFORE the input loop. It will paint
+      ;; the first frame as soon as `:render-version` is non-zero (every
+      ;; init dispatch above bumps it).
+      (vreset! render-thread (start-render-thread! screen))
       (loop []
         (let [db    @state/app-db
-              size  (screen-size screen)
-              cols  (.getColumns size)
-              rows  (.getRows size)
-              g     (.newTextGraphics screen)
-              bubble-w (- cols 4)
-              text-rows (input-text-rows (:input db))
-              inner-h  (- (- rows (+ text-rows 2 (* 2 render/input-pad-y))) 0 1)
-              ;; Scroll math must account for the (possibly expanded)
-              ;; progress placeholder — otherwise mid-stream the bubble
-              ;; grows off-screen and the user can't scroll down to it.
-              displayed-messages (apply-settings
-                                   (:messages db) (:progress db) (:loading? db) bubble-w (:settings db)
-                                   {:query-start-ms (:query-start-ms db)
-                                    :cancelling?    (boolean (:cancelling? db))})
-              total-h  (render/total-messages-height displayed-messages bubble-w)]
+              ;; Layout fields are populated by the render thread after
+              ;; the first paint. Until then, scroll handlers fall back
+              ;; to safe defaults and act as a no-op.
+              {:keys [total-h inner-h]} (:layout db)
+              total-h (or total-h 0)
+              inner-h (or inner-h 0)]
 
-          (render-frame! screen g cols rows db)
-
-          ;; Always poll (non-blocking) so terminal resize is detected immediately.
+          ;; Pure poll — no rendering on this thread anymore. The
+          ;; render thread handles all screen output.
           (let [key (.pollInput screen)]
             (if (nil? key)
               (do (Thread/sleep 16) (recur))
-              (let [{:keys [action state col row]} (input/handle-key key (:input db))
-                    input-top (- rows (+ text-rows 2 (* 2 render/input-pad-y)))]
+              (let [{:keys [action state col row]} (input/handle-key key (:input db))]
                 (state/dispatch [:update-input state])
                 (let [run-command!
                       (fn [cmd]
@@ -382,6 +513,14 @@
 
                   :continue (recur))))))))
       (finally
+        ;; Tell the render thread to exit and wake it so the wait
+        ;; doesn't sit out its full timeout. Daemon thread, so we don't
+        ;; strictly have to join — but doing so ensures the final paint
+        ;; (or no paint, if shutdown? was already true) finishes before
+        ;; we tear down the screen.
+        (state/dispatch [:shutdown])
+        (when-let [t @render-thread]
+          (try (.join ^Thread t 500) (catch Throwable _ nil)))
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
         (.stopScreen screen))))))
