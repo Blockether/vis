@@ -32,7 +32,7 @@
    Example:
      (agent {:name \"code-reviewer\"
              :description \"Reviews Clojure code for quality\"
-             :model \"claude-sonnet-4-6\"
+             :model \"gpt-4o\"
              :max-iterations 10})"
   [{:keys [name] :as opts}]
   (let [agent-name (or name "default")]

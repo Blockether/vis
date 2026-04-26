@@ -317,7 +317,7 @@
   "Build a svar-native provider config map for GitHub Copilot.
    Resolves a fresh Copilot API token (auto-refreshes from cached OAuth token).
 
-   `models` — vec of model name strings, e.g. [\"gpt-4o\" \"claude-sonnet-4-20250514\"]
+   `models` — vec of model name strings, e.g. [\"gpt-4o\" \"gpt-4o-mini\"]
    `opts`   — {:enterprise-domain str} for GHE"
   [models & [opts]]
   (let [{:keys [token api-url]} (get-copilot-token! opts)]
