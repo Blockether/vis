@@ -181,19 +181,25 @@
       KeyType/ArrowRight {:action :continue :state (move-right state)}
       KeyType/ArrowUp
       (cond
-        ;; Alt+Up = input history (previous query)
+        ;; Alt+Up always = input history
         (.isAltDown key) {:action :history-up :state state}
-        ;; Plain Up = cursor move (or no-op at top)
-        (zero? (:crow state)) {:action :continue :state state}
-        :else {:action :continue :state (move-up state)})
+        ;; Single-line input at top row: plain Up = history
+        (and (= 1 (count (:lines state))) (zero? (:crow state)))
+        {:action :history-up :state state}
+        ;; Multi-line: cursor move
+        (pos? (:crow state)) {:action :continue :state (move-up state)}
+        :else {:action :continue :state state})
 
       KeyType/ArrowDown
       (cond
-        ;; Alt+Down = input history (next query)
+        ;; Alt+Down always = input history
         (.isAltDown key) {:action :history-down :state state}
-        ;; Plain Down = cursor move (or no-op at bottom)
-        (= (:crow state) (dec (count (:lines state)))) {:action :continue :state state}
-        :else {:action :continue :state (move-down state)})
+        ;; Single-line input at bottom row: plain Down = history
+        (and (= 1 (count (:lines state))) (= (:crow state) (dec (count (:lines state)))))
+        {:action :history-down :state state}
+        ;; Multi-line: cursor move
+        (< (:crow state) (dec (count (:lines state)))) {:action :continue :state (move-down state)}
+        :else {:action :continue :state state})
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 
@@ -202,10 +208,8 @@
             col (.getColumn (.getPosition mouse))
             row (.getRow (.getPosition mouse))]
         (condp = (.getActionType mouse)
-          ;; Mouse scroll disabled — use PageUp/PageDown for history scroll.
-          ;; Mouse wheel is left to the terminal for native text selection.
-          MouseActionType/SCROLL_UP   {:action :continue :state state}
-          MouseActionType/SCROLL_DOWN {:action :continue :state state}
+          MouseActionType/SCROLL_UP   {:action :scroll-up :state state}
+          MouseActionType/SCROLL_DOWN {:action :scroll-down :state state}
           MouseActionType/CLICK_RELEASE {:action :mouse-click :state state :col col :row row}
           {:action :continue :state state}))
 

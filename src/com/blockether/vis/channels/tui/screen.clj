@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Alt+↑↓ history · Ctrl+K commands ")
+(def ^:private hint " Enter send · Alt+Enter newline · ↑↓ history · Ctrl+Y copy · Ctrl+K commands ")
 
 (defn- with-dialog-lock
   [f]
