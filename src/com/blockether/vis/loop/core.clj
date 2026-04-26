@@ -537,7 +537,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
   (let [remaining (- (long (or current-max-iterations 0)) (inc (long (or iteration 0))))]
     (when (<= remaining 2)
       (str "[system_nudge] " (max 0 remaining) " iteration(s) left. "
-        "Either finalize with :answer NOW, or call (request-more-iterations N) from :code to extend."))))
+        "Either finalize with :answer NOW, or call (request-more-iterations N) in :code alongside your other operations to extend."))))
 
 (defn- var-index-overflow [user-var-count]
   (when (> (long (or user-var-count 0)) 150)
