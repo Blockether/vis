@@ -61,7 +61,7 @@ current environment, `:ext/nudge-fn` is not called at all.
   {:ext/namespace 'my-tool
    :ext/doc       "My custom tool"
    :ext/group     "tools"
-   :ext/prompt    "Use (my-tool ...) to do X."
+   :ext/prompt    "Prefer batching by 10 items at a time."
    :ext/symbols   [my-tool-sym]
    :ext/nudge-fn  (fn [{:keys [environment iteration prev-expressions]}]
                     (when (and (> iteration 5)

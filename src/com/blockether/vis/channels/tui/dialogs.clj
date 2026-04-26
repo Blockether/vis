@@ -5,6 +5,7 @@
             [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.channels.tui.theme :as t])
   (:import [com.googlecode.lanterna TextColor$RGB]
+           [com.googlecode.lanterna Symbols]
            [com.googlecode.lanterna.input KeyType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]))
 
@@ -436,12 +437,12 @@
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
 (def palette-commands
-  "Command palette entries. Each is {:id keyword :label str}."
-  [{:id :provider       :label "Provider"}
-   {:id :settings       :label "Settings"}
-   {:id :copy           :label "Copy Messages"}
-   {:id :system-prompt  :label "System Prompt"}
-   {:id :quit           :label "Quit"}])
+  "Command palette entries. Each is {:id keyword :label str}.
+   Quit is intentionally NOT here — use Ctrl+C to quit."
+  [{:id :configure-provider :label "Configure Provider"}
+   {:id :toggles            :label "Toggles"}
+   {:id :copy               :label "Copy Messages"}
+   {:id :system-prompt      :label "Inspect Latest System Prompt"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc."
@@ -462,7 +463,10 @@
 
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
-   `title` is the dialog header. `text` is a string (may contain newlines).
+   `title` is the dialog header. `text` is a string (may contain newlines)
+   that is rendered VERBATIM — same content the LLM receives, only soft-
+   wrapped to fit the dialog width. No markdown, no truncation, no
+   reformatting.
    Returns nil on Esc. Supports keyboard scrolling."
   [^TerminalScreen screen title text]
   (let [scroll (atom 0)
@@ -478,7 +482,11 @@
             bounds  (draw-dialog-chrome! g cols rows title cw ch)
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-            text-w  (max 1 (- inner-w 2))
+            ;; Reserve the last inner column for a scrollbar that matches
+            ;; the chat area's track+thumb style. Text wraps into the
+            ;; remaining width so nothing collides with the bar.
+            scroll-col (+ left inner-w)
+            text-w  (max 1 (- inner-w 3))
             lines   (vec (mapcat #(render/wrap-text % text-w)
                            (str/split-lines (or text "(empty)"))))
             total   (count lines)
@@ -487,29 +495,39 @@
             visible (subvec lines @scroll
                       (min total (+ @scroll content-h)))]
 
+        ;; Body — verbatim line render, no ellipsization (wrap-text
+        ;; already produced lines that fit `text-w`).
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (doseq [[i line] (map-indexed vector visible)]
           (let [row (+ content-top i)]
             (when (< row (+ content-top content-h))
               (p/fill-rect! g (inc left) row inner-w 1)
-              (p/put-str! g (+ left 2) row (ellipsize line text-w)))))
-        ;; Clear remaining rows
+              (p/put-str! g (+ left 2) row line))))
+        ;; Clear remaining rows in the content area
         (doseq [row (range (+ content-top (count visible))
                       (+ content-top content-h))]
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) row inner-w 1))
 
-        ;; Scroll indicator
+        ;; Scrollbar — same style as the chat messages area: a vertical
+        ;; track of │ plus a solid █ thumb sized proportionally to the
+        ;; visible window. Drawn over the content's right margin, on the
+        ;; dialog background so it visually blends with the dialog frame.
         (when (> total content-h)
-          (let [pct  (if (zero? max-scroll) 0 (/ (double @scroll) max-scroll))
-                bar-h (max 1 (int (* content-h (/ (double content-h) total))))
-                bar-y (+ content-top (int (* pct (- content-h bar-h))))]
-            (doseq [r (range bar-y (min (+ content-top content-h) (+ bar-y bar-h)))]
-              (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/set-char! g (+ left inner-w) r \|))))
+          (let [track-h  content-h
+                ratio    (/ (double content-h) total)
+                thumb-h  (max 1 (int (* track-h ratio)))
+                den      (max 1 max-scroll)
+                thumb-pos (int (* (- track-h thumb-h) (/ (double @scroll) den)))]
+            (doseq [r (range track-h)]
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/set-char! g scroll-col (+ content-top r) Symbols/SINGLE_LINE_VERTICAL))
+            (doseq [r (range thumb-h)]
+              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+              (p/set-char! g scroll-col (+ content-top thumb-pos r) \█))))
 
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "scroll"] ["Esc" "close"]])
+          [["↑/↓" "scroll"] ["PgUp/PgDn" "page"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 

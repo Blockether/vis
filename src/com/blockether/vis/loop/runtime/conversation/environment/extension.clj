@@ -126,10 +126,10 @@
 ;; (fn [env] -> bool). Default: (constantly true).
 (s/def :ext/activation-fn fn?)
 
-;; Rich documentation for the LLM - injected into the system prompt when
-;; the extension is active. After normalization, always a fn.
-;; The `extension` constructor and `validate!` both accept string | fn
-;; and normalize strings to (constantly s).
+;; Optional extra LLM-facing documentation appended AFTER the canonical
+;; symbol-derived prompt block when the extension is active.
+;; Accepts string | (fn [env] → string). Nil means: rely only on the
+;; auto-rendered prompt derived from :ext/doc + :ext/symbols metadata.
 (s/def :ext/prompt fn?)
 
 ;; Optional per-iteration nudge composer.
@@ -197,9 +197,9 @@
 (s/def ::extension
   (s/and
     (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
-                  :ext/activation-fn :ext/prompt :ext/symbols
+                  :ext/activation-fn :ext/symbols
                   :ext/classes :ext/imports]
-      :opt [:ext/ns-alias :ext/nudge-fn :ext/requires
+      :opt [:ext/ns-alias :ext/prompt :ext/nudge-fn :ext/requires
             :ext/version :ext/author :ext/license
             :ext/cli])
     ns-alias-required-when-symbols?))
@@ -274,6 +274,60 @@
                            :val val
                            :doc (:doc opts)}]
     (validate-symbol-entry! entry)))
+
+(defn- arglist->call-form
+  [alias-sym sym-name arglist]
+  (let [args   (->> arglist (remove #{'&}) (map str) (str/join " "))
+        target (if alias-sym
+                 (str alias-sym "/" sym-name)
+                 (str sym-name))]
+    (str "(" target (when (seq args) (str " " args)) ")")))
+
+(defn- render-symbol-line
+  [alias-sym entry]
+  (let [{sym-name :ext.symbol/sym
+         doc      :ext.symbol/doc
+         arglists :ext.symbol/arglists} entry]
+    (if (:ext.symbol/fn entry)
+      (str "- "
+        (str/join " or " (map #(arglist->call-form alias-sym sym-name %) arglists))
+        " — " doc)
+      (str "- "
+        (if alias-sym
+          (str alias-sym "/" sym-name)
+          (str sym-name))
+        " — " doc))))
+
+(defn render-prompt
+  "Render canonical :ext/prompt text from symbol docstrings + arglists.
+
+   Accepts an extension map or any map with:
+   - :ext/doc      or :heading
+   - :ext/ns-alias optional {:alias 'fs}
+   - :ext/symbols  vector of ext/symbol + ext/value entries
+   - :usage-note   optional extra note added to the heading
+   - :notes        optional string or seq of extra lines appended verbatim
+
+   Returns a prompt string suitable for :ext/prompt."
+  [{:keys [heading usage-note notes] :as opts}]
+  (let [alias-sym    (get-in opts [:ext/ns-alias :alias])
+        symbols      (or (:symbols opts) (:ext/symbols opts))
+        heading      (or heading (:ext/doc opts) "Extension tools")
+        header-notes (vec (remove nil?
+                            [(when alias-sym (str "use " alias-sym "/ prefix"))
+                             (when (non-blank-string? usage-note) usage-note)]))
+        extra-lines  (cond
+                       (nil? notes)        []
+                       (string? notes)     [notes]
+                       (sequential? notes) (vec notes)
+                       :else               [(str notes)])
+        body-lines   (mapv #(render-symbol-line alias-sym %) symbols)]
+    (str/join "\n"
+      (concat [(str heading
+                 (when (seq header-notes)
+                   (str " (" (str/join "; " header-notes) ")")))]
+        body-lines
+        extra-lines))))
 
 ;; =============================================================================
 ;; Normalization
@@ -490,7 +544,9 @@
      :ext/group          — required, prompt group (e.g. \"knowledge\")
      :ext/subgroup       — optional, defaults to :ext/group
      :ext/activation-fn  — optional, (fn [env] → bool), default (constantly true)
-     :ext/prompt         — required, string or (fn [env] → string)
+     :ext/prompt         — optional, string or (fn [env] → string);
+                           appended after the canonical auto-rendered
+                           symbol prompt
      :ext/nudge-fn       — optional, (fn [ctx] → string|nil)
      :ext/requires       — optional, vector of extension namespace symbols
                            that must be registered first, default []
@@ -514,7 +570,7 @@
       :ext/doc           \"Document search and retrieval\"
       :ext/group         \"knowledge\"
       :ext/requires      ['filesystem]
-      :ext/prompt        \"Use (search-documents query) to search.\"
+      :ext/prompt        \"Prefer narrow searches before broad scans.\"
       :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
       :ext/nudge-fn      (fn [{:keys [environment iteration]}]
                            (when (> iteration 8)
@@ -694,8 +750,8 @@
              (let [without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
                (conj without ext))))
          (tel/log! {:level :info :id ::reload-hot-swap
-                    :data {:ext ns-sym :env-id (:env-id environment)}
-                    :msg (str "Hot-swapped '" ns-sym "' into environment " (:env-id environment))})))
+                    :data {:ext ns-sym :environment-id (:environment-id environment)}
+                    :msg (str "Hot-swapped '" ns-sym "' into environment " (:environment-id environment))})))
      ext)))
 
 ;; =============================================================================

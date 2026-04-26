@@ -82,7 +82,7 @@
   (println "Commands:")
   (println "  vis                                   Start new TUI chat")
   (println "  vis chat                              Start new TUI chat")
-  (println "  vis chat --conversation-id ID          Resume a specific conversation")
+  (println "  vis chat --conversation-id ID          Resume a conversation (full or short ID)")
   (println "  vis chat --resume                      Resume the latest conversation")
   (println "  vis conversations                     List all conversations")
   (println "  vis conversations telegram             List telegram conversations")
@@ -263,7 +263,7 @@
            {:key :created   :label "Created"    :width 16 :align :left}]
           rows)
         (stdout! (str "\n  " (count rows) " conversation(s)\n"))
-        (stdout! "  Resume with: vis chat --conversation-id <ID>")
+        (stdout! "  Resume with: vis chat --conversation-id <ID>  (full or short)")
         (stdout! "  Or latest:   vis chat --resume")))))
 
 ;;; ── Chat Argument Parsing ─────────────────────────────────────────────────
@@ -271,7 +271,7 @@
 (defn- parse-chat-args
   "Parse `vis chat` arguments.
    Flags:
-     --conversation-id ID   Resume a specific conversation
+     --conversation-id ID   Resume a conversation (full UUID or short prefix)
      --resume               Resume the latest :vis conversation"
   [args]
   (loop [args (seq args) opts {}]

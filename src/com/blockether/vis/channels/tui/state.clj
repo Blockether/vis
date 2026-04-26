@@ -1,11 +1,11 @@
 (ns com.blockether.vis.channels.tui.state
   "Re-frame-like state management for the TUI.
    Single app-db atom, pure event handlers, side effects via reg-fx."
-  (:require [com.blockether.vis.channels.core :as channels]
+  (:require [com.blockether.vis.channels.cancellation :as cancellation]
+            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.render :as render]
-            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
@@ -54,6 +54,11 @@
 ;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
 ;;  :input-history-draft nil     ;; unsent draft preserved while browsing history
 ;;  :loading?   false            ;; true while RLM is working
+;;  :cancel-token nil            ;; channels.cancellation token for the
+;;                               ;; in-flight turn (nil when idle). Holds
+;;                               ;; the cooperative flag + the worker
+;;                               ;; future so :cancel-query can hit both.
+;;  :cancelling? false           ;; true once Esc was pressed; cleared on :message-received
 ;;  :progress   nil              ;; live per-iteration timeline while loading:
 ;;                               ;;   {:iterations [{:iteration int
 ;;                               ;;                  :thinking  str-or-nil
@@ -77,6 +82,8 @@
                   :input-history-index nil
                   :input-history-draft nil
                   :loading?   false
+                  :cancel-token nil
+                  :cancelling? false
                   :progress   nil
                   :settings   {:show-thinking true :show-iterations true}
                   :dialog-open? false}))
@@ -186,18 +193,32 @@
 
 (reg-event-fx :send-message
   (fn [db [_ text]]
-    {:db (-> db
-           (update :messages conj (chat/user-msg text))
-           (update :messages conj (chat/assistant-msg "Sending request..."))
-           (update :input-history (fn [xs]
-                                    (let [xs (vec (or xs []))]
-                                      (if (= text (last xs)) xs (conj xs text)))))
-           (assoc :msg-scroll nil :loading? true
-             :progress {:iterations []}
-             :query-start-ms (System/currentTimeMillis)
-             :input-history-index nil
-             :input-history-draft nil))
-     :fx [[:rlm-query (:conv db) text]]}))
+    (let [token (cancellation/make)]
+      {:db (-> db
+             (update :messages conj (chat/user-msg text))
+             (update :messages conj (chat/assistant-msg "Sending request to provider…"))
+             (update :input-history (fn [xs]
+                                      (let [xs (vec (or xs []))]
+                                        (if (= text (last xs)) xs (conj xs text)))))
+             (assoc :msg-scroll nil :loading? true
+               :cancel-token token
+               :cancelling? false
+               :progress {:iterations []}
+               :query-start-ms (System/currentTimeMillis)
+               :input-history-index nil
+               :input-history-draft nil))
+       :fx [[:rlm-query (:conv db) text token]]})))
+
+(reg-event-fx :cancel-query
+  (fn [db _]
+    (if-not (:loading? db)
+      {:db db}
+      (do
+        ;; Both the cooperative flag and the hard interrupt are fired
+        ;; through one channel-agnostic call. See
+        ;; channels.cancellation/cancel! for the contract.
+        (cancellation/cancel! (:cancel-token db))
+        {:db (assoc db :cancelling? true)}))))
 
 (reg-event-db :set-progress-iterations
   (fn [db [_ iterations]]
@@ -218,38 +239,38 @@
                              iterations (assoc :iterations iterations)
                              tokens     (assoc :tokens tokens)
                              cost       (assoc :cost cost)
-                             confidence (assoc :confidence confidence)))
-          ;; Auto-generate title from first user message if not yet set
-          conv-id  (get-in db [:conv :id])
-          first-turn? (= 2 (count (:messages db)))  ;; user msg + placeholder
-          first-user-text (when first-turn?
-                            (:text (first (:messages db))))]
-      (when (and first-turn? first-user-text conv-id)
-        (future
-          (try
-            (let [title (subs first-user-text 0 (min (count first-user-text) 80))]
-              (conversations/set-title! conv-id title))
-            (catch Throwable _ nil))))
+                             confidence (assoc :confidence confidence)))]
       (-> db
         (update :messages pop)
         (update :messages conj response)
-        (assoc :msg-scroll nil :loading? false :progress nil)
-        (cond-> (and first-turn? first-user-text)
-          (assoc :title (subs first-user-text 0 (min (count first-user-text) 60))))
+        (assoc :msg-scroll nil :loading? false :progress nil
+               :cancel-token nil :cancelling? false)
         (dissoc :query-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
 (reg-fx :rlm-query
-  (fn [conv text]
-    (future
-      (let [{:keys [on-chunk get-timeline]}
-            (channels/make-progress-tracker
-              {:on-update (fn [timeline _chunk]
-                            (try (dispatch [:set-progress-iterations timeline])
-                              (catch Throwable _ nil)))})
-            result (chat/query! conv text {:on-chunk on-chunk})]
-        (if (:error result)
-          (dispatch [:message-received (str "Error: " (:error result))])
-          (dispatch [:message-received (:answer result)
-                      (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence :query-id])]))))))
+  (fn [conv text token]
+    (let [fut (future
+                (try
+                  (let [{:keys [on-chunk get-timeline]}
+                        (channels/make-progress-tracker
+                          {:on-update (fn [timeline _chunk]
+                                        (try (dispatch [:set-progress-iterations timeline])
+                                          (catch Throwable _ nil)))})
+                        result (chat/query! conv text
+                                 {:on-chunk    on-chunk
+                                  :cancel-atom (cancellation/cancel-atom token)})]
+                    (if (:error result)
+                      (dispatch [:message-received (str "Error: " (:error result))])
+                      (dispatch [:message-received (:answer result)
+                                  (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence :query-id])])))
+                  (catch Throwable t
+                    ;; channels.cancellation/cancellation? folds in
+                    ;; InterruptedException, CancellationException, and
+                    ;; runtime wrappers around them — keep all the
+                    ;; channel-shaped logic in one place.
+                    (if (cancellation/cancellation? t)
+                      (dispatch [:message-received "_Cancelled by user._"])
+                      (dispatch [:message-received (str "Error: " (or (ex-message t) (str t)))])))))]
+      (cancellation/set-future! token fut))))

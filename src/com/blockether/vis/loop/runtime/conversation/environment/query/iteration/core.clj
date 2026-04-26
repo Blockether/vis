@@ -343,16 +343,20 @@
         "[system_nudge] You are repeating the same expression pattern. Change strategy."))))
 
 (defn- collect-extension-nudges
+  "Invoke `:ext/nudge-fn` on every PRECOMPUTED active extension and
+   collect the resulting strings. Activation-fn is NOT evaluated here —
+   `extensions` is expected to be the seq returned by
+   `loop-core/active-extensions` once at query start. This keeps
+   activation single-fire-per-query even though nudges fire per-iteration."
   [extensions ctx]
   (when (seq extensions)
     (into []
       (keep (fn [ext]
               (when-let [nudge-fn (:ext/nudge-fn ext)]
                 (try
-                  (when ((:ext/activation-fn ext) (:environment ctx))
-                    (let [result (nudge-fn ctx)]
-                      (when (and (string? result) (not (str/blank? result)))
-                        result)))
+                  (let [result (nudge-fn ctx)]
+                    (when (and (string? result) (not (str/blank? result)))
+                      result))
                   (catch Throwable t
                     (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
                     nil)))))
@@ -363,10 +367,29 @@
 ;; ---------------------------------------------------------------------------
 
 (defn build-iteration-context
+  "Assemble the per-iteration trailing user message: iter header,
+   `<prior_thinking>`, `<journal>`, `<var_index>`, and built-in +
+   extension `[system_nudge]` lines.
+
+   Required opts:
+     `:active-extensions` — vec returned by `(loop-core/active-extensions env)`.
+        Caller MUST compute this exactly ONCE per query and thread it
+        through every iteration. This fn does NOT re-evaluate
+        `:ext/activation-fn`. Pass `[]` when the env has no extensions.
+
+   Optional:
+     `:iteration`, `:current-max-iterations`, `:prior-thinking`,
+     `:prev-expressions`, `:prev-iteration`, `:call-counts-atom`.
+
+   Returns the joined block or nil when every component is blank."
   [environment {:keys [iteration current-max-iterations
-                   prior-thinking
-                   prev-expressions prev-iteration
-                   call-counts-atom]}]
+                       prior-thinking
+                       prev-expressions prev-iteration
+                       call-counts-atom
+                       active-extensions] :as opts}]
+  (when-not (contains? opts :active-extensions)
+    (throw (ex-info "build-iteration-context requires :active-extensions — compute once per query via (loop-core/active-extensions env)"
+             {:type :vis/missing-active-extensions})))
   (let [clamp (fn [s n] (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
         iter-header (when (and iteration current-max-iterations)
                       (str "[iter " (inc (long iteration)) "/"
@@ -381,20 +404,19 @@
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
         expr-results (format-expression-results prev-expressions prev-iteration)
-        nudge-ctx {:environment          environment
-                   :iteration            iteration
+        nudge-ctx {:environment            environment
+                   :iteration              iteration
                    :current-max-iterations current-max-iterations
-                   :prev-expressions      prev-expressions
-                   :prev-iteration       prev-iteration
-                   :user-var-count       0}
+                   :prev-expressions       prev-expressions
+                   :prev-iteration         prev-iteration
+                   :user-var-count         0}
         built-in-nudges (keep identity
                           [(when (and iteration current-max-iterations)
                              (budget-warning
                                {:iteration              iteration
                                 :current-max-iterations current-max-iterations}))
                            (repetition-warning call-counts-atom prev-expressions)])
-        ext-nudges (collect-extension-nudges
-                     (some-> (:extensions environment) deref) nudge-ctx)
+        ext-nudges (collect-extension-nudges active-extensions nudge-ctx)
         nudges-block (str/join "\n" (concat built-in-nudges ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [iter-header prior-block expr-results var-block nudges-block])]
@@ -517,7 +539,7 @@
                                         :thinking  (some-> reasoning str)
                                         :code      nil
                                         :done?     (boolean done?)}))))
-          ask-result (binding [llm/*log-context* {:query-id (:env-id environment) :iteration iteration}]
+          ask-result (binding [llm/*log-context* {:query-id (:environment-id environment) :iteration iteration}]
                        (llm/ask! (:router environment)
                          (cond-> {:spec iteration-spec
                                   :messages messages

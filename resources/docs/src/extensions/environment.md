@@ -1,6 +1,6 @@
 # Environment Map
 
-Every callback an extension receives — `:ext/activation-fn`,
+Every callback an extension receives — `:ext/activation-fn`, optional
 `:ext/prompt`, `:ext/nudge-fn`, and the symbol hooks (`:before-fn`,
 `:after-fn`, `:on-error-fn`) — operates on the **environment**. This
 is the runtime map that represents one live conversation context.
@@ -13,7 +13,7 @@ These keys exist on every environment for its entire lifetime:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `:env-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
+| `:environment-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
 | `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every query/iteration/var is parented under this. |
 | `:db-info` | `map` | Database connection handle (`{:datasource ds …}`). Pass to `persistance.core` functions for reads. **Do not close it.** |
 | `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only. |

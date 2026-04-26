@@ -5,7 +5,9 @@
    Pass `--conversation-id ID` or `--resume` to pick up an existing one.
    Conversation data is persisted in `~/.vis/vis.mdb` so you can come
    back to it."
-  (:require [com.blockether.vis.channels.tui.render :as render]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.channels.cancellation :as cancellation]
+            [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.persistance.core :as db]
             [taoensso.telemere :as t]))
@@ -80,29 +82,52 @@
   (let [{:keys [id]} (conversations/create! :vis)]
     {:id id :history []}))
 
+(defn- resolve-resume-id
+  "Resolve a resume id. Accepts full UUID or an unambiguous prefix
+   among :vis conversations. Returns full UUID string or nil."
+  [conversation-id]
+  (let [cid (some-> conversation-id str str/trim)]
+    (when (seq cid)
+      (or (some-> (conversations/by-id cid) :id str)
+        (let [matches (->> (conversations/by-channel :vis)
+                        (map :id)
+                        (filter #(str/starts-with? (str %) cid))
+                        vec)]
+          (when (= 1 (count matches))
+            (str (first matches))))))))
+
 (defn resume-conversation
   "Resume an existing conversation by id.
+   Accepts full UUID or unambiguous short UUID prefix.
    Returns `{:id conv-id :history [...]}` with persisted messages."
   [conversation-id]
-  (when-let [conv (conversations/by-id conversation-id)]
-    {:id (str (:id conv)) :history (rebuild-history (str (:id conv)))}))
+  (when-let [resolved-id (resolve-resume-id conversation-id)]
+    (when-let [conv (conversations/by-id resolved-id)]
+      {:id (str (:id conv)) :history (rebuild-history (str (:id conv)))})))
 
 (defn query!
   "Send a user query through the shared conversations cache. Blocking.
    Returns `{:answer str}` or `{:error str}`.
 
    `opts` may contain:
-     :on-chunk — fn receiving `{:iteration :thinking :code :final :done?}`
-                 on every streaming chunk from the RLM. The TUI uses this
-                 to project a live per-iteration progress timeline into
-                 the assistant placeholder bubble."
+     :on-chunk    — fn receiving `{:iteration :thinking :code :final :done?}`
+                    on every streaming chunk from the RLM. The TUI uses this
+                    to project a live per-iteration progress timeline into
+                    the assistant placeholder bubble.
+     :cancel-atom — (atom bool) honored by the iteration loop; flipping
+                    it to true causes the current query to terminate at
+                    the next safe point and return `{:status :cancelled}`."
   ([conv text] (query! conv text {}))
-  ([{:keys [id]} text {:keys [on-chunk]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-atom]}]
    (try
       (let [send-opts (cond-> {}
-                        on-chunk (assoc :hooks {:on-chunk on-chunk}))
+                        on-chunk    (assoc :hooks {:on-chunk on-chunk})
+                        cancel-atom (assoc :cancel-atom cancel-atom))
            result (conversations/send! id text send-opts)
-           answer (or (:answer result) "[empty response]")
+           cancelled? (= :cancelled (:status result))
+           answer (or (:answer result)
+                    (when cancelled? "_Cancelled by user._")
+                    "[empty response]")
            model  (or (get-in result [:cost :model]) (get result :model))
            tokens (:tokens result)
            cost   (:cost result)]
@@ -115,9 +140,17 @@
            tokens     (assoc :tokens tokens)
            cost       (assoc :cost cost)
            confidence (assoc :confidence confidence))))
+     ;; future-cancel from the TUI translates to thread interruption.
+     ;; The shared channels.cancellation predicate folds in
+     ;; InterruptedException, CancellationException, and any runtime
+     ;; wrapper that hides one in its cause chain — surface those as
+     ;; a clean cancelled answer, not a generic error.
      (catch Exception e
-       (t/log! :error (str "Query failed: " (ex-message e)))
-       {:error (conversations/error->user-message e)}))))
+       (if (cancellation/cancellation? e)
+         (do (.interrupt (Thread/currentThread))
+           {:answer "_Cancelled by user._" :iterations 0 :status :cancelled})
+         (do (t/log! :error (str "Query failed: " (ex-message e)))
+           {:error (conversations/error->user-message e)}))))))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in

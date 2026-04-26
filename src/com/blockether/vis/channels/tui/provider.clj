@@ -276,23 +276,63 @@
       (dlg/ellipsize (str "   ★ " root-name "  " suffix) text-w))))
 
 (defn- draw-model-card!
-  [g left row inner-w idx selected? is-root? _provider-id model]
-  (let [model-name   (:name model)
-        text-w       (max 0 (- inner-w 2))
-        text-x       (+ left 2)
-        root-mark    (if is-root? "★ " "  ")
-        bg           (if selected? t/dialog-title-bg t/dialog-bg)]
+  "Two-line model card. Mirrors `draw-provider-card!` layout:
+     Line 1: ① model-name                         ★ Primary
+     Line 2:    → then {next}  /  after {prev} → then {next}  /  ...
+
+   Line 2 spells out the **default fallback chain**: svar's default
+   routing picks `(first candidates)` from this provider's `:models`
+   after filtering, so list order = chain order.
+
+   `prev-name` and `next-name` are the names of the model just before /
+   after this one in the chain (nil at the ends)."
+  [g left row inner-w idx selected? is-root? _provider-id model prev-name next-name]
+  (let [model-name (or (:name model) (str "model-" (inc idx)))
+        text-w     (max 0 (- inner-w 2))
+        text-x     (+ left 2)
+        pri        (priority-label idx)
+        left-part  (str pri " " model-name)
+        tag        (when is-root? "★ Primary")
+        bg         (if selected? t/dialog-title-bg t/dialog-bg)
+        ;; Build the chain breadcrumb. Use Unicode arrows so the flow
+        ;; reads left-to-right at a glance: "after X → then Y".
+        subtitle   (cond
+                     (and (nil? prev-name) (nil? next-name))
+                     "   only model — no fallback configured"
+
+                     (nil? prev-name)
+                     (str "   → then " next-name)
+
+                     (nil? next-name)
+                     (str "   after " prev-name " — last fallback")
+
+                     :else
+                     (str "   after " prev-name " → then " next-name))]
+    ;; Background fill across both lines
     (p/set-bg! g bg)
     (doseq [r (range card-rows)]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
-    (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-fg))
-    (p/styled g [p/BOLD]
-      (p/put-str! g text-x row
-        (dlg/ellipsize (str root-mark (or model-name (str "model-" (inc idx)))) text-w)))
-    ;; Line 2: root indicator hint only
-    (when is-root?
-      (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-hint))
-      (p/put-str! g text-x (inc row) (dlg/ellipsize "   primary model" text-w)))))
+
+    ;; Line 1 left — priority + model name (bold), trimmed to leave room
+    ;; for the right-aligned tag.
+    (let [reserved (if tag (+ (count tag) 1) 0)]
+      (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-fg))
+      (p/styled g [p/BOLD]
+        (p/put-str! g text-x row (dlg/ellipsize left-part (max 0 (- text-w reserved))))))
+
+    ;; Line 1 right — ★ Primary tag, right-aligned. Green when not
+    ;; selected, follows title-fg when the row is selected so it stays
+    ;; readable on the highlight stripe.
+    (when tag
+      (let [tag-col (+ text-x (- text-w (count tag)))]
+        (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/status-ok))
+        (p/styled g [p/BOLD]
+          (p/put-str! g tag-col row tag))))
+
+    ;; Line 2 — dimmed italic chain breadcrumb.
+    (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-hint))
+    (p/styled g [p/ITALIC]
+      (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
 
 (defn- move-model-to-front
   [models idx]
@@ -343,16 +383,22 @@
                 "No models. Press A to add."))
             (doseq [idx (range total)]
               (let [card-y (+ content-top (card-start-row idx))
-                    model  (nth @models idx)]
+                    model  (nth @models idx)
+                    prev-name (when (pos? idx)
+                                (:name (nth @models (dec idx))))
+                    next-name (when (< idx (dec total))
+                                (:name (nth @models (inc idx))))]
                 (when (and (< card-y (+ content-top content-h))
                         (>= (+ card-y card-rows) content-top))
                   (draw-model-card! g left card-y inner-w idx (= idx @selected)
                     (zero? idx)
                     (:id provider)
-                    model)))))
+                    model
+                    prev-name
+                    next-name)))))
 
           (dlg/draw-hint-bar! g left hint-row inner-w
-            [["↑/↓" "move"] ["A" "add"] ["D" "del"] ["R" "root"] ["Esc" "back"]])
+            [["↑/↓" "move"] ["A" "add"] ["D" "del"] ["R" "make primary"] ["Esc" "back"]])
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
 
