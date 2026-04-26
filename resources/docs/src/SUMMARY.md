@@ -12,7 +12,6 @@
 
 - [Overview](architecture/overview.md)
 - [Iteration Flow](architecture/iteration-flow.md)
-- [Directory Structure](architecture/directory-structure.md)
 - [State Ownership](architecture/state.md)
 - [Database Schema](architecture/database.md)
 
