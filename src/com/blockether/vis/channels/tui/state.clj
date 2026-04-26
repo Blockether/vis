@@ -230,20 +230,13 @@
             (let [title (subs first-user-text 0 (min (count first-user-text) 80))]
               (conversations/set-title! conv-id title))
             (catch Throwable _ nil))))
-      (let [error? (and (string? answer) (str/starts-with? answer "Error: "))
-            ;; On error, restore the last query into the input box so
-            ;; the user can edit and re-send without Alt+Up.
-            last-user-text (when error?
-                            (:text (last (filter #(= :user (:role %)) (:messages db)))))]
-        (-> db
-          (update :messages pop)
-          (update :messages conj response)
-          (assoc :msg-scroll nil :loading? false :progress nil)
-          (cond-> (and first-turn? first-user-text)
-            (assoc :title (subs first-user-text 0 (min (count first-user-text) 60))))
-          (cond-> last-user-text
-            (assoc :input (text->input-state last-user-text)))
-          (dissoc :query-start-ms)))))
+      (-> db
+        (update :messages pop)
+        (update :messages conj response)
+        (assoc :msg-scroll nil :loading? false :progress nil)
+        (cond-> (and first-turn? first-user-text)
+          (assoc :title (subs first-user-text 0 (min (count first-user-text) 60))))
+        (dissoc :query-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
