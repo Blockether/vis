@@ -19,7 +19,7 @@ The model sees exactly what it needs: the previous iteration's results,
 a var index of everything it has defined, and system nudges. Everything
 else is one function call away.
 
-📖 **Docs:** <https://blockether.github.io/vis/>
+📖 **[Book](https://blockether.github.io/vis/)**
 
 ## Rules for Contributors
 

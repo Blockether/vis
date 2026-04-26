@@ -1,17 +1,22 @@
 (ns com.blockether.vis.channels.cli
-  ;; CLI dispatcher.
-  ;;
-  ;; The whole `vis xxx` family is modeled as a TREE of commands using
-  ;; `com.blockether.vis.commandline`. Built-in commands (`run`, `auth`,
-  ;; `doctor`, `conversations`, `extensions`, `help`) live here; the
-  ;; `vis ext <cmd>` and `vis channel <name>` parents have DYNAMIC
-  ;; subcommands sourced from the extension and channel registries
-  ;; respectively. vis-core has ZERO direct reference to any concrete
-  ;; channel namespace — channels register themselves into
-  ;; `com.blockether.vis.channel` at load time, and we just adapt the
-  ;; registry into commandline command maps.
+  "vis-core's built-in CLI commands.
+
+   This namespace is a PLUG-IN, not a dispatcher. Loading it at
+   startup self-registers every built-in (`run`, `auth`, `doctor`,
+   `conversations`, `extensions`) into `com.blockether.vis.commandline`
+   so the dispatcher in `com.blockether.vis.commandline.main` can
+   discover and invoke them.
+
+   Things that live elsewhere now:
+
+     - The dispatcher / `-main` / pre-stderr-redirect → vis-commandline
+     - The `vis channel` parent + channel-registry adapter → vis-extension
+     - The `vis ext` parent + `:ext/cli` adapter → vis-extension
+
+   `META-INF/vis/commandline.edn` lists this namespace so dropping
+   the vis-core jar onto the classpath is enough to get every
+   built-in. No caller wiring required."
   (:require [clojure.string :as str]
-            [com.blockether.vis.channel :as channel]
             [com.blockether.vis.channels.cli.agent :as agent]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.commandline :as cmd]
@@ -97,16 +102,6 @@
 
 (defn- print-run-usage! []
   (stdout! "Usage: vis run [FLAGS] \"prompt\"")
-  (stdout! "")
-  (stdout! "Flags:")
-  (stdout! "  --json              Output result as JSON")
-  (stdout! "  --edn               Output result as EDN")
-  (stdout! "  --trace             Show full execution trace")
-  (stdout! "  --debug             Enable debug logging")
-  (stdout! "  --model MODEL       Override LLM model")
-  (stdout! "  --max-iterations N  Override iteration budget (default 50, min 1)")
-  (stdout! "  --name NAME         Agent name")
-  (stdout! "  --db PATH|:memory   Override DB target for this command")
   (stdout! "")
   (stdout! "Examples:")
   (stdout! "  vis run \"What is 2+2?\"")
@@ -350,197 +345,52 @@
         (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 
-;;; ── Dynamic subcommand builders ────────────────────────────────────────
+;;; ── Self-register every built-in into the commandline registry ─────────
+;;
+;; This is the entire wiring this namespace contributes to the CLI.
+;; The dispatcher in `com.blockether.vis.commandline.main` finds
+;; these via `cmd/registered-under []` and renders + dispatches them
+;; alongside any other plug-in's commands.
 
-(defn- channel->command
-  "Adapt a `:channel/…`-keyed channel descriptor into a vis-commandline
-   command map. Channels parse their own raw args so we forward the
-   residual untouched and ignore the parsed map."
-  [c]
-  {:cmd/name      (:channel/cmd c)
-   :cmd/doc       (:channel/doc c)
-   :cmd/usage     (or (:channel/usage c)
-                    (str "vis channel " (:channel/cmd c)))
-   :cmd/owns-tty? (boolean (:channel/owns-tty? c))
-   :cmd/run-fn    (fn [_parsed residual]
-                    ((:channel/main-fn c) (vec residual)))})
+(doseq [spec
+        [{:cmd/name  "run"
+          :cmd/doc   "Run a one-shot agent query and print the answer."
+          :cmd/usage "vis run [FLAGS] \"prompt\""
+          :cmd/args  [{:name "json"           :kind :flag :type :boolean :doc "Output result as JSON."}
+                      {:name "edn"            :kind :flag :type :boolean :doc "Output result as EDN."}
+                      {:name "trace"          :kind :flag :type :boolean :doc "Show full execution trace."}
+                      {:name "debug"          :kind :flag :type :boolean :doc "Enable svar debug logging."}
+                      {:name "model"          :kind :flag :type :string  :doc "Override the LLM model."}
+                      {:name "max-iterations" :kind :flag :type :int     :doc "Iteration budget (default 50, min 1)."}
+                      {:name "name"           :kind :flag :type :string  :doc "Agent name."}
+                      {:name "db"             :kind :flag :type :string  :doc "DB target: PATH or :memory."}]
+          :cmd/examples ["vis run \"What is 2+2?\""
+                         "vis run --json --model gpt-4o \"Explain the auth flow\""
+                         "vis run --max-iterations 10 \"Refactor src/foo.clj\""]
+          :cmd/run-fn cli-run!}
 
-(defn- channel-subcommands
-  "Snapshot the channel registry AND any commandline plug-in commands
-   that asked to mount under `vis channel` (`:cmd/parent [\"channel\"]`).
-   Called on every `dispatch!`/`render-help` walk so newly registered
-   channels appear immediately."
-  []
-  (let [chs   (mapv channel->command (channel/registered-channels))
-        regd  (cmd/registered-under ["channel"])
-        ;; Channel-registry entries take precedence on name collision
-        ;; (channels are first-class; commandline mounts under `channel`
-        ;; are an escape hatch for non-channel adapters).
-        names (set (map :cmd/name chs))]
-    (vec (sort-by :cmd/name (concat chs (remove #(names (:cmd/name %)) regd))))))
+         {:cmd/name  "auth"
+          :cmd/doc   "Authenticate with an LLM provider."
+          :cmd/usage "vis auth <provider> [--status | --logout]"
+          :cmd/examples ["vis auth github-copilot"
+                         "vis auth github-copilot --status"
+                         "vis auth github-copilot --logout"]
+          :cmd/run-fn cli-auth!}
 
-(defn- ext->command
-  "Adapt one extension `:ext/cli` entry into a vis-commandline command.
-   `entry` shape is `{:cmd :doc :args :fn :ext-ns}` as produced by
-   `channels.core/all-extension-cmds`."
-  [{cmd-name :cmd, cmd-doc :doc, cmd-args :args, runner :fn, ext-ns :ext-ns}]
-  {:cmd/name cmd-name
-   :cmd/doc  (str (or cmd-doc "")
-              (when ext-ns (str "  (" ext-ns ")")))
-   :cmd/args (vec (or cmd-args []))
-   :cmd/run-fn (fn [parsed _residual]
-                 (config/init-cli!)
-                 (let [r (try (runner parsed)
-                           (catch Throwable t
-                             (stdout! (str "Error: " (ex-message t)))
-                             (System/exit 1)))]
-                   (when (some? r) (stdout! (str r)))
-                   (shutdown-agents)))})
+         {:cmd/name  "conversations"
+          :cmd/doc   "List conversations stored on disk."
+          :cmd/usage "vis conversations [vis|telegram|cli]"
+          :cmd/examples ["vis conversations"
+                         "vis conversations telegram"]
+          :cmd/run-fn cli-conversations!}
 
-(defn- ext-subcommands
-  "Snapshot every extension's `:ext/cli` entries AND any commandline
-   plug-in commands registered with `:cmd/parent [\"ext\"]`. Called on
-   every dispatch/help walk so freshly loaded plug-ins appear without
-   restart."
-  []
-  (let [legacy (mapv ext->command (channels/all-extension-cmds))
-        regd   (cmd/registered-under ["ext"])
-        names  (set (map :cmd/name legacy))]
-    (vec (sort-by :cmd/name (concat legacy (remove #(names (:cmd/name %)) regd))))))
+         {:cmd/name  "doctor"
+          :cmd/doc   "Show environment + DB diagnostics."
+          :cmd/usage "vis doctor"
+          :cmd/run-fn cli-doctor!}
 
-;;; ── Root command tree ──────────────────────────────────────────────────
-
-(def ^:private builtin-subcommands
-  "The fixed top-level commands that ship with vis-core itself. Plug-in
-   jars can add more by calling `commandline/register-global!` with
-   no `:cmd/parent` (or with `:cmd/parent []`) — those land alongside
-   these via `top-level-subcommands`."
-  [{:cmd/name  "run"
-       :cmd/doc   "Run a one-shot agent query and print the answer."
-       :cmd/usage "vis run [FLAGS] \"prompt\""
-       :cmd/args  [{:name "json"           :kind :flag :type :boolean :doc "Output result as JSON."}
-                   {:name "edn"            :kind :flag :type :boolean :doc "Output result as EDN."}
-                   {:name "trace"          :kind :flag :type :boolean :doc "Show full execution trace."}
-                   {:name "debug"          :kind :flag :type :boolean :doc "Enable svar debug logging."}
-                   {:name "model"          :kind :flag :type :string  :doc "Override the LLM model."}
-                   {:name "max-iterations" :kind :flag :type :int     :doc "Iteration budget (default 50, min 1)."}
-                   {:name "name"           :kind :flag :type :string  :doc "Agent name."}
-                   {:name "db"             :kind :flag :type :string  :doc "DB target: PATH or :memory."}]
-       :cmd/examples ["vis run \"What is 2+2?\""
-                      "vis run --json --model gpt-4o \"Explain the auth flow\""
-                      "vis run --max-iterations 10 \"Refactor src/foo.clj\""]
-       :cmd/run-fn cli-run!}
-
-      {:cmd/name  "auth"
-       :cmd/doc   "Authenticate with an LLM provider."
-       :cmd/usage "vis auth <provider> [--status | --logout]"
-       :cmd/examples ["vis auth github-copilot"
-                      "vis auth github-copilot --status"
-                      "vis auth github-copilot --logout"]
-       :cmd/run-fn cli-auth!}
-
-      {:cmd/name  "conversations"
-       :cmd/doc   "List conversations stored on disk."
-       :cmd/usage "vis conversations [vis|telegram|cli]"
-       :cmd/examples ["vis conversations"
-                      "vis conversations telegram"]
-       :cmd/run-fn cli-conversations!}
-
-      {:cmd/name  "doctor"
-       :cmd/doc   "Show environment + DB diagnostics."
-       :cmd/usage "vis doctor"
-       :cmd/run-fn cli-doctor!}
-
-      {:cmd/name  "extensions"
-       :cmd/doc   "List every registered extension."
-       :cmd/usage "vis extensions"
-       :cmd/run-fn cli-extensions!}
-
-      {:cmd/name  "ext"
-       :cmd/doc   "Run an extension-provided CLI command."
-       :cmd/usage "vis ext <cmd> [args…]"
-       :cmd/subcommands ext-subcommands}
-
-      {:cmd/name  "channel"
-       :cmd/doc   "Run a registered channel (TUI, Telegram, …)."
-       :cmd/usage "vis channel <name> [args…]"
-       :cmd/subcommands channel-subcommands}])
-
-(defn- top-level-subcommands
-  "Built-in vis-core commands + every plug-in command registered with
-   `:cmd/parent []` (or no parent at all). Built-ins win on name
-   collision so a stray plug-in can't hijack `run` / `auth` / etc."
-  []
-  (let [regd  (cmd/registered-under [])
-        names (set (map :cmd/name builtin-subcommands))]
-    (vec (concat builtin-subcommands
-           (remove #(names (:cmd/name %)) regd)))))
-
-(defn- root-command
-  "Build the root `vis` command tree on every call so newly registered
-   plug-ins show up without restart. Cheap — it's a tiny map; the heavy
-   lifting is in the dynamic `:cmd/subcommands` fns."
-  []
-  (cmd/command
-    {:cmd/name "vis"
-     :cmd/doc  (str/join "\n"
-                 ["vis — SCI powered RLM iterative coding harness"
-                  ""
-                  "  No tool calls. No message accumulation. No compaction."
-                  "  The model writes Clojure. A sandboxed SCI interpreter executes it."
-                  "  Results flow back as a compact journal. State lives in named vars"
-                  "  and SQLite, not in the token budget. One context message per"
-                  "  iteration — constant size, never grows. Works with any model that"
-                  "  outputs JSON."
-                  ""
-                  "  Run `vis run --help` for one-shot options."
-                  "  Docs: cd docs && mdbook serve --open"])
-     :cmd/subcommands top-level-subcommands}))
-
-;;; ── Main ───────────────────────────────────────────────────────────────
-
-(defn- pre-redirect-stderr!
-  "Walk the command tree to see whether the resolved leaf owns the
-   controlling terminal. If so, redirect stderr to ~/.vis/vis.log
-   BEFORE any further class loading triggers JVM warnings (e.g. the
-   sun.misc.Unsafe deprecation from aircompressor)."
-  [args]
-  (when-let [{:keys [command]} (cmd/find-leaf (root-command) (cons "vis" args))]
-    (when (:cmd/owns-tty? command)
-      (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
-        (when-not (.exists log-dir) (.mkdirs log-dir))
-        (System/setErr (java.io.PrintStream.
-                         (java.io.FileOutputStream.
-                           (str log-dir "/vis.log") true) true))))))
-
-(defn -main [& args]
-  ;; Discover plug-ins FIRST so dispatch + help see the full set:
-  ;;   - channels register themselves into the channel registry
-  ;;   - commandline plug-ins (top-level, ext-mounted, channel-mounted)
-  ;;     register into `commandline/global-registry`
-  (channel/discover-channels!)
-  (cmd/discover-commands!)
-  (pre-redirect-stderr! args)
-  (let [root      (root-command)
-        full-args (cons "vis" args)
-        leaf      (cmd/find-leaf root full-args)
-        unknown?  (and (seq args)
-                    leaf
-                    (= (:command leaf) root)
-                    (not-any? #{"help" "--help" "-h"} args))]
-    (cond
-      ;; No args at all → top-level help (the same render the help
-      ;; command would produce).
-      (empty? args)
-      (println (cmd/render-tree root))
-
-      ;; `vis "what is 2+2?"` — first arg is not a command. Fall back
-      ;; to `vis run` for ergonomic one-liners.
-      unknown?
-      (cli-run! {} (vec args))
-
-      ;; Otherwise: dispatch through the tree. `dispatch!` handles
-      ;; `--help`, parent-without-runner help rendering, arg parsing,
-      ;; and the actual leaf invocation.
-      :else
-      (cmd/dispatch! root full-args))))
+         {:cmd/name  "extensions"
+          :cmd/doc   "List every registered extension."
+          :cmd/usage "vis extensions"
+          :cmd/run-fn cli-extensions!}]]
+  (cmd/register-global! spec))

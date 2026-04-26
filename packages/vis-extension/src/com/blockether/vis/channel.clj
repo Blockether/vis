@@ -43,6 +43,7 @@
   (:require [clojure.edn :as edn]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.commandline :as cmd]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -195,3 +196,41 @@
                      :data  {:source (str url) :message (ex-message t)}
                      :msg   (str "Failed to parse " url ": " (ex-message t))}))))
     (- (count @global-registry) (count before))))
+
+;; =============================================================================
+;; CLI bridge — the `vis channel` parent
+;;
+;; Loading this namespace registers a top-level commandline parent
+;; whose subcommands are computed lazily from the channel registry on
+;; every help/dispatch walk. New channels show up immediately, no
+;; restart required. The bridge lives here (not in vis-commandline)
+;; because that's where the registry is — vis-commandline never
+;; depends on the channel concept.
+;; =============================================================================
+
+(defn- channel->command
+  "Adapt a `:channel/…`-keyed channel descriptor into a vis-commandline
+   command map. Channels parse their own raw args so we forward the
+   residual untouched and ignore the parsed map."
+  [c]
+  {:cmd/name      (:channel/cmd c)
+   :cmd/doc       (:channel/doc c)
+   :cmd/usage     (or (:channel/usage c)
+                    (str "vis channel " (:channel/cmd c)))
+   :cmd/owns-tty? (boolean (:channel/owns-tty? c))
+   :cmd/run-fn    (fn [_parsed residual]
+                    ((:channel/main-fn c) (vec residual)))})
+
+(defn channel-subcommands
+  "Snapshot the channel registry into a sorted vector of command maps.
+   Public so other packages can compose channel listings into custom
+   parents."
+  []
+  (mapv channel->command
+    (sort-by :channel/cmd (registered-channels))))
+
+(cmd/register-global!
+  {:cmd/name        "channel"
+   :cmd/doc         "Run a registered channel (TUI, Telegram, …)."
+   :cmd/usage       "vis channel <name> [args…]"
+   :cmd/subcommands #'channel-subcommands})

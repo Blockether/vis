@@ -1,10 +1,18 @@
 {:paths ["src" "resources"]
  ;; SQLite backend for the vis persistence facade.
  ;;
- ;; Owns every JDBC dep (sqlite-jdbc, next.jdbc, honeysql, flyway, nippy)
- ;; and ships the `db/sqlite/migration/V1__schema.sql` resource. Loading
- ;; this jar's `com.blockether.vis.persistance.sqlite.core` namespace
- ;; auto-registers the `:sqlite` backend with the facade.
+ ;; Owns:
+ ;;   - sqlite-jdbc, next.jdbc, honeysql, nippy (the JDBC plumbing)
+ ;;   - flyway-database-nc-sqlite (the dialect-specific Flyway driver
+ ;;     SQLite needs at runtime; flyway-core itself is shipped by
+ ;;     `vis-persistance` along with the SQL resources and the
+ ;;     dialect-agnostic migration runner)
+ ;;
+ ;; Loading `com.blockether.vis.persistance.sqlite.core` auto-registers
+ ;; the `:sqlite` backend with the facade. `open-store` invokes
+ ;; `vis-persistance/migration/migrate!` against
+ ;; `classpath:db/sqlite/migration` (SQL ships in `vis-persistance`)
+ ;; so every store starts with the canonical schema applied.
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
   com.blockether/vis-persistance            {:local/root "../vis-persistance"}
@@ -16,9 +24,8 @@
   org.xerial/sqlite-jdbc                    {:mvn/version "3.53.0.0"}
   com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1093"}
   com.github.seancorfield/honeysql          {:mvn/version "2.7.1368"}
-  ;; Flyway — versioned SQL migrations. SQLite support lives in the
-  ;; flyway-database-nc-sqlite module (split out from core in 10.x+).
-  org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
+  ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
+  ;; — without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
   org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}}
 
  :aliases

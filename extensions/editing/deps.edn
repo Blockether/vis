@@ -8,4 +8,4 @@
         ;; backtracking. No native deps, pure Java, license Go-BSD.
         com.google.re2j/re2j         {:mvn/version "1.8"}
         ;; .gitignore parsing for `(fs/list-files)` and `(fs/grep-files)`.
-        org.eclipse.jgit/org.eclipse.jgit {:mvn/version "6.10.0.202406032230-r"}}}
+        org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}}

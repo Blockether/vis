@@ -17,10 +17,10 @@
   ;; JSON dataset parsing
   com.cnuernber/charred      {:mvn/version "1.038"}
   ;; Filesystem helpers
-  babashka/fs                {:mvn/version "0.5.32"}
+  babashka/fs                {:mvn/version "0.5.33"}
   ;; Telemetry
   com.taoensso/telemere      {:mvn/version "1.2.1"}
-  com.taoensso/trove         {:mvn/version "1.0.0"}}
+  com.taoensso/trove         {:mvn/version "1.1.0"}}
 
  :aliases
  {:run  {:main-opts ["-m" "com.blockether.vis.bench.runner"]
