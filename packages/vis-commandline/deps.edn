@@ -1,0 +1,27 @@
+{:paths ["src"]
+ ;; Reusable command-line primitives.
+ ;;
+ ;; Models a CLI as a TREE of commands. Every command is a small data
+ ;; map (`:cmd/name`, `:cmd/doc`, optional `:cmd/run-fn`,
+ ;; optional `:cmd/subcommands`, optional `:cmd/args`). The dispatcher
+ ;; walks the tree, resolves a leaf, validates flags, and invokes the
+ ;; runner. Help rendering uses the SAME tree.
+ ;;
+ ;; Used by:
+ ;;   - `vis-core` to assemble the top-level CLI (built-ins + ext + channel)
+ ;;   - `vis-extension` consumers that want to reuse arg parsing
+ ;;   - any future package shipping its own `vis xxx` family of commands
+ ;;
+ ;; ZERO non-clojure deps on purpose so the CLI surface stays cheap.
+ :deps
+ {org.clojure/clojure   {:mvn/version "1.12.4"}
+  ;; Structured registration logging (so plug-in jars showing up at
+  ;; classpath time are visible in `~/.vis/vis.log`). No other runtime
+  ;; deps on purpose — the CLI surface stays cheap.
+  com.taoensso/telemere {:mvn/version "1.2.1"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}

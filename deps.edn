@@ -1,83 +1,32 @@
-{:paths ["src" "resources"]
+;; Monorepo root.
+;;
+;; All source lives under `packages/`. This file is a development-time
+;; aggregator: it pulls each sibling package via :local/root so a single
+;; `clojure -M:run` from the repo root has the whole product available
+;; on the classpath, and the same nREPL session can touch every package.
+;;
+;; Each package has its OWN `packages/<name>/deps.edn` and is publishable
+;; independently (build.clj reads the per-package deps.edn for jars).
+{:paths []
 
  :deps
- {org.clojure/clojure                       {:mvn/version "1.12.4"}
-  ;; Extension contract — standalone library so extensions don't drag
-  ;; the entire vis runtime. See vis-extension/deps.edn.
-  com.blockether/vis-extension              {:local/root "vis-extension"}
-  hiccup/hiccup                             {:mvn/version "2.0.0"}
-  ;; LLM structured output
-  com.blockether/svar                       {:mvn/version "0.3.10"}
-  ;; Anomaly - standardized error categories (used by RLM)
-  com.blockether/anomaly                    {:mvn/version "1.0.1"}
-  ;; Browser automation (Playwright)
-  com.blockether/spel                       {:mvn/version "0.9.5"}
-  ;; Ring — Jetty adapter
-  ring/ring-jetty-adapter                   {:mvn/version "1.15.4"}
-  ;; Reitit — data-driven router
-  metosin/reitit-ring                       {:mvn/version "0.10.1"}
-  ;; nREPL — embedded in dev + prod
-  nrepl/nrepl                               {:mvn/version "1.7.0"}
-  ;; Structured telemetry
-  com.taoensso/telemere                     {:mvn/version "1.2.1"}
-  com.taoensso/telemere-slf4j               {:mvn/version "1.2.1"}
-
-  ;; Binary serialization for expression_state.result/error blobs
-  com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}
-  ;; Fast EDN parsing
-  io.github.tonsky/fast-edn                 {:mvn/version "1.1.3"}
-  ;; i18n — pluralization and translations
-  tongue/tongue                             {:mvn/version "0.4.4"}
-  ;; Dependency injection
-  org.clojars.darkleaf/di                   {:mvn/version "3.6.0"}
-  ;; Terminal UI
-  com.googlecode.lanterna/lanterna          {:mvn/version "3.1.5"}
-  ;; JSON serialization (CLI output, agent results)
-  com.cnuernber/charred                     {:mvn/version "1.038"}
-  ;; Line-by-line diff (unified diff format for edit/write tool rendering)
-
-  ;; ---- RLM stack (moved from svar) ----
-  ;; Filesystem utilities
-  babashka/fs                               {:mvn/version "0.5.32"}
-  ;; SCI - Small Clojure Interpreter (RLM sandbox)
-  org.babashka/sci                          {:mvn/version "0.12.51"}
-  ;; HTTP client (pageindex vision calls etc.)
-  org.babashka/http-client                  {:mvn/version "0.4.23"}
-  ;; zprint - pretty printer (RLM sandbox)
-  zprint/zprint                             {:mvn/version "1.3.0"}
-  ;; Token counting
-  com.knuddels/jtokkit                      {:mvn/version "1.1.0"}
-  ;; Edamame — edn/clj reader (richer than clojure.edn)
-  borkdude/edamame                          {:mvn/version "1.5.39"}
-  ;; SQLite + JDBC
-  org.xerial/sqlite-jdbc                    {:mvn/version "3.53.0.0"}
-  com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1093"}
-  com.github.seancorfield/honeysql          {:mvn/version "2.7.1368"}
-  ;; Flyway — versioned SQL migrations. SQLite support lives in the
-  ;; flyway-database-nc-sqlite module (split out from core in 10.x+).
-  org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
-  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}
-  ;; PDFBox — PDF processing (pageindex)
-  org.apache.pdfbox/pdfbox                  {:mvn/version "3.0.7"}
-  ;; core.async — parallel processing (pageindex)
-  org.clojure/core.async                    {:mvn/version "1.9.865"}
-  ;; lazytest — exposed in RLM SCI sandbox
-  io.github.noahtheduke/lazytest            {:mvn/version "2.0.0"}
-  ;; JGit — pure-JVM git library (RLM git ingestion)
-  org.eclipse.jgit/org.eclipse.jgit         {:mvn/version "7.6.0.202603022253-r"}
-  ;; yamlstar — YAML 1.2 loader (SKILL.md frontmatter)
-  org.yamlstar/yamlstar                     {:mvn/version "0.1.3"}
-  ;; clojure+ — cond+/if+/when+ macros + enhanced walk (SCI sandbox)
-  io.github.tonsky/clojure-plus             {:mvn/version "1.7.2"}
-  ;; jmustache — Mustache templating (RLM answer interpolation)
-  com.samskivert/jmustache                  {:mvn/version "1.16"}
-
-  }
+ {com.blockether/vis-core              {:local/root "packages/vis-core"}
+  com.blockether/vis-commandline       {:local/root "packages/vis-commandline"}
+  com.blockether/vis-extension         {:local/root "packages/vis-extension"}
+  com.blockether/vis-logging           {:local/root "packages/vis-logging"}
+  com.blockether/vis-persistance       {:local/root "packages/vis-persistance"}
+  com.blockether/vis-persistance-sqlite {:local/root "packages/vis-persistance-sqlite"}
+  com.blockether/vis-provider          {:local/root "packages/vis-provider"}
+  ;; Optional channels — listed here so the dev/run binary has every
+  ;; front-end available. Each is published as its own jar; downstream
+  ;; consumers can opt out simply by omitting the dep.
+  com.blockether/vis-telegram          {:local/root "packages/vis-telegram"}
+  com.blockether/vis-tui               {:local/root "packages/vis-tui"}}
 
  :aliases
- {:dev   {:extra-paths  []
-          :extra-deps {cider/cider-nrepl             {:mvn/version "0.59.0"}
-                       io.github.tonsky/clj-reload   {:mvn/version "1.0.0"}
+ {:dev   {:extra-paths []
+          :extra-deps {cider/cider-nrepl              {:mvn/version "0.59.0"}
+                       io.github.tonsky/clj-reload    {:mvn/version "1.0.0"}
                        com.blockether.vis.ext/editing {:local/root "extensions/editing"}}}
 
   :run   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
@@ -87,11 +36,21 @@
   :web   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts ["-m" "com.blockether.vis.channels.web.app"]}
 
-  :test  {:extra-paths ["test"]
+  ;; Aggregate test runner. Lists every package test tree containing
+  ;; `*_test.clj` files — lazytest errors out on "no namespaces to
+  ;; run" if a listed dir is empty, so add new packages here only
+  ;; once they get their first test.
+  :test  {:extra-paths ["packages/vis-core/test"
+                        "packages/vis-commandline/test"
+                        "packages/vis-extension/test"
+                        "packages/vis-persistance-sqlite/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-          :main-opts  ["-m" "lazytest.main"]}
+          :main-opts  ["-m" "lazytest.main"
+                       "--dir" "packages/vis-core/test"
+                       "--dir" "packages/vis-commandline/test"
+                       "--dir" "packages/vis-extension/test"]}
 
-  :bench {:extra-paths ["bench"]
+  :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "packages/vis-benchmark"}}
           :jvm-opts    ["-Xmx8g"]
           :main-opts   ["-m" "com.blockether.vis.bench.runner"]}
 

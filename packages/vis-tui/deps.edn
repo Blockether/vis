@@ -1,0 +1,19 @@
+{:paths ["src" "resources"]
+ ;; TUI channel — Lanterna-based chat UI. Optional channel package.
+ ;;
+ ;; Depends on vis-core for the runtime (conversations, env, query, db).
+ ;; vis-core never requires this namespace directly — the CLI dispatcher
+ ;; resolves `com.blockether.vis.channels.tui.screen/run-chat!` lazily
+ ;; via `requiring-resolve`, so omitting this jar still leaves the rest
+ ;; of vis usable.
+ :deps
+ {org.clojure/clojure              {:mvn/version "1.12.4"}
+  com.blockether/vis-core          {:local/root "../vis-core"}
+  com.googlecode.lanterna/lanterna {:mvn/version "3.1.5"}
+  com.blockether/svar              {:mvn/version "0.3.10"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main"]}}}

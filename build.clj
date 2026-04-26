@@ -1,13 +1,19 @@
 (ns build
-  (:require [clojure.tools.build.api :as b]
+  (:require [clojure.java.io :as io]
+            [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
 
 (def lib 'com.blockether/vis)
+
+;; Single source of truth for the version string. Lives at the repo
+;; root so every package + the runtime can agree without duplicating
+;; the value. The `VERSION` env var (set by CI) overrides for releases;
+;; the file gives non-release builds a deterministic `-SNAPSHOT` tag.
 (def version
   (let [v (System/getenv "VERSION")]
     (if (and v (.startsWith v "v"))
       (subs v 1)
-      (or v (str (slurp "resources/VERSION") "-SNAPSHOT")))))
+      (or v (str (.trim (slurp "VERSION")) "-SNAPSHOT")))))
 
 (def class-dir "target/classes")
 (def jar-file (format "target/%s.jar" (name lib)))
@@ -15,6 +21,15 @@
 
 (defn clean [_]
   (b/delete {:path "target"}))
+
+(defn- write-version-resource!
+  "Embed the resolved version string into the jar as
+   `META-INF/vis/VERSION` so `com.blockether.vis.config/version` can
+   read it via `(io/resource …)` at runtime."
+  []
+  (let [target (io/file class-dir "META-INF/vis/VERSION")]
+    (io/make-parents target)
+    (spit target version)))
 
 (defn jar [_]
   (clean nil)
@@ -29,8 +44,9 @@
                             [:license
                              [:name "Apache License, Version 2.0"]
                              [:url "https://www.apache.org/licenses/LICENSE-2.0"]]]]})
-  (b/copy-dir {:src-dirs ["src" "resources"]
+  (b/copy-dir {:src-dirs ["src"]
                :target-dir class-dir})
+  (write-version-resource!)
   (b/jar {:class-dir class-dir
           :jar-file jar-file})
   (println "Built:" jar-file "version:" version))
