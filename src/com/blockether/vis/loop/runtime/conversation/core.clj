@@ -1,7 +1,6 @@
 (ns com.blockether.vis.loop.runtime.conversation.core
   "Conversation lifecycle/send orchestration inside loop core."
-  (:require [clojure.string :as str]
-            [com.blockether.svar.internal.llm :as llm]
+  (:require [com.blockether.svar.internal.llm :as llm]
             [com.blockether.svar.internal.spec :as svar-spec]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.core :as loop-core]
@@ -113,27 +112,9 @@
    Returns nil when the conversation is not found."
   [id]
   (when-let [env (env-for id)]
-    (let [;; Core system prompt (iteration instructions, env block, CLJ rules, etc.)
-          base   (loop-core/build-system-prompt
-                   {:system-prompt (:system-prompt (by-id id))})
-          ext-ps (when-let [exts (some-> (:extensions env) deref seq)]
-                   (->> exts
-                     (keep (fn [ext]
-                             (try
-                               (when ((:ext/activation-fn ext) env)
-                                 (let [p ((:ext/prompt ext) env)]
-                                   (when (and (string? p) (not (str/blank? p)))
-                                     (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-                                       (str "[namespace: " alias-sym " \u2192 " ns-sym "]\n" p)
-                                       p))))
-                               (catch Throwable _ nil))))
-                     seq))
-          combined (if ext-ps
-                     (str base "\n\n" (str/join "\n\n" ext-ps))
-                     base)
-
-          ;; 1. System message (sent as-is to the LLM)
-          objective combined
+    (let [;; 1. System message — SAME function the iteration loop uses
+          system-prompt (loop-core/assemble-system-prompt env
+                          {:system-prompt (:system-prompt (by-id id))})
           ;; --- pull last query for realistic context ---
           queries  (when-let [di (:db-info env)]
                      (try (db/db-list-conversation-queries di (:conversation-id env))
@@ -171,7 +152,7 @@
                       rlm-spec/ITERATION_SPEC_NON_REASONING)
           spec-prompt (svar-spec/spec->prompt iter-spec)]
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
-        objective
+        system-prompt
         "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
         query-text
         (when iter-ctx

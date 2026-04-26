@@ -212,30 +212,7 @@
                              (long (* 0.6 (router/context-limit effective-model))))
         has-reasoning? (boolean (provider-has-reasoning? (:router environment)))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
-        system-prompt (loop-core/build-system-prompt {:system-prompt system-prompt})
-        ;; Append active extension prompts to the system prompt.
-        ;; Each ext with a truthy activation-fn contributes its :ext/prompt.
-        ext-prompts   (when-let [exts (some-> (:extensions environment) deref seq)]
-                        (->> exts
-                          (keep (fn [ext]
-                                  (try
-                                    (when ((:ext/activation-fn ext) environment)
-                                      (let [p ((:ext/prompt ext) environment)]
-                                        (when (and (string? p) (not (str/blank? p)))
-                                          ;; Prepend alias header so the LLM knows the namespace.
-                                          (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-                                            (str "[namespace: " alias-sym " → " ns-sym "]\n" p)
-                                            p))))
-                                    (catch Throwable t
-                                      (tel/log! {:level :error :id ::ext-prompt-error
-                                                 :data (assoc (format-exception-short t)
-                                                         :ext (:ext/namespace ext))}
-                                        (str "Extension '" (:ext/namespace ext) "' prompt/activation failed"))
-                                      nil))))
-                          seq))
-        system-prompt (if ext-prompts
-                        (str system-prompt "\n\n" (str/join "\n\n" ext-prompts))
-                        system-prompt)
+        system-prompt (loop-core/assemble-system-prompt environment {:system-prompt system-prompt})
         initial-user-content query
         initial-messages (iterate/assemble-initial-messages
                            {:system-prompt system-prompt
