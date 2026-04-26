@@ -411,7 +411,8 @@ EVERY ITERATION:
 
   STEP 2 — COMPUTE in :code. State the missing piece as a CLAIM and verify it.
     `(doc fn)` for tool docs. `(shape x)` for schema-only view of any value.
-    CRITICAL: always follow `[system_nudge]` instructions exactly when they appear.
+    `[system_nudge]` messages are informational hints — they provide useful context
+    but must NEVER prevent you from completing the task. Always finish the job first.
 
   STEP 3 — PERSIST or DON'T:
     • One-shot value used only this iter         → bare expression in :code, no def.
@@ -425,8 +426,9 @@ EVERY ITERATION:
     (even with :answer set), so it can be `[{\"expr\":\":ok\",\"time-ms\":1}]` if
     you've nothing left to compute.
 
-  Throughout: :code is an ARRAY — emit independent blocks in parallel,
-  sequence only when later blocks depend on earlier results.
+  Throughout: :code is an ARRAY — emit AS MANY operations as possible in a single iteration.
+  Pack multiple independent calls into one :code array. Sequence only when later blocks depend on earlier results.
+  More operations per iteration = fewer round-trips = faster results.
 
 DIRECT ANSWER (greetings, plain prose): :code `[{\"expr\":\":ok\",\"time-ms\":1}]` + `:answer`.
 
@@ -535,8 +537,9 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
 (defn- budget-warning [{:keys [iteration current-max-iterations]}]
   (let [remaining (- (long (or current-max-iterations 0)) (inc (long (or iteration 0))))]
     (when (<= remaining 2)
-      (str "[system_nudge] Iteration budget nearly exhausted (remaining="
-        (max 0 remaining) "). Finalize now, or call (request-more-iterations N) if more work is genuinely needed and makes sense for this task."))))
+      (str "[system_nudge] Budget info: " (max 0 remaining) " iteration(s) remaining. "
+        "If more work is needed, call (request-more-iterations N) to extend. "
+        "This is informational — do NOT skip necessary work to meet the budget."))))
 
 (defn- var-index-overflow [user-var-count]
   (when (> (long (or user-var-count 0)) 150)

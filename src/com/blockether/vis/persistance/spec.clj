@@ -202,7 +202,7 @@
                         ::spec/target      :code_block
                         ::spec/cardinality :spec.cardinality/many
                         ::spec/required    true
-                        ::spec/description "Required code blocks to execute this iteration; use `[{\"expr\":\":ok\",\"time-ms\":1}]` when no computation is needed."})
+                        ::spec/description "Required code blocks to execute this iteration. Emit AS MANY blocks as possible — pack all independent operations into one array. Use `[{\"expr\":\":ok\",\"time-ms\":1}]` only when no computation is needed."})
            (spec/field {::spec/name        :next
                         ::spec/type        :spec.type/ref
                         ::spec/target      :next_turn
