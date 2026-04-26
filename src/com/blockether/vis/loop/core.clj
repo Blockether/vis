@@ -28,7 +28,7 @@
    [com.blockether.vis.persistance.core :as db
     :refer [create-rlm-conn dispose-rlm-conn!]]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
-   [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
+   [com.blockether.vis.extension :as ext]
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
 

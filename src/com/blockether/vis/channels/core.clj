@@ -6,7 +6,7 @@
    for provider state — changes here are reflected everywhere."
   (:require [clojure.string :as str]
             [com.blockether.vis.config :as config]
-            [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [taoensso.telemere :as tel]))
 

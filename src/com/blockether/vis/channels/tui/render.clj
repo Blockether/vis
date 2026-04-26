@@ -672,7 +672,11 @@
                                  (into [(str err-result-marker "  " hdr)] body-lines)))]
             (vec (concat
                    ;; Top margin so the ERROR sub-header doesn't sit
-                   ;; flush against the ITERATION header.
+                   ;; flush against the ITERATION header. Two padding
+                   ;; lines guarantee at least one visible blank row
+                   ;; between the headers regardless of how the
+                   ;; surrounding bubble background fills in.
+                   [(str iter-pad-marker "")]
                    [(str iter-pad-marker "")]
                    [hdr-line]
                    [(str code-err-pad-marker "")]

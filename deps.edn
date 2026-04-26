@@ -2,6 +2,9 @@
 
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
+  ;; Extension contract — standalone library so extensions don't drag
+  ;; the entire vis runtime. See vis-extension/deps.edn.
+  com.blockether/vis-extension              {:local/root "vis-extension"}
   hiccup/hiccup                             {:mvn/version "2.0.0"}
   ;; LLM structured output
   com.blockether/svar                       {:mvn/version "0.3.10"}

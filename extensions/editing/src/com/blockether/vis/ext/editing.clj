@@ -2,12 +2,15 @@
   "Editing extension — read, list, grep, patch.
 
    Self-registers via `register-global!` at namespace load time.
-   Drop on the classpath and every new environment gets it."
+   Drop on the classpath and every new environment gets it.
+
+   Depends ONLY on `com.blockether/vis-extension` (the slim extension
+   contract). The full vis runtime is intentionally not pulled in here."
   (:refer-clojure :exclude [read list])
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as vis])
+   [com.blockether.vis.extension :as ext])
   (:import [com.google.re2j Pattern]
            [org.eclipse.jgit.ignore IgnoreNode]))
 
@@ -513,7 +516,7 @@
 ;; =============================================================================
 
 (def read-file-symbol
-  (vis/symbol 'read-file read-file
+  (ext/symbol 'read-file read-file
     {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
      :arglists '([path] [path offset] [path offset limit])
      :examples ["(fs/read-file \"src/core.clj\")"
@@ -521,7 +524,7 @@
      :on-error-fn rescue-path-args}))
 
 (def list-files-symbol
-  (vis/symbol 'list-files list-files
+  (ext/symbol 'list-files list-files
     {:doc "List files/dirs as a tree of {:name :path :type :size :hidden? :children}. Default depth is 2 (top level + one level of children). Pass an integer for custom depth, true for unbounded, or false/0 for current level only. Directory :size is the recursive byte sum. Respects .gitignore by default. Positional args only."
      :arglists '([] [path] [path depth] [path depth hidden?] [path depth hidden? respect-gitignore?])
      :examples ["(fs/list-files)"
@@ -533,7 +536,7 @@
      :on-error-fn rescue-path-args}))
 
 (def grep-files-symbol
-  (vis/symbol 'grep-files grep-files
+  (ext/symbol 'grep-files grep-files
     {:doc "Search files with RE2/J (linear-time regex, ReDoS-safe). Always returns structured maps. Respects .gitignore by default. Positional args only."
      :arglists '([pattern] [pattern path] [pattern path limit] [pattern path limit hidden?] [pattern path limit hidden? respect-gitignore?])
      :examples ["(fs/grep-files \"TODO\")"
@@ -544,7 +547,7 @@
      :on-error-fn rescue-grep-args}))
 
 (def patch-file-symbol
-  (vis/symbol 'patch-file patch-file
+  (ext/symbol 'patch-file patch-file
     {:doc "Patch an existing file. Preferred form is Codex-style SEARCH/REPLACE patch text; old 3-arg exact replacement remains supported. Use empty SEARCH to create a new file."
      :arglists '([path patch-text] [path old-text new-text])
      :examples ["(fs/patch-file \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
@@ -559,7 +562,7 @@
    patch-file-symbol])
 
 (def editing-extension
-  (vis/extension
+  (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.editing
      :ext/doc "Filesystem tools: read, list, grep, patch."
      :ext/version "0.3.0"
@@ -574,4 +577,4 @@
 - Prefer the smallest unique SEARCH block that matches exactly once."
      :ext/symbols editing-symbols}))
 
-(vis/register-global! editing-extension)
+(ext/register-global! editing-extension)
