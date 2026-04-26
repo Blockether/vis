@@ -2,7 +2,12 @@
 # match at any depth (root, packages/*, extensions/*, docs/, etc.).
 .cpcache/
 .cache/
-.clj-kondo/
+# clj-kondo: ignore the cache/imports it generates locally, but keep
+# our project-level config + hooks in the repo so editors and CI use
+# the same lint rules.
+.clj-kondo/.cache/
+.clj-kondo/imports/
+.clj-kondo/inline-configs/
 .lsp/
 .shadow-cljs/
 target/
