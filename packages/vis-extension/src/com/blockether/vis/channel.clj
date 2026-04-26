@@ -1,8 +1,8 @@
 (ns com.blockether.vis.channel
   "Channel registry — dynamic, plug-in CLI front-ends.
 
-   A *channel* is a vis adapter (TUI, Telegram bot, web server, …)
-   discovered and dispatched at runtime. The CLI core in vis-core does
+   A *channel* is a vis adapter (TUI, Telegram bot, …) discovered and
+   dispatched at runtime. The CLI core in vis-core does
    NOT import any concrete channel namespace — it iterates this global
    registry to dispatch sub-commands. Same pattern as `extension`,
    different concern: extensions add tools to the SCI sandbox, channels
@@ -222,15 +222,26 @@
                     ((:channel/main-fn c) (vec residual)))})
 
 (defn channel-subcommands
-  "Snapshot the channel registry into a sorted vector of command maps.
-   Public so other packages can compose channel listings into custom
-   parents."
+  "Compose subcommands for the `vis channels` parent from TWO sources:
+
+     1. Every entry in the channel registry (TUI, Telegram, web, …)
+     2. Every commandline plug-in registered with
+        `:cmd/parent [\"channels\"]` (escape hatch for non-channel
+        adapters that still want to live under `vis channels`)
+
+   Source #1 wins on name collision — channels are first-class so a
+   stray plug-in can't shadow a real channel name. Both sorted
+   together so help output is alphabetic."
   []
-  (mapv channel->command
-    (sort-by :channel/cmd (registered-channels))))
+  (let [from-channels (mapv channel->command (registered-channels))
+        regd          (cmd/registered-under ["channels"])
+        names         (set (map :cmd/name from-channels))]
+    (vec (sort-by :cmd/name
+           (concat from-channels
+             (remove #(names (:cmd/name %)) regd))))))
 
 (cmd/register-global!
-  {:cmd/name        "channel"
+  {:cmd/name        "channels"
    :cmd/doc         "Run a registered channel (TUI, Telegram, …)."
-   :cmd/usage       "vis channel <name> [args…]"
+   :cmd/usage       "vis channels <name> [args…]"
    :cmd/subcommands #'channel-subcommands})

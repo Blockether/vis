@@ -836,19 +836,29 @@
                    (when (some? r) (println (str r)))))})
 
 (defn ext-subcommands
-  "Snapshot every registered extension's `:ext/cli` entries into a flat
-   vector of vis-commandline commands. Public so other packages can
-   compose with this listing."
+  "Compose subcommands for the `vis extensions` parent from TWO sources:
+
+     1. Every registered extension's `:ext/cli` entries (legacy adapter)
+     2. Every commandline plug-in registered with
+        `:cmd/parent [\"extensions\"]` (preferred, more powerful API)
+
+   Source #1 wins on name collision — a third-party package can't
+   accidentally hijack a built-in extension command. Both sources
+   are sorted together so help output is alphabetic."
   []
-  (vec
-    (mapcat (fn [e]
-              (let [ns-sym (:ext/namespace e)]
-                (map (partial ext-cli->command (str ns-sym))
-                  (or (:ext/cli e) []))))
-      (registered-extensions))))
+  (let [from-ext-cli (vec (mapcat (fn [e]
+                                    (let [ns-sym (:ext/namespace e)]
+                                      (map (partial ext-cli->command (str ns-sym))
+                                        (or (:ext/cli e) []))))
+                            (registered-extensions)))
+        regd         (cmd/registered-under ["extensions"])
+        names        (set (map :cmd/name from-ext-cli))]
+    (vec (sort-by :cmd/name
+           (concat from-ext-cli
+             (remove #(names (:cmd/name %)) regd))))))
 
 (cmd/register-global!
-  {:cmd/name        "ext"
+  {:cmd/name        "extensions"
    :cmd/doc         "Run an extension-provided CLI command."
-   :cmd/usage       "vis ext <cmd> [args…]"
+   :cmd/usage       "vis extensions <cmd> [args…]"
    :cmd/subcommands #'ext-subcommands})
