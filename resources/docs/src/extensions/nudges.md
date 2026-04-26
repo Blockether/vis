@@ -15,6 +15,11 @@ prompt to steer the LLM's behavior. They come from two sources:
 | Var-index overflow | >150 user-defined vars in the sandbox |
 | Repetition warning | Same code/result pair seen ≥3 times |
 
+When the budget warning fires, the intended agent behavior is explicit:
+if more work is genuinely needed, call `(request-more-iterations n)`
+from `:code` immediately. Do not ignore the nudge and drift into a
+weak forced finalize.
+
 ## Extension Nudges
 
 When an extension provides `:ext/nudge-fn`, it is called **every

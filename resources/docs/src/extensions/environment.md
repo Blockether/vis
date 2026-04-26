@@ -20,7 +20,7 @@ These keys exist on every environment for its entire lifetime:
 | `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Do not mutate directly** — use `bind-and-bump!`. |
 | `:sandbox-ns` | `SCI ns` | The `'sandbox` namespace object. Used internally by `eval-string+`. |
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |
-| `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. Bump via `bump-var-index!` after mutating sandbox bindings. |
+| `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. The rendered string is compact pseudo-source (`(def ^{:v 3 :s :l :t :map :n 12} foo ...)`, `(defn ^{:v 2 :s :l} f [x] ...)`). Bump via `bump-var-index!` after mutating sandbox bindings. |
 | `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for nudges. |
 | `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :environment <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
 | `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level queries. |

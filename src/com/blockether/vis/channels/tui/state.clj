@@ -50,6 +50,9 @@
 ;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
 ;;  :msg-scroll nil              ;; row offset into bubbles, nil = auto-bottom
 ;;  :input      {:lines [""] :crow 0 :ccol 0}
+;;  :input-history []            ;; persisted user queries for this conversation
+;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
+;;  :input-history-draft nil     ;; unsent draft preserved while browsing history
 ;;  :loading?   false            ;; true while RLM is working
 ;;  :progress   nil              ;; live per-iteration timeline while loading:
 ;;                               ;;   {:iterations [{:iteration int
@@ -70,6 +73,9 @@
                   :messages   []
                   :msg-scroll nil
                   :input      (input/empty-input)
+                  :input-history []
+                  :input-history-index nil
+                  :input-history-draft nil
                   :loading?   false
                   :progress   nil
                   :settings   {:show-thinking true :show-iterations true}
@@ -94,7 +100,15 @@
 
 (reg-event-db :init-conversation
   (fn [db [_ conv history]]
-    (assoc db :conv conv :messages (or history []))))
+    (let [user-history (->> (or history [])
+                         (filter #(= :user (:role %)))
+                         (mapv :text))]
+      (assoc db
+        :conv conv
+        :messages (or history [])
+        :input-history user-history
+        :input-history-index nil
+        :input-history-draft nil))))
 
 (reg-event-db :set-title
   (fn [db [_ title]]
@@ -104,9 +118,53 @@
   (fn [db [_ new-input]]
     (assoc db :input new-input)))
 
+(defn- text->input-state [text]
+  (let [lines (vec (or (seq (clojure.string/split (or text "") #"\n" -1)) [""]))
+        crow  (dec (count lines))
+        ccol  (count (nth lines crow))]
+    {:lines lines :crow crow :ccol ccol}))
+
+(reg-event-db :history-up
+  (fn [db _]
+    (let [history (vec (or (:input-history db) []))
+          cur-idx (:input-history-index db)
+          draft   (:input-history-draft db)
+          input-text (input/input->text (:input db))]
+      (if (empty? history)
+        db
+        (let [new-idx (if (nil? cur-idx)
+                        (dec (count history))
+                        (max 0 (dec cur-idx)))
+              draft   (if (nil? cur-idx) input-text draft)]
+          (assoc db
+            :input-history-index new-idx
+            :input-history-draft draft
+            :input (text->input-state (nth history new-idx))))))))
+
+(reg-event-db :history-down
+  (fn [db _]
+    (let [history (vec (or (:input-history db) []))
+          cur-idx (:input-history-index db)
+          draft   (:input-history-draft db)]
+      (cond
+        (nil? cur-idx) db
+        (< cur-idx (dec (count history)))
+        (let [new-idx (inc cur-idx)]
+          (assoc db
+            :input-history-index new-idx
+            :input (text->input-state (nth history new-idx))))
+        :else
+        (assoc db
+          :input-history-index nil
+          :input-history-draft nil
+          :input (text->input-state (or draft "")))))))
+
 (reg-event-db :reset-input
   (fn [db _]
-    (assoc db :input (input/empty-input))))
+    (assoc db
+      :input (input/empty-input)
+      :input-history-index nil
+      :input-history-draft nil)))
 
 (reg-event-db :set-scroll
   (fn [db [_ scroll]]
@@ -131,9 +189,14 @@
     {:db (-> db
            (update :messages conj (chat/user-msg text))
            (update :messages conj (chat/assistant-msg "Sending request..."))
+           (update :input-history (fn [xs]
+                                    (let [xs (vec (or xs []))]
+                                      (if (= text (last xs)) xs (conj xs text)))))
            (assoc :msg-scroll nil :loading? true
              :progress {:iterations []}
-             :query-start-ms (System/currentTimeMillis)))
+             :query-start-ms (System/currentTimeMillis)
+             :input-history-index nil
+             :input-history-draft nil))
      :fx [[:rlm-query (:conv db) text]]}))
 
 (reg-event-db :set-progress-iterations
@@ -143,12 +206,13 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost confidence]}]]]
+  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost confidence query-id]}]]]
     (let [start    (:query-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
           response (-> (chat/assistant-msg (or answer ""))
-                     (cond-> (seq trace)              (assoc :trace trace :raw-answer (or answer ""))
+                     (cond-> query-id                (assoc :query-id query-id)
+                             (seq trace)              (assoc :trace trace :raw-answer (or answer ""))
                              (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                              model      (assoc :model model)
                              iterations (assoc :iterations iterations)
@@ -188,4 +252,4 @@
         (if (:error result)
           (dispatch [:message-received (str "Error: " (:error result))])
           (dispatch [:message-received (:answer result)
-                      (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence])]))))))
+                      (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence :query-id])]))))))

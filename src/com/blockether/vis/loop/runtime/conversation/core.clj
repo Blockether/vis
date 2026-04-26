@@ -103,39 +103,27 @@
   [id]
   (:environment (ensure-env! id)))
 
-(defn effective-system-prompt
-  "Return the full effective prompt the LLM sees for this conversation.
-   Reconstructs all four message layers:
-     1. System message: <objective> wrapping base + extension prompts
-     2. Per-iteration context: [iter N/M], <var_index>, journal, nudges
-     3. Spec schema: svar enforcement banner + BAML iteration spec
-   Returns nil when the conversation is not found."
-  [id]
-  (when-let [env (env-for id)]
-    (let [;; 1. System message — SAME function the iteration loop uses
-          system-prompt (loop-core/assemble-system-prompt env
-                          {:system-prompt (:system-prompt (by-id id))})
-          ;; --- pull last query for realistic context ---
-          queries  (when-let [di (:db-info env)]
-                     (try (db/db-list-conversation-queries di (:conversation-id env))
-                       (catch Throwable _ nil)))
-          last-q   (last queries)
-          query-id (:id last-q)
-          query-text (or (:query last-q) "<the user's message appears here>")
-          ;; 2. Cross-query handover (prior turn's thinking + answer)
-          handover (when (and (:db-info env) (:conversation-id env) query-id
-                           (> (count queries) 1))
-                     (try (iterate/build-cross-query-handover
-                            (:db-info env) (:conversation-id env) query-id nil)
-                       (catch Throwable _ nil)))
-          ;; 3. Prior thinking from current query's iterations
+(defn effective-system-prompt-for-query
+  "Return the reconstructed prompt snapshot for a specific query-id in a conversation."
+  [conversation-id query-id]
+  (when-let [env (env-for conversation-id)]
+    (let [system-prompt (loop-core/assemble-system-prompt env
+                          {:system-prompt (:system-prompt (by-id conversation-id))})
+          queries       (when-let [di (:db-info env)]
+                          (try (db/db-list-conversation-queries di (:conversation-id env))
+                            (catch Throwable _ nil)))
+          query-row     (some #(when (= (:id %) query-id) %) queries)
+          query-text    (or (:query query-row) "<the user's message appears here>")
+          handover      (when (and (:db-info env) (:conversation-id env) query-id
+                                (> (count queries) 1))
+                          (try (iterate/build-cross-query-handover
+                                 (:db-info env) (:conversation-id env) query-id nil)
+                            (catch Throwable _ nil)))
           prior-thinking (when (and (:db-info env) query-id)
                            (try (iterate/build-prior-thinking env (:db-info env) query-id)
                              (catch Throwable _ nil)))
-          ;; 4. Iteration context (live var_index + handover + prior thinking)
           combined-prior (cond
-                           (and handover prior-thinking)
-                           (str handover "\n\n" prior-thinking)
+                           (and handover prior-thinking) (str handover "\n\n" prior-thinking)
                            handover handover
                            :else prior-thinking)
           iter-ctx (iterate/build-iteration-context env
@@ -145,7 +133,6 @@
                       :prev-expressions nil
                       :prev-iteration nil
                       :call-counts-atom (atom {})})
-          ;; 5. Spec schema
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
           iter-spec (if has-reasoning?
                       rlm-spec/ITERATION_SPEC_REASONING
@@ -160,6 +147,16 @@
             iter-ctx))
         "\n\n═══ MESSAGE 4: Spec schema (role: user, appended by svar) ═══\n"
         spec-prompt))))
+
+(defn effective-system-prompt
+  "Return the reconstructed prompt snapshot for the latest query in a conversation."
+  [conversation-id]
+  (when-let [d (some-> (env-for conversation-id) :db-info)]
+    (let [queries (try (db/db-list-conversation-queries d conversation-id)
+                    (catch Throwable _ nil))
+          last-q  (last queries)]
+      (when last-q
+        (effective-system-prompt-for-query conversation-id (:id last-q))))))
 
 (defn send!
   ([id messages] (send! id messages {}))

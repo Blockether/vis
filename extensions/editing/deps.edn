@@ -1,2 +1,6 @@
 {:paths ["src" "resources"]
- :deps {com.blockether/vis {:local/root "../.."}}}
+ :deps {com.blockether/vis   {:local/root "../.."}
+        ;; RE2/J — linear-time regex (ReDoS-safe). Used by the grep tool so
+        ;; agent-supplied patterns can never burn the box with catastrophic
+        ;; backtracking. No native deps, pure Java, license Go-BSD.
+        com.google.re2j/re2j {:mvn/version "1.8"}}}

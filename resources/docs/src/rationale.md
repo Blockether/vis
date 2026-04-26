@@ -100,7 +100,7 @@ sequenceDiagram
 
 The model sees **one context message** per iteration:
 - `<journal>` — previous iteration's results (not accumulated)
-- `<var_index>` — all named vars with types, sizes, versions
+- `<var_index>` — all named vars rendered as compact pseudo-source, e.g. `(def ^{:v 3 :s :l :t :map :n 12} foo ...)`; `:v` means persisted version count and full history is available via `(var-history 'sym)`
 - `[system_nudge]` — budget, repetition, extension hints
 - `<prior_thinking>` — previous iteration's reasoning only
 

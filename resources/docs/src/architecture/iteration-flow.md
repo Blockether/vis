@@ -41,7 +41,7 @@ flowchart TD
 
 **Step details:**
 
-1. **Build Context** — iter header, `<prior_thinking>`, `<journal>`, `<var_index>`, nudges (built-in + extension)
+1. **Build Context** — iter header, `<prior_thinking>`, `<journal>`, `<var_index>` (compact pseudo-source index of defs/defns), nudges (built-in + extension)
 2. **Ask LLM** — svar structured JSON output: code blocks + optional `:final`
 3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
 4. **Persist + Decide** — `store-iteration!`, attach extension metadata, route to next step
@@ -86,12 +86,22 @@ must plan. When more work is genuinely needed, the LLM calls
 `(request-more-iterations n)` from `:code` to extend on demand.
 There is **no cap** on how high the budget can grow.
 
+This is especially important when a budget `[system_nudge]` fires.
+The intended behavior is: read the nudge, decide whether more work is
+actually needed, and if yes call `(request-more-iterations n)`
+immediately instead of limping into a bad finalize.
+
 ## Prior Thinking
 
 Only the **most recent** iteration's `:thinking` is shipped in
 `<prior_thinking>`. Older reasonings are accessible on demand via
 `(var-history '*reasoning*)` from `:code`. This is deliberate —
 eager auto-context burns tokens on summaries nobody asked for.
+
+More generally, `<var_index>` is only the latest namespace snapshot.
+When a symbol shows `:v N`, the full persisted version timeline is
+available via `(var-history 'sym)`. This includes SYSTEM vars like
+`*query*`, `*reasoning*`, and `*answer*`.
 
 Cross-query handover at iteration 0 ships the last 2 reasonings +
 final answer from the previous turn. This is a separate mechanism.

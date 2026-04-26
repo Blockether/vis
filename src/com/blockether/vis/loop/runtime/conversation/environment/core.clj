@@ -335,103 +335,80 @@
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
 
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
-(def ^:private ^:const MAX_VAR_INDEX_CODE_CHARS
-  "Per-row budget for the `code` column in <var_index>. We show the
-   CODE that produced each var (not a preview of its value) — the
-   journal already carries full values for the last iteration, and
-   the model can always re-reference a var by name to materialize
-   its value into the next journal. Code is bounded by what the
-   model typed, so this cap is only a safety rail against pathological
-   one-liners, not a lossy summary."
-  400)
 
-(def ^:private SYSTEM_VAR_CODE_PLACEHOLDER
-  "(SYSTEM — bound each turn by the agent loop)")
+(defn- earmuffed-sym? [sym]
+  (let [n (name sym)]
+    (and (> (count n) 2)
+      (str/starts-with? n "*")
+      (str/ends-with? n "*"))))
 
-(defn parse-rich-code
-  "Decode the `code` column from the `iteration_var_attrs` DB row into
-   a uniform map `{:expr :time-ms :metadata}`.
-
-   New writes use `pr-str {:expr … :time-ms … :metadata …}`. Legacy
-   writes (and user-supplied raw expressions) are bare strings. We
-   accept both. Unparseable inputs degrade to `{:expr <raw>}` so we
-   never lose provenance."
-  [code-col]
+(defn- var-status-keyword [{:keys [system? persisted?]}]
   (cond
-    (nil? code-col) nil
+    system? :sys
+    persisted? :f
+    :else :l))
 
-    (map? code-col)
-    code-col
+(defn- var-type-keyword [val persisted?]
+  (cond
+    persisted? :persisted
+    (nil? val) :nil
+    (fn? val) :fn
+    (map? val) :map
+    (vector? val) :vector
+    (set? val) :set
+    (list? val) :list
+    (sequential? val) :seq
+    (string? val) :string
+    (integer? val) :int
+    (float? val) :float
+    (boolean? val) :bool
+    (keyword? val) :keyword
+    (symbol? val) :symbol
+    :else (some-> val class .getSimpleName str/lower-case keyword)))
 
-    (string? code-col)
-    (if (str/starts-with? (str/triml code-col) "{")
-      (try
-        (let [parsed (read-string {:read-cond :allow :features #{:clj}} code-col)]
-          (if (map? parsed) parsed {:expr code-col}))
-        (catch Throwable _ {:expr code-col}))
-      {:expr code-col})
-
+(defn- var-size [val persisted?]
+  (cond
+    persisted? nil
+    (nil? val) nil
+    (string? val) (count val)
+    (or (map? val) (vector? val) (set? val)) (count val)
+    (sequential? val)
+    (let [n (bounded-count MAX_VAR_INDEX_COUNT val)]
+      (if (= n MAX_VAR_INDEX_COUNT) (str MAX_VAR_INDEX_COUNT "+") n))
     :else nil))
 
-(defn- render-var-code
-  "Render the `code` column entry for one var. We show CODE (plus
-   `:time-ms` when known), not a preview of the value — the journal
-   already carries the previous iteration's full values and the model
-   can reference any var by name to materialize its current value
-   into the NEXT journal. Preview columns forced the model to re-read
-   files it had already stored (see conversation 1f44852d-…) because
-   a bounded slice is ambiguous for structured data like source files
-   or hiccup trees."
-  [{:keys [system? expr time-ms]}]
-  (cond
-    system? SYSTEM_VAR_CODE_PLACEHOLDER
-
-    (and (string? expr) (not (str/blank? expr)))
-    (let [trimmed (truncate-str (str/trim expr) MAX_VAR_INDEX_CODE_CHARS)]
-      (if time-ms
-        (str trimmed " [" time-ms "ms]")
-        trimmed))
-
-    :else "-"))
-
-(defn- render-var-status
-  "Render the `status` column entry — a GC-grade lifecycle hint for
-   the agent.
-
-   Values:
-     live       — bound in the current sandbox; usable by name.
-     PERSISTED  — not live in the sandbox but the DB row survives;
-                  use `(var-history 'sym)` to inspect old values.
-     SYSTEM     — earmuffed (*query*, *reasoning*, …) — always live,
-                  re-bound every turn.
-
-   The agent uses this to decide whether to reclaim a persisted var
-   instead of recomputing, and which vars are safe to ignore."
-  [{:keys [system? persisted?]}]
-  (cond
-    system?    "SYSTEM"
-    persisted? "forgotten"
-    :else      "live"))
+(defn- render-var-form
+  [{:keys [sym version status type size arglists]}]
+  (let [meta-map (cond-> {:v version :s status}
+                   (and type (not= status :sys)) (assoc :t type)
+                   (some? size) (assoc :n size))
+        single-arglist? (and (sequential? arglists)
+                          (= 1 (count arglists))
+                          (vector? (first arglists)))
+        fn-form? (= type :fn)]
+    (if fn-form?
+      (if single-arglist?
+        (str "(defn ^" (pr-str meta-map) " " sym " " (pr-str (first arglists)) " ...)")
+        (str "(defn ^"
+          (pr-str (cond-> meta-map
+                    (seq arglists) (assoc :args arglists)))
+          " " sym " ...)"))
+      (str "(def ^" (pr-str meta-map) " " sym " ...)"))))
 
 (defn build-var-index
-  "Builds a formatted var index table from user-def'd vars in the SCI context.
-   Filters out initial bindings (tools, helpers) using initial-ns-keys.
-   Returns nil if no user vars exist.
+  "Builds a compact pseudo-source `<var_index>` from user-defined vars in the
+   SCI context. Filters out initial bindings (tools, helpers) using
+   `initial-ns-keys`. Returns nil if no user vars exist.
 
-   Row format: `name | ver | type | size | status | doc | code`
+   Render format:
+     (def  ^{:v N :s :l|:f|:sys :t kw :n size?} sym ...)
+     (defn ^{:v N :s :l|:f|:sys :t :fn :n size?} sym [args] ...)
 
-   The `code` column shows the DEFINING expression for each var plus
-   its execution time in ms (`(def x …) [42ms]`) so the model has
-   complete provenance without a lossy value preview. For the raw
-   value the LLM references the var by name in its own code — the
-   next <journal> then shows the full materialized value.
-
-   All user vars appear — no `MAX_VAR_INDEX_ROWS` cap. SYSTEM vars
-   sort first; the rest are newest-touched first.
-
-   Vars persisted in the DB but no longer in the live sandbox appear
-   as 'persisted' placeholders so the LLM knows they exist and can
-   call `(var-history 'sym)` to inspect old values."
+   The block is intentionally index-like, not executable source: `...` bodies
+   save tokens because the actual defining expressions already live in the DB,
+   journal, and `var-history`. SYSTEM vars sort first; the rest are
+   newest-touched first. Forgotten vars remain visible so the model knows they
+   exist and can call `(var-history 'sym)` to inspect old values."
   ([sci-ctx initial-ns-keys]
    (build-var-index sci-ctx initial-ns-keys nil nil nil nil))
   ([sci-ctx initial-ns-keys sandbox]
@@ -448,122 +425,38 @@
                           (integer? ts) (long ts)
                           :else Long/MAX_VALUE)
                         Long/MAX_VALUE))
-           ;; The `code` column in the DB carries rich `{:expr :time-ms
-           ;; :metadata}` maps for new writes and bare strings for
-           ;; legacy rows — `parse-rich-code` smooths the two.
-         rich-code-for (fn [sym]
-                         (parse-rich-code (get-in var-registry [sym :code])))
          live-info (into {}
                      (for [[s v] sandbox-map
                            :when (symbol? s)]
-                       (let [rich (rich-code-for s)]
-                         [s {:val (if (instance? clojure.lang.IDeref v) @v v)
-                             :doc (:doc (meta v))
-                             :arglists (:arglists (meta v))
-                             :version (get-in var-registry [s :version] 1)
-                             :expr (:expr rich)
-                             :time-ms (:time-ms rich)}])))
+                       [s {:val (if (instance? clojure.lang.IDeref v) @v v)
+                           :arglists (:arglists (meta v))
+                           :version (get-in var-registry [s :version] 1)}]))
          persisted-info (when var-registry
                           (into {}
                             (for [[sym _] var-registry
                                   :when (and (symbol? sym)
                                           (not (contains? live-info sym))
                                           (not (contains? initial-ns-keys sym)))]
-                              (let [rich (rich-code-for sym)]
-                                [sym {:val ::persisted
-                                      :doc (str "persisted - use (var-history '" sym ") to inspect")
-                                      :expr (:expr rich)
-                                      :time-ms (:time-ms rich)}]))))
+                              [sym {:val ::persisted
+                                    :version (get-in var-registry [sym :version] 1)}])))
          var-info (merge persisted-info live-info)
-         earmuffed? (fn [sym]
-                      (let [n (name sym)]
-                        (and (> (count n) 2)
-                          (str/starts-with? n "*")
-                          (str/ends-with? n "*"))))
-         system-doc (fn [sym]
-                      (case (str sym)
-                        "*query*"     "(SYSTEM, never forgotten) current user query"
-                        "*reasoning*" "(SYSTEM, never forgotten) YOUR thinking from the previous iteration"
-                        "*answer*"    "(SYSTEM, never forgotten) final answer from the previous turn in this conversation"
-                        "(SYSTEM, never forgotten) agent-bound var"))
          entries (->> var-info
                    (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
                    (sort-by (fn [[sym _]]
-                              [(if (earmuffed? sym) 0 1)
+                              [(if (earmuffed-sym? sym) 0 1)
                                (- (long (recency-of sym)))
                                (str sym)]))
-                   (mapv (fn [[sym {:keys [val doc arglists expr time-ms]}]]
+                   (mapv (fn [[sym {:keys [val arglists version]}]]
                            (let [persisted? (= val ::persisted)
-                                 system?    (earmuffed? sym)
-                                 type-label (cond
-                                              persisted? "persisted"
-                                              (nil? val) "nil"
-                                              (fn? val) (if arglists (str "fn " arglists) "fn")
-                                              (map? val) "map"
-                                              (vector? val) "vector"
-                                              (set? val) "set"
-                                              (sequential? val) "seq"
-                                              (string? val) "string"
-                                              (integer? val) "int"
-                                              (float? val) "float"
-                                              (boolean? val) "bool"
-                                              (keyword? val) "keyword"
-                                              (symbol? val) "symbol"
-                                              :else (.getSimpleName (class val)))
-                                 size (cond
-                                        persisted? "-"
-                                        (nil? val) "-"
-                                        (string? val) (str (count val) " chars")
-                                        (or (map? val) (vector? val) (set? val))
-                                        (str (count val) " items")
-                                        (sequential? val)
-                                        (let [n (bounded-count MAX_VAR_INDEX_COUNT val)]
-                                          (if (= n MAX_VAR_INDEX_COUNT)
-                                            (str MAX_VAR_INDEX_COUNT "+ items")
-                                            (str n " items")))
-                                        :else "-")
-                                 code-col      (render-var-code {:system? system? :expr expr :time-ms time-ms})
-                                 status-col    (render-var-status {:system? system? :persisted? persisted?})
-                                 version (get-in var-info [sym :version] 1)
-                                 ver-str (str version)]
-                             {:name (str sym) :ver ver-str :type type-label :size size
-                              :status status-col
-                              :doc (cond
-                                     system? (truncate-str (system-doc sym) 80)
-                                     doc (truncate-str doc 80)
-                                     :else "-")
-                              :code code-col
-                              :system? system?}))))]
+                                 system?    (earmuffed-sym? sym)]
+                             {:sym sym
+                              :version version
+                              :status (var-status-keyword {:system? system? :persisted? persisted?})
+                              :type (var-type-keyword val persisted?)
+                              :size (var-size val persisted?)
+                              :arglists arglists}))))]
      (when (seq entries)
-       (let [visible entries   ;; full index — no MAX_VAR_INDEX_ROWS cap
-             max-name (max 4 (apply max (map #(count (:name %)) visible)))
-             max-ver  (max 3 (apply max (map #(count (:ver %)) visible)))
-             max-type (max 4 (apply max (map #(count (:type %)) visible)))
-             max-size (max 4 (apply max (map #(count (:size %)) visible)))
-             max-status (max 6 (apply max (map #(count (:status %)) visible)))
-             max-doc  (max 3 (apply max (map #(count (:doc %)) visible)))
-             pad (fn [s n] (str s (apply str (repeat (max 0 (- n (count s))) \space))))
-             header (str "  " (pad "name" max-name) " | " (pad "ver" max-ver)
-                      " | " (pad "type" max-type) " | " (pad "size" max-size)
-                      " | " (pad "status" max-status)
-                      " | " (pad "doc" max-doc)
-                      " | code")
-             sep (str "  " (apply str (repeat max-name \-)) "-+-"
-                   (apply str (repeat max-ver \-)) "-+-"
-                   (apply str (repeat max-type \-)) "-+-"
-                   (apply str (repeat max-size \-)) "-+-"
-                   (apply str (repeat max-status \-)) "-+-"
-                   (apply str (repeat max-doc \-)) "-+---------")
-             rows (mapv (fn [{:keys [name ver type size status doc code]}]
-                          (str "  " (pad name max-name)
-                            " | " (pad ver max-ver)
-                            " | " (pad type max-type)
-                            " | " (pad size max-size)
-                            " | " (pad status max-status)
-                            " | " (pad doc max-doc)
-                            " | " code))
-                    visible)]
-         (str/join "\n" (concat [header sep] rows)))))))
+       (str/join "\n" (map render-var-form entries))))))
 
 ;; =============================================================================
 ;; Sandbox restore — rebuild SCI bindings from DB
