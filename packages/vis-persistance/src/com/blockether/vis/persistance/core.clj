@@ -34,8 +34,7 @@
    listing the namespaces that call `register-backend!`. The first
    `create-rlm-conn` call triggers `discover-backends!`, which is
    memoized for the process lifetime."
-  (:require [clojure.edn :as edn]
-            [clojure.string :as str]))
+  (:require [clojure.edn :as edn]))
 
 ;; =============================================================================
 ;; Backend registry
