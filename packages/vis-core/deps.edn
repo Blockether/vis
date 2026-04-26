@@ -10,6 +10,10 @@
   ;; arg parsing, dispatch, help rendering). The `cli.clj` dispatcher
   ;; assembles the entire `vis` command tree out of these.
   com.blockether/vis-commandline            {:local/root "../vis-commandline"}
+  ;; dynaload — used to look up the optional vis-provider registry
+  ;; without a hard compile-time dep, so vis-core works on a
+  ;; classpath that doesn't include any provider package.
+  borkdude/dynaload                         {:mvn/version "0.3.5"}
   ;; Persistence FACADE — the public API + spec only, no JDBC.
   ;; vis-core hard-depends on the facade; concrete backends (e.g.
   ;; vis-persistance-sqlite) plug themselves in at load time via

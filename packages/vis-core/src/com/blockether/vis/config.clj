@@ -193,18 +193,28 @@
     {:name n}))
 
 (defn ->svar-provider
-  "Coerce a provider map to svar-native shape (only :id, :api-key, :base-url, :models).
-   For :github-copilot without an explicit :api-key, installs a dynamic
-   :api-key-fn that auto-refreshes the Copilot OAuth token."
+  "Coerce a provider map to svar-native shape (only :id, :api-key,
+   :base-url, :models).
+
+   When `:api-key` is nil, look the provider up in the
+   `vis-provider` registry and call its `:provider/get-token-fn` to
+   resolve a usable token. Each provider implementation handles its
+   own auth lifecycle (OAuth refresh, env-var fallback, etc.) so this
+   namespace stays provider-agnostic and never references a concrete
+   provider namespace by name."
   [provider]
-  (let [pid      (:id provider)
-        api-key  (:api-key provider)
-        models   (->> (:models provider) (keep ->svar-model) vec)
-        base-url (provider-base-url provider)]
-    (if (and (= pid :github-copilot) (nil? api-key))
-      ;; Resolve Copilot API token from OAuth flow — auto-refreshes internally
-      (let [get-token (requiring-resolve 'com.blockether.vis.providers.github-copilot/get-copilot-token!)
-            {:keys [token api-url]} (get-token)]
+  (let [pid       (:id provider)
+        api-key   (:api-key provider)
+        models    (->> (:models provider) (keep ->svar-model) vec)
+        base-url  (provider-base-url provider)
+        ;; Dynaload the registry so vis-core has no compile-time dep
+        ;; on vis-provider — the registry plug-in is optional.
+        by-id     (try @(requiring-resolve 'com.blockether.vis.provider/by-id)
+                    (catch Throwable _ nil))
+        get-token-fn (when (and by-id (nil? api-key))
+                       (some-> (by-id pid) :provider/get-token-fn))]
+    (if get-token-fn
+      (let [{:keys [token api-url]} (get-token-fn)]
         (cond-> {:id pid :models models :api-key token}
           (some? (or base-url api-url)) (assoc :base-url (or base-url api-url))))
       (cond-> {:id pid :models models}

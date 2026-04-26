@@ -2,8 +2,11 @@
 ;;
 ;; All source lives under `packages/`. This file is a development-time
 ;; aggregator: it pulls each sibling package via :local/root so a single
-;; `clojure -M:run` from the repo root has the whole product available
+;; `clojure -M:vis` from the repo root has the whole product available
 ;; on the classpath, and the same nREPL session can touch every package.
+;;
+;; The repo-root `bin/vis` wrapper just `exec`s `clojure -M:vis "$@"`,
+;; so daily use is `vis <subcommand>` once `bin/` is on PATH.
 ;;
 ;; Each package has its OWN `packages/<name>/deps.edn` and is publishable
 ;; independently (build.clj reads the per-package deps.edn for jars).
@@ -17,6 +20,7 @@
   com.blockether/vis-persistance              {:local/root "packages/vis-persistance"}
   com.blockether/vis-persistance-sqlite       {:local/root "packages/vis-persistance-sqlite"}
   com.blockether/vis-provider          {:local/root "packages/vis-provider"}
+  com.blockether/vis-provider-github-copilot {:local/root "packages/vis-provider-github-copilot"}
   ;; Optional channels — listed here so the dev/run binary has every
   ;; front-end available. Each is published as its own jar; downstream
   ;; consumers can opt out simply by omitting the dep.
@@ -29,11 +33,15 @@
                        io.github.tonsky/clj-reload    {:mvn/version "1.0.0"}
                        com.blockether.vis.ext/editing {:local/root "extensions/editing"}}}
 
-  :run   {:jvm-opts   ["--enable-native-access=ALL-UNNAMED"]
-          ;; Dispatcher lives in vis-commandline now — it discovers
-          ;; channels, extensions, persistance backends, and every
-          ;; commandline plug-in (including vis-core's built-ins) at
-          ;; startup. vis-core is just one of those plug-ins.
+  ;; Primary alias — the `vis` CLI dispatcher. The repo-root
+  ;; `bin/vis` wrapper just `exec`s `clojure -M:vis "$@"`, so
+  ;; day-to-day use is `vis <subcommand>` with no Clojure visible.
+  ;;
+  ;; Dispatcher lives in vis-commandline — it discovers channels,
+  ;; extensions, persistance backends, and every commandline plug-in
+  ;; (including vis-core's built-ins) at startup. vis-core is just
+  ;; one of those plug-ins.
+  :vis   {:jvm-opts   ["--enable-native-access=ALL-UNNAMED"]
           :extra-deps {com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
           :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
