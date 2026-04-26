@@ -807,3 +807,48 @@
                      :data {:source (str url) :message (ex-message t)}
                      :msg (str "Failed to parse " url ": " (ex-message t))}))))
     @loaded))
+
+;; =============================================================================
+;; CLI bridge — the `vis ext` parent
+;;
+;; Self-registers a top-level `ext` command into vis-commandline whose
+;; subcommands are computed lazily from every registered extension's
+;; `:ext/cli` vector. Each `:ext/cli` entry is adapted to the
+;; vis-commandline `:cmd/...` shape so help rendering, arg parsing,
+;; required-arg validation, and dispatch all work uniformly.
+;;
+;; Lives here (not in vis-commandline) because the bridge needs the
+;; extension registry; lives at the foot of the file so the runtime
+;; helpers above don't depend on commandline.
+;; =============================================================================
+
+(require '[com.blockether.vis.commandline :as cmd])
+
+(defn- ext-cli->command
+  "Adapt one extension's `:ext/cli` entry to a vis-commandline command map."
+  [ext-ns {cmd-name :cmd, cmd-doc :doc, cmd-args :args, runner :fn}]
+  {:cmd/name cmd-name
+   :cmd/doc  (str (or cmd-doc "")
+              (when ext-ns (str "  (" ext-ns ")")))
+   :cmd/args (vec (or cmd-args []))
+   :cmd/run-fn (fn [parsed _residual]
+                 (let [r (runner parsed)]
+                   (when (some? r) (println (str r)))))})
+
+(defn ext-subcommands
+  "Snapshot every registered extension's `:ext/cli` entries into a flat
+   vector of vis-commandline commands. Public so other packages can
+   compose with this listing."
+  []
+  (vec
+    (mapcat (fn [e]
+              (let [ns-sym (:ext/namespace e)]
+                (map (partial ext-cli->command (str ns-sym))
+                  (or (:ext/cli e) []))))
+      (registered-extensions))))
+
+(cmd/register-global!
+  {:cmd/name        "ext"
+   :cmd/doc         "Run an extension-provided CLI command."
+   :cmd/usage       "vis ext <cmd> [args…]"
+   :cmd/subcommands #'ext-subcommands})

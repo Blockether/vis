@@ -14,8 +14,8 @@
   com.blockether/vis-commandline       {:local/root "packages/vis-commandline"}
   com.blockether/vis-extension         {:local/root "packages/vis-extension"}
   com.blockether/vis-logging           {:local/root "packages/vis-logging"}
-  com.blockether/vis-persistance       {:local/root "packages/vis-persistance"}
-  com.blockether/vis-persistance-sqlite {:local/root "packages/vis-persistance-sqlite"}
+  com.blockether/vis-persistance              {:local/root "packages/vis-persistance"}
+  com.blockether/vis-persistance-sqlite       {:local/root "packages/vis-persistance-sqlite"}
   com.blockether/vis-provider          {:local/root "packages/vis-provider"}
   ;; Optional channels — listed here so the dev/run binary has every
   ;; front-end available. Each is published as its own jar; downstream
@@ -29,9 +29,13 @@
                        io.github.tonsky/clj-reload    {:mvn/version "1.0.0"}
                        com.blockether.vis.ext/editing {:local/root "extensions/editing"}}}
 
-  :run   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
+  :run   {:jvm-opts   ["--enable-native-access=ALL-UNNAMED"]
+          ;; Dispatcher lives in vis-commandline now — it discovers
+          ;; channels, extensions, persistance backends, and every
+          ;; commandline plug-in (including vis-core's built-ins) at
+          ;; startup. vis-core is just one of those plug-ins.
           :extra-deps {com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
-          :main-opts ["-m" "com.blockether.vis.channels.cli"]}
+          :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
   :web   {:jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts ["-m" "com.blockether.vis.channels.web.app"]}
@@ -54,8 +58,8 @@
           :jvm-opts    ["-Xmx8g"]
           :main-opts   ["-m" "com.blockether.vis.bench.runner"]}
 
-  :build {:deps  {io.github.clojure/tools.build {:mvn/version "0.10.7"}
-                  slipset/deps-deploy           {:mvn/version "0.2.2"}}
+  :build {:deps  {io.github.clojure/tools.build {:mvn/version "0.10.13"}
+                  slipset/deps-deploy           {:mvn/version "0.2.3"}}
           :ns-default build}
 
   :antq  {:deps  {com.github.liquidz/antq {:mvn/version "RELEASE"}}

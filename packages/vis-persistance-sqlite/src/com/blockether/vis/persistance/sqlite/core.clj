@@ -15,6 +15,7 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.vis.persistance.base :as base]
+   [com.blockether.vis.persistance.migration :as migration]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -75,21 +76,21 @@
   (when bs (nippy/thaw bs)))
 
 ;; =============================================================================
-;; Schema install — Flyway
+;; Schema install
+;;
+;; The dialect-agnostic Flyway runner lives in `vis-persistance`; the
+;; canonical V*__schema.sql files live there too, under
+;; `resources/db/sqlite/migration/`. We just point the runner at the
+;; classpath location and let Flyway handle ordering, idempotency,
+;; and the `flyway_schema_history` baseline. The dialect-specific
+;; Flyway driver (flyway-database-nc-sqlite) is pulled in through
+;; this package's deps.edn so Flyway recognizes `jdbc:sqlite:` URLs.
 ;; =============================================================================
 
-(def ^:private MIGRATIONS ["classpath:db/sqlite/migration"])
+(def ^:private MIGRATIONS "classpath:db/sqlite/migration")
 
 (defn- install-schema! [^DataSource ds]
-  (let [flyway (-> (org.flywaydb.core.Flyway/configure)
-                 (.dataSource ds)
-                 (.locations (into-array String MIGRATIONS))
-                 (.baselineOnMigrate true)
-                 (.baselineVersion "0")
-                 (.mixed true)
-                 (.load))]
-    (.migrate flyway))
-  ds)
+  (migration/migrate! ds MIGRATIONS))
 
 ;; =============================================================================
 ;; Connection management

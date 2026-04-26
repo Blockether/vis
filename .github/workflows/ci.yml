@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     name: tests / aggregate
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeLaGuardo/setup-clojure@13.5
+      - uses: actions/checkout@v6
+      - uses: DeLaGuardo/setup-clojure@13.6.0
         with:
           cli: latest
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.m2/repository
@@ -52,11 +52,11 @@ jobs:
           - vis-commandline
           - vis-extension
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeLaGuardo/setup-clojure@13.5
+      - uses: actions/checkout@v6
+      - uses: DeLaGuardo/setup-clojure@13.6.0
         with:
           cli: latest
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.m2/repository
@@ -89,11 +89,11 @@ jobs:
           - packages/vis-tui
           - extensions/editing
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeLaGuardo/setup-clojure@13.5
+      - uses: actions/checkout@v6
+      - uses: DeLaGuardo/setup-clojure@13.6.0
         with:
           cli: latest
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.m2/repository
@@ -112,11 +112,11 @@ jobs:
     name: build / umbrella jar
     needs: [test-aggregate, test-package, classpath-sanity]
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeLaGuardo/setup-clojure@13.5
+      - uses: actions/checkout@v6
+      - uses: DeLaGuardo/setup-clojure@13.6.0
         with:
           cli: latest
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.m2/repository

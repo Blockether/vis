@@ -16,9 +16,12 @@
  :deps
  {org.clojure/clojure   {:mvn/version "1.12.4"}
   ;; Structured registration logging (so plug-in jars showing up at
-  ;; classpath time are visible in `~/.vis/vis.log`). No other runtime
-  ;; deps on purpose — the CLI surface stays cheap.
-  com.taoensso/telemere {:mvn/version "1.2.1"}}
+  ;; classpath time are visible in `~/.vis/vis.log`).
+  com.taoensso/telemere {:mvn/version "1.2.1"}
+  ;; Optional plug-in discovery (channels, extensions, persistance
+  ;; backends) is dynaloaded so vis-commandline can run STANDALONE
+  ;; without any of those jars present — it just shows empty help.
+  borkdude/dynaload     {:mvn/version "0.3.5"}}
 
  :aliases
  {:test

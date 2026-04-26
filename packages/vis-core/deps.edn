@@ -1,4 +1,4 @@
-{:paths ["src"]
+{:paths ["src" "resources"]
 
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
@@ -23,7 +23,7 @@
   ;; Anomaly - standardized error categories (used by RLM)
   com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)
-  com.blockether/spel                       {:mvn/version "0.9.5"}
+  com.blockether/spel                       {:mvn/version "0.9.7"}
   ;; Ring — Jetty adapter
   ring/ring-jetty-adapter                   {:mvn/version "1.15.4"}
   ;; Reitit — data-driven router
@@ -45,7 +45,7 @@
 
   ;; ---- RLM stack (moved from svar) ----
   ;; Filesystem utilities
-  babashka/fs                               {:mvn/version "0.5.32"}
+  babashka/fs                               {:mvn/version "0.5.33"}
   ;; SCI - Small Clojure Interpreter (RLM sandbox)
   org.babashka/sci                          {:mvn/version "0.12.51"}
   ;; HTTP client (pageindex vision calls etc.)

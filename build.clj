@@ -45,15 +45,16 @@
   "Every publishable package in the monorepo, in dependency-friendly
    order (deeper deps first so a sequential install fills `~/.m2`
    before any later package needs them)."
-  [{:lib 'com.blockether/vis-extension          :dir "packages/vis-extension"}
-   {:lib 'com.blockether/vis-commandline        :dir "packages/vis-commandline"}
-   {:lib 'com.blockether/vis-persistance        :dir "packages/vis-persistance"}
-   {:lib 'com.blockether/vis-persistance-sqlite :dir "packages/vis-persistance-sqlite"}
-   {:lib 'com.blockether/vis-provider           :dir "packages/vis-provider"}
-   {:lib 'com.blockether/vis-logging            :dir "packages/vis-logging"}
-   {:lib 'com.blockether/vis-core               :dir "packages/vis-core"}
-   {:lib 'com.blockether/vis-telegram           :dir "packages/vis-telegram"}
-   {:lib 'com.blockether/vis-tui                :dir "packages/vis-tui"}])
+  [{:lib 'com.blockether/vis-extension                 :dir "packages/vis-extension"}
+   {:lib 'com.blockether/vis-commandline               :dir "packages/vis-commandline"}
+   {:lib 'com.blockether/vis-persistance               :dir "packages/vis-persistance"}
+   {:lib 'com.blockether/vis-persistance-sqlite        :dir "packages/vis-persistance-sqlite"}
+   {:lib 'com.blockether/vis-persistance-sqlite-flyway :dir "packages/vis-persistance-sqlite-flyway"}
+   {:lib 'com.blockether/vis-provider                  :dir "packages/vis-provider"}
+   {:lib 'com.blockether/vis-logging                   :dir "packages/vis-logging"}
+   {:lib 'com.blockether/vis-core                      :dir "packages/vis-core"}
+   {:lib 'com.blockether/vis-telegram                  :dir "packages/vis-telegram"}
+   {:lib 'com.blockether/vis-tui                       :dir "packages/vis-tui"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed
@@ -113,7 +114,9 @@
    'com.blockether/vis-persistance
    "Persistence facade — backend-agnostic API + spec, no database drivers."
    'com.blockether/vis-persistance-sqlite
-   "SQLite backend for the vis persistence facade — Flyway + soul/state schema."
+   "SQLite backend for the vis persistence facade — JDBC plumbing only, migrator-agnostic."
+   'com.blockether/vis-persistance-sqlite-flyway
+   "Flyway migrator for the SQLite backend — applies vis-persistance's V*__schema.sql files."
    'com.blockether/vis-provider
    "Provider auth (currently GitHub Copilot OAuth device flow)."
    'com.blockether/vis-tui

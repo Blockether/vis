@@ -1,11 +1,25 @@
-{:paths ["src"]
- ;; Persistence FACADE only.
+{:paths ["src" "resources"]
+ ;; Persistence FACADE.
  ;;
- ;; This package owns the public API (`persistance.core`), the data
- ;; spec (`persistance.spec`), and the small id/kw/now-ms helpers
- ;; (`persistance.base`). It does NOT pull a database driver — concrete
- ;; backends register themselves into `persistance.core` at load time
- ;; (see `vis-persistance-sqlite`, future `vis-persistance-postgres`,
+ ;; This package owns:
+ ;;   1. The public API (`persistance.core`)
+ ;;   2. The data spec (`persistance.spec`)
+ ;;   3. The id/kw/now-ms helpers (`persistance.base`)
+ ;;   4. The canonical SCHEMA — SQL files under
+ ;;      `resources/db/<dialect>/migration/V*__schema.sql`. Migrations
+ ;;      are part of the persistence CONTRACT (the table layout the
+ ;;      facade promises to expose), not a backend implementation
+ ;;      detail.
+ ;;   5. The Flyway-based migration runner (`persistance.migration`)
+ ;;      that backends invoke during `open-store`. Backends pull the
+ ;;      DIALECT-SPECIFIC Flyway driver (e.g.
+ ;;      `flyway-database-nc-sqlite` lives in `vis-persistance-sqlite`)
+ ;;      and call this runner with their own classpath migration
+ ;;      location.
+ ;;
+ ;; This package does NOT pull a database driver — concrete backends
+ ;; register themselves into `persistance.core` at load time (see
+ ;; `vis-persistance-sqlite`, future `vis-persistance-postgres`,
  ;; etc.). Callers depend on this jar; backends depend on this jar +
  ;; whatever drivers they need.
  :deps
@@ -14,7 +28,12 @@
   com.blockether/svar       {:mvn/version "0.3.10"}
   ;; JSON + EDN — used in persistance.spec only, no SQL libs.
   com.cnuernber/charred     {:mvn/version "1.038"}
-  io.github.tonsky/fast-edn {:mvn/version "1.1.3"}}
+  io.github.tonsky/fast-edn {:mvn/version "1.1.3"}
+  ;; Flyway core — the migration framework itself. Dialect-specific
+  ;; drivers (flyway-database-nc-sqlite, etc.) live in the matching
+  ;; backend package; this jar carries only the dialect-agnostic
+  ;; runner that takes a `DataSource` + a classpath location.
+  org.flywaydb/flyway-core  {:mvn/version "12.4.0"}}
 
  :aliases
  {:test
