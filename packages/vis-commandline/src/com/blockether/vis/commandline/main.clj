@@ -106,18 +106,7 @@
 ;; commands appear here without any code change.
 ;; =============================================================================
 
-(def ^:private DEFAULT_DOC
-  (str/join "\n"
-    ["vis \u2014 SCI powered RLM iterative coding harness"
-     ""
-     "  No tool calls. No message accumulation. No compaction."
-     "  The model writes Clojure. A sandboxed SCI interpreter executes it."
-     "  Results flow back as a compact journal. State lives in named vars"
-     "  and SQLite, not in the token budget. One context message per"
-     "  iteration \u2014 constant size, never grows."
-     ""
-     "  Drop more package jars onto the classpath to extend this CLI;"
-     "  every command listed below comes from a registered plug-in."]))
+(def ^:private DEFAULT_DOC "vis — iterative coding agent CLI")
 
 (defn root-command
   "Build the root `vis` command tree. Subcommands are pulled fresh on
@@ -168,7 +157,7 @@
 
    Behavior:
      - No args                → top-level help
-     - `--help` / `-h`        → help for the resolved command
+     - `help` / `--help` / `-h` → help for the resolved command
      - Recognized command     → invoke its `:cmd/run-fn`
      - Unknown command        → top-level help + exit 1
 
@@ -187,6 +176,13 @@
         full-args (cons "vis" args)]
     (cond
       (empty? args)
+      (println (cmd/render-tree root))
+
+      ;; `vis help` is a universal synonym for `vis --help`. Without
+      ;; this branch the dispatcher would treat `help` as an unknown
+      ;; command, print the tree, AND tag it with "Unknown command:
+      ;; help" + exit 1 — which surprised everyone who tried it.
+      (= ["help"] (vec args))
       (println (cmd/render-tree root))
 
       (unknown-command? root args)

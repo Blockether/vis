@@ -49,12 +49,14 @@
   ;; `*_test.clj` files — lazytest errors out on "no namespaces to
   ;; run" if a listed dir is empty, so add new packages here only
   ;; once they get their first test.
-  :test  {:extra-paths ["packages/vis-core/test"
+  :test  {:extra-paths ["test"
+                        "packages/vis-core/test"
                         "packages/vis-commandline/test"
                         "packages/vis-extension/test"
                         "packages/vis-persistance-sqlite/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
           :main-opts  ["-m" "lazytest.main"
+                       "--dir" "test"
                        "--dir" "packages/vis-core/test"
                        "--dir" "packages/vis-commandline/test"
                        "--dir" "packages/vis-extension/test"]}
