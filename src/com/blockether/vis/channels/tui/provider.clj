@@ -111,6 +111,51 @@
                    vec)]
     (select-model! screen (config/provider-base-url provider) (:api-key provider) defaults)))
 
+(defn- copilot-oauth-flow!
+  "Run the GitHub Copilot OAuth device flow inside the TUI.
+   Shows the user code + URL, waits for authorization, returns the API key or nil."
+  [^TerminalScreen screen]
+  (let [start-fn   @(requiring-resolve 'com.blockether.vis.providers.github-copilot/start-device-flow!)
+        poll-fn    @(requiring-resolve 'com.blockether.vis.providers.github-copilot/poll-for-token!)
+        exchange-fn @(requiring-resolve 'com.blockether.vis.providers.github-copilot/get-copilot-token!)
+        detect-fn  @(requiring-resolve 'com.blockether.vis.providers.github-copilot/detect-oauth-token)]
+    ;; Already authenticated?
+    (if-let [existing (detect-fn)]
+      (try
+        (let [{:keys [token]} (exchange-fn)]
+          token)
+        (catch Exception _
+          (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
+          nil))
+      ;; Device flow
+      (try
+        (let [{:keys [user-code verification-uri device-code interval expires-in]}
+              (start-fn)]
+          ;; Show the code to the user
+          (dlg/confirm-dialog! screen "GitHub Copilot — Authenticate"
+            [(str "1. Open:  " verification-uri)
+             (str "2. Enter: " user-code)
+             ""
+             "Press Enter, then authorize in your browser."
+             "Vis will wait for you."])
+          ;; Poll in background, show waiting message
+          (let [result (future (poll-fn device-code interval expires-in))]
+            ;; Simple blocking wait with a confirm dialog
+            ;; The poll runs in background; once authorized it returns
+            (loop [attempt 0]
+              (if (realized? result)
+                (let [{:keys [oauth-token]} @result
+                      {:keys [token]} (exchange-fn)]
+                  (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
+                  token)
+                (do
+                  (Thread/sleep 2000)
+                  (when (< attempt 180) ;; 6 min max
+                    (recur (inc attempt))))))))
+        (catch Exception e
+          (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
+          nil)))))
+
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
   [^TerminalScreen screen existing-ids]
@@ -121,15 +166,19 @@
         (let [pid        (:id preset)
               base-url   (:base-url preset)
               has-key?   (some? (:api-key preset))
-              needs-key? (not (or has-key? (= pid :ollama)))
-              raw-key    (cond
+              ;; GitHub Copilot uses OAuth, not a static API key
+              oauth?     (= pid :github-copilot)
+              ;; Ollama needs no key
+              needs-key? (not (or has-key? oauth? (= pid :ollama)))
+              api-key    (cond
                            has-key?   (:api-key preset)
-                           needs-key? (dlg/text-input-dialog! screen
-                                        (str (:label preset) " Setup")
-                                        "API Key:"
-                                        :mask \*)
-                           :else nil)
-              api-key    (when-not (str/blank? raw-key) raw-key)]
+                           oauth?     (copilot-oauth-flow! screen)
+                           needs-key? (let [raw (dlg/text-input-dialog! screen
+                                                  (str (:label preset) " Setup")
+                                                  "API Key:"
+                                                  :mask \*)]
+                                        (when-not (str/blank? raw) raw))
+                           :else      nil)]
           (when (or (not needs-key?) api-key)
             (when-let [model (select-provider-model! screen (cond-> {:id (:id preset)
                                                                      :base-url base-url
@@ -138,7 +187,10 @@
               (cond-> {:id (:id preset)
                        :base-url base-url
                        :models [{:name model}]}
-                api-key (assoc :api-key api-key)))))))))
+                ;; For Copilot, don't persist the short-lived API token —
+                ;; config.clj resolves it dynamically from the OAuth token.
+                (and api-key (not oauth?)) (assoc :api-key api-key)))))))))
+
 
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────

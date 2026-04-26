@@ -17,7 +17,7 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · Ctrl+Y copy · Ctrl+K commands · Shift+drag select ")
+(def ^:private hint " Enter send · Alt+Enter newline · F2 inspect · Ctrl+K commands ")
 
 (defn- with-dialog-lock
   [f]
@@ -86,11 +86,10 @@
         bubble-w    (- cols 4)
         effective-messages (apply-settings messages progress loading? bubble-w settings)]
     (render/fill-background! g cols rows)
-    (let [icons (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})]
-      (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
-        (.setCursorPosition screen (TerminalPosition. cx cy)))
-      (.refresh screen Screen$RefreshType/DELTA)
-      icons)))
+    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
+      (.setCursorPosition screen (TerminalPosition. cx cy)))
+    (.refresh screen Screen$RefreshType/DELTA)))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -109,7 +108,10 @@
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)
-    (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE)
+    ;; Do NOT capture mouse in the main chat screen.
+    ;; Native terminal text selection/copy is more important than
+    ;; clickable widgets here. Use the command palette / keyboard for
+    ;; inspect/copy actions.
     (try
       ;; Show provider dialog on first launch if no config
       (when-not (:config @state/app-db)
@@ -167,7 +169,7 @@
                                    (:messages db) (:progress db) (:loading? db) bubble-w (:settings db))
               total-h  (render/total-messages-height displayed-messages bubble-w)]
 
-          (let [icons (render-frame! screen g cols rows db)]
+          (render-frame! screen g cols rows db)
 
           ;; Always poll (non-blocking) so terminal resize is detected immediately.
           (let [key (.pollInput screen)]
@@ -194,9 +196,20 @@
                             :inspect
                             (with-dialog-lock
                               #(let [conv-id (get-in @state/app-db [:conv :id])
-                                     prompt  (if conv-id
+                                     msgs    (:messages @state/app-db)
+                                     last-asst (->> msgs reverse
+                                                 (filter (fn [m] (= :assistant (:role m))))
+                                                 first)
+                                     prompt  (cond
+                                               (and conv-id (:query-id last-asst))
+                                               (or (conversations/effective-system-prompt-for-query conv-id (:query-id last-asst))
+                                                 "(no system prompt)")
+
+                                               conv-id
                                                (or (conversations/effective-system-prompt conv-id)
                                                  "(no system prompt)")
+
+                                               :else
                                                "(no conversation)")]
                                  (dlg/text-viewer-dialog! screen "System Prompt" prompt)))
 
@@ -214,13 +227,17 @@
                         (do (when cmd (run-command! cmd))
                           (recur)))))
 
-                  :mouse-click
-                  (if-let [hit (some (fn [{:keys [row-start row-end col-start col-end cmd]}]
-                                       (when (and (>= row row-start) (< row row-end)
-                                                  (>= col col-start) (< col col-end))
-                                         cmd))
-                                     icons)]
-                    (do (run-command! hit) (recur))
+
+                  :history-up
+                  (do (state/dispatch [:history-up])
+                    (recur))
+
+                  :history-down
+                  (do (state/dispatch [:history-down])
+                    (recur))
+
+                  :inspect
+                  (do (run-command! :inspect)
                     (recur))
 
                   :send
@@ -240,19 +257,13 @@
                   (do (state/dispatch [:scroll-down 3 total-h inner-h])
                     (recur))
 
-                  :copy-last
-                  (let [msgs (:messages @state/app-db)
-                        last-asst (->> msgs reverse
-                                    (filter #(= :assistant (:role %)))
-                                    first)]
-                    (when-let [text (or (:raw-answer last-asst)
-                                     (:text last-asst))]
-                      (input/clipboard-copy! text))
-                    (recur))
-
-                  :continue (recur)))))))))
+                  :continue (recur))))))))
       (finally
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
+        ;; Disable SGR mouse ext before resetting mouse mode.
+        (let [^java.io.OutputStream out @config/tty-out]
+          (.write out (.getBytes "\u001b[?1006l"))
+          (.flush out))
         (.setMouseCaptureMode terminal nil)
         (.stopScreen screen))))))

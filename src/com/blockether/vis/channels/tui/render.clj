@@ -511,19 +511,12 @@
 
       ;; Below-bubble meta row
       (p/clear-styles! g)
-      (let [meta-row (+ btop bubble-h)
-            icon-pos (when (not user?)
-                       ;; Draw [?] icon left-aligned on meta row
-                       (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-                       (p/put-str! g (inc bx) meta-row "[?]")
-                       ;; Return screen coords for click detection
-                       {:col (inc bx) :row meta-row :w 3})]
+      (let [meta-row (+ btop bubble-h)]
         (when meta-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str))
-        ;; Return: rows consumed + icon position (or nil for user bubbles)
-        {:rows (+ 1 bubble-h 2)
-         :icon icon-pos}))))
+        ;; Return: rows consumed
+        (+ 1 bubble-h 2))))
 
 (defn bubble-height
   "Calculate rows a chat bubble will consume without drawing.
@@ -841,60 +834,41 @@
   ([g messages box-top box-bottom cols scroll]
    (draw-messages-area! g messages box-top box-bottom cols scroll nil))
   ([g messages box-top box-bottom cols scroll {:keys [title]}]
-  (let [inner-h   (- box-bottom box-top 1 msg-margin-top msg-margin-bottom)
-        text-top  (+ (inc box-top) msg-margin-top)
-        bubble-w  (- cols 4)
-        ;; Pre-compute cumulative heights for scroll math
-        heights   (mapv #(bubble-height % bubble-w) messages)
-        total-h   (reduce + 0 heights)
-        ;; Scroll: nil = auto-bottom
-        eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
-                     (min s (max 0 (- total-h inner-h))))
-        ;; Cumulative row offsets for each message
-        offsets   (reductions + 0 heights)]
+   (let [inner-h   (- box-bottom box-top 1 msg-margin-top msg-margin-bottom)
+         text-top  (+ (inc box-top) msg-margin-top)
+         bubble-w  (- cols 4)
+         heights   (mapv #(bubble-height % bubble-w) messages)
+         total-h   (reduce + 0 heights)
+         eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
+                      (min s (max 0 (- total-h inner-h))))
+         offsets   (reductions + 0 heights)]
 
-    ;; Draw the container
-    (draw-box-border! g box-top box-bottom cols
-      (if title
-        (str " " (subs title 0 (min (count title) (- cols 6))) " ")
-        " messages "))
-    (fill-box-interior! g box-top box-bottom cols)
+     (draw-box-border! g box-top box-bottom cols
+       (if title
+         (str " " (subs title 0 (min (count title) (- cols 6))) " ")
+         " messages "))
+     (fill-box-interior! g box-top box-bottom cols)
 
-    ;; Clip to interior so bubbles never overflow into borders or input box
-    (let [clip (.newTextGraphics g
-                 (TerminalPosition. 0 text-top)
-                 (TerminalSize. cols inner-h))]
-      ;; Render visible bubbles inside clipped region
-      ;; Collect [?] icon screen positions for click detection.
-      (let [icons (atom [])]
-        (doseq [idx (range (count messages))]
-          (let [msg-top    (- (long (nth offsets idx)) eff-scroll)
-                msg-h      (nth heights idx)]
-            (when (and (> (+ msg-top msg-h) 0)
-                    (< msg-top inner-h))
-              (let [result (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w)]
-                (when-let [{:keys [col row w]} (:icon result)]
-                  ;; Convert clip-local row to screen row and normalize shape
-                  (let [screen-row (+ row text-top)]
-                    (swap! icons conj {:row-start screen-row
-                                       :row-end   (inc screen-row)
-                                       :col-start col
-                                       :col-end   (+ col w)
-                                       :cmd       :inspect})))))))
+     (let [clip (.newTextGraphics g
+                  (TerminalPosition. 0 text-top)
+                  (TerminalSize. cols inner-h))]
+       (doseq [idx (range (count messages))]
+         (let [msg-top (- (long (nth offsets idx)) eff-scroll)
+               msg-h   (nth heights idx)]
+           (when (and (> (+ msg-top msg-h) 0)
+                   (< msg-top inner-h))
+             (draw-chat-bubble! clip (nth messages idx) msg-top (inc t/pad-x) bubble-w))))
 
-        ;; Scrollbar on the right border column
-        (when (> total-h inner-h)
-          (let [max-scroll (max 1 (- total-h inner-h))
-                track-h    inner-h
-                thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
-                thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
-                bar-col    (dec cols)
-                bar-top    text-top]
-            (doseq [r (range track-h)]
-              (p/set-colors! g t/border-fg t/terminal-bg)
-              (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
-            (doseq [r (range thumb-h)]
-              (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-              (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588))))
-
-        @icons)))))
+       (when (> total-h inner-h)
+         (let [max-scroll (max 1 (- total-h inner-h))
+               track-h    inner-h
+               thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
+               thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
+               bar-col    (dec cols)
+               bar-top    text-top]
+           (doseq [r (range track-h)]
+             (p/set-colors! g t/border-fg t/terminal-bg)
+             (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
+           (doseq [r (range thumb-h)]
+             (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+             (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588))))))))

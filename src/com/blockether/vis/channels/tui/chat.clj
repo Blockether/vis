@@ -61,6 +61,7 @@
                                           :successes (mapv #(nil? (:error %)) exprs)})))
                                 query-iters)
                         ai-msg    (cond-> (assistant-msg (or answer "") (or (:created-at q) (java.util.Date.)))
+                                    true       (assoc :query-id (:id q))
                                     (seq trace) (assoc :trace trace :raw-answer (or answer ""))
                                     model  (assoc :model model)
                                     iters  (assoc :iterations iters)
@@ -108,7 +109,8 @@
        (let [confidence (:confidence result)]
          (cond-> {:answer      (if (string? answer) answer (pr-str answer))
                   :iterations  (or (:iterations result) 1)
-                  :duration-ms (:duration-ms result)}
+                  :duration-ms (:duration-ms result)
+                  :query-id    (:query-id result)}
            model      (assoc :model model)
            tokens     (assoc :tokens tokens)
            cost       (assoc :cost cost)

@@ -168,8 +168,6 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
-          (and ctrl (= c \y)) {:action :copy-last :state state}
-
           :else {:action :continue :state (insert-char state c)}))
 
       KeyType/Enter
@@ -177,11 +175,19 @@
         {:action :continue :state (insert-newline state)}
         {:action :send :state state})
 
+      KeyType/F2         {:action :inspect :state state}
       KeyType/Backspace  {:action :continue :state (delete-backward state)}
       KeyType/ArrowLeft  {:action :continue :state (move-left state)}
       KeyType/ArrowRight {:action :continue :state (move-right state)}
-      KeyType/ArrowUp    {:action :continue :state (move-up state)}
-      KeyType/ArrowDown  {:action :continue :state (move-down state)}
+      KeyType/ArrowUp
+      (if (zero? (:crow state))
+        {:action :history-up :state state}
+        {:action :continue :state (move-up state)})
+
+      KeyType/ArrowDown
+      (if (= (:crow state) (dec (count (:lines state))))
+        {:action :history-down :state state}
+        {:action :continue :state (move-down state)})
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 
@@ -190,8 +196,10 @@
             col (.getColumn (.getPosition mouse))
             row (.getRow (.getPosition mouse))]
         (condp = (.getActionType mouse)
-          MouseActionType/SCROLL_UP   {:action :scroll-up :state state}
-          MouseActionType/SCROLL_DOWN {:action :scroll-down :state state}
+          ;; Mouse scroll disabled — use PageUp/PageDown for history scroll.
+          ;; Mouse wheel is left to the terminal for native text selection.
+          MouseActionType/SCROLL_UP   {:action :continue :state state}
+          MouseActionType/SCROLL_DOWN {:action :continue :state state}
           MouseActionType/CLICK_RELEASE {:action :mouse-click :state state :col col :row row}
           {:action :continue :state state}))
 

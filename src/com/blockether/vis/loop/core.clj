@@ -395,6 +395,11 @@ EVERY ITERATION:
 
   STEP 1 — READ. You receive:
     <var_index>       every `(def name val)` you've written. Survives until `:forget`.
+                      Rendered as compact pseudo-source: `(def ^{:v 3 :s :l :t :map :n 12} x ...)`
+                      and `(defn ^{:v 2 :s :l} f [x] ...)` (`:s` = `:l|:f|:sys`).
+                      `:v N` means N persisted versions exist. Bare `x` is the latest live value.
+                      Full timeline is on demand via `(var-history 'x)`, including SYSTEM vars
+                      like `(var-history '*query*)`, `(var-history '*reasoning*)`, `(var-history '*answer*)`.
     <journal>         the PREVIOUS iteration's results only (not N-2). For each :code
                       block: return value (auto-formatted), :stdout, :stderr, timing.
     <prior_thinking>  your last reasoning.
@@ -406,6 +411,8 @@ EVERY ITERATION:
 
   STEP 2 — COMPUTE in :code. State the missing piece as a CLAIM and verify it.
     `(doc fn)` for tool docs. `(shape x)` for schema-only view of any value.
+    CRITICAL: if a `[system_nudge]` says the budget is nearly exhausted but more work is genuinely needed,
+    call `(request-more-iterations N)` IMMEDIATELY from :code instead of pretending you can finish in time.
 
   STEP 3 — PERSIST or DON'T:
     • One-shot value used only this iter         → bare expression in :code, no def.
