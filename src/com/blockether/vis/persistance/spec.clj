@@ -276,7 +276,7 @@
   "Dynamic var for max recursion depth. Bound per vis! call."
 
 (def ^:dynamic *rlm-ctx*
-  "Dynamic context for RLM debug logging. Bind with {:rlm-debug? true :rlm-phase :phase-name :rlm-env-id \"...\"}."
+  "Dynamic context for RLM debug logging. Bind with {:rlm-debug? true :rlm-phase :phase-name :rlm-environment-id \"...\"}."
   nil)
 
 (def BLOOM_DIFFICULTIES

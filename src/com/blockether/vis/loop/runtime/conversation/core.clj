@@ -107,8 +107,13 @@
   "Return the reconstructed prompt snapshot for a specific query-id in a conversation."
   [conversation-id query-id]
   (when-let [env (env-for conversation-id)]
-    (let [system-prompt (loop-core/assemble-system-prompt env
-                          {:system-prompt (:system-prompt (by-id conversation-id))})
+    (let [;; Activate extensions ONCE for this snapshot — reused by both
+          ;; assemble-system-prompt (system block) and build-iteration-context
+          ;; (per-iter user block) below. Mirrors the runtime contract.
+          active-exts   (loop-core/active-extensions env)
+          system-prompt (loop-core/assemble-system-prompt env
+                          {:system-prompt     (:system-prompt (by-id conversation-id))
+                           :active-extensions active-exts})
           queries       (when-let [di (:db-info env)]
                           (try (db/db-list-conversation-queries di (:conversation-id env))
                             (catch Throwable _ nil)))
@@ -127,12 +132,13 @@
                            handover handover
                            :else prior-thinking)
           iter-ctx (iterate/build-iteration-context env
-                     {:iteration 0
+                     {:iteration              0
                       :current-max-iterations rlm-spec/MAX_ITERATIONS
-                      :prior-thinking combined-prior
-                      :prev-expressions nil
-                      :prev-iteration nil
-                      :call-counts-atom (atom {})})
+                      :prior-thinking         combined-prior
+                      :prev-expressions       nil
+                      :prev-iteration         nil
+                      :call-counts-atom       (atom {})
+                      :active-extensions      active-exts})
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
           iter-spec (if has-reasoning?
                       rlm-spec/ITERATION_SPEC_REASONING

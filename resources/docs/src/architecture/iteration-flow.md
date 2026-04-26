@@ -56,8 +56,9 @@ the system message content. Both iteration loop paths and the TUI
    (READ/COMPUTE/PERSIST/FINALIZE), Mustache docs, grounding rule,
    query primacy, perf hints, tool discipline, CLJ rules, output voice
 2. **Date + environment block** — CWD, home, user, platform, shell
-3. **Extension prompts** — each active extension’s `:ext/prompt`,
-   prefixed with `[namespace: alias → ns]`
+3. **Extension prompts** — each active extension’s canonical
+   symbol-derived prompt block, prefixed with `[namespace: alias → ns]`,
+   plus any optional extra `:ext/prompt` tail
 
 The iteration spec schema (svar’s `spec->prompt`) is appended separately
 by svar as a final user message — it is NOT part of the system message.

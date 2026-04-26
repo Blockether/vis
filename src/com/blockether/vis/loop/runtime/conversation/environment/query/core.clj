@@ -26,6 +26,37 @@
 (defn- truncate [s n]
   (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
+(defn- format-iter-error
+  "Render one trace `:error` map as a Markdown bullet for the user.
+   Always includes the wrapper message; appends the raw provider
+   response when the spec layer captured one (`svar.spec/schema-rejected`
+   stashes the literal model output under `:data :raw-data`). Without
+   this, errors like \"Your organization does not have access to Claude\"
+   were stored in the DB but the user only saw the schema-rejection
+   wrapper text. The raw response is the actually-useful part."
+  [err]
+  (let [msg  (or (:message err) (str err))
+        data (:data err)
+        raw  (some-> (:raw-data data) str)
+        recv (:received-type data)
+        body (when (and raw (not (str/blank? raw)))
+               (truncate raw 400))]
+    (cond-> (str "- " msg)
+      body (str "\n  provider returned"
+             (when recv (str " (" recv ")"))
+             ": " body))))
+
+(defn- recent-errors-block
+  "Render the last `n` trace `:error` entries as a Markdown block
+   (\"**Recent provider errors:**\\n\\n- …\"). Returns nil when the
+   trace carries no errors so callers can `(when …)` without churn."
+  [trace n]
+  (let [errs (->> trace reverse (keep :error) (take n))]
+    (when (seq errs)
+      (str "**Recent provider errors:**\n\n"
+        (str/join "\n" (map format-iter-error errs))
+        "\n\n"))))
+
 (defn- realize-value [v]
   (cond
     (instance? clojure.lang.IDeref v) @v
@@ -212,7 +243,13 @@
                              (long (* 0.6 (router/context-limit effective-model))))
         has-reasoning? (boolean (provider-has-reasoning? (:router environment)))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
-        system-prompt (loop-core/assemble-system-prompt environment {:system-prompt system-prompt})
+        ;; Activate extensions ONCE per query. Threaded through both the
+        ;; system-prompt assembler (cacheable prefix) and the per-iteration
+        ;; nudge collector — activation-fn never re-fires inside the loop.
+        active-exts   (loop-core/active-extensions environment)
+        system-prompt (loop-core/assemble-system-prompt environment
+                        {:system-prompt      system-prompt
+                         :active-extensions  active-exts})
         initial-user-content query
         initial-messages (iterate/assemble-initial-messages
                            {:system-prompt system-prompt
@@ -248,16 +285,14 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-msg)))))
-        active-extensions-meta (fn []
-                                (when-let [exts (some-> (:extensions environment) deref seq)]
-                                  (mapv (fn [ext]
-                                          (cond-> {:namespace (str (:ext/namespace ext))}
-                                            (:ext/version ext) (assoc :version (:ext/version ext))))
-                                    exts)))
+        ;; Metadata persisted on each iteration row — reuses the
+        ;; precomputed `active-exts` (no second activation pass).
         iter-metadata (fn []
-                        (let [exts (active-extensions-meta)]
-                          (when (seq exts)
-                            {:extensions exts})))]
+                        (when (seq active-exts)
+                          {:extensions (mapv (fn [ext]
+                                               (cond-> {:namespace (str (:ext/namespace ext))}
+                                                 (:ext/version ext) (assoc :version (:ext/version ext))))
+                                         active-exts)}))]
     (sci-env/bind-and-bump! environment '*query* query)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (loop-core/auto-forget-stale-vars! environment)
@@ -281,9 +316,18 @@
             (let [max-iter (effective-max-iterations)
                   last-thinking (some->> trace reverse (map :thinking)
                                   (filter #(and (string? %) (not (str/blank? %)))) first)
+                  errors-block  (recent-errors-block trace 3)
                   fallback (str "Warning: Iteration limit (" iteration "/" max-iter ") reached.\n\n"
+                             ;; Surface the actual provider failures FIRST when present —
+                             ;; they're the load-bearing diagnostic. Without this the
+                             ;; user only saw \"max-iter reached, rephrase narrowly\"
+                             ;; while the DB held the real cause (e.g. a Claude auth
+                             ;; rejection that hit because routing slipped models).
+                             errors-block
                              (when last-thinking (str "**Last reasoning:**\n\n" (truncate last-thinking 800) "\n\n"))
-                             "**What to try:** Rephrase more narrowly.")]
+                             (if errors-block
+                               "**What to try:** Fix the provider error above (config / model availability), then retry."
+                               "**What to try:** Rephrase more narrowly."))]
               (iterate/log-stage! :error iteration {:reason :max-iterations :max max-iter})
               (merge {:answer fallback
                       :status :max-iterations :status-id (status->id :max-iterations)
@@ -301,11 +345,14 @@
                   (recur (assoc loop-state
                            :iteration (inc iteration) :messages msgs
                            :trace trace :consecutive-errors 0 :restarts (inc restarts))))
-                (let [errs (->> trace reverse (keep :error) (take 3)
-                             (map #(str "- " (or (:message %) (str %)))) (str/join "\n"))
-                      fallback (str "Warning: Too many errors (" consecutive-errors ") across "
-                                 (inc restarts) " restart(s).\n\n"
-                                 (when-not (str/blank? errs) (str "**Recent errors:**\n\n" errs "\n\n")))]
+                (let [errors-block (recent-errors-block trace 3)
+                      fallback     (str "Warning: Too many errors (" consecutive-errors ") across "
+                                     (inc restarts) " restart(s).\n\n"
+                                     ;; Same shared formatter as the max-iterations
+                                     ;; branch — includes the raw provider payload
+                                     ;; (e.g. an HTTP plain-text auth rejection) so
+                                     ;; the user can act on it instead of guessing.
+                                     errors-block)]
                   (merge {:answer fallback
                           :status :error-budget-exhausted :status-id (status->id :error-budget-exhausted)
                           :trace trace :iterations iteration} (finalize-cost))))
@@ -325,12 +372,13 @@
                                      cross-query-handover cross-query-handover
                                      :else prior-thinking-body)
                     iteration-context (iterate/build-iteration-context environment
-                                        {:iteration iteration
+                                        {:iteration              iteration
                                          :current-max-iterations (effective-max-iterations)
-                                         :prior-thinking prior-thinking
-                                         :prev-expressions prev-expressions
-                                         :prev-iteration prev-iteration
-                                         :call-counts-atom call-counts-atom})
+                                         :prior-thinking         prior-thinking
+                                         :prev-expressions       prev-expressions
+                                         :prev-iteration         prev-iteration
+                                         :call-counts-atom       call-counts-atom
+                                         :active-extensions      active-exts})
                     base-messages (iterate/trim-to-initial-history messages (count initial-messages))
                     effective-messages (cond-> base-messages
                                          (not (str/blank? iteration-context))
@@ -352,28 +400,56 @@
                                            {:iteration iteration :messages effective-messages
                                             :routing effective-routing :reasoning-level reasoning-level})))]
                 (if-let [iter-err (::iterate/iteration-error iteration-result)]
-                  (let [error-feedback (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
-                                         "<error>LLM call failed: " (:message iter-err) "</error>\n"
-                                         "Adjust your approach or emit :final with what you have.")
-                        trace-entry {:iteration iteration :error iter-err :final? false}
-                        empty-reasoning (when (= :svar.llm/empty-content (:type iter-err))
-                                          (:reasoning (:data iter-err)))
-                        err-iter-id (db/store-iteration! (:db-info environment)
-                                      {:query-id query-id :vars [] :expressions nil
-                                       :thinking empty-reasoning :duration-ms 0 :error iter-err
-                                       :llm-messages effective-messages
-                                       :llm-model (str (:name resolved-model))
-                                       :metadata (iter-metadata)})]
-                    (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iter-id))
-                    (emit-hook! on-iteration
-                      {:iteration iteration :status :error :status-id (status->id :error)
-                       :thinking empty-reasoning :expressions nil :final-result nil
-                       :error iter-err :duration-ms 0} "on-iteration (error)")
-                    (recur (assoc loop-state
-                             :iteration (inc iteration)
-                             :messages (conj messages {:role "user" :content error-feedback})
-                             :trace (conj trace trace-entry)
-                             :consecutive-errors (inc consecutive-errors) :restarts restarts)))
+                  ;; Cancellation short-circuit. When the user pressed Esc
+                  ;; mid-call, `cancel!` flipped the flag BEFORE
+                  ;; future-cancel, so by the time we land here the flag is
+                  ;; already true. Treat the resulting interrupt-shaped
+                  ;; \"iter-err\" as cancellation, not a real failure: skip
+                  ;; the trace entry, skip the DB write, skip the on-chunk
+                  ;; error chunk (otherwise the bubble paints a phantom
+                  ;; ITERATION N ERROR block right next to FINAL ANSWER:
+                  ;; \"_Cancelled by user._\"). Bail straight to the cancel
+                  ;; result that the top-of-loop branch would have produced.
+                  (if (and cancel-atom @cancel-atom)
+                    (do (iterate/log-stage! :error iteration {:reason :cancelled})
+                      (emit-hook! on-cancel {:iteration iteration :status :cancelled
+                                             :status-id (status->id :cancelled)}
+                        "on-cancel hook threw")
+                      (merge {:answer nil :status :cancelled
+                              :status-id (status->id :cancelled)
+                              :trace trace :iterations iteration}
+                        (finalize-cost)))
+                    (let [error-feedback (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
+                                           "<error>LLM call failed: " (:message iter-err) "</error>\n"
+                                           "Adjust your approach or emit :final with what you have.")
+                          trace-entry {:iteration iteration :error iter-err :final? false}
+                          empty-reasoning (when (= :svar.llm/empty-content (:type iter-err))
+                                            (:reasoning (:data iter-err)))
+                          err-iter-id (db/store-iteration! (:db-info environment)
+                                        {:query-id query-id :vars [] :expressions nil
+                                         :thinking empty-reasoning :duration-ms 0 :error iter-err
+                                         :llm-messages effective-messages
+                                         :llm-model (str (:name resolved-model))
+                                         :metadata (iter-metadata)})]
+                      (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iter-id))
+                      ;; Live error chunk — lets the TUI / web bubble show
+                      ;; \"iter N failed: <msg>\" the moment it happens, instead
+                      ;; of waiting for the whole loop to give up. The chunk
+                      ;; carries the same shape on-iteration sees so any UI
+                      ;; that already reads :error gets it for free.
+                      (emit-hook! on-chunk
+                        {:iteration iteration :thinking empty-reasoning :code nil
+                         :error iter-err :done? true}
+                        "on-chunk (iter error)")
+                      (emit-hook! on-iteration
+                        {:iteration iteration :status :error :status-id (status->id :error)
+                         :thinking empty-reasoning :expressions nil :final-result nil
+                         :error iter-err :duration-ms 0} "on-iteration (error)")
+                      (recur (assoc loop-state
+                               :iteration (inc iteration)
+                               :messages (conj messages {:role "user" :content error-feedback})
+                               :trace (conj trace trace-entry)
+                               :consecutive-errors (inc consecutive-errors) :restarts restarts))))
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking expressions final-result next-model next-reasoning]} iteration-result
@@ -569,7 +645,7 @@
           environment            (assoc env
                                    :max-iterations-atom max-iterations-atom
                                    :current-iteration-id-atom current-iteration-id-atom)
-          env-id                 (:env-id env)]
+          environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
        :query-str              query-str
        :router                 env-router
@@ -578,7 +654,7 @@
        :current-iteration-atom current-iteration-atom
        :max-iterations-atom    max-iterations-atom
        :environment             environment
-       :env-id                 env-id
+       :environment-id         environment-id
        :spec                   spec
        :max-iterations         max-iterations
        :max-context-tokens     max-context-tokens
@@ -749,9 +825,9 @@
          {:keys [eval-timeout-ms concurrency
                  debug? query-str root-model max-iterations
                  db-info max-iterations-atom
-                 env-id]} ctx
+                 environment-id]} ctx
          merged-concurrency (merge rlm-spec/DEFAULT_CONCURRENCY concurrency)]
-     (binding [rlm-spec/*rlm-ctx*               {:rlm-env-id env-id :rlm-type :main
+     (binding [rlm-spec/*rlm-ctx*               {:rlm-environment-id environment-id :rlm-type :main
                                                  :rlm-debug? debug? :rlm-phase :query
                                                  :db-info db-info
                                                  :conversation-soul-id (:conversation-id environment)}

@@ -12,6 +12,19 @@ for the full convention.
 (ext/extension spec) → validated extension map
 ```
 
+For public callers, the same helpers are re-exported from
+`com.blockether.vis.core`:
+
+```clojure
+(require '[com.blockether.vis.core :as vis])
+
+(vis/extension ...)
+(vis/symbol ...)
+(vis/value ...)
+(vis/render-extension-prompt ...)
+(vis/register-extension! environment ...)
+```
+
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `:ext/namespace` | ✓ | — | Fully qualified symbol, e.g. `'com.blockether.vis.ext.editing`, `'com.acme.ext.git` |
@@ -19,7 +32,7 @@ for the full convention.
 | `:ext/group` | ✓ | — | Top-level prompt group, e.g. `"knowledge"` |
 | `:ext/subgroup` | ✗ | same as `:ext/group` | Finer-grained grouping within the group |
 | `:ext/activation-fn` | ✗ | `(constantly true)` | `(fn [env] → bool)` — when falsy, all symbols are unbound and nudge-fn is skipped |
-| `:ext/prompt` | ✓ | — | String or `(fn [env] → string)` — LLM-facing docs in system prompt |
+| `:ext/prompt` | ✗ | — | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt |
 | `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
 | `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.editing]` |
 | `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
@@ -55,6 +68,38 @@ for the full convention.
 |-----|----------|-------------|
 | `:doc` | ✓ | One-liner description |
 
+## `render-prompt` — canonical prompt preview / renderer
+
+```clojure
+(ext/render-prompt opts) → prompt-string
+```
+
+Renders the canonical LLM-facing prompt text directly from extension
+symbol metadata: function `:doc` + `:arglists`, plus value `:doc`
+lines.
+
+This is the same canonical block the loop prepends automatically for
+active extensions. Call it when you want to preview how an extension
+will look in the system prompt.
+
+| Opt | Required | Description |
+|-----|----------|-------------|
+| `:ext/doc` or `:heading` | ✓ | Prompt heading |
+| `:ext/ns-alias` | ✗ | If present, emits `use alias/ prefix` in the heading and renders calls as `(alias/fn ...)` |
+| `:ext/symbols` | ✓ | Vector of `ext/symbol` / `ext/value` entries to render |
+| `:usage-note` | ✗ | Extra heading note, e.g. `"positional args only"` |
+| `:notes` | ✗ | String or seq of extra lines appended verbatim |
+
+Example:
+
+```clojure
+(ext/render-prompt
+  {:ext/doc "Filesystem tools"
+   :ext/ns-alias {:ns 'vis.ext.fs :alias 'fs}
+   :ext/symbols [read-file-sym patch-file-sym]
+   :usage-note "positional args only"})
+```
+
 ## `wrap-extension` — bind into SCI
 
 ```clojure
@@ -83,13 +128,13 @@ Called internally by `extension`; safe to call standalone.
 
 ```clojure
 (ns com.blockether.vis.ext.documents
-  (:require [c.b.vis.loop.runtime.conversation.environment.extension :as ext]))
+  (:require [com.blockether.vis.core :as vis]))
 
 (defn- search-fn [query] ...)
 (defn- search-with-opts [query opts] ...)
 
 (def search-sym
-  (ext/symbol 'search search-fn
+  (vis/symbol 'search search-fn
     {:doc        "Full-text search across ingested documents."
      :arglists  '([query] [query opts])
      :examples  ["(docs/search \"neural\")"
@@ -100,11 +145,11 @@ Called internally by `extension`; safe to call standalone.
                   {:result (take 10 result)})}))
 
 (def max-results-sym
-  (ext/value 'max-results 50
+  (vis/value 'max-results 50
     {:doc "Maximum number of search results returned."}))
 
 (def docs-ext
-  (ext/extension
+  (vis/extension
     {:ext/namespace     'com.blockether.vis.ext.documents
      :ext/doc           "Document search and retrieval"
      :ext/version       "1.0.0"
@@ -114,9 +159,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/subgroup      "documents"
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
      :ext/requires      ['com.blockether.vis.ext.editing]
-     :ext/prompt        "Document search (use docs/ prefix):
-- (docs/search query) — full-text search across documents
-- docs/max-results — max results constant (default 50)"
+     :ext/prompt        "Prefer narrow searches before broad scans."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
      :ext/nudge-fn      (fn [{:keys [environment iteration prev-expressions]}]
                           (when (and (> iteration 5)
@@ -127,16 +170,17 @@ Called internally by `extension`; safe to call standalone.
      :ext/imports       {'LocalDate 'java.time.LocalDate}}))
 
 ;; Self-register at load time
-(ext/register-global! docs-ext)
+(vis/register-global! docs-ext)
 ```
 
 The LLM sees in the system prompt:
 
 ```
 [namespace: docs → vis.ext.docs]
-Document search (use docs/ prefix):
-- (docs/search query) — full-text search across documents
-- docs/max-results — max results constant (default 50)
+Document search and retrieval (use docs/ prefix)
+- (docs/search query) or (docs/search query opts) — Full-text search across ingested documents.
+- docs/max-results — Maximum number of search results returned.
+Prefer narrow searches before broad scans.
 ```
 
 And calls `(docs/search "neural")` from `:code` blocks.

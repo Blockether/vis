@@ -7,7 +7,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.loop.runtime.conversation.environment.extension :as ext])
+   [com.blockether.vis.core :as vis])
   (:import [com.google.re2j Pattern]
            [org.eclipse.jgit.ignore IgnoreNode]))
 
@@ -81,9 +81,17 @@
     f))
 
 (defn- rel-path
+  "Path of f relative to cwd. Canonicalizes the parent chain (so cwd-side
+   symlinks resolve cleanly) but preserves the leaf name, so a symlink like
+   CLAUDE.md -> AGENTS.md is reported as CLAUDE.md, not AGENTS.md."
   ^String [^java.io.File f]
-  (let [cwd-file (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
-    (str (.relativize (.toPath cwd-file) (.toPath (.getCanonicalFile f))))))
+  (let [cwd-path (.toPath (.getCanonicalFile (io/file (System/getProperty "user.dir"))))
+        parent   (.getParentFile f)
+        leaf     (.getName f)
+        resolved (if (and parent (seq leaf))
+                   (io/file (.getCanonicalFile parent) leaf)
+                   (.getCanonicalFile f))]
+    (str (.relativize cwd-path (.toPath resolved)))))
 
 (defn- ensure-existing-file!
   ^java.io.File [path]
@@ -200,47 +208,95 @@
              (str (- total off showing) " more lines. Use offset=" (+ off showing 1) " to continue"))
            "]"))))))
 
+(defn- dir-size
+  "Recursive byte-sum of every regular file under f. Symlinks and unreadable
+   entries contribute 0; never throws."
+  ^long [^java.io.File f]
+  (try
+    (reduce
+      (fn [^long acc ^java.io.File child]
+        (if (.isFile child)
+          (+ acc (.length child))
+          acc))
+      0
+      (file-seq f))
+    (catch Exception _ 0)))
+
 (defn- file->entry
   [^java.io.File f]
   {:name (.getName f)
    :path (rel-path f)
    :type (if (.isDirectory f) :dir :file)
-   :size (when (.isFile f) (.length f))
+   :size (if (.isDirectory f) (dir-size f) (.length f))
    :hidden? (.isHidden f)})
 
+(def ^:private default-list-depth
+  "Default tree depth for (fs/list-files): top level + one level of children."
+  2)
+
+(defn- depth->limit
+  "Coerce a user-supplied depth arg into a long.
+
+   - true        => unbounded (Long/MAX_VALUE)
+   - false / nil => 1 (current level only)
+   - integer n   => max(0, n)"
+  ^long [d]
+  (cond
+    (true? d)    Long/MAX_VALUE
+    (or (false? d) (nil? d)) 1
+    (integer? d) (max 0 (long d))
+    :else (throw (ex-info (str "Invalid depth: " (pr-str d))
+                   {:type :ext.editing/invalid-depth :depth d}))))
+
+(defn- visible-children
+  "Direct children of dir, filtered by hidden? + gitignore, sorted by path."
+  [^java.io.File dir hidden? respect-gitignore?]
+  (let [children (seq (.listFiles dir))
+        visible  (filter #(or hidden? (not (.isHidden ^java.io.File %))) children)
+        visible  (if respect-gitignore?
+                   (remove ignored-by-gitignore? visible)
+                   visible)]
+    (sort-by rel-path visible)))
+
+(defn- file->tree
+  "Build a tree entry for f. Directory entries get :children when
+   depth-left > 0, otherwise :children is omitted (the dir is a leaf)."
+  [^java.io.File f ^long depth-left hidden? respect-gitignore?]
+  (let [base (file->entry f)]
+    (if (and (= :dir (:type base)) (pos? depth-left))
+      (assoc base :children
+        (mapv #(file->tree % (dec depth-left) hidden? respect-gitignore?)
+          (visible-children f hidden? respect-gitignore?)))
+      base)))
+
 (defn- list-files
-  "List files/dirs at path. Always returns structured maps.
+  "List files/dirs at path as a tree of
+   {:name :path :type :size :hidden? :children}.
 
    Positional args only:
    - ()
    - (path)
-   - (path recursive?)
-   - (path recursive? hidden?)
-   - (path recursive? hidden? respect-gitignore?)
+   - (path depth)                          ; integer, true (unbounded), or false (1)
+   - (path depth hidden?)
+   - (path depth hidden? respect-gitignore?)
 
-   Default depth is ONE level (recursive? = false).
+   Default depth is 2 (top level + one level of children).
    By default, .gitignore is respected."
-  ([] (list-files "." false false default-respect-gitignore?))
-  ([path] (list-files path false false default-respect-gitignore?))
-  ([path recursive?] (list-files path recursive? false default-respect-gitignore?))
-  ([path recursive? hidden?] (list-files path recursive? hidden? default-respect-gitignore?))
-  ([path recursive? hidden? respect-gitignore?]
-   (let [f (safe-path path)]
+  ([] (list-files "." default-list-depth false default-respect-gitignore?))
+  ([path] (list-files path default-list-depth false default-respect-gitignore?))
+  ([path depth] (list-files path depth false default-respect-gitignore?))
+  ([path depth hidden?] (list-files path depth hidden? default-respect-gitignore?))
+  ([path depth hidden? respect-gitignore?]
+   (let [f         (safe-path path)
+         depth-lim (depth->limit depth)]
      (when-not (.exists f)
        (throw (ex-info (str "Path not found: " path)
                 {:type :ext.editing/not-found :path path})))
      (when-not (.isDirectory f)
        (throw (ex-info (str "Not a directory: " path)
                 {:type :ext.editing/not-directory :path path})))
-     (let [children (if recursive?
-                      (rest (file-seq f))
-                      (seq (.listFiles f)))
-           visible  (filter #(or hidden? (not (.isHidden ^java.io.File %))) children)
-           visible  (if respect-gitignore?
-                      (remove ignored-by-gitignore? visible)
-                      visible)
-           sorted   (sort-by rel-path visible)]
-       (vec (map file->entry sorted))))))
+     (mapv #(file->tree % (dec depth-lim) hidden? respect-gitignore?)
+       (visible-children f hidden? respect-gitignore?)))))
 
 (defn- compile-safe-pattern
   [pattern]
@@ -456,8 +512,54 @@
 ;; Extension definition
 ;; =============================================================================
 
+(def read-file-symbol
+  (vis/symbol 'read-file read-file
+    {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
+     :arglists '([path] [path offset] [path offset limit])
+     :examples ["(fs/read-file \"src/core.clj\")"
+                "(fs/read-file \"big.log\" 100 50)"]
+     :on-error-fn rescue-path-args}))
+
+(def list-files-symbol
+  (vis/symbol 'list-files list-files
+    {:doc "List files/dirs as a tree of {:name :path :type :size :hidden? :children}. Default depth is 2 (top level + one level of children). Pass an integer for custom depth, true for unbounded, or false/0 for current level only. Directory :size is the recursive byte sum. Respects .gitignore by default. Positional args only."
+     :arglists '([] [path] [path depth] [path depth hidden?] [path depth hidden? respect-gitignore?])
+     :examples ["(fs/list-files)"
+                "(fs/list-files \"src\")"
+                "(fs/list-files \"src\" 3)"
+                "(fs/list-files \"src\" true)"
+                "(fs/list-files \"src\" 2 true)"
+                "(fs/list-files \"src\" 2 true false)"]
+     :on-error-fn rescue-path-args}))
+
+(def grep-files-symbol
+  (vis/symbol 'grep-files grep-files
+    {:doc "Search files with RE2/J (linear-time regex, ReDoS-safe). Always returns structured maps. Respects .gitignore by default. Positional args only."
+     :arglists '([pattern] [pattern path] [pattern path limit] [pattern path limit hidden?] [pattern path limit hidden? respect-gitignore?])
+     :examples ["(fs/grep-files \"TODO\")"
+                "(fs/grep-files \"defn\" \"src\")"
+                "(fs/grep-files \"defn|defmacro\" \"src\" 50)"
+                "(fs/grep-files \"defn\" \"src\" 50 true)"
+                "(fs/grep-files \"defn\" \"src\" 50 true false)"]
+     :on-error-fn rescue-grep-args}))
+
+(def patch-file-symbol
+  (vis/symbol 'patch-file patch-file
+    {:doc "Patch an existing file. Preferred form is Codex-style SEARCH/REPLACE patch text; old 3-arg exact replacement remains supported. Use empty SEARCH to create a new file."
+     :arglists '([path patch-text] [path old-text new-text])
+     :examples ["(fs/patch-file \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
+                "(fs/patch-file \"src/core.clj\" \"old code\" \"new code\")"
+                "(fs/patch-file \"new-file.txt\" \"<<<<<<< SEARCH\n=======\nhello\n>>>>>>> REPLACE\")"]
+     :on-error-fn rescue-path-args}))
+
+(def editing-symbols
+  [read-file-symbol
+   list-files-symbol
+   grep-files-symbol
+   patch-file-symbol])
+
 (def editing-extension
-  (ext/extension
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.editing
      :ext/doc "Filesystem tools: read, list, grep, patch."
      :ext/version "0.3.0"
@@ -465,54 +567,11 @@
      :ext/license "Apache-2.0"
      :ext/ns-alias {:ns 'vis.ext.fs :alias 'fs}
      :ext/group "filesystem"
-     :ext/prompt "Filesystem tools (use fs/ prefix, POSITIONAL ARGS ONLY):
-- (fs/read-file path) — read a preview capped to 1500 chars with line numbers
-- (fs/read-file path offset) or (fs/read-file path offset limit) — continue with more lines
-- (fs/list-files) or (fs/list-files path) — structured listing, returns maps with :name :path :type :size :hidden? (ONE level by default)
-- (fs/list-files path recursive?) or (fs/list-files path recursive? hidden?) or (fs/list-files path recursive? hidden? respect-gitignore?)
-- list-files respects .gitignore by default
-- (fs/grep-files pattern) or (fs/grep-files pattern path) — structured grep, returns maps with :path :line :text
-- (fs/grep-files pattern path limit) or (fs/grep-files pattern path limit hidden?) or (fs/grep-files pattern path limit hidden? respect-gitignore?)
-- grep-files respects .gitignore by default and uses RE2/J (linear-time regex)
-- (fs/patch-file path patch-text) — preferred Codex-style patch for editing existing files. Use SEARCH/REPLACE blocks
-- (fs/patch-file path old-text new-text) — backward-compatible exact single replacement
-
-RULES:
+     :ext/prompt "RULES:
 - NEVER guess file paths. Always discover paths first with (fs/list-files) or (fs/grep-files pattern).
 - There is NO write-file tool. Use fs/patch-file ALWAYS.
 - To create a new file, use fs/patch-file with an EMPTY SEARCH block.
 - Prefer the smallest unique SEARCH block that matches exactly once."
-     :ext/symbols
-     [(ext/symbol 'read-file read-file
-        {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
-         :arglists '([path] [path offset] [path offset limit])
-         :examples ["(fs/read-file \"src/core.clj\")"
-                    "(fs/read-file \"big.log\" 100 50)"]
-         :on-error-fn rescue-path-args})
-      (ext/symbol 'list-files list-files
-        {:doc "List files/dirs as structured maps {:name :path :type :size :hidden?}. One level by default. Respects .gitignore by default. Positional args only."
-         :arglists '([] [path] [path recursive?] [path recursive? hidden?] [path recursive? hidden? respect-gitignore?])
-         :examples ["(fs/list-files)"
-                    "(fs/list-files \"src\")"
-                    "(fs/list-files \"src\" true)"
-                    "(fs/list-files \"src\" true true)"
-                    "(fs/list-files \"src\" true true false)"]
-         :on-error-fn rescue-path-args})
-      (ext/symbol 'grep-files grep-files
-        {:doc "Search files with RE2/J (linear-time regex, ReDoS-safe). Always returns structured maps. Respects .gitignore by default. Positional args only."
-         :arglists '([pattern] [pattern path] [pattern path limit] [pattern path limit hidden?] [pattern path limit hidden? respect-gitignore?])
-         :examples ["(fs/grep-files \"TODO\")"
-                    "(fs/grep-files \"defn\" \"src\")"
-                    "(fs/grep-files \"defn|defmacro\" \"src\" 50)"
-                    "(fs/grep-files \"defn\" \"src\" 50 true)"
-                    "(fs/grep-files \"defn\" \"src\" 50 true false)"]
-         :on-error-fn rescue-grep-args})
-      (ext/symbol 'patch-file patch-file
-        {:doc "Patch an existing file. Preferred form is Codex-style SEARCH/REPLACE patch text; old 3-arg exact replacement remains supported. Use empty SEARCH to create a new file."
-         :arglists '([path patch-text] [path old-text new-text])
-         :examples ["(fs/patch-file \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
-                    "(fs/patch-file \"src/core.clj\" \"old code\" \"new code\")"
-                    "(fs/patch-file \"new-file.txt\" \"<<<<<<< SEARCH\n=======\nhello\n>>>>>>> REPLACE\")"]
-         :on-error-fn rescue-path-args})]}))
+     :ext/symbols editing-symbols}))
 
-(ext/register-global! editing-extension)
+(vis/register-global! editing-extension)

@@ -71,38 +71,47 @@
 
 ;;; ── Box drawing ────────────────────────────────────────────────────────────
 
+(defn- embed-in-bar
+  "Centre `label` in `bar` (a string of horizontal box characters) and
+   return the resulting string. `bar` length is unchanged. nil/blank
+   labels return the bar untouched."
+  [bar label]
+  (let [w (count bar)]
+    (if (and label (not (str/blank? label)) (<= (count label) w))
+      (let [start (max 0 (quot (- w (count label)) 2))
+            end   (min w (+ start (count label)))]
+        (str (subs bar 0 start) label (subs bar end)))
+      bar)))
+
 (defn- draw-box-border!
-  "Draw a single-line box border. Optionally center a hint string in the top edge."
-  [g box-top box-bottom cols hint]
-  (let [inner-w (- cols 2)]
-    (.setForegroundColor g t/border-fg)
-    (.setBackgroundColor g t/terminal-bg)
+  "Draw a single-line box border. Optionally embed centered hint strings
+   on the top and/or bottom edges. Both edges accept independent strings
+   so a box can label its top hint (e.g. keybindings) AND its bottom hint
+   (e.g. live status) at the same time."
+  ([g box-top box-bottom cols top-hint]
+   (draw-box-border! g box-top box-bottom cols top-hint nil))
+  ([g box-top box-bottom cols top-hint bottom-hint]
+   (let [inner-w (- cols 2)
+         bar     (apply str (repeat inner-w Symbols/SINGLE_LINE_HORIZONTAL))]
+     (.setForegroundColor g t/border-fg)
+     (.setBackgroundColor g t/terminal-bg)
 
-    ;; Top: ┌── hint ──┐
-    (let [bar (apply str (repeat inner-w Symbols/SINGLE_LINE_HORIZONTAL))]
-      (if hint
-        (let [start (max 0 (quot (- inner-w (count hint)) 2))
-              end   (min inner-w (+ start (count hint)))
-              inner (str (subs bar 0 start) hint (subs bar end))]
-          (.setCharacter g 0 box-top Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-          (.putString g 1 box-top inner)
-          (.setCharacter g (dec cols) box-top Symbols/SINGLE_LINE_TOP_RIGHT_CORNER))
-        (do
-          (.setCharacter g 0 box-top Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-          (.putString g 1 box-top bar)
-          (.setCharacter g (dec cols) box-top Symbols/SINGLE_LINE_TOP_RIGHT_CORNER))))
+     ;; Top: ┌── top-hint ──┐
+     (.setCharacter g 0 box-top Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+     (.putString g 1 box-top (embed-in-bar bar top-hint))
+     (.setCharacter g (dec cols) box-top Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
 
-    ;; Bottom: └──────┘
-    (.setCharacter g 0 box-bottom Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-    (.putString g 1 box-bottom (apply str (repeat inner-w Symbols/SINGLE_LINE_HORIZONTAL)))
-    (.setCharacter g (dec cols) box-bottom Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+     ;; Bottom: └── bottom-hint ──┘
+     (.setCharacter g 0 box-bottom Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+     (.putString g 1 box-bottom (embed-in-bar bar bottom-hint))
+     (.setCharacter g (dec cols) box-bottom Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
 
-    ;; Sides: │ ... │
-    (doseq [row (range (inc box-top) box-bottom)]
-      (.setForegroundColor g t/border-fg)
-      (.setBackgroundColor g t/terminal-bg)
-      (.setCharacter g 0 row Symbols/SINGLE_LINE_VERTICAL)
-      (.setCharacter g (dec cols) row Symbols/SINGLE_LINE_VERTICAL))))
+     ;; Sides: │ ... │
+     (doseq [row (range (inc box-top) box-bottom)]
+       (.setForegroundColor g t/border-fg)
+       (.setBackgroundColor g t/terminal-bg)
+       (.setCharacter g 0 row Symbols/SINGLE_LINE_VERTICAL)
+       (.setCharacter g (dec cols) row Symbols/SINGLE_LINE_VERTICAL)))))
 
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
@@ -126,7 +135,7 @@
         offset     (min scroll (max 0 (- total inner-rows)))
         visible    (subvec messages offset (min total (+ offset inner-rows)))]
 
-    (draw-box-border! g box-top box-bottom cols " messages ")
+    (draw-box-border! g box-top box-bottom cols "")
     (fill-box-interior! g box-top box-bottom cols)
 
     (doseq [[i msg] (map-indexed vector visible)]
@@ -141,14 +150,21 @@
 (def ^:private input-pad-x 2)  ;; internal horizontal padding (cols left/right of text)
 
 (defn draw-input-box!
-  "Draw bordered input area with internal padding. Returns [cursor-col cursor-row] in screen coords."
-  [g {:keys [lines crow ccol]} box-top text-rows cols hint]
+  "Draw bordered input area with internal padding. Returns
+   [cursor-col cursor-row] in screen coords.
+
+   `hint` is the keybinding strip on the TOP border (existing behavior).
+   `status` is an optional one-line live status (model, context window,
+   tokens used) embedded in the BOTTOM border."
+  ([g input box-top text-rows cols hint]
+   (draw-input-box! g input box-top text-rows cols hint nil))
+  ([g {:keys [lines crow ccol]} box-top text-rows cols hint status]
   (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
         text-top   (+ (inc box-top) input-pad-y)
         text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
         h-scroll   (max 0 (- ccol (dec text-w)))]
-    (draw-box-border! g box-top box-bottom cols hint)
+    (draw-box-border! g box-top box-bottom cols hint status)
     (fill-box-interior! g box-top box-bottom cols)
 
     ;; Text
@@ -166,7 +182,7 @@
 
     ;; Cursor position
     [(+ input-pad-x (- ccol h-scroll))
-     (+ text-top (- crow v-scroll))]))
+     (+ text-top (- crow v-scroll))])))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
 
@@ -561,6 +577,35 @@
   ([s] (str/upper-case (str s)))
   ([s n] (str (str/upper-case (str s)) " " n)))
 
+(defn- error-signature
+  "Stable comparison key for two trace `:error` maps. Returns nil for
+   non-error iterations (so they never collapse)."
+  [entry]
+  (when-let [err (:error entry)]
+    [(:type err) (:message err) (get-in err [:data :raw-data])]))
+
+(defn- collapse-repeated-error-runs
+  "Walk an iterations vec; collapse runs of consecutive iterations that
+   share the same error signature into one rendered block carrying a
+   `:repeat-count`. Non-error iterations pass through unchanged with
+   `:repeat-count 1`.
+
+   Returns a vec of `[orig-idx entry]` pairs (mirroring the input order
+   of `map-indexed`) so callers can keep using `(inc orig-idx)` as the
+   visible iteration number while skipping the duplicates."
+  [iterations]
+  (loop [acc [] i 0 remaining (vec iterations)]
+    (if (empty? remaining)
+      acc
+      (let [head (first remaining)
+            sig  (error-signature head)
+            run  (if (nil? sig)
+                   1
+                   (count (take-while #(= sig (error-signature %)) remaining)))]
+        (recur (conj acc [i (assoc head :repeat-count run)])
+          (+ i run)
+          (subvec remaining run))))))
+
 (defn- format-iteration-entry
   "Format one iteration's thinking + code + results + stdout into display lines.
    Each line is prefixed with an invisible marker so draw-chat-bubble! can
@@ -573,8 +618,13 @@
       :results   [str ...]        ;; per-expression result strings
       :stdouts   [str ...]        ;; per-expression stdout
       :durations [int ...]        ;; per-expression ms
-      :successes [bool ...]}      ;; per-expression success? (nil = unknown / streaming)"
-  [{:keys [thinking code results stdouts durations successes]} code-width iter-num]
+      :successes [bool ...]      ;; per-expression success? (nil = unknown / streaming)
+      :error     {:type kw :message str :data {:raw-data str :received-type str}}}
+                                  ;; iteration-level error (LLM call/spec failure).
+                                  ;; Rendered in red so the user sees the actual
+                                  ;; provider response (e.g. an HTTP plain-text
+                                  ;; auth rejection) instead of just an empty bubble."
+  [{:keys [thinking code results stdouts durations successes error repeat-count]} code-width iter-num]
   (let [;; All marker-prefixed lines must have visible content ≤ (dec code-width)
         ;; because wrap-text in draw-chat-bubble! wraps at code-width and the
         ;; invisible 1-char marker prefix counts toward string length.
@@ -590,6 +640,46 @@
           (let [lines (mapv #(str thinking-marker %)
                         (wrap-text (str/trim thinking) fill-w))]
             (vec (concat [(str thinking-marker "")] lines [(str thinking-marker "")]))))
+
+        ;; Iteration-level error block. Header + wrapper message + raw
+        ;; provider response (when the spec layer captured one). Same
+        ;; red styling as a failed code block so it reads as \"this iter
+        ;; ate it\" at a glance.
+        ;;
+        ;; `:repeat-count` (set by collapse-repeated-error-runs) marks
+        ;; how many consecutive iterations produced this exact error.
+        ;; When >1 the sub-header gets a \"× N\" badge so we don't repeat
+        ;; the same multi-line block over and over.
+        error-lines
+        (when (map? error)
+          (let [repeat-count (max 1 (long (or repeat-count 1)))
+                badge        (when (> repeat-count 1) (str "  × " repeat-count))
+                hdr-label    (str (label-text "error") (or badge ""))
+                hdr-pad      (max 0 (- fill-w (count hdr-label) 1))
+                hdr-line     (str iter-hdr-marker (apply str (repeat hdr-pad \space)) hdr-label " ")
+                msg          (or (:message error) (str (:type error)) "unknown error")
+                raw          (some-> (get-in error [:data :raw-data]) str str/trim)
+                recv         (get-in error [:data :received-type])
+                msg-wrapped  (wrap-text (str "✘ " msg) (max 1 (- fill-w 2)))
+                msg-rows     (mapv #(str err-result-marker "  " %) msg-wrapped)
+                raw-rows     (when (and raw (not (str/blank? raw)))
+                               (let [hdr (str "provider returned"
+                                           (when recv (str " (" recv ")"))
+                                           ":")
+                                     raw-trim (if (> (count raw) 600) (str (subs raw 0 600) "…") raw)
+                                     body-lines (mapv #(str err-result-marker "  " %)
+                                                  (wrap-text raw-trim (max 1 (- fill-w 2))))]
+                                 (into [(str err-result-marker "  " hdr)] body-lines)))]
+            (vec (concat
+                   ;; Top margin so the ERROR sub-header doesn't sit
+                   ;; flush against the ITERATION header.
+                   [(str iter-pad-marker "")]
+                   [hdr-line]
+                   [(str code-err-pad-marker "")]
+                   msg-rows
+                   (when (seq raw-rows) [(str code-err-pad-marker "")])
+                   (or raw-rows [])
+                   [(str code-err-pad-marker "")]))))
 
         code+result-lines
         (when (seq code)
@@ -673,7 +763,32 @@
                          code+result-lines
                          [(str iter-pad-marker "")]))) ;; group bottom
         ]
-    (into (vec (concat header thinking-lines)) grouped)))
+    (into (vec (concat header thinking-lines error-lines)) grouped)))
+
+(defn- live-status-line
+  "Compose a one-line live status describing what the agent is currently
+   doing: sending the request, thinking, executing code, or recovering
+   from an iteration error. Always ends with the elapsed wall-clock time
+   and a cancel hint."
+  [{:keys [iterations cancelling? query-start-ms]}]
+  (let [elapsed-ms  (when query-start-ms
+                      (max 0 (- (System/currentTimeMillis) query-start-ms)))
+        elapsed-str (or (channels/format-duration elapsed-ms) "0ms")
+        n           (count iterations)
+        last-iter   (last iterations)
+        errored?    (some? (:error last-iter))
+        thinking?   (and (not errored?)
+                      (some? (:thinking last-iter))
+                      (not (str/blank? (:thinking last-iter))))
+        executing?  (and (not errored?) last-iter (seq (:code last-iter)))
+        phase       (cond
+                      cancelling? "cancelling"
+                      errored?    (str "iter " n " failed — retrying")
+                      (zero? n)   "sending request to provider"
+                      thinking?   (str "thinking (iter " n ")")
+                      executing?  (str "executing code (iter " n ")")
+                      :else       (str "working (iter " n ")"))]
+    (str phase "… " elapsed-str " · Esc to cancel")))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -682,35 +797,38 @@
    `bubble-w` is the outer bubble width in chars — we size inner content
    conservatively so wrap-text inside draw-chat-bubble! doesn't blow up.
    `settings` is the display settings map: `{:show-thinking bool :show-iterations bool}`.
+   `extra` (optional) carries:
+     :query-start-ms — wall-clock start for elapsed time
+     :cancelling?    — true once Esc was pressed
    Returns a single string with newlines separating lines.
 
-   Returns the literal \"...\" string when the progress timeline is
-   empty, so the placeholder still shows *something* in the first 100ms
-   before the first chunk arrives."
-  [progress bubble-w settings]
-  (let [iterations (:iterations progress)
-        content-w  (max 10 (- bubble-w 4))
-        show-thinking?  (get settings :show-thinking true)
-        show-iterations? (get settings :show-iterations true)]
-    (if (empty? iterations)
-      "..."
-      (if-not show-iterations?
-        ;; When iterations hidden, just show a compact status line
-        (let [n (count iterations)
-              last-iter (last iterations)
-              thinking? (and show-thinking?
-                          (some? (:thinking last-iter))
-                          (not (str/blank? (:thinking last-iter))))]
-          (if thinking?
-            (str "thinking... (iter " n ")")
-            (str "working... (iter " n ")")))
-        (str/join "\n"
-          (into []
-            (mapcat (fn [[idx entry]]
-                      (format-iteration-entry
-                        (if show-thinking? entry (dissoc entry :thinking))
-                        content-w (inc idx))))
-            (map-indexed vector iterations)))))))
+   Always emits a top status line so the user knows whether we're
+   sending the request, thinking, executing, or cancelling — and how
+   long it's been running."
+  ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
+  ([progress bubble-w settings extra]
+   (let [iterations       (:iterations progress)
+         content-w        (max 10 (- bubble-w 4))
+         show-thinking?   (get settings :show-thinking true)
+         show-iterations? (get settings :show-iterations true)
+         status-line      (live-status-line (assoc extra :iterations iterations))]
+     (cond
+       ;; No iterations yet — first 100ms before any chunk arrives.
+       (empty? iterations)
+       status-line
+
+       ;; Iterations hidden — keep it to a single compact line.
+       (not show-iterations?)
+       status-line
+
+       :else
+       (str/join "\n"
+         (into [status-line ""]
+           (mapcat (fn [[idx entry]]
+                     (format-iteration-entry
+                       (if show-thinking? entry (dissoc entry :thinking))
+                       content-w (inc idx))))
+           (collapse-repeated-error-runs iterations)))))))
 
 (defn- markdown->lines
   "Parse markdown text into marker-prefixed lines for styled rendering.
@@ -805,7 +923,7 @@
                                    (format-iteration-entry
                                      (if show-thinking? entry (dissoc entry :thinking))
                                      content-w (inc idx))))
-                         (map-indexed vector trace)))
+                         (collapse-repeated-error-runs trace)))
          answer-str  (or answer "")
          ;; Right-aligned "FINAL ANSWER" header with confidence
          fa-label    (label-text "final answer")
@@ -861,7 +979,7 @@
      (draw-box-border! g box-top box-bottom cols
        (if title
          (str " " (subs title 0 (min (count title) (- cols 6))) " ")
-         " messages "))
+         ""))
      (fill-box-interior! g box-top box-bottom cols)
 
      (let [clip (.newTextGraphics g

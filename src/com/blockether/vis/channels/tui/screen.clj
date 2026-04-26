@@ -1,14 +1,16 @@
 (ns com.blockether.vis.channels.tui.screen
   (:require [clojure.string :as str]
+            [com.blockether.svar.internal.router :as router]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.chat :as chat]
-            [com.blockether.vis.config :as config]
-            [com.blockether.vis.channels.tui.dialogs :as dlg]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.provider :as provider]
             [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.channels.tui.state :as state]
-            [com.blockether.vis.loop.runtime.conversation.core :as conversations])
+            [com.blockether.vis.config :as config]
+            [com.blockether.vis.channels.tui.dialogs :as dlg]
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
@@ -16,7 +18,129 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint " Enter send · Alt+Enter newline · ↑↓ scroll · Ctrl+P/N history · Ctrl+K commands ")
+(def ^:private hint-idle " Enter send · Alt+Enter newline · ↑↓ scroll · Ctrl+P/N history · Ctrl+K commands ")
+(def ^:private hint-loading " Esc cancel · ↑↓ scroll · Ctrl+C quit ")
+(def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
+
+(defn- current-hint [{:keys [loading? cancelling?]}]
+  (cond
+    cancelling? hint-cancelling
+    loading?    hint-loading
+    :else       hint-idle))
+
+(def ^:private default-reasoning-level
+  "Mirrors `query/core.clj`'s `balanced-reasoning` constant. The TUI
+   doesn't expose a per-conversation override yet, so this is the level
+   every new turn runs at when the model supports reasoning."
+  :balanced)
+
+(defn- chosen-model-info
+  "Resolved model map for the configured root model, or nil. Carries
+   `:name`, `:reasoning?`, and the rest of svar's normalized model
+   metadata, so the status line can render reasoning support without
+   reaching into config shape directly."
+  []
+  (when-let [r (try (query-core/get-router) (catch Throwable _ nil))]
+    (try (query-core/resolve-effective-model r) (catch Throwable _ nil))))
+
+(defn- format-token-count
+  "e.g. 12345 → \"12.3k\"; 999 → \"999\"; nil/0 → nil."
+  [n]
+  (when (and (number? n) (pos? n))
+    (cond
+      (>= n 1000000) (format "%.1fM" (/ n 1e6))
+      (>= n 1000)    (format "%.1fk" (/ n 1e3))
+      :else          (str (long n)))))
+
+(defn- last-assistant-tokens
+  "Token map `{:input n :output n}` of the most recent finalized
+   assistant message, or nil if none."
+  [messages]
+  (some->> (reverse messages)
+    (some (fn [m] (when (and (= :assistant (:role m)) (:tokens m)) (:tokens m))))))
+
+(defn- estimate-next-context-chars
+  "Approximate next-iteration context size = char-count of all chat
+   messages so far. Crude (no tokenizer here), but useful as a rough
+   indicator while a turn is in flight."
+  ^long [messages]
+  (long (reduce + 0
+          (keep (fn [m]
+                  (let [t (:text m)]
+                    (when (string? t) (count t))))
+            messages))))
+
+(defn- format-ctx-segment
+  "\"12.3k/128k (10%)\" / \"128k\" / nil. `used` and `max-tokens` are
+   raw token counts (longs)."
+  [used max-tokens]
+  (let [used-str (format-token-count used)
+        max-str  (format-token-count max-tokens)]
+    (cond
+      (and used-str max-str (pos? max-tokens))
+      (let [pct (long (Math/round (* 100.0 (/ (double used) (double max-tokens)))))]
+        (str used-str "/" max-str " (" pct "%)"))
+
+      max-str max-str
+      :else   nil)))
+
+(defn- input-status-line
+  "Build the live one-line status embedded in the bottom border of the
+   input box.
+
+   Always names the chosen model + how full the context window will be
+   for the next query (estimate while loading, last turn's actual
+   `:input` tokens once a turn finishes). Adds the default reasoning
+   level when the model exposes reasoning support.
+
+   `inner-w` is the available width of the border (cols - 2). The
+   status string fits within that budget by dropping optional segments
+   (least-important first) when too wide. Returns nil if no info is
+   available yet (no provider configured).
+
+   Output is bracketed with single spaces so it doesn't touch the
+   horizontal border characters."
+  [{:keys [messages loading?]} inner-w]
+  (let [info        (chosen-model-info)
+        model       (:name info)
+        reasoning?  (boolean (:reasoning? info))
+        ctx-max     (when model
+                      (try (router/context-limit model) (catch Throwable _ nil)))
+        ;; Estimated next-query input tokens. Priority order:
+        ;;   1) prior turn's actual :input tokens  (most accurate)
+        ;;   2) ~4 chars/token over current chat   (fallback first turn)
+        ;; The estimate is what svar will most likely send for the
+        ;; *next* request, so labelling it "next" is honest.
+        last-tok    (last-assistant-tokens messages)
+        next-tok    (or (:input last-tok)
+                      (let [chars (estimate-next-context-chars messages)]
+                        (when (pos? chars) (long (/ chars 4)))))
+        ctx-segment (format-ctx-segment next-tok ctx-max)
+        ;; Last turn's output (only meaningful between turns, not while
+        ;; the next one is in flight).
+        out-str     (format-token-count (:output last-tok))
+        ;; Default reasoning level only shows when the model actually
+        ;; supports reasoning — otherwise it's misleading noise.
+        reasoning-segment (when reasoning?
+                            (str "reasoning: " (name default-reasoning-level)))
+        ;; Segments in priority order: model first, ctx utilization,
+        ;; reasoning, then last turn's output for context. The shrink
+        ;; loop drops from the tail when the line gets too wide.
+        segments (cond-> []
+                   model             (conj (str "model: " model))
+                   ctx-segment       (conj (str "ctx: " ctx-segment))
+                   reasoning-segment (conj reasoning-segment)
+                   (and (not loading?) out-str)
+                   (conj (str "last out: " out-str)))
+        budget   (max 0 (- inner-w 2))]
+    (loop [parts segments]
+      (cond
+        (empty? parts) nil
+        :else
+        (let [s (str " " (str/join "  ·  " parts) " ")]
+          (if (<= (count s) budget)
+            s
+            (recur (vec (butlast parts)))))))))
 
 (defn- with-dialog-lock
   [f]
@@ -40,8 +164,11 @@
 (defn- apply-settings
   "Project messages for display: apply settings to all assistant messages
    that carry a :trace, and replace the live placeholder with progress text.
-   This runs every frame so toggling settings is immediately reactive."
-  [messages progress loading? bubble-w settings]
+   This runs every frame so toggling settings is immediately reactive.
+
+   `progress-extra` is forwarded to `render/progress->text` so the live
+   status line can show elapsed time and a cancelling marker."
+  [messages progress loading? bubble-w settings progress-extra]
   (let [;; Apply trace→text projection and markdown to assistant messages
         projected (mapv (fn [msg]
                           (cond
@@ -64,7 +191,7 @@
             last-msg (get projected last-idx)]
         (if (= :assistant (:role last-msg))
           (assoc projected last-idx
-            (assoc last-msg :text (render/progress->text progress bubble-w settings)))
+            (assoc last-msg :text (render/progress->text progress bubble-w settings progress-extra)))
           projected))
       projected)))
 
@@ -74,19 +201,36 @@
   (let [n (count lines)]
     (min input-max-lines (max input-min-lines n))))
 
+(defn- short-id
+  [id]
+  (when-let [s (some-> id str)]
+    (subs s 0 (min 8 (count s)))))
+
 (defn- render-frame!
-  "Draw one frame: background, messages area (bubbles), input box."
-  [screen g cols rows {:keys [messages msg-scroll input progress loading? title settings]}]
+  "Draw one frame: background, messages area (bubbles), input box.
+   The input box's top border carries keybinding hints and the bottom
+   border carries the live model/context status line."
+  [screen g cols rows {:keys [messages msg-scroll input progress loading? cancelling?
+                              query-start-ms title settings conv] :as db}]
   (let [text-rows   (input-text-rows input)
         input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         input-top   (- rows input-box-h)
         msg-top     0
         msg-bottom  input-top
         bubble-w    (- cols 4)
-        effective-messages (apply-settings messages progress loading? bubble-w settings)]
+        progress-extra {:query-start-ms query-start-ms
+                        :cancelling?    (boolean cancelling?)}
+        effective-messages (apply-settings messages progress loading? bubble-w settings progress-extra)
+        sid         (short-id (get conv :id))
+        display-title (when-not (str/blank? title)
+                        (if sid
+                          (str title " · " sid)
+                          title))
+        status-line (input-status-line db (max 0 (- cols 2)))]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title title})
-    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols hint)]
+    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll {:title display-title})
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
+                    (current-hint db) status-line)]
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (.refresh screen Screen$RefreshType/DELTA)))
 
@@ -131,24 +275,12 @@
                         (chat/make-conversation config))
                     (chat/make-conversation config))
                   (chat/make-conversation config)))
-              ;; Set title from DB if resuming, else nil (auto-set on first turn)
+              ;; Set title from DB if present; do not synthesize from messages.
               conv-info (when-let [c (conversations/by-id id)] c)
-              db-title  (when conv-info (:title conv-info))
-              ;; Backfill title from first user message if conversation has
-              ;; history but no persisted title (pre-title-feature conversations).
-              title     (or (when-not (str/blank? db-title) db-title)
-                            (when-let [first-user (->> history
-                                                    (filter #(= :user (:role %)))
-                                                    first
-                                                    :text)]
-                              (when-not (str/blank? first-user)
-                                (let [t (subs first-user 0 (min (count first-user) 80))]
-                                  (future
-                                    (try (conversations/set-title! id t)
-                                      (catch Throwable _ nil)))
-                                  t))))]
+              title     (when-let [t (some-> conv-info :title)]
+                          (when-not (str/blank? t) t))]
           (state/dispatch [:init-conversation {:id id} history])
-          (when (and title (not (str/blank? title)))
+          (when title
             (state/dispatch [:set-title title]))
           (channels/register-conversation-shutdown-hook! id)))
 
@@ -165,7 +297,9 @@
               ;; progress placeholder — otherwise mid-stream the bubble
               ;; grows off-screen and the user can't scroll down to it.
               displayed-messages (apply-settings
-                                   (:messages db) (:progress db) (:loading? db) bubble-w (:settings db))
+                                   (:messages db) (:progress db) (:loading? db) bubble-w (:settings db)
+                                   {:query-start-ms (:query-start-ms db)
+                                    :cancelling?    (boolean (:cancelling? db))})
               total-h  (render/total-messages-height displayed-messages bubble-w)]
 
           (render-frame! screen g cols rows db)
@@ -181,38 +315,28 @@
                       (fn [cmd]
                         (when-not (:dialog-open? @state/app-db)
                           (case cmd
-                            :provider
+                            :configure-provider
                             (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                               (state/dispatch [:set-config c]))
 
                             :copy
                             (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
 
-                            :settings
+                            :toggles
                             (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
                               (state/dispatch [:update-settings s]))
 
                             :system-prompt
                             (with-dialog-lock
                               #(let [conv-id (get-in @state/app-db [:conv :id])
-                                     msgs    (:messages @state/app-db)
-                                     last-asst (->> msgs reverse
-                                                 (filter (fn [m] (= :assistant (:role m))))
-                                                 first)
-                                     prompt  (cond
-                                               (and conv-id (:query-id last-asst))
-                                               (or (conversations/effective-system-prompt-for-query conv-id (:query-id last-asst))
-                                                 "(no system prompt)")
-
-                                               conv-id
+                                     prompt  (if conv-id
                                                (or (conversations/effective-system-prompt conv-id)
                                                  "(no system prompt)")
-
-                                               :else
                                                "(no conversation)")]
-                                 (dlg/text-viewer-dialog! screen "System Prompt" prompt)))
+                                 (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
 
-                            :quit nil  ;; handled separately
+                            ;; No :quit branch — the palette has no Quit
+                            ;; entry; Ctrl+C is the only quit path.
                             nil)))]
                   (case action
                   :quit nil
@@ -221,10 +345,8 @@
                   (if (:dialog-open? @state/app-db)
                     (recur)
                     (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
-                      (if (= cmd :quit)
-                        nil
-                        (do (when cmd (run-command! cmd))
-                          (recur)))))
+                      (when cmd (run-command! cmd))
+                      (recur)))
 
 
                   :history-up
@@ -242,6 +364,11 @@
                             (:conv @state/app-db)
                             (not (:loading? @state/app-db)))
                       (state/dispatch [:send-message text]))
+                    (recur))
+
+                  :cancel
+                  (do (when (:loading? @state/app-db)
+                        (state/dispatch [:cancel-query]))
                     (recur))
 
                   :scroll-up

@@ -1,6 +1,11 @@
 # Extension System
 
 > **Namespace:** `com.blockether.vis.loop.runtime.conversation.environment.extension`
+>
+> **Public facade:** `com.blockether.vis.core` re-exports the extension
+> constructors/registry helpers (`extension`, `symbol`, `value`,
+> `render-extension-prompt`, `register-extension!`, etc.) so extension
+> authors do not need to require the deep runtime namespace directly.
 
 Extensions are the **only** way to add symbols, classes, and documentation
 to the SCI sandbox. An extension is a namespace-like bundle that groups
@@ -127,7 +132,7 @@ flowchart TD
 3. **Topo-sort** - order by `:ext/requires` dependencies
 4. **Dependencies** - all required extensions must be registered
 5. **Install** - bind symbols into aliased SCI namespace, auto-require alias in sandbox
-6. **Prompt** - append `[namespace: alias → ns]` header + `:ext/prompt` to system prompt
+6. **Prompt** - auto-render canonical symbol docs, prepend `[namespace: alias → ns]`, then append optional `:ext/prompt`
 7. **Activation** - per-query `activation-fn` check
 8. **Nudge** - per-iteration `nudge-fn` called
 9. **Hooks** - per-call `before-fn`, `fn`, `after-fn`, `on-error-fn`
@@ -169,9 +174,17 @@ exposes `java.time.LocalDate`.
 
 ## Prompt Injection
 
-Every active extension's `:ext/prompt` is appended to the **system
+Every active extension contributes a prompt block to the **system
 prompt** at the start of each query. This is how the LLM knows which
 tools are available in the sandbox.
+
+The canonical tool section is rendered automatically inside the loop
+from the extension's `:ext/doc`, `:ext/ns-alias`, and `:ext/symbols`
+metadata. `:ext/prompt` is only the optional extra tail appended after
+that canonical block.
+
+Use `ext/render-prompt` (or `vis/render-extension-prompt`) when you want
+to preview how the canonical block will look.
 
 `loop-core/assemble-system-prompt` is the **single function** that
 builds the complete system message. It:
@@ -179,9 +192,10 @@ builds the complete system message. It:
 1. Builds the core system prompt (`CORE_SYSTEM_PROMPT` + date +
    environment block + optional caller instructions)
 2. Collects extension prompts: for each extension where
-   `(:ext/activation-fn ext) environment` is truthy,
-   `(:ext/prompt ext) environment` is called
-3. Joins all active prompts with `\n\n` and appends to the core prompt
+   `(:ext/activation-fn ext) environment` is truthy, it renders the
+   canonical symbol-derived block and then evaluates `(:ext/prompt ext)`
+   when present
+3. Joins all active prompt blocks with `\n\n` and appends to the core prompt
 
 Both iteration loop paths (`loop/core.clj` and `query/core.clj`) and
 the TUI `[?]` inspector (`conversation/core.clj :: effective-system-prompt`)
@@ -195,33 +209,36 @@ the query still runs.
 
 ```clojure
 (ns com.acme.ext.search
-  (:require [c.b.vis.loop.runtime.conversation.environment.extension :as ext]))
+  (:require [com.blockether.vis.core :as vis]))
 
 (defn- search-fn [query] ...)
 
+(def find-symbol
+  (vis/symbol 'find search-fn
+    {:doc      "Full-text search."
+     :arglists '([query])
+     :examples ["(search/find \"neural\")"]}))
+
 (def search-ext
-  (ext/extension
+  (vis/extension
     {:ext/namespace     'com.acme.ext.search
      :ext/doc           "Document search"
      :ext/group         "knowledge"
      :ext/ns-alias      {:ns 'vis.ext.search :alias 'search}
-     :ext/prompt        "Document search tools (use search/ prefix):
-- (search/find query) - full-text search across documents"
-     :ext/symbols       [(ext/symbol 'find search-fn
-                           {:doc      "Full-text search."
-                            :arglists '([query])
-                            :examples ["(search/find \"neural\")"]})]}))
+     :ext/prompt        "Prefer search before manual file scans."
+     :ext/symbols       [find-symbol]}))
 
 ;; Self-register at load time
-(ext/register-global! search-ext)
+(vis/register-global! search-ext)
 ```
 
 The LLM sees in the system prompt:
 
 ```
 [namespace: search → vis.ext.search]
-Document search tools (use search/ prefix):
-- (search/find query) - full-text search across documents
+Document search (use search/ prefix)
+- (search/find query) — Full-text search.
+Prefer search before manual file scans.
 ```
 
 And calls `(search/find "neural")` from `:code` blocks. Bare

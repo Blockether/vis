@@ -150,8 +150,11 @@
   [key state]
   (let [ktype (.getKeyType key)]
     (condp = ktype
+      ;; Esc — the screen loop turns this into a cancel when a query is
+      ;; in flight; otherwise it's a no-op (no dialog is open here, the
+      ;; dialog code intercepts Esc itself).
       KeyType/Escape
-      {:action :continue :state state}
+      {:action :cancel :state state}
 
       KeyType/Character
       (let [c    (.getCharacter key)

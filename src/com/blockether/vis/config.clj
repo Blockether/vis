@@ -100,10 +100,12 @@
 ;;; ── Provider presets ────────────────────────────────────────────────────
 
 (def ^:private base-providers
-  [{:id :anthropic  :label "Anthropic"  :base-url "https://api.anthropic.com/v1"
-    :default-models ["claude-sonnet-4-20250514" "claude-3-5-sonnet-20241022" "claude-3-5-haiku-20241022"
-                     "claude-3-opus-20240229"]}
-   {:id :openai     :label "OpenAI"     :base-url "https://api.openai.com/v1"
+  ;; Anthropic preset deliberately removed — the Blockether gateway
+  ;; rejects Claude requests with a plaintext \"no access\" response
+  ;; that pretends to be a 200 OK, and we don't want any model picker
+  ;; to surface Claude until that's fixed gateway-side. Same reason for
+  ;; the Claude entries dropped from the other presets below.
+  [{:id :openai     :label "OpenAI"     :base-url "https://api.openai.com/v1"
     :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini" "gpt-4-turbo" "gpt-4"]}
    {:id :github-models :label "GitHub Models" :base-url "https://models.github.ai/inference"
     :default-models ["openai/gpt-4o" "openai/gpt-4o-mini" "openai/o3-mini"
@@ -111,10 +113,9 @@
                      "deepseek/DeepSeek-R1" "mistralai/mistral-small-2503"]}
    {:id :github-copilot :label "GitHub Copilot" :base-url "https://api.githubcopilot.com"
     :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini"
-                     "claude-sonnet-4-20250514" "claude-3.5-sonnet"
                      "gemini-2.0-flash-001"]}
    {:id :openrouter :label "OpenRouter" :base-url "https://openrouter.ai/api/v1"
-    :default-models ["openai/gpt-4o" "anthropic/claude-sonnet-4-20250514" "google/gemini-2.0-flash-001"
+    :default-models ["openai/gpt-4o" "google/gemini-2.0-flash-001"
                      "meta-llama/llama-3.1-70b-instruct"]}
    {:id :ollama     :label "Ollama"     :base-url "http://localhost:11434/v1"
     :default-models ["llama3.1" "mistral" "codellama" "phi3"]}])
@@ -129,8 +130,12 @@
        :label "Blockether"
        :base-url be-url
        :api-key be-key
+        ;; Claude entries deliberately removed — the Blockether gateway
+        ;; returns a plaintext auth-rejection on a 200 OK for those
+        ;; models, which svar's spec layer correctly classifies as
+        ;; `not-a-map` and the iteration loop has nowhere to go from
+        ;; there. Reinstate only after the gateway side is fixed.
         :default-models ["glm-5-turbo" "glm-5.1" "gpt-5-mini" "gpt-4o"
-                         "claude-sonnet-4-6" "claude-opus-4-6"
                          "minimax-m2.5" "gemini-2.5-pro"]})))
 
 (defn provider-presets
