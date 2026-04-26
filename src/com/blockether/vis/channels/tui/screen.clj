@@ -108,10 +108,10 @@
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)
-    ;; Do NOT capture mouse in the main chat screen.
-    ;; Native terminal text selection/copy is more important than
-    ;; clickable widgets here. Use the command palette / keyboard for
-    ;; inspect/copy actions.
+    ;; Disable mouse capture so the terminal handles scroll natively.
+    ;; Without this, Lanterna intercepts mouse wheel events and the
+    ;; terminal never sees them — scroll doesn't work.
+    (.setMouseCaptureMode terminal nil)
     (try
       ;; Show provider dialog on first launch if no config
       (when-not (:config @state/app-db)
@@ -265,9 +265,4 @@
       (finally
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
-        ;; Disable SGR mouse ext before resetting mouse mode.
-        (let [^java.io.OutputStream out @config/tty-out]
-          (.write out (.getBytes "\u001b[?1006l"))
-          (.flush out))
-        (.setMouseCaptureMode terminal nil)
         (.stopScreen screen))))))
