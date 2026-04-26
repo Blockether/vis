@@ -73,13 +73,16 @@
                         "packages/vis-core/test"
                         "packages/vis-commandline/test"
                         "packages/vis-extension/test"
-                        "packages/vis-persistance-sqlite/test"]
-          :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                        "packages/vis-persistance-sqlite/test"
+                        "extensions/editing/test"]
+          :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+                       com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
           :main-opts  ["-m" "lazytest.main"
                        "--dir" "test"
                        "--dir" "packages/vis-core/test"
                        "--dir" "packages/vis-commandline/test"
-                       "--dir" "packages/vis-extension/test"]}
+                       "--dir" "packages/vis-extension/test"
+                       "--dir" "extensions/editing/test"]}
 
   :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "packages/vis-benchmark"}}
           :jvm-opts    ["-Xmx8g"]

@@ -369,6 +369,25 @@
     (.start t)
     t))
 
+(defn- format-conversation-not-found
+  "Build a friendly multi-line message for `--conversation-id` misses,
+   listing the most recent :vis conversations so the user has
+   something to copy-paste."
+  [cid]
+  (let [available (try (vec (take 10 (conversations/by-channel :vis)))
+                    (catch Throwable _ []))
+        line (fn [c]
+               (let [id-str (str (:id c))
+                     id8    (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
+                     title  (let [t (:title c)] (when-not (str/blank? t) t))]
+                 (str "  " id8 "  " (or title "(untitled)"))))]
+    (str "Conversation not found: " cid
+      (if (seq available)
+        (str "\n\nAvailable :vis conversations (most recent first):\n"
+          (str/join "\n" (map line available))
+          "\n\nUse the 8-char prefix or full UUID with --conversation-id.")
+        "\n\nNo :vis conversations exist yet — run `vis channels tui` without --conversation-id first."))))
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -376,6 +395,16 @@
      :resume          true        — resume the latest :vis conversation"
   ([] (run-chat! {}))
   ([opts]
+  ;; Validate --conversation-id BEFORE we boot Lanterna. A miss here
+  ;; used to crash mid-screen-startup with a stack trace; now it
+  ;; surfaces as a `:vis/user-error` and `channel-main` prints a
+  ;; clean, actionable message + exit code 2 (no trace, no torn-down
+  ;; terminal state).
+  (let [resumed-from-flag (when-let [cid (:conversation-id opts)]
+                            (or (chat/resume-conversation cid)
+                                (throw (ex-info (format-conversation-not-found cid)
+                                         {:vis/user-error true
+                                          :id             cid}))))]
   (state/init!)
 
   ;; Load persisted config
@@ -402,11 +431,12 @@
       (try (conversations/sweep-orphaned-running-queries!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
+      ;; The --conversation-id case was already validated above (before
+      ;; Lanterna started), so here we only need the pre-resolved value.
       (when-let [config (:config @state/app-db)]
         (let [{:keys [id history]}
-              (if-let [cid (:conversation-id opts)]
-                (or (chat/resume-conversation cid)
-                    (throw (ex-info (str "Conversation not found: " cid) {:id cid})))
+              (if (:conversation-id opts)
+                resumed-from-flag
                 (if (:resume opts)
                   ;; --resume: pick up the latest :vis conversation
                   (if-let [latest (first (conversations/by-channel :vis))]
@@ -523,7 +553,7 @@
           (try (.join ^Thread t 500) (catch Throwable _ nil)))
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
-        (.stopScreen screen))))))
+        (.stopScreen screen)))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
@@ -572,14 +602,26 @@
   [args]
   (redirect-stdio-to-log!)
   (config/init!)
-  (try
-    (run-chat! (parse-args args))
-    (catch Throwable t
-      (.println config/original-stdout (str "vis: fatal error — " (.getMessage t)))
-      (.printStackTrace t (java.io.PrintStream. @config/tty-out true))
-      (throw t))
-    (finally
-      (config/shutdown!))))
+  (let [exit-code (atom 0)]
+    (try
+      (run-chat! (parse-args args))
+      (catch Throwable t
+        (if (:vis/user-error (ex-data t))
+          ;; Caller-facing error: invalid flag value, missing
+          ;; conversation id, etc. Print the message clean and let the
+          ;; process exit non-zero — no Java stack trace, no rethrow
+          ;; (which would trigger clojure.main's auto-trace dump).
+          (do (.println config/original-stdout (str "vis: " (.getMessage t)))
+              (reset! exit-code 2))
+          ;; Genuine fatal: dump the trace to the terminal AND the log
+          ;; so we can post-mortem it.
+          (do (.println config/original-stdout (str "vis: fatal error — " (.getMessage t)))
+              (.printStackTrace t (java.io.PrintStream. @config/tty-out true))
+              (throw t))))
+      (finally
+        (config/shutdown!)))
+    (when (pos? @exit-code)
+      (System/exit @exit-code))))
 
 ;;; ── Channel registration (auto-discovered via META-INF/vis/channels.edn) ──
 

@@ -47,22 +47,82 @@
         {:fn f :args (vec (cons fixed-path (rest args)))})
       {:error err})))
 
+;; Regex meta characters that can be safely de-escaped (i.e. the LLM
+;; threw an unhelpful backslash in front of a literal that didn't need
+;; escaping in the first place). NOT included: alphanumeric escapes
+;; like \d, \w, \s, \b — those are real character classes in RE2/J
+;; and stripping them would break legitimate patterns.
+(def ^:private safe-deescape-meta-chars
+  #{\| \( \) \{ \} \[ \] \. \+ \* \? \^ \$ \- \/ \, \: \; \= \! \@ \#})
+
+(defn- strip-bad-escape
+  "Remove every occurrence of `\\X` from `pattern` where `X` is the
+   offending char reported by RE2/J's \"invalid escape sequence: `\\X`\"
+   message. Returns the fixed pattern, or nil if the offending escape
+   isn't safe to strip (e.g. `\\1` backreference, `\\q` typo for `\\d`).
+
+   Both the search pattern and the replacement go through
+   `java.util.regex.{Pattern,Matcher}/quote` so meta characters like
+   `$` or `(` don't get re-interpreted by `str/replace`."
+  [^String pattern ^Character bad-char]
+  (when (contains? safe-deescape-meta-chars bad-char)
+    (str/replace pattern
+      (re-pattern (str "\\\\" (java.util.regex.Pattern/quote (str bad-char))))
+      (java.util.regex.Matcher/quoteReplacement (str bad-char)))))
+
+(defn- extract-bad-escape-char
+  "Pull the offending char from RE2/J's \"invalid escape sequence: `\\X`\"
+   message. Returns the Character or nil."
+  [^String msg]
+  (when msg
+    (when-let [m (re-find #"invalid escape sequence: `\\(.)`" msg)]
+      (.charAt ^String (second m) 0))))
+
 (defn- rescue-grep-args
   "on-error-fn: rescue common grep mistakes — bad regex escapes and
-   absolute paths. Retries with fixed arguments."
-  [err _env f args]
-  (let [msg (ex-message err)]
-    (cond
-      ;; Bad escape like \| — SCI/edamame rejects it before we even see it,
-      ;; but if the pattern string arrives with literal backslash-pipe,
-      ;; RE2/J will reject it too. Strip the backslashes.
-      (and msg (str/includes? msg "Unsupported escape character"))
-      (let [fixed-pattern (str/replace (str (first args)) #"\\\\([|(){}\[\].+*?^$])" "$1")]
-        {:fn f :args (vec (cons fixed-pattern (rest args)))})
+   absolute paths. Retries with fixed arguments, or surfaces the
+   original error if nothing safe can be repaired.
 
-      ;; Absolute path in the second arg
-      (and msg (or (str/includes? msg "not a relative path")
-                   (str/includes? msg "Path escapes working directory")))
+   What this CAN fix:
+     - RE2/J errors of the form \"invalid escape sequence: `\\X`\" where
+       X is a non-alphanumeric punctuation char that the LLM
+       over-escaped (e.g. `\\|`, `\\(`, `\\.`, `\\$`). Those backslashes
+       are stripped and the call is retried with the cleaned pattern.
+     - Absolute paths in the optional `path` arg — rewritten relative
+       to CWD.
+
+   What this CANNOT fix (and intentionally re-throws):
+     - SCI/edamame parse errors (e.g. raw `\\|` in source code with no
+       string escape). Those happen at code-eval time BEFORE the tool
+       fn is ever invoked, so :on-error-fn never sees them. The
+       iteration loop surfaces the parse error to the LLM, which
+       self-corrects on the next turn.
+     - Real character-class typos like `\\q` (probably meant `\\d`) or
+       backreferences like `\\1`. Stripping the backslash would
+       silently change meaning, so we leave them alone."
+  [err _env f args]
+  (let [msg       (ex-message err)
+        data      (ex-data err)
+        ;; compile-safe-pattern wraps RE2/J's message in :error.
+        re2j-msg  (when data (some-> (:error data) str))
+        bad-char  (or (extract-bad-escape-char re2j-msg)
+                    (extract-bad-escape-char msg))
+        path-err? (some #(and % (or (str/includes? % "not a relative path")
+                                    (str/includes? % "Path escapes working directory")))
+                    [msg re2j-msg])]
+    (cond
+      ;; RE2/J told us exactly which escape it choked on. Try a
+      ;; conservative fix: strip the backslash only for known-safe
+      ;; punctuation. Anything else (letters, digits) gets surfaced.
+      bad-char
+      (if-let [fixed (strip-bad-escape (str (first args)) bad-char)]
+        (if (= fixed (str (first args)))
+          {:error err}
+          {:fn f :args (vec (cons fixed (rest args)))})
+        {:error err})
+
+      ;; Absolute path in the second arg.
+      path-err?
       (let [fixed-args (if (>= (count args) 2)
                          (vec (cons (first args)
                                 (cons (absolute->relative (str (second args)))
