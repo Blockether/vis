@@ -21,14 +21,17 @@ else is one function call away.
 
 ## Quick Links
 
+📖 **Full docs site:** <https://blockether.github.io/vis/>
+
 | | |
 |---|---|
-| **[Rationale](rationale.md)** | Why code-eval over tool-calls. Why SCI. What we learned. |
-| **[Architecture](architecture/overview.md)** | How the layers fit together |
-| **[Iteration Flow](architecture/iteration-flow.md)** | Step-by-step: message to answer |
-| **[Extensions](extensions/overview.md)** | How to extend the agent with tools and nudges |
-| **[Channels](architecture/channels.md)** | Plug-in front-ends (TUI, Telegram, your own) |
-| **[Database](architecture/database.md)** | Entity tree and SQLite schema |
+| **[Rationale](https://blockether.github.io/vis/rationale.html)** | Why code-eval over tool-calls. Why SCI. What we learned. |
+| **[Architecture](https://blockether.github.io/vis/architecture/overview.html)** | How the layers fit together |
+| **[Packages](https://blockether.github.io/vis/architecture/packages.html)** | What every `packages/vis-*` jar does, dependency direction, auto-discovery |
+| **[Iteration Flow](https://blockether.github.io/vis/architecture/iteration-flow.html)** | Step-by-step: message to answer |
+| **[Extensions](https://blockether.github.io/vis/extensions/overview.html)** | How to extend the agent with tools and nudges |
+| **[Channels](https://blockether.github.io/vis/architecture/channels.html)** | Plug-in front-ends (TUI, Telegram, your own) |
+| **[Database](https://blockether.github.io/vis/architecture/database.html)** | Entity tree and SQLite schema |
 
 ## Rules for Contributors
 

@@ -65,31 +65,28 @@ top-level command set built in `cli.clj :: root-command`:
 `vis "free-form prompt"` (no leading sub-command) falls back to
 `cli-run!`. `vis` with no args prints the rendered help tree.
 
-## Packages
+## Channel packages
 
-The repo is split per channel so adopters can drop the ones they
-don't need. `vis-core` stays usable without any of them:
+The full per-package matrix lives on the [Packages](packages.md) page;
+this section only highlights which packages register a channel.
 
-| Package                 | Channel id   | Notes                                                                  |
-| ----------------------- | ------------ | ---------------------------------------------------------------------- |
-| `vis-core`              | `:cli`       | CLI dispatcher + one-shot `vis run` (`channels.cli.agent`).             |
-| `vis-extension`         | —           | Plug-in spec: `extension` (SCI tools) + `channel` (CLI front-ends).    |
-| `vis-commandline`       | —           | Reusable command tree / arg-parsing primitives used by `cli.clj`.      |
-| `vis-persistance`       | —           | Persistence facade + spec. JDBC stays out of `vis-core`.               |
-| `vis-persistance-sqlite`| —           | SQLite + Flyway backend. Auto-registers via `META-INF/vis/persistance-backends.edn`. |
-| `vis-logging`           | —           | Telemere → SQLite log handler (opt-in).                                |
-| `vis-provider`          | —           | Vendor auth (currently GitHub Copilot OAuth).                          |
-| `vis-tui`               | `:tui`       | Lanterna TUI. `:channel/owns-tty? true`.                              |
-| `vis-telegram`          | `:telegram`  | Long-poll bot.                                                         |
+| Package         | `:channel/id` | Notes                                                  |
+| --------------- | ------------- | ------------------------------------------------------ |
+| `vis-tui`       | `:tui`        | Lanterna TUI. `:channel/owns-tty? true`.              |
+| `vis-telegram`  | `:telegram`   | Long-poll bot.                                         |
 
-> **Note on the `:cli` channel id.** The CLI agent calls
-> `(conversations/create! :cli …)` so its conversations show up under
-> the `:cli` channel namespace. There is no separate "CLI channel"
-> registered through `channel/register-global!` — the dispatcher itself
-> *is* the CLI surface.
+> **The `:cli` channel id is not a registered channel.** The CLI agent
+> calls `(conversations/create! :cli …)` so its conversations show up
+> under the `:cli` namespace, but there is no `channel/register-global!`
+> for it — the `vis` dispatcher itself is the CLI surface. Same shape
+> for the TUI's `:vis` conversations channel: `vis-tui` registers the
+> CLI-level channel id `:tui`, but it writes its conversations under
+> `:vis`. Two related but separate keywords (see
+> [Packages — Two senses of "channel"](packages.md#package-map)).
 
-Adding a new channel from a third-party jar is identical to writing
-an extension:
+## Adding a new channel from a third-party jar
+
+Identical to writing an extension:
 
 1. Create your `*-main` function: `(fn [args-vec] …)`.
 2. Call `(channel/register-global! {…})` at namespace load.

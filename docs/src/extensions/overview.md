@@ -130,13 +130,15 @@ From classpath jar to live tool call:
 7. **Nudge (per iteration)** — active extensions' `:ext/nudge-fn` is invoked
 8. **Hooks (per call)** — `:before-fn` → `:fn` → `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
-## Namespace Aliases (required)
+## Namespace Aliases (required when `:ext/symbols` is non-empty)
 
-Every extension **must** declare `:ext/ns-alias` - a map with `:ns`
-(the full SCI namespace symbol) and `:alias` (the short alias the LLM
-uses). Extension symbols are bound **only** into this dedicated
-namespace, **never** into the `sandbox` namespace directly. The LLM
-must always use the alias prefix.
+An extension that ships any `:ext/symbols` **must** declare
+`:ext/ns-alias` — a map with `:ns` (the full SCI namespace symbol)
+and `:alias` (the short alias the LLM uses). Pure prompt-only
+extensions (no `:ext/symbols`) may omit it. When present, extension
+symbols are bound **only** into this dedicated namespace, **never**
+into the `sandbox` namespace directly, and the LLM must always use
+the alias prefix.
 
 ```clojure
 (ext/extension

@@ -38,11 +38,12 @@ a running env.
 | `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.editing]` |
 | `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
 | `:ext/author` | ✗ | — | Author name or org, e.g. `"Blockether"` |
-| `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"Apache-2.0"` |
+| `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"` |
 | `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
 | `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
 | `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
-| `:ext/ns-alias` | ✓ | — | `{:ns 'vis.ext.fs :alias 'fs}` — **required**. Creates a dedicated SCI namespace with alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file ...)` — bare `(read-file ...)` does not resolve. |
+| `:ext/ns-alias` | conditional | — | `{:ns 'vis.ext.fs :alias 'fs}` — **required when `:ext/symbols` is non-empty** (enforced by `ns-alias-required-when-symbols?`). Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file ...)` — bare `(read-file ...)` does not resolve. |
+| `:ext/cli` | ✗ | — | Vector of CLI entries `[{:cmd "name" :doc "…" :args […] :fn (fn [parsed-args] …)}]`. Each entry mounts as `vis ext <cmd>` via the `vis-commandline` adapter in `channels.cli`. Use this for occasional one-shot commands tied to your extension; for richer command trees, register a top-level command directly through `com.blockether.vis.commandline/register-global!`. |
 
 ## `symbol` — function binding
 

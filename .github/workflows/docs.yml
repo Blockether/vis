@@ -3,8 +3,10 @@ name: Deploy docs
 on:
   push:
     branches: [main]
+    # mdBook tree moved from `resources/docs/` to `docs/` at the repo root
+    # in the monorepo split.
     paths:
-      - 'resources/docs/**'
+      - 'docs/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -31,15 +33,15 @@ jobs:
       - name: Install mdbook-mermaid
         run: |
           cargo install mdbook-mermaid
-          mdbook-mermaid install resources/docs
+          mdbook-mermaid install docs
 
       - name: Build
-        run: mdbook build resources/docs
+        run: mdbook build docs
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: resources/docs/book
+          path: docs/book
 
   deploy:
     needs: build

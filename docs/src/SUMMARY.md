@@ -11,6 +11,7 @@
 # Architecture
 
 - [Overview](architecture/overview.md)
+- [Packages](architecture/packages.md)
 - [Iteration Flow](architecture/iteration-flow.md)
 - [State Ownership](architecture/state.md)
 - [Database Schema](architecture/database.md)

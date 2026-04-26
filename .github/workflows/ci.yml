@@ -6,28 +6,123 @@ on:
   pull_request:
     branches: [main]
 
+# Cache key reused by every job. Hashing every package deps.edn means a
+# bump in any sibling invalidates the cache once, not per job.
+env:
+  CACHE_KEY: deps-${{ hashFiles('deps.edn', 'packages/**/deps.edn', 'extensions/**/deps.edn') }}
+
 jobs:
-  test:
+  # Aggregate runner: every test from every package on a single classpath.
+  # Catches integration regressions that only show up when packages are wired
+  # together (cross-package requires, classpath ordering, etc.).
+  test-aggregate:
     runs-on: ubuntu-latest
+    name: tests / aggregate
     steps:
       - uses: actions/checkout@v4
-
       - uses: DeLaGuardo/setup-clojure@13.5
         with:
           cli: latest
-
-      - name: Cache deps
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
-
-      - name: Run tests
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: deps-
+      - name: Run aggregate tests
         run: clojure -M:test
 
-      - name: Build jar
+  # Per-package runner: each package is exercised in isolation so a missing
+  # transitive dep, a wrong :paths, or a stale namespace require fails the
+  # job for that exact package and only that one. fail-fast: false so we
+  # see every breakage in a single CI run.
+  test-package:
+    runs-on: ubuntu-latest
+    name: tests / ${{ matrix.package }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only packages that ship a test/ tree with *_test.clj files. Add
+        # entries here as new packages get their first test \u2014 lazytest
+        # errors out on "no namespaces to run" if the dir is empty.
+        package:
+          - vis-core
+          - vis-commandline
+          - vis-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeLaGuardo/setup-clojure@13.5
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: deps-
+      - name: Run ${{ matrix.package }} tests
+        run: cd packages/${{ matrix.package }} && clojure -M:test
+
+  # Classpath sanity: every package + every extension must resolve its own
+  # deps.edn cleanly. Catches stale local-root paths, missing siblings, or
+  # spec'd deps without a Maven artifact \u2014 problems that wouldn't show up in
+  # the aggregate runner because vis-core pulls everything transitively.
+  classpath-sanity:
+    runs-on: ubuntu-latest
+    name: classpath / ${{ matrix.path }}
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - packages/vis-core
+          - packages/vis-commandline
+          - packages/vis-extension
+          - packages/vis-logging
+          - packages/vis-persistance
+          - packages/vis-persistance-sqlite
+          - packages/vis-provider
+          - packages/vis-telegram
+          - packages/vis-tui
+          - extensions/editing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeLaGuardo/setup-clojure@13.5
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: deps-
+      - name: Resolve ${{ matrix.path }} classpath
+        run: cd ${{ matrix.path }} && clojure -Spath > /dev/null
+
+  # Build the umbrella vis jar from the root deps.edn. The release workflow
+  # uses the same task, so failing here on `main` means the next tag push
+  # would also fail.
+  build:
+    runs-on: ubuntu-latest
+    name: build / umbrella jar
+    needs: [test-aggregate, test-package, classpath-sanity]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeLaGuardo/setup-clojure@13.5
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: deps-
+      - name: Build umbrella jar
         run: clojure -T:build jar
