@@ -68,12 +68,12 @@ This applies to EVERY spec, not just iteration spec:
 code_block, next_turn, all of them. If svar loaded it, the shape is
 correct by construction.
 
-### Always update `resources/docs/` when touching architecture or public API
+### Always update `docs/` when touching architecture or public API
 
-`resources/docs/src/` (mdBook) is the single source of truth for Vis architecture,
-extension system, and public API. **Every** change to files under `loop/`,
-`persistance/`, `channels/`, or `core.clj` MUST be followed by an update
-to the relevant doc if the change affects:
+`docs/src/` (mdBook) at the repo root is the single source of truth for
+Vis architecture, extension system, and public API. **Every** change to
+files under `loop/`, `persistance/`, `channels/`, or `core.clj` MUST be
+followed by an update to the relevant doc if the change affects:
 
 - File moves, renames, or deletions
 - New files or namespaces
@@ -84,71 +84,42 @@ to the relevant doc if the change affects:
 - Changes to the dependency graph between modules
 - Changes to the SQLite schema (`V1__schema.sql`)
 
-Doc files:
-- `resources/docs/src/rationale.md` — why RLM, why SCI, what we learned
-- `resources/docs/src/architecture/` — overview, iteration flow, state, database schema
-- `resources/docs/src/extensions/` — extension spec, hooks, environment map, nudge system
-- `resources/docs/src/reference/` — public API, reasoning levels, ubiquitous language
+Doc files (all under the repo-root `docs/` tree, NOT inside any package):
+- `docs/src/rationale.md` — why RLM, why SCI, what we learned
+- `docs/src/architecture/` — overview, iteration flow, state, database schema, channels
+- `docs/src/extensions/` — extension spec, hooks, environment map, nudge system
 
-Build: `cd resources/docs && mdbook serve --open`
+`docs/src/SUMMARY.md` is the mdBook table of contents — keep it in
+sync when adding/removing pages. There is intentionally no
+`reference/` section or `directory-structure.md` page; the public API
+and current package layout are documented inline in the existing
+pages (and in this file).
+
+Build: `cd docs && mdbook serve --open`
 
 Skipping this update is a bug. The docs drifting from the code is
 how we ended up with an incomprehensible god file in the first place.
 
-### Always use `dev/dev.clj` FIRST when investigating conversations
+### Inspect the SQLite DB before theorizing about a bug
 
-`dev/dev.clj` is the unified post-mortem debugger. It wraps every
-relevant DB query into an ergonomic Clojure API and reconstructs the
-exact iteration context the LLM saw, the journal, var-index,
-nudges, and per-turn quality metrics (repetition fires, budget
-extensions, redundant-exec-ratio, slowest iteration, token counts).
+`~/.vis/vis.mdb/rlm.db` is the single source of truth for everything
+that happened in every conversation — queries, iterations, final
+answers, persisted SCI vars, timings, costs. Before hypothesizing
+about a user-reported bug that references a specific `conversation-id`
+or `query-id`, **open the DB**. The conversation API
+(`com.blockether.vis.loop.runtime.conversation.core`) covers the
+common high-level reads (list by channel, env-for, send!, delete!)
+and should be your first stop. Drop to raw SQL for schema/migration
+checks, cross-conversation aggregates, or low-level execution-row
+triage that the conversation API does not expose.
 
-Before you open `sqlite3` by hand, before you write a `SELECT ... FROM
-entity`, before you theorize about why iterations look funny on the
-frontend: **use the debugger**. Raw SQL triage is a fallback for cases
-the debugger genuinely can't express, not a first move. If the
-debugger is missing a function you need, ADD it to `dev/dev.clj` —
-don't go around it. Every ad-hoc SQL query you write instead of
-calling `dev/...` is a missed opportunity to make the next post-mortem
-faster.
+There is no longer a dedicated `dev/dev.clj` post-mortem debugger
+in-tree. If you find yourself running the same ad-hoc query twice,
+lift it into a real namespace (under `packages/vis-persistance` or a
+new `packages/vis-debug` if it grows enough) instead of wedging it
+into an editor scratch buffer.
 
-Mandatory debugger-first flow:
-
-```clojure
-(require '[dev :as d])
-
-;; Top-level
-(d/conversation    "6f832df0-…")   ;; persona, model, turn + iter count, status
-(d/turns           "6f832df0-…")   ;; per-turn summary + key-vars + answer preview
-(d/quality-report  "6f832df0-…")   ;; metrics: repetition fires, budget ext, redundancy
-
-;; Drill in to one turn
-(d/iterations          <query-uuid>)        ;; every iter with reconstructed executions
-(d/iteration           <query-uuid> POS)    ;; single iter detail (zero-indexed)
-(d/iteration-context   <query-uuid> POS)    ;; journal + var-index + nudges + approx-full
-
-;; Cross-query perspective
-(d/query-context       "6f832df0-…" TURN)   ;; cross-query handover + inherited vars
-```
-
-`dev/dev.clj` is read-only, shares the SQLite pool with the live
-process, and is safe to run while the web server is up. Open a REPL
-(`clojure -M:dev -r`) or one-shot `clojure -M:dev -e '(...)'` —
-either works.
-
-### Raw SQL is a fallback, not a starting point
-
-`~/.vis/vis.mdb/rlm.db` is the single source of truth for everything that happened in every conversation — queries, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about user-reported bugs that reference a specific `conversation-id` or `query-id`, you MUST open the DB — preferably through `dev/dev.clj`. Only reach for raw SQL when:
-
-- you already confirmed `dev/dev.clj` does not expose the view you
-  need AND you intend to upstream that view as a new `dev` function,
-- you are checking schema/migration state, not conversation data, OR
-- you need cross-conversation aggregates that the debugger cannot
-  express.
-
-If those don't apply, call `dev/...` instead.
-
-Raw SQL triage checklist for the remaining cases:
+Raw SQL triage checklist:
 
 ```bash
 DB=~/.vis/vis.mdb/rlm.db
@@ -202,12 +173,45 @@ Only AFTER the DB has been inspected may you form a hypothesis, propose a fix, o
 ### Running
 
 ```bash
-clojure -M:run
+clojure -M:run                # default channel (TUI) via channels.cli dispatcher
+clojure -M:run telegram       # explicit channel sub-command
+clojure -M:run run "prompt"   # one-shot agent query
+clojure -M:test               # aggregate test runner across packages
 ```
+
+Available aliases (root `deps.edn`): `:run`, `:test`, `:bench`,
+`:build`, `:dev`, `:antq`. The `:web` alias is reserved but the
+`channels.web.app` namespace is not in tree yet — do not document a
+web channel as if it ships.
 
 ### Project Structure
 
-Build docs: `cd resources/docs && mdbook serve --open`
+The codebase is a polylith-style monorepo under `packages/`. Each
+package has its own `deps.edn` and is publishable independently; the
+root `deps.edn` aggregates them via `:local/root` so a single
+`clojure -M:run` from the repo root has the whole product on the
+classpath. Current packages:
+
+- `vis-core` — public API facade, runtime loop, query/iteration
+  engine, SCI sandbox, conversation lifecycle, channels.cli dispatcher
+  + `cli.agent`. The only package consumers must depend on directly.
+- `vis-extension` — standalone extension + channel contract
+  (`com.blockether.vis.extension`, `com.blockether.vis.channel`).
+  Slim deps on purpose (telemere + clojure.spec); extensions and
+  third-party channels depend on this, not on `vis-core`.
+- `vis-commandline` — reusable CLI primitives (command spec, arg
+  parsing, dispatch, help rendering) consumed by `channels.cli`.
+- `vis-persistance` — persistence FACADE: public API + spec, no JDBC.
+- `vis-persistance-sqlite` — SQLite + Flyway backend; auto-registers
+  via `META-INF/vis/persistance-backends.edn`.
+- `vis-logging` — Telemere → SQLite log handler (opt-in).
+- `vis-provider` — vendor auth (currently GitHub Copilot OAuth).
+- `vis-tui` — Lanterna TUI channel (`:tui` channel id, default).
+- `vis-telegram` — Telegram long-poll bot (`:telegram` channel id).
+- `vis-benchmark` — benchmark harness (not a runtime package).
+
+Docs build: `cd docs && mdbook serve --open` (mdBook source lives at
+the repo root under `docs/`, not inside any package).
 
 **DO NOT create or maintain a directory-structure file.** The codebase
 changes faster than any static tree can track. Use `find`, `ls`, `grep`
@@ -215,11 +219,14 @@ to explore. If an agent writes a directory-structure doc, delete it.
 
 ## Ubiquitous Language (MANDATORY)
 
-- Use `conversation`, never `session`, for the product concept across web, TUI, Telegram, and CLI.
+- Use `conversation`, never `session`, for the product concept across TUI, Telegram, and CLI.
 - Use `turn` for the product-level ask+answer. `query` and `iteration` remain runtime internals.
 - Use `tool` and `skill`. Do not use `capability` as a catch-all for agent features.
 - Keep `capability` / `capabilities` only where an external provider/router API already requires that word.
-- Use `channel` for `:vis`, `:telegram`, and `:cli`.
+- Use `channel` for `:tui`, `:vis`, `:telegram`, and `:cli`. The `:vis`
+  channel is the TUI's conversation namespace (TUI calls
+  `(conversations/create! :vis)`); `:tui` is the registered channel
+  id used by `vis-tui`'s `channel/register-global!` for CLI dispatch.
 - Use `environment` in public API. `env` is allowed in internal local bindings only.
 
 ## Namespace Architecture
@@ -230,36 +237,58 @@ to explore. If an agent writes a directory-structure doc, delete it.
 - `*.core` means orchestration and use cases for one bounded context.
 - `*.persistence*` means storage/schema/DB boundary for one bounded context.
 - `*.presentation*` means pure rendering/view-model formatting for one bounded context or adapter.
-- `channels.*` means external surface code only: web, TUI, Telegram, and CLI.
+- `channels.*` means external surface code only: TUI, Telegram, CLI.
 - top-level facades like `core` should stay thin and stable.
 
-### Adapter Target
+### Channel adapters (one package each)
 
-- `src/com/blockether/vis/channels/web/*` - web adapter layer
-- `src/com/blockether/vis/channels/tui/*` - TUI adapter layer
-- `src/com/blockether/vis/channels/telegram/*` - Telegram adapter layer
-- `src/com/blockether/vis/channels/cli.clj` - CLI adapter layer
+- `packages/vis-tui/src/com/blockether/vis/channels/tui/*` — Lanterna TUI
+- `packages/vis-telegram/src/com/blockether/vis/channels/telegram/*` — Telegram bot
+- `packages/vis-core/src/com/blockether/vis/channels/cli.clj` — CLI dispatcher (registry-driven)
+- `packages/vis-core/src/com/blockether/vis/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
 
-### Web Target
+Third-party channels register themselves at namespace load via
+`com.blockether.vis.channel/register-global!` and ship a
+`META-INF/vis/channels.edn` resource. The CLI dispatcher discovers
+them; nothing in `vis-core` references a concrete channel namespace.
+See `docs/src/architecture/channels.md`.
 
-- `src/com/blockether/vis/channels/web/app.clj` - process boot only; Jetty start/stop and wiring
-- `src/com/blockether/vis/channels/web/routes.clj` - HTTP only; no DB/env poking, no cache mutation
-- `src/com/blockether/vis/channels/web/conversations.clj` - deep web-facing module for conversation list/page/title/projection/cache
-- `src/com/blockether/vis/channels/web/executor.clj` - async turn execution and live progress
-- `src/com/blockether/vis/channels/web/presentation*.clj` - pure rendering only
+### Runtime modules (vis-core)
 
-### Runtime Target
+All under `packages/vis-core/src/com/blockether/vis/`:
 
-- `src/com/blockether/vis/core.clj` - public API facade (`create-environment`, `query!`, `dispose-environment!`)
-- `src/com/blockether/vis/config.clj` - config and router construction only
-- `src/com/blockether/vis/loop/core.clj` - environment lifecycle + iteration loop
-- `src/com/blockether/vis/channels/core.clj` - cross-channel provider mgmt, streaming, extension CLI
-- `src/com/blockether/vis/loop/runtime/conversation/core.clj` - conversation lifecycle (create!/send!/close!)
-- `src/com/blockether/vis/loop/runtime/conversation/environment/core.clj` - SCI sandbox + var-index
-- `src/com/blockether/vis/loop/runtime/conversation/environment/extension.clj` - extension spec + hooks
-- `src/com/blockether/vis/loop/runtime/conversation/environment/query/core.clj` - query engine
-- `src/com/blockether/vis/loop/runtime/conversation/environment/query/iteration/core.clj` - iteration engine
-- `src/com/blockether/vis/persistance/core.clj` - persistence API (delegates to sqlite)
+- `core.clj` — public API facade (`create-environment`,
+  `dispose-environment!`, `register-extension!`, `active-extensions`,
+  `assemble-system-prompt`, `query!`, `MAX_ITERATIONS`,
+  `-main` dispatcher). Extension authoring helpers (`extension`,
+  `symbol`, `value`, `register-global!`, `render-prompt`) are NOT
+  re-exported — require `com.blockether.vis.extension` directly.
+- `config.clj` — config loader, db-path (`~/.vis/vis.mdb`), router builder
+- `loop/core.clj` — environment lifecycle + system-prompt assembly
+- `loop/mustache.clj` — Mustache templating helpers exposed in the SCI sandbox
+- `loop/runtime/conversation/core.clj` — conversation lifecycle
+  (`create!`, `by-id`, `by-channel`, `for-telegram-chat!`,
+  `set-title!`, `env-for`, `effective-system-prompt`, `send!`,
+  `close!`, `delete!`, `sweep-orphaned-running-queries!`, `close-all!`)
+- `loop/runtime/conversation/environment/core.clj` — SCI sandbox + var-index
+- `loop/runtime/conversation/environment/query/core.clj` — query engine
+- `loop/runtime/conversation/environment/query/iteration/core.clj` — iteration engine
+- `channels/core.clj` — cross-channel provider mgmt and streaming progress tracker
+- `channels/cancellation.clj` — in-flight query cancellation registry
+
+### Persistence + extension contract
+
+- `packages/vis-persistance/src/com/blockether/vis/persistance/{core,base,spec}.clj` —
+  facade API (`create-rlm-conn`, `db-list-conversations`, etc.) + spec.
+  Backends self-register via `META-INF/vis/persistance-backends.edn`.
+- `packages/vis-persistance-sqlite/src/com/blockether/vis/persistance/sqlite/core.clj` —
+  SQLite + Flyway backend. Schema: `resources/db/sqlite/migration/V1__schema.sql`.
+- `packages/vis-extension/src/com/blockether/vis/extension.clj` —
+  extension spec, symbol/value builders, hook protocol, global
+  registry, classpath discovery (`META-INF/vis/extensions.edn`).
+- `packages/vis-extension/src/com/blockether/vis/channel.clj` —
+  channel descriptor spec + global registry + classpath discovery
+  (`META-INF/vis/channels.edn`).
 
 Use `find`/`grep` to explore the tree — no static directory doc exists.
 
@@ -274,8 +303,8 @@ Use `find`/`grep` to explore the tree — no static directory doc exists.
 - Use `core.clj` as the default application/use-case namespace in each bounded context.
 - Do not turn `loop.core` into a dumping ground for unrelated behavior.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
-- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. Prefer folding it into `channels.cli` or deleting it once callers are simplified.
-- Do not keep long-term adapter code at the product root once the bounded-context APIs are ready for an `channels/*` move.
+- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It now lives at `packages/vis-core/src/com/blockether/vis/channels/cli/agent.clj` alongside `channels/cli.clj`.
+- Do not introduce new top-level `channels/web/*` files. There is no web channel package today; if one is added it ships as its own `packages/vis-web` jar with its own `channel/register-global!`.
 - Prefer extracting a deep module first, then renaming callers, then deleting stale code.
 - Remove `requiring-resolve` cycles instead of spreading them further.
 - Keep slices small and shippable; no big-bang folder shuffle.
@@ -350,21 +379,25 @@ All application state lives in `channels/tui/state.clj` using a re-frame dispatc
 
 ### Conversations (`com.blockether.vis.loop.runtime.conversation.core`)
 
-**One module owns env lifecycle for every frontend.** Web + TUI share the `:vis` channel; Telegram has its own `:telegram` channel. Conversation IDs are plain UUIDs. No name prefixes, no string lookups.
+**One module owns env lifecycle for every frontend.** TUI uses the
+`:vis` channel, the CLI agent uses `:cli`, Telegram uses `:telegram`.
+Conversation IDs are plain UUIDs. No name prefixes, no string lookups.
 
 ```clojure
 (require '[com.blockether.vis.loop.runtime.conversation.core :as conversations])
 
 ;; Create / lookup
-(conversations/create! :vis)                    ;; new web/TUI conversation
-(conversations/create! :vis {:title "…"})
+(conversations/create! :vis)                    ;; new TUI conversation
+(conversations/create! :cli {:title "…"})       ;; one-shot CLI agent run
 (conversations/by-id conv-id)                   ;; conv map or nil
 (conversations/by-channel :vis)                 ;; sidebar / list, recent first
+(conversations/by-channel :telegram)
 (conversations/for-telegram-chat! chat-id)      ;; find-or-create by chat-id
 
 ;; Mutate
 (conversations/set-title! conv-id "New title")
-(conversations/env-for conv-id)                 ;; raw rlm env (for presenter projections)
+(conversations/env-for conv-id)                 ;; raw env (for presenter projections / inspectors)
+(conversations/effective-system-prompt conv-id) ;; assembled system prompt for the [?] inspector
 
 ;; Turn
 (conversations/send! conv-id msgs opts)         ;; locked per conv-id; see docstring for every opt
@@ -372,6 +405,7 @@ All application state lives in `channels/tui/state.clj` using a re-frame dispatc
 ;; Lifecycle
 (conversations/close! conv-id)                  ;; release env handle, keep DB data
 (conversations/delete! conv-id)                 ;; close + purge entity tree + sidecar row
+(conversations/sweep-orphaned-running-queries!) ;; mark crashed queries as :error on boot
 (conversations/close-all!)                      ;; process shutdown
 ```
 
@@ -380,7 +414,7 @@ All application state lives in `channels/tui/state.clj` using a re-frame dispatc
 **ONE SQLite DB for everything.** Path: `~/.vis/vis.mdb` (`config/db-path`). Every frontend opens the same DB; the connection pool is shared across environments.
 
 Schema: soul/state model with versioned execution history.
-Full reference: `resources/docs/src/architecture/database.md`.
+Full reference: `docs/src/architecture/database.md`.
 
 **Entity hierarchy:**
 - `conversation_soul` → `conversation_state` → `query_soul` → `query_state` → `iteration` → `expression_state`
@@ -390,34 +424,42 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
 
 **Investigating DB state:**
 ```clojure
-(require '[com.blockether.vis.loop.runtime.conversation.core :as conversations])
+(require '[com.blockether.vis.loop.runtime.conversation.core :as conversations]
+         '[com.blockether.vis.persistance.core :as db])
 
 ;; List conversations
 (conversations/by-channel :vis)
 (conversations/by-channel :telegram)
+(conversations/by-channel :cli)
 
 ;; Access environment for a conversation
 (let [env     (conversations/env-for conv-id)
       db-info (:db-info env)]
-  ;; Use dev/dev.clj for detailed inspection (preferred)
-  ;; Or persistance.core functions with db-info
+  ;; Use persistance.core functions with db-info, or drop to raw
+  ;; HoneySQL via (jdbc/execute! (:datasource db-info) ...).
   )
 ```
 
 **Public API (`com.blockether.vis.core` / `com.blockether.vis.loop.core`):**
 - `create-environment router {:db path :conversation selector}` — selector is `nil` | `:latest` | uuid | `[:id uuid]`. Nil creates a fresh conversation; an id-ref resumes an existing one.
 - `register-extension!` — register a validated extension into the environment (tools, nudges, prompt context).
+- `active-extensions environment` — vec of currently-active extensions; call ONCE per query and thread the vec through `assemble-system-prompt` + per-iteration nudge collectors.
+- `assemble-system-prompt environment {:active-extensions vec, :system-prompt opt}` — single source of truth for the system message. Required by both loop paths and the TUI `[?]` inspector.
 - `query! environment [(llm/user "...")] opts` — messages must be a vector of message maps. See `conversations/send!` docstring for every opt forwarded to `query!`.
 - `dispose-environment!` — releases the environment handle; the shared SQLite DataSource stays open for sibling envs.
 
-Full API reference: `resources/docs/src/reference/api.md`.
+Extension authoring API lives on `com.blockether.vis.extension` —
+`extension`, `symbol`, `value`, `register-global!`, `render-prompt`,
+`load-extension!`, `discover-extensions!`. Channel authoring API
+lives on `com.blockether.vis.channel`. Neither is re-exported from
+`com.blockether.vis.core` anymore.
 
 **Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, iteration stops and the answer is the RLM result. Observability: pass `{:hooks {:on-chunk (fn [{:iteration :thinking :code :final :done?}])}}` to `conversations/send!`.
 
 **`<prior_thinking>` rule:** the iteration loop ships **only the previous iteration's `:thinking`** in `<prior_thinking>`, plus a one-line breadcrumb. There is no spec field, no carry, no opt-in knob to request more. When the agent needs older reasonings it calls `(var-history '*reasoning*)` (or `(take-last N (var-history '*reasoning*))`) from `:code`. Do NOT reintroduce auto-shipping multiple historical reasonings — the eager-context path was deleted on purpose; the on-demand path is the only path. Cross-query handover at iter 0 (`HANDOVER_KEEP_LAST=2` from the previous turn + final answer) is a separate mechanism and stays.
 
 **Frontend wiring:**
-- **TUI** — `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty). Disposal on exit only closes the env; the conversation stays in the `:vis` channel so the web sidebar can see it.
-- **Web** — the target vocabulary is conversation-first, not session-first. Move toward `create-conversation!`, `get-conversation`, `delete-conversation!`, and `conversations-list`; keep web projection/cache logic in a dedicated `web.conversations` module and keep routes/presenters away from raw env access.
-- **Telegram** — `conversations/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conversations/send!` with the Telegram persona system prompt.
+- **TUI (`vis-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes the env, the conversation stays in the `:vis` channel so other inspectors can see it.
+- **Telegram (`vis-telegram`)** — registered channel id `:telegram`. `conversations/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conversations/send!` with the Telegram persona system prompt.
 - **CLI `agent/run!`** — one-shot. Creates a fresh conversation in the `:cli` channel and runs a single query. Conversations persist — past runs are browsable via `(conversations/by-channel :cli)`.
+- **Third-party channels** — ship a jar with a `META-INF/vis/channels.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-core`.

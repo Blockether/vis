@@ -1,0 +1,23 @@
+{:paths ["src"]
+ ;; Persistence FACADE only.
+ ;;
+ ;; This package owns the public API (`persistance.core`), the data
+ ;; spec (`persistance.spec`), and the small id/kw/now-ms helpers
+ ;; (`persistance.base`). It does NOT pull a database driver — concrete
+ ;; backends register themselves into `persistance.core` at load time
+ ;; (see `vis-persistance-sqlite`, future `vis-persistance-postgres`,
+ ;; etc.). Callers depend on this jar; backends depend on this jar +
+ ;; whatever drivers they need.
+ :deps
+ {org.clojure/clojure       {:mvn/version "1.12.4"}
+  ;; svar internal spec (used by persistance.spec for shared types)
+  com.blockether/svar       {:mvn/version "0.3.10"}
+  ;; JSON + EDN — used in persistance.spec only, no SQL libs.
+  com.cnuernber/charred     {:mvn/version "1.038"}
+  io.github.tonsky/fast-edn {:mvn/version "1.1.3"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main"]}}}

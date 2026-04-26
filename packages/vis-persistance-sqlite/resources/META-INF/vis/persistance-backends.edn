@@ -1,0 +1,4 @@
+;; Persistence backends exported by vis-persistance-sqlite. The
+;; persistence facade `discover-backends!` loads each namespace,
+;; triggering its `register-backend!` call.
+[com.blockether.vis.persistance.sqlite.core]

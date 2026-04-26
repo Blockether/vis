@@ -1,0 +1,17 @@
+{:paths ["src"]
+ ;; Standalone provider package — vendor-specific auth/token plumbing
+ ;; (currently GitHub Copilot OAuth + device flow + token exchange).
+ ;;
+ ;; ZERO vis-core deps on purpose. vis-core resolves these via
+ ;; `requiring-resolve` so the runtime stays decoupled from any
+ ;; particular provider's auth shape.
+ :deps
+ {org.clojure/clojure   {:mvn/version "1.12.4"}
+  com.cnuernber/charred {:mvn/version "1.038"}
+  com.taoensso/telemere {:mvn/version "1.2.1"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main"]}}}

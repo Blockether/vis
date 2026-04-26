@@ -24,12 +24,16 @@ PLAN.md
 schema-therapy.pdf
 schema-therapy.pageindex/
 
-# Bench trajectories / results / data (large, generated)
-bench/trajectories/
-bench/results/
-bench/data/
+# Bench trajectories / results / harness output (large, generated).
+# Datasets under packages/vis-benchmark/data/ ARE tracked.
+packages/vis-benchmark/results/
+packages/vis-benchmark/trajectories/
+packages/vis-benchmark/swebench-harness/
 
 # Sessions / runtime data
 .omc/
 .agents/
-resources/docs/book/
+docs/book/
+# mdbook-mermaid install assets — regenerable via `mdbook-mermaid install docs`
+docs/mermaid.min.js
+docs/mermaid-init.js

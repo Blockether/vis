@@ -1,0 +1,3 @@
+;; Channels exported by vis-tui. The CLI dispatcher loads each
+;; namespace at startup, triggering its `channel/register-global!`.
+[com.blockether.vis.channels.tui.screen]
