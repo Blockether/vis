@@ -556,3 +556,360 @@ of work, not a richer ledger of state.** The current design is
 state-heavy (var-index inflates) and work-light (no attempts, no plan,
 no eliminated). Inverting that ratio is what stops the looping — and it
 stops it without violating one byte of the RLM contract.
+
+---
+
+## 7. The reasoning bug at the bottom of everything: the plan changes between iterations
+
+If you read nothing else above, read this. **Most of the looping in Vis is
+downstream of one specific defect: the model's *plan* is stored in the
+wrong place, projected through the wrong mechanism, and re-summarized
+through a lossy chain on every iteration.** Once that's fixed, half the
+other problems shrink or disappear.
+
+### 7.1 The literal one-line cause
+
+`packages/vis-core/src/com/blockether/vis/loop/runtime/conversation/environment/query/iteration/core.clj:283`
+
+```clojure
+(defn build-prior-thinking [_environment db-info query-id]
+  (let [chain (load-prior-thinking-chain db-info query-id)]
+    (when (seq chain)
+      (let [tail (vec (take-last 1 chain))      ;; ← this line
+            body (format-prior-thinking-chain tail)]
+        ...))))
+```
+
+The DB has `[T₀, T₁, …, T_{N-1}]` — every prior iteration's `:thinking`,
+fully persisted, indexed, ready to read. `load-prior-thinking-chain`
+fetches **all of it**. Then we throw away everything except the last
+entry. Always. By design. With a comment in `AGENTS.md` defending the
+choice as principled minimalism.
+
+At iter 5, the projection contains exactly `T₄`. `T₀` — the iteration
+where the model decomposed the task into a plan — is gone. So is `T₁`,
+where it committed to the first step. So is `T₂`, where it noticed an
+edge case. The strategic frame of the work is invisible.
+
+### 7.2 Why "just keep the last one" is not the same as "keep a chain"
+
+The defense for `take-last 1` is: "older reasonings are reachable via
+`(var-history '*reasoning*)` from `:code`." That's true. It's also a
+trap, because of three asymmetries the system pretends don't exist:
+
+**A. Iter-0 thinking is qualitatively different from iter-N thinking.**
+
+At iter 0 the model reads the user query, mints a **plan**, and writes
+strategic prose: *"This is a 3-step task: list relevant files, identify
+where the foo-fn is defined, patch its arity. I'll start with list."*
+
+At iter 4 the model is hands-deep in step 2, writing tactical prose:
+*"The grep matched 3 spots; the second one is in a comment, ignore."*
+
+Iter 0's prose is *the plan*. Iter 4's prose is *one tactical move
+within the plan*. They are not interchangeable, and **summarizing a plan
+through four layers of tactical-step lenses produces a tactical mush, not
+a plan.**
+
+**B. The summarization chain is recursively lossy.**
+
+The model at iter K sees `<prior_thinking> = T_{K-1}`. Its own `:thinking`
+at iter K is influenced by what it sees. Whatever fragment of the
+original plan made it into `T_{K-1}` may or may not survive into `T_K`.
+Iterate this:
+
+```
+T₀  = "Plan: A → B → C. Doing A."
+T₁  = "A done. (Plan A→B→C.) Doing B step 1."             ← plan survives
+T₂  = "B step 1 yielded {…}. Doing B step 2."             ← plan implicit
+T₃  = "B step 2 needs case-insensitive grep. Trying."     ← plan gone
+T₄  = "Grep regex was wrong. Fixing escape."              ← tactical-only
+T₅  = (sees T₄) → "Now the regex compiles. Running it."   ← still tactical
+T₆  = (sees T₅) → "Three matches. Reading first one."     ← drifted to a sub-task
+```
+
+By iter 6 the model has lost the entire `A → B → C` decomposition. It is
+now operating in the local frame of a sub-sub-step of step B, with no
+structural reminder that step C exists, that A was completed, or that B
+is the second of three. **This is what "the plan changes" looks like in
+practice.** The plan didn't "change" in any deliberate sense. It
+evaporated through compression.
+
+**C. The escape hatch makes it worse, not better.**
+
+When the model finally notices it's lost the plan and emits
+`(var-history '*reasoning*)`, it gets back a **vector of strings** with
+no iteration labels, no structure, no diff between strategic and
+tactical, and the result lands in `<journal>` next iter capped at
+`MAX_RESULT_DISPLAY_CHARS`. The model now has to re-read its own
+internal monologue, in reverse-temporal order, paraphrased through the
+pr-str of a vec of strings. By the time it reconstructs the plan, two
+iterations have elapsed and the budget warning is firing. Then it
+panics and finalizes with whatever it has.
+
+### 7.3 The reasoning-models case is strictly worse
+
+For reasoning providers (`ITERATION_SPEC_REASONING`), the spec
+**deliberately omits the `:thinking` field** because the model's
+chain-of-thought lives in the provider's native reasoning channel
+(Anthropic thinking blocks, OpenAI reasoning items, Gemini thinking).
+The rationale in `spec.clj:235`:
+
+> `:thinking` is omitted for reasoning providers (CoT is native, no
+> duplication).
+
+Good. Except the next stage — `run-iteration` line 552 —
+`(or model-reasoning (:thinking parsed))` falls back to whatever svar
+surfaces from the reasoning channel. For Anthropic this is the
+`thinking` block text and that works. For OpenAI o-series the reasoning
+is **opaque/encrypted**, surfaced (if at all) as a placeholder. Result:
+the `iteration.thinking` column for o-series iters is often nil or
+near-empty. So `<prior_thinking>` for an o-series turn is **empty** for
+long stretches.
+
+The model has zero record of its own reasoning across iterations, and
+the RLM loop has no fallback for that. This is strictly worse than the
+non-reasoning case: at least non-reasoning gets `T_{N-1}`; o-series
+gets nothing.
+
+### 7.4 Role confusion makes the model second-guess its own plan
+
+Even when `<prior_thinking>` is non-empty, it is delivered as **user**
+role content:
+
+```clojure
+(conj base-messages {:role "user" :content iteration-context})
+```
+
+The iteration-context contains `<prior_thinking>` inline. So the model's
+own reasoning from one tick ago is presented to it next tick as if a
+*human* wrote it.
+
+LLMs are RLHF-trained to treat user-role text as **input to react to**,
+not **internal state to continue**. When the model sees its own plan
+materialize as a user message, it often re-evaluates the plan rather
+than executing it. "The user is now telling me to do A→B→C — should I?
+Let me think about whether that's the right plan." And so the plan
+gets re-litigated every iter that it appears, even when the model would
+have kept executing if it had seen it as its own assistant content.
+
+This is **plan re-derivation by role confusion**, on top of plan loss
+by summarization. They compound.
+
+### 7.5 The cross-turn handover gives the *previous turn* more thinking continuity than the current turn gets internally
+
+`HANDOVER_KEEP_LAST = 2` for cross-query handover (last 2 thinkings of
+the *prior turn* + final answer). `take-last 1` for in-turn
+`<prior_thinking>`. So:
+
+- Turn 2 iter 0: sees turn 1's last 2 thinkings + final answer.
+- Turn 2 iter 5: sees turn 2's iter 4 thinking only.
+
+Within-turn coherence matters more than cross-turn coherence (the work
+is tighter, the plan is fresher), and the system gives it **less** of
+it. Strictly backwards. Whoever picked these two constants did not
+pick them together.
+
+### 7.6 What "plan" should actually be — and the fix that fits the RLM contract
+
+The whole class of problems above collapses to: **the plan is not a
+first-class slot.** It exists only as a sentence inside a free-form
+`:thinking` field whose lifetime is one iteration.
+
+The correct projection has **three** thinking-related slots, all
+bounded, all RLM-compatible (no message accumulation):
+
+```
+<plan>          sticky.   model writes via spec field :plan (string).
+                          carried verbatim until model overwrites it.
+                          changes are observable (loop emits a
+                          "[plan changed at iter K]" annotation
+                          when :plan differs from previous version).
+
+<breadcrumbs>   cumulative one-liner per iter, written by the model
+                via spec field :breadcrumb (≤120 chars). capped at
+                last K=20 entries. addressable by iter id.
+
+  i0  decomposed task: A→B→C; starting A
+  i1  A done — foo.clj has 3 defmacros; starting B
+  i2  B step 1: grep yielded 12 matches; filtering
+  i3  B step 1 done; 4 real callers; starting B step 2
+  ...
+
+<recent_thought>  free-form last-iter :thinking (today's behavior).
+                  capped 4000c. for nuance the breadcrumb couldn't carry.
+```
+
+Three slots. All bounded. Plan is sticky and addressable. Breadcrumb
+chain gives the strategic frame across the whole turn at one line per
+iter (~2400 chars max for K=20). Recent thought retains the tactical
+nuance the breadcrumb truncated. **Total projection size is still
+O(1) in iterations**, because K is fixed.
+
+Spec changes (one new optional string field each):
+
+```clojure
+;; spec.clj — add to iteration-spec base-fields:
+(spec/field {::spec/name :plan
+             ::spec/type :spec.type/string
+             ::spec/cardinality :spec.cardinality/one
+             ::spec/required false
+             ::spec/description
+               "Strategic plan for the whole turn. Set on iter 0 with
+                goal decomposition + steps. Refine ONLY when learning
+                forces a real change of approach (loop will surface
+                the diff). Carried verbatim across iterations until
+                you overwrite it. This is the slot the system uses to
+                know what you are doing."})
+
+(spec/field {::spec/name :breadcrumb
+             ::spec/type :spec.type/string
+             ::spec/cardinality :spec.cardinality/one
+             ::spec/required false
+             ::spec/description
+               "≤120 char single line summarizing what THIS iteration
+                accomplished, in the strategic frame of <plan>. The
+                loop appends this to <breadcrumbs> for next iter. Use
+                past tense, mention which step of the plan you are on."})
+```
+
+Projection changes (in `build-iteration-context`):
+
+1. Pull current `:plan` from latest iteration row; carry verbatim.
+2. Pull `[(:breadcrumb iter) for iter in last K]` from rows; format as
+   `<breadcrumbs>` block.
+3. Keep the existing `<prior_thinking>` → rename to `<recent_thought>`
+   for honesty (it was never a chain).
+4. **Stop** loading `:thinking` for older iters into the projection.
+   The breadcrumbs replace it. `:thinking` is for one-iter free-form;
+   the chain is the breadcrumb.
+
+The `(var-history '*reasoning*)` escape hatch can stay for the rare
+case the model needs to re-read its own old free-form thinking, but it
+should almost never fire because the breadcrumbs already have the
+strategic frame.
+
+### 7.7 Why this specifically stops "the plan changes"
+
+- `<plan>` is **sticky by construction**. It doesn't pass through a
+  summarizer. It doesn't get re-derived. It survives until the model
+  explicitly rewrites it via the `:plan` field.
+- When the model **does** rewrite the plan, the loop renders the diff
+  inline (`[plan changed at iter K — was X, now Y]`). The plan change
+  becomes a deliberate observable act, not silent compression-induced
+  drift. This is the meta-cognition layer the current loop is missing.
+- Tactical context is preserved as breadcrumbs — enough for the model
+  to know "I'm on step 2 of 3, last iter I narrowed the candidates to 4"
+  without having to re-grep.
+- For reasoning models where `:thinking` is empty, `:plan` and
+  `:breadcrumb` are **author-visible** (the model writes them in the
+  spec output, just like `:answer`), so they are not affected by the
+  encrypted-reasoning-channel issue. **Reasoning continuity for o-series
+  is achieved through structured authored fields, not through
+  reasoning-channel surfacing that may not exist.** This is the only
+  design that actually works across providers.
+- The role-confusion problem is reduced because `<plan>` and
+  `<breadcrumbs>` are *labeled as the model's own work* by the slot
+  semantics, not delivered as raw user prose. They read as
+  "your plan" / "your breadcrumbs" not "a paragraph of text." Same
+  user-role wrapper, but the framing primes "continue" rather than
+  "react." Not as good as native assistant-role replay would be, but
+  inside the RLM contract it's the best we can do, and it works.
+
+### 7.8 Sanity check against AGENTS.md's defense of the current design
+
+AGENTS.md, on `<prior_thinking>`:
+
+> the iteration loop ships **only the previous iteration's `:thinking`**
+> in `<prior_thinking>`, plus a one-line breadcrumb. There is no spec
+> field, no carry, no opt-in knob to request more.
+
+Note the giveaway in that very sentence: *"plus a one-line
+breadcrumb."* The system already has the concept of a breadcrumb. It
+just calls it `PRIOR_THINKING_BREADCRUMB`:
+
+```clojure
+(def PRIOR_THINKING_BREADCRUMB
+  "[older reasonings] call `(var-history '*reasoning*)` from :code
+   (oldest first; `take-last N` for a window).")
+```
+
+That is not a breadcrumb. That is a *signpost pointing at a tool the
+model has to call to fetch its own reasoning*. It's a 156-char string
+telling the model to do a round-trip. **The entire `<breadcrumbs>` block
+proposed above is what that signpost is pretending to be**, except
+actually carrying the data instead of pointing to it.
+
+AGENTS.md continues:
+
+> When the agent needs older reasonings it calls `(var-history '*reasoning*)`
+> (or `(take-last N (var-history '*reasoning*))`) from `:code`. Do NOT
+> reintroduce auto-shipping multiple historical reasonings — the
+> eager-context path was deleted on purpose; the on-demand path is the
+> only path.
+
+This defense conflates two things:
+
+1. *Auto-shipping every prior iteration's full free-form `:thinking`* —
+   correct to delete, that does blow the bounded contract.
+2. *Shipping a structured plan + a one-line breadcrumb chain* — a
+   different design, bounded by construction (K-capped), addresses
+   the actual failure mode.
+
+The deletion of (1) was right. It's being used to justify also not
+doing (2), which is a separate, smaller, correct change. The on-demand
+path via `(var-history)` should remain available, but as a *fallback*,
+not as the primary mechanism for the model to remember its own plan.
+Asking the model to call a tool to read its own goal is the original
+sin.
+
+### 7.9 The minimal patch, in one screen
+
+```
+1. spec.clj: add :plan and :breadcrumb optional string fields to both
+   ITERATION_SPEC_BASE and ITERATION_SPEC_NON_REASONING.
+
+2. iteration/core.clj run-iteration: persist (:plan parsed) and
+   (:breadcrumb parsed) into the iteration row. Sticky semantics for
+   :plan (default to previous if not provided this iter).
+
+3. iteration/core.clj build-iteration-context: replace <prior_thinking>
+   block with three sub-blocks:
+     <plan>            current plan (sticky, from latest iter row)
+     <breadcrumbs>     last K=20 :breadcrumb entries with iter ids
+     <recent_thought>  last iter's :thinking (today's content)
+
+4. iteration/core.clj run-iteration: when (:plan parsed) differs from
+   the previous iter's plan, append "[plan changed at iter N]" to the
+   breadcrumb of this iter. Loop now teaches the model that plan
+   changes are observable.
+
+5. loop/core.clj CORE_SYSTEM_PROMPT: replace the STEP 1-4 narrative
+   with a state-machine framing whose first step is:
+     STEP 0 - Read <plan>. If empty, write one. If your work this iter
+              forces a real change of approach, rewrite it. Otherwise
+              do not touch it.
+   And replace the existing PRIOR_THINKING_BREADCRUMB pointer-to-tool
+   with a sentence about the breadcrumb chain being right there.
+
+6. Drop HANDOVER_KEEP_LAST=2. Replace with: cross-turn handover ships
+   the previous turn's final <plan> + final answer. (Plan-as-handover.)
+   This unifies cross-turn and within-turn semantics around the same
+   sticky-plan abstraction.
+```
+
+Six surgical changes, no architectural deletions, RLM contract
+preserved, and the plan stops drifting.
+
+---
+
+## 8. Closing
+
+§§1-6 critique many surfaces. §7 names the one defect at the bottom of
+most of them. If the team picks one thing to do, do §7. The attempts
+ledger (§5.2), the value-bearing var-index (§5.4), the bash tool (§4.2)
+are all real wins, but they are independently valuable and can be
+staged. The plan-as-first-class-slot fix is **load-bearing for
+reasoning continuity** and nothing else solves it. Everything else is a
+performance optimization on a system that has correctly identified that
+it forgot what it was doing.

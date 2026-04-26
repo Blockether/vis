@@ -405,8 +405,14 @@
         new-id))))
 
 (defn update-query!
-  "Update the latest query_state with final outcome."
-  [db-info query-id {:keys [answer iterations duration-ms status tokens cost]}]
+  "Update the latest query_state with final outcome.
+
+   Phase 1: when `:prior-outcome` is provided (one of `:complete`,
+   `:abandoned`, `:cancelled`, `:error`), it lands in the dedicated
+   `prior_outcome` column so the next turn's handover digest can read
+   it without scanning every iteration. The column is bounded by a
+   CHECK constraint at the schema level."
+  [db-info query-id {:keys [answer iterations duration-ms status tokens cost prior-outcome]}]
   (when (and (ds db-info) query-id)
     (let [soul-id-s (->ref query-id)
           state     (latest-query-state db-info soul-id-s)]
@@ -425,7 +431,8 @@
                                             (:cached tokens)    (assoc :cached-tokens    (long (:cached tokens)))
                                             (:total-cost cost)  (assoc :total-cost       (double (:total-cost cost)))
                                             (:model cost)       (assoc :model            (str (:model cost))))))}
-                     (:model cost) (assoc :llm_root_model (str (:model cost))))
+                     (:model cost)   (assoc :llm_root_model (str (:model cost)))
+                     prior-outcome   (assoc :prior_outcome (name prior-outcome)))
            :where  [:= :id (:id state)]})))))
 
 ;; =============================================================================
@@ -474,9 +481,14 @@
 
 (defn store-iteration!
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
-   Returns the iteration UUID."
+   Returns the iteration UUID.
+
+   Phase 1: persists structured `:plan-state`, `:breadcrumb`, `:plan-diff`
+   into the iteration row when present. Pre-Phase-1 callers (no plan keys)
+   continue to work — the columns stay NULL."
   [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
-                   llm-messages llm-model]}]
+                   llm-messages llm-model
+                   plan-state breadcrumb plan-diff]}]
   (when (ds db-info)
     (let [iter-id   (UUID/randomUUID)
           iter-id-s (str iter-id)
@@ -515,6 +527,15 @@
                    :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                    :llm_returned_empty_expressions (if (empty? expressions) 1 0)
                    :metadata             (when metadata (->json metadata))
+                   ;; Nippy BLOBs preserve :status keyword values that
+                   ;; JSON would flatten to strings. freeze-safe walks the
+                   ;; map first so any unexpected SCI/runtime objects get
+                   ;; replaced by `{:vis/ref :expr}` markers instead of
+                   ;; throwing during nippy/freeze.
+                   :plan_state           (when plan-state (->blob (freeze-safe plan-state)))
+                   :breadcrumb           (when (and breadcrumb (not (str/blank? breadcrumb)))
+                                           breadcrumb)
+                   :plan_diff            (when plan-diff (->blob (freeze-safe plan-diff)))
                    :created_at           now
                    :finished_at          now}]})
       ;; 2. Executions → expression_soul (kind=call, stateless) + expression_state
@@ -642,14 +663,22 @@
       (query! db-info (query-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
 
+(defn- attach-prior-outcome [row->qmap]
+  ;; Surface :prior-outcome on the query map when the column has a value.
+  ;; Pre-V2 rows have NULL → absent key, matching legacy callers.
+  (fn [row]
+    (cond-> (row->qmap row)
+      (:prior_outcome row) (assoc :prior-outcome (keyword (:prior_outcome row))))))
+
 (defn db-list-conversation-queries [db-info conversation-id]
   (if (and (ds db-info) conversation-id)
     (let [state-id-s (latest-state-id db-info conversation-id)]
       (when state-id-s
-        (mapv row->query
+        (mapv (attach-prior-outcome row->query)
           (query! db-info
-            (assoc (query-soul+state-query [:= :qs.conversation_state_id state-id-s])
-              :order-by [[:qs.created_at :asc]])))))
+            (-> (query-soul+state-query [:= :qs.conversation_state_id state-id-s])
+              (update :select conj :qst.prior_outcome)
+              (assoc :order-by [[:qs.created_at :asc]]))))))
     []))
 
 (defn- row->iteration [row]
@@ -661,7 +690,13 @@
     (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
     (some? (:llm_error row))            (assoc :error (:llm_error row))
     (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
-    (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))))
+    (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
+    ;; Phase 1: surface plan slot fields when populated. NULL columns stay
+    ;; absent so legacy callers see the same shape as pre-Phase-1.
+    ;; Nippy round-trips keywords/sets/etc. losslessly — no shim needed.
+    (some? (:plan_state row))           (assoc :plan-state (<-blob (:plan_state row)))
+    (some? (:breadcrumb row))           (assoc :breadcrumb (:breadcrumb row))
+    (some? (:plan_diff row))            (assoc :plan-diff  (<-blob (:plan_diff row)))))
 
 (defn db-list-query-iterations [db-info query-id]
   (if (and (ds db-info) query-id)

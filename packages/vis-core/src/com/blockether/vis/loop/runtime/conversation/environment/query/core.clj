@@ -26,7 +26,7 @@
 (defn- truncate [s n]
   (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
-(defn- format-iter-error
+(defn- format-iteration-error
   "Render one trace `:error` map as a Markdown bullet for the user.
    Always includes the wrapper message; appends the raw provider
    response when the spec layer captured one (`svar.spec/schema-rejected`
@@ -54,7 +54,7 @@
   (let [errs (->> trace reverse (keep :error) (take n))]
     (when (seq errs)
       (str "**Recent provider errors:**\n\n"
-        (str/join "\n" (map format-iter-error errs))
+        (str/join "\n" (map format-iteration-error errs))
         "\n\n"))))
 
 (defn- realize-value [v]
@@ -196,28 +196,30 @@
       vec)))
 
 (defn update-system-vars!
-  "Bind *reasoning* and *answer* into the SCI sandbox after an iteration."
+  "Rebind REASONING and ANSWER in the SCI sandbox after an iteration.
+   See `sci-env/SYSTEM_VAR_NAMES` for the full SYSTEM-var registry."
   [environment {:keys [thinking final-result final-answer]}]
   (when (seq thinking)
-    (sci-env/bind-and-bump! environment '*reasoning* thinking))
+    (sci-env/bind-and-bump! environment 'REASONING thinking))
   (when final-result
-    (sci-env/bind-and-bump! environment '*answer* final-answer)))
+    (sci-env/bind-and-bump! environment 'ANSWER final-answer)))
 
 (defn inject-system-var-snapshots
-  "Append SYSTEM var entries to a vars-snapshot vec for persistence."
+  "Append SYSTEM-var entries to a vars-snapshot vec for persistence.
+   Names match `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no earmuffs)."
   [vars-snapshot {:keys [iteration query thinking final-result final-answer]}]
   (cond-> vars-snapshot
-    (zero? iteration) (conj {:name "*query*" :value query :code ";; SYSTEM var"})
-    (seq thinking) (conj {:name "*reasoning*" :value thinking :code ";; SYSTEM var"})
-    final-result (conj {:name "*answer*" :value final-answer :code ";; SYSTEM var"})))
+    (zero? iteration) (conj {:name "QUERY"     :value query        :code ";; SYSTEM var"})
+    (seq thinking)    (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
+    final-result      (conj {:name "ANSWER"    :value final-answer :code ";; SYSTEM var"})))
 
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-query! (inlined from former query/base)
 ;; -----------------------------------------------------------------------------
 
 (def ^:private FRESH_ITER_CARRY
-  {:prev-expressions nil :prev-iteration -1
-   :prev-next-model nil :prev-next-reasoning nil})
+  {:previous-expressions nil :previous-iteration -1
+   :previous-next-model nil :previous-next-reasoning nil})
 
 (def ^:private balanced-reasoning :balanced)
 
@@ -235,8 +237,8 @@
   (let [max-iterations (or max-iterations rlm-spec/MAX_ITERATIONS)
         max-consecutive-errors (or max-consecutive-errors 5)
         max-restarts (or max-restarts 3)
-        max-iter-atom (:max-iterations-atom environment)
-        effective-max-iterations (fn [] (if max-iter-atom @max-iter-atom max-iterations))
+        max-iterations-atom-binding (:max-iterations-atom environment)
+        effective-max-iterations (fn [] (if max-iterations-atom-binding @max-iterations-atom-binding max-iterations))
         effective-model (:name (resolve-effective-model (:router environment)))
         _ (assert effective-model "Router must resolve a root model")
         max-context-tokens (or max-context-tokens
@@ -287,13 +289,13 @@
                            (tel/log! {:level :warn :data (format-exception-short e)} log-msg)))))
         ;; Metadata persisted on each iteration row — reuses the
         ;; precomputed `active-exts` (no second activation pass).
-        iter-metadata (fn []
+        iteration-metadata (fn []
                         (when (seq active-exts)
                           {:extensions (mapv (fn [ext]
                                                (cond-> {:namespace (str (:ext/namespace ext))}
                                                  (:ext/version ext) (assoc :version (:ext/version ext))))
                                          active-exts)}))]
-    (sci-env/bind-and-bump! environment '*query* query)
+    (sci-env/bind-and-bump! environment 'QUERY query)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (loop-core/auto-forget-stale-vars! environment)
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
@@ -301,8 +303,8 @@
                                 :trace [] :consecutive-errors 0 :restarts 0}
                           FRESH_ITER_CARRY)]
         (let [{:keys [iteration messages trace consecutive-errors restarts
-                      prev-expressions prev-iteration
-                      prev-next-model prev-next-reasoning]} loop-state]
+                      previous-expressions previous-iteration
+                      previous-next-model previous-next-reasoning]} loop-state]
           (when current-iteration-atom (reset! current-iteration-atom iteration))
           (cond
             (when cancel-atom @cancel-atom)
@@ -313,14 +315,14 @@
                       :trace trace :iterations iteration} (finalize-cost)))
 
             (>= iteration (effective-max-iterations))
-            (let [max-iter (effective-max-iterations)
+            (let [max-iteration (effective-max-iterations)
                   last-thinking (some->> trace reverse (map :thinking)
                                   (filter #(and (string? %) (not (str/blank? %)))) first)
                   errors-block  (recent-errors-block trace 3)
-                  fallback (str "Warning: Iteration limit (" iteration "/" max-iter ") reached.\n\n"
+                  fallback (str "Warning: Iteration limit (" iteration "/" max-iteration ") reached.\n\n"
                              ;; Surface the actual provider failures FIRST when present —
                              ;; they're the load-bearing diagnostic. Without this the
-                             ;; user only saw \"max-iter reached, rephrase narrowly\"
+                             ;; user only saw \"max-iteration reached, rephrase narrowly\"
                              ;; while the DB held the real cause (e.g. a Claude auth
                              ;; rejection that hit because routing slipped models).
                              errors-block
@@ -328,7 +330,7 @@
                              (if errors-block
                                "**What to try:** Fix the provider error above (config / model availability), then retry."
                                "**What to try:** Rephrase more narrowly."))]
-              (iterate/log-stage! :error iteration {:reason :max-iterations :max max-iter})
+              (iterate/log-stage! :error iteration {:reason :max-iterations :max max-iteration})
               (merge {:answer fallback
                       :status :max-iterations :status-id (status->id :max-iterations)
                       :trace trace :iterations iteration} (finalize-cost)))
@@ -358,25 +360,35 @@
                           :trace trace :iterations iteration} (finalize-cost))))
 
               (let [reasoning-level (when has-reasoning?
-                                      (or prev-next-reasoning
+                                      (or previous-next-reasoning
                                         (iterate/reasoning-level-for-errors base-reasoning-level consecutive-errors)))
-                    _ (iterate/log-stage! :iter-start iteration {:msg-count (count messages) :reasoning reasoning-level})
-                    prior-thinking-body (iterate/build-prior-thinking environment db-info query-id)
-                    cross-query-handover (when (zero? iteration)
-                                           (iterate/build-cross-query-handover
-                                             db-info (:conversation-id environment) query-id
-                                             (:parent-iteration-id environment)))
-                    prior-thinking (cond
-                                     (and cross-query-handover prior-thinking-body)
-                                     (str cross-query-handover "\n\n" prior-thinking-body)
-                                     cross-query-handover cross-query-handover
-                                     :else prior-thinking-body)
+                    _ (iterate/log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
+                    ;; Phase 1 — sticky plan + breadcrumb chain + last
+                    ;; iteration's :thinking. All come from DB so the
+                    ;; projection is always rebuilt from persisted
+                    ;; state, never accumulated in messages.
+                    sticky-plan      (iterate/load-effective-plan db-info query-id)
+                    breadcrumb-chain (iterate/load-breadcrumb-chain db-info query-id)
+                    recent-thought   (when (pos? iteration)
+                                       (some-> (last (db/db-list-query-iterations db-info query-id))
+                                         :thinking))
+                    system-vars      {:QUERY     query
+                                      :ANSWER    nil
+                                      :REASONING recent-thought}
+                    prior-turn       (when (zero? iteration)
+                                       (iterate/load-prior-turn-digest
+                                         db-info (:conversation-id environment) query-id))
+                    expressions-by-iteration (when (seq previous-expressions)
+                                          [[(or previous-iteration 0) previous-expressions]])
                     iteration-context (iterate/build-iteration-context environment
                                         {:iteration              iteration
                                          :current-max-iterations (effective-max-iterations)
-                                         :prior-thinking         prior-thinking
-                                         :prev-expressions       prev-expressions
-                                         :prev-iteration         prev-iteration
+                                         :plan-state             sticky-plan
+                                         :breadcrumbs            breadcrumb-chain
+                                         :recent-thought         recent-thought
+                                         :system-vars            system-vars
+                                         :prior-turn             prior-turn
+                                         :expressions-by-iteration    expressions-by-iteration
                                          :call-counts-atom       call-counts-atom
                                          :active-extensions      active-exts})
                     base-messages (iterate/trim-to-initial-history messages (count initial-messages))
@@ -384,8 +396,8 @@
                                          (not (str/blank? iteration-context))
                                          (conj {:role "user" :content iteration-context}))
                     effective-overrides (cond-> {}
-                                          prev-next-model (assoc :optimize prev-next-model)
-                                          prev-next-reasoning (assoc :reasoning prev-next-reasoning))
+                                          previous-next-model (assoc :optimize previous-next-model)
+                                          previous-next-reasoning (assoc :reasoning previous-next-reasoning))
                     resolved-model (resolve-effective-model (:router environment) effective-overrides)
                     effective-routing (merge (or routing {}) effective-overrides)
                     iteration-result (try
@@ -399,12 +411,12 @@
                                          (iterate/handle-iteration-exception! e
                                            {:iteration iteration :messages effective-messages
                                             :routing effective-routing :reasoning-level reasoning-level})))]
-                (if-let [iter-err (::iterate/iteration-error iteration-result)]
+                (if-let [iteration-error-data (::iterate/iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
                   ;; mid-call, `cancel!` flipped the flag BEFORE
                   ;; future-cancel, so by the time we land here the flag is
                   ;; already true. Treat the resulting interrupt-shaped
-                  ;; \"iter-err\" as cancellation, not a real failure: skip
+                  ;; \"iteration-error-data\" as cancellation, not a real failure: skip
                   ;; the trace entry, skip the DB write, skip the on-chunk
                   ;; error chunk (otherwise the bubble paints a phantom
                   ;; ITERATION N ERROR block right next to FINAL ANSWER:
@@ -420,31 +432,31 @@
                               :trace trace :iterations iteration}
                         (finalize-cost)))
                     (let [error-feedback (str "[Iteration " (inc iteration) "/" (effective-max-iterations) "]\n"
-                                           "<error>LLM call failed: " (:message iter-err) "</error>\n"
+                                           "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
                                            "Adjust your approach or emit :final with what you have.")
-                          trace-entry {:iteration iteration :error iter-err :final? false}
-                          empty-reasoning (when (= :svar.llm/empty-content (:type iter-err))
-                                            (:reasoning (:data iter-err)))
-                          err-iter-id (db/store-iteration! (:db-info environment)
+                          trace-entry {:iteration iteration :error iteration-error-data :final? false}
+                          empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
+                                            (:reasoning (:data iteration-error-data)))
+                          err-iteration-id (db/store-iteration! (:db-info environment)
                                         {:query-id query-id :vars [] :expressions nil
-                                         :thinking empty-reasoning :duration-ms 0 :error iter-err
+                                         :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
                                          :llm-messages effective-messages
                                          :llm-model (str (:name resolved-model))
-                                         :metadata (iter-metadata)})]
-                      (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iter-id))
+                                         :metadata (iteration-metadata)})]
+                      (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                       ;; Live error chunk — lets the TUI / web bubble show
-                      ;; \"iter N failed: <msg>\" the moment it happens, instead
+                      ;; \"iteration N failed: <msg>\" the moment it happens, instead
                       ;; of waiting for the whole loop to give up. The chunk
                       ;; carries the same shape on-iteration sees so any UI
                       ;; that already reads :error gets it for free.
                       (emit-hook! on-chunk
                         {:iteration iteration :thinking empty-reasoning :code nil
-                         :error iter-err :done? true}
-                        "on-chunk (iter error)")
+                         :error iteration-error-data :done? true}
+                        "on-chunk (iteration error)")
                       (emit-hook! on-iteration
                         {:iteration iteration :status :error :status-id (status->id :error)
                          :thinking empty-reasoning :expressions nil :final-result nil
-                         :error iter-err :duration-ms 0} "on-iteration (error)")
+                         :error iteration-error-data :duration-ms 0} "on-iteration (error)")
                       (recur (assoc loop-state
                                :iteration (inc iteration)
                                :messages (conj messages {:role "user" :content error-feedback})
@@ -453,6 +465,21 @@
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking expressions final-result next-model next-reasoning]} iteration-result
+                        ;; Phase 1 — plan/breadcrumb fields from svar parse
+                        new-plan-state    (:plan-state iteration-result)
+                        breadcrumb-text   (:breadcrumb iteration-result)
+                        ;; Phase 0b — plan-edit-distance + change marker.
+                        ;; Compute against the sticky plan (loaded above)
+                        ;; so we record the diff for THIS iteration.
+                        plan-validation   (when new-plan-state
+                                            (iterate/validate-plan-state new-plan-state))
+                        effective-plan    (cond
+                                            plan-validation sticky-plan ;; reject — keep prior
+                                            new-plan-state  new-plan-state
+                                            :else           sticky-plan)
+                        plan-diff         (when new-plan-state
+                                            (iterate/compute-plan-diff sticky-plan new-plan-state))
+                        plan-edit-dist    (iterate/plan-edit-distance plan-diff)
                         final-answer (when final-result (:answer final-result))
                         _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
@@ -460,15 +487,50 @@
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
                                          :final-result final-result :final-answer final-answer})
-                        iter-id (db/store-iteration! (:db-info environment)
+                        ;; Augment iteration metadata with Phase 0/0b counters.
+                        iteration-metadata-with-metrics
+                        (merge (or (iteration-metadata) {})
+                          {:plan-edit-distance plan-edit-dist
+                           :plan-changed?      (boolean (and plan-diff (pos? plan-edit-dist)))
+                           :var-history-recall-count
+                           (count (filter #(and (string? (:code %))
+                                             (re-find #"\(var-history\b" (:code %)))
+                             (or expressions [])))
+                           :expression-redundancy-fraction 0.0   ;; populated in Phase 2
+                           :dedup-saves                    0     ;; populated in Phase 2
+                           :plan-validation-error          (some-> plan-validation :type name)})
+                        ;; PEV gate (PLAN.md §10.1): if the model emitted
+                        ;; :answer with open plan items and no
+                        ;; :abandon-reason, surface a structured nudge
+                        ;; that the next iteration will see. We don't reject
+                        ;; the answer here yet (Phase 6 makes it strict);
+                        ;; for now we annotate so the model gets a hint.
+                        gate-violation
+                        (when (and final-result
+                                effective-plan
+                                (some #(contains? #{:in_progress :pending}
+                                         (iterate/item-status-key %))
+                                  (:items effective-plan))
+                                (str/blank? (str (:abandon-reason final-result))))
+                          {:type :vis/incomplete-plan-on-answer
+                           :open-item-ids (mapv :id
+                                            (filter #(contains? #{:in_progress :pending}
+                                                       (iterate/item-status-key %))
+                                              (:items effective-plan)))})
+                        iteration-id (db/store-iteration! (:db-info environment)
                                   {:query-id query-id :expressions expressions :vars vars-snapshot
                                    :thinking thinking
                                    :answer (when final-result (iterate/answer-str (:answer final-result)))
                                    :duration-ms (or (:duration-ms iteration-result) 0)
                                    :llm-messages (:llm-messages iteration-result)
                                    :llm-model (:llm-model iteration-result)
-                                   :metadata (iter-metadata)})
-                        _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iter-id))
+                                   ;; Phase 1 plan slot persistence.
+                                   :plan-state (when (and new-plan-state (nil? plan-validation))
+                                                 new-plan-state)
+                                   :breadcrumb breadcrumb-text
+                                   :plan-diff  plan-diff
+                                   :metadata iteration-metadata-with-metrics})
+                        _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                         _ (emit-hook! on-iteration
                             {:iteration iteration
                              :status (cond final-result :final (empty? expressions) :empty :else :success)
@@ -482,7 +544,7 @@
                       (do (iterate/log-stage! :final iteration
                             {:answer (truncate (iterate/answer-str (:answer final-result)) 200)
                              :confidence (:confidence final-result) :iterations (inc iteration)})
-                        (iterate/log-stage! :iter-end iteration
+                        (iterate/log-stage! :iteration-end iteration
                           {:blocks (count expressions) :errors (count (filter :error expressions))
                            :times (mapv :execution-time-ms expressions)})
                         (when on-chunk
@@ -502,12 +564,12 @@
 
                       (if (empty? expressions)
                         (do (iterate/log-stage! :empty iteration {})
-                          (iterate/log-stage! :iter-end iteration {:blocks 0 :errors 0 :times []})
+                          (iterate/log-stage! :iteration-end iteration {:blocks 0 :errors 0 :times []})
                           (recur (merge loop-state
                                    {:iteration (inc iteration) :trace (conj trace trace-entry)
-                                    :prev-next-model next-model :prev-next-reasoning next-reasoning})))
+                                    :previous-next-model next-model :previous-next-reasoning next-reasoning})))
 
-                        (do (iterate/log-stage! :iter-end iteration
+                        (do (iterate/log-stage! :iteration-end iteration
                               {:blocks (count expressions) :errors (count (filter :error expressions))
                                :times (mapv :execution-time-ms expressions)})
                           (when on-chunk
@@ -524,12 +586,33 @@
                             (recur (merge loop-state
                                      {:iteration (inc iteration) :messages messages
                                       :trace (conj trace trace-entry) :consecutive-errors next-errors
-                                      :prev-expressions expressions :prev-iteration iteration
-                                      :prev-next-model next-model
-                                      :prev-next-reasoning next-reasoning}))))))))))))))))
+                                      :previous-expressions expressions :previous-iteration iteration
+                                      :previous-next-model next-model
+                                      :previous-next-reasoning next-reasoning}))))))))))))))))
+
+(defn- ->prior-outcome
+  "Map a query-loop result to one of the four canonical outcomes
+   stored on `query_state.prior_outcome`. Used by the next turn's
+   handover digest (see `iterate/load-prior-turn-digest`)."
+  [result]
+  (let [status   (:status result)
+        abandon? (some-> result :abandon-reason str str/blank? not)]
+    (cond
+      abandon?                                          :abandoned
+      (= status :cancelled)                             :cancelled
+      (contains? #{:max-iterations
+                   :error-budget-exhausted
+                   :error}
+        status)                                          :error
+      :else                                              :complete)))
 
 (defn run-query!
-  "Store query → iteration-loop → update query → return result."
+  "Store query → iteration-loop → update query → return result.
+
+   Phase 1: derives `:prior-outcome` (one of `:complete`,
+   `:abandoned`, `:cancelled`, `:error`) from the loop result and
+   persists it on the `query_state` row. The next turn's
+   `<system_state>` digest reads it."
   [env query loop-opts]
   (when-not (map? env)
     (throw (ex-info "run-query! requires an env map" {:got (type env)})))
@@ -541,14 +624,16 @@
                     :messages nil
                     :status :running})
         result (iteration-loop env query (assoc loop-opts :query-id query-id))
+        prior-outcome (->prior-outcome result)
         _ (db/update-query! (:db-info env) query-id
-            {:answer      (:answer result)
-             :iterations  (:iterations result)
-             :duration-ms (:duration-ms result)
-             :status      (or (:status result) :success)
-             :tokens      (:tokens result)
-             :cost        (:cost result)})]
-    (assoc result :query-id query-id)))
+            {:answer        (:answer result)
+             :iterations    (:iterations result)
+             :duration-ms   (:duration-ms result)
+             :status        (or (:status result) :success)
+             :tokens        (:tokens result)
+             :cost          (:cost result)
+             :prior-outcome prior-outcome})]
+    (assoc result :query-id query-id :prior-outcome prior-outcome)))
 
 ;; -----------------------------------------------------------------------------
 ;; Phase 1 - Prepare query context
@@ -690,10 +775,10 @@
                                     :cancel-atom            cancel-atom}
                              routing (assoc :routing routing)))
         query-id         (:query-id iteration-result)
-        {iter-tokens :tokens
-         iter-cost   :cost} iteration-result
-        total-tokens-atom (atom (or iter-tokens {}))
-        total-cost-atom   (atom (or iter-cost {}))
+        {iteration-tokens :tokens
+         iteration-cost   :cost} iteration-result
+        total-tokens-atom (atom (or iteration-tokens {}))
+        total-cost-atom   (atom (or iteration-cost {}))
         merge-cost!       (fn [extra-tokens extra-cost]
                             (when extra-tokens
                               (swap! total-tokens-atom
@@ -719,7 +804,7 @@
   "Updates DB query record, builds result map.
 
    `:model` is attached to the persisted cost map so the web footer can
-   render `model · N iter · duration · tokens · $total` after a restart."
+   render `model · N iteration · duration · tokens · $total` after a restart."
   [{:keys [db-info root-model]}
    {:keys [query-id start-time iterations status status-id trace locals
            answer confidence reasoning total-tokens-atom total-cost-atom]}]
@@ -845,7 +930,7 @@
                phase2       (run-iteration-phase ctx)
                {:keys [iteration-result query-id
                        total-tokens-atom total-cost-atom merge-cost!]} phase2
-               {iter-answer :answer
+               {iteration-answer :answer
                 trace       :trace
                 iterations  :iterations
                 status      :status
@@ -863,7 +948,7 @@
                 :status-id         status-id
                 :trace             trace
                 :locals            locals
-                :answer            iter-answer
+                :answer            iteration-answer
                 :total-tokens-atom total-tokens-atom
                 :total-cost-atom   total-cost-atom})
              (finalize-query-result
@@ -872,7 +957,7 @@
                 :start-time        start-time
                 :iterations        iterations
                 :trace             trace
-                :answer            iter-answer
+                :answer            iteration-answer
                 :confidence        confidence
                 :reasoning         reasoning
                 :total-tokens-atom total-tokens-atom

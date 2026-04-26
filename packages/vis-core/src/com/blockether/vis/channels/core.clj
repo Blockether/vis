@@ -99,7 +99,7 @@
   (let [hook (Thread. (fn []
                         (let [out config/original-stdout]
                           (.println out "")
-                          (.println out (str "  vis chat --conversation-id " conversation-id))
+                          (.println out (str "  vis channels tui --conversation-id " conversation-id))
                           (.println out "")
                           (.flush out))))]
     (.addShutdownHook (Runtime/getRuntime) hook)

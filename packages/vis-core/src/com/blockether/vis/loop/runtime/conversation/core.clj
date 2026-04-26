@@ -128,53 +128,50 @@
   (:environment (ensure-env! id)))
 
 (defn effective-system-prompt-for-query
-  "Return the reconstructed prompt snapshot for a specific query-id in a conversation."
+  "Return the reconstructed prompt snapshot for a specific query-id in a
+   conversation. Uses the Phase 1 layered projection (sticky plan +
+   breadcrumb chain + recent thought + prior-turn digest) — the
+   `<prior_thinking>` blob is gone."
   [conversation-id query-id]
   (when-let [env (env-for conversation-id)]
     (let [;; Activate extensions ONCE for this snapshot — reused by both
           ;; assemble-system-prompt (system block) and build-iteration-context
-          ;; (per-iter user block) below. Mirrors the runtime contract.
+          ;; (per-iteration user block) below. Mirrors the runtime contract.
           active-exts   (loop-core/active-extensions env)
           system-prompt (loop-core/assemble-system-prompt env
                           {:system-prompt     (:system-prompt (by-id conversation-id))
                            :active-extensions active-exts})
-          queries       (when-let [di (:db-info env)]
-                          (try (db/db-list-conversation-queries di (:conversation-id env))
+          db-info       (:db-info env)
+          queries       (when db-info
+                          (try (db/db-list-conversation-queries db-info (:conversation-id env))
                             (catch Throwable _ nil)))
           query-row     (some #(when (= (:id %) query-id) %) queries)
           query-text    (or (:query query-row) "<the user's message appears here>")
-          handover      (when (and (:db-info env) (:conversation-id env) query-id
-                                (> (count queries) 1))
-                          (try (iterate/build-cross-query-handover
-                                 (:db-info env) (:conversation-id env) query-id nil)
-                            (catch Throwable _ nil)))
-          prior-thinking (when (and (:db-info env) query-id)
-                           (try (iterate/build-prior-thinking env (:db-info env) query-id)
-                             (catch Throwable _ nil)))
-          combined-prior (cond
-                           (and handover prior-thinking) (str handover "\n\n" prior-thinking)
-                           handover handover
-                           :else prior-thinking)
-          iter-ctx (iterate/build-iteration-context env
+          sticky-plan      (iterate/load-effective-plan db-info query-id)
+          breadcrumb-chain (iterate/load-breadcrumb-chain db-info query-id)
+          prior-turn       (iterate/load-prior-turn-digest
+                             db-info (:conversation-id env) query-id)
+          iteration-context-block (iterate/build-iteration-context env
                      {:iteration              0
                       :current-max-iterations rlm-spec/MAX_ITERATIONS
-                      :prior-thinking         combined-prior
-                      :prev-expressions       nil
-                      :prev-iteration         nil
+                      :plan-state             sticky-plan
+                      :breadcrumbs            breadcrumb-chain
+                      :system-vars            {:QUERY query-text}
+                      :prior-turn             prior-turn
                       :call-counts-atom       (atom {})
                       :active-extensions      active-exts})
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
-          iter-spec (if has-reasoning?
+          iteration-spec (if has-reasoning?
                       rlm-spec/ITERATION_SPEC_REASONING
                       rlm-spec/ITERATION_SPEC_NON_REASONING)
-          spec-prompt (svar-spec/spec->prompt iter-spec)]
+          spec-prompt (svar-spec/spec->prompt iteration-spec)]
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
         system-prompt
         "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
         query-text
-        (when iter-ctx
+        (when iteration-context-block
           (str "\n\n═══ MESSAGE 3: Iteration context (role: user, appended per iteration) ═══\n"
-            iter-ctx))
+            iteration-context-block))
         "\n\n═══ MESSAGE 4: Spec schema (role: user, appended by svar) ═══\n"
         spec-prompt))))
 
@@ -218,10 +215,14 @@
      (doseq [{:keys [id iterations duration-ms]} orphans]
        (try
          (db/update-query! db id
-           {:answer      answer
-            :iterations  (or iterations 0)
-            :duration-ms (or duration-ms 0)
-            :status      :interrupted})
+           {:answer        answer
+            :iterations    (or iterations 0)
+            :duration-ms   (or duration-ms 0)
+            :status        :interrupted
+            ;; Phase 1 — mark crashed/cancelled turns so the next turn's
+            ;; handover digest renders the right outcome instead of
+            ;; falling through to a derived guess.
+            :prior-outcome :cancelled})
          (catch Exception _ nil)))
      (count orphans))))
 

@@ -336,11 +336,27 @@
 
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 
-(defn- earmuffed-sym? [sym]
-  (let [n (name sym)]
-    (and (> (count n) 2)
-      (str/starts-with? n "*")
-      (str/ends-with? n "*"))))
+;; SYSTEM vars are the read-only bindings the loop maintains for the
+;; agent: QUERY (current user query), REASONING (last iteration's
+;; thinking), ANSWER (previous turn's final answer). UPPERCASE matches
+;; the Clojure idiom for constants and avoids the earmuff misread
+;; (earmuffs imply dynamic-var semantics, which these are not).
+;;
+;; The set is a fixed registry; adding to it is a deliberate API
+;; change, not a free-form pattern. See AGENTS.md → "SYSTEM vars are
+;; UPPERCASE and explicitly defined".
+(def SYSTEM_VAR_NAMES
+  "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
+   var?' check is needed: var-index sort+status, auto-forget guard,
+   <system_state> rendering, etc."
+  '#{QUERY REASONING ANSWER})
+
+(defn system-var-sym?
+  "True when `sym` is one of the registered SYSTEM-var names. The fixed
+   set `SYSTEM_VAR_NAMES` is checked by membership, not pattern, so a
+   user-defined uppercase var doesn't get misclassified as system."
+  [sym]
+  (contains? SYSTEM_VAR_NAMES sym))
 
 (defn- var-status-keyword [{:keys [system? persisted?]}]
   (cond
@@ -442,13 +458,17 @@
          var-info (merge persisted-info live-info)
          entries (->> var-info
                    (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
+                   ;; Phase 1: SYSTEM vars (QUERY/REASONING/ANSWER) live in
+                   ;; <system_state> with their current values inlined.
+                   ;; Drop them from <var_index> entirely so the user-facing
+                   ;; var list is just user-defined state.
+                   (remove (fn [[sym _]] (system-var-sym? sym)))
                    (sort-by (fn [[sym _]]
-                              [(if (earmuffed-sym? sym) 0 1)
-                               (- (long (recency-of sym)))
+                              [(- (long (recency-of sym)))
                                (str sym)]))
                    (mapv (fn [[sym {:keys [val arglists version]}]]
                            (let [persisted? (= val ::persisted)
-                                 system?    (earmuffed-sym? sym)]
+                                 system?    false]
                              {:sym sym
                               :version version
                               :status (var-status-keyword {:system? system? :persisted? persisted?})

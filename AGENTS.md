@@ -237,6 +237,95 @@ to explore. If an agent writes a directory-structure doc, delete it.
   id used by `vis-tui`'s `channel/register-global!` for CLI dispatch.
 - Use `environment` in public API. `env` is allowed in internal local bindings only.
 
+### No abbreviated identifiers in source code
+
+Do NOT abbreviate domain terms in identifiers. Spell things out. The cost
+of a few extra characters is dwarfed by the readability win and by the
+risk of an LLM-or-human reader misreading a half-formed shorthand. The
+rule applies to: function names, fn parameters, `let`-bindings,
+`def`/`defn` names, `:keys` destructuring, map keys we author, doc
+strings, log keys, and metric names.
+
+**Banned abbreviations — use the full word:**
+
+| Don't write | Write           |
+| ----------- | --------------- |
+| `iter`      | `iteration`     |
+| `expr`      | `expression`    |
+| `msg`       | `message`       |
+| `cnt`       | `count`         |
+| `pos`       | `position`      |
+| `prev`      | `previous`      |
+| `cb`        | `callback`      |
+| `idx`       | `index`         |
+| `len`       | `length`        |
+| `desc`      | `description`   |
+| `cfg`       | `config` (whole word OK) |
+| `tmp`       | `temp` or `temporary` |
+| `init`      | `initial` or `initialize` |
+| `val`       | `value`         |
+| `attr`      | `attribute`     |
+| `param`     | `parameter`     |
+| `req`/`res` | `request`/`response` |
+| `freq`      | `frequency`     |
+| `dur`       | `duration`      |
+| `info`      | `information` (only at the end of a name; `db-info` stays — it's a domain noun) |
+
+**Idioms that stay** (Clojure-native; do not change):
+
+- `var`, `vars`, `defn`, `def`, `let`, `fn`, `ns`, `sym`, `ctx`, `opts`,
+  `args`, `id`, `db`, `str` (only as `clojure.string` alias or in
+  built-in fn names like `pr-str`, `subs`, `str/replace`).
+- `env` is permitted ONLY as a local-scope binding name; public API
+  uses `environment` (already enshrined above).
+- `kw` (keyword) inside one-shot reader/normalizer helpers; spell out
+  in any externally-visible name.
+
+### SYSTEM vars are UPPERCASE and explicitly defined
+
+The sandbox-visible system vars carrying the user's current query, the
+model's last reasoning text, and the prior-turn final answer are named
+**`QUERY`, `REASONING`, `ANSWER`** — ALL CAPS, no earmuffs.
+
+They are explicitly `(def QUERY nil)` / `(def REASONING nil)` /
+`(def ANSWER nil)` at environment construction so the symbols always
+resolve, even before the first turn. They are subsequently rebound
+after each iteration via the iteration loop's bookkeeping.
+
+Do NOT introduce earmuffed names (`*query*`, `*foo*`) for new system
+vars. The system-var registry (`SYSTEM_VAR_NAMES`) is a fixed set;
+adding to it is a deliberate API change, not a free-form pattern.
+
+Why uppercase, not earmuffs:
+
+- Earmuffs are Clojure's idiom for *dynamic vars* (`*out*`, `*ns*`).
+  Our SYSTEM vars are **plain SCI bindings**, not dynamic; the earmuff
+  signal misled readers into thinking they could `binding`-shadow them.
+- Uppercase aligns with the Clojure idiom for *constants* (`MAX_VAL`,
+  `URL_PATTERN`). The SYSTEM vars are read-only from the model's POV;
+  the loop owns mutation.
+- Cleaner in `<var_index>` and `<system_state>` blocks (no asterisk
+  punctuation noise).
+
+**Examples — prefer the right column:**
+
+```clojure
+;; BAD                                  ;; GOOD
+(def MAX_ITER 30)                        (def MAX_ITERATIONS 30)
+(let [iter 0 prev-msg ...] ...)          (let [iteration 0 previous-message ...] ...)
+(defn run-iter [...] ...)                (defn run-iteration [...] ...)
+:expr-results                            :expression-results
+:prev-iteration                          :previous-iteration
+(defn count-cb [cb] ...)                 (defn count-callback [callback] ...)
+```
+
+Why this matters: half the looping pathologies in CRITIQUE.md trace back
+to over-compressed projections (`:s :l :t :map :n 12` vs. real Clojure
+shape). The same compression instinct in identifiers makes call sites
+harder to read and diff harder to review. Spell things out. Reviewers
+MUST reject PRs that introduce new banned abbreviations from the table
+above.
+
 ## Namespace Architecture
 
 ### Namespace Layers
@@ -464,7 +553,33 @@ lives on `com.blockether.vis.channel`. Neither is re-exported from
 
 **Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, iteration stops and the answer is the RLM result. Observability: pass `{:hooks {:on-chunk (fn [{:iteration :thinking :code :final :done?}])}}` to `conversations/send!`.
 
-**`<prior_thinking>` rule:** the iteration loop ships **only the previous iteration's `:thinking`** in `<prior_thinking>`, plus a one-line breadcrumb. There is no spec field, no carry, no opt-in knob to request more. When the agent needs older reasonings it calls `(var-history '*reasoning*)` (or `(take-last N (var-history '*reasoning*))`) from `:code`. Do NOT reintroduce auto-shipping multiple historical reasonings — the eager-context path was deleted on purpose; the on-demand path is the only path. Cross-query handover at iter 0 (`HANDOVER_KEEP_LAST=2` from the previous turn + final answer) is a separate mechanism and stays.
+**Plan slot rule (Phase 1):** reasoning continuity is delivered by
+three structured slots, not by a `<prior_thinking>` blob.
+
+- `<plan>` — sticky structured TODO list (`:plan_state` ref spec).
+  The model emits it at iter 0 and the loop carries it verbatim until
+  re-emit. Max 20 items, exactly one `:in_progress`.
+- `<breadcrumbs>` — cumulative one-liner per iteration (last K=20),
+  authored by the model in `:breadcrumb`. Tactical history at one line
+  per iter.
+- `<recent_thought>` — last iteration's `:thinking` text only,
+  capped at 4000 chars.
+
+SYSTEM vars (`QUERY`, `REASONING`, `ANSWER`) appear inlined in
+`<system_state>` with their current values, NOT in `<var_index>`. The
+previous turn's bounded digest (`{:goal :counts :outcome
+:abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.
+
+When the agent genuinely needs older reasonings, the (opt-in)
+`vis-ext-self-debug` extension exposes `(self/breadcrumbs N)`,
+`(self/turn-history N)`, `(self/attempts)`, `(self/var-history 'sym)`.
+The deprecated built-in `var-history` still works for backwards
+compatibility.
+
+Do NOT reintroduce a `<prior_thinking>` blob, the lossy summarization
+chain it produced, or the `HANDOVER_KEEP_LAST=2` cross-query special
+case — those were deleted on purpose. The plan slot replaces all of
+them with a bounded, structured, sticky projection.
 
 **Frontend wiring:**
 - **TUI (`vis-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes the env, the conversation stays in the `:vis` channel so other inspectors can see it.

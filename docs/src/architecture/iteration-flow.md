@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — iter header, `<prior_thinking>`, `<journal>`, `<var_index>` (compact pseudo-source index of defs/defns), nudges (built-in + extension)
+1. **Build Context** — iteration header, `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's :thinking), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `PRIOR_TURN`), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension)
 2. **Ask LLM** — svar structured JSON output: code blocks + optional
    `:final`. The call site is `(llm/ask! (:router environment) …)`,
    i.e. the env's snapshot router — NOT the global
@@ -68,17 +68,63 @@ The intended behavior is: read the nudge, decide whether more work is
 actually needed, and if yes call `(request-more-iterations n)`
 immediately instead of limping into a bad finalize.
 
-## Prior Thinking
+## Plan slot, breadcrumbs, recent thought
 
-Only the **most recent** iteration's `:thinking` is shipped in
-`<prior_thinking>`. Older reasonings are accessible on demand via
-`(var-history '*reasoning*)` from `:code`. This is deliberate —
-eager auto-context burns tokens on summaries nobody asked for.
+Reasoning continuity is delivered by **three structured slots**, not by
+a lossy summarization chain:
 
-More generally, `<var_index>` is only the latest namespace snapshot.
-When a symbol shows `:v N`, the full persisted version timeline is
-available via `(var-history 'sym)`. This includes SYSTEM vars like
-`*query*`, `*reasoning*`, and `*answer*`.
+- **`<plan>`** — sticky `:plan_state` map. The model emits it at iter 0
+  (or whenever the approach changes); the loop carries the most-recent
+  persisted plan forward verbatim until the model re-emits one.
+  Schema: `:goal` / `:items [{:id :content :status :evidence}]` /
+  `:open` / `:decided`. Max 20 items, exactly one `:in_progress`.
+- **`<breadcrumbs>`** — cumulative one-liner per iteration, authored by
+  the model in `:breadcrumb`. Bounded at last K=20 entries, oldest-first.
+  Tactical "what I just did" rendered as `i3  [3] grep yielded 12 hits`.
+- **`<recent_thought>`** — the most recent iteration's free-form
+  `:thinking` text, capped at 4000 chars. For nuance the breadcrumb
+  couldn't carry.
 
-Cross-query handover at iteration 0 ships the last 2 reasonings +
-final answer from the previous turn. This is a separate mechanism.
+Older reasonings are no longer auto-shipped. When the model genuinely
+needs them, the (opt-in) `vis-ext-self-debug` extension exposes
+`(self/breadcrumbs N)` and `(self/turn-history N)` for programmatic
+introspection without wasting iterations on `(var-history)` round-trips.
+
+## SYSTEM vars: `QUERY`, `REASONING`, `ANSWER`
+
+The sandbox-visible system vars carrying the user's current query, the
+model's last reasoning text, and the prior-turn final answer are named
+**`QUERY`, `REASONING`, `ANSWER`** — ALL CAPS, no earmuffs. They are
+explicitly defined at environment construction (`(def QUERY nil)` etc.)
+so the symbols always resolve, even before the first turn.
+
+Uppercase, not earmuffs, because:
+
+- Earmuffs are Clojure's idiom for *dynamic vars* (`*out*`, `*ns*`).
+  These are plain SCI bindings, not dynamic; the earmuff signal misled
+  readers into thinking they could `binding`-shadow them.
+- Uppercase aligns with the Clojure idiom for *constants*
+  (`MAX_VAL`, `URL_PATTERN`). The SYSTEM vars are read-only from the
+  model's POV; the loop owns mutation.
+
+The registry is fixed: `SYSTEM_VAR_NAMES = #{QUERY ANSWER REASONING}`.
+See `loop.runtime.conversation.environment.core/system-var-sym?` for
+the predicate. SYSTEM vars are *excluded* from `<var_index>` (their
+current values appear inlined in `<system_state>` instead) and never
+subject to auto-forget.
+
+## Cross-turn handover digest
+
+At iteration 0 of turn N, `<system_state>.PRIOR_TURN` carries a
+**bounded digest** of the previous turn: `{:goal :counts :outcome
+:abandon-reason}`. Only this digest — not the full plan body, not raw
+reasoning, not the transcript. Multi-turn conversations cannot
+accumulate stale plan context here. The next turn's plan is fresh.
+
+## Var-index
+
+`<var_index>` is the latest namespace snapshot of *user-defined* vars
+only. When a symbol shows `:v N`, the full persisted version timeline
+is available via `(var-history 'sym)`. SYSTEM vars do NOT appear in
+`<var_index>` — they live in `<system_state>` with their current values
+inlined.
