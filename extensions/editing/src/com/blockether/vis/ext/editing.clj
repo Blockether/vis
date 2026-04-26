@@ -114,35 +114,57 @@
 
 (defn- ignored-by-gitignore?
   "Check if a file or any of its ancestor directories is gitignored.
-   For each directory between root and target, checks that directory's
-   name against parent's .gitignore as a DIRECTORY match. If any
-   ancestor is ignored, the file is ignored."
+   Two-pass approach:
+   1. Check the FULL relative path from root against root's .gitignore
+      (catches path patterns like 'bench/data/').
+   2. Walk each ancestor and check its NAME against its parent's
+      .gitignore (catches simple patterns like '.clj-kondo/')."
   [^java.io.File f]
   (when-let [root (repo-root)]
-    (let [root-path (.getPath (.getCanonicalFile root))
-          target    (.getCanonicalFile f)]
+    (let [root-canon (.getCanonicalFile root)
+          root-path  (.getPath root-canon)
+          target     (.getCanonicalFile f)]
       (when (str/starts-with? (.getPath target) root-path)
-        ;; Walk from target up to root. For each segment, check if
-        ;; its NAME is ignored by its PARENT's .gitignore.
-        (loop [current target]
-          (let [parent (.getParentFile current)]
-            (cond
-              (nil? parent) false
-              ;; Reached or passed root — not ignored
-              (not (str/starts-with? (.getPath (.getCanonicalFile parent)) root-path)) false
-              :else
-              (let [parent-canon (.getCanonicalFile parent)
-                    node         (load-ignore-node parent-canon)
-                    name         (.getName current)
-                    is-dir?      (.isDirectory current)
-                    ignored?     (when (and node (not (str/blank? name)))
-                                   (let [r (.checkIgnored node name is-dir?)]
-                                     (true? r)))]
-                (if ignored?
-                  true
-                  (if (.equals parent-canon (.getCanonicalFile root))
-                    false
-(recur parent)))))))))))
+        (let [;; Full relative path from repo root
+              rel-from-root (-> (str (.relativize (.toPath root-canon) (.toPath target)))
+                              (str/replace java.io.File/separator "/"))
+              ;; Pass 1: check full relative path against root .gitignore
+              ;; This catches path patterns like 'bench/data/' and 'resources/docs/book/'
+              root-node    (load-ignore-node root-canon)
+              root-ignored (when (and root-node (not (str/blank? rel-from-root)))
+                             (true? (.checkIgnored root-node rel-from-root (.isDirectory target))))]
+          (if root-ignored
+            true
+            ;; Also check partial paths for intermediate dirs:
+            ;; e.g. for bench/data/foo.json, check bench/data against root .gitignore
+            (let [parts (str/split rel-from-root #"/")
+                  intermediate-ignored
+                  (when (and root-node (> (count parts) 1))
+                    (some (fn [n]
+                            (let [partial (str/join "/" (take n parts))]
+                              (true? (.checkIgnored root-node partial true))))
+                      (range 1 (count parts))))]
+              (if intermediate-ignored
+                true
+                ;; Pass 2: walk ancestors checking each name against parent's .gitignore
+                (loop [current target]
+                  (let [parent (.getParentFile current)]
+                    (cond
+                      (nil? parent) false
+                      (not (str/starts-with? (.getPath (.getCanonicalFile parent)) root-path)) false
+                      :else
+                      (let [parent-canon (.getCanonicalFile parent)
+                            node         (load-ignore-node parent-canon)
+                            nm           (.getName current)
+                            is-dir?      (.isDirectory current)
+                            ignored?     (when (and node (not (str/blank? nm)))
+                                           (true? (.checkIgnored node nm is-dir?)))]
+                        (if ignored?
+                          true
+                          (if (.equals parent-canon root-canon)
+                            false
+                            (recur parent)))))))))))))))
+
 
 (defn- read-file
   "Read file contents with optional offset/limit (1-indexed lines).
@@ -230,11 +252,20 @@
                 :pattern pattern
                 :error (ex-message e)})))))
 
+(def ^:private max-grep-line-chars
+  "Max chars per matched line in grep results. Lines longer than this
+   are truncated to prevent multi-KB JSON lines from flooding the journal."
+  500)
+
 (defn- grep-match->map
   [^java.io.File file idx line]
-  {:path (rel-path file)
-   :line (inc idx)
-   :text (str/trim line)})
+  (let [text (str/trim line)
+        text (if (> (count text) max-grep-line-chars)
+               (str (subs text 0 max-grep-line-chars) "...[truncated]")
+               text)]
+    {:path (rel-path file)
+     :line (inc idx)
+     :text text}))
 
 (defn- grep-files
   "Search for pattern in files. Always returns structured maps.

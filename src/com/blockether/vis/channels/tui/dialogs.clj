@@ -463,7 +463,7 @@
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
    `title` is the dialog header. `text` is a string (may contain newlines).
-   Returns nil on Esc. Supports ↑/↓/PgUp/PgDn scrolling."
+   Returns nil on Esc. Supports keyboard scrolling."
   [^TerminalScreen screen title text]
   (let [scroll (atom 0)
         term-size (.getTerminalSize screen)
@@ -509,7 +509,7 @@
               (p/set-char! g (+ left inner-w) r \|))))
 
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "scroll"] ["PgUp/Dn" "page"] ["Esc" "close"]])
+          [["↑/↓" "scroll"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
