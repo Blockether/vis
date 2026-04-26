@@ -16,7 +16,52 @@
    their `META-INF/vis/commandline.edn` registrations show up\n   automatically."
   (:require [borkdude.dynaload :as dl]
             [clojure.string :as str]
-            [com.blockether.vis.commandline :as cmd]))
+            [com.blockether.vis.commandline :as cmd]
+            [taoensso.telemere :as tel]))
+
+;; =============================================================================
+;; Logging routing
+;;
+;; Telemere ships with a `:default/console` handler that prints EVERY
+;; signal to stdout. That fills the terminal with registration noise
+;; before the user ever sees the help text — painful UX for a CLI.
+;;
+;; Default behavior:
+;;   - stdout stays clean
+;;   - every signal is appended to `~/.vis/vis.log`
+;;
+;; Pass `--debug` / `--verbose` / `-v` (or set `VIS_DEBUG=1`) to KEEP
+;; the console handler in addition to the file handler.
+;; =============================================================================
+
+(def ^:private debug-flags #{"--debug" "--verbose" "-v"})
+
+(defn- debug-mode? [args]
+  (or (some debug-flags args)
+    (= "1" (System/getenv "VIS_DEBUG"))))
+
+(defn- log-file-path []
+  (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
+    (when-not (.exists log-dir) (.mkdirs log-dir))
+    (str log-dir "/vis.log")))
+
+(defn- configure-logging!
+  "Route Telemere signals away from stdout (and into the log file)
+   unless `--debug` was given. Idempotent — the same handler keys
+   are reused so re-running this is a no-op."
+  [args]
+  (let [debug? (debug-mode? args)
+        path   (log-file-path)]
+    ;; File handler ALWAYS on, so post-mortem reads always have data.
+    (try
+      (tel/add-handler! :file
+        (tel/handler:file {:path path})
+        {:min-level :info})
+      (catch Throwable _ nil))
+    ;; Console handler: removed unless the user asked for verbosity.
+    (when-not debug?
+      (try (tel/remove-handler! :default/console)
+        (catch Throwable _ nil)))))
 
 ;; =============================================================================
 ;; Optional plug-in discovery (dynaloaded \u2014 zero compile-time deps)
@@ -132,6 +177,10 @@
    ergonomics can register a `:cmd/run-fn` on the root via a custom
    plug-in."
   [& args]
+  ;; Quiet stdout BEFORE any plug-in load triggers Telemere registration
+  ;; spam — the user only sees logs when they pass --debug / --verbose / -v
+  ;; (or set VIS_DEBUG=1).
+  (configure-logging! args)
   (discover-all!)
   (pre-redirect-stderr! args)
   (let [root      (root-command)
