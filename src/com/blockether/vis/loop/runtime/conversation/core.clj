@@ -113,7 +113,9 @@
    Returns nil when the conversation is not found."
   [id]
   (when-let [env (env-for id)]
-    (let [base   (or (:system-prompt (by-id id)) "")
+    (let [;; Core system prompt (iteration instructions, env block, CLJ rules, etc.)
+          base   (loop-core/build-system-prompt
+                   {:system-prompt (:system-prompt (by-id id))})
           ext-ps (when-let [exts (some-> (:extensions env) deref seq)]
                    (->> exts
                      (keep (fn [ext]
@@ -129,6 +131,7 @@
           combined (if ext-ps
                      (str base "\n\n" (str/join "\n\n" ext-ps))
                      base)
+
           ;; 1. System message — svar wraps in <objective> tags
           objective (str "<objective>\n" combined "\n</objective>")
           ;; --- pull last query for realistic context ---
