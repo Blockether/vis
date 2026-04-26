@@ -516,7 +516,7 @@
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str) 1))) meta-row meta-str))
         ;; Return: rows consumed
-        (+ 1 bubble-h 2))))
+        (+ 1 bubble-h 2)))))
 
 (defn bubble-height
   "Calculate rows a chat bubble will consume without drawing.
