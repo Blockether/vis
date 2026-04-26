@@ -108,15 +108,11 @@
         _        (input/register-custom-patterns! terminal)
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)
-    ;; Enable normal mouse tracking (?1000h) for scroll + click.
-    ;; Lanterna auto-adds ?1005h (UTF-8 ext) on UTF-8 terminals, which
-    ;; breaks Shift+Drag native selection in many emulators. We disable
-    ;; ?1005 and enable ?1006 (SGR) instead — SGR properly respects
-    ;; Shift+Drag bypass for native text selection.
-    (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE)
-    (let [^java.io.OutputStream out @config/tty-out]
-      (.write out (.getBytes "\u001b[?1005l\u001b[?1006h"))
-      (.flush out))
+    ;; Mouse capture OFF. When enabled, Lanterna intercepts mouse wheel
+    ;; events and the terminal can't scroll. Raw escape sequences also
+    ;; leak as garbage characters into the input box. Leave mouse
+    ;; handling entirely to the terminal.
+    (.setMouseCaptureMode terminal nil)
     (try
       ;; Show provider dialog on first launch if no config
       (when-not (:config @state/app-db)
@@ -270,9 +266,4 @@
       (finally
         (when-let [conv (:conv @state/app-db)]
           (chat/dispose! conv))
-        ;; Disable SGR mouse ext before resetting mouse mode.
-        (let [^java.io.OutputStream out @config/tty-out]
-          (.write out (.getBytes "\u001b[?1006l"))
-          (.flush out))
-        (.setMouseCaptureMode terminal nil)
         (.stopScreen screen))))))

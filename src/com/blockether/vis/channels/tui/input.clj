@@ -2,8 +2,7 @@
   (:require [clojure.string :as str])
   (:import [com.googlecode.lanterna.input
             CharacterPattern CharacterPattern$Matching
-            KeyDecodingProfile KeyStroke KeyType
-            MouseAction MouseActionType]
+            KeyDecodingProfile KeyStroke KeyType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
            [java.awt Toolkit]
            [java.awt.datatransfer DataFlavor StringSelection]))
@@ -195,15 +194,9 @@
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 
-      KeyType/MouseEvent
-      (let [^MouseAction mouse key
-            col (.getColumn (.getPosition mouse))
-            row (.getRow (.getPosition mouse))]
-        (condp = (.getActionType mouse)
-          MouseActionType/SCROLL_UP   {:action :scroll-up :state state}
-          MouseActionType/SCROLL_DOWN {:action :scroll-down :state state}
-          MouseActionType/CLICK_RELEASE {:action :mouse-click :state state :col col :row row}
-          {:action :continue :state state}))
+      ;; Mouse capture is OFF — mouse events should not arrive, but
+      ;; if they do, ignore them completely.
+      KeyType/MouseEvent {:action :continue :state state}
 
       {:action :continue :state state})))
 
