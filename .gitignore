@@ -1,7 +1,10 @@
-# Build / cache
+# Build / cache — all globs are leading-slash-free on purpose so they
+# match at any depth (root, packages/*, extensions/*, docs/, etc.).
 .cpcache/
+.cache/
 .clj-kondo/
 .lsp/
+.shadow-cljs/
 target/
 
 # IDE

@@ -190,28 +190,33 @@ The codebase is a polylith-style monorepo under `packages/`. Each
 package has its own `deps.edn` and is publishable independently; the
 root `deps.edn` aggregates them via `:local/root` so a single
 `clojure -M:run` from the repo root has the whole product on the
-classpath. Current packages:
+classpath.
 
-- `vis-core` — public API facade, runtime loop, query/iteration
-  engine, SCI sandbox, conversation lifecycle, channels.cli dispatcher
-  + `cli.agent`. The only package consumers must depend on directly.
-- `vis-extension` — standalone extension + channel contract
-  (`com.blockether.vis.extension`, `com.blockether.vis.channel`).
-  Slim deps on purpose (telemere + clojure.spec); extensions and
-  third-party channels depend on this, not on `vis-core`.
-- `vis-commandline` — reusable CLI primitives (command spec, arg
-  parsing, dispatch, help rendering) consumed by `channels.cli`.
-- `vis-persistance` — persistence FACADE: public API + spec, no JDBC.
-- `vis-persistance-sqlite` — SQLite + Flyway backend; auto-registers
-  via `META-INF/vis/persistance-backends.edn`.
-- `vis-logging` — Telemere → SQLite log handler (opt-in).
-- `vis-provider` — vendor auth (currently GitHub Copilot OAuth).
-- `vis-tui` — Lanterna TUI channel (`:tui` channel id, default).
-- `vis-telegram` — Telegram long-poll bot (`:telegram` channel id).
-- `vis-benchmark` — benchmark harness (not a runtime package).
+**Canonical package list:** `docs/src/architecture/packages.md` —
+the single source of truth for what each package does, the dependency
+direction, and the auto-discovery resources. Update that page when
+adding/removing/renaming a package; do not maintain a divergent list
+here.
 
-Docs build: `cd docs && mdbook serve --open` (mdBook source lives at
-the repo root under `docs/`, not inside any package).
+Quick mental map (use `packages.md` for details):
+
+- `vis-core` — only package consumers must depend on directly
+- `vis-extension` + `vis-commandline` — slim plug-in contracts
+- `vis-persistance` (+ `vis-persistance-sqlite`) — storage facade + backend
+- `vis-logging`, `vis-provider` — optional cross-cutting utilities
+- `vis-tui`, `vis-telegram` — channel implementations
+- `vis-benchmark` — benchmark harness (`:bench` alias only)
+
+Three classpath-scan auto-discovery resources, all the same shape
+(EDN vector of namespace symbols loaded at startup):
+`META-INF/vis/extensions.edn`, `META-INF/vis/channels.edn`,
+`META-INF/vis/commandline.edn` (plus the persistence-backend variant).
+Drop a jar that ships any of them on the classpath and `vis-core`
+picks it up at the next process boot — no edits required.
+
+Docs build: `cd docs && mdbook-mermaid install . && mdbook serve --open`
+(mdBook source lives at the repo root under `docs/`, not inside any
+package).
 
 **DO NOT create or maintain a directory-structure file.** The codebase
 changes faster than any static tree can track. Use `find`, `ls`, `grep`
