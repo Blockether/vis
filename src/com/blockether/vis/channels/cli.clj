@@ -363,9 +363,14 @@
 (defn- run-tui!
   "Start TUI chat with logging redirected to file (stdout reserved for Lanterna)."
   [opts]
+  ;; Kill Telemere console handler FIRST — it holds the original System/err
+  ;; and will write to the terminal even after System/setErr redirects.
+  (try (require 'taoensso.telemere)
+    ((resolve 'taoensso.telemere/remove-handler!) :default/console)
+    (catch Throwable _ nil))
   ;; Redirect ALL output immediately — before any requires — so JVM
-  ;; warnings, library logging, Telemere console, and stray prints
-  ;; never reach the terminal. Lanterna uses /dev/tty directly.
+  ;; warnings, library logging, and stray prints never reach the terminal.
+  ;; Lanterna uses /dev/tty directly and is unaffected.
   (let [log-dir  (java.io.File. (str (System/getProperty "user.home") "/.vis"))
         _        (when-not (.exists log-dir) (.mkdirs log-dir))
         log-path (str log-dir "/vis.log")
