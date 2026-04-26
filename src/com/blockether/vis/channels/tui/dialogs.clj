@@ -440,6 +440,7 @@
   [{:id :provider       :label "Provider"}
    {:id :settings       :label "Settings"}
    {:id :copy           :label "Copy Messages"}
+   {:id :system-prompt  :label "System Prompt"}
    {:id :quit           :label "Quit"}])
 
 (defn command-palette!

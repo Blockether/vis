@@ -323,9 +323,8 @@
         max-iters (long (or current-max-iterations 0))
         remaining (- max-iters (inc iter))]
     (when (<= remaining BUDGET_WARNING_WINDOW)
-      (str "[system_nudge] Budget info: " (max 0 remaining) " iteration(s) remaining. "
-        "If more work is needed, call (request-more-iterations N) to extend. "
-        "This is informational — do NOT skip necessary work to meet the budget."))))
+      (str "[system_nudge] " (max 0 remaining) " iteration(s) left. "
+        "Either finalize with :answer NOW, or call (request-more-iterations N) from :code to extend."))))
 
 (defn- repetition-warning
   [call-counts-atom prev-expressions]
