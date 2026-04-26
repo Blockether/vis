@@ -614,10 +614,12 @@
                       ;; Result
                       result-str  (when results (get results idx))
                       r-marker    (if is-error? err-result-marker result-marker)
-                      r-lines     (when (and result-str (not (str/blank? (str result-str))))
-                                    (mapv #(str r-marker "  => " %)
-                                      (wrap-text (str/trim (str result-str))
-                                        (max 1 (- fill-w 5)))))
+                      r-wrapped   (when (and result-str (not (str/blank? (str result-str))))
+                                    (wrap-text (str/trim (str result-str))
+                                      (max 1 (- fill-w 2))))
+                      r-lines     (when (seq r-wrapped)
+                                    (into [(str r-marker "  " (first r-wrapped))]
+                                      (map #(str r-marker "  " %) (rest r-wrapped))))
                       ;; Code block = header + pad-top + code + gap + result + status + pad-bottom
                       code-block  (vec (concat
                                          [(str iter-hdr-marker expr-hdr)]  ;; right-aligned code ₁
