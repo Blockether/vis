@@ -68,7 +68,8 @@ entity, enters the iteration loop, finalizes cost/duration/tokens.
 **Iteration Engine** — one LLM round-trip. Assembles context (journal,
 var-index, nudges, prior thinking), calls the LLM, executes code blocks
 in SCI, persists results. Context is O(1) — never grows with iteration
-count.
+count. The system prompt is built by `loop-core/assemble-system-prompt`
+— single source of truth shared by both loop paths and the TUI inspector.
 
 **Persistence** — single SQLite DB for everything. Every `(def ...)`,
 every iteration, every thinking step persisted as versioned snapshots.

@@ -75,7 +75,7 @@ to the relevant doc if the change affects:
 
 Doc files:
 - `resources/docs/src/rationale.md` — why RLM, why SCI, what we learned
-- `resources/docs/src/architecture/` — overview, iteration flow, directory structure, state, database schema
+- `resources/docs/src/architecture/` — overview, iteration flow, state, database schema
 - `resources/docs/src/extensions/` — extension spec, hooks, environment map, nudge system
 - `resources/docs/src/reference/` — public API, reasoning levels, ubiquitous language
 
@@ -196,9 +196,11 @@ clojure -M:run
 
 ### Project Structure
 
-See `resources/docs/src/architecture/directory-structure.md` for the full annotated tree.
-
 Build docs: `cd resources/docs && mdbook serve --open`
+
+**DO NOT create or maintain a directory-structure file.** The codebase
+changes faster than any static tree can track. Use `find`, `ls`, `grep`
+to explore. If an agent writes a directory-structure doc, delete it.
 
 ## Ubiquitous Language (MANDATORY)
 
@@ -248,7 +250,7 @@ Build docs: `cd resources/docs && mdbook serve --open`
 - `src/com/blockether/vis/loop/runtime/conversation/environment/query/iteration/core.clj` - iteration engine
 - `src/com/blockether/vis/persistance/core.clj` - persistence API (delegates to sqlite)
 
-Full directory tree: `resources/docs/src/architecture/directory-structure.md`
+Use `find`/`grep` to explore the tree — no static directory doc exists.
 
 ### Refactor Rules
 

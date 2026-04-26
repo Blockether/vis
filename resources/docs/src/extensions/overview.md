@@ -9,12 +9,12 @@ a single validated unit.
 
 ## What an Extension Can Do
 
-1. **Bind functions** into an aliased namespace — the LLM calls `(alias/fn ...)` from `:code`
-2. **Bind constants** — data the LLM references via the alias prefix
-3. **Inject prompt context** — LLM-facing docs in the system prompt
-4. **Emit per-iteration nudges** — situational hints (budget, errors, etc.)
-5. **Expose Java classes** — enable `(LocalDate/now)` style interop
-6. **Guard activation** — conditionally enable/disable based on env state
+1. **Bind functions** into an aliased namespace - the LLM calls `(alias/fn ...)` from `:code`
+2. **Bind constants** - data the LLM references via the alias prefix
+3. **Inject prompt context** - LLM-facing docs in the system prompt
+4. **Emit per-iteration nudges** - situational hints (budget, errors, etc.)
+5. **Expose Java classes** - enable `(LocalDate/now)` style interop
+6. **Guard activation** - conditionally enable/disable based on env state
 
 ## Registration
 
@@ -45,7 +45,7 @@ self-registers → every new environment gets it.
 
 Extensions can be discovered **automatically** without any manual
 `require`. Place a `META-INF/vis/extensions.edn` file in your
-extension’s `resources/` directory:
+extension's `resources/` directory:
 
 ```edn
 [com.acme.ext.git
@@ -90,7 +90,7 @@ An extension can load other extensions at runtime:
 ;; => requires the ns, triggers register-global!, returns the ext
 ```
 
-This is how meta-extensions (extension packs) work — one extension
+This is how meta-extensions (extension packs) work - one extension
 `require`s others dynamically.
 
 ### Per-Environment (ad-hoc)
@@ -121,20 +121,20 @@ flowchart TD
 
 **Step details:**
 
-0. **discover-extensions!** — scan `META-INF/vis/extensions.edn` on classpath
-1. **ext/extension** — build and validate extension spec
-2. **register-global!** — add to process-level registry
-3. **Topo-sort** — order by `:ext/requires` dependencies
-4. **Dependencies** — all required extensions must be registered
-5. **Install** — bind symbols into aliased SCI namespace, auto-require alias in sandbox
-6. **Prompt** — append `[namespace: alias → ns]` header + `:ext/prompt` to system prompt
-7. **Activation** — per-query `activation-fn` check
-8. **Nudge** — per-iteration `nudge-fn` called
-9. **Hooks** — per-call `before-fn`, `fn`, `after-fn`, `on-error-fn`
+0. **discover-extensions!** - scan `META-INF/vis/extensions.edn` on classpath
+1. **ext/extension** - build and validate extension spec
+2. **register-global!** - add to process-level registry
+3. **Topo-sort** - order by `:ext/requires` dependencies
+4. **Dependencies** - all required extensions must be registered
+5. **Install** - bind symbols into aliased SCI namespace, auto-require alias in sandbox
+6. **Prompt** - append `[namespace: alias → ns]` header + `:ext/prompt` to system prompt
+7. **Activation** - per-query `activation-fn` check
+8. **Nudge** - per-iteration `nudge-fn` called
+9. **Hooks** - per-call `before-fn`, `fn`, `after-fn`, `on-error-fn`
 
 ## Namespace Aliases (required)
 
-Every extension **must** declare `:ext/ns-alias` — a map with `:ns`
+Every extension **must** declare `:ext/ns-alias` - a map with `:ns`
 (the full SCI namespace symbol) and `:alias` (the short alias the LLM
 uses). Extension symbols are bound **only** into this dedicated
 namespace, **never** into the `sandbox` namespace directly. The LLM
@@ -152,9 +152,9 @@ At `register-extension!` time:
 2. The alias `fs` is registered in the SCI context
 3. `(require '[vis.ext.fs :as fs])` is auto-evaluated in the sandbox
 4. The LLM calls `(fs/read-file ...)`, `(fs/list-files ...)`, etc.
-5. Bare `(read-file ...)` does **not** resolve — the alias is mandatory
+5. Bare `(read-file ...)` does **not** resolve - the alias is mandatory
 
-The system prompt auto-prepends a namespace header to each extension’s
+The system prompt auto-prepends a namespace header to each extension's
 prompt block:
 
 ```
@@ -169,20 +169,27 @@ exposes `java.time.LocalDate`.
 
 ## Prompt Injection
 
-Every active extension’s `:ext/prompt` is appended to the **system
+Every active extension's `:ext/prompt` is appended to the **system
 prompt** at the start of each query. This is how the LLM knows which
 tools are available in the sandbox.
 
-At query start:
-1. Base system prompt is assembled
-2. For each extension where `(:ext/activation-fn ext) environment` is truthy:
-   - `(:ext/prompt ext) environment` is called
-   - If it returns a non-blank string, it’s appended
-3. All active prompts are joined with `\n\n` and appended to the system prompt
+`loop-core/assemble-system-prompt` is the **single function** that
+builds the complete system message. It:
 
-If an extension’s `activation-fn` or `prompt` fn throws, the error is
-logged at `:error` level (with the unified `format-exception-short`
-format) and that extension’s prompt is skipped — the query still runs.
+1. Builds the core system prompt (`CORE_SYSTEM_PROMPT` + date +
+   environment block + optional caller instructions)
+2. Collects extension prompts: for each extension where
+   `(:ext/activation-fn ext) environment` is truthy,
+   `(:ext/prompt ext) environment` is called
+3. Joins all active prompts with `\n\n` and appends to the core prompt
+
+Both iteration loop paths (`loop/core.clj` and `query/core.clj`) and
+the TUI `[?]` inspector (`conversation/core.clj :: effective-system-prompt`)
+call this same function — zero duplication, zero drift.
+
+If an extension's `activation-fn` or `prompt` fn throws, the error is
+logged at `:error` level and that extension's prompt is skipped —
+the query still runs.
 
 ## Quick Example
 
@@ -199,7 +206,7 @@ format) and that extension’s prompt is skipped — the query still runs.
      :ext/group         "knowledge"
      :ext/ns-alias      {:ns 'vis.ext.search :alias 'search}
      :ext/prompt        "Document search tools (use search/ prefix):
-- (search/find query) — full-text search across documents"
+- (search/find query) - full-text search across documents"
      :ext/symbols       [(ext/symbol 'find search-fn
                            {:doc      "Full-text search."
                             :arglists '([query])
@@ -214,7 +221,7 @@ The LLM sees in the system prompt:
 ```
 [namespace: search → vis.ext.search]
 Document search tools (use search/ prefix):
-- (search/find query) — full-text search across documents
+- (search/find query) - full-text search across documents
 ```
 
 And calls `(search/find "neural")` from `:code` blocks. Bare
@@ -222,7 +229,7 @@ And calls `(search/find "neural")` from `:code` blocks. Bare
 
 ## Sections
 
-- [Extension Spec](spec.md) — all keys, defaults, validation
-- [Hook Protocol](hooks.md) — `:before-fn`, `:after-fn`, `:on-error-fn`
-- [Environment Map](environment.md) — every key in the environment
-- [Nudge System](nudges.md) — built-in + extension nudges
+- [Extension Spec](spec.md) - all keys, defaults, validation
+- [Hook Protocol](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn`
+- [Environment Map](environment.md) - every key in the environment
+- [Nudge System](nudges.md) - built-in + extension nudges
