@@ -748,52 +748,83 @@
               (do (p/set-colors! g t/iter-header-fg bg-color)
                 (p/put-str! g x y (subs line 1)))
 
-              ;; ── Answer-mode markdown headings ──
+              ;; ── Answer-mode markdown headings (gold gradient) ──
+              ;;
+              ;; H1→H3 use a saturated amber/gold gradient
+              ;; (`t/md-h1-fg` etc.) instead of the body fg + bold,
+              ;; so headings stop disappearing into surrounding
+              ;; prose. The colour stack is engineered to pop on
+              ;; both the white assistant bg and the new pale-blue
+              ;; answer-bg — see the WCAG ratios in theme.clj.
+              ;; Heading lines now run their content through
+              ;; `markdown->inline` before reaching here, so the line
+              ;; payload may contain INLINE_*_ON/OFF sentinels for
+              ;; nested bold/italic/code spans. Painting via
+              ;; `paint-styled-line!` (instead of raw `put-str!`)
+              ;; ensures the sentinels CONSUME and don't leak into
+              ;; the terminal as PUA glyphs. Heading colour + BOLD
+              ;; remain the BASE style; inline spans STACK on top
+              ;; (e.g. `## **plain** *and italic*` keeps the gold +
+              ;; bold base, plus italic on the second word).
               (str/starts-with? line md-h1-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g fg-color lbg)
+                (p/set-colors! g t/md-h1-fg lbg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/md-h1-fg lbg t/code-block-fg t/code-block-bg)))
 
               (str/starts-with? line md-h2-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g fg-color lbg)
+                (p/set-colors! g t/md-h2-fg lbg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/md-h2-fg lbg t/code-block-fg t/code-block-bg)))
 
               (str/starts-with? line md-h3-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g t/dialog-hint lbg)
+                (p/set-colors! g t/md-h3-fg lbg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/md-h3-fg lbg t/code-block-fg t/code-block-bg)))
 
               (str/starts-with? line md-bold-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g fg-color lbg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    fg-color lbg t/code-block-fg t/code-block-bg)))
 
               (str/starts-with? line md-code-marker)
               (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
+              ;; Bullet items: same inline-span treatment as plain text.
+              ;; `- **bold** thing` should bold the word.
               (str/starts-with? line md-bullet-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g fg-color lbg)
                 (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                (p/paint-styled-line! g x y (subs line 1)
+                  fg-color lbg t/code-block-fg t/code-block-bg))
 
+              ;; Blockquote: italic + dim base, inline spans honoured
+              ;; on top. Was the user-visible bug — `> **Lącznie:**`
+              ;; rendered with literal asterisks because the previous
+              ;; quote painter used raw put-str! and the quote branch
+              ;; in markdown->lines didn't run markdown->inline. Both
+              ;; halves now fixed; this is the painter half.
               (str/starts-with? line md-quote-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
                 (p/set-colors! g t/dialog-hint lbg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/dialog-hint lbg t/code-block-fg t/code-block-bg)))
 
               (str/starts-with? line md-hr-marker)
               (let [lbg (if in-answer? t/answer-bg bg-color)]
@@ -1771,9 +1802,13 @@
                ;; we render anything deeper than H3 as H3 rather
                ;; than leaking raw `####` into the body. The regex
                ;; allows 3-6 leading hashes and a single space.
+               ;;
+               ;; Heading body is run through `markdown->inline` so
+               ;; `## **bold** title` keeps the inner bold instead of
+               ;; rendering the asterisks literally.
                (re-matches #"^#{3,6} .*" line)
                (let [hash-count (count (re-find #"^#+" line))
-                     body       (subs line (inc hash-count))]
+                     body       (markdown->inline (subs line (inc hash-count)))]
                  (recur rst false
                    (into acc (mapv #(str (:h3 m) %)
                                (wrap-text body max-w)))))
@@ -1782,58 +1817,65 @@
                (str/starts-with? line "## ")
                (recur rst false
                  (into acc (mapv #(str (:h2 m) %)
-                             (wrap-text (subs line 3) max-w))))
+                             (wrap-text (markdown->inline (subs line 3)) max-w))))
 
                ;; Heading 1
                (str/starts-with? line "# ")
                (recur rst false
                  (into acc (mapv #(str (:h1 m) %)
-                             (wrap-text (subs line 2) max-w))))
+                             (wrap-text (markdown->inline (subs line 2)) max-w))))
 
                ;; Horizontal rule: --- / *** / ___
                (re-matches #"^\s*([-*_])\1{2,}\s*$" line)
                (recur rst false
                  (conj acc (str (:hr m) (repeat-str \─ max-w))))
 
-               ;; Blockquote
+               ;; Blockquote.
+               ;;
+               ;; Was the headline bug after PR #625 + emoji width fix
+               ;; landed: `> **Lącznie:** ~10 MB w 16 pozycjach 🎉`
+               ;; rendered with literal asterisks because the quote
+               ;; branch never tokenised inline spans. Now goes through
+               ;; `markdown->inline` like every other prose branch.
                (re-matches #"^\s*>\s?.*" line)
                (let [trimmed (str/replace line #"^\s*>\s?" "")
-                     wrapped (wrap-text trimmed (max 1 (- max-w 2)))]
+                     decorated (markdown->inline trimmed)
+                     wrapped (wrap-text decorated (max 1 (- max-w 2)))]
                  (recur rst false
                    (into acc (mapv #(str (:quote m) "┃ " %) wrapped))))
 
                ;; Bullet list (- / * / +) — keep one trailing space.
+               ;; Inline spans inside the bullet body get tokenised so
+               ;; `- **bold** thing` actually bolds the word.
                (re-matches #"^\s*[-*+]\s+.*" line)
-               (let [trimmed (str/replace line #"^\s*[-*+]\s+" "")
-                     trimmed (-> trimmed
-                               (str/replace #"\*\*([^*]+)\*\*" "$1")
-                               (str/replace #"`([^`]+)`" "$1"))
-                     wrapped (wrap-text trimmed (max 1 (- max-w 4)))]
+               (let [trimmed   (str/replace line #"^\s*[-*+]\s+" "")
+                     decorated (markdown->inline trimmed)
+                     wrapped   (wrap-text decorated (max 1 (- max-w 4)))]
                  (recur rst false
                    (into acc
                      (into [(str (:bullet m) "  • " (first wrapped))]
                        (mapv #(str (:bullet m) "    " %) (rest wrapped))))))
 
-               ;; Numbered list (1. 2.)
+               ;; Numbered list (1. 2.) — same inline tokenisation.
                (re-matches #"^\s*\d+[.)]\s+.*" line)
                (let [[_ num body] (re-matches #"^\s*(\d+)[.)]\s+(.*)$" line)
-                     body (-> (or body "")
-                            (str/replace #"\*\*([^*]+)\*\*" "$1")
-                            (str/replace #"`([^`]+)`" "$1"))
-                     prefix (str num ". ")
-                     wrapped (wrap-text body (max 1 (- max-w (count prefix) 2)))]
+                     decorated (markdown->inline (or body ""))
+                     prefix    (str num ". ")
+                     wrapped   (wrap-text decorated (max 1 (- max-w (count prefix) 2)))]
                  (recur rst false
                    (into acc
                      (into [(str (:bullet m) "  " prefix (first wrapped))]
                        (mapv #(str (:bullet m) "    " (repeat-str \space (count prefix)) %)
                          (rest wrapped))))))
 
-               ;; Bold-only line: **text**
+               ;; Bold-only line: **text**.
+               ;; Inner content is run through `markdown->inline` in
+               ;; case it carries inline `code` / `*italic*` etc.
                (and (str/starts-with? (str/trim line) "**")
                  (str/ends-with? (str/trim line) "**")
                  (> (count (str/trim line)) 4))
                (let [trimmed (str/trim line)
-                     inner   (subs trimmed 2 (- (count trimmed) 2))]
+                     inner   (markdown->inline (subs trimmed 2 (- (count trimmed) 2)))]
                  (recur rst false
                    (into acc (mapv #(str (:bold m) %)
                                (wrap-text inner max-w)))))

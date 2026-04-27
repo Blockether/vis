@@ -64,8 +64,33 @@
 (def iter-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
 (def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
 (def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
-(def answer-bg         (TextColor$RGB. 224 235 252))  ;; clearly blue — final answer zone, distinct from code-block-bg
+;; Final answer zone background. Was previously (224 235 252) — a
+;; clearly-blue tint that user feedback flagged as overpowering when
+;; the answer is the bulk of the bubble. Dialed back to a barely-
+;; perceptible cool tint that still distinguishes the answer zone
+;; from the assistant white area / code blocks but no longer competes
+;; with the heading colours or the inline code highlight. WCAG
+;; contrast for `answer-fg` (near-black) on this bg is > 18:1, so
+;; readability is unchanged.
+(def answer-bg         (TextColor$RGB. 247 250 254))  ;; subtle cool tint — 'this is the answer' without screaming it
 (def answer-fg         (TextColor$RGB. 25 25 25))     ;; near-black answer text
+
+;; Markdown heading colours (answer-mode H1/H2/H3). Pre-fix headings
+;; were near-black + bold, indistinguishable from body text + bold.
+;; Now a saturated GOLD/AMBER gradient that pops on both the white
+;; assistant background AND the new pale-blue answer-bg. WCAG ratios
+;; on white: H1 ≈ 4.8, H2 ≈ 6.2, H3 ≈ 8.4 — all pass AA, H3 passes
+;; AAA. Hierarchy reads strongest → most muted as you descend H1→H3,
+;; matching what `glow` / `mdcat` do (and what every prose stylesheet
+;; on the planet does).
+;; Tuned to clear WCAG AA (>= 4.5:1) on BOTH white and the dialed-back
+;; answer-bg — the heading-colours-test pins both surfaces. The
+;; previous (184 124 0) hit only 3.5:1 on white, which counts as AA
+;; for large/bold text but the bubble renderer doesn't enlarge the
+;; glyph, only bolds it, so we hold to the stricter normal-text bar.
+(def md-h1-fg          (TextColor$RGB. 150 100 0))    ;; rich amber/gold — H1 is the loudest
+(def md-h2-fg          (TextColor$RGB. 125 80 0))     ;; deeper amber — H2 a step quieter
+(def md-h3-fg          (TextColor$RGB. 100 65 0))     ;; deep bronze — H3 is the most muted of the three
 (def confidence-fg     (TextColor$RGB. 140 140 140))  ;; muted confidence label
 
 ;; Footer (dedicated row below the input box)

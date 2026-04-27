@@ -137,9 +137,15 @@ followed by an update to the relevant doc if the change affects:
 - Changes to the SQLite schema (`V1__schema.sql`)
 
 Doc files (all under the repo-root `docs/` tree, NOT inside any package):
-- `docs/src/rationale.md` — why RLM, why SCI, what we learned
-- `docs/src/architecture/` — overview, iteration flow, state, database schema, channels
-- `docs/src/extensions/` — extension spec, hooks, environment map, nudge system
+- `docs/src/README.md` — introduction (why RLM, why SCI, the problem,
+  how Vis works, security model, prior art). Merged from the old
+  `rationale.md`; do NOT recreate `rationale.md`.
+- `docs/src/usage.md` — getting started (install, auth, the four
+  ways to talk to the agent, browsing past conversations).
+- `docs/src/architecture/` — overview, packages, iteration flow,
+  state ownership, database schema, channels.
+- `docs/src/extensions/` — overview, extension spec, symbol
+  decorators (hooks), environment map, nudge system, vis-self-debug.
 
 `docs/src/SUMMARY.md` is the mdBook table of contents — keep it in
 sync when adding/removing pages. There is intentionally no
@@ -151,6 +157,52 @@ Build: `cd docs && mdbook serve --open`
 
 Skipping this update is a bug. The docs drifting from the code is
 how we ended up with an incomprehensible god file in the first place.
+
+### Docs style: real UTF-8, sentence-case headings, no code in titles
+
+Three rules. All three are non-negotiable. Every prior violation
+shipped to readers as broken rendering or unreadable noise.
+
+1. **Use real UTF-8 characters in Markdown.** Markdown is NOT JSON.
+   `\u2014`, `\u251c`, `\u2500`, `\u2514`, `\u2026` are six-character
+   ASCII strings, not characters. mdbook renders them verbatim and
+   the page looks like an editor crash dump. Type the actual
+   characters: `—` (em dash, U+2014), `…` (ellipsis, U+2026), `├`
+   `─` `└` (box-drawing, U+2500 family). If your editor escapes
+   them on save, fix the editor; do not commit the escapes. CI grep:
+
+   ```bash
+   grep -rn '\\u[0-9a-f]\{4\}' docs/src/ && exit 1
+   ```
+
+2. **Headings are short, descriptive, sentence-case prose. NO code
+   identifiers in the title.** A heading is a navigation aid for
+   humans, not an API index entry.
+
+   - Bad: `## \`:before-fn\` — entry decorator`,
+     `### \`(self/turn)\``,
+     `### 1) \`conversation_soul\``,
+     `### Embedded \`:cmd/subcommands\` vector`,
+     `### Render caches (\`channels/tui/render.clj :: fmt-cache\`)`,
+     `## How Vis Works` (Title Case).
+   - Good: `## Entry decorator`, `### Current turn snapshot`,
+     `### Conversation soul`, `### Embedded subcommand vector`,
+     `### Render caches`, `## How Vis works`.
+
+   The keyword / function name / table name / file path that the
+   section documents goes in the **first line of the body** as a
+   short "Slot key: \`:before-fn\`" / "Call: \`(self/turn)\`" /
+   "Table: \`conversation_soul\`" / "Lives in:
+   \`channels/tui/render.clj\`" lead. The reader still gets the
+   identifier; it just isn't load-bearing on the heading.
+
+3. **Internal links use slugified anchors of the live heading.**
+   Renaming a heading invalidates every `#anchor` link to it. After
+   any heading rename, grep for the old anchor across `docs/src/` and
+   repoint or delete every reference. Example: renaming `## Auto-discovery
+   resource` to `## Auto-discovery` changes the anchor from
+   `#auto-discovery-resource` to `#auto-discovery`; the doc that
+   linked to the old anchor breaks silently — mdbook does not warn.
 
 ### Inspect the SQLite DB before theorizing about a bug
 

@@ -305,11 +305,17 @@
    Robustness contract:
    - Walks by GRAPHEME CLUSTER (lanterna's `TextCharacter/fromString`),
      so column tracking is exact for emoji + CJK.
+   - INHERITS any SGR modifiers already enabled on `g` at entry (e.g.
+     a wrapping `(p/styled g [p/ITALIC] ...)` for blockquotes). Inline
+     toggles STACK on top of the inherited set: `> **bold**` inside a
+     quote renders as bold-italic, not bold-without-italic. The pre-fix
+     version called `clearModifiers` at entry and silently dropped the
+     wrapping italic — user-visible bug on every blockquote that
+     contained inline emphasis.
    - Unmatched / dangling sentinels (e.g. an OFF without a prior ON,
-     or a line that ends mid-bold) are tolerated: the painter never
-     leaks SGR state across calls because it `clear-styles!`s + resets
-     colors at entry, and any active state at end-of-line is implicitly
-     dropped on the next call.
+     or a line that ends mid-bold) are tolerated: at exit we restore
+     exactly the inherited modifier set, so SGR state never leaks past
+     the call.
    - When NO sentinel appears in the line this collapses to a single
      `put-str!` call — the same as the old non-styled path — so the
      hot path is not penalised for the common case.
@@ -318,58 +324,77 @@
    **bold** / *italic* / ~~strike~~ / `code` mid-line without
    abandoning the marker-prefix-per-line architecture above."
   [^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
-  (.clearModifiers g)
-  (.setForegroundColor g base-fg)
-  (.setBackgroundColor g base-bg)
-  (let [cells (TextCharacter/fromString line)
-        n     (alength cells)]
-    (if (zero? n)
-      nil
-      ;; Fast path: no sentinels at all → single putString.
-      (if (loop [i 0]
+  (let [;; Capture pre-existing modifiers so inline toggles can stack
+        ;; on top of them and we can restore exactly at exit.
+        inherited ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
+        cells     (TextCharacter/fromString line)
+        n         (alength cells)]
+    (.setForegroundColor g base-fg)
+    (.setBackgroundColor g base-bg)
+    (cond
+      (zero? n) nil
+
+      ;; Fast path: no sentinels at all → single putString. The
+      ;; inherited modifiers are still active, so this paints with
+      ;; whatever style the wrapping `styled` block enabled.
+      (loop [i 0]
+        (cond
+          (>= i n) true
+          (inline-sentinel? (.getCharacterString ^TextCharacter (aget cells i))) false
+          :else (recur (inc i))))
+      (.putString g (int x) (int y) line)
+
+      ;; Slow path: walk graphemes, buffer text segments, flush on
+      ;; style transitions. `inline` is the set of toggles activated
+      ;; by sentinels we've seen so far; effective SGR set per flush
+      ;; is `inherited ∪ inline`.
+      :else
+      (let [sb     (StringBuilder.)
+            inline (java.util.EnumSet/noneOf SGR)
+            col    (int-array 1 0)
+            code?  (boolean-array 1 false)
+            flush! (fn []
+                     (when (pos? (.length sb))
+                       (let [seg (.toString sb)]
+                         (.clearModifiers g)
+                         (if (aget code? 0)
+                           ;; Code span: hard-override fg/bg; modifiers
+                           ;; cleared so code reads as a flat zone.
+                           (do (.setForegroundColor g code-fg)
+                             (.setBackgroundColor g code-bg))
+                           ;; Plain span: base colors + (inherited ∪ inline) SGR.
+                           (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
+                             (.addAll effective inline)
+                             (.setForegroundColor g base-fg)
+                             (.setBackgroundColor g base-bg)
+                             (when-not (.isEmpty effective)
+                               (.enableModifiers g (into-array SGR effective)))))
+                         (.putString g (+ (int x) (aget col 0)) (int y) seg)
+                         (aset col 0 (int (+ (aget col 0) (display-width seg))))
+                         (.setLength sb 0))))]
+        (dotimes [i n]
+          (let [tc ^TextCharacter (aget cells i)
+                gs ^String (.getCharacterString tc)]
             (cond
-              (>= i n) true
-              (inline-sentinel? (.getCharacterString ^TextCharacter (aget cells i))) false
-              :else (recur (inc i))))
-        (.putString g (int x) (int y) line)
-        ;; Slow path: walk graphemes, buffer text segments, flush on
-        ;; style transitions.
-        (let [sb     (StringBuilder.)
-              styles (java.util.EnumSet/noneOf SGR)
-              col    (int-array 1 0)
-              code?  (boolean-array 1 false)
-              flush! (fn []
-                       (when (pos? (.length sb))
-                         (let [seg (.toString sb)]
-                           (if (aget code? 0)
-                             (do (.setForegroundColor g code-fg)
-                               (.setBackgroundColor g code-bg)
-                               (.clearModifiers g))
-                             (do (.setForegroundColor g base-fg)
-                               (.setBackgroundColor g base-bg)
-                               (.clearModifiers g)
-                               (when-not (.isEmpty styles)
-                                 (.enableModifiers g (into-array SGR styles)))))
-                           (.putString g (+ (int x) (aget col 0)) (int y) seg)
-                           (aset col 0 (int (+ (aget col 0) (display-width seg))))
-                           (.setLength sb 0))))]
-          (dotimes [i n]
-            (let [tc ^TextCharacter (aget cells i)
-                  gs ^String (.getCharacterString tc)]
-              (cond
-                (= gs INLINE_BOLD_ON)    (do (flush!) (.add styles SGR/BOLD))
-                (= gs INLINE_BOLD_OFF)   (do (flush!) (.remove styles SGR/BOLD))
-                (= gs INLINE_ITALIC_ON)  (do (flush!) (.add styles SGR/ITALIC))
-                (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove styles SGR/ITALIC))
-                (= gs INLINE_STRIKE_ON)  (do (flush!) (.add styles SGR/CROSSED_OUT))
-                (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove styles SGR/CROSSED_OUT))
-                (= gs INLINE_CODE_ON)    (do (flush!) (aset code? 0 true))
-                (= gs INLINE_CODE_OFF)   (do (flush!) (aset code? 0 false))
-                :else                    (.append sb gs))))
-          (flush!)
-          (.clearModifiers g)
-          (.setForegroundColor g base-fg)
-          (.setBackgroundColor g base-bg))))))
+              (= gs INLINE_BOLD_ON)    (do (flush!) (.add inline SGR/BOLD))
+              (= gs INLINE_BOLD_OFF)   (do (flush!) (.remove inline SGR/BOLD))
+              (= gs INLINE_ITALIC_ON)  (do (flush!) (.add inline SGR/ITALIC))
+              (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove inline SGR/ITALIC))
+              (= gs INLINE_STRIKE_ON)  (do (flush!) (.add inline SGR/CROSSED_OUT))
+              (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
+              (= gs INLINE_CODE_ON)    (do (flush!) (aset code? 0 true))
+              (= gs INLINE_CODE_OFF)   (do (flush!) (aset code? 0 false))
+              :else                    (.append sb gs))))
+        (flush!)
+        ;; Restore the inherited modifier set exactly so the wrapping
+        ;; `styled` form's cleanup sees the state it expects. Without
+        ;; this, an unbalanced sentinel (e.g. line ending mid-bold)
+        ;; could leak BOLD into the next paint call.
+        (.clearModifiers g)
+        (.setForegroundColor g base-fg)
+        (.setBackgroundColor g base-bg)
+        (when-not (.isEmpty inherited)
+          (.enableModifiers g (into-array SGR inherited)))))))
 
 ;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 
