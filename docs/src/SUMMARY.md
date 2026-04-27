@@ -4,10 +4,6 @@
 
 ---
 
-# Why Vis
-
-- [Rationale](rationale.md)
-
 # Architecture
 
 - [Overview](architecture/overview.md)

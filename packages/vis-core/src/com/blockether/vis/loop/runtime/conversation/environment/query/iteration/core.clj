@@ -1249,15 +1249,36 @@
               locals (try (get-locals environment) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
                               (try (symbol? (read-string raw-answer)) (catch Throwable _ false)))
+              ;; If the var is a 0-arity fn, invoke it and use the
+              ;; return value. Catches the common pattern where the
+              ;; model wrote `(defn render-table [] ...)` and then set
+              ;; `:answer "render-table"` — the SCI fn object would
+              ;; otherwise pr-str as `sci.impl.fns$fun$arity_0__...`
+              ;; which is meaningless to the user. Higher-arity fns
+              ;; (ArityException on 0-arg call) fall through to pr-str:
+              ;; the model needs to call them explicitly with args via
+              ;; :code or use a mustache template.
+              maybe-invoke-zero-arity
+              (fn [v]
+                (if (fn? v)
+                  (let [call-result (try {:value (v)}
+                                      (catch clojure.lang.ArityException _ {:arity-mismatch true})
+                                      (catch Throwable t {:error t}))]
+                    (cond
+                      (contains? call-result :value)  (:value call-result)
+                      (:arity-mismatch call-result)   v
+                      :else                           v))
+                  v))
               resolved-var-value (when single-token?
                                    (let [sym (symbol raw-answer)
                                          resolved (get locals sym)]
                                      (when (some? resolved)
                                        (let [v (if (instance? clojure.lang.IDeref resolved)
-                                                 @resolved resolved)]
+                                                 @resolved resolved)
+                                             v (maybe-invoke-zero-arity v)]
                                          (cond
                                            (string? v) v
-                                           :else (pr-str v))))))
+                                           :else (safe-pr-str v))))))
               mustache-detected? (and (not resolved-var-value)
                                    (some? answer-type))
               mustache-result (when mustache-detected?

@@ -100,3 +100,54 @@
           [duplicates total] (iterate/count-duplicates seen [])]
       (expect (= 0 duplicates))
       (expect (= 0 total)))))
+
+;; -----------------------------------------------------------------------------
+;; dedup-cache short-circuit — the actual Phase 2 mechanism.
+;; -----------------------------------------------------------------------------
+
+(defdescribe dedup-cache-test
+  (it "lookup returns nil when the cache is empty"
+    (let [cache (atom {})]
+      (expect (nil? (iterate/dedup-cache-lookup cache "(grep \"X\")")))))
+
+  (it "lookup returns nil when expression is nil"
+    (let [cache (atom {})]
+      (expect (nil? (iterate/dedup-cache-lookup cache nil)))))
+
+  (it "record! stores successful results, lookup hits afterwards"
+    (let [cache (atom {})
+          successful {:result :ok :stdout "" :stderr "" :execution-time-ms 7}]
+      (iterate/dedup-cache-record! cache "(grep \"X\")" successful "i3.1")
+      (let [hit (iterate/dedup-cache-lookup cache "(grep \"X\")")]
+        (expect (some? hit))
+        (expect (= :ok (:result hit)))
+        (expect (= "i3.1" (:cached-from hit)))
+        (expect (true? (:cached? hit)))
+        (expect (= 0 (:execution-time-ms hit))))))
+
+  (it "record! is a no-op for error results"
+    (let [cache (atom {})
+          err-result {:result nil :error "boom" :stdout "" :stderr ""}]
+      (iterate/dedup-cache-record! cache "(grep \"X\")" err-result "i3.1")
+      (expect (nil? (iterate/dedup-cache-lookup cache "(grep \"X\")")))))
+
+  (it "record! is a no-op for timeouts"
+    (let [cache (atom {})
+          timeout-result {:result nil :timeout? true :stdout "" :stderr ""}]
+      (iterate/dedup-cache-record! cache "(grep \"X\")" timeout-result "i3.1")
+      (expect (nil? (iterate/dedup-cache-lookup cache "(grep \"X\")")))))
+
+  (it "record! preserves the FIRST writer when racing"
+    (let [cache (atom {})
+          first-result  {:result :first :execution-time-ms 1}
+          second-result {:result :second :execution-time-ms 2}]
+      (iterate/dedup-cache-record! cache "(grep \"X\")" first-result "i1.1")
+      (iterate/dedup-cache-record! cache "(grep \"X\")" second-result "i5.2")
+      (let [hit (iterate/dedup-cache-lookup cache "(grep \"X\")")]
+        (expect (= :first (:result hit)))
+        (expect (= "i1.1" (:cached-from hit))))))
+
+  (it "whitespace-equivalent forms hit the same cache entry"
+    (let [cache (atom {})]
+      (iterate/dedup-cache-record! cache "(grep \"X\")" {:result :ok} "i1.1")
+      (expect (some? (iterate/dedup-cache-lookup cache "(grep    \"X\")"))))))

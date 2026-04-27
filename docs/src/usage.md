@@ -183,7 +183,7 @@ To author your own extension, see [Extension System](extensions/overview.md).
 
 ## Where to next
 
-- [Rationale](rationale.md) \u2014 why code-eval over tool-calls
+- [Introduction](README.md) \u2014 why code-eval over tool-calls
 - [Architecture Overview](architecture/overview.md) \u2014 how the layers fit together
 - [Packages](architecture/packages.md) \u2014 every `vis-*` jar, dep direction, auto-discovery
 - [Extension System](extensions/overview.md) \u2014 add tools, prompts, nudges

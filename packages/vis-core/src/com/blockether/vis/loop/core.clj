@@ -187,6 +187,20 @@ EVERY ITERATION:
 DIRECT ANSWER (greetings, plain prose): empty :code `[]`, no :plan needed,
   emit :answer + :answer-type immediately.
 
+:ANSWER SHORTCUTS.
+  • String var          — :answer is a single token that names a sandbox
+                          var holding a string. The loop derefs and uses
+                          the string verbatim.
+  • 0-arity fn var      — :answer is a single token that names a 0-arg
+                          fn (e.g. `(defn render [] \"...\"))`. The loop
+                          INVOKES it and uses the return value (string
+                          → verbatim, otherwise pr-str). Use this when
+                          you want lazy evaluation: build the fn in
+                          :code, set :answer to the fn name, the loop
+                          calls it for you.
+  • Mustache template   — :answer-type set + :answer is a Mustache
+                          template referencing sandbox vars.
+
 MUSTACHE — :answer-type `mustache-text` | `mustache-markdown`:
   Sandbox vars = context. Tags: {{var}} {{#list}}..{{/list}} {{^val}}..{{/val}} {{.}} {{list.size}}.
   No pipe filters, no {{#each}}. Missing vars rejected.

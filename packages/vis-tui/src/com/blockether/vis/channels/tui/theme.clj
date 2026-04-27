@@ -66,7 +66,7 @@
 (def iter-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
 (def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
 (def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
-(def answer-bg         (TextColor$RGB. 245 248 255))  ;; light blue tint for final answer
+(def answer-bg         (TextColor$RGB. 224 235 252))  ;; clearly blue — final answer zone, distinct from code-block-bg
 (def answer-fg         (TextColor$RGB. 25 25 25))     ;; near-black answer text
 (def confidence-fg     (TextColor$RGB. 140 140 140))  ;; muted confidence label
 
