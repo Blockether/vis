@@ -111,7 +111,7 @@
 (defn- literal-code-block-error [expr]
   (cond
     (bare-string-code-block? expr)
-    "Bare string literal in :code. Prose belongs in :answer with answer-type text, not in :code."
+    "Bare string literal in :code. Prose belongs in :answer (the loop auto-detects plain text), not in :code."
 
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
@@ -1254,8 +1254,7 @@
           abandon-reason  (some-> (:abandon-reason parsed) str str/trim not-empty)]
       (if-let [raw-final-answer (:answer parsed)]
         ;; FINAL path
-        (let [answer-type (some-> (:answer-type parsed) keyword)
-              raw-code (or (:code parsed) [])
+        (let [raw-code (or (:code parsed) [])
               code-entries (vec (keep (fn [block]
                                         (when (map? block)
                                           (let [expr (str (:expr block ""))
@@ -1282,81 +1281,25 @@
                                   (seq (clojure.core/filter :error expression-results)))
               raw-answer (str raw-final-answer)
               locals (try (get-locals environment) (catch Throwable _ {}))
-              single-token? (and (re-matches #"\S+" raw-answer)
-                              (try (symbol? (read-string raw-answer)) (catch Throwable _ false)))
-              ;; If the var is a 0-arity fn, invoke it and use the
-              ;; return value. Catches the common pattern where the
-              ;; model wrote `(defn render-table [] ...)` and then set
-              ;; `:answer "render-table"` — the SCI fn object would
-              ;; otherwise pr-str as `sci.impl.fns$fun$arity_0__...`
-              ;; which is meaningless to the user. Higher-arity fns
-              ;; (ArityException on 0-arg call) fall through to pr-str:
-              ;; the model needs to call them explicitly with args via
-              ;; :code or use a mustache template.
-              maybe-invoke-zero-arity
-              (fn [v]
-                (if (fn? v)
-                  (let [call-result (try {:value (v)}
-                                      (catch clojure.lang.ArityException _ {:arity-mismatch true})
-                                      (catch Throwable t {:error t}))]
-                    (cond
-                      (contains? call-result :value)  (:value call-result)
-                      (:arity-mismatch call-result)   v
-                      :else                           v))
-                  v))
-              resolved-var-value (when (and single-token?
-                                         (not= answer-type :sci-expression))
-                                   (let [sym (symbol raw-answer)
-                                         resolved (get locals sym)]
-                                     (when (some? resolved)
-                                       (let [v (if (instance? clojure.lang.IDeref resolved)
-                                                 @resolved resolved)
-                                             v (maybe-invoke-zero-arity v)]
-                                         (cond
-                                           (string? v) v
-                                           :else (safe-pr-str v))))))
-              ;; :answer-type :sci-expression -- evaluate the answer
-              ;; as a Clojure form in the SCI sandbox AFTER any :code
-              ;; blocks have run (so the form can rely on vars defined
-              ;; this iteration). Success -> use the printed value as
-              ;; the final answer text. Failure -> validation error
-              ;; that re-prompts the model.
-              sci-eval-iteration-id (str "i" iteration ".final")
-              sci-eval-result (when (and (= answer-type :sci-expression)
-                                      (not expression-errors))
-                                (execute-code environment raw-answer
-                                  :timeout-ms 5000
-                                  :iteration-id sci-eval-iteration-id))
-              sci-eval-error  (some-> sci-eval-result :error vis-error/error-message)
-              sci-eval-answer (when (and (= answer-type :sci-expression)
-                                      (nil? sci-eval-error)
-                                      (some? sci-eval-result))
-                                (let [v (:result sci-eval-result)]
-                                  (cond
-                                    (string? v) v
-                                    (nil? v)    "nil"
-                                    :else       (safe-pr-str v))))
-              mustache-detected? (and (not resolved-var-value)
-                                   (some? answer-type)
-                                   (not= answer-type :sci-expression))
-              mustache-result (when mustache-detected?
+              ;; ONE rendering mode: every :answer is a Mustache
+              ;; template against sandbox vars. Plain text / markdown
+              ;; with no `{{...}}` tags renders verbatim, so prose
+              ;; passes through unchanged. To inject a computed
+              ;; value, the model defs it in :code (`(def x ...)`)
+              ;; and references `{{x}}` in :answer. No second mode,
+              ;; no auto-detect heuristics, no :answer-type field.
+              mustache-result (when-not expression-errors
                                 (try
-                                  (let [result (mustache/render raw-answer locals)]
-                                    {:answer (when (not= result raw-answer) result)})
+                                  {:answer (mustache/render raw-answer locals)}
                                   (catch Exception e
                                     {:error (str "Mustache error: " (.getMessage e)
                                               ". Define all referenced vars in :code first.")})))
-              template-answer (:answer mustache-result)
+              mustache-answer  (:answer mustache-result)
               mustache-missing (:error mustache-result)
-              raw-answer (or sci-eval-answer resolved-var-value template-answer raw-answer)
-              final-answer raw-answer
+              final-answer (or mustache-answer raw-answer)
               confidence (or (:confidence parsed) :high)
-              validation-error (or (when-not answer-type
-                                     (vis-error/missing-answer-type-message))
-                                 (when expression-errors
-                                   (vis-error/final-answer-code-error-message (:error (first expression-errors))))
-                                 (when sci-eval-error
-                                   (vis-error/sci-expression-eval-error-message sci-eval-error))
+              validation-error (or (when expression-errors
+                                     (vis-error/final-answer-code-error-message (:error (first expression-errors))))
                                  mustache-missing)
               expressions (when expression-results
                             (mapv (fn [idx code result]

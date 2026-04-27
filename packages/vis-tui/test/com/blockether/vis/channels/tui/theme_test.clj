@@ -62,16 +62,14 @@
         (expect (> l2 l3))))))
 
 (defdescribe answer-bg-test
-  (describe "Answer background is dialed back from the previous saturated blue"
-    (it "Stored RGB matches the new pale tint"
-      (expect (= [247 250 254]
+  (describe "Answer background is now visually identical to terminal-bg (no zone bg)"
+    (it "answer-bg RGB matches terminal-bg exactly"
+      ;; Per user request: the answer zone no longer paints a coloured
+      ;; block. The answer is distinguished by the FINAL ANSWER header
+      ;; + heading colours, nothing else. Pinning the equality keeps
+      ;; the renderer honest — if anyone re-introduces a tint, this
+      ;; test fails immediately.
+      (expect (= [(.getRed t/terminal-bg) (.getGreen t/terminal-bg) (.getBlue t/terminal-bg)]
                 [(.getRed t/answer-bg) (.getGreen t/answer-bg) (.getBlue t/answer-bg)])))
-    (it "Answer-bg is barely-distinguishable from white (luminance delta < 0.05)"
-      ;; The dial-back's whole point: subtle, not screaming. 0.05 keeps
-      ;; the 'this is the answer zone' affordance without dominating.
-      (let [white (TextColor$RGB. 255 255 255)]
-        (expect (< (Math/abs (- (relative-luminance t/answer-bg)
-                               (relative-luminance white)))
-                  0.05))))
     (it "answer-fg on answer-bg still passes WCAG AAA (>= 7)"
       (expect (>= (contrast-ratio t/answer-fg t/answer-bg) 7.0)))))

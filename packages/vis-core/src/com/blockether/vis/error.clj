@@ -45,22 +45,6 @@
       message
       (str standard-error-prefix message))))
 
-(defn missing-answer-type-message
-  "Validation message for final answers that forgot :answer-type."
-  []
-  (str "Final answer is missing :answer-type. "
-    "Set :answer-type to \"mustache-text\", \"mustache-markdown\", or \"sci-expression\". "
-    "Use \"sci-expression\" when :answer is a Clojure form to evaluate "
-    "(its printed result becomes the final answer)."))
-
-(defn sci-expression-eval-error-message
-  "Validation message when an :answer-type :sci-expression evaluation
-   threw at the SCI sandbox."
-  [error-value]
-  (str "Final answer :sci-expression evaluation failed: "
-    (error-message error-value)
-    ". Make sure every symbol referenced by :answer is defined in :code first."))
-
 (defn final-answer-code-error-message
   "Validation message when code execution failed before a final answer."
   [error-value]
