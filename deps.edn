@@ -76,6 +76,7 @@
                         "packages/vis-commandline/test"
                         "packages/vis-extension/test"
                         "packages/vis-persistance-sqlite/test"
+                        "packages/vis-tui/test"
                         "extensions/vis-common-operations/test"
                         "extensions/vis-self-debug/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
@@ -87,6 +88,7 @@
                        "--dir" "packages/vis-commandline/test"
                        "--dir" "packages/vis-extension/test"
                        "--dir" "packages/vis-persistance-sqlite/test"
+                       "--dir" "packages/vis-tui/test"
                        "--dir" "extensions/vis-common-operations/test"
                        "--dir" "extensions/vis-self-debug/test"]}
 

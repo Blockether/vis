@@ -40,7 +40,7 @@
   "Creates an RLM environment for querying.
 
    `router` — LLM router from `config/make-router`.
-   `opts`   — Map with :db (path or :temp), :conversation (nil | :latest | uuid).
+   `opts`   — Map with :db (path or :memory), :conversation (nil | :latest | uuid).
 
    Returns an environment map with :db-info, :sci-ctx, :router, etc."
   [router opts]

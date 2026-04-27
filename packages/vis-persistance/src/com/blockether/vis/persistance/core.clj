@@ -139,11 +139,12 @@
     v))
 
 (defn- normalize-spec
-  "Strip the legacy `:temp` alias and reshape the legacy explicit-sqlite
-   nested forms into the canonical shape backends accept."
+  "Reshape explicit-sqlite nested forms into the canonical shape
+   backends accept. The shorthand `:memory` is the canonical name for
+   the ephemeral in-process DB; we used to also accept `:temp`, but
+   that alias was deleted -- use `:memory` everywhere."
   [db-spec]
   (cond
-    (= :temp db-spec)               :memory
     (and (map? db-spec)
       (= :sqlite (:backend db-spec)))
     (cond

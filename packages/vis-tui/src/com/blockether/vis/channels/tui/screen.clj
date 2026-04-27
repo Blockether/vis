@@ -206,7 +206,7 @@
         inner-h      (max 0 (- msg-bottom msg-top 2)) ;; top + bottom margins
         total-h      (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll nil)
+    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)

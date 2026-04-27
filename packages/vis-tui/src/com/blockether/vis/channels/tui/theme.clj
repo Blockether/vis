@@ -32,13 +32,11 @@
 ;; against the yellow stays above 12:1 — readable in any terminal.
 (def user-bubble-bg    (TextColor$RGB. 254 248 215))  ;; very pale warm yellow — "user said this" zone
 (def user-bubble-fg    (TextColor$RGB. 25 22 5))      ;; near-black warm — high contrast on the yellow
-(def user-bubble-border (TextColor$RGB. 240 225 175)) ;; (unused — kept for back-compat)
 (def user-role-fg      (TextColor$RGB. 130 90 0))     ;; bold amber accent for the "You" label
 
 ;; Chat messages — assistant (no background fill, terminal bg shows through)
 (def ai-bubble-bg      (TextColor$RGB. 255 255 255))  ;; white — same as terminal
 (def ai-bubble-fg      (TextColor$RGB. 30 30 30))     ;; near-black text
-(def ai-bubble-border  (TextColor$RGB. 130 130 130))  ;; (unused — kept for back-compat)
 (def ai-role-fg        (TextColor$RGB. 80 160 80))    ;; green "vis" label
 
 ;; Status indicators

@@ -26,20 +26,18 @@
     :else nil))
 
 (defn ->ref
-  "Normalize any entity reference to a string ID for SQL.
-   Accepts: UUID, string, [:id UUID], [:id string], or nil.
-   Returns string or nil.
-   
+  "Normalize an entity reference to a string ID for SQL.
+   Accepts: UUID, string, or nil. Returns string or nil.
+
    This is the ONLY way to extract a SQL-ready string from a ref.
-   Legacy code passed [:id uuid] tagged pairs; new code passes plain UUIDs.
-   This function accepts both so callers don't need to know which form they have."
+   The legacy `[:id <uuid>]` tagged-pair form is no longer accepted --
+   pass the plain UUID (or string) directly."
   [v]
   (cond
-    (nil? v) nil
-    (uuid? v) (str v)
+    (nil? v)    nil
+    (uuid? v)   (str v)
     (string? v) v
-    (and (vector? v) (>= (count v) 2)) (->id (second v))
-    :else (str v)))
+    :else       (str v)))
 
 (defn ->kw
   "Keyword/string → TEXT (no leading colon). Nil → nil."
