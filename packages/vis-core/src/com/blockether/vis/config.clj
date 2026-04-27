@@ -50,7 +50,7 @@
 (def default-db-spec {:backend :sqlite :path db-path})
 
 ;; Logging path shared by TUI, CLI, Telegram, and web.
-(def ^:private log-path (str config-dir "/vis.log"))
+(def ^:private ^String log-path (str config-dir "/vis.log"))
 
 ;; Open /dev/tty directly for Lanterna — independent of System/out.
 ;; Delayed so non-TUI entrypoints do not fail at class-load time.

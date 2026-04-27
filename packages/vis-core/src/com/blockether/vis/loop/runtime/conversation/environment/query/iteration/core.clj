@@ -170,6 +170,47 @@
       (when (nil? (parse-clojure-syntax fixed))
         fixed))))
 
+(defn canonical-expression-hash
+  "Whitespace-and-form-normalized hash of `expression`. Parses the form
+   via edamame so `(grep \"X\")` and `(grep   \"X\")` collapse to the
+   same hash, then `pr-str`s the AST and hashes that. Falls back to a
+   raw-string hash when the parser can't read the input — better to
+   over-count duplicates than to miss them due to a tagged literal.
+
+   Stable across JVM runs because we hash the printed AST, not the
+   reader's internal data structures."
+  [expression]
+  (try
+    (let [forms (edamame/parse-string-all expression edamame-opts)]
+      (str (hash (pr-str forms))))
+    (catch Throwable _
+      (str (hash (str expression))))))
+
+(defn count-duplicates
+  "Count how many entries in `expressions` have a canonical hash that
+   already lives in `seen-hashes-atom`. After counting, the atom is
+   updated with the hashes of every SUCCESSFUL expression in this iter
+   (errors / timeouts are NOT recorded — retrying after failure is
+   legitimate, not redundant).
+
+   Returns `[duplicates total]` so callers can compute the redundancy
+   fraction without re-walking the seq."
+  [seen-hashes-atom expressions]
+  (let [total (count expressions)
+        hashes (mapv #(canonical-expression-hash (or (:code %) "")) expressions)
+        seen-now @seen-hashes-atom
+        duplicates (count (filter seen-now hashes))]
+    (swap! seen-hashes-atom
+      (fn [seen]
+        (transduce
+          (comp
+            (filter (fn [[exec _]] (nil? (:error exec))))
+            (map second))
+          (completing conj)
+          seen
+          (map vector expressions hashes))))
+    [duplicates total]))
+
 (def ^:private DEF_HEADS '#{def defn defn- defmacro})
 
 (defn extract-defining-name

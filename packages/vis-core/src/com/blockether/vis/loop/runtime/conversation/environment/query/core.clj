@@ -280,6 +280,12 @@
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
         call-counts-atom (atom {})
+        ;; Phase 2-m measurement: per-query set of canonical hashes
+        ;; for SUCCESSFUL expressions. The iteration handler counts how
+        ;; many of THIS iter's blocks were already in the set
+        ;; (`:expression-redundancy-fraction` + `:dedup-saves` metadata)
+        ;; before adding the new successful ones.
+        seen-expression-hashes-atom (atom #{})
         finalize-cost (fn []
                         (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} @usage-atom
                               total-tokens (+ input-tokens output-tokens)
@@ -507,6 +513,20 @@
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
                                          :final-result final-result :final-answer final-answer})
+                        ;; Phase 2-m: count duplicates against the
+                        ;; per-query seen-hashes set; record both the
+                        ;; raw count (would-be savings if Phase 2's
+                        ;; auto-dedup were live) and the per-iter
+                        ;; fraction. The atom is mutated so the next
+                        ;; iteration's count includes hashes added
+                        ;; here.
+                        [redundant-count expression-count]
+                        (iterate/count-duplicates seen-expression-hashes-atom
+                          (or expressions []))
+                        redundancy-fraction
+                        (if (pos? expression-count)
+                          (double (/ redundant-count expression-count))
+                          0.0)
                         ;; Augment iteration metadata with the iteration-level counters.
                         iteration-metadata-with-metrics
                         (merge (or (iteration-metadata) {})
@@ -516,8 +536,8 @@
                            (count (filter #(and (string? (:code %))
                                              (re-find #"\(var-history\b" (:code %)))
                                     (or expressions [])))
-                           :expression-redundancy-fraction 0.0   ;; populated by the dedup atom
-                           :dedup-saves                    0     ;; populated by the dedup atom
+                           :expression-redundancy-fraction redundancy-fraction
+                           :dedup-saves                    redundant-count
                            :plan-validation-error          (some-> plan-validation :type name)})
                         ;; The PEV gate actively rejects :answer when
                         ;; the plan still has open items and no

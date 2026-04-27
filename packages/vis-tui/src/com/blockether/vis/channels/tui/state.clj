@@ -7,6 +7,7 @@
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.render :as render]
+            [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
@@ -110,6 +111,49 @@
 ;;  :dialog-open? false}         ;; dialog singleton guard
 ;;
 
+(def default-settings
+  "Per-user TUI display toggles. Persisted to `~/.vis/config.edn`
+   under `:tui-settings`. The keys come in two families:
+
+     show-thinking / show-iterations  — high-signal content controls.
+         Default ON because new users want to SEE the agent reasoning;
+         power users turn them off when they want a clean transcript.
+
+     show-timestamps / show-iteration-headers / show-final-answer-header
+         — chrome controls. Default OFF because timestamps duplicate
+         info already on screen, the `ITERATION N` superscript is
+         redundant with the trace's visual zone, and the
+         `FINAL ANSWER` superscript is redundant with the answer-bg
+         color band. Off-by-default keeps the surface clean; users
+         opt back in via Ctrl+K → Toggles."
+  {:show-thinking             true
+   :show-iterations           true
+   :show-timestamps           false
+   :show-iteration-headers    false
+   :show-final-answer-header  false})
+
+(defn- load-persisted-settings
+  "Read `:tui-settings` from `~/.vis/config.edn` and merge over
+   `default-settings`. Missing keys fall back to defaults; unknown
+   keys are dropped so a forward-compatible future we add new
+   toggles into a previously-saved config doesn't blow up here."
+  []
+  (let [raw (try (config/load-config-raw) (catch Throwable _ nil))
+        saved (when (map? raw) (:tui-settings raw))]
+    (merge default-settings (when (map? saved)
+                              (select-keys saved (keys default-settings))))))
+
+(defn- persist-settings!
+  "Write `settings` back into `~/.vis/config.edn` under
+   `:tui-settings`, preserving every other key in the file. Failures
+   are swallowed — a config-save failure should never crash a TUI
+   that's already otherwise healthy."
+  [settings]
+  (try
+    (let [raw (or (config/load-config-raw) {})]
+      (config/save-config! (assoc raw :tui-settings settings)))
+    (catch Throwable _ nil)))
+
 (defn init!
   "Initialize app-db with default state."
   []
@@ -126,7 +170,7 @@
                   :cancel-token nil
                   :cancelling? false
                   :progress   nil
-                  :settings   {:show-thinking true :show-iterations true}
+                  :settings   (load-persisted-settings)
                   :dialog-open? false
                   ;; Render thread coordination — see render-monitor docstring.
                   :render-version 0
@@ -156,13 +200,16 @@
 
 (reg-event-db :update-settings
   (fn [db [_ new-settings]]
-    ;; Settings (show-thinking?, show-iterations?) are part of every
-    ;; format-answer cache key, so toggling them already invalidates
-    ;; cache entries naturally. But the OLD entries linger until the
-    ;; cache fills — which on a quiet conversation never happens. Drop
-    ;; them so we don't leak memory across many toggles.
+    ;; Settings (show-thinking?, show-iterations?, etc.) are part of
+    ;; every format-answer cache key, so toggling them already
+    ;; invalidates cache entries naturally. But the OLD entries
+    ;; linger until the cache fills — which on a quiet conversation
+    ;; never happens. Drop them so we don't leak memory across many
+    ;; toggles.
     (render/invalidate-cache!)
-    (assoc db :settings (merge (:settings db) new-settings))))
+    (let [merged (merge (:settings db) new-settings)]
+      (persist-settings! merged)
+      (assoc db :settings merged))))
 
 (reg-event-db :set-layout
   (fn [db [_ layout]]

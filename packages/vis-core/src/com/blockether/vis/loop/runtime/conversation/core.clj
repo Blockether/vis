@@ -62,7 +62,7 @@
   [^Throwable e]
   (boolean
     (some (fn [^Throwable t]
-            (let [m (or (ex-message t) "")]
+            (let [^String m (or (ex-message t) "")]
               (or (.contains m "[SQLITE_CANTOPEN]")
                 (.contains m "unable to open database file")
                 (.contains m "Unable to open the database file"))))
@@ -76,7 +76,7 @@
    provider errors, validation issues, etc. are often self-explanatory.
    The one case we rewrite is `SQLITE_CANTOPEN`, because the raw
    message (\"unable to open the database file\") is meaningless
-   without context: the underlying file at `~/.vis/vis.mdb/rlm.db`
+   without context: the underlying file at `~/.vis/vis.mdb/vis.db`
    was either deleted out from under the running JVM, or moved, or
    the process lost write permissions to the directory. Anyone
    hitting this on the chat surface needs to know what to inspect,
@@ -85,7 +85,7 @@
   (cond
     (sqlite-cantopen-message? e)
     (let [home   (System/getProperty "user.home")
-          dbpath (str home "/.vis/vis.mdb/rlm.db")
+          dbpath (str home "/.vis/vis.mdb/vis.db")
           dbdir  (str home "/.vis/vis.mdb")
           dirf   (java.io.File. dbdir)
           filef  (java.io.File. dbpath)]

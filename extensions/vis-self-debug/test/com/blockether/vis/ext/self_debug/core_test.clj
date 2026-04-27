@@ -94,7 +94,33 @@
       (let [turn ((private-fn "self-turn") (env s conversation-id))]
         (expect (= 2 (count (:attempts turn))))
         (expect (= 1 (count (:errors turn))))
-        (expect (= "boom" (-> turn :errors first :error)))))))
+        (expect (= "boom" (-> turn :errors first :error))))))
+
+  (it "surfaces the redundancy summary aggregated across iteration metadata"
+    ;; The Phase 2-m metric lands in iteration.metadata as :dedup-saves
+    ;; per iter; (self/turn).:redundancy aggregates across iters.
+    (let [s (h/store)
+          {:keys [conversation-id query-id]} (bootstrap s)]
+      (db/store-iteration! s
+        {:query-id    query-id
+         :expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
+                       {:id 1 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
+         :duration-ms 100
+         :llm-model   "test-model"
+         :metadata    {:dedup-saves 0
+                       :expression-redundancy-fraction 0.0}})
+      (db/store-iteration! s
+        {:query-id    query-id
+         :expressions [{:id 0 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
+         :duration-ms 100
+         :llm-model   "test-model"
+         :metadata    {:dedup-saves 1
+                       :expression-redundancy-fraction 1.0}})
+      (let [turn ((private-fn "self-turn") (env s conversation-id))
+            redundancy (:redundancy turn)]
+        (expect (= 1 (:duplicate-count redundancy)))
+        (expect (= 3 (:total-count redundancy)))
+        (expect (< (Math/abs (- (/ 1.0 3.0) (:fraction redundancy))) 1e-9))))))
 
 ;; -----------------------------------------------------------------------------
 ;; (self/conversation [id]) — current or specific conversation

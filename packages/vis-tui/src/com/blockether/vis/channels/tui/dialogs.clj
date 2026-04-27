@@ -374,17 +374,56 @@
 ;;; ── Settings dialog ─────────────────────────────────────────────────────────
 
 (defn settings-dialog!
-  "Show a settings dialog with toggleable options.
-   `settings` is a map like `{:show-thinking true :show-iterations true}`.
-   Returns the updated settings map, or nil on Esc."
+  "Show a settings dialog with toggleable options as a 3-column table:
+   checkbox, label, description. The description column tells the
+   user what each toggle actually does — important because some of
+   them control subtle chrome (right-aligned superscripts) that
+   aren't obvious from the label alone.
+
+   `settings` is a map of toggle keys to booleans (see
+   `state/default-settings`). Returns the updated settings map, or
+   nil on Esc.
+
+   The toggle list is the canonical user-controlled chrome surface.
+   Adding a new toggle here + adding the matching key+default in
+   `state/default-settings` is the only thing required to expose a
+   new on/off knob — persistence and merge are handled centrally."
   [^TerminalScreen screen settings]
-  (let [options [{:key :show-thinking   :label "Show thinking / reasoning"}
-                 {:key :show-iterations :label "Show iteration trace"}]
-        n       (count options)
+  (let [options [{:key :show-thinking
+                  :label "Show thinking / reasoning"
+                  :description "LLM's chain-of-thought above each iteration's code blocks"}
+                 {:key :show-iterations
+                  :label "Show iteration trace"
+                  :description "Per-iteration history of code, results, and stdout"}
+                 {:key :show-timestamps
+                  :label "Show per-message timestamps"
+                  :description "Date+time next to every 'You' / 'Vis' label"}
+                 {:key :show-iteration-headers
+                  :label "Show 'ITERATION N' headers"
+                  :description "Right-aligned superscript above every iteration block"}
+                 {:key :show-final-answer-header
+                  :label "Show 'FINAL ANSWER' header"
+                  :description "Right-aligned superscript above the final answer body"}]
+        n        (count options)
         selected (atom 0)
-        values   (atom (or settings {:show-thinking true :show-iterations true}))
-        cw       (max (+ 6 (apply max (map (comp count :label) options))) (+ (count "Settings") 4))
-        ch       (count options)]
+        values   (atom (or settings {}))
+        ;; Three-column layout:
+        ;;   col 1: \"[✓] \" or \"[ ] \"   (4 chars, fixed)
+        ;;   col 2: label text                (label-w, computed from longest label)
+        ;;   col 3: description text          (rest of inner-w, ellipsized if needed)
+        ;; Plus 2-col gap between label and description so the eye
+        ;; doesn't smudge the two columns together.
+        check-w  4   ;; \"[x] \"
+        gap      "  "
+        gap-w    (count gap)
+        label-w  (apply max (map (comp count :label) options))
+        desc-w   (apply max (map (comp count :description) options))
+        ;; Content width includes padding inside the dialog frame; +2
+        ;; absorbs the box's inner gutter so text never touches the
+        ;; vertical border.
+        cw       (max (+ check-w label-w gap-w desc-w 2)
+                   (+ (count "Settings") 4))
+        ch       n]
     (loop []
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
@@ -392,15 +431,41 @@
             g      (.newTextGraphics screen)
             bounds (draw-dialog-chrome! g cols rows "Settings" cw ch)
             {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds n)]
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds n)
+            ;; Pad description to fill remaining space; ellipsize if
+            ;; the dialog is narrower than the natural content width.
+            actual-desc-w (max 1 (- inner-w 2 check-w label-w gap-w))]
 
         (dotimes [i n]
-          (let [opt      (nth options i)
-                row      (+ content-top i)
-                checked? (get @values (:key opt) true)]
+          (let [{:keys [key label description]} (nth options i)
+                row       (+ content-top i)
+                checked?  (get @values key true)
+                sel?      (= i @selected)
+                mark      (if checked? "✓" " ")
+                checkbox  (str "[" mark "] ")
+                label-pad (str label
+                            (apply str (repeat (max 0 (- label-w (count label))) \space)))
+                desc-trunc (if (<= (count description) actual-desc-w)
+                             description
+                             (str (subs description 0 (max 0 (dec actual-desc-w))) "…"))]
             (when (< row (+ content-top content-h))
-              (draw-checkbox-item! g left row inner-w (= i @selected)
-                checked? (:label opt)))))
+              ;; Selected row uses inverted (title-bg) background; the
+              ;; description block stays muted on a normal row to make
+              ;; the label the dominant signal.
+              (if sel?
+                (do (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+                  (p/fill-rect! g (inc left) row inner-w 1)
+                  (p/put-str! g (+ left 2) row
+                    (str checkbox label-pad gap desc-trunc)))
+                (do
+                  ;; Background fill (single color across the row).
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
+                  (p/fill-rect! g (inc left) row inner-w 1)
+                  ;; Checkbox + label in normal text color.
+                  (p/put-str! g (+ left 2) row (str checkbox label-pad))
+                  ;; Description in muted hint color.
+                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/put-str! g (+ left 2 check-w label-w gap-w) row desc-trunc))))))
 
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Space" "toggle"] ["Esc" "done"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
