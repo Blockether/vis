@@ -645,11 +645,20 @@
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Thinking — dimmed bg, italic ──
+              ;; Inline span sentinels (**bold** etc.) embedded in
+              ;; thinking-mode prose are honoured via paint-styled-line!
+              ;; on top of the italic base style. Italic stacks with
+              ;; SGR/BOLD per terminal SGR rules, so a bolded word
+              ;; inside thinking renders as bold-italic, not as plain
+              ;; bold (which would visually escape the thinking zone).
               (str/starts-with? line thinking-marker)
-              (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
+              (let [raw (subs line 1)]
+                (p/set-colors! g t/dialog-hint t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y raw
+                    t/dialog-hint t/iter-header-bg
+                    t/code-block-fg t/code-block-bg)))
 
               ;; ── Code (success) — neutral code bg, green ✓ suffix ──
               (str/starts-with? line code-ok-marker)
@@ -927,8 +936,19 @@
                   (p/fill-rect! g fbx y iw 1))
                 (p/set-colors! g line-fg line-bg)
                 (if cancelled?
+                  ;; Cancelled / system status messages: render as a
+                  ;; muted italic block. Inline markdown spans are
+                  ;; intentionally NOT honoured here — a system note
+                  ;; saying "Cancelled by user" should stay flat,
+                  ;; never bold.
                   (p/styled g [p/ITALIC] (p/put-str! g x y line))
-                  (p/put-str! g x y line)))))))
+                  ;; Plain assistant prose: walk the line, switch SGR
+                  ;; on each inline sentinel pair. paint-styled-line!
+                  ;; falls back to a single put-str! when no sentinels
+                  ;; are present, so this is free for ASCII-only text.
+                  (p/paint-styled-line! g x y line
+                    line-fg line-bg
+                    t/code-block-fg t/code-block-bg)))))))
 
       ;; Below-content meta row.
       ;;
@@ -991,6 +1011,137 @@
     [(:type err) (:message err) (get-in err [:data :raw-data])]))
 
 (declare markdown->lines)
+
+;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
+
+(declare markdown->inline)
+
+(defn- find-inline-close
+  "Scan `s` from index `from` for the next occurrence of `closer`,
+   stepping over nested constructs that we don't want to break:
+
+   - Code spans (`` `...` ``) are atomic; their content can include any
+     character (including the closer we're hunting for) without our
+     scanner being fooled. Skip from one backtick to its matching pair.
+     The exception is when WE are the code-span scanner (closer = ``\\`
+     ``) — then we just want the next backtick, no further skipping.
+   - When `closer` is a SINGLE char (`*` or `_`), a doubled-pair like
+     `**…**` or `__…__` belongs to a nested bold span, NOT to the open
+     italic we're trying to close. Skip the whole nested pair. This is
+     what makes `*italic with **bold** inside*` parse the way a human
+     reads it (italic wrapping bold) instead of `italic with` /
+     literal-`*bold` / italic-` inside`.
+
+   Empty spans (`**` immediately followed by `**`, etc.) are rejected
+   by returning -1 — GitHub does the same.
+
+   Returns the index of the matched closer or -1 if none."
+  [^String s ^String closer ^long from]
+  (let [n         (.length s)
+        cl-len    (.length closer)
+        single-ch (when (= 1 cl-len) (.charAt closer 0))]
+    (loop [k from]
+      (cond
+        (> (+ k cl-len) n) -1
+
+        ;; Step over code spans — unless we ARE the code-span scanner.
+        (and (not= closer "`") (= (.charAt s k) \`))
+        (let [end (.indexOf s "`" (inc k))]
+          (if (neg? end) (recur (inc k)) (recur (inc end))))
+
+        ;; When closing a single `*` (or `_`), skip past nested
+        ;; doubled `**…**` (or `__…__`) so the outer italic doesn't
+        ;; eat the inner bold's opener.
+        (and single-ch
+          (= (.charAt s k) ^char single-ch)
+          (< (inc k) n)
+          (= (.charAt s (inc k)) ^char single-ch))
+        (let [doubled (str single-ch single-ch)
+              end     (.indexOf s doubled (+ k 2))]
+          (if (neg? end)
+            ;; Unmatched double — step past the first char only and continue.
+            (recur (inc k))
+            (recur (+ end 2))))
+
+        ;; Match!
+        (.regionMatches s k closer 0 cl-len)
+        (if (= k from) -1 k)             ;; reject empty span
+
+        :else
+        (recur (inc k))))))
+
+(defn- markdown->inline
+  "Tokenize CommonMark inline syntax (`**bold**`, `__bold__`,
+   `*italic*`, `_italic_`, `~~strike~~`, `` `code` ``) into
+   sentinel-decorated text the bubble painter can render with SGR.
+
+   Strategy: left-to-right scan with a fixed priority table
+   (longest opener first: `**`/`__` before `*`/`_`, `~~` before `~`,
+   then backtick). When a span is matched, its CONTENT is recursively
+   re-tokenized so nested spans render correctly:
+
+     **bold *italic* bold-again**
+     ~~strike `with code` strike-again~~
+     *italic with **bold** inside*
+
+   The `find-inline-close` helper above understands the nesting
+   rules: it steps over doubled-char pairs when scanning for a
+   single-char close, and steps over code spans (which are atomic).
+
+   Code spans are the ONE exception: their content is NOT re-tokenized.
+   `` `**not-bold**` `` keeps the asterisks literal, mirroring GitHub.
+
+   Empty spans (`****`, `__`, `~~~~`) and orphan openers fall through
+   as literal text — also matches GitHub behaviour for the same input.
+
+   What this is NOT: a full CommonMark parser. There's no flanking-
+   rule support (`a*b*c` always becomes italic-b here, while CommonMark
+   would call it literal). No autolinks. No HTML. No images. We cover
+   the 95% of inline markup that real assistant answers emit; the
+   other 5% is either rare enough to ignore or already handled by
+   line-level markers (`# heading`, `- bullet`, `> quote`, fenced code)."
+  ^String [^String s]
+  (if (or (nil? s) (zero? (.length s)))
+    (or s "")
+    (let [n  (.length s)
+          sb (StringBuilder.)
+          ;; Each token entry: [opener, closer, ON-sentinel, OFF-sentinel,
+          ;;                    recurse-into-content?].
+          ;; Order matters — longer openers tried first (`**` before `*`)
+          ;; so `**foo**` parses as bold rather than italic-`foo`-italic.
+          tokens [["**" "**" p/INLINE_BOLD_ON   p/INLINE_BOLD_OFF   true]
+                  ["__" "__" p/INLINE_BOLD_ON   p/INLINE_BOLD_OFF   true]
+                  ["~~" "~~" p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF true]
+                  ["*"  "*"  p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF true]
+                  ["_"  "_"  p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF true]
+                  ["`"  "`"  p/INLINE_CODE_ON   p/INLINE_CODE_OFF   false]]
+          match-opener (fn [^long i]
+                         (some (fn [[op _ _ _ _ :as t]]
+                                 (let [op-len (.length ^String op)]
+                                   (when (and (<= (+ i op-len) n)
+                                           (.regionMatches s i ^String op 0 op-len))
+                                     t)))
+                           tokens))]
+      (loop [i 0]
+        (if (>= i n)
+          (.toString sb)
+          (if-let [[opener closer on off recurse?] (match-opener i)]
+            (let [content-from (+ i (.length ^String opener))
+                  close-at     (find-inline-close s closer content-from)]
+              (if (neg? close-at)
+                ;; No matching close — emit opener char as literal,
+                ;; advance one char and let later positions reattempt.
+                (do (.append sb (.charAt s i))
+                  (recur (inc i)))
+                (let [content (subs s content-from close-at)]
+                  (.append sb ^String on)
+                  (.append sb ^String (if recurse?
+                                        (markdown->inline content)
+                                        content))
+                  (.append sb ^String off)
+                  (recur (+ close-at (.length ^String closer))))))
+            (do (.append sb (.charAt s i))
+              (recur (inc i)))))))))
 
 (defn- collapse-repeated-error-runs
   "Walk an iterations vec; collapse runs of consecutive iterations that
@@ -1691,14 +1842,16 @@
                (str/blank? line)
                (recur rst false (conj acc (emit-plain "")))
 
-               ;; Plain text — strip inline **bold** and `code` markers
-               ;; (mid-line styled spans aren't supported in the grid).
+               ;; Plain text — tokenize inline **bold** / *italic* /
+               ;; ~~strike~~ / `code` into invisible sentinel pairs so
+               ;; the per-line painter can switch SGR mid-line. The
+               ;; sentinels are zero-width per `display-width`, so
+               ;; wrap-text wraps by visible columns and the spans
+               ;; round-trip cleanly through the wrap.
                :else
-               (let [clean (-> line
-                             (str/replace #"\*\*([^*]+)\*\*" "$1")
-                             (str/replace #"`([^`]+)`" "$1"))]
+               (let [decorated (markdown->inline line)]
                  (recur rst false
-                   (into acc (mapv emit-plain (wrap-text clean max-w)))))))))))))
+                   (into acc (mapv emit-plain (wrap-text decorated max-w)))))))))))))
 
 (defn format-answer-with-thinking*
   "Uncached implementation. See `format-answer-with-thinking`."

@@ -15,7 +15,7 @@ author-facing entry point
 slot key (`:ext/symbols`, `:ext/cli`, `:ext/channels`,
 `:ext/providers`, `:ext/persistance`); the registrar dispatches each
 populated slot to its matching internal sub-registry. See
-[Packages — Auto-discovery resource](packages.md#auto-discovery-resource)
+[Packages — Auto-discovery](packages.md#auto-discovery)
 for the full slot → sub-registry table.
 
 `vis-core` ships zero channel implementations. The CLI dispatcher
@@ -110,7 +110,7 @@ this section only highlights which packages register a channel.
 > `:vis`. Two related but separate keywords (see
 > [Packages — Two senses of "channel"](packages.md#package-map)).
 
-## Adding a new channel from a third-party jar
+## Adding a channel from a third-party jar
 
 1. Create your `*-main` function: `(fn [args-vec] …)`.
 2. At namespace load time, call `(ext/register-global! (ext/extension {… :ext/channels [{…}]}))`. (Direct `(channel/register-global! …)` is still supported for embedded use; the slot form is the canonical author-facing API.)

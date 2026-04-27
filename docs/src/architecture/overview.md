@@ -16,7 +16,7 @@ Iteration engine                         one LLM round-trip; assembles O(1) cont
 Persistence                              single SQLite DB; versioned snapshots
 ```
 
-## Layer Responsibilities
+## Layer responsibilities
 
 **Channels** — external surfaces only. HTTP routes, terminal rendering,
 bot polling, CLI argument parsing. No business logic. Each channel calls

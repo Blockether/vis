@@ -1,6 +1,6 @@
 # State Ownership
 
-## Lifetime Table
+## State lifetime table
 
 | State | Location | Lifetime |
 |-------|----------|----------|
@@ -17,13 +17,13 @@
 | Token usage | `usage-atom` (local in iteration-loop) | Query |
 | Repetition counts | `call-counts-atom` (local in iteration-loop) | Query |
 
-## Environment Map
+## Environment map
 
 The environment is the runtime map representing one live conversation.
 See [Environment Map](../extensions/environment.md) for every key, its
 type, and what you can/cannot do with it from extension code.
 
-## Conversation Cache
+## Conversation cache
 
 `conversation/core.clj` maintains a process-level `(defonce cache (atom {}))`
 mapping conversation ID strings to `{:environment env :lock Object}`.
@@ -36,7 +36,7 @@ mapping conversation ID strings to `{:environment env :lock Object}`.
 The per-conversation `:lock` object serializes `send!` calls — only one
 turn runs at a time per conversation.
 
-## Router Lifecycle
+## Router lifecycle
 
 The router lives in **two places** on purpose, and the relationship
 between them is non-obvious enough to have caused a real bug — read
@@ -76,7 +76,7 @@ If you add a new caller of `rebuild-router!` and skip
 `refresh-cached-routers!`, you are reintroducing the bug. Treat the
 pair as one operation.
 
-## TUI Threading Model
+## TUI threading model
 
 The TUI runs **two** threads against the Lanterna screen:
 
@@ -101,9 +101,10 @@ The TUI runs **two** threads against the Lanterna screen:
    `no-render-bump-events` so it doesn't livelock). The input
    thread reads `:layout` for scroll math.
 
-### `draw-lock` (ReentrantLock)
+### Draw lock
 
-Sole lock guarding screen-mutation methods:
+`ReentrantLock` in `channels/tui/screen.clj`. Sole lock guarding
+screen-mutation methods:
 `doResizeIfNecessary`, `setCharacter`/`putString`, `refresh`,
 `setCursorPosition`. Held by:
 
@@ -115,9 +116,10 @@ backs off (50 ms tryLock timeout + 100 ms monitor wait). The dialog
 closes → `:set-dialog-open false` dispatch → `notifyAll` → render
 thread acquires the lock and paints over the dialog area.
 
-### Render caches (`channels/tui/render.clj :: fmt-cache`)
+### Render caches
 
-Every hot formatter — `format-answer-with-thinking`,
+`fmt-cache` in `channels/tui/render.clj`. Every hot formatter —
+`format-answer-with-thinking`,
 `format-answer-markdown`, `bubble-height`, `wrap-text` — is
 identity-keyed against the source string/vec stored on the
 immutable message map. Finalized assistant bubbles never mutate, so
@@ -126,7 +128,7 @@ Cache is bounded (cap 512 entries, fully cleared on overflow);
 `render/invalidate-cache!` is called from `:update-settings` so
 toggling thinking/iterations doesn't leak entries.
 
-### Why this matters (don't re-introduce the old design)
+### Why this matters
 
 Before this split, every key event — even idle 16 ms ticks with no
 input — ran the full render pipeline on the input thread:

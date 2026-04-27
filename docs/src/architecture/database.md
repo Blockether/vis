@@ -6,7 +6,7 @@ Schema source of truth: `packages/vis-persistance/resources/db/sqlite/migration/
 
 Flyway migration location: `classpath:db/sqlite/migration`.
 
-## Entity Tree
+## Entity tree
 
 ```
 conversation_soul
@@ -26,8 +26,9 @@ search  — FTS5 virtual table; populated by triggers on:
 
 ## Tables
 
-### 1) `conversation_soul`
-Conversation identity.
+### Conversation soul
+
+Table: `conversation_soul`. Conversation identity.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -37,8 +38,9 @@ Conversation identity.
 
 Index: `idx_conv_soul_created(created_at DESC)`
 
-### 2) `conversation_state`
-Forkable mutable state for a conversation soul.
+### Conversation state
+
+Table: `conversation_state`. Forkable mutable state for a conversation soul.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -52,8 +54,9 @@ Forkable mutable state for a conversation soul.
 
 Constraints: `UNIQUE(conversation_soul_id, version)`
 
-### 3) `query_soul`
-Immutable identity of a user ask (branch-local).
+### Query soul
+
+Table: `query_soul`. Immutable identity of a user ask (branch-local).
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -66,8 +69,9 @@ Immutable identity of a user ask (branch-local).
 
 Index: `idx_query_soul_state(conversation_state_id, created_at)`
 
-### 4) `query_state`
-One run/retry state for `query_soul`.
+### Query state
+
+Table: `query_state`. One run/retry state for `query_soul`.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -88,8 +92,9 @@ One run/retry state for `query_soul`.
 Constraints: `UNIQUE(query_soul_id, version)`
 Indexes: `idx_query_state_soul(query_soul_id, version)`, `idx_query_state_forked_from(forked_from_query_state_id)`
 
-### 5) `iteration`
-One LLM round-trip inside a `query_state`.
+### Iteration
+
+Table: `iteration`. One LLM round-trip inside a `query_state`.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -117,7 +122,7 @@ One LLM round-trip inside a `query_state`.
 Constraints: `UNIQUE(query_state_id, position)`
 Indexes: `idx_iteration_query_state(query_state_id, position)`, `idx_iteration_query_state_created(query_state_id, created_at)`
 
-#### Iteration Metadata
+#### Iteration metadata
 
 The `metadata` column stores per-iteration context as JSON:
 
@@ -134,8 +139,9 @@ Records which extensions (with full source namespace and version) were
 active when the iteration ran, enabling post-mortem analysis and
 reproducibility.
 
-### 6) `expression_soul`
-Branch-local identity for var/call/literal expression nodes.
+### Expression soul
+
+Table: `expression_soul`. Branch-local identity for var/call/literal expression nodes.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -151,8 +157,9 @@ Constraints: `CHECK(kind <> 'literal' OR state_mode = 'stateless')`
 Indexes: `idx_expression_soul_state_kind(conversation_state_id, kind, created_at)`
 Unique partial index: `uq_expression_soul_state_name(conversation_state_id, name) WHERE name IS NOT NULL`
 
-### 7) `expression_dependency`
-Directed dependency edges between expression souls.
+### Expression dependency
+
+Table: `expression_dependency`. Directed dependency edges between expression souls.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -167,8 +174,9 @@ Constraints: `CHECK(downstream <> upstream)`, `UNIQUE(downstream, upstream)`
 Indexes: `idx_expr_dep_downstream`, `idx_expr_dep_upstream`, `idx_expr_dep_state(conversation_state_id)`
 Triggers enforce same `conversation_state_id` across endpoints (`trg_expr_dep_same_state_ai/au`).
 
-### 8) `expression_state`
-Versioned expression output snapshots emitted per iteration.
+### Expression state
+
+Table: `expression_state`. Versioned expression output snapshots emitted per iteration.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -190,8 +198,9 @@ Constraints: `UNIQUE(expression_soul_id, version)`, `CHECK((success=1 AND error 
 Indexes: `idx_expression_state_soul(expression_soul_id, version)`, `idx_expression_state_iteration(iteration_id)`
 Triggers (`trg_expression_state_stateless_ai/au`) enforce: first version = 0, stateless expressions only ever get version 0 and at most one row.
 
-### 9) `log`
-Structured logs with optional scope references.
+### Log
+
+Table: `log`. Structured logs with optional scope references.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -210,8 +219,9 @@ Structured logs with optional scope references.
 
 Indexes: `idx_log_level(level, created_at)`, `idx_log_created(created_at)`, `idx_log_event_created(event, created_at)`, plus a partial index per nullable FK (`idx_log_conv_soul`, `idx_log_conv_state`, `idx_log_query_soul`, `idx_log_query_state`, `idx_log_iteration`, `idx_log_expression_soul`, `idx_log_expression_state`).
 
-### 10) `search` (FTS5)
-Full-text search virtual table.
+### Full-text search
+
+Table: `search` (FTS5 virtual table).
 
 | Column | Notes |
 |--------|-------|
@@ -226,7 +236,7 @@ Indexed sources via triggers:
 - `query_soul.query`
 - `expression_state.expr`
 
-## Persistence Rules
+## Persistence rules
 
 1. All DB code lives under `persistance/*` — nowhere else.
 2. HoneySQL only — no raw SQL outside `persistance/sqlite/*.clj`.
