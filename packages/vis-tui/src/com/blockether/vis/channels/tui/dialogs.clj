@@ -522,7 +522,7 @@
                                        (apply str (repeat (max 0 (- min-w (count label))) \space)))})
                        items)]
     (when-let [choice (select-dialog! screen "Commands" padded-items)]
-      (:id (nth palette-commands (.indexOf (mapv :label padded-items) (:label choice)))))))
+      (:id (nth palette-commands (.indexOf ^java.util.List (mapv :label padded-items) (:label choice)))))))
 
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 

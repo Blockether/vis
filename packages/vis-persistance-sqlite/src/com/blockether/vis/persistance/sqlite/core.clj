@@ -159,7 +159,7 @@
               (.setLeakDetectionThreshold 60000))]
     (HikariDataSource. cfg)))
 
-(def ^:private DB_FILENAME "vis.db")
+(def ^:private ^String DB_FILENAME "vis.db")
 
 (def ^:private LEGACY_DB_FILENAMES
   ;; Pre-rename file names that should be transparently picked up if a

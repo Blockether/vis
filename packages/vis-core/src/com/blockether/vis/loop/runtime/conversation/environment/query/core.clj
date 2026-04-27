@@ -231,6 +231,18 @@
 ;; plan and move on (a buggy validator must not soft-lock the loop).
 (def ^:private MAX_PLAN_VALIDATION_RETRIES 1)
 
+;; Plan churn nudges fire when the cumulative `:plan-edit-distance`
+;; across the current turn's iterations exceeds this threshold. The
+;; intent: catch thrashing before budget exhaustion. A single nudge
+;; per turn (the threshold-stickiness flag in the loop state ensures
+;; we don't re-nudge every iteration once the threshold is breached).
+(def ^:private CHURN_THRESHOLD 5)
+
+;; Consecutive-error nudge fires the iteration BEFORE the strategy
+;; restart kicks in, giving the model one warning to re-emit :plan
+;; with a different approach. Tuned to MAX_CONSECUTIVE_ERRORS - 1.
+(def ^:private CONSECUTIVE_ERROR_NUDGE_AT 2)
+
 ;; Same idea for the open-plan gate: one nudge, then accept.
 (def ^:private MAX_GATE_RETRIES 1)
 
@@ -248,7 +260,11 @@
            hooks cancel-atom current-iteration-atom
            reasoning-default routing]}]
   (let [max-iterations (or max-iterations rlm-spec/MAX_ITERATIONS)
-        max-consecutive-errors (or max-consecutive-errors 5)
+        ;; Tightened from 5 to 3. Three consecutive failures is enough
+        ;; signal that the current approach is wrong; the nudge fires
+        ;; at CONSECUTIVE_ERROR_NUDGE_AT (= 2) so the model gets a
+        ;; warning before the strategy-restart kicks in.
+        max-consecutive-errors (or max-consecutive-errors 3)
         max-restarts (or max-restarts 3)
         max-iterations-atom-binding (:max-iterations-atom environment)
         effective-max-iterations (fn [] (if max-iterations-atom-binding @max-iterations-atom-binding max-iterations))
@@ -286,6 +302,13 @@
         ;; (`:expression-redundancy-fraction` + `:dedup-saves` metadata)
         ;; before adding the new successful ones.
         seen-expression-hashes-atom (atom #{})
+        ;; Per-query map of canonical hash -> cached execution result.
+        ;; When the model re-issues an identical canonical form,
+        ;; `execute-code` returns the cached result with `:cached?
+        ;; true` and `:cached-from "iN.K"` instead of re-running SCI.
+        ;; Saves SCI eval cost + downstream side effects AND tells the
+        ;; model the call was already made so it stops re-issuing.
+        dedup-cache-atom (atom {})
         finalize-cost (fn []
                         (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} @usage-atom
                               total-tokens (+ input-tokens output-tokens)
@@ -401,11 +424,24 @@
                                          db-info (:conversation-id environment) query-id))
                     expressions-by-iteration (when (seq previous-expressions)
                                                [[(or previous-iteration 0) previous-expressions]])
+                    ;; Attempts ledger: deduped log of every executed
+                    ;; call across this turn so far.
+                    ;; build-attempts-from-iterations walks the
+                    ;; persisted iteration rows + their
+                    ;; expression_state rows; format-attempts-block
+                    ;; (in build-iteration-context) dedups by
+                    ;; canonical hash and caps at ATTEMPTS_KEEP_LAST.
+                    attempts-ledger (try
+                                      (iterate/build-attempts-from-iterations
+                                        db-info
+                                        (db/db-list-query-iterations db-info query-id))
+                                      (catch Throwable _ []))
                     iteration-context (iterate/build-iteration-context environment
                                         {:iteration              iteration
                                          :current-max-iterations (effective-max-iterations)
                                          :plan-state             sticky-plan
                                          :breadcrumbs            breadcrumb-chain
+                                         :attempts               attempts-ledger
                                          :recent-thought         recent-thought
                                          :system-vars            system-vars
                                          :prior-turn             prior-turn
@@ -432,7 +468,8 @@
                                           :iteration iteration :reasoning-level reasoning-level
                                           :routing effective-routing
                                           :resolved-model resolved-model
-                                          :on-chunk on-chunk})
+                                          :on-chunk on-chunk
+                                          :dedup-cache-atom dedup-cache-atom})
                                        (catch Exception e
                                          (iterate/handle-iteration-exception! e
                                            {:iteration iteration :messages effective-messages
@@ -565,12 +602,51 @@
                         (when (and plan-validation
                                 (< plan-validation-retries MAX_PLAN_VALIDATION_RETRIES))
                           plan-validation)
+                        ;; Plan churn: cumulative `:plan-edit-distance`
+                        ;; across this turn's iterations. Sum from
+                        ;; prior iter rows + this iter. Latches a
+                        ;; one-shot nudge once the cumulative crosses
+                        ;; CHURN_THRESHOLD.
+                        prior-edit-distance-sum
+                        (reduce + 0 (keep #(get-in % [:metadata :plan-edit-distance])
+                                      (db/db-list-query-iterations db-info query-id)))
+                        cumulative-edit-distance
+                        (+ prior-edit-distance-sum (or plan-edit-dist 0))
+                        churn-violation
+                        (when (and (> cumulative-edit-distance CHURN_THRESHOLD)
+                                (not (:churn-nudged? loop-state)))
+                          {:type :vis/plan-churn
+                           :data {:edit-distance cumulative-edit-distance
+                                  :iteration-count (inc iteration)}})
+                        ;; Pre-restart consecutive-error nudge: fires
+                        ;; ONCE when the count reaches
+                        ;; CONSECUTIVE_ERROR_NUDGE_AT (= 2). Past that
+                        ;; the strategy-restart logic kicks in, so a
+                        ;; queued nudge would never be seen anyway.
+                        consecutive-error-violation
+                        (when (and (= consecutive-errors CONSECUTIVE_ERROR_NUDGE_AT)
+                                (not (:consecutive-error-nudged? loop-state)))
+                          {:type :vis/consecutive-errors
+                           :data {:count consecutive-errors}})
                         ;; Aggregate loop-nudges to surface on the next
                         ;; iteration. `format-loop-nudge` gates nil input
                         ;; and returns the [system_nudge]-prefixed line.
                         next-pending-loop-nudges
                         (vec (keep iterate/format-loop-nudge
-                               [gate-violation plan-validation-violation]))
+                               [gate-violation
+                                plan-validation-violation
+                                churn-violation
+                                consecutive-error-violation]))
+                        ;; Latching flags: once a churn / consecutive-
+                        ;; error nudge has fired, don't re-fire it on
+                        ;; every subsequent iteration. Stays sticky
+                        ;; through all recur paths via merge into
+                        ;; loop-state.
+                        next-churn-nudged?
+                        (or (:churn-nudged? loop-state) (boolean churn-violation))
+                        next-consecutive-error-nudged?
+                        (or (:consecutive-error-nudged? loop-state)
+                          (boolean consecutive-error-violation))
                         iteration-id (db/store-iteration! (:db-info environment)
                                        {:query-id query-id :expressions expressions :vars vars-snapshot
                                         :thinking thinking

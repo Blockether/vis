@@ -42,12 +42,13 @@
                  (throw (ex-info "locations must be a string or coll of strings"
                           {:type :persistance/invalid-migration-locations
                            :got  (type locations)})))
-        flyway (-> (org.flywaydb.core.Flyway/configure)
-                 (.dataSource ds)
-                 (.locations (into-array String locs))
-                 (.baselineOnMigrate true)
-                 (.baselineVersion "0")
-                 (.mixed true)
-                 (.load))]
+        ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
+        (-> (org.flywaydb.core.Flyway/configure)
+          (.dataSource ds)
+          (.locations ^"[Ljava.lang.String;" (into-array String locs))
+          (.baselineOnMigrate true)
+          (.baselineVersion "0")
+          (.mixed true))
+        ^org.flywaydb.core.Flyway flyway (.load cfg)]
     (.migrate flyway)
     ds))

@@ -37,7 +37,7 @@
 ;; `draw-lock`. `pollInput` lives on its own input queue inside
 ;; Lanterna and is safe to call concurrently from the input thread.
 
-(defonce ^:private draw-lock
+(defonce ^:private ^ReentrantLock draw-lock
   ^{:doc "Single screen-mutation lock. Held by the render thread for the
           duration of one paint, and by `with-dialog-lock` for the
           duration of a modal dialog session."}
@@ -102,7 +102,7 @@
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
    held (or before the render thread is started) because
    `doResizeIfNecessary` reallocates the back buffer."
-  [^TerminalScreen screen]
+  ^com.googlecode.lanterna.TerminalSize [^TerminalScreen screen]
   (if-let [new-size (.doResizeIfNecessary screen)]
     (do (try (.refresh screen Screen$RefreshType/COMPLETE)
           (catch NullPointerException _
@@ -282,7 +282,7 @@
               (let [v-now (long (or (:render-version @state/app-db) 0))
                     loading? (boolean (:loading? @state/app-db))]
                 (when (= v-now version)
-                  (try (.wait state/render-monitor
+                  (try (.wait ^Object state/render-monitor
                          (long (if loading? spinner-tick-ms 250)))
                     (catch InterruptedException _ nil))))))
           (recur (if rendered? version last-v)
@@ -541,12 +541,12 @@
           ;; conversation id, etc. Print the message clean and let the
           ;; process exit non-zero — no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
-          (do (.println config/original-stdout (str "vis: " (.getMessage t)))
+          (do (.println ^java.io.PrintStream config/original-stdout (str "vis: " (.getMessage t)))
             (reset! exit-code 2))
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
-          (do (.println config/original-stdout (str "vis: fatal error — " (.getMessage t)))
-            (.printStackTrace t (java.io.PrintStream. @config/tty-out true))
+          (do (.println ^java.io.PrintStream config/original-stdout (str "vis: fatal error — " (.getMessage t)))
+            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @config/tty-out true))
             (throw t))))
       (finally
         (config/shutdown!)))
