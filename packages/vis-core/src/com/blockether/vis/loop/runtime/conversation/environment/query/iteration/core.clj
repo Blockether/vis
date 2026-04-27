@@ -1304,7 +1304,8 @@
                       (:arity-mismatch call-result)   v
                       :else                           v))
                   v))
-              resolved-var-value (when single-token?
+              resolved-var-value (when (and single-token?
+                                         (not= answer-type :sci-expression))
                                    (let [sym (symbol raw-answer)
                                          resolved (get locals sym)]
                                      (when (some? resolved)
@@ -1314,8 +1315,30 @@
                                          (cond
                                            (string? v) v
                                            :else (safe-pr-str v))))))
+              ;; :answer-type :sci-expression -- evaluate the answer
+              ;; as a Clojure form in the SCI sandbox AFTER any :code
+              ;; blocks have run (so the form can rely on vars defined
+              ;; this iteration). Success -> use the printed value as
+              ;; the final answer text. Failure -> validation error
+              ;; that re-prompts the model.
+              sci-eval-iteration-id (str "i" iteration ".final")
+              sci-eval-result (when (and (= answer-type :sci-expression)
+                                      (not expression-errors))
+                                (execute-code environment raw-answer
+                                  :timeout-ms 5000
+                                  :iteration-id sci-eval-iteration-id))
+              sci-eval-error  (some-> sci-eval-result :error vis-error/error-message)
+              sci-eval-answer (when (and (= answer-type :sci-expression)
+                                      (nil? sci-eval-error)
+                                      (some? sci-eval-result))
+                                (let [v (:result sci-eval-result)]
+                                  (cond
+                                    (string? v) v
+                                    (nil? v)    "nil"
+                                    :else       (safe-pr-str v))))
               mustache-detected? (and (not resolved-var-value)
-                                   (some? answer-type))
+                                   (some? answer-type)
+                                   (not= answer-type :sci-expression))
               mustache-result (when mustache-detected?
                                 (try
                                   (let [result (mustache/render raw-answer locals)]
@@ -1325,14 +1348,15 @@
                                               ". Define all referenced vars in :code first.")})))
               template-answer (:answer mustache-result)
               mustache-missing (:error mustache-result)
-              raw-answer (or resolved-var-value template-answer raw-answer)
+              raw-answer (or sci-eval-answer resolved-var-value template-answer raw-answer)
               final-answer raw-answer
               confidence (or (:confidence parsed) :high)
               validation-error (or (when-not answer-type
                                      (vis-error/missing-answer-type-message))
                                  (when expression-errors
                                    (vis-error/final-answer-code-error-message (:error (first expression-errors))))
-
+                                 (when sci-eval-error
+                                   (vis-error/sci-expression-eval-error-message sci-eval-error))
                                  mustache-missing)
               expressions (when expression-results
                             (mapv (fn [idx code result]

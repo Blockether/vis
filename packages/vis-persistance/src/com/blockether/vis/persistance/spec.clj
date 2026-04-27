@@ -127,6 +127,30 @@
               :edn  (validate-edn s)
               nil)
       :text nil
+      ;; :sci-expression rides on Clojure's reader: refuse to ship
+      ;; an unparseable form to the sandbox eval. Runtime errors
+      ;; (undefined symbol, arity, etc.) are reported by the
+      ;; iteration handler when it actually evaluates the form, not
+      ;; here -- this validator only sees text. We do BOTH the
+      ;; structural lint (`__` placeholders, bare %-args, nested
+      ;; #()) AND a real reader round-trip so an unbalanced form is
+      ;; rejected here instead of surfacing as an opaque parse
+      ;; failure two layers down.
+      ;; clojure.core/read-string handles the full Clojure reader
+      ;; (regex literals, reader-macros) so a legitimate sandbox form
+      ;; like `(re-find #"x" s)` doesn't false-positive the way
+      ;; `edn/read-string` would. We bind `*read-eval*` to false to
+      ;; defuse `#=(...)` reader-eval before the form ever reaches
+      ;; SCI; the sandbox does its own eval gating but defense in
+      ;; depth is cheap here.
+      :sci-expression (or (validate-clojure-code s)
+                        (try
+                          (binding [*read-eval* false]
+                            (read-string s))
+                          nil
+                          (catch Exception e
+                            (str ":sci-expression failed to parse: "
+                              (ex-message e)))))
       nil)))
 
 (def CODE_BLOCK_SPEC
@@ -306,8 +330,12 @@
                       ::spec/type        :spec.type/keyword
                       ::spec/cardinality :spec.cardinality/one
                       ::spec/required    false
-                      ::spec/description "Required with :answer; controls final answer rendering."
-                      ::spec/values      ["mustache-text" "mustache-markdown"]})
+                      ::spec/description (str "Required with :answer; controls final answer rendering. "
+                                           "`mustache-text` / `mustache-markdown` render :answer as a Mustache template against sandbox vars. "
+                                           "`sci-expression` evaluates :answer as a Clojure form in the SCI sandbox "
+                                           "and uses the printed result as the final answer text -- string returns are used verbatim, "
+                                           "other values go through bounded pr-str.")
+                      ::spec/values      ["mustache-text" "mustache-markdown" "sci-expression"]})
          (spec/field {::spec/name        :confidence
                       ::spec/type        :spec.type/keyword
                       ::spec/cardinality :spec.cardinality/one

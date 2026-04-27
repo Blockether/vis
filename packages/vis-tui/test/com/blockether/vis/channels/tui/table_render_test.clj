@@ -53,23 +53,20 @@
       (it "SMP emoji '📄' (2 chars / 2 cols) padded to 5 has the same visual width as ASCII"
         (let [out (pad-cell "📄" 5 :left)]
           (expect (= 7 (p/display-width out)))))
-      (it "VS-16 emoji '🏷️' (3 chars / 2 cols) gets the +1 per-cell bonus — 8 cols not 7"
-        ;; pad-cell adds one extra space per VS-16 grapheme so the
-        ;; cell visually fills correctly on terminals that paint VS-16
-        ;; sequences one col narrower than lanterna claims. In our
-        ;; display-width model that means a VS-16 cell is +1 col wider
-        ;; than a sibling non-VS-16 cell. See pad-cell for the why.
+      (it "VS-16 emoji '🏷️' (3 chars / 1 col after lanterna fork's VS-16 fix)"
+        ;; lanterna 3.1.5-vis.3's TextCharacter.isDoubleWidth returns
+        ;; false for VS-16 graphemes (matches what real terminals
+        ;; actually paint). display-width therefore reports 1, and
+        ;; pad-cell allocates one extra space than a wide-emoji cell
+        ;; would — cell winds up the SAME visual width as siblings.
         (let [out (pad-cell "🏷️" 5 :left)]
-          (expect (= 8 (p/display-width out)))))
-      (it "Regional-indicator flag '🇵🇱' (4 chars / 2 cols) has no VS-16 — stays at 7 cols"
+          (expect (= 7 (p/display-width out)))))
+      (it "Regional-indicator flag '🇵🇱' (4 chars / 2 cols) has no VS-16 — 7 cols"
         (let [out (pad-cell "🇵🇱" 5 :left)]
           (expect (= 7 (p/display-width out)))))
-      (it "Non-VS-16 emoji classes pad to identical width when w=5"
+      (it "Every emoji class — VS-16 included — pads to identical width when w=5"
         (let [w (fn [s] (p/display-width (pad-cell s 5 :left)))]
-          (expect (= (w "abc") (w "☕") (w "📄") (w "🇵🇱")))))
-      (it "VS-16 emoji are ALWAYS exactly +1 col wider than non-VS-16 in the same w"
-        (let [w (fn [s] (p/display-width (pad-cell s 5 :left)))]
-          (expect (= (inc (w "📄")) (w "🏷️"))))))
+          (expect (= (w "abc") (w "☕") (w "📄") (w "🏷️") (w "🇵🇱"))))))
 
     (describe "pad-cell truncation respects column count"
       (it "Truncates ASCII over-wide content with ellipsis"
@@ -112,19 +109,11 @@
         (let [n (count rows)]
           (expect (= (+ 1 1 1 (+ n (dec n)) 1) (count out)))))
 
-      (it "non-VS-16 lines all share the same width; VS-16 row gets exactly +1"
-        ;; The grid is monomorphic in DISPLAY-COLS for the terminal
-        ;; (where VS-16 emoji like 🏷️ render one column narrower than
-        ;; lanterna's `isDoubleWidth` claims). pad-cell adds a +1 bonus
-        ;; per VS-16 grapheme inside a cell so the visual width on the
-        ;; user's terminal lines up. In our display-width MODEL that
-        ;; makes the VS-16 row exactly one column wider than its
-        ;; siblings.
-        (let [widths (visual-widths out)]
-          (expect (= 2 (count widths))
-            "Two distinct widths: the standard width and standard+1")
-          (expect (= 1 (- (apply max widths) (apply min widths)))
-            "The wider rows are exactly +1 col over the standard")))
+      (it "every line has the exact same display width — the grid is monomorphic"
+        ;; With lanterna 3.1.5-vis.3's VS-16 width fix, our model and
+        ;; the terminal agree on every emoji width. The grid is
+        ;; once again exactly one width across all rows.
+        (expect (= 1 (count (visual-widths out)))))
 
       (it "each non-marker line ends with the right corner glyph for its row type"
         (let [bare (mapv strip-marker out)]
@@ -135,14 +124,8 @@
 
   (describe "Single-row table with VS-16 emoji in isolation"
     (it "Header column-width is computed from display-width, not char count"
-      ;; The 🏷️ row gets +1 col of padding via the per-cell VS-16
-      ;; bonus (see pad-cell), so the rendered line is exactly one
-      ;; column wider than the 📄 row IN OUR MODEL — corresponds to
-      ;; equal visual width on terminals that paint 🏷️ one col narrower.
-      (let [out (render-table ["Ikona"] [["🏷️"] ["📄"]] 100 dummy-markers)
-            widths (visual-widths out)]
-        (expect (= 2 (count widths)))
-        (expect (= 1 (- (apply max widths) (apply min widths))))))
+      (let [out (render-table ["Ikona"] [["🏷️"] ["📄"]] 100 dummy-markers)]
+        (expect (= 1 (count (visual-widths out))))))
 
     (it "Flag emoji (regional indicator pair) — 4 chars, 2 cols"
       (let [out (render-table ["X"] [["🇵🇱"] ["abc"]] 100 dummy-markers)]
