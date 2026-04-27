@@ -1,5 +1,5 @@
 {:paths ["src"]
- ;; Generic LLM provider registry — same plug-in pattern as channels,
+ ;; Generic LLM provider registry — same extension pattern as channels,
  ;; extensions, commandline, persistance backends. Concrete providers
  ;; (e.g. `vis-provider-github-copilot`) self-register into this
  ;; registry at namespace load time. vis-core looks providers up

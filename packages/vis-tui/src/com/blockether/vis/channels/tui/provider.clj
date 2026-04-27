@@ -113,7 +113,7 @@
 
 ;;; ── GitHub Copilot OAuth (dynaload — optional provider jar) ────────
 ;;
-;; com.blockether/vis-providers-github-copilot is an OPTIONAL plug-in
+;; com.blockether/vis-providers-github-copilot is an OPTIONAL extension
 ;; jar. When it's missing every dynaload below stays nil (`:default`)
 ;; and `copilot-oauth-flow!` shows a friendly dialog instead of
 ;; throwing a CompilerException at the user.

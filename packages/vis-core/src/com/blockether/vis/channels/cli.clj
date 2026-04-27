@@ -1,7 +1,7 @@
 (ns com.blockether.vis.channels.cli
   "vis-core's built-in CLI commands.
 
-   This namespace is a PLUG-IN, not a dispatcher. Loading it at
+   This namespace is an EXTENSION, not a dispatcher. Loading it at
    startup self-registers every built-in (`run`, `auth`, `doctor`,
    `conversations`, `extensions`) into `com.blockether.vis.commandline`
    so the dispatcher in `com.blockether.vis.commandline.main` can
@@ -13,7 +13,7 @@
      - The `vis channel` parent + channel-registry adapter → vis-extension
      - The `vis ext` parent + `:ext/cli` adapter → vis-extension
 
-   `META-INF/vis/commandline.edn` lists this namespace so dropping
+   The unified `META-INF/vis.edn` lists this namespace so dropping
    the vis-core jar onto the classpath is enough to get every
    built-in. No caller wiring required."
   (:require [borkdude.dynaload :as dl]
@@ -358,7 +358,7 @@
 ;; This is the entire wiring this namespace contributes to the CLI.
 ;; The dispatcher in `com.blockether.vis.commandline.main` finds
 ;; these via `cmd/registered-under []` and renders + dispatches them
-;; alongside any other plug-in's commands.
+;; alongside any other extension's commands.
 
 (doseq [spec
         [{:cmd/name  "run"

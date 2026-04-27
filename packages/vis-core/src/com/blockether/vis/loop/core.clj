@@ -155,6 +155,14 @@ EVERY ITERATION:
     var. Future iterations — yours and the next turn's — read those docs
     from `<var_index>` instead of having to re-derive what each var is for.
 
+    KEEP `:expr` CLEAN. Do NOT use Clojure's native
+    `(def name \"docstring\" val)` / `(defn name \"doc\" [args] body)` form;
+    that's redundant with the structured `:doc` field and bug-prone
+    (a real value that happens to be a string gets eaten as the
+    docstring, leaving the var bound to nothing). Always:
+      :expr `(def name val)` or `(defn name [args] body)`
+      :doc  \"one-line description\".
+
   STEP 3 — REPORT.
     Emit :breadcrumb (≤120 chars, past tense). Cite the active item id, what
     happened, and (when relevant) which iN.K result advanced it.
@@ -520,8 +528,11 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                      :data {:error (ex-message t)
                             :conversation-id conversation-id}
                      :msg "Failed to restore sandbox from DB \u2014 starting empty"}))))
-    ;; Auto-discover extensions from META-INF/vis/extensions.edn on classpath,
-    ;; then install in dependency order.
+    ;; Auto-discover everything from `META-INF/vis.edn` on the
+    ;; classpath, then install extensions in dependency order. The
+    ;; same loader populates channel/command/provider/persistance
+    ;; registries as a side effect; we just care about the extension
+    ;; rows here.
     (ext/discover-extensions!)
     (ext/register-extensions! env register-extension!)
     env))

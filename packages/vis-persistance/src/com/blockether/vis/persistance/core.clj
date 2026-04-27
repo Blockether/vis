@@ -27,13 +27,14 @@
    `store` map back as its first argument; the `:backend` key on
    `store` controls dispatch.
 
-   ── Auto-discovery ────────────────────────────────────────────────
+   ── Auto-discovery ───────────────────────────────────
 
-   Backends are loaded the same way channels and extensions are: ship
-   `META-INF/vis/persistance-backends.edn` in your jar's resources/
+   Backends are loaded the same way channels and other extensions are:
+   ship the unified `META-INF/vis.edn` in your jar's resources/
    listing the namespaces that call `register-backend!`. The first
-   `create-rlm-conn` call triggers `discover-backends!`, which is
-   memoized for the process lifetime."
+   `create-rlm-conn` call triggers a lazy `requiring-resolve` of
+   `com.blockether.vis.extension/discover-extensions!`, memoized for
+   the process lifetime."
   (:require [clojure.edn :as edn]))
 
 ;; =============================================================================
@@ -75,39 +76,32 @@
 
 ;; ----------------------------------------------------------------------------
 ;; Auto-discovery
+;;
+;; There is no backend-specific scanner. The single source of truth is
+;; `com.blockether.vis.extension/discover-extensions!`, which scans every
+;; `META-INF/vis.edn` on the classpath and `require`s the namespaces
+;; listed inside. Any of those namespaces that calls
+;; `(register-backend! ...)` lands in this backend registry as a side
+;; effect.
+;;
+;; This package keeps its zero-vis-runtime-deps property by resolving
+;; the loader through `requiring-resolve` instead of a hard `:require`.
+;; If `vis-extension` happens NOT to be on the classpath (extremely
+;; unusual; practically every consumer pulls it transitively via
+;; `vis-core`), discovery becomes a no-op and the caller is expected
+;; to `(require ...)` their backend explicitly.
 ;; ----------------------------------------------------------------------------
-
-(def ^:private BACKENDS_RESOURCE "META-INF/vis/persistance-backends.edn")
-
-(defn discover-backends!
-  "Scan the classpath for every `META-INF/vis/persistance-backends.edn`
-   resource. Each file is an EDN vector of namespace symbols whose
-   load triggers `register-backend!`. Returns the count of backends
-   added by this call. Idempotent through the underlying `require`
-   cache — calling it twice does no extra work."
-  []
-  (let [urls   (try
-                 (enumeration-seq
-                   (.getResources
-                     (.getContextClassLoader (Thread/currentThread))
-                     BACKENDS_RESOURCE))
-                 (catch Exception _ nil))
-        before (set (keys @backends))]
-    (doseq [^java.net.URL url urls]
-      (try
-        (let [ns-syms (edn/read-string (slurp url))]
-          (when (sequential? ns-syms)
-            (doseq [ns-sym ns-syms]
-              (when (symbol? ns-sym)
-                (try (require ns-sym)
-                  (catch Throwable _ nil))))))
-        (catch Throwable _ nil)))
-    (- (count @backends) (count before))))
 
 (defonce ^:private discovery-once
   ;; Lazy: triggered on first `create-rlm-conn`. Wrapped in `defonce`
-  ;; so subsequent calls are O(1) reads of the realized delay.
-  (delay (discover-backends!)))
+  ;; so subsequent calls are O(1) reads of the realized delay. Resolves
+  ;; the unified loader at use time so this jar stays decoupled from
+  ;; `vis-extension` at compile time.
+  (delay
+    (try
+      (when-let [v (requiring-resolve 'com.blockether.vis.extension/discover-extensions!)]
+        (v))
+      (catch Throwable _ 0))))
 
 (defn- pick-backend-id
   "Decide which backend handles this call. Honors an explicit

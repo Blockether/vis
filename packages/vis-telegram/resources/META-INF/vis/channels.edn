@@ -1,3 +1,0 @@
-;; Channels exported by vis-telegram. The CLI dispatcher loads each
-;; namespace at startup, triggering its `channel/register-global!`.
-[com.blockether.vis.channels.telegram.bot]

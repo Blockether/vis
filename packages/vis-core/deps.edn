@@ -17,7 +17,7 @@
   ;; Persistence FACADE — the public API + spec only, no JDBC.
   ;; vis-core hard-depends on the facade; concrete backends (e.g.
   ;; vis-persistance-sqlite) plug themselves in at load time via
-  ;; `META-INF/vis/persistance-backends.edn`. vis-core has ZERO direct
+  ;; the unified `META-INF/vis.edn`. vis-core has ZERO direct
   ;; reference to any backend namespace.
   com.blockether/vis-persistance            {:local/root "../vis-persistance"}
 

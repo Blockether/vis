@@ -789,6 +789,7 @@
           current-iteration-id-atom (atom nil)
           environment            (assoc env
                                    :max-iterations-atom max-iterations-atom
+                                   :current-iteration-atom current-iteration-atom
                                    :current-iteration-id-atom current-iteration-id-atom)
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom

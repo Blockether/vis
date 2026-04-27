@@ -38,9 +38,10 @@
   ;; day-to-day use is `vis <subcommand>` with no Clojure visible.
   ;;
   ;; Dispatcher lives in vis-commandline — it discovers channels,
-  ;; extensions, persistance backends, and every commandline plug-in
-  ;; (including vis-core's built-ins) at startup. vis-core is just
-  ;; one of those plug-ins.
+  ;; extensions (the umbrella term — ext symbols, channels, CLI
+  ;; commands, providers, persistance backends) at startup via the
+  ;; unified `META-INF/vis.edn` loader in vis-extension. vis-core is
+  ;; just one of those extensions.
   :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI
           ;; (Lanterna) is not corrupted by JVM-emitted warnings:
           ;;   --enable-native-access=ALL-UNNAMED
@@ -74,15 +75,18 @@
                         "packages/vis-commandline/test"
                         "packages/vis-extension/test"
                         "packages/vis-persistance-sqlite/test"
-                        "extensions/vis-common-operations/test"]
+                        "extensions/vis-common-operations/test"
+                        "extensions/vis-self-debug/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                       com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}
+                       com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}
+                       com.blockether/vis-self-debug       {:local/root "extensions/vis-self-debug"}}
           :main-opts  ["-m" "lazytest.main"
                        "--dir" "test"
                        "--dir" "packages/vis-core/test"
                        "--dir" "packages/vis-commandline/test"
                        "--dir" "packages/vis-extension/test"
-                       "--dir" "extensions/vis-common-operations/test"]}
+                       "--dir" "extensions/vis-common-operations/test"
+                       "--dir" "extensions/vis-self-debug/test"]}
 
   :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "packages/vis-benchmark"}}
           :jvm-opts    ["-Xmx8g"]

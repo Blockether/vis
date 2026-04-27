@@ -144,7 +144,7 @@
                  ::spec/type :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/required false
-                 ::spec/description "Optional docstring for the var defined by this :expr. Use when :expr is `(def name val)` or `(defn name [args] body)` so the var carries its purpose into <var_index>. The loop attaches this as :doc metadata after eval. Ignored when :expr does not define a var."})))
+                 ::spec/description "Optional docstring for the var defined by this :expr. Use this INSTEAD of Clojure's native `(def name \"docstring\" val)` / `(defn name \"docstring\" [args] body)` form — keep :expr clean: `(def name val)` and `(defn name [args] body)`. The loop attaches this string as :doc metadata after eval; <var_index> renders the first line. Ignored when :expr does not define a var."})))
 
 (def NEXT_SPEC
   "Per-iteration steering hint. Both fields are optional — emit `:next` only
