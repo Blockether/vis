@@ -17,5 +17,17 @@
               (vis-error/format-error {:message "Missing field" :type :vis/missing-field}))))
 
   (it "exposes the standardized final-answer validation message"
-    (expect (= "Final answer is missing :answer-type. Set :answer-type to \"mustache-text\" or \"mustache-markdown\"."
-              (vis-error/missing-answer-type-message)))))
+    (let [message (vis-error/missing-answer-type-message)]
+      ;; The message MUST advertise all three valid answer-types --
+      ;; if a future PR adds a fourth, this test forces the
+      ;; message update.
+      (expect (re-find #"mustache-text"     message))
+      (expect (re-find #"mustache-markdown" message))
+      (expect (re-find #"sci-expression"    message))))
+
+  (it "formats sci-expression eval errors with a recovery hint"
+    (let [message (vis-error/sci-expression-eval-error-message
+                    (ex-info "Unable to resolve symbol: foo" {}))]
+      (expect (re-find #"sci-expression" message))
+      (expect (re-find #"Unable to resolve symbol: foo" message))
+      (expect (re-find #":code first" message)))))

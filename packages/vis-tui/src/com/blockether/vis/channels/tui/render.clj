@@ -885,31 +885,53 @@
                     (when head? [p/BOLD]))))
 
               ;; ── Thinking-mode markdown headings ── dim italic on iter bg
+              ;;
+              ;; All thinking-mode prose branches go through
+              ;; `paint-styled-line!` instead of raw `put-str!` because
+              ;; their CONTENT now contains inline sentinels:
+              ;; markdown->lines runs `markdown->inline` on heading,
+              ;; bullet, quote, and bold-line bodies. Without the
+              ;; styled painter the sentinels (INLINE_CODE_ON/OFF etc.)
+              ;; would be written to the terminal as PUA chars and the
+              ;; backtick code spans would silently lose their styling.
+              ;; Fenced code (th-md-code-marker) is the one exception:
+              ;; its body is intentionally NOT inline-tokenised, so a
+              ;; raw put-str! is correct there.
               (str/starts-with? line th-md-h1-marker)
               (do (p/set-colors! g t/iter-header-fg t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/iter-header-fg t/iter-header-bg
+                    t/code-result-fg t/code-block-bg)))
 
               (str/starts-with? line th-md-h2-marker)
               (do (p/set-colors! g t/iter-header-fg t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/iter-header-fg t/iter-header-bg
+                    t/code-result-fg t/code-block-bg)))
 
               (str/starts-with? line th-md-h3-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/dialog-hint t/iter-header-bg
+                    t/code-result-fg t/code-block-bg)))
 
               (str/starts-with? line th-md-bold-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/BOLD p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/dialog-hint t/iter-header-bg
+                    t/code-result-fg t/code-block-bg)))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
+              ;; No sentinels in code-block bodies (markdown->lines does
+              ;; NOT recurse into fenced code), so a raw put-str! is fine.
               (str/starts-with? line th-md-code-marker)
               (do (p/set-colors! g t/code-result-fg t/code-block-bg)
                 (p/fill-rect! g fbx y iw 1)
@@ -920,13 +942,17 @@
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/dialog-hint t/iter-header-bg
+                    t/code-result-fg t/code-block-bg)))
 
               (str/starts-with? line th-md-quote-marker)
               (do (p/set-colors! g t/dialog-hint t/iter-header-bg)
                 (p/fill-rect! g fbx y iw 1)
                 (p/styled g [p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (p/paint-styled-line! g x y (subs line 1)
+                    t/dialog-hint t/iter-header-bg
+                    t/code-result-fg t/code-block-bg)))
 
               (str/starts-with? line th-md-hr-marker)
               (do (p/set-colors! g t/answer-sep-fg t/iter-header-bg)
@@ -1635,19 +1661,13 @@
         ;; guarantees display-width ≤ (dec w); the +1 for the ellipsis
         ;; or unchanged path keeps the math honest.
         ;;
-        ;; Per-cell VS-16 compensation: macOS Terminal / iTerm2 with
-        ;; certain font configs render emoji+VS-16 sequences ONE
-        ;; COLUMN NARROWER than lanterna's `isDoubleWidth` claims
-        ;; (and one narrower than our `display-width` then computes).
-        ;; Result: VS-16 cells visually under-fill by one col, the
-        ;; grid drifts. Add one bonus space per VS-16 grapheme in
-        ;; this cell to absorb the gap. Per-cell, NOT per-column,
-        ;; because non-VS-16 emoji in the same column (📄 / 📁 / ✅)
-        ;; render at the expected 2 cols and would shift right if we
-        ;; bonused the whole column. See render-table comment for the
-        ;; rejected per-column variant.
-        vs16-bonus (count (re-seq #"\uFE0F" t))
-        pad-cols (max 0 (+ vs16-bonus (- w (p/display-width t))))
+        ;; (VS-16 padding compensation lived here briefly when the
+        ;; lanterna fork still reported `isDoubleWidth=true` for
+        ;; 🏷️ / ❤️. Lanterna 3.1.5-vis.3 fixes that at the source
+        ;; — see the dep comment in vis-tui/deps.edn — so VS-16
+        ;; graphemes now report `display-width=1` consistently and
+        ;; pad-cell allocates the right space without a per-cell hack.)
+        pad-cols (max 0 (- w (p/display-width t)))
         pad (repeat-str \space pad-cols)
         body (case align
                :right (str pad t)

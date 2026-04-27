@@ -198,8 +198,26 @@ DIRECT ANSWER (greetings, plain prose): empty :code `[]`, no :plan needed,
                           you want lazy evaluation: build the fn in
                           :code, set :answer to the fn name, the loop
                           calls it for you.
-  • Mustache template   — :answer-type set + :answer is a Mustache
+  • Mustache template   — :answer-type set to `mustache-text` /
+                          `mustache-markdown` + :answer is a Mustache
                           template referencing sandbox vars.
+  • SCI expression      — :answer-type `sci-expression` + :answer is a
+                          Clojure form. The loop evaluates the form in
+                          the sandbox (AFTER :code blocks for this iter
+                          have run, so it can rely on freshly-defined
+                          vars) and uses the printed result as the final
+                          answer text. String results pass through
+                          verbatim; other values go through bounded
+                          pr-str. Errors re-prompt the iter.
+                          e.g. :answer \"(str/join \\\"\\\\n\\\" rendered-rows)\"
+                               :answer-type \"sci-expression\"
+
+SCI EXPRESSION — :answer-type `sci-expression`:
+  Use when the answer is computed from sandbox vars and you want a
+  full Clojure form, not a Mustache template. The form runs in the
+  same SCI namespace as :code; every var, every extension symbol,
+  every clojure.string/clojure.set fn is in scope. Treat it as one
+  more :code block that returns the answer string.
 
 MUSTACHE — :answer-type `mustache-text` | `mustache-markdown`:
   Sandbox vars = context. Tags: {{var}} {{#list}}..{{/list}} {{^val}}..{{/val}} {{.}} {{list.size}}.
