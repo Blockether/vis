@@ -10,7 +10,7 @@
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis-core          {:local/root "../vis-core"}
   com.googlecode.lanterna/lanterna {:mvn/version "3.1.5"}
-  com.blockether/svar              {:mvn/version "0.3.10"}}
+  com.blockether/svar              {:mvn/version "0.3.11"}}
 
  :aliases
  {:test
