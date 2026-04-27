@@ -26,25 +26,108 @@ The runtime composition helpers that DO need a live environment
 stay on `com.blockether.vis.core` because they only make sense against
 a running env.
 
-| Key | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `:ext/namespace` | ✓ | — | Fully qualified symbol, e.g. `'com.blockether.vis.ext.common-operations.core`, `'com.acme.ext.git` |
-| `:ext/doc` | ✓ | — | Extension-level description |
-| `:ext/group` | ✓ | — | Top-level prompt group, e.g. `"knowledge"` |
-| `:ext/subgroup` | ✗ | same as `:ext/group` | Finer-grained grouping within the group |
-| `:ext/activation-fn` | ✗ | `(constantly true)` | `(fn [env] → bool)` — when falsy, all symbols are unbound and nudge-fn is skipped |
-| `:ext/prompt` | ✗ | — | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt |
-| `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
-| `:ext/on-parse-error-fn` | ✗ | — | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
-| `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.common-operations.core]` |
-| `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
-| `:ext/author` | ✗ | — | Author name or org, e.g. `"Blockether"` |
-| `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"` |
-| `:ext/symbols` | ✓ | — | Vector of symbol entries (from `symbol` / `value`) |
-| `:ext/classes` | ✗ | `{}` | `{fq-symbol → Class}` — Java classes exposed in sandbox |
-| `:ext/imports` | ✗ | `{}` | `{short-symbol → fq-symbol}` — short-name imports |
-| `:ext/ns-alias` | conditional | — | `{:ns 'vis.ext.fs :alias 'fs}` — **required when `:ext/symbols` is non-empty** (enforced by `ns-alias-required-when-symbols?`). Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file ...)` — bare `(read-file ...)` does not resolve. |
-| `:ext/cli` | ✗ | — | Vector of CLI entries `[{:cmd "name" :doc "…" :args […] :fn (fn [parsed-args] …)}]`. Each entry mounts as `vis ext <cmd>` via the `vis-commandline` adapter in `channels.cli`. Use this for occasional one-shot commands tied to your extension; for richer command trees, register a top-level command directly through `com.blockether.vis.commandline/register-global!`. |
+Only `:ext/namespace` and `:ext/doc` are unconditionally required.
+Everything else is optional (with sensible defaults applied by the
+`extension` constructor) so an extension that ships, say, only
+`:ext/channels` doesn't need to declare any SCI-symbol bookkeeping.
+
+Two conditional rules apply on top of the spec:
+
+- `:ext/group` is required when `:ext/symbols` is non-empty (enforced
+  by `group-required-when-symbols?`).
+- `:ext/ns-alias` is required when `:ext/symbols` is non-empty
+  (enforced by `ns-alias-required-when-symbols?`).
+
+| Key                      | Required        | Default              | Description |
+|--------------------------|-----------------|----------------------|-------------|
+| `:ext/namespace`         | ✓              | —                    | Fully qualified symbol, e.g. `'com.blockether.vis.ext.common-operations.core`, `'com.acme.ext.git`. Also the dedup key in the global registry. |
+| `:ext/doc`               | ✓              | —                    | Extension-level description. |
+| `:ext/group`             | conditional     | —                    | Top-level prompt group (e.g. `"knowledge"`). **Required when `:ext/symbols` is non-empty.** Pure non-symbol extensions (channels-only, providers-only, persistence-only) may omit it. |
+| `:ext/subgroup`          | ✗              | same as `:ext/group` | Finer-grained grouping within the group. Defaults to `:ext/group` only when `:ext/group` is itself present. |
+| `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] → bool)` — when falsy, all symbols are unbound and `:ext/nudge-fn` is skipped. |
+| `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt. Strings are normalized to `(constantly s)`. |
+| `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)). |
+| `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
+| `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.common-operations.core]`. |
+| `:ext/version`           | ✗              | —                    | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"`. |
+| `:ext/author`            | ✗              | —                    | Author name or org, e.g. `"Blockether"`. |
+| `:ext/license`           | ✗              | —                    | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"`. |
+| `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/group` and `:ext/ns-alias` become required. |
+| `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol → Class}` — Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
+| `:ext/imports`           | ✗              | `{}`                  | `{short-symbol → fq-symbol}` — short-name imports for sandbox interop (`(LocalDate/now)` style). |
+| `:ext/ns-alias`          | conditional     | —                    | `{:ns 'vis.ext.fs :alias 'fs}` — **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file …)` — bare `(read-file …)` does not resolve. |
+| `:ext/cli`               | ✗              | `[]`                  | Vector of [`vis-commandline`](packages.md#package-map) command maps (`{:cmd/name … :cmd/doc … :cmd/run-fn … :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** — the dispatcher defaults `:cmd/parent` to `["extensions"]` for entries that don't specify one, and rejects entries whose `:cmd/parent` doesn't start with `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` are NOT extension commands; they use `cmd/register-global!` directly. See the [`:ext/cli` section](#extcli----extensions-subcommands) below for the three accepted forms. |
+| `:ext/channels`          | ✗              | `[]`                  | Vector of channel descriptors (`{:channel/id :channel/cmd :channel/doc :channel/main-fn :channel/usage? :channel/owns-tty?}`). Each entry is forwarded to `channel/register-global!`; it appears under `vis channels <cmd>`. See [Channels](../architecture/channels.md). |
+| `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn …}`). Each entry is forwarded via `requiring-resolve` to `com.blockether.vis.provider/register-global!` so vis-extension keeps zero compile-time dep on vis-provider. |
+| `:ext/persistance`       | ✗              | `[]`                  | Vector of persistence-backend descriptors (`{:persistance/id <kw> :persistance/ns <fq-symbol>}`). Each entry is forwarded via `requiring-resolve` to `com.blockether.vis.persistance.core/register-backend!`. |
+
+## `:ext/cli` — extensions subcommands
+
+`:ext/cli` is the slot for commands an extension contributes to
+`vis extensions <cmd>`. Three forms accepted:
+
+### Flat (most common)
+
+No `:cmd/parent` — the dispatcher inserts `["extensions"]` for you:
+
+```clojure
+:ext/cli [{:cmd/name   "blame"
+           :cmd/doc    "Run git blame on a path."
+           :cmd/run-fn #'cli-blame}]
+```
+
+→ `vis extensions blame`.
+
+### Embedded `:cmd/subcommands` vector
+
+The entry carries its whole subcommand tree inline:
+
+```clojure
+:ext/cli [{:cmd/name "docker"
+           :cmd/doc  "Docker operations."
+           :cmd/subcommands [{:cmd/name "ps"   :cmd/doc "List." :cmd/run-fn #'docker-ps}
+                             {:cmd/name "logs" :cmd/doc "Tail." :cmd/run-fn #'docker-logs}]}]
+```
+
+→ `vis extensions docker`, `vis extensions docker ps`,
+`vis extensions docker logs`.
+
+### Deeper nest via `:cmd/parent`
+
+Mount entries at any depth under `vis extensions …` by specifying a
+`:cmd/parent` whose first element is `"extensions"`:
+
+```clojure
+:ext/cli [{:cmd/name "git"
+           :cmd/doc  "Git operations."
+           :cmd/subcommands #(cmd/registered-under ["extensions" "git"])}
+          {:cmd/name   "status"
+           :cmd/parent ["extensions" "git"]
+           :cmd/doc    "Show git status."
+           :cmd/run-fn #'git-status}
+          {:cmd/name   "blame"
+           :cmd/parent ["extensions" "git"]
+           :cmd/doc    "Show git blame."
+           :cmd/run-fn #'git-blame}]
+```
+
+→ `vis extensions git`, `vis extensions git status`,
+`vis extensions git blame`.
+
+### Rejected: any non-`"extensions"` parent
+
+```clojure
+:ext/cli [{:cmd/name "rogue" :cmd/parent ["channels"] :cmd/run-fn ...}]
+;; Throws ex-info with :type :ext/cli-bad-parent at register-global! time.
+```
+
+`:ext/cli` is the EXTENSIONS slot. For top-level commands or other
+placements (the binary's own built-ins, custom command trees), use
+`com.blockether.vis.commandline/register-global!` directly. See
+`packages/vis-core/.../channels/cli.clj` for an example: `vis run`,
+`vis auth`, `vis doctor`, `vis conversations` are registered with
+`cmd/register-global!`; only the `vis extensions list` subcommand
+goes through `:ext/cli`.
 
 ## `symbol` — function binding
 
@@ -166,9 +249,9 @@ Called internally by `extension`; safe to call standalone.
      :ext/requires      ['com.blockether.vis.ext.common-operations.core]
      :ext/prompt        "Prefer narrow searches before broad scans."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
-     :ext/nudge-fn      (fn [{:keys [environment iteration prev-expressions]}]
+     :ext/nudge-fn      (fn [{:keys [environment iteration previous-expressions]}]
                           (when (and (> iteration 5)
-                                    (some :error prev-expressions))
+                                    (some :error previous-expressions))
                             "[system_nudge] Document searches are failing."))
      :ext/symbols       [search-sym max-results-sym]
      :ext/classes       {'java.time.LocalDate java.time.LocalDate}

@@ -138,10 +138,11 @@ The model sees **one context message** per iteration:
 - `[system_nudge]` — budget, repetition, extension hints.
 
 Older reasonings live in the breadcrumb chain (one line per iteration)
-and the persisted plan slot. The optional `vis-ext-self-debug`
-extension adds `(self/breadcrumbs N)` / `(self/turn-history N)` /
-`(self/attempts)` / `(self/var-history 'sym)` for programmatic
-introspection.
+and the persisted plan slot. The optional `vis-self-debug` extension
+adds `(self/turn)` / `(self/conversation)` / `(self/conversations)` /
+`(self/var-history 'sym)` / `(self/find-attempts pattern)` for
+programmatic introspection of the live turn, the conversation tree,
+and prior attempts.
 
 ## Secure by Default
 

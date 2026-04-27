@@ -17,13 +17,14 @@ cd vis
 # One-time: drop the mdbook-mermaid JS into docs/ (only needed for docs build)
 mdbook-mermaid install docs
 
-# Run any sub-command via the :run alias
-clojure -M:run            # prints the full help tree
-clojure -M:run help       # same
+# Run any sub-command via the :vis alias
+clojure -M:vis            # prints the full help tree
+clojure -M:vis help       # same
 ```
 
-If you build a `vis` binary and put it on `PATH`, every example below
-works with `vis` instead of `clojure -M:run`.
+`bin/vis` is a checked-in wrapper that just `exec`s `clojure -M:vis`
+from the repo root. Add `bin/` to your `PATH` and every example below
+works with `vis` instead of `clojure -M:vis`.
 
 ## First-time auth
 
@@ -158,7 +159,7 @@ The bundled `extensions/vis-common-operations` package adds `read`,
 
 ```clojure
 ;; deps.edn
-:run {:extra-deps {com.blockether/vis-common-operations {:local/root \"extensions/vis-common-operations\"}}}
+:dev {:extra-deps {com.blockether/vis-common-operations {:local/root \"extensions/vis-common-operations\"}}}
 ```
 
 To author your own extension, see [Extension System](extensions/overview.md).

@@ -34,8 +34,8 @@ the base environment returned by `create-environment`.
 | Key | Type | Description |
 |-----|------|-------------|
 | `:max-iterations-atom` | `atom of int` | Live iteration budget — extendable via `request-more-iterations`. Reset each query. |
-| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `store-iteration!`. Used for sub-RLM parenting. |
-| `:parent-iteration-id` | `uuid or nil` | Non-nil for sub-RLM forks. Points to the parent iteration. |
+| `:current-iteration-atom` | `atom of int` | Plain integer counter for the iteration in flight (0-indexed). Bumped before every `store-iteration!`. Read by extensions that want to know which iteration they're in. |
+| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `store-iteration!`. Used for sub-RLM parenting and for log correlation. |
 
 ## Safe Operations
 

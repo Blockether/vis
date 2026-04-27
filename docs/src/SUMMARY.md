@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](README.md)
+[Getting Started](usage.md)
 
 ---
 

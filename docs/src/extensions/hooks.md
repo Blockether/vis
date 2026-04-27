@@ -40,10 +40,10 @@ Runs before `:fn`. Can rewrite inputs or skip the call entirely.
 
 | Return key | Effect |
 |------------|--------|
-| `:environment` | Override the environment passed to `:fn` |
+| `:env` | Override the environment passed to `:fn` |
 | `:fn` | Swap in a different implementation fn |
 | `:args` | Override the args vector |
-| `:result` | **Short-circuit** — skip `:fn` and `:after-fn` is still called with this result |
+| `:result` | **Short-circuit** — skip `:fn` and return this value (the post-`:after-fn` step is bypassed) |
 
 Use it for: argument normalization, permission checks that abort with
 a synthetic result, swapping in a mock fn for testing.
@@ -59,7 +59,7 @@ Runs after `:fn` returns successfully. Can transform the result.
 | Return key | Effect |
 |------------|--------|
 | `:result` | Override the result the caller sees |
-| `:environment`, `:fn`, `:args` | Override (rarely useful here) |
+| `:env`, `:fn`, `:args` | Override (rarely useful here) |
 
 Use it for: result truncation, telemetry, post-processing, attaching
 metadata.

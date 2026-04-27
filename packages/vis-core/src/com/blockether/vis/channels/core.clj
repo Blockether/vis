@@ -211,7 +211,7 @@
            :doc       (:ext/doc e)
            :group     (:ext/group e)
            :version   (or (:ext/version e) "—")
-           :cli-cmds  (str/join ", " (map :cmd (or (:ext/cli e) [])))})
+           :cli-cmds  (str/join ", " (map :cmd/name (or (:ext/cli e) [])))})
     (ext/registered-extensions)))
 
 (defn find-extension-cmd

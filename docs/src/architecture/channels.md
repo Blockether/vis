@@ -4,41 +4,61 @@ A **channel** is a vis adapter — a user-facing front-end that turns
 external input (terminal keys, HTTP requests, Telegram messages) into
 calls to the runtime API in `com.blockether.vis.loop.runtime.conversation.core`.
 
-Channels are EXTENSIONS, not features hard-coded in `vis-core`. The
-word "extension" is the umbrella term for everything extensible
-in vis: ext symbols, channels, CLI commands, providers, persistence
-backends. They all share one classpath-discovery resource and one
-loader.
-
-| Concern              | Ext symbols (`com.blockether.vis.extension`) | Channels (`com.blockether.vis.channel`) |
-| -------------------- | -------------------------------------------- | --------------------------------------- |
-| What they add        | tools/values to the SCI sandbox              | sub-commands under `vis channels`       |
-| Registration         | `register-global!` at ns load                | `register-global!` at ns load           |
-| Auto-discovery       | `META-INF/vis.edn` (unified)                 | `META-INF/vis.edn` (same file)          |
-| Spec / validation    | `clojure.spec` + `extension`                 | `clojure.spec` + `channel`              |
-| Consumed by          | `register-extensions!` per env               | `cli/-main` dispatcher                  |
+Channels are one **slot** on an extension. The word "extension" is
+the umbrella term for everything extensible in vis: SCI sandbox
+symbols, CLI commands, channels, LLM providers, persistance entries.
+All five surfaces share one classpath-discovery resource
+(`META-INF/vis.edn`), one loader
+(`com.blockether.vis.extension/discover-extensions!`), and one
+author-facing entry point
+(`com.blockether.vis.extension/register-global!`). Each surface is a
+slot key (`:ext/symbols`, `:ext/cli`, `:ext/channels`,
+`:ext/providers`, `:ext/persistance`); the registrar dispatches each
+populated slot to its matching internal sub-registry. See
+[Packages — Auto-discovery resource](packages.md#auto-discovery-resource)
+for the full slot → sub-registry table.
 
 `vis-core` ships zero channel implementations. The CLI dispatcher
-calls `com.blockether.vis.extension/discover-extensions!` once at
-boot, which scans every `META-INF/vis.edn` on the classpath and
-`require`s the namespaces inside. Every namespace that calls
-`(channel/register-global! ...)` lands in the channel registry as a
-side effect; the `vis channels` sub-command tree exposes each one.
-Each channel's `:channel/cmd` becomes the leaf name (`vis channels
-tui`, `vis channels telegram`, …). The dispatcher never references a
-concrete channel namespace — `vis-core` stays usable when an optional
-channel jar is absent.
+calls `discover-extensions!` once at boot, which scans every
+`META-INF/vis.edn` on the classpath and `require`s the namespaces
+inside. Every `(ext/register-global! …)` call with a populated
+`:ext/channels` slot lands the channel descriptor in the channel
+registry as a side effect; the `vis channels` sub-command tree
+exposes each one. Each channel's `:channel/cmd` becomes the leaf name
+(`vis channels tui`, `vis channels telegram`, …). The dispatcher
+never references a concrete channel namespace — `vis-core` stays
+usable when an optional channel jar is absent.
 
 ## Channel descriptor
 
+A channel is a plain map. The canonical way to register one is to
+list it inside an extension's `:ext/channels` slot:
+
 ```clojure
-{:channel/id        :tui                                      ;; required, keyword identity
- :channel/cmd       "tui"                                     ;; required, sub-command name under `vis channels`
- :channel/doc       "Interactive terminal UI."                ;; required, one-line summary
- :channel/usage     "vis tui [--conversation-id ID|--resume]" ;; optional, shown in help
- :channel/owns-tty? true                                      ;; optional, see below
- :channel/main-fn   #'tui.screen/channel-main}                ;; required, IFn
+(ns com.blockether.vis.channels.tui.screen
+  (:require [com.blockether.vis.extension :as ext]))
+
+(defn channel-main [args] …)
+
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.channels.tui.screen
+     :ext/doc       "Lanterna-based terminal UI channel."
+     :ext/channels
+     [{:channel/id        :tui                                      ;; required, keyword identity
+       :channel/cmd       "tui"                                     ;; required, sub-command name under `vis channels`
+       :channel/doc       "Interactive terminal UI."                ;; required, one-line summary
+       :channel/usage     "vis tui [--conversation-id ID|--resume]" ;; optional, shown in help
+       :channel/owns-tty? true                                      ;; optional, see below
+       :channel/main-fn   #'channel-main}]}))                       ;; required, IFn
 ```
+
+The lower-level `(channel/register-global! …)` call (from
+`com.blockether.vis.channel`) still works for embedded / programmatic
+registration, and is what `ext/register-global!` ultimately calls
+under the hood. New code should prefer the slot form because it lets
+a single jar register everything an extension contributes in one
+validated call.
 
 `:channel/main-fn` receives the residual CLI tokens after the
 `vis channels <cmd>` prefix as a single vector.
@@ -92,13 +112,11 @@ this section only highlights which packages register a channel.
 
 ## Adding a new channel from a third-party jar
 
-Identical to writing an extension:
-
 1. Create your `*-main` function: `(fn [args-vec] …)`.
-2. Call `(channel/register-global! {…})` at namespace load.
+2. At namespace load time, call `(ext/register-global! (ext/extension {… :ext/channels [{…}]}))`. (Direct `(channel/register-global! …)` is still supported for embedded use; the slot form is the canonical author-facing API.)
 3. Ship `META-INF/vis.edn` (the unified extension manifest) listing your namespace.
 
-The next `clojure -M:run` (or `vis` binary launch) picks up the new
+The next `clojure -M:vis` (or `bin/vis` launch) picks up the new
 channel automatically and exposes it as `vis channels <your-cmd>` —
 no edits to `cli.clj`.
 

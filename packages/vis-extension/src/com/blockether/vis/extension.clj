@@ -24,6 +24,7 @@
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.channel :as channel]
             [com.blockether.vis.commandline :as cmd]
             [taoensso.telemere :as tel]))
 
@@ -196,10 +197,72 @@
 ;; SPDX license identifier, e.g. "MIT", "Apache-2.0", "EPL-2.0".
 (s/def :ext/license non-blank-string?)
 
-;; Optional CLI commands exported by this extension.
-;; Vector of {:cmd "name" :doc "description" :fn (fn [args] ...)}
-;; Enables `vis ext <cmd> [args...]` invocation from the terminal.
+;; ============================================================================
+;; Surface slots
+;;
+;; An extension declaration is the SINGLE entry point for everything
+;; an extension contributes to vis. Whatever surfaces the extension
+;; populates -- SCI sandbox symbols, CLI commands, channels,
+;; providers, persistance entries -- it does so by listing them in
+;; the matching `:ext/<surface>` slot. `ext/register-global!` then
+;; dispatches each slot to its concrete sub-registry under the hood.
+;;
+;; Per-entry validation happens at dispatch time inside each
+;; sub-registrar (`cmd/register-global!`, `channel/register-global!`,
+;; etc.). The slot specs here only enforce "vector of maps".
+;; ============================================================================
+
+;; CLI commands exported by this extension. Vector of `cmd/command`
+;; maps (full `:cmd/*` shape: `:cmd/name`, `:cmd/run-fn`, optional
+;; `:cmd/args`, `:cmd/usage`, `:cmd/subcommands`, ...).
+;;
+;; Every entry is auto-mounted under `vis extensions <name>` -- THIS
+;; SLOT IS THE EXTENSIONS SUBCOMMAND TREE. The dispatcher sets
+;; `:cmd/parent [\"extensions\"]` for entries that don't specify one;
+;; entries that DO specify must start with `\"extensions\"` (deeper
+;; nests like `[\"extensions\" \"git\"]` are allowed for sub-trees).
+;;
+;; Top-level built-ins like `vis run` / `vis auth` are the binary's
+;; commands, not an extension's, and use `cmd/register-global!`
+;; directly -- `:ext/cli` does NOT and CANNOT mount at the top level.
+;;
+;;     :ext/cli [{:cmd/name   "blame"
+;;                :cmd/doc    "Show git blame."
+;;                :cmd/run-fn #'cli-blame}]
+;;
+;;     ;; deeper nest -- shows up as `vis extensions git status`
+;;     :ext/cli [{:cmd/name   "status"
+;;                :cmd/parent [\"extensions\" \"git\"]
+;;                :cmd/run-fn #'cli-git-status}]
 (s/def :ext/cli (s/coll-of map? :kind vector?))
+
+;; Channels exported by this extension. Vector of `channel/channel`
+;; maps (`:channel/id`, `:channel/cmd`, `:channel/doc`,
+;; `:channel/main-fn`, optional `:channel/usage`, `:channel/owns-tty?`).
+;; Each entry is forwarded to `channel/register-global!` so it shows
+;; up under `vis channels <id>`.
+(s/def :ext/channels (s/coll-of map? :kind vector?))
+
+;; LLM providers exported by this extension. Vector of
+;; `provider/provider` maps (`:provider/id`, `:provider/label`,
+;; `:provider/status-fn`, `:provider/auth-fn`,
+;; `:provider/get-token-fn`, ...). Each entry is forwarded via
+;; `requiring-resolve` to `com.blockether.vis.provider/register-global!`
+;; so vis-extension keeps zero compile-time dep on vis-provider.
+(s/def :ext/providers (s/coll-of map? :kind vector?))
+
+;; Persistence backends exported by this extension. Vector of
+;; `{:persistance/id <keyword> :persistance/ns <symbol>}` maps. Each
+;; entry is forwarded via `requiring-resolve` to
+;; `com.blockether.vis.persistance.core/register-backend!`.
+;;
+;; Slot name matches the `vis-persistance` package vocabulary (and the
+;; existing `:cli`/`:channels`/`:providers` slot-naming convention --
+;; capability area, not the implementation noun "backend").
+(s/def :persistance/id keyword?)
+(s/def :persistance/ns symbol?)
+(s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
+(s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
 
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
@@ -237,16 +300,29 @@
   (or (empty? (:ext/symbols ext))
     (some? (:ext/ns-alias ext))))
 
+(defn- group-required-when-symbols?
+  "When :ext/symbols is non-empty, :ext/group must be present (it's the
+   prompt-rendering bucket for those symbols)."
+  [ext]
+  (or (empty? (:ext/symbols ext))
+    (some? (:ext/group ext))))
+
 (s/def ::extension
   (s/and
-    (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
-                  :ext/activation-fn :ext/symbols
-                  :ext/classes :ext/imports]
-      :opt [:ext/ns-alias :ext/prompt :ext/nudge-fn
+    ;; Only `:ext/namespace` and `:ext/doc` are unconditionally required.
+    ;; Everything else is optional and defaulted -- an extension that
+    ;; only ships, say, `:ext/channels` shouldn't be forced to declare
+    ;; `:ext/group`, `:ext/symbols`, `:ext/activation-fn`, etc. just
+    ;; because the SCI surface exists.
+    (s/keys :req [:ext/namespace :ext/doc]
+      :opt [:ext/group :ext/subgroup :ext/activation-fn
+            :ext/symbols :ext/classes :ext/imports
+            :ext/ns-alias :ext/prompt :ext/nudge-fn
             :ext/on-parse-error-fn :ext/requires
             :ext/version :ext/author :ext/license
-            :ext/cli])
-    ns-alias-required-when-symbols?))
+            :ext/cli :ext/channels :ext/providers :ext/persistance])
+    ns-alias-required-when-symbols?
+    group-required-when-symbols?))
 
 ;; =============================================================================
 ;; Symbol helper
@@ -397,10 +473,11 @@
 
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
-   Normalizes :ext/prompt (string → fn) before checking the spec.
-   Throws with spec explain-data on violation."
+   Normalizes `:ext/prompt` (string → fn) before checking the spec
+   when the key is present. Throws with spec explain-data on violation."
   [ext]
-  (let [ext (update ext :ext/prompt normalize-prompt)]
+  (let [ext (cond-> ext
+              (contains? ext :ext/prompt) (update :ext/prompt normalize-prompt))]
     (when-not (s/valid? ::extension ext)
       (throw (ex-info (str "Invalid extension '" (:ext/namespace ext) "':\n"
                         (with-out-str (s/explain ::extension ext)))
@@ -727,10 +804,12 @@
      :ext/imports        — optional, {short-symbol → fq-symbol}, default {}
      :ext/ns-alias       — required when :ext/symbols is non-empty,
                            {:ns 'vis.ext.fs :alias 'fs}
-                           Creates a dedicated SCI namespace with an alias
-                           so the LLM can call (fs/read-file ...) in addition
-                           to (read-file ...). Symbols are always also bound
-                           into the sandbox namespace.
+                           Creates a dedicated SCI namespace with that alias.
+                           Symbols are bound ONLY into this aliased namespace,
+                           NEVER into the `sandbox` namespace directly. The
+                           alias is auto-required in the sandbox so the LLM
+                           must call (fs/read-file ...) — bare
+                           (read-file ...) does not resolve.
 
    Example:
 
@@ -749,13 +828,25 @@
    Returns a validated extension map conforming to ::extension."
   [spec]
   (-> spec
-    (update :ext/prompt normalize-prompt)
+    ;; `:ext/prompt` is optional. Only run normalize-prompt when the
+    ;; key is present, otherwise we'd insert a nil value that fails
+    ;; the (s/def :ext/prompt fn?) spec.
+    (cond-> (contains? spec :ext/prompt) (update :ext/prompt normalize-prompt))
     (cond->
-      (not (:ext/activation-fn spec)) (assoc :ext/activation-fn (constantly true))
-      (not (:ext/subgroup spec))      (assoc :ext/subgroup (:ext/group spec))
-      (not (:ext/classes spec))       (assoc :ext/classes {})
-      (not (:ext/imports spec))       (assoc :ext/imports {})
-      (not (:ext/requires spec))      (assoc :ext/requires []))
+      (not (:ext/activation-fn spec))                  (assoc :ext/activation-fn (constantly true))
+      ;; `:ext/subgroup` defaults to `:ext/group` -- but only when
+      ;; `:ext/group` is itself present (extensions that don't ship
+      ;; SCI symbols don't need either).
+      (and (not (:ext/subgroup spec))
+        (some? (:ext/group spec)))                     (assoc :ext/subgroup (:ext/group spec))
+      (not (:ext/symbols spec))                        (assoc :ext/symbols [])
+      (not (:ext/classes spec))                        (assoc :ext/classes {})
+      (not (:ext/imports spec))                        (assoc :ext/imports {})
+      (not (:ext/requires spec))                       (assoc :ext/requires [])
+      (not (:ext/cli spec))                            (assoc :ext/cli [])
+      (not (:ext/channels spec))                       (assoc :ext/channels [])
+      (not (:ext/providers spec))                      (assoc :ext/providers [])
+      (not (:ext/persistance spec))                    (assoc :ext/persistance []))
     (validate!)))
 
 ;; =============================================================================
@@ -767,29 +858,109 @@
   ;; Keyed by :ext/namespace to prevent duplicates.
   (atom {}))
 
+(defn- dispatch-providers!
+  "Forward each `:ext/providers` entry to vis-provider's registry via
+   `requiring-resolve` so vis-extension keeps zero compile-time dep on
+   vis-provider."
+  [providers]
+  (when (seq providers)
+    (when-let [reg (try (requiring-resolve
+                          'com.blockether.vis.provider/register-global!)
+                     (catch Throwable _ nil))]
+      (doseq [p providers] (reg p)))))
+
+(defn- dispatch-persistance!
+  "Forward each `:ext/persistance` entry to vis-persistance's registry
+   via `requiring-resolve` so vis-extension keeps zero compile-time
+   dep on vis-persistance."
+  [entries]
+  (when (seq entries)
+    (when-let [reg (try (requiring-resolve
+                          'com.blockether.vis.persistance.core/register-backend!)
+                     (catch Throwable _ nil))]
+      (doseq [{:persistance/keys [id ns]} entries] (reg id ns)))))
+
+(def ^:private EXTENSIONS_PARENT ["extensions"])
+
+(defn- mount-under-extensions
+  "Auto-place an `:ext/cli` entry under the `vis extensions` parent.
+
+   `:ext/cli` is reserved for commands the extension contributes to
+   `vis extensions <cmd>` -- top-level built-ins like `vis run` are
+   the binary's, not an extension's, and use `cmd/register-global!`
+   directly. So every entry here gets `:cmd/parent` defaulted to
+   `[\"extensions\"]`. Authors who want nested placement (e.g.
+   `vis extensions git status`) can pass `:cmd/parent
+   [\"extensions\" \"git\"]` and the dispatcher respects it AS LONG
+   AS the first element is `\"extensions\"`. Any other parent is
+   rejected -- `:ext/cli` is the extensions slot; mount somewhere
+   else through `cmd/register-global!` direct."
+  [{:cmd/keys [parent name] :as entry}]
+  (cond
+    (or (nil? parent) (= [] parent))
+    (assoc entry :cmd/parent EXTENSIONS_PARENT)
+
+    (= "extensions" (first parent))
+    entry
+
+    :else
+    (throw (ex-info
+             (str ":ext/cli entry '" name "' has :cmd/parent " (pr-str parent)
+               " -- :ext/cli mounts only under [\"extensions\" ...]."
+               " Use cmd/register-global! directly for arbitrary placement.")
+             {:type :ext/cli-bad-parent
+              :entry entry}))))
+
 (defn register-global!
   "Register an extension in the global process-level registry.
+
+   This is THE single entry point for everything an extension
+   contributes to vis. Whatever the extension declares -- SCI sandbox
+   symbols (`:ext/symbols`), CLI commands (`:ext/cli`), channels
+   (`:ext/channels`), LLM providers (`:ext/providers`), persistence
+   backends (`:ext/persistance`) -- gets routed here and dispatched into
+   the matching sub-registry as a side effect.
 
    Call this at namespace load time so the extension is available
    to every environment created afterwards:
 
      (ns my.company.ext.git
-       (:require [....extension :as ext]))
+       (:require [com.blockether.vis.extension :as ext]))
 
      (ext/register-global!
        (ext/extension
          {:ext/namespace 'com.acme.ext.git
-          :ext/requires  ['com.blockether.vis.ext.common]
-          ...}))
+          :ext/doc       \"Git integration.\"
+          :ext/symbols   [git-status-sym git-blame-sym]
+          :ext/cli       [{:cmd/name \"git-status\"
+                           :cmd/parent [\"extensions\"]
+                           :cmd/run-fn #'cli-git-status}]}))
 
-   Idempotent — re-registering the same :ext/namespace replaces
-   the previous version. Returns the extension."
+   Idempotent on `:ext/namespace` -- re-registering replaces the
+   previous version of the extension AND re-applies every sub-registry
+   side effect (the inner registrars are themselves idempotent on
+   their respective identity keys).
+
+   Returns the validated extension."
   [ext]
-  (let [ns-sym (:ext/namespace ext)]
+  (let [ext    (extension ext)
+        ns-sym (:ext/namespace ext)]
     (swap! global-registry assoc ns-sym ext)
     (tel/log! {:level :info :id ::register-global
-               :data {:ext ns-sym}
+               :data {:ext ns-sym
+                      :symbols     (count (:ext/symbols ext))
+                      :cli         (count (:ext/cli ext))
+                      :channels    (count (:ext/channels ext))
+                      :providers   (count (:ext/providers ext))
+                      :persistance (count (:ext/persistance ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
+    ;; Side-effect: route each surface to its concrete registry.
+    ;; The inner registrars validate their own input via specs and
+    ;; throw on bad shape -- we trust that here.
+    (doseq [c (:ext/cli ext)]      (cmd/register-global! (mount-under-extensions c)))
+    (doseq [c (:ext/channels ext)] (channel/register-global! c))
+    (dispatch-providers!   (:ext/providers ext))
+    (dispatch-persistance! (:ext/persistance ext))
     ext))
 
 (defn deregister-global!
@@ -928,7 +1099,7 @@
 ;;
 ;; ONE classpath scan, ONE resource per jar (`META-INF/vis.edn`), ONE
 ;; entry point. Every extension surface in the system -- ext symbols,
-;; channels, commands, providers, persistence backends -- routes
+;; channels, commands, providers, persistance entries -- routes
 ;; through this single fn. "Extension" here is the SUPERSET term: a
 ;; channel is a kind of extension, a CLI command is a kind of
 ;; extension, a provider is a kind of extension. The bespoke
@@ -971,7 +1142,7 @@
    `require` each namespace symbol listed inside. The loaded
    namespaces self-register into whichever subsystem registry they
    target (extension symbols, channels, commands, providers,
-   persistence backends, ...). `Extension` here is the umbrella term:
+   persistance entries, ...). `Extension` here is the umbrella term:
    every extension surface in vis -- channels, commands, providers,
    backends -- is treated as a kind of extension and discovered
    through this one fn.
@@ -1023,54 +1194,21 @@
     @loaded))
 
 ;; =============================================================================
-;; CLI bridge — the `vis ext` parent
+;; CLI bridge -- the `vis extensions` parent
 ;;
-;; Self-registers a top-level `ext` command into vis-commandline whose
-;; subcommands are computed lazily from every registered extension's
-;; `:ext/cli` vector. Each `:ext/cli` entry is adapted to the
-;; vis-commandline `:cmd/...` shape so help rendering, arg parsing,
-;; required-arg validation, and dispatch all work uniformly.
+;; Self-registers a top-level `extensions` command into vis-commandline
+;; whose subcommands are computed lazily from every command registered
+;; with `:cmd/parent ["extensions"]`. Extensions populate this slot
+;; through `:ext/cli` on `ext/extension` -- the `register-global!`
+;; dispatcher above forwards each entry to `cmd/register-global!`.
 ;;
-;; Lives here (not in vis-commandline) because the bridge needs the
-;; extension registry. The `cmd` alias was already established at the
-;; top-of-ns require form.
+;; Lives here (not in vis-commandline) because vis-extension is the
+;; canonical home for everything extension-shaped. The `cmd` alias is
+;; established at the top-of-ns require form.
 ;; =============================================================================
-
-(defn- ext-cli->command
-  "Adapt one extension's `:ext/cli` entry to a vis-commandline command map."
-  [ext-ns {cmd-name :cmd, cmd-doc :doc, cmd-args :args, runner :fn}]
-  {:cmd/name cmd-name
-   :cmd/doc  (str (or cmd-doc "")
-               (when ext-ns (str "  (" ext-ns ")")))
-   :cmd/args (vec (or cmd-args []))
-   :cmd/run-fn (fn [parsed _residual]
-                 (let [r (runner parsed)]
-                   (when (some? r) (println (str r)))))})
-
-(defn ext-subcommands
-  "Compose subcommands for the `vis extensions` parent from TWO sources:
-
-     1. Every registered extension's `:ext/cli` entries (legacy adapter)
-     2. Every commandline extension registered with
-        `:cmd/parent [\"extensions\"]` (preferred, more powerful API)
-
-   Source #1 wins on name collision — a third-party package can't
-   accidentally hijack a built-in extension command. Both sources
-   are sorted together so help output is alphabetic."
-  []
-  (let [from-ext-cli (vec (mapcat (fn [e]
-                                    (let [ns-sym (:ext/namespace e)]
-                                      (map (partial ext-cli->command (str ns-sym))
-                                        (or (:ext/cli e) []))))
-                            (registered-extensions)))
-        regd         (cmd/registered-under ["extensions"])
-        names        (set (map :cmd/name from-ext-cli))]
-    (vec (sort-by :cmd/name
-           (concat from-ext-cli
-             (remove #(names (:cmd/name %)) regd))))))
 
 (cmd/register-global!
   {:cmd/name        "extensions"
    :cmd/doc         "Run an extension-provided CLI command."
    :cmd/usage       "vis extensions <cmd> [args…]"
-   :cmd/subcommands #'ext-subcommands})
+   :cmd/subcommands #(cmd/registered-under ["extensions"])})

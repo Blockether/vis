@@ -584,7 +584,7 @@
                                (str/starts-with? l answer-hdr-marker)
                                (str/starts-with? l answer-pad-marker)))
             answer-start (or (some (fn [[i l]] (when (answer-marker? l) i))
-                              (map-indexed vector lines))
+                               (map-indexed vector lines))
                            (count lines))]
         (doseq [[i line] (map-indexed vector lines)]
           (p/clear-styles! g)

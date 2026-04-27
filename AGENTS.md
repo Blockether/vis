@@ -239,6 +239,36 @@ just `vis <subcommand>`.
 Available aliases (root `deps.edn`): `:vis` (the `vis` CLI), `:test`,
 `:bench`, `:build`, `:dev`, `:antq`.
 
+### Bumping a shared dependency
+
+vis is polylith — every package declares its OWN deps in
+`packages/<name>/deps.edn`. There is intentionally NO `vis-common`
+god-bag. To bump a coordinate that several packages share (e.g.
+`com.blockether/svar` lives in `vis-core`, `vis-tui`,
+`vis-persistance`, `vis-benchmark`) use the checked-in helper:
+
+```bash
+bin/bump-dependency com.blockether/svar 0.3.12   # rewrite + verify + stage
+bin/bump-dependency --dry-run org.clojure/clojure 1.12.5
+bin/bump-dependency --no-verify some.lib/foo 1.2.3
+```
+
+It scans root `deps.edn` + every `packages/*/deps.edn`, rewrites
+only `{:mvn/version "..."}` entries that follow the exact
+coordinate (leaves `:local/root` deps alone), runs
+`./verify.sh --quick`, and `git add`s the modified files. Idempotent
+— re-running with the same version is a no-op. Do NOT hand-edit N
+deps.edn files for a shared bump; the script is the single supported
+path.
+
+Full svar release flow (cross-repo):
+
+```bash
+cd ../svar && git tag v0.3.12 && git push origin v0.3.12   # CI deploys to Clojars
+cd ../vis  && bin/bump-dependency com.blockether/svar 0.3.12
+git commit -m "deps: bump svar to 0.3.12"
+```
+
 ### Project Structure
 
 The codebase is a polylith-style monorepo under `packages/`. Each

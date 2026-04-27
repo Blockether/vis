@@ -1,10 +1,11 @@
-# vis-ext-self-debug
+# vis-self-debug
 
-Opt-in extension that lets the agent introspect its own state and the
-underlying conversation/turn DB from inside `:code`. Five functions,
-each returning a plain Clojure map or vector so the agent can
-manipulate the data structurally with `(filter …)`, `(get-in …)`,
-etc. — instead of making seven separate function calls.
+Opt-in extension (`com.blockether/vis-self-debug`, ships from
+`extensions/vis-self-debug/`) that lets the agent introspect its own
+state and the underlying conversation/turn DB from inside `:code`.
+Five functions, each returning a plain Clojure map or vector so the
+agent can manipulate the data structurally with `(filter …)`,
+`(get-in …)`, etc. — instead of making seven separate function calls.
 
 Every function is a pure read off the same DB tables the projection
 layer reads from. Failures return `nil` / `[]`, never throw.
@@ -31,6 +32,8 @@ Snapshot of the current turn as a single map:
  :iteration   {:current N :budget M :remaining K}     ;; mirrors <system_state>.ITERATION
  :cost        {:input-tokens :output-tokens :reasoning-tokens
                :cached-tokens :total-cost :model}
+ :redundancy  {:duplicate-count N :total-count N
+               :fraction 0.0}                          ;; how often the agent repeated itself this turn
  :elapsed-ms  N}                                       ;; wall-clock for the turn
 ```
 
