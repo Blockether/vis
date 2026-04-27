@@ -225,20 +225,45 @@
 ;; the matching `:ext/<surface>` slot. `ext/register-global!` then
 ;; dispatches each slot to its concrete sub-registry under the hood.
 ;;
-;; Per-entry validation happens at dispatch time inside each
-;; sub-registrar (`cmd/register-global!`, `channel/register-global!`,
-;; etc.). The slot specs here only enforce "vector of maps".
+;; The slot specs validate the FULL entry shape per surface -- vector
+;; of `map?` is not enough, because a typo at extension-author time
+;; (e.g. `:cmd/run` vs `:cmd/run-fn`, missing `:channel/main-fn`,
+;; non-keyword `:provider/id`) would otherwise only blow up at
+;; dispatch time, far from the offending `(register-global! …)` call
+;; that introduced it. Concrete entry specs catch these at validation.
+;;
+;; Where possible we DELEGATE to the canonical spec for that surface
+;; instead of duplicating field rules:
+;;   :ext/cli      -> :com.blockether.vis.commandline/command
+;;   :ext/channels -> :com.blockether.vis.channel/channel
+;; The two registry packages live behind the same vis-extension jar
+;; (commandline) or are required by it (channel), so the spec is
+;; loaded by the time `(extension …)` runs.
+;;
+;; `:ext/providers` is the one exception: vis-extension keeps a zero
+;; compile-time dep on vis-provider (entries are dispatched via
+;; `requiring-resolve`), so the canonical `:provider/...` keys may
+;; not be globally registered yet. We declare a self-contained
+;; structural spec here that mirrors `vis-provider`'s contract
+;; without globally `s/def`-ing the `:provider/*` keys (avoids
+;; spec-key ownership clashes if both jars later land on the
+;; classpath in either order).
 ;; ============================================================================
 
-;; CLI commands exported by this extension. Vector of `cmd/command`
-;; maps (full `:cmd/*` shape: `:cmd/name`, `:cmd/run-fn`, optional
-;; `:cmd/args`, `:cmd/usage`, `:cmd/subcommands`, ...).
+;; CLI commands exported by this extension. Each entry must conform
+;; to the canonical `vis-commandline` command shape
+;; (`:com.blockether.vis.commandline/command`): `:cmd/name` +
+;; `:cmd/doc` are required; `:cmd/usage`, `:cmd/args`, `:cmd/run-fn`,
+;; `:cmd/subcommands`, `:cmd/owns-tty?`, `:cmd/examples`,
+;; `:cmd/parent` optional. See vis-commandline for the per-key specs.
 ;;
 ;; Every entry is auto-mounted under `vis extensions <name>` -- THIS
 ;; SLOT IS THE EXTENSIONS SUBCOMMAND TREE. The dispatcher sets
-;; `:cmd/parent [\"extensions\"]` for entries that don't specify one;
-;; entries that DO specify must start with `\"extensions\"` (deeper
-;; nests like `[\"extensions\" \"git\"]` are allowed for sub-trees).
+;; `:cmd/parent ["extensions"]` for entries that don't specify one;
+;; entries that DO specify must start with `"extensions"` (deeper
+;; nests like `["extensions" "git"]` are allowed for sub-trees) --
+;; that's enforced at register time by `validate-cli-entry-parent!`,
+;; below. The spec here only checks structural shape.
 ;;
 ;; Top-level built-ins like `vis run` / `vis auth` are the binary's
 ;; commands, not an extension's, and use `cmd/register-global!`
@@ -250,35 +275,69 @@
 ;;
 ;;     ;; deeper nest -- shows up as `vis extensions git status`
 ;;     :ext/cli [{:cmd/name   "status"
-;;                :cmd/parent [\"extensions\" \"git\"]
+;;                :cmd/doc    "Show git status."
+;;                :cmd/parent ["extensions" "git"]
 ;;                :cmd/run-fn #'cli-git-status}]
-(s/def :ext/cli (s/coll-of map? :kind vector?))
+(s/def :ext/cli
+  (s/coll-of :com.blockether.vis.commandline/command :kind vector?))
 
-;; Channels exported by this extension. Vector of `channel/channel`
-;; maps (`:channel/id`, `:channel/cmd`, `:channel/doc`,
-;; `:channel/main-fn`, optional `:channel/usage`, `:channel/owns-tty?`).
-;; Each entry is forwarded to `channel/register-global!` so it shows
-;; up under `vis channels <id>`.
-(s/def :ext/channels (s/coll-of map? :kind vector?))
+;; Channels exported by this extension. Each entry must conform to
+;; the canonical channel shape (`:com.blockether.vis.channel/channel`):
+;; `:channel/id` (keyword), `:channel/cmd` (non-blank string),
+;; `:channel/doc` (non-blank string), `:channel/main-fn` (ifn) are
+;; required; `:channel/usage` (non-blank string), `:channel/owns-tty?`
+;; (boolean) are optional. Each entry is forwarded to
+;; `channel/register-global!`; it appears under `vis channels <cmd>`.
+(s/def :ext/channels
+  (s/coll-of :com.blockether.vis.channel/channel :kind vector?))
 
-;; LLM providers exported by this extension. Vector of
-;; `provider/provider` maps (`:provider/id`, `:provider/label`,
-;; `:provider/status-fn`, `:provider/auth-fn`,
-;; `:provider/get-token-fn`, ...). Each entry is forwarded via
-;; `requiring-resolve` to `com.blockether.vis.provider/register-global!`
-;; so vis-extension keeps zero compile-time dep on vis-provider.
-(s/def :ext/providers (s/coll-of map? :kind vector?))
+;; LLM providers exported by this extension. Each entry mirrors the
+;; canonical vis-provider provider shape; we restate the contract
+;; locally instead of globally `s/def`-ing `:provider/*` keys so
+;; vis-extension keeps a zero compile-time dep on vis-provider and
+;; can't clash with vis-provider's own `s/def`s if both jars are on
+;; the classpath. Each entry is forwarded via `requiring-resolve` to
+;; `com.blockether.vis.provider/register-global!`.
+;;
+;; Required: `:provider/id` (keyword), `:provider/label` (non-blank
+;; string). Optional fns (every one ifn): `:provider/status-fn`,
+;; `:provider/logout-fn`, `:provider/detect-fn`, `:provider/auth-fn`,
+;; `:provider/get-token-fn`. The `or-nil-or-fn` predicate accepts an
+;; absent key (treated as nil) or any IFn -- matching vis-provider's
+;; "all four runtime fns are optional individually" contract.
+(let [or-nil-or-fn (fn [k] #(let [v (get % k ::absent)] (or (= v ::absent) (ifn? v))))]
+  (s/def ::provider-entry
+    (s/and map?
+      #(keyword? (:provider/id %))
+      #(non-blank-string? (:provider/label %))
+      (or-nil-or-fn :provider/status-fn)
+      (or-nil-or-fn :provider/logout-fn)
+      (or-nil-or-fn :provider/detect-fn)
+      (or-nil-or-fn :provider/auth-fn)
+      (or-nil-or-fn :provider/get-token-fn))))
+(s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
 
-;; Persistence backends exported by this extension. Vector of
-;; `{:persistance/id <keyword> :persistance/ns <symbol>}` maps. Each
-;; entry is forwarded via `requiring-resolve` to
+;; Persistence backends exported by this extension. Each entry is
+;; `{:persistance/id <keyword>
+;;   :persistance/ns <fully-qualified-symbol>}` -- the id is the
+;; backend tag stored in config (`{:backend :sqlite ...}`) and the
+;; ns is the namespace to `require` so its `register-backend!` call
+;; runs. Each entry is forwarded via `requiring-resolve` to
 ;; `com.blockether.vis.persistance.core/register-backend!`.
 ;;
 ;; Slot name matches the `vis-persistance` package vocabulary (and the
 ;; existing `:cli`/`:channels`/`:providers` slot-naming convention --
 ;; capability area, not the implementation noun "backend").
 (s/def :persistance/id keyword?)
-(s/def :persistance/ns symbol?)
+(s/def :persistance/ns
+  ;; Must be a SYMBOL we can pass to `require` -- a fully-qualified
+  ;; namespace symbol like 'com.blockether.vis.persistance.sqlite.core,
+  ;; not just any symbol. Allowing bare symbols would let an entry
+  ;; ship a typo'd value that only blows up at the requiring-resolve
+  ;; site (mid-boot, far from the extension declaration).
+  (s/and symbol?
+    #(nil? (namespace %))
+    #(re-find #"\." (name %))))
 (s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
 
@@ -305,12 +364,18 @@
 
 ;; Optional SCI namespace alias for this extension's symbols.
 ;; When set, a dedicated SCI namespace is created and aliased so
-;; the LLM can call `(vis/read-file "x")` in addition to `(read-file "x")`.
+;; the LLM can call `(vis/cat "x")` in addition to `(cat "x")`.
 ;; e.g. {:ns 'vis.ext.tools :alias 'vis}
+;;
+;; Both `:ns` and `:alias` must be plain (non-namespaced) symbols --
+;; SCI uses them as namespace names and aliases respectively, neither
+;; of which is allowed to itself carry a namespace.
+(s/def :ext.ns-alias/ns    (s/and symbol? #(nil? (namespace %))))
+(s/def :ext.ns-alias/alias (s/and symbol? #(nil? (namespace %))))
 (s/def :ext/ns-alias
   (s/and map?
-    #(symbol? (:ns %))
-    #(symbol? (:alias %))))
+    #(s/valid? :ext.ns-alias/ns    (:ns %))
+    #(s/valid? :ext.ns-alias/alias (:alias %))))
 
 (defn- ns-alias-required-when-symbols?
   "When :ext/symbols is non-empty, :ext/ns-alias must be present."
@@ -829,8 +894,8 @@
                            Symbols are bound ONLY into this aliased namespace,
                            NEVER into the `sandbox` namespace directly. The
                            alias is auto-required in the sandbox so the LLM
-                           must call (vis/read-file ...) — bare
-                           (read-file ...) does not resolve.
+                           must call (vis/cat ...) — bare
+                           (cat ...) does not resolve.
 
    Example:
 

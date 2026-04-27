@@ -19,8 +19,8 @@
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
 
-(def ^:private read-symbol
-  (ext/symbol 'read-file (fn [& _] nil)
+(def ^:private cat-symbol
+  (ext/symbol 'cat (fn [& _] nil)
     {:doc "Read a file preview."
      :arglists '([path] [path offset limit])}))
 
@@ -37,7 +37,7 @@
                                              :ext/group     "filesystem"
                                              :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                                              :ext/prompt    "RULES:\n- Discover paths first."
-                                             :ext/symbols   [read-symbol retries-value]})])}
+                                             :ext/symbols   [cat-symbol retries-value]})])}
           ;; assemble-system-prompt requires :active-extensions — compute
           ;; ONCE per call site (here, once per snapshot) and pass in.
           active-exts   (vis/active-extensions environment)
@@ -45,9 +45,49 @@
                           {:active-extensions active-exts})]
       (expect (str/includes? system-prompt "[namespace: vis → vis.ext.tools]"))
       (expect (str/includes? system-prompt "Filesystem tools (use vis/ prefix)"))
-      (expect (str/includes? system-prompt "- (vis/read-file path) or (vis/read-file path offset limit) — Read a file preview."))
+      (expect (str/includes? system-prompt "- (vis/cat path) or (vis/cat path offset limit) — Read a file preview."))
       (expect (str/includes? system-prompt "- vis/max-retries — Maximum retry attempts."))
       (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))))
+
+  (it "register-extension! applies :autobind-fn and records footer events"
+    (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]}
+          (environment-core/create-sci-context nil)
+          environment {:extensions (atom [])
+                       :sci-ctx sci-ctx
+                       :sandbox-ns sandbox-ns
+                       :initial-ns-keys initial-ns-keys
+                       :autobind-events-atom (atom [])
+                       :autobind-registry-atom (atom {})}
+          extension
+          (ext/extension
+            {:ext/namespace 'com.acme.ext.autobind
+             :ext/doc       "Autobind fixture"
+             :ext/group     "filesystem"
+             :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+             :ext/prompt    "placeholder"
+             :ext/symbols   [(ext/symbol 'echo-path (fn [path] (str "content:" path))
+                               {:doc "Echo path"
+                                :arglists '([path])
+                                :autobind-fn (fn [{:keys [args result]}]
+                                               {:bindings [{:kind :file
+                                                            :id (first args)
+                                                            :content result
+                                                            :tag result}]})})]})
+          _ (loop-core/register-extension! environment extension)
+          _ (sci/eval-string+ sci-ctx "(vis/echo-path \"src/core.clj\")"
+              {:ns (sci/find-ns sci-ctx 'sandbox)})
+          first-bound
+          (:val (sci/eval-string+ sci-ctx "file__src__core-clj"
+                  {:ns (sci/find-ns sci-ctx 'sandbox)}))
+          first-events @(:autobind-events-atom environment)
+          _ (sci/eval-string+ sci-ctx "(vis/echo-path \"src/core.clj\")"
+              {:ns (sci/find-ns sci-ctx 'sandbox)})
+          second-events @(:autobind-events-atom environment)
+          last-event (last second-events)]
+      (expect (= "content:src/core.clj" first-bound))
+      (expect (= :bound (:status (first first-events))))
+      (expect (string? (:footer (first first-events))))
+      (expect (= :unchanged (:status last-event)))))
 
   (it "vis.core no longer re-exports the extension contract"
     ;; The split lives forever — if these come back, the extension

@@ -35,14 +35,14 @@
   (str/join "\n\n" [editing/editing-prompt]))
 
 ;; Parse-error rescue lives at the SYMBOL level (see
-;; `grep-files-symbol` in editing.clj) so the iteration loop only
+;; `rg-symbol` in editing.clj) so the iteration loop only
 ;; fires it when the broken source actually mentions the symbol it
 ;; repairs. No extension-wide hook is needed here.
 
 (def extension
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.common-operations.core
-     :ext/doc       "Common Vis operations: read, list, grep, patch."
+     :ext/doc       "Common Vis operations: cat, ls, rg, patch."
      :ext/version   "0.4.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"

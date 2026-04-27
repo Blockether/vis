@@ -113,7 +113,7 @@ sequenceDiagram
 The model sees **one context message** per iteration:
 - `<plan>` — sticky structured TODO list (Phase 1). Schema:
   `{:goal :items [{:id :content :status :evidence}] :open :decided}`.
-  Max 20 items, exactly one `:in_progress`. Carried verbatim across
+  Max 20 items, exactly one `:in-progress`. Carried verbatim across
   iterations until the model re-emits.
 - `<breadcrumbs>` — cumulative one-liner per iteration (last K=20),
   authored by the model in `:breadcrumb`. Tactical "what I just did".

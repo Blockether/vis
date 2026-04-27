@@ -275,7 +275,7 @@
         l        (region-spans segs :left)
         c        (region-spans segs :center)
         r        (region-spans segs :right)
-        edge-pad 1
+        edge-pad 2
         l-w      (spans-width l separator)
         c-w      (spans-width c separator)
         r-w      (spans-width r separator)

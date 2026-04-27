@@ -6,6 +6,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.router :as router]
    [com.blockether.vis.config :as config]
+   [com.blockether.vis.error :as vis-error]
    [com.blockether.vis.loop.core :as loop-core]
    [com.blockether.vis.persistance.core :as db]
 
@@ -608,7 +609,12 @@
                                     (or expressions [])))
                            :expression-redundancy-fraction redundancy-fraction
                            :dedup-saves                    redundant-count
-                           :plan-validation-error          (some-> plan-validation :type name)})
+                           :plan-validation-error          (some-> plan-validation :type name)
+                           :confidence-gate-rejected?
+                           (boolean (and final-result
+                                      (= :low (:confidence final-result))
+                                      (str/blank? (str (:abandon-reason final-result)))
+                                      (< gate-retries MAX_GATE_RETRIES)))})
                         ;; The PEV gate actively rejects :answer when
                         ;; the plan still has open items and no
                         ;; :abandon-reason. Up to MAX_GATE_RETRIES; after
@@ -617,7 +623,7 @@
                         gate-violation
                         (when (and final-result
                                 effective-plan
-                                (some #(contains? #{:in_progress :pending}
+                                (some #(contains? #{:in-progress :pending}
                                          (iterate/item-status-key %))
                                   (:items effective-plan))
                                 (str/blank? (str (:abandon-reason final-result)))
@@ -625,9 +631,19 @@
                           {:type :vis/incomplete-plan-on-answer
                            :data {:open-item-ids
                                   (mapv :id
-                                    (filter #(contains? #{:in_progress :pending}
+                                    (filter #(contains? #{:in-progress :pending}
                                                (iterate/item-status-key %))
                                       (:items effective-plan)))}})
+                        ;; Confidence gate: :answer with :confidence
+                        ;; :low must carry :abandon-reason. Reuses the
+                        ;; same retry budget as the open-plan gate.
+                        confidence-gate-violation
+                        (when (and final-result
+                                (= :low (:confidence final-result))
+                                (str/blank? (str (:abandon-reason final-result)))
+                                (< gate-retries MAX_GATE_RETRIES))
+                          {:type :vis/low-confidence-on-answer
+                           :data {:confidence (:confidence final-result)}})
                         ;; Plan-validation surfaces the validator's
                         ;; structured error on the next iteration, up
                         ;; to MAX_PLAN_VALIDATION_RETRIES.
@@ -667,6 +683,7 @@
                         next-pending-loop-nudges
                         (vec (keep iterate/format-loop-nudge
                                [gate-violation
+                                confidence-gate-violation
                                 plan-validation-violation
                                 churn-violation
                                 consecutive-error-violation]))
@@ -708,9 +725,10 @@
                       ;; plan items and no :abandon-reason is REJECTED.
                       ;; Drop final-result, queue nudge for next iter,
                       ;; bump gate-retries, recur.
-                      gate-violation
+                      (or gate-violation confidence-gate-violation)
                       (do (iterate/log-stage! :gate-rejected iteration
                             {:open-items (-> gate-violation :data :open-item-ids)
+                             :low-confidence? (boolean confidence-gate-violation)
                              :retry      (inc gate-retries)})
                         (recur (merge loop-state
                                  {:iteration (inc iteration)
@@ -732,7 +750,7 @@
                         (when on-chunk
                           (on-chunk {:iteration iteration :thinking thinking
                                      :code (mapv :code expressions)
-                                     :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (iterate/safe-pr-str (:result %))) expressions)
+                                     :results (mapv #(if (:error %) (vis-error/format-error (:error %)) (iterate/safe-pr-str (:result %))) expressions)
                                      :stdouts (mapv #(or (:stdout %) "") expressions)
                                      :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                      :successes (mapv #(nil? (:error %)) expressions)
@@ -764,7 +782,7 @@
                           (when on-chunk
                             (on-chunk {:iteration iteration :thinking thinking
                                        :code (mapv :code expressions)
-                                       :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (iterate/safe-pr-str (:result %))) expressions)
+                                       :results (mapv #(if (:error %) (vis-error/format-error (:error %)) (iterate/safe-pr-str (:result %))) expressions)
                                        :stdouts (mapv #(or (:stdout %) "") expressions)
                                        :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                        :successes (mapv #(nil? (:error %)) expressions)

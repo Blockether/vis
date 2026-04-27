@@ -7,6 +7,7 @@
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.loop.runtime.conversation.core`."
   (:require [com.blockether.vis.config :as config]
+            [com.blockether.vis.error :as vis-error]
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
@@ -67,7 +68,7 @@
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}
                          :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (str "Warning: " (conversations/error->user-message e)))
+                     (vis-error/format-error (conversations/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]

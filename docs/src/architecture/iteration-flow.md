@@ -57,6 +57,18 @@ When an iteration throws:
 4. If consecutive errors reach `max-consecutive-errors` (default **3**, overridable via `:max-consecutive-errors`), the loop attempts a **strategy restart** — fresh prompt assembly + reset counters — up to `max-restarts` (default **3**, overridable via `:max-restarts`).
 5. After the final restart still fails, the turn ends with `:status :error`.
 
+## Finalize gates
+
+Before accepting a `:final` answer, the loop applies two gates:
+
+- **Open-plan gate (PEV):** if any plan item is still `:pending` or
+  `:in-progress`, `:answer` is rejected unless `:abandon-reason` is set.
+- **Confidence gate:** if `:confidence` is `:low`, `:answer` is rejected
+  unless `:abandon-reason` explains what would raise confidence.
+
+Rejected finals are turned into `[system_nudge]` messages for the next
+iteration and retried with the same bounded gate retry budget.
+
 ## Budget extension
 
 The default budget is **4 iterations** — deliberately tight so the LLM
@@ -78,7 +90,7 @@ a lossy summarization chain:
   (or whenever the approach changes); the loop carries the most-recent
   persisted plan forward verbatim until the model re-emits one.
   Schema: `:goal` / `:items [{:id :content :status :evidence}]` /
-  `:open` / `:decided`. Max 20 items, exactly one `:in_progress`.
+  `:open` / `:decided`. Max 20 items, exactly one `:in-progress`.
 - **`<breadcrumbs>`** — cumulative one-liner per iteration, authored by
   the model in `:breadcrumb`. Bounded at last K=20 entries, oldest-first.
   Tactical "what I just did" rendered as `i3  [3] grep yielded 12 hits`.

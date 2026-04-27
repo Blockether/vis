@@ -174,24 +174,26 @@ the alias prefix.
 ```clojure
 (ext/extension
   {:ext/namespace 'com.blockether.vis.ext.common-operations.core
-   :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+   :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
    ...})
 ```
 
 At `register-extension!` time:
-1. A SCI namespace `vis.ext.fs` is created with all wrapped symbols
-2. The alias `fs` is registered in the SCI context
-3. `(require '[vis.ext.fs :as fs])` is auto-evaluated in the sandbox
-4. The LLM calls `(fs/read-file ...)`, `(fs/list-files ...)`, etc.
+1. A SCI namespace `vis.ext.tools` is created with all wrapped symbols
+2. The alias `vis` is registered in the SCI context
+3. `(require '[vis.ext.tools :as vis])` is auto-evaluated in the sandbox
+4. The LLM calls `(vis/cat ...)`, `(vis/ls ...)`, `(vis/rg ...)`, etc.
 5. Bare `(read-file ...)` does **not** resolve - the alias is mandatory
 
 The system prompt auto-prepends a namespace header to each extension's
 prompt block:
 
 ```
-[namespace: fs → vis.ext.fs]
-Filesystem tools (use fs/ prefix):
-- (fs/read-file path) ...
+[namespace: vis → vis.ext.tools]
+Filesystem tools (use vis/ prefix):
+- (vis/cat path) ...
+- (vis/ls ".") ...
+- (vis/rg pattern ".") ...
 ```
 
 Extension-declared `:ext/classes` and `:ext/imports` are also injected
@@ -283,10 +285,10 @@ Real in-tree examples — every package below ships exactly one
 (ext/register-global!
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.common-operations.core
-     :ext/doc       "Common filesystem operations: read, list, grep, patch."
-     :ext/version   "0.3.0"
+     :ext/doc       "Common Vis operations: cat, ls, rg, patch."
+     :ext/version   "0.4.0"
      :ext/group     "filesystem"
-     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+     :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
      :ext/symbols   all-symbols
      :ext/prompt    combined-prompt}))
 ```

@@ -2,7 +2,7 @@
   "Tests for the editing extension's error-rescue helpers.
 
    The story: the LLM occasionally over-escapes regex patterns when
-   calling `(vis/grep-files ...)` — e.g. `\\|` to mean a literal pipe,
+   calling `(vis/rg ...)` — e.g. `\\|` to mean a literal pipe,
    `\\.` to mean a literal dot — and RE2/J rejects only the malformed
    ones with `\"invalid escape sequence: `\\X`\"`.
 
@@ -23,6 +23,7 @@
    :on-error-fn never sees that case. The iteration loop surfaces the
    parse error to the LLM, which self-corrects on the next turn."
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.extension :as ext]
    [com.blockether.vis.ext.common-operations.editing :as editing]
@@ -39,6 +40,7 @@
 (def extract-bad-escape-char #'editing/extract-bad-escape-char)
 (def rescue-parse-error      #'editing/rescue-parse-error)
 (def line-col->index         #'editing/line-col->index)
+(def patch-tool              #'editing/patch)
 
 ;; =============================================================================
 ;; Helpers
@@ -62,6 +64,22 @@
   [msg path]
   (ex-info (str msg ": " path)
     {:type :ext.common-operations.editing/path-traversal :path path}))
+
+(defn- delete-tree!
+  [^java.io.File root]
+  (when (.exists root)
+    (doseq [file (reverse (file-seq root))]
+      (.delete file))))
+
+(defn- with-temp-workspace
+  [f]
+  (let [workspace-name (str ".tmp-editing-test-" (java.util.UUID/randomUUID))
+        workspace-dir  (io/file workspace-name)]
+    (.mkdirs workspace-dir)
+    (try
+      (f workspace-name)
+      (finally
+        (delete-tree! workspace-dir)))))
 
 ;; =============================================================================
 ;; extract-bad-escape-char
@@ -298,11 +316,11 @@
 (defdescribe rescue-parse-error-test
 
   (it "doubles the lone backslash in front of a regex meta char"
-    (let [code  "(vis/grep-files \"foo\\|bar\")"
+    (let [code  "(vis/rg \"foo\\|bar\")"
           err   (edamame-error-msg code)
           _     (expect (some? err))
           fixed (rescue-parse-error {:code code :error err :environment {}})]
-      (expect (= "(vis/grep-files \"foo\\\\|bar\")" fixed))
+      (expect (= "(vis/rg \"foo\\\\|bar\")" fixed))
       ;; And critically: the rewrite parses cleanly.
       (expect (nil? (edamame-error-msg fixed)))))
 
@@ -355,29 +373,74 @@
       (expect (nil? (edamame-error-msg fix2))))))
 
 ;; =============================================================================
-;; Symbol-level wiring — grep-files-symbol carries the parse rescue
+;; patch — unified vis/patch modes
 ;; =============================================================================
 
-(defdescribe grep-files-symbol-parse-error-wiring-test
+(defdescribe patch-tool-test
 
-  (it "grep-files-symbol carries :ext.symbol/on-parse-error-fn"
-    (let [hook (:ext.symbol/on-parse-error-fn editing/grep-files-symbol)]
+  (it "applies single-triple mode: (vis/patch path search replace)"
+    (with-temp-workspace
+      (fn [workspace-name]
+        (let [path (str workspace-name "/single.txt")]
+          (spit path "hello old world")
+          (let [result (patch-tool path "old" "new")]
+            (expect (= :ok (:status result)))
+            (expect (= "hello new world" (slurp path))))))))
+
+  (it "applies vector mode across multiple files"
+    (with-temp-workspace
+      (fn [workspace-name]
+        (let [first-path  (str workspace-name "/one.txt")
+              second-path (str workspace-name "/two.txt")]
+          (spit first-path "alpha")
+          (spit second-path "beta")
+          (let [result (patch-tool [{:path first-path :search "alpha" :replace "ALPHA"}
+                                    {:path second-path :search "beta" :replace "BETA"}])]
+            (expect (= 2 (:files-touched result)))
+            (expect (= "ALPHA" (slurp first-path)))
+            (expect (= "BETA" (slurp second-path))))))))
+
+  (it "applies Codex payload mode"
+    (with-temp-workspace
+      (fn [workspace-name]
+        (let [path (str workspace-name "/codex.txt")
+              payload (str "*** Begin Patch\n"
+                        "*** Update File: " path "\n"
+                        "<<<<<<< SEARCH\n"
+                        "before\n"
+                        "=======\n"
+                        "after\n"
+                        ">>>>>>> REPLACE\n"
+                        "*** End Patch")]
+          (spit path "before")
+          (let [result (patch-tool payload)]
+            (expect (= :ok (:status result)))
+            (expect (= "after" (slurp path)))))))))
+
+;; =============================================================================
+;; Symbol-level wiring — rg-symbol carries the parse rescue
+;; =============================================================================
+
+(defdescribe rg-symbol-parse-error-wiring-test
+
+  (it "rg-symbol carries :ext.symbol/on-parse-error-fn"
+    (let [hook (:ext.symbol/on-parse-error-fn editing/rg-symbol)]
       (expect (fn? hook))
       ;; Smoke-test the symbol-level hook directly: the broken `\|` case
       ;; gets repaired so the LLM's intent (literal pipe) is preserved.
-      (let [code "(vis/grep-files \"a\\|b\")"
+      (let [code "(vis/rg \"a\\|b\")"
             err  (edamame-error-msg code)
             out  (hook {:code code :error err
-                        :sym 'grep-files :environment {}})]
-        (expect (= "(vis/grep-files \"a\\\\|b\")" out)))))
+                        :sym 'rg :environment {}})]
+        (expect (= "(vis/rg \"a\\\\|b\")" out)))))
 
   (it "the registered extension routes parse rescue through the symbol hook"
     (require '[com.blockether.vis.ext.common-operations.core :as core])
     (let [registered @(resolve 'core/extension)
-          code       "(vis/grep-files \"a\\|b\")"
+          code       "(vis/rg \"a\\|b\")"
           err        (edamame-error-msg code)]
       ;; No extension-level catch-all anymore.
       (expect (nil? (:ext/on-parse-error-fn registered)))
       ;; But try-rescue-parse-error finds the symbol hook by name.
-      (expect (= "(vis/grep-files \"a\\\\|b\")"
+      (expect (= "(vis/rg \"a\\\\|b\")"
                 (ext/try-rescue-parse-error [registered] code err {}))))))

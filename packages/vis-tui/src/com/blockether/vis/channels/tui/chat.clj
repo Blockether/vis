@@ -7,6 +7,7 @@
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.channels.cancellation :as cancellation]
+            [com.blockether.vis.error :as vis-error]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.persistance.core :as db]
             [taoensso.telemere :as t])
@@ -68,7 +69,7 @@
                                        (let [exprs (db/db-list-iteration-expressions d (:id it))
                                              result-strs (mapv (fn [{:keys [result error]}]
                                                                  (if error
-                                                                   (str "ERROR: " error)
+                                                                   (vis-error/format-error error)
                                                                    (pr-str result)))
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)

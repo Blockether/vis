@@ -134,15 +134,15 @@ execution.
 Example (from `vis-common-operations`):
 
 ```clojure
-(ext/symbol 'grep-files grep-files
+(ext/symbol 'rg grep-files
   {:doc      "Search files with RE2/J."
    :arglists '([pattern] [pattern path])
    :on-error-fn       rescue-grep-args        ;; runtime decorator: bad regex
    :on-parse-error-fn rescue-parse-error})    ;; parse rescue: bare `\|`
 ```
 
-When the LLM emits `(fs/grep-files "foo\|bar")` (raw `\|` instead of
-`\\|`), edamame fails. The loop notices `fs/grep-files` in the broken
+When the LLM emits `(vis/rg "foo\|bar")` (raw `\|` instead of
+`\\|`), edamame fails. The loop notices `vis/rg` in the broken
 form and calls `rescue-parse-error`, which doubles the backslash so
 the re-parse succeeds and the tool fn runs with the LLM's intended
 string.
@@ -161,6 +161,28 @@ fns with non-fn metadata (`:doc`, `:arglists`, `:examples`) and the
 suffix prevents collisions. It is **not** because these are something
 fundamentally different from decorators. They aren't. They're
 decorators.
+
+## Autobind hook
+
+Function symbols can also define `:autobind-fn`:
+
+```clojure
+(ext/symbol 'cat cat
+  {:doc "Read file contents."
+   :arglists '([path] [path offset limit])
+   :autobind-fn
+   (fn [{:keys [args result environment]}]
+     {:bindings [{:kind    :file
+                  :id      (first args)
+                  :content result
+                  :doc     "Pinned file content"
+                  :tag     (hash result)}]})})
+```
+
+The hook runs after a successful call. Return `nil` to skip autobind.
+When you return `:bindings`, the runtime computes the canonical symbol
+name, binds the value in SCI, and appends an autobind footer to
+`<recent>`.
 
 ## Observability
 

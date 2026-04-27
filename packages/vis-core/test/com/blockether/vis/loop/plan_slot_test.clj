@@ -52,7 +52,7 @@
   (it "stores plan_state, breadcrumb, plan_diff and reads them back"
     (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))
           plan {:goal  "do the thing"
-                :items [{:id 1 :content "first" :status :in_progress}
+                :items [{:id 1 :content "first" :status :in-progress}
                         {:id 2 :content "second" :status :pending}]
                 :open  ["q1?"]
                 :decided ["rejected approach X"]}]
@@ -83,7 +83,7 @@
     (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))
           plan-v1 {:goal "v1" :items [{:id 1 :content "a" :status :pending}]}
           plan-v2 {:goal "v2" :items [{:id 1 :content "a" :status :done}
-                                      {:id 2 :content "b" :status :in_progress}]}]
+                                      {:id 2 :content "b" :status :in-progress}]}]
       (store-iteration! store query-id {:plan-state plan-v1 :breadcrumb "i0"})
       (store-iteration! store query-id {:breadcrumb "i1 — no plan re-emit"})
       (store-iteration! store query-id {:plan-state plan-v2 :breadcrumb "i2"})
@@ -125,10 +125,10 @@
   (it "status change bumps distance by 1"
     (let [d (iterate/compute-plan-diff
               {:goal "g" :items [{:id 1 :content "a" :status :pending}]}
-              {:goal "g" :items [{:id 1 :content "a" :status :in_progress}]})]
+              {:goal "g" :items [{:id 1 :content "a" :status :in-progress}]})]
       (expect (= 1 (count (:status-changed d))))
       (expect (= :pending (-> d :status-changed first :from)))
-      (expect (= :in_progress (-> d :status-changed first :to)))
+      (expect (= :in-progress (-> d :status-changed first :to)))
       (expect (= 1 (iterate/plan-edit-distance d)))))
 
   (it "goal change is observable but does not count toward distance"
@@ -147,7 +147,7 @@
     (expect (nil? (iterate/validate-plan-state
                     {:goal "g"
                      :items [{:id 1 :content "a" :status :pending}
-                             {:id 2 :content "b" :status :in_progress}
+                             {:id 2 :content "b" :status :in-progress}
                              {:id 3 :content "c" :status :done}]}))))
 
   (it "rejects >20 items"
@@ -157,11 +157,11 @@
       (expect (string? (:message err)))
       (expect (= 21 (-> err :data :item-count)))))
 
-  (it "rejects two :in_progress items"
+  (it "rejects two :in-progress items"
     (let [err (iterate/validate-plan-state
                 {:goal "g"
-                 :items [{:id 1 :content "a" :status :in_progress}
-                         {:id 2 :content "b" :status :in_progress}]})]
+                 :items [{:id 1 :content "a" :status :in-progress}
+                         {:id 2 :content "b" :status :in-progress}]})]
       (expect (= :vis/plan-multiple-in-progress (:type err)))
       (expect (= [1 2] (-> err :data :in-progress-ids)))))
 
@@ -173,10 +173,10 @@
       (expect (= :vis/plan-non-monotonic-ids (:type err)))
       (expect (= [2 1] (-> err :data :ids)))))
 
-  (it "tolerates :in-progress (kebab-case) as :in_progress"
+  (it "accepts string status values when they use canonical kebab-case"
     (expect (nil? (iterate/validate-plan-state
                     {:goal "g"
-                     :items [{:id 1 :content "a" :status :in-progress}]})))))
+                     :items [{:id 1 :content "a" :status "in-progress"}]})))))
 
 ;; =============================================================================
 ;; Loop nudge formatter — mirrors format-iteration-error for trace
@@ -199,6 +199,13 @@
                  :message "Custom override message."
                  :data {}})]
       (expect (= "[system_nudge] Custom override message." out))))
+
+  (it "renders the low-confidence gate nudge"
+    (let [out (iterate/format-loop-nudge {:type :vis/low-confidence-on-answer
+                                          :data {:confidence :low}})]
+      (expect (re-find #"\[system_nudge\]" out))
+      (expect (re-find #":confidence :low" out))
+      (expect (re-find #":abandon-reason" out))))
 
   (it "falls through to a generic line for an unknown :type"
     (let [out (iterate/format-loop-nudge {:type :vis/something-else})]
@@ -237,11 +244,11 @@
                  :active-extensions []
                  :plan-state {:goal "ship phase 1"
                               :items [{:id 1 :content "spec" :status :done}
-                                      {:id 2 :content "store" :status :in_progress}]}})]
+                                      {:id 2 :content "store" :status :in-progress}]}})]
       (expect (re-find #"<plan>" out))
       (expect (re-find #"goal: ship phase 1" out))
       (expect (re-find #"\[1\] done" out))
-      (expect (re-find #"\[2\] in_progress" out))))
+      (expect (re-find #"\[2\] in-progress" out))))
 
   (it "renders <breadcrumbs> with iN prefix"
     (let [out (iterate/build-iteration-context {}

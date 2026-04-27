@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.primitives :as p]
+            [com.blockether.vis.error :as vis-error]
             [com.blockether.vis.channels.tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
@@ -167,29 +168,44 @@
    edge via a second hint argument; that path was deleted when the
    dedicated footer row took over (see
    `com.blockether.vis.channels.tui.footer`). The bottom edge is now
-   always a plain horizontal rule."
-  [^TextGraphics g box-top box-bottom cols top-hint]
-  (let [inner-w (- cols 2)
-        bar     (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
-    (.setForegroundColor g t/border-fg)
-    (.setBackgroundColor g t/terminal-bg)
+   always a plain horizontal rule.
 
-    ;; Top: ┌── top-hint ──┐
-    (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-    (.putString g 1 (int box-top) (embed-in-bar bar top-hint))
-    (.setCharacter g (int (dec cols)) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+   `sides?` (default true) controls whether to paint the vertical
+   `│` rails on the left and right edges of the inner rows. The
+   input box passes false: it gets a top + bottom rule but no side
+   rails, so the typing area sits flush against the message column."
+  ([g box-top box-bottom cols top-hint]
+   (draw-box-border! g box-top box-bottom cols top-hint true))
+  ([^TextGraphics g box-top box-bottom cols top-hint sides?]
+   (let [inner-w (- cols 2)
+         bar     (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
+     (.setForegroundColor g t/border-fg)
+     (.setBackgroundColor g t/terminal-bg)
 
-    ;; Bottom: └──────┘ (plain rule — status moved to footer row).
-    (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-    (.putString g 1 (int box-bottom) bar)
-    (.setCharacter g (int (dec cols)) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+     (if sides?
+       (do
+         ;; Top: ┌── top-hint ──┐
+         (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+         (.putString g 1 (int box-top) (embed-in-bar bar top-hint))
+         (.setCharacter g (int (dec cols)) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
 
-    ;; Sides: │ ... │
-    (doseq [row (range (inc box-top) box-bottom)]
-      (.setForegroundColor g t/border-fg)
-      (.setBackgroundColor g t/terminal-bg)
-      (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
-      (.setCharacter g (int (dec cols)) (int row) Symbols/SINGLE_LINE_VERTICAL))))
+         ;; Bottom: └──────┘ (plain rule — status moved to footer row).
+         (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+         (.putString g 1 (int box-bottom) bar)
+         (.setCharacter g (int (dec cols)) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+
+         ;; Sides: │ ... │
+         (doseq [row (range (inc box-top) box-bottom)]
+           (.setForegroundColor g t/border-fg)
+           (.setBackgroundColor g t/terminal-bg)
+           (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
+           (.setCharacter g (int (dec cols)) (int row) Symbols/SINGLE_LINE_VERTICAL)))
+       ;; Sideless variant: top + bottom rules span the FULL width
+       ;; (cols cells, not inner-w), no corner glyphs, no side rails.
+       ;; Top hint embeds in the full-width bar.
+       (let [full-bar (repeat-str Symbols/SINGLE_LINE_HORIZONTAL cols)]
+         (.putString g 0 (int box-top) (embed-in-bar full-bar top-hint))
+         (.putString g 0 (int box-bottom) full-bar))))))
 
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
@@ -227,7 +243,7 @@
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 
 (def input-pad-y 1)  ;; internal vertical padding (rows above/below text)
-(def ^:private input-pad-x 2)  ;; internal horizontal padding (cols left/right of text)
+(def ^:private input-pad-x 3)  ;; internal horizontal padding (cols left/right of text)
 
 (defn draw-input-box!
   "Draw bordered input area with internal padding. Returns
@@ -236,14 +252,19 @@
    `hint` is the keybinding strip embedded in the TOP border. The
    bottom border is always a plain horizontal rule — live status
    (model / run-state / ctx %) lives in the dedicated footer row
-   below this box (see `footer/draw-footer!`)."
+   below this box (see `footer/draw-footer!`).
+
+   No left/right side rails: the input area is framed by the top
+   keybinding strip and the bottom rule only, so the typing zone
+   sits flush with the message column on either side and the eye
+   tracks the prompt directly without `│`-noise on the edges."
   [^TextGraphics g {:keys [lines crow ccol]} box-top text-rows cols hint]
   (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
         text-top   (+ (inc box-top) input-pad-y)
         text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
         h-scroll   (max 0 (- ccol (dec text-w)))]
-    (draw-box-border! g box-top box-bottom cols hint)
+    (draw-box-border! g box-top box-bottom cols hint false)
     (fill-box-interior! g box-top box-bottom cols)
 
     ;; Text
@@ -1281,7 +1302,7 @@
                 msg          (or (:message error) (str (:type error)) "unknown error")
                 raw          (some-> (get-in error [:data :raw-data]) str str/trim)
                 recv         (get-in error [:data :received-type])
-                msg-wrapped  (wrap-text (str "✘ " msg) (max 1 (- fill-w 2)))
+                msg-wrapped  (wrap-text (vis-error/format-error msg) (max 1 (- fill-w 2)))
                 msg-rows     (mapv #(str err-result-marker "  " %) msg-wrapped)
                 raw-rows     (when (and raw (not (str/blank? raw)))
                                (let [hdr (str "provider returned"
@@ -1613,7 +1634,20 @@
         ;; expressed in COLUMNS, not Java chars. truncate-cols
         ;; guarantees display-width ≤ (dec w); the +1 for the ellipsis
         ;; or unchanged path keeps the math honest.
-        pad-cols (max 0 (- w (p/display-width t)))
+        ;;
+        ;; Per-cell VS-16 compensation: macOS Terminal / iTerm2 with
+        ;; certain font configs render emoji+VS-16 sequences ONE
+        ;; COLUMN NARROWER than lanterna's `isDoubleWidth` claims
+        ;; (and one narrower than our `display-width` then computes).
+        ;; Result: VS-16 cells visually under-fill by one col, the
+        ;; grid drifts. Add one bonus space per VS-16 grapheme in
+        ;; this cell to absorb the gap. Per-cell, NOT per-column,
+        ;; because non-VS-16 emoji in the same column (📄 / 📁 / ✅)
+        ;; render at the expected 2 cols and would shift right if we
+        ;; bonused the whole column. See render-table comment for the
+        ;; rejected per-column variant.
+        vs16-bonus (count (re-seq #"\uFE0F" t))
+        pad-cols (max 0 (+ vs16-bonus (- w (p/display-width t))))
         pad (repeat-str \space pad-cols)
         body (case align
                :right (str pad t)
@@ -1646,13 +1680,16 @@
         h         (pad-cells headers)
         rs        (mapv pad-cells rows)
         ;; Per-column width = max DISPLAY-WIDTH (terminal columns) of
-        ;; every cell in that column, including the header. Using
-        ;; (count) here was the second of the two emoji-table bugs:
-        ;; 🏿️ and friends inflate Java char-count past their visual
-        ;; column count, which (a) over-allocates cell padding for
-        ;; the WIDE-CHAR-PER-CELL row and (b) under-pads sibling rows
-        ;; that don't have the wide char, drifting every `┃` after
-        ;; that column.
+        ;; every cell in that column, including the header.
+        ;;
+        ;; VS-16 compensation lives in pad-cell, not here. Each cell
+        ;; carrying a VS-16 grapheme adds its own +1 padding so its
+        ;; visual width matches sibling cells — see pad-cell. Tried
+        ;; expanding col-width for the whole column instead; rejected
+        ;; because it over-pads non-VS-16 cells (📄, 📁, ✅ etc. render
+        ;; correctly without the bonus, so adding it everywhere shifts
+        ;; them right by 1 — the user-visible 'still misaligned, need
+        ;; even more' regression). Per-cell bonus is the right grain.
         col-widths-raw
         (mapv (fn [i]
                 (apply max 1
@@ -1677,21 +1714,21 @@
                          (vec (map-indexed
                                 (fn [i w] (if (< i extra) (inc w) w))
                                 shrunk)))))
-        ;; Heavy box-drawing variants — the table reads as a real
-        ;; grid instead of a wireframe. Light glyphs (`┌─┬─┐│├─┼─┤│
-        ;; └─┴─┘`) plus the muted `code-border-fg` made the chrome
-        ;; almost invisible against the table bg; heavy glyphs
-        ;; (`┏━┳━┓┃┣━╋━┫┃┗━┻━┛`) plus a darker fg make borders
-        ;; properly visible without resorting to bold-on-everything.
-        bar        (fn [w] (repeat-str \━ (+ w 2)))
-        top-line   (str "┏" (str/join "┳" (map bar col-widths)) "┓")
-        head-sep   (str "┣" (str/join "╋" (map bar col-widths)) "┫")
+        ;; LIGHT box-drawing variants — the heavy glyphs read as
+        ;; aggressive bold lines on macOS Terminal / iTerm2 with a
+        ;; thick monospaced font; users wanted a quieter grid that
+        ;; does not compete with the cell text for attention. Light
+        ;; glyphs render thinner, the muted `code-border-fg`
+        ;; foreground keeps them visible without dominating.
+        bar        (fn [w] (repeat-str \─ (+ w 2)))
+        top-line   (str "┌" (str/join "┬" (map bar col-widths)) "┐")
+        head-sep   (str "├" (str/join "┼" (map bar col-widths)) "┤")
         ;; Same shape as `head-sep` — inserted between every pair of
         ;; body rows so each row sits in its own visual cell. Without
         ;; this the body looked like a stack of pipe-separated text
         ;; rows; with it, the table reads as a proper grid.
         row-sep    head-sep
-        bot-line   (str "┗" (str/join "┻" (map bar col-widths)) "┛")
+        bot-line   (str "└" (str/join "┴" (map bar col-widths)) "┘")
         ;; Per-column alignment: numeric columns right-align, every
         ;; other column stays left. The header inherits the column's
         ;; alignment so the title sits over the data correctly
@@ -1700,12 +1737,12 @@
         col-aligns (mapv (fn [i] (column-align (map #(nth % i "") rs)))
                      (range n-cols))
         format-row (fn [cells]
-                     (str "┃"
-                       (str/join "┃"
+                     (str "│"
+                       (str/join "│"
                          (map-indexed
                            (fn [i c] (pad-cell c (nth col-widths i) (nth col-aligns i)))
                            cells))
-                       "┃"))]
+                       "│"))]
     (vec (concat
            [(str tsep top-line)]
            [(str thead (format-row h))]
@@ -1987,8 +2024,8 @@
 
 (def ^:private msg-margin-top    1)  ;; rows above first message
 (def ^:private msg-margin-bottom 1)  ;; rows below last message
-(def ^:private msg-margin-left   3)  ;; cols left gutter (matches input box gutter)
-(def ^:private msg-margin-right  3)  ;; cols right gutter (room for scrollbar + air)
+(def ^:private msg-margin-left   2)  ;; cols left gutter (matches input box gutter)
+(def ^:private msg-margin-right  2)  ;; cols right gutter (room for scrollbar + air)
 
 (defn draw-messages-area!
   "Draw structured chat messages as left-aligned blocks inside a clean,

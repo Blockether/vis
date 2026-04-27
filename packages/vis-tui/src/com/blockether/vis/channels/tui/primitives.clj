@@ -192,6 +192,10 @@
    clusters honoured (BreakIterator-based), CJK + emoji counted as two
    columns, ASCII as one.
 
+   Inline span sentinels (`INLINE_*_ON`/`OFF`, range \uE110…\uE117)
+   count as zero columns: they're invisible style toggles, never
+   painted, never advance the cursor.
+
    Returns 0 for nil/empty input."
   ^long [s]
   (if (or (nil? s) (zero? (.length ^CharSequence s)))

@@ -112,8 +112,8 @@ ONE RULE: you model your context via calls. Reasoning happens in :code, not pros
 EVERY ITERATION:
 
   STEP 0 — PLAN. Read <plan>.
-    • Empty? → EMIT :plan in this iteration. ≤3–7 items, exactly ONE :in_progress.
-      Schema: {:goal \"…\" :items [{:id N :content \"…\" :status :in_progress
+    • Empty? → EMIT :plan in this iteration. ≤3–7 items, exactly ONE :in-progress.
+      Schema: {:goal \"…\" :items [{:id N :content \"…\" :status :in-progress
       :evidence \"iN.K\"} …] :open [\"…\"] :decided [\"…\"]}.
     • Reality forces a real change of approach? → RE-EMIT :plan with the change.
       The loop renders a [plan changed] line in <breadcrumbs> so you can SEE
@@ -179,7 +179,7 @@ EVERY ITERATION:
     The loop rejects :answer with open items unless :abandon-reason is set.
 
   BUDGET ESCAPE.
-    Budget short and ≥1 item :in_progress with visible progress?
+    Budget short and ≥1 item :in-progress with visible progress?
       → prefer (request-more-iterations N) in :code.
     Items blocked or info missing? → emit :answer + :abandon-reason.
     Don't run out of budget silently.
@@ -612,7 +612,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
       (catch Throwable _ nil))))
 
 (defn- apply-autobind-binding!
-  [environment _source-symbol {:keys [kind id content doc tag]}]
+  [environment source-symbol {:keys [kind id content doc tag]}]
   (let [symbol-name  (autobind-symbol-for kind id)
         registry-atom (:autobind-registry-atom environment)
         previous      (get @registry-atom symbol-name)
@@ -620,6 +620,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
     (if unchanged?
       (let [version (or (:version previous) 1)]
         {:symbol symbol-name
+         :source-symbol source-symbol
          :status :unchanged
          :version version
          :kind kind
@@ -634,6 +635,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
               sha-part     (when (some? tag)
                              (str " sha=" (trim-sha-tag tag)))]
           {:symbol symbol-name
+           :source-symbol source-symbol
            :status :bound
            :version next-version
            :kind kind
@@ -657,6 +659,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                                         (apply-autobind-binding! environment source-symbol binding-entry)
                                         (catch Throwable throwable
                                           {:symbol nil
+                                           :source-symbol source-symbol
                                            :status :failed
                                            :kind (:kind binding-entry)
                                            :id (:id binding-entry)
@@ -668,6 +671,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
           (when events-atom
             (swap! events-atom conj
               {:symbol nil
+               :source-symbol source-symbol
                :status :failed
                :footer (str "[autobind hook failed: " (ex-message throwable) "]")}))
           (tel/log! {:level :warn :id ::autobind-fn-failed
