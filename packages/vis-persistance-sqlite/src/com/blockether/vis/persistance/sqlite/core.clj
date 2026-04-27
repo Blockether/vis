@@ -21,10 +21,11 @@
    [next.jdbc.result-set :as rs]
    [taoensso.nippy :as nippy])
   (:import
+   (com.zaxxer.hikari HikariConfig HikariDataSource)
    (java.util UUID)
+   (java.util.concurrent.atomic AtomicLong)
    (javax.sql DataSource)
-   (org.sqlite SQLiteConfig SQLiteConfig$JournalMode SQLiteConfig$SynchronousMode)
-   (org.sqlite.javax SQLiteConnectionPoolDataSource)))
+   (org.sqlite SQLiteConfig SQLiteConfig$JournalMode SQLiteConfig$SynchronousMode SQLiteDataSource)))
 
 ;; =============================================================================
 ;; Helpers
@@ -94,46 +95,115 @@
 
 ;; =============================================================================
 ;; Connection management
+;;
+;; xerial's `SQLiteConnectionPoolDataSource` is a JNDI-shaped façade
+;; that opens a NEW physical SQLite connection on every
+;; `getConnection()` — it does NOT pool. We replace it with HikariCP:
+;; an underlying `SQLiteDataSource` configured via `SQLiteConfig`
+;; (WAL, NORMAL sync, FK enforcement, 30s busy timeout) is wrapped
+;; in a `HikariDataSource` with a small fixed pool. SQLite WAL allows
+;; N readers + 1 writer, so 5 connections give read concurrency
+;; without amplifying writer contention. The pool keeps physical
+;; connections alive for the process lifetime (no idle eviction,
+;; no maxLifetime recycling — unlike a network DB, SQLite handles
+;; have no equivalent of a connection drop). `close-store` actually
+;; closes the pool now, so dispose-rlm-conn! releases handles
+;; deterministically.
 ;; =============================================================================
 
-(defn- sqlite-datasource ^DataSource [^String url]
+(defn- raw-sqlite-datasource
+  "Build a configured xerial `SQLiteDataSource` (the plain non-pooled
+   one). All pragmas (`journal_mode=WAL`, `synchronous=NORMAL`,
+   `foreign_keys=ON`, `busy_timeout=30000`) are set on the
+   `SQLiteConfig` so every Hikari-handed connection inherits them.
+
+   The returned object is what we hand to Hikari as its underlying
+   DataSource; callers should NOT call `getConnection` on this directly."
+  ^DataSource [^String url]
   (let [cfg (doto (SQLiteConfig.)
               (.setJournalMode SQLiteConfig$JournalMode/WAL)
               (.setSynchronous SQLiteConfig$SynchronousMode/NORMAL)
               (.enforceForeignKeys true)
               (.setBusyTimeout 30000))
-        ds  (SQLiteConnectionPoolDataSource. cfg)]
+        ds  (SQLiteDataSource. cfg)]
     (.setUrl ds url)
     ds))
 
+(defn- pooled-datasource
+  "Wrap `raw-ds` in a HikariCP pool. `pool-name` is the JMX name and
+   shows up in thread names (`HikariPool-vis-rlm-disk-1`), which
+   makes debugging far easier when there are multiple envs alive.
+
+   Pool sizing for SQLite WAL:
+     maximumPoolSize = 5  — 1 writer + up to 4 concurrent readers,
+                            mirrors the SQLite WAL concurrency model.
+     minimumIdle     = 1  — keep one connection warm; cold-start cost
+                            on SQLite is small, but eliminating it
+                            removes one source of `[SQLITE_CANTOPEN]`
+                            jitter on the very first request.
+     idleTimeout     = 0  — SQLite handles are cheap to keep; don't
+                            evict, don't churn WAL state.
+     maxLifetime     = 0  — no network drop concern; recycling adds
+                            zero value and creates spurious opens.
+     leakDetectionThreshold = 60s — surface checked-out-but-never-
+                                    returned connections in the log."
+  ^HikariDataSource [^DataSource raw-ds ^String pool-name]
+  (let [cfg (doto (HikariConfig.)
+              (.setPoolName             pool-name)
+              (.setDataSource           raw-ds)
+              (.setMaximumPoolSize      5)
+              (.setMinimumIdle          1)
+              (.setConnectionTimeout    30000)
+              (.setIdleTimeout          0)
+              (.setMaxLifetime          0)
+              (.setLeakDetectionThreshold 60000))]
+    (HikariDataSource. cfg)))
+
 (def ^:private DB_FILENAME "rlm.db")
+
+(def ^:private ^AtomicLong pool-counter
+  ;; Monotonic suffix so multiple envs alive in the same JVM get
+  ;; distinct pool names (and thread names) instead of colliding.
+  (AtomicLong.))
 
 (defn- open-sqlite-at-dir [^String dir]
   (.mkdirs (java.io.File. dir))
-  (let [file (str dir "/" DB_FILENAME)
-        ds   (sqlite-datasource (str "jdbc:sqlite:" file))]
-    (install-schema! ds)
-    {:datasource ds :conn ds :path dir :db-file file :backend :sqlite}))
+  (let [file   (str dir "/" DB_FILENAME)
+        raw    (raw-sqlite-datasource (str "jdbc:sqlite:" file))
+        pool   (pooled-datasource raw
+                 (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+    (install-schema! pool)
+    {:datasource pool :conn pool :path dir :db-file file :backend :sqlite}))
 
-(def ^:private ^java.util.concurrent.atomic.AtomicLong mem-counter
-  (java.util.concurrent.atomic.AtomicLong.))
+(def ^:private ^AtomicLong mem-counter
+  (AtomicLong.))
 
 (defn- open-sqlite-mem []
-  ;; Use a named shared-cache in-memory DB so all pooled connections
-  ;; see the same tables. Each call gets a unique name to isolate tests.
+  ;; Use a named shared-cache in-memory DB so every pooled connection
+  ;; sees the same tables. Each call gets a unique name to isolate
+  ;; tests; the pool's `minimumIdle 1` keeps the shared-cache DB
+  ;; alive without the manual `getConnection` keep-alive the old
+  ;; non-pooled implementation needed.
   (let [db-name (str "vis_mem_" (.incrementAndGet mem-counter))
-        ds (sqlite-datasource (str "jdbc:sqlite:file:" db-name "?mode=memory&cache=shared"))]
-    ;; Force a connection to keep the shared-cache DB alive
-    (.getConnection ^SQLiteConnectionPoolDataSource ds)
-    (install-schema! ds)
-    {:datasource ds :conn ds :path nil :db-file nil
+        raw     (raw-sqlite-datasource
+                  (str "jdbc:sqlite:file:" db-name "?mode=memory&cache=shared"))
+        pool    (pooled-datasource raw
+                  (str "vis-rlm-mem-" (.incrementAndGet pool-counter)))]
+    (install-schema! pool)
+    {:datasource pool :conn pool :path nil :db-file nil
      :backend :sqlite :owned? true :mode :memory}))
 
 (defn open-store [db-spec]
   (cond
     (nil? db-spec)    nil
     (= :memory db-spec) (open-sqlite-mem)
-    (string? db-spec) (assoc (open-sqlite-at-dir db-spec) :owned? false :mode :persistent)
+    ;; `:owned? true` for both memory and persistent: we built the
+    ;; Hikari pool ourselves, so we own its lifecycle. The old code
+    ;; stamped persistent stores as `:owned? false` because the
+    ;; non-pooled DataSource didn't *need* closing — it had no
+    ;; resources to release. With Hikari that's no longer true; an
+    ;; un-closed pool leaks daemon threads and connection handles.
+    (string? db-spec) (assoc (open-sqlite-at-dir db-spec) :owned? true :mode :persistent)
     (map? db-spec)
     (cond
       (or (:datasource db-spec) (:conn db-spec))
@@ -142,13 +212,22 @@
         {:datasource ds :conn ds :path nil :db-file nil
          :backend :external :owned? false :mode :external})
       (:path db-spec)
-      (assoc (open-sqlite-at-dir (:path db-spec)) :owned? false :mode :persistent)
+      (assoc (open-sqlite-at-dir (:path db-spec)) :owned? true :mode :persistent)
       :else
       (throw (ex-info "Invalid db-spec map" {:type :vis/invalid-db-spec :db-spec db-spec})))
     :else
     (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec}))))
 
-(defn close-store [_store] nil)
+(defn close-store
+  "Idempotent dispose. Closes the Hikari pool when we own it; for
+   `:external` mode (caller-supplied DataSource) it's a no-op so we
+   don't yank the rug out from under whoever passed us the handle."
+  [store]
+  (when (and store (:owned? store))
+    (let [^Object ds (:datasource store)]
+      (when (instance? java.io.Closeable ds)
+        (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
+  nil)
 
 ;; =============================================================================
 ;; Logging — log table

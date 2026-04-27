@@ -80,6 +80,27 @@
 ;; If no :on-error-fn is defined, the original exception propagates.
 (s/def :ext.symbol/on-error-fn fn?)
 
+;; Source-code rewriter for SCI/edamame parse errors that mention this
+;; symbol. (fn [{:code :error :sym :environment}] → string-or-nil).
+;; The iteration loop scans the broken source for any registered
+;; symbol whose name appears (with or without :ext/ns-alias prefix)
+;; and only invokes that symbol's hook — keeping rescue logic
+;; co-located with the tool it repairs.
+;;
+;; Returns:
+;;   - a NEW source string — the loop retries parsing with it; if it
+;;     parses cleanly the rewritten code is executed and the
+;;     expression result is tagged :repaired? true
+;;   - nil — pass; the next matching symbol's hook is consulted, then
+;;     the extension-level :ext/on-parse-error-fn fallback, then the
+;;     original error is surfaced to the LLM
+;;
+;; Hooks that throw are logged and treated as if they returned nil.
+;; A parse error is by definition a pre-dispatch failure — there is
+;; no `:fn` to call — so this hook is the ONLY way a symbol can
+;; influence parse-time recovery.
+(s/def :ext.symbol/on-parse-error-fn fn?)
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn - a symbol is either a
 ;; function or a value, never both.
@@ -90,7 +111,7 @@
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists :ext.symbol/examples]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
-          :ext.symbol/on-error-fn]))
+          :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn]))
 
 ;; Value symbol: just name + value + doc. No hooks, no arglists.
 (s/def ::val-symbol-entry
@@ -137,6 +158,24 @@
 ;; `[system_nudge] …` string to inject a nudge, nil to skip.
 ;; See docs/src/extensions/nudges.md for the ctx shape.
 (s/def :ext/nudge-fn fn?)
+
+;; Optional source-code rewriter for SCI/edamame parse errors.
+;; (fn [ctx] → string-or-nil), where ctx is
+;;   {:code        original code string the LLM emitted
+;;    :error       edamame's error message (e.g.
+;;                 "[line 1, col 12] Unsupported escape character: \|")
+;;    :environment the live conversation environment}
+;; Returns:
+;;   - a NEW source string — the iteration loop retries parsing/eval
+;;     with the rewritten code and tags the result :repaired? true
+;;   - nil — pass; the next extension's hook is consulted, or the
+;;     parse error is surfaced to the LLM as before
+;;
+;; Symbol-level :on-error-fn cannot help here because parse failures
+;; happen before any tool fn is dispatched, so the recovery is
+;; necessarily extension-wide. Hooks that throw are logged and
+;; treated as if they returned nil.
+(s/def :ext/on-parse-error-fn fn?)
 
 ;; Optional dependency declaration.
 ;; Vector of extension namespace symbols that must be registered
@@ -199,7 +238,8 @@
     (s/keys :req [:ext/namespace :ext/doc :ext/group :ext/subgroup
                   :ext/activation-fn :ext/symbols
                   :ext/classes :ext/imports]
-      :opt [:ext/ns-alias :ext/prompt :ext/nudge-fn :ext/requires
+      :opt [:ext/ns-alias :ext/prompt :ext/nudge-fn
+            :ext/on-parse-error-fn :ext/requires
             :ext/version :ext/author :ext/license
             :ext/cli])
     ns-alias-required-when-symbols?))
@@ -229,7 +269,8 @@
   "Build a function symbol entry.
 
    Required: :doc, :arglists
-   Optional: :examples, :before-fn, :after-fn, :on-error-fn
+   Optional: :examples, :before-fn, :after-fn, :on-error-fn,
+             :on-parse-error-fn
 
    Defaults:
      :examples — derived from :arglists when not provided
@@ -238,11 +279,16 @@
      {:doc      \"Full-text search across documents.\"
       :arglists '([query] [query opts])
       :examples [\"(search-documents \\\"neural\\\")\"]
-      ;; Optional hooks — each returns a MAP, not a direct value.
-      ;; See Hook Protocol in EXTENSION.md for every return key.
+      ;; Runtime hooks — fire AFTER `:fn` is dispatched. Each returns a
+      ;; MAP, not a direct value. See Hook Protocol in EXTENSION.md.
       :before-fn   (fn [env f args] {:args (transform args)})    ;; override args/fn/env, or {:result v} to short-circuit
       :after-fn    (fn [env f args result] {:result (transform result)})  ;; override result
-      :on-error-fn (fn [err env f args] {:result fallback})})    ;; recover, retry, or {:error e} to re-throw"
+      :on-error-fn (fn [err env f args] {:result fallback})    ;; recover, retry, or {:error e} to re-throw
+      ;; Parse-time hook — fires when SCI/edamame rejects the LLM's
+      ;; source AND this symbol's name appears in the broken code.
+      ;; Returns rewritten source (string) or nil.
+      :on-parse-error-fn (fn [{:keys [code error sym environment]}]
+                           (rewrite-source code error))})"
   [sym-name f opts]
   (let [arglists (:arglists opts)
         arglists (when arglists (if (seq? arglists) (vec arglists) arglists))
@@ -251,12 +297,13 @@
     (validate-symbol-entry!
       (cond-> #:ext.symbol{:sym sym-name
                            :fn  f}
-        (:doc opts)        (assoc :ext.symbol/doc (:doc opts))
-        arglists           (assoc :ext.symbol/arglists arglists)
-        examples           (assoc :ext.symbol/examples (vec examples))
-        (:before-fn opts)  (assoc :ext.symbol/before-fn (:before-fn opts))
-        (:after-fn opts)   (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
+        (:doc opts)               (assoc :ext.symbol/doc (:doc opts))
+        arglists                  (assoc :ext.symbol/arglists arglists)
+        examples                  (assoc :ext.symbol/examples (vec examples))
+        (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
+        (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
+        (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
+        (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))))))
 
 (defn value
   "Build a value symbol entry - a plain constant/data binding.
@@ -531,6 +578,119 @@
     (:ext/symbols ext)))
 
 ;; =============================================================================
+;; Parse-error rescue — walked by the iteration loop
+;;
+;; SCI/edamame parse failures happen BEFORE any tool fn is dispatched,
+;; so symbol-level :on-error-fn is useless for them. Two recovery
+;; layers exist instead, in priority order:
+;;
+;;   1. SYMBOL-level `:ext.symbol/on-parse-error-fn` — fires only for
+;;      symbols whose name is mentioned in the broken source. This
+;;      keeps rescue logic co-located with the tool that caused it.
+;;   2. EXTENSION-level `:ext/on-parse-error-fn` — a catch-all for
+;;      cross-cutting rewrites (e.g. \"strip every JSON-style
+;;      smart-quote\"). Fires only when no symbol-level hook produced
+;;      a rewrite.
+;;
+;; Both layers receive `{:code :error :environment}`; symbol-level
+;; hooks additionally receive `:sym`. First non-nil rewrite different
+;; from `code` wins. Hooks that throw are logged and skipped — a
+;; buggy hook can never break query execution.
+;; =============================================================================
+
+(defn- code-mentions-symbol?
+  "Cheap regex check: does `code` look like it invokes `sym-name`,
+   either bare `(name ...)` or aliased `(alias/name ...)`? We can't
+   parse the broken source, so this is a substring scan with word
+   boundaries. False positives are harmless — the worst case is the
+   hook gets called and returns nil."
+  [^String code ^String sym-name alias-name]
+  (let [esc-name (java.util.regex.Pattern/quote sym-name)
+        bare     (re-pattern (str "\\(\\s*" esc-name "(?:[\\s)\\[]|$)"))
+        prefixed (when (and alias-name (seq alias-name))
+                   (re-pattern (str "\\(\\s*"
+                                 (java.util.regex.Pattern/quote alias-name)
+                                 "/" esc-name "(?:[\\s)\\[]|$)")))]
+    (boolean (or (re-find bare code)
+               (and prefixed (re-find prefixed code))))))
+
+(defn- run-parse-rescue-hook
+  "Invoke a single parse-error hook, swallowing throws.
+   `id` is purely a tag for the warn log so we can tell symbol- vs
+   extension-level breakage apart."
+  [id hook ctx]
+  (try
+    (hook ctx)
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::on-parse-error-fn-threw
+                 :data {:source id :error (ex-message t)}
+                 :msg   (str ":on-parse-error-fn (" id ") threw: "
+                          (ex-message t))})
+      nil)))
+
+(defn- try-symbol-parse-rescue
+  "Walk every symbol of every extension. For symbols whose name appears
+   in `code` AND that carry `:ext.symbol/on-parse-error-fn`, call the
+   hook. First non-nil rewrite wins."
+  [extensions code error environment]
+  (loop [exts (seq extensions)]
+    (when exts
+      (let [ext   (first exts)
+            alias (some-> (:ext/ns-alias ext) :alias clojure.core/name)
+            hit
+            (loop [syms (seq (:ext/symbols ext))]
+              (when syms
+                (let [entry (first syms)
+                      sym   (:ext.symbol/sym entry)
+                      hook  (:ext.symbol/on-parse-error-fn entry)]
+                  (if (and hook sym (code-mentions-symbol? code (str sym) alias))
+                    (let [out (run-parse-rescue-hook
+                                (str (:ext/namespace ext) "/" sym)
+                                hook
+                                {:code        code
+                                 :error       error
+                                 :sym         sym
+                                 :environment environment})]
+                      (if (and (string? out) (not= out code))
+                        out
+                        (recur (next syms))))
+                    (recur (next syms))))))]
+        (or hit (recur (next exts)))))))
+
+(defn- try-extension-parse-rescue
+  "Walk extension-level `:ext/on-parse-error-fn` hooks as a catch-all
+   layer for cross-cutting rewrites that aren't tied to one symbol."
+  [extensions code error environment]
+  (loop [exts (seq extensions)]
+    (when exts
+      (let [ext  (first exts)
+            hook (:ext/on-parse-error-fn ext)
+            out  (when hook
+                   (run-parse-rescue-hook (str (:ext/namespace ext))
+                     hook
+                     {:code        code
+                      :error       error
+                      :environment environment}))]
+        (if (and (string? out) (not= out code))
+          out
+          (recur (next exts)))))))
+
+(defn try-rescue-parse-error
+  "Walk `extensions` and produce a rewritten source string for a
+   broken `code`, or nil when nothing wants to rescue.
+
+   Resolution order:
+     1. Per-symbol `:ext.symbol/on-parse-error-fn` of any registered
+        symbol whose name appears in `code`.
+     2. Extension-level `:ext/on-parse-error-fn` as a fallback.
+
+   Hooks that throw or return non-strings or the unchanged code are
+   skipped."
+  [extensions code error environment]
+  (or (try-symbol-parse-rescue extensions code error environment)
+    (try-extension-parse-rescue extensions code error environment)))
+
+;; =============================================================================
 ;; Public API
 ;; =============================================================================
 
@@ -547,6 +707,12 @@
                            appended after the canonical auto-rendered
                            symbol prompt
      :ext/nudge-fn       — optional, (fn [ctx] → string|nil)
+     :ext/on-parse-error-fn — optional, (fn [{:code :error :environment}]
+                           → string|nil). Called when SCI/edamame
+                           rejects the LLM's source. Return a
+                           rewritten source string to retry, nil to
+                           defer to the next extension. See
+                           `try-rescue-parse-error`.
      :ext/requires       — optional, vector of extension namespace symbols
                            that must be registered first, default []
      :ext/version        — optional, semver string, e.g. \"1.0.0\"

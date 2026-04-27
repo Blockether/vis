@@ -37,6 +37,8 @@
 (def rescue-path-args        #'editing/rescue-path-args)
 (def strip-bad-escape        #'editing/strip-bad-escape)
 (def extract-bad-escape-char #'editing/extract-bad-escape-char)
+(def rescue-parse-error      #'editing/rescue-parse-error)
+(def line-col->index         #'editing/line-col->index)
 
 ;; =============================================================================
 ;; Helpers
@@ -228,7 +230,11 @@
      :ext/doc       "Fake editing extension for tests."
      :ext/group     "filesystem"
      :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
-     :ext/prompt    "placeholder"
+     ;; The spec demands :ext/prompt be a fn (env→string); the
+     ;; non-fn shorthand is normalized by `ext/extension` itself, but
+     ;; passing a fn directly avoids relying on that normalization in
+     ;; tests.
+     :ext/prompt    (constantly "placeholder")
      :ext/symbols   [sym]}))
 
 (defdescribe rescue-grep-args-end-to-end-test
@@ -252,3 +258,126 @@
       ;; Only one underlying call — rescue refused to retry on `\q`.
       (expect (= 1 (count @calls)))
       (expect (= "foo\\q" (first @calls))))))
+
+;; =============================================================================
+;; rescue-parse-error — :ext/on-parse-error-fn
+;;
+;; This is the OTHER half of the story — the LLM emits raw `\X` inside
+;; a string literal in the source it sends. SCI/edamame rejects with
+;; "[line L, col C] Unsupported escape character: \X" BEFORE any tool
+;; fn dispatch, so symbol-level :on-error-fn is useless. The
+;; extension-level :ext/on-parse-error-fn hook can still rewrite the
+;; source and let the iteration loop retry the parse.
+;; =============================================================================
+
+(defn- edamame-parse [^String code]
+  ;; Real edamame round-trip so the error message format we depend on
+  ;; doesn't drift silently. Throws on parse error — callers wrap.
+  (require '[edamame.core :as eda])
+  ((resolve 'eda/parse-string-all) code {:all true}))
+
+(defn- edamame-error-msg [^String code]
+  (try (edamame-parse code) nil
+    (catch Throwable t (ex-message t))))
+
+(defdescribe line-col->index-test
+
+  (it "resolves [line, col] into a 0-based char index, accounting for newlines"
+    (let [code "abc\ndef\nghi"]
+      ;; (line 1, col 1) → 'a'
+      (expect (= 0 (line-col->index code 1 1)))
+      ;; (line 2, col 1) → 'd'
+      (expect (= 4 (line-col->index code 2 1)))
+      ;; (line 3, col 2) → 'h'
+      (expect (= 9 (line-col->index code 3 2)))))
+
+  (it "returns nil when the position runs past the source"
+    (expect (nil? (line-col->index "x" 1 99)))
+    (expect (nil? (line-col->index "" 1 2)))))
+
+(defdescribe rescue-parse-error-test
+
+  (it "doubles the lone backslash in front of a regex meta char"
+    (let [code  "(fs/grep-files \"foo\\|bar\")"
+          err   (edamame-error-msg code)
+          _     (expect (some? err))
+          fixed (rescue-parse-error {:code code :error err :environment {}})]
+      (expect (= "(fs/grep-files \"foo\\\\|bar\")" fixed))
+      ;; And critically: the rewrite parses cleanly.
+      (expect (nil? (edamame-error-msg fixed)))))
+
+  (it "repairs `\\.` and `\\$` and `\\(` the same way"
+    (doseq [bad ["(re-find \"a\\.b\")"
+                 "(re-find \"end\\$\")"
+                 "(re-find \"\\(group\")"]]
+      (let [err   (edamame-error-msg bad)
+            fixed (rescue-parse-error {:code bad :error err :environment {}})]
+        (expect (some? fixed))
+        (expect (nil? (edamame-error-msg fixed))))))
+
+  (it "returns nil for a real letter typo — doesn't pretend to fix a single backslash followed by a letter"
+    ;; Doubling a backslash before a letter would parse fine but might
+    ;; silently convert intent (a typo for the digit-class escape).
+    ;; Rule: only rescue punctuation.
+    ;;
+    ;; Construct the input programmatically: a string literal
+    ;; containing the bytes  ( r e - f i n d  " f o o \ q b a r " )
+    ;; The single backslash before `q` is what makes it an
+    ;; unsupported-escape input — we cannot embed that as a Clojure
+    ;; string literal directly because the Clojure reader rejects
+    ;; `\q` itself, so we synthesize via `str` + the backslash char.
+    (let [code (str "(re-find \"foo" \\ "qbar\")")
+          err  (edamame-error-msg code)]
+      (expect (some? err))
+      (expect (nil? (rescue-parse-error {:code code :error err :environment {}})))))
+
+  (it "returns nil when the error isn't an Unsupported-escape one"
+    (expect (nil? (rescue-parse-error
+                    {:code "(unbalanced "
+                     :error "EOF while reading"
+                     :environment {}}))))
+
+  (it "returns nil on non-string inputs (defensive against malformed ctx)"
+    (expect (nil? (rescue-parse-error {:code nil :error "x" :environment {}})))
+    (expect (nil? (rescue-parse-error {:code "x" :error nil :environment {}}))))
+
+  (it "only repairs the FIRST offending site — caller re-runs the rescue if more remain"
+    ;; Two stray escapes on different lines. The hook fixes ONE; the
+    ;; iteration loop calls the hook again on the new error. We model
+    ;; that here by parsing the rewrite and rescuing again.
+    (let [code  "(do \"a\\|b\"\n    \"c\\|d\")"
+          err1  (edamame-error-msg code)
+          fix1  (rescue-parse-error {:code code :error err1 :environment {}})
+          err2  (edamame-error-msg fix1)
+          fix2  (rescue-parse-error {:code fix1 :error err2 :environment {}})]
+      (expect (some? fix1))
+      (expect (some? fix2))
+      (expect (nil? (edamame-error-msg fix2))))))
+
+;; =============================================================================
+;; Symbol-level wiring — grep-files-symbol carries the parse rescue
+;; =============================================================================
+
+(defdescribe grep-files-symbol-parse-error-wiring-test
+
+  (it "grep-files-symbol carries :ext.symbol/on-parse-error-fn"
+    (let [hook (:ext.symbol/on-parse-error-fn editing/grep-files-symbol)]
+      (expect (fn? hook))
+      ;; Smoke-test the symbol-level hook directly: the broken `\|` case
+      ;; gets repaired so the LLM's intent (literal pipe) is preserved.
+      (let [code "(fs/grep-files \"a\\|b\")"
+            err  (edamame-error-msg code)
+            out  (hook {:code code :error err
+                        :sym 'grep-files :environment {}})]
+        (expect (= "(fs/grep-files \"a\\\\|b\")" out)))))
+
+  (it "the registered extension routes parse rescue through the symbol hook"
+    (require '[com.blockether.vis.ext.common-operations.core :as core])
+    (let [registered @(resolve 'core/extension)
+          code       "(fs/grep-files \"a\\|b\")"
+          err        (edamame-error-msg code)]
+      ;; No extension-level catch-all anymore.
+      (expect (nil? (:ext/on-parse-error-fn registered)))
+      ;; But try-rescue-parse-error finds the symbol hook by name.
+      (expect (= "(fs/grep-files \"a\\\\|b\")"
+                (ext/try-rescue-parse-error [registered] code err {}))))))

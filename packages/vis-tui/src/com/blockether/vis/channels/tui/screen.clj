@@ -365,78 +365,78 @@
                  total-h (or total-h 0)
                  inner-h (or inner-h 0)
                  key     (.pollInput screen)]
-               (if (nil? key)
-                 (do (Thread/sleep 16) (recur))
-                 (let [{:keys [action state]} (input/handle-key key (:input db))]
-                   (state/dispatch [:update-input state])
-                   (let [run-command!
-                         (fn [cmd]
-                           (when-not (:dialog-open? @state/app-db)
-                             (case cmd
-                               :configure-provider
-                               (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                                 (state/dispatch [:set-config c]))
+             (if (nil? key)
+               (do (Thread/sleep 16) (recur))
+               (let [{:keys [action state]} (input/handle-key key (:input db))]
+                 (state/dispatch [:update-input state])
+                 (let [run-command!
+                       (fn [cmd]
+                         (when-not (:dialog-open? @state/app-db)
+                           (case cmd
+                             :configure-provider
+                             (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                               (state/dispatch [:set-config c]))
 
-                               :copy
-                               (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
+                             :copy
+                             (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
 
-                               :toggles
-                               (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
-                                 (state/dispatch [:update-settings s]))
+                             :toggles
+                             (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
+                               (state/dispatch [:update-settings s]))
 
-                               :system-prompt
-                               (with-dialog-lock
-                                 #(let [conv-id (get-in @state/app-db [:conv :id])
-                                        prompt  (if conv-id
-                                                  (or (conversations/effective-system-prompt conv-id)
-                                                    "(no system prompt)")
-                                                  "(no conversation)")]
-                                    (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
+                             :system-prompt
+                             (with-dialog-lock
+                               #(let [conv-id (get-in @state/app-db [:conv :id])
+                                      prompt  (if conv-id
+                                                (or (conversations/effective-system-prompt conv-id)
+                                                  "(no system prompt)")
+                                                "(no conversation)")]
+                                  (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
-                               nil)))]
-                     (case action
-                       :quit nil
+                             nil)))]
+                   (case action
+                     :quit nil
 
-                       :show-palette
-                       (if (:dialog-open? @state/app-db)
-                         (recur)
-                         (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
-                           (when cmd (run-command! cmd))
-                           (recur)))
+                     :show-palette
+                     (if (:dialog-open? @state/app-db)
+                       (recur)
+                       (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
+                         (when cmd (run-command! cmd))
+                         (recur)))
 
-                       :history-up
-                       (do (state/dispatch [:history-up])
-                         (recur))
+                     :history-up
+                     (do (state/dispatch [:history-up])
+                       (recur))
 
-                       :history-down
-                       (do (state/dispatch [:history-down])
-                         (recur))
+                     :history-down
+                     (do (state/dispatch [:history-down])
+                       (recur))
 
-                       :send
-                       (let [text (input/input->text state)]
-                         (state/dispatch [:reset-input])
-                         (when (and (seq (str/trim text))
-                                 (:conv @state/app-db)
-                                 (not (:loading? @state/app-db)))
-                           (state/dispatch [:send-message text]))
-                         (recur))
+                     :send
+                     (let [text (input/input->text state)]
+                       (state/dispatch [:reset-input])
+                       (when (and (seq (str/trim text))
+                               (:conv @state/app-db)
+                               (not (:loading? @state/app-db)))
+                         (state/dispatch [:send-message text]))
+                       (recur))
 
-                       :cancel
-                       (do (when (:loading? @state/app-db)
-                             (state/dispatch [:cancel-query]))
-                         (recur))
+                     :cancel
+                     (do (when (:loading? @state/app-db)
+                           (state/dispatch [:cancel-query]))
+                       (recur))
 
-                       :scroll-up
-                       (do (state/dispatch [:scroll-up 3 total-h inner-h])
-                         (recur))
+                     :scroll-up
+                     (do (state/dispatch [:scroll-up 3 total-h inner-h])
+                       (recur))
 
-                       :scroll-down
-                       (do (state/dispatch [:scroll-down 3 total-h inner-h])
-                         (recur))
+                     :scroll-down
+                     (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                       (recur))
 
-                       :continue (recur)))))))
+                     :continue (recur)))))))
          (finally
         ;; Tell the render thread to exit and wake it so the wait
         ;; doesn't sit out its full timeout. Daemon thread, so we don't

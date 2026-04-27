@@ -406,9 +406,14 @@
    answer-bg, stdout, etc.).
 
    Returns the number of screen rows consumed (including spacing)."
-  [g {:keys [role text timestamp duration-ms model iterations tokens cost]} start-row left max-w]
+  [g {:keys [role text timestamp duration-ms model iterations tokens cost status]} start-row left max-w]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
+        ;; Cancelled turns are status messages, not real answers —
+        ;; render the entire bubble dim (gray + italic), drop the
+        ;; meta line, dim the role label too. Skips markdown so a
+        ;; bare text like \"Cancelled by user.\" reads naturally.
+        cancelled? (= :cancelled status)
         label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
@@ -429,10 +434,14 @@
                     warning? t/warning-bg
                     :else    t/terminal-bg)
         fg-color  (cond
-                    warning? t/warning-fg
-                    user?    t/user-bubble-fg
-                    :else    t/ai-bubble-fg)
-        role-fg   (if user? t/user-role-fg t/ai-role-fg)
+                    cancelled? t/dialog-hint
+                    warning?   t/warning-fg
+                    user?      t/user-bubble-fg
+                    :else      t/ai-bubble-fg)
+        role-fg   (cond
+                    cancelled? t/dialog-hint
+                    user?      t/user-role-fg
+                    :else      t/ai-role-fg)
         time-str  (channels/format-date timestamp)
         dur-str   (channels/format-duration duration-ms)
         tok-in    (when-let [n (:input tokens)] (str "↑" n))
@@ -440,8 +449,11 @@
         iter-str  (when (and (not user?) iterations (pos? iterations)) (str iterations (if (= 1 iterations) " iter" " iters")))
         cost-str  (when-let [c (some-> cost :total-cost)]
                     (str "~$" (String/format java.util.Locale/US "%.6f" (into-array Object [(double c)]))))
-        ;; Below-message meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration
-        meta-parts (when (not user?)
+        ;; Below-message meta (assistant only): model · iters · ctx-in · ctx-out · ~cost · duration.
+        ;; Cancelled turns skip this entirely — there's no \"answer\"
+        ;; to attribute, and showing 0 iters / no model under a
+        ;; \"Cancelled\" placeholder is just clutter.
+        meta-parts (when (and (not user?) (not cancelled?))
                      (remove nil? [model iter-str tok-in tok-out cost-str dur-str]))
         meta-str   (when (seq meta-parts) (str/join " · " meta-parts))]
 
@@ -752,6 +764,9 @@
                 (p/fill-rect! g fbx y iw 1))
 
               ;; ── Plain text — answer bg if in answer zone, else bubble bg ──
+              ;; Cancelled status messages render in muted italic on
+              ;; terminal bg (no fill) so the line reads as a system
+              ;; note, not as something the model said.
               :else
               (let [line-bg (if in-answer? t/answer-bg bg-color)
                     line-fg (if in-answer? t/answer-fg fg-color)]
@@ -759,7 +774,9 @@
                   (p/set-bg! g line-bg)
                   (p/fill-rect! g fbx y iw 1))
                 (p/set-colors! g line-fg line-bg)
-                (p/put-str! g x y line))))))
+                (if cancelled?
+                  (p/styled g [p/ITALIC] (p/put-str! g x y line))
+                  (p/put-str! g x y line)))))))
 
       ;; Below-content meta row.
       ;;
@@ -1029,25 +1046,62 @@
   ^String [^long now-ms]
   (nth spinner-frames (mod (quot now-ms 100) (count spinner-frames))))
 
+(defn- prettify-error-type
+  "`:svar.core/http-error` → \"http error\". Drops the namespace and
+   replaces dashes with spaces so the spinner line reads naturally,
+   e.g. \"iter 0 — http error — retrying\". Returns nil when there's
+   nothing useful to print."
+  [error-data]
+  (when-let [t (some-> error-data :type)]
+    (let [bare (cond-> t (keyword? t) name)]
+      (when (and (string? bare) (not (str/blank? bare)))
+        (str/replace bare "-" " ")))))
+
+(defn- slow-suffix
+  "Escalating suffix that tells the user the provider is unusually
+   quiet. We show nothing for the first 30s (every LLM call takes a
+   few seconds), bump up at 30s, sharpen at 60s, and turn it into a
+   call-to-action at 120s. The thresholds match what humans actually
+   feel: <30s is \"normal\", 60s is \"this is slow\", 2 min is
+   \"something is wrong, you can bail\". Without this the spinner
+   said `sending request to provider…` for 143 seconds straight
+   while glm-5.1 hung — zero feedback that anything was off."
+  [^Long elapsed-ms]
+  (cond
+    (or (nil? elapsed-ms) (< (long elapsed-ms) 30000)) ""
+    (< (long elapsed-ms) 60000)  " — still waiting"
+    (< (long elapsed-ms) 120000) " — provider slow"
+    :else                         " — provider unresponsive, Esc to cancel"))
+
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether we're waiting on
-   the provider, thinking, executing, or recovering."
-  [iterations cancelling?]
+   the provider, thinking, executing, or recovering.
+
+   `elapsed-ms` is the wall-clock since query-start. When a single
+   iteration drags on — typically iter 0 hanging on `(llm/ask!…)` —
+   the phase escalates via `slow-suffix` so the user knows the issue
+   is upstream, not a UI freeze."
+  [iterations cancelling? elapsed-ms]
   (let [n          (count iterations)
         last-iter  (last iterations)
-        errored?   (some? (:error last-iter))
+        err        (:error last-iter)
+        errored?   (some? err)
         thinking?  (and (not errored?)
                      (some? (:thinking last-iter))
                      (not (str/blank? (:thinking last-iter))))
-        executing? (and (not errored?) last-iter (seq (:code last-iter)))]
+        executing? (and (not errored?) last-iter (seq (:code last-iter)))
+        suffix     (slow-suffix elapsed-ms)]
     (cond
       cancelling? "cancelling"
-      errored?    (str "iter " n " failed — retrying")
-      (zero? n)   "sending request to provider"
-      thinking?   (str "thinking (iter " n ")")
-      executing?  (str "executing code (iter " n ")")
-      :else       (str "working (iter " n ")"))))
+      errored?    (let [label (prettify-error-type err)]
+                    (str "iter " n
+                      (when label (str " — " label))
+                      " — retrying"))
+      (zero? n)   (str "sending request to provider" suffix)
+      thinking?   (str "thinking (iter " n ")" suffix)
+      executing?  (str "executing code (iter " n ")" suffix)
+      :else       (str "working (iter " n ")" suffix))))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -1082,7 +1136,7 @@
                             (max 0 (- now-ms (long query-start-ms))))
          elapsed-str      (or (channels/format-duration elapsed-ms) "0ms")
          spinner-line     (str (spinner-frame now-ms) "  "
-                            (progress-phase iterations cancelling?) "…  "
+                            (progress-phase iterations cancelling? elapsed-ms) "…  "
                             elapsed-str "  ·  Esc to cancel")
          trace-lines      (when (and show-iterations? (seq iterations))
                             (into []

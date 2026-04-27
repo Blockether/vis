@@ -2,6 +2,58 @@
 
 ## MANDATORY: Agent Rules
 
+### Run `./verify.sh` before every commit
+
+`./verify.sh` (at the repo root) is the single pre-commit gate. It runs
+eight checks in order and stops at the first failure. **No PR, commit,
+or agent-authored change ships without a green run.** This rule
+overrides convenience, scope creep, and "it's just a one-line fix."
+
+Gates:
+
+1. **Format** — `cljfmt check` over `packages/`, `extensions/`, `build.clj`.
+   Fix with `cljfmt fix packages/ extensions/ build.clj`.
+2. **Lint** — `clj-kondo` across every package src tree. Errors and
+   warnings are fatal; info-level diagnostics are advisory.
+3. **GraalVM safety** — walks every production package's `src/`, loads
+   each `.clj` with `*warn-on-reflection*` + `*unchecked-math*
+   :warn-on-boxed`, counts the resulting warnings on project source
+   paths only. **Ratchet**: fails if the count grows beyond
+   `.verification-baseline/graal-warnings.count` (tracked file).
+   Improvements ratchet down via `./verify.sh --update-baseline`.
+   `vis-benchmark` is excluded — it's a dev/research package, not on
+   the default classpath, not shipped as a runtime jar.
+4. **Tests** — `clojure -M:test` (lazytest, aggregate suite).
+5. **Docs build** — `cd docs && mdbook build`. The "update `docs/`
+   when touching architecture or public API" rule below is meaningless
+   if the docs don't compile.
+6. **Smoke** — `bin/vis` prints the help banner. Doesn't touch the user DB.
+7. **Git hygiene** — `git diff --check HEAD` (trailing whitespace,
+   conflict markers).
+8. **Secret scan** — scans the diff against `origin/main` for common
+   API-key patterns (`sk_*`, `lin_api_*`, `nvapi-*`, `AIzaSy*`,
+   `ghp_*`, hardcoded `password = "..."`).
+
+Modes:
+
+- `./verify.sh` — full pipeline (default).
+- `./verify.sh --quick` — format + lint only (~10s) for tight loops.
+- `./verify.sh --graal` — just the GraalVM safety check.
+- `./verify.sh --strict` — graal step demands ZERO warnings
+   (no ratchet); used to confirm a successful clean-up before
+   updating the baseline.
+- `./verify.sh --update-baseline` — snapshot the current graal
+   warning count as the new lower bound. Commit the
+   `.verification-baseline/graal-warnings.count` change with the same
+   PR that drove the count down.
+
+Logs land in `.verification/<step>.log` and `.verification/summary.log`
+(both gitignored).
+
+The baseline is intentionally a **ratchet, not a ceiling** — it only
+moves down. Any PR that adds reflection or boxed-math warnings without
+a justification is a bug, even if the rest of the diff looks fine.
+
 ### Never bind Ctrl+Y in the TUI
 
 `Ctrl+Y` sends `SIGTSTP` (or the `DSUSP` character on macOS) which

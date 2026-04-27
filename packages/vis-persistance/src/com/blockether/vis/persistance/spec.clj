@@ -139,7 +139,12 @@
     (spec/field {::spec/name :time-ms
                  ::spec/type :spec.type/int
                  ::spec/cardinality :spec.cardinality/one
-                 ::spec/description "Expected max execution time in ms. def 100, assert 500, heavy 2000. Max 5000."})))
+                 ::spec/description "Expected max execution time in ms. def 100, assert 500, heavy 2000. Max 5000."})
+    (spec/field {::spec/name :doc
+                 ::spec/type :spec.type/string
+                 ::spec/cardinality :spec.cardinality/one
+                 ::spec/required false
+                 ::spec/description "Optional docstring for the var defined by this :expr. Use when :expr is `(def name val)` or `(defn name [args] body)` so the var carries its purpose into <var_index>. The loop attaches this as :doc metadata after eval. Ignored when :expr does not define a var."})))
 
 (def NEXT_SPEC
   "Per-iteration steering hint. Both fields are optional — emit `:next` only

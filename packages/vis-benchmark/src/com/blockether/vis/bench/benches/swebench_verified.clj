@@ -431,38 +431,38 @@
         predictions (collect-predictions! agent-name tasks router model run-ts)
 
           ;; Phase 2: Write predictions.jsonl
-          predictions-path (write-predictions! predictions run-id model)
+        predictions-path (write-predictions! predictions run-id model)
 
           ;; Phases 3-4: Run harness and parse report (may throw)
-          [report-map harness-ok?]
-          (try
-            (run-harness! predictions-path run-id report-dir)
-            [(parse-report report-dir) true]
-            (catch Throwable e
-              (println (format "\nWARNING: Harness failed: %s" (ex-message e)))
-              (println "Predictions have been saved. Run the harness manually:")
-              (println (format "  python -m swebench.harness.run_evaluation \\"))
-              (println (format "    --dataset_name princeton-nlp/SWE-bench_Verified \\"))
-              (println (format "    --predictions_path %s \\" predictions-path))
-              (println (format "    --max_workers %d \\" harness-max-workers))
-              (println (format "    --run_id %s \\" run-id))
-              (println (format "    --report_dir %s" report-dir))
-              [{} false]))
+        [report-map harness-ok?]
+        (try
+          (run-harness! predictions-path run-id report-dir)
+          [(parse-report report-dir) true]
+          (catch Throwable e
+            (println (format "\nWARNING: Harness failed: %s" (ex-message e)))
+            (println "Predictions have been saved. Run the harness manually:")
+            (println (format "  python -m swebench.harness.run_evaluation \\"))
+            (println (format "    --dataset_name princeton-nlp/SWE-bench_Verified \\"))
+            (println (format "    --predictions_path %s \\" predictions-path))
+            (println (format "    --max_workers %d \\" harness-max-workers))
+            (println (format "    --run_id %s \\" run-id))
+            (println (format "    --report_dir %s" report-dir))
+            [{} false]))
 
           ;; Phase 5: Build final results
-          results (mapv #(make-result-rec % report-map) predictions)
+        results (mapv #(make-result-rec % report-map) predictions)
 
           ;; Save
-          saved (common/save-results! "swebench-verified" agent-name model results)
+        saved (common/save-results! "swebench-verified" agent-name model results)
 
-          resolved   (count (filter #(= :resolved (:harness-status %)) results))
-          unresolved (count (filter #(= :unresolved (:harness-status %)) results))
-          errors-cnt (count (filter #(or (= :error (:harness-status %))
-                                       (some? (:error %))) results))
-          accuracy   (if (pos? total-q) (/ (double resolved) total-q) 0.0)
-          total-dur  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
-          avg-dur    (if (pos? total-q) (/ (double total-dur) total-q) 0.0)
-          total-cost (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
+        resolved   (count (filter #(= :resolved (:harness-status %)) results))
+        unresolved (count (filter #(= :unresolved (:harness-status %)) results))
+        errors-cnt (count (filter #(or (= :error (:harness-status %))
+                                     (some? (:error %))) results))
+        accuracy   (if (pos? total-q) (/ (double resolved) total-q) 0.0)
+        total-dur  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
+        avg-dur    (if (pos? total-q) (/ (double total-dur) total-q) 0.0)
+        total-cost (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
         avg-iters  (when (= agent-name :vis)
                      (let [iters (keep :iterations predictions)]
                        (when (seq iters)
