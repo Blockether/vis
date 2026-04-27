@@ -140,9 +140,8 @@
 
 (defn- normalize-spec
   "Reshape explicit-sqlite nested forms into the canonical shape
-   backends accept. The shorthand `:memory` is the canonical name for
-   the ephemeral in-process DB; we used to also accept `:temp`, but
-   that alias was deleted -- use `:memory` everywhere."
+   backends accept. `:memory` is the canonical shorthand for the
+   ephemeral in-process DB."
   [db-spec]
   (cond
     (and (map? db-spec)

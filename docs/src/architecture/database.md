@@ -2,11 +2,6 @@
 
 Single SQLite DB for everything: `~/.vis/vis.mdb/vis.db`.
 
-> **Filename history.** The file used to be called `rlm.db`. On first
-> open, the SQLite backend transparently renames any legacy `rlm.db`
-> (and its `-wal` / `-shm` / `-journal` sidecars) to `vis.db` so
-> upgraded installs keep their data without manual intervention.
-
 Schema source of truth: `packages/vis-persistance/resources/db/sqlite/migration/V1__schema.sql`. The SQL ships in the **`vis-persistance`** facade jar (so the schema travels with the API) while the SQLite/Flyway runtime lives in `vis-persistance-sqlite` and points its migration runner at the classpath resource via `MIGRATIONS = "classpath:db/sqlite/migration"`.
 
 Flyway migration location: `classpath:db/sqlite/migration`.

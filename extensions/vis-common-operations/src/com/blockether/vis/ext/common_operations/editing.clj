@@ -631,11 +631,11 @@
      :applied (count blocks)}))
 
 (defn- patch-file
-  "Apply an edit patch to a file.
+  "Apply a Codex-style SEARCH/REPLACE patch to a file.
 
-   Preferred form (Codex-style):
      (fs/patch-file path patch-text)
-   where patch-text contains one or more blocks:
+
+   `patch-text` contains one or more blocks:
 
      <<<<<<< SEARCH
      old text
@@ -643,25 +643,14 @@
      new text
      >>>>>>> REPLACE
 
-   Backward-compatible form:
-     (fs/patch-file path old-text new-text)
-
-   Without write-file, create a new file by using an EMPTY SEARCH block:
+   Create a new file by using an EMPTY SEARCH block:
 
      <<<<<<< SEARCH
      =======
      full file contents here
      >>>>>>> REPLACE"
-  ([path patch-text]
-   (apply-search-replace-patch path patch-text))
-  ([path old-text new-text]
-   (apply-search-replace-patch
-     path
-     (str search-marker "\n"
-       old-text "\n"
-       split-marker "\n"
-       new-text "\n"
-       replace-marker))))
+  [path patch-text]
+  (apply-search-replace-patch path patch-text))
 
 ;; =============================================================================
 ;; Extension definition
@@ -707,10 +696,9 @@
 
 (def patch-file-symbol
   (ext/symbol 'patch-file patch-file
-    {:doc "Patch an existing file. Preferred form is Codex-style SEARCH/REPLACE patch text; old 3-arg exact replacement remains supported. Use empty SEARCH to create a new file."
-     :arglists '([path patch-text] [path old-text new-text])
+    {:doc "Patch a file with a Codex-style SEARCH/REPLACE patch text. Use an empty SEARCH block to create a new file."
+     :arglists '([path patch-text])
      :examples ["(fs/patch-file \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
-                "(fs/patch-file \"src/core.clj\" \"old code\" \"new code\")"
                 "(fs/patch-file \"new-file.txt\" \"<<<<<<< SEARCH\n=======\nhello\n>>>>>>> REPLACE\")"]
      :on-error-fn rescue-path-args}))
 
