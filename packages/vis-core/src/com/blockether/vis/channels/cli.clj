@@ -23,6 +23,7 @@
             [com.blockether.vis.commandline :as cmd]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.core :as core]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.core :as conv-core]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
             [com.blockether.vis.persistance.core :as db]
@@ -353,12 +354,14 @@
         (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 
-;;; ── Self-register every built-in into the commandline registry ─────────
+;;; ── Top-level binary built-ins (cmd/register-global! direct) ─────────
 ;;
-;; This is the entire wiring this namespace contributes to the CLI.
-;; The dispatcher in `com.blockether.vis.commandline.main` finds
-;; these via `cmd/registered-under []` and renders + dispatches them
-;; alongside any other extension's commands.
+;; `run`, `auth`, `conversations`, `doctor` are the binary's own
+;; commands. They live at the top of the command tree -- `vis run
+;; "..."`, NOT `vis extensions run "..."` -- and so they DO NOT use
+;; `:ext/cli` (which is the extensions-subcommand slot, see below).
+;; Direct `cmd/register-global!` is the right plumbing here; vis-core
+;; is the host, not an extension contributing to `vis extensions`.
 
 (doseq [spec
         [{:cmd/name  "run"
@@ -369,7 +372,7 @@
                       {:name "trace"          :kind :flag :type :boolean :doc "Show full execution trace."}
                       {:name "debug"          :kind :flag :type :boolean :doc "Enable svar debug logging."}
                       {:name "model"          :kind :flag :type :string  :doc "Override the LLM model."}
-                      {:name "max-iterations" :kind :flag :type :int     :doc "Iteration budget (default 50, min 1)."}
+                      {:name "max-iterations" :kind :flag :type :int     :doc "Initial iteration budget (default 4, min 1; the LLM extends on demand via (request-more-iterations N))."}
                       {:name "name"           :kind :flag :type :string  :doc "Agent name."}
                       {:name "db"             :kind :flag :type :string  :doc "DB target: PATH or :memory."}]
           :cmd/examples ["vis run \"What is 2+2?\""
@@ -395,15 +398,26 @@
          {:cmd/name  "doctor"
           :cmd/doc   "Show environment + DB diagnostics."
           :cmd/usage "vis doctor"
-          :cmd/run-fn cli-doctor!}
-
-         ;; `list` mounts UNDER `vis extensions` (the parent registered
-         ;; by vis-extension/extension.clj). vis-core has no top-level
-         ;; `extensions` command anymore — listing extensions is just
-         ;; another subcommand of the extensions parent.
-         {:cmd/name   "list"
-          :cmd/parent ["extensions"]
-          :cmd/doc    "List every registered extension with metadata."
-          :cmd/usage  "vis extensions list"
-          :cmd/run-fn cli-extensions!}]]
+          :cmd/run-fn cli-doctor!}]]
   (cmd/register-global! spec))
+
+;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────
+;;
+;; `extensions list` IS extensions-namespaced -- introspecting the
+;; extension registry is naturally part of `vis extensions <cmd>`.
+;; So it goes through `:ext/cli`, where the vis-extension dispatcher
+;; auto-mounts every entry under `[\"extensions\"]`. vis-core thus
+;; participates in the unified extension contract for this entry, the
+;; same way every other extension does.
+
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.channels.cli
+     :ext/doc       "vis-core's contribution to the `vis extensions` subtree."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/cli       [{:cmd/name   "list"
+                      :cmd/doc    "List every registered extension with metadata."
+                      :cmd/usage  "vis extensions list"
+                      :cmd/run-fn cli-extensions!}]}))

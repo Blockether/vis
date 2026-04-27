@@ -1,7 +1,7 @@
 (ns com.blockether.vis.channels.tui.screen
   (:require [clojure.string :as str]
-            [com.blockether.vis.channel :as channel]
             [com.blockether.vis.channels.core :as channels]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.footer :as footer]
             [com.blockether.vis.channels.tui.input :as input]
@@ -555,10 +555,16 @@
 
 ;;; ── Channel registration (auto-discovered via META-INF/vis.edn) ──
 
-(channel/register-global!
-  {:channel/id        :tui
-   :channel/cmd       "tui"
-   :channel/doc       "Interactive terminal UI."
-   :channel/usage     "vis tui [--conversation-id ID | --resume]"
-   :channel/owns-tty? true
-   :channel/main-fn   #'channel-main})
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.channels.tui.screen
+     :ext/doc       "Lanterna-based terminal UI channel."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/channels  [{:channel/id        :tui
+                      :channel/cmd       "tui"
+                      :channel/doc       "Interactive terminal UI."
+                      :channel/usage     "vis tui [--conversation-id ID | --resume]"
+                      :channel/owns-tty? true
+                      :channel/main-fn   #'channel-main}]}))

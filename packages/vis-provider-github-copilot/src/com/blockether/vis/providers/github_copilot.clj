@@ -373,7 +373,7 @@
 ;; to swap providers without touching vis-core.
 ;; =============================================================================
 
-(require '[com.blockether.vis.provider :as provider])
+(require '[com.blockether.vis.extension :as ext])
 
 (defn- interactive-auth!
   "Wrap the multi-step device flow into one fn the CLI / TUI can
@@ -398,11 +398,18 @@
         (print! "  ✓ Authenticated! GitHub Copilot is ready.")
         :ok))))
 
-(provider/register-global!
-  {:provider/id           :github-copilot
-   :provider/label        "GitHub Copilot"
-   :provider/status-fn    #'status
-   :provider/logout-fn    #'logout!
-   :provider/detect-fn    #'detect-oauth-token
-   :provider/auth-fn      #'interactive-auth!
-   :provider/get-token-fn #'get-copilot-token!})
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.providers.github-copilot
+     :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/providers
+     [{:provider/id           :github-copilot
+       :provider/label        "GitHub Copilot"
+       :provider/status-fn    #'status
+       :provider/logout-fn    #'logout!
+       :provider/detect-fn    #'detect-oauth-token
+       :provider/auth-fn      #'interactive-auth!
+       :provider/get-token-fn #'get-copilot-token!}]}))

@@ -1067,5 +1067,14 @@
 ;; routes here.
 ;; =============================================================================
 
-(require '[com.blockether.vis.persistance.core :as facade])
-(facade/register-backend! :sqlite 'com.blockether.vis.persistance.sqlite.core)
+(require '[com.blockether.vis.extension :as ext])
+
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.persistance.sqlite.core
+     :ext/doc       "SQLite + Flyway persistence backend."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/persistance [{:persistance/id :sqlite
+                        :persistance/ns 'com.blockether.vis.persistance.sqlite.core}]}))

@@ -15,6 +15,12 @@
  ;; so every store starts with the canonical schema applied.
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
+  ;; vis-extension is the canonical extension-registration contract:
+  ;; this package ships a `:ext/persistance` entry (the SQLite
+  ;; backend implementation of the persistance facade) through
+  ;; `ext/register-global!`, the same author-facing API every other
+  ;; extension uses.
+  com.blockether/vis-extension              {:local/root "../vis-extension"}
   com.blockether/vis-persistance            {:local/root "../vis-persistance"}
   ;; Binary serialization for expression_state.result/error blobs
   com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}

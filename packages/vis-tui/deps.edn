@@ -9,7 +9,12 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis-core          {:local/root "../vis-core"}
-  com.googlecode.lanterna/lanterna {:mvn/version "3.1.5"}
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with PR #625 cherry-picked
+  ;; (emoji rendering in StreamBasedTerminal/AbstractTextGraphics).
+  ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
+  ;; Source: https://github.com/Blockether/lanterna (tag vis-3.1.5)
+  ;; Retire when upstream cuts a release containing #625.
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.1"}
   com.blockether/svar              {:mvn/version "0.3.11"}}
 
  :aliases

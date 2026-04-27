@@ -6,8 +6,8 @@
    These tests prove the binary actually launches: classpath builds,
    the unified extension loader discovers every `META-INF/vis.edn`
    on the classpath (which then populates the ext-symbol, channel,
-   CLI-command, provider, and persistence-backend registries as a
-   side effect), the dispatcher walks its tree, and each sub-command's
+   CLI-command, provider, and persistance registries as a side
+   effect), the dispatcher walks its tree, and each sub-command's
    help / list path runs to a clean exit. They do NOT exercise the
    LLM round-trip — that requires real auth and is intentionally
    left to manual / integration-only runs.

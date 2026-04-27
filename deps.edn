@@ -39,7 +39,7 @@
   ;;
   ;; Dispatcher lives in vis-commandline — it discovers channels,
   ;; extensions (the umbrella term — ext symbols, channels, CLI
-  ;; commands, providers, persistance backends) at startup via the
+  ;; commands, providers, persistance entries) at startup via the
   ;; unified `META-INF/vis.edn` loader in vis-extension. vis-core is
   ;; just one of those extensions.
   :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI

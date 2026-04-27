@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# Bump a Maven dependency across every packages/*/deps.edn (and the
+# root deps.edn) in lockstep.
+#
+# Why this exists: vis is a polylith monorepo. Each package declares
+# the exact deps it needs in its own deps.edn — that's the polylith
+# pattern, and we are NOT collapsing them into a god-bag "vis-common"
+# package. But that means a single upstream bump (e.g. svar 0.3.11 →
+# 0.3.12) touches N files. This script eats that toil.
+#
+# Usage:
+#   bin/bump-dependency <group/artifact> <new-version>
+#   bin/bump-dependency com.blockether/svar 0.3.12
+#   bin/bump-dependency org.clojure/clojure 1.12.5
+#
+# Flags:
+#   --dry-run     Show what would change, touch nothing.
+#   --no-verify   Skip ./verify.sh --quick at the end.
+#   --no-stage    Skip `git add` of the modified files.
+#   -h | --help   Show this banner.
+#
+# Behaviour:
+#   1. Scans deps.edn + packages/*/deps.edn for the coordinate.
+#   2. Rewrites every `{:mvn/version "<old>"}` immediately following
+#      the coordinate to the new version. :local/root entries are left
+#      alone (they have no version).
+#   3. Reports per-file diff summary.
+#   4. (default) Runs `./verify.sh --quick` to catch obvious breakage.
+#   5. (default) Stages the modified deps.edn files.
+#
+# Exit codes:
+#   0  success (or dry-run with matches)
+#   1  bad usage
+#   2  coordinate not found in any deps.edn
+#   3  verify.sh --quick failed
+
+set -euo pipefail
+
+# ---- arg parsing ----------------------------------------------------
+
+dry_run=false
+run_verify=true
+stage_changes=true
+positional=()
+
+usage() {
+  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)    usage; exit 0 ;;
+    --dry-run)    dry_run=true; shift ;;
+    --no-verify)  run_verify=false; shift ;;
+    --no-stage)   stage_changes=false; shift ;;
+    --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
+    -*)           echo "unknown flag: $1" >&2; usage >&2; exit 1 ;;
+    *)            positional+=("$1"); shift ;;
+  esac
+done
+
+if [[ ${#positional[@]} -ne 2 ]]; then
+  usage >&2
+  exit 1
+fi
+
+coord="${positional[0]}"
+new_version="${positional[1]}"
+
+# Validate coord shape: group/artifact, no spaces, no quotes.
+if [[ ! "$coord" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+  echo "error: coordinate '$coord' does not look like 'group/artifact'" >&2
+  exit 1
+fi
+
+# Validate version: semver-ish, allow pre-release/build tags.
+if [[ ! "$new_version" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+  echo "error: version '$new_version' contains illegal characters" >&2
+  exit 1
+fi
+
+# ---- locate repo root ----------------------------------------------
+
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ "$src" != /* ]] && src="$dir/$src"
+done
+bin_dir="$(cd -P "$(dirname "$src")" && pwd)"
+repo_root="$(cd -P "$bin_dir/.." && pwd)"
+cd "$repo_root"
+
+# ---- collect candidate deps.edn files -------------------------------
+
+deps_files=()
+[[ -f deps.edn ]] && deps_files+=("deps.edn")
+while IFS= read -r f; do
+  deps_files+=("$f")
+done < <(find packages -mindepth 2 -maxdepth 2 -name 'deps.edn' | sort)
+
+# ---- rewrite ---------------------------------------------------------
+
+# Escape the coordinate for use in a regex (dots, slashes).
+coord_regex="$(printf '%s' "$coord" | sed -e 's/[.[\*^$/]/\\&/g')"
+
+# Match: <coord>  WHITESPACE  {:mvn/version "<anything>"}
+#                                            ^^^^^^^^^^^
+# Capture old version so we can report it.
+match_pattern="(${coord_regex})([[:space:]]+)\{:mvn/version \"([^\"]+)\"\}"
+
+changed_files=()
+total_hits=0
+declare -a summary_lines
+
+for f in "${deps_files[@]}"; do
+  # Find matches with old → new.
+  hits=$(perl -ne 'while (/'"$coord_regex"'\s+\{:mvn\/version "([^"]+)"\}/g) { print "$1\n" }' "$f")
+  if [[ -z "$hits" ]]; then
+    continue
+  fi
+  while IFS= read -r old_ver; do
+    [[ -z "$old_ver" ]] && continue
+    total_hits=$((total_hits + 1))
+    if [[ "$old_ver" == "$new_version" ]]; then
+      summary_lines+=("  = $f  (already $new_version)")
+    else
+      summary_lines+=("  ↑ $f  $old_ver → $new_version")
+    fi
+  done <<< "$hits"
+
+  if [[ "$dry_run" == "true" ]]; then
+    continue
+  fi
+
+  # In-place rewrite. Use perl for portable look-behind-free substitution.
+  perl -i -pe '
+    s{('"$coord_regex"')(\s+)\{:mvn/version "[^"]+"\}}
+     {$1.$2."{:mvn/version \"'"$new_version"'\"}"}ge
+  ' "$f"
+
+  changed_files+=("$f")
+done
+
+# ---- report ---------------------------------------------------------
+
+if [[ $total_hits -eq 0 ]]; then
+  echo "error: coordinate '$coord' not found in any deps.edn" >&2
+  echo "       searched: ${deps_files[*]}" >&2
+  exit 2
+fi
+
+echo "bump-dependency: $coord → $new_version"
+printf '%s\n' "${summary_lines[@]}"
+
+if [[ "$dry_run" == "true" ]]; then
+  echo
+  echo "(dry-run — no files written)"
+  exit 0
+fi
+
+if [[ ${#changed_files[@]} -eq 0 ]]; then
+  echo
+  echo "Nothing to write — every match already at $new_version."
+  exit 0
+fi
+
+# ---- verify ---------------------------------------------------------
+
+if [[ "$run_verify" == "true" ]]; then
+  echo
+  echo "Running ./verify.sh --quick ..."
+  if ! ./verify.sh --quick; then
+    echo
+    echo "verify.sh --quick failed — leaving the rewritten deps.edn in place" >&2
+    echo "for inspection. Revert with: git checkout -- ${changed_files[*]}" >&2
+    exit 3
+  fi
+fi
+
+# ---- stage ----------------------------------------------------------
+
+if [[ "$stage_changes" == "true" ]]; then
+  git add -- "${changed_files[@]}"
+  echo
+  echo "Staged: ${changed_files[*]}"
+  echo "Suggested commit:"
+  echo "  git commit -m \"deps: bump $coord to $new_version\""
+fi

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.provider
   "LLM provider registry. Same extension pattern as channels, ext symbols,
-   commandline, and persistance backends.
+   commandline, and persistance entries.
 
    A provider is an authentication/credential strategy for talking to
    an LLM API: GitHub Copilot device flow, Anthropic API key, Ollama

@@ -34,7 +34,7 @@
 
    Auto-discovery: ship the unified `META-INF/vis.edn` in the jar's
    resources/ listing every namespace that calls `register-global!`
-   (channels, extensions, commands, providers, persistence backends —
+   (channels, extensions, commands, providers, persistance entries —
    the loader is type-agnostic):
 
      [com.blockether.vis.channels.tui.screen

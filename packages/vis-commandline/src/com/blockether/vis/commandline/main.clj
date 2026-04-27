@@ -13,7 +13,7 @@
    every `META-INF/vis.edn` resource and `require`s the namespaces
    listed inside. Each loaded namespace self-registers into whichever
    subsystem registry it targets (extension symbols, channels,
-   commands, providers, persistence backends, ...). vis-commandline
+   commands, providers, persistance entries, ...). vis-commandline
    stays genuinely standalone: we resolve the loader through
    `requiring-resolve` so this jar carries zero compile-time dep on
    vis-extension. Drop just this jar and you get a working CLI that

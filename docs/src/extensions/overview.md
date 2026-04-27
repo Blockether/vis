@@ -24,12 +24,28 @@ a single validated unit.
 
 ## What an Extension Can Do
 
-1. **Bind functions** into an aliased namespace - the LLM calls `(alias/fn ...)` from `:code`
-2. **Bind constants** - data the LLM references via the alias prefix
-3. **Inject prompt context** - LLM-facing docs in the system prompt
-4. **Emit per-iteration nudges** - situational hints (budget, errors, etc.)
-5. **Expose Java classes** - enable `(LocalDate/now)` style interop
-6. **Guard activation** - conditionally enable/disable based on env state
+An extension is a single `(ext/extension {…})` data map declaring
+zero or more of FIVE surfaces. The same `(ext/register-global! …)`
+call handles all of them; the registrar dispatches each populated
+slot to its matching sub-registry as a side effect.
+
+| Slot | Purpose | Where the user sees it |
+|------|---------|------------------------|
+| `:ext/symbols`     | Functions / constants bound into the SCI sandbox under an alias. | LLM `:code` calls `(alias/fn …)`. |
+| `:ext/cli`         | CLI subcommands the extension contributes. **Always auto-mount under `vis extensions <cmd>`**; deeper nests like `vis extensions git status` are allowed via `:cmd/parent ["extensions" "git"]`. | `vis extensions <name>`. |
+| `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
+| `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis auth <id>`. |
+| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `persistance.core/create-rlm-conn`. |
+
+Alongside those surfaces, every extension may also:
+
+- **Inject prompt context** — LLM-facing docs in the system prompt (`:ext/prompt`, derived from `:ext/symbols` metadata).
+- **Emit per-iteration nudges** — situational hints (budget, errors, …) via `:ext/nudge-fn`.
+- **Expose Java classes** — enable `(LocalDate/now)` style interop via `:ext/classes` / `:ext/imports`.
+- **Guard activation** — conditionally enable/disable based on env state via `:ext/activation-fn`.
+- **Declare dependencies** on other extensions via `:ext/requires`.
+
+No extension is required to populate every slot — a TUI jar fills only `:ext/channels`, a backend jar fills only `:ext/persistance`, a tools jar fills only `:ext/symbols`, etc.
 
 ## Registration
 
@@ -79,10 +95,17 @@ calls `com.blockether.vis.extension/discover-extensions!` which:
 5. Logs every success at `:info` and every failure at `:error`
 
 The loader is **type-agnostic**: the same `META-INF/vis.edn` resource
-holds the namespaces for ext symbols, channels, CLI commands,
-providers, and persistence backends. Whichever `register-global!`
-(or `register-backend!`) the loaded namespace happens to call decides
-which subsystem registry it ends up in.
+holds the namespaces for every surface (SCI sandbox symbols,
+channels, CLI commands, providers, persistance entries). The author
+declares everything in one `(ext/extension {…})` map and calls
+`(ext/register-global! …)` once; the registrar dispatches each
+populated `:ext/<slot>` (`:ext/symbols`, `:ext/cli`, `:ext/channels`,
+`:ext/providers`, `:ext/persistance`) to its matching sub-registry as
+a side effect. The lower-level `register-global!` calls
+(`channel/register-global!`, `cmd/register-global!`,
+`provider/register-global!`, `persistance.core/register-backend!`)
+remain available for embedded / programmatic use, and are still what
+`ext/register-global!` ultimately invokes.
 
 This means: add the extension jar/local-root to your deps.edn aliases,
 ensure it has a `META-INF/vis.edn` in its resources, and it will be
@@ -101,7 +124,7 @@ extensions/my-ext/
 **deps.edn alias:**
 
 ```clojure
-:run {:extra-deps {com.acme.ext/my-tool {:local/root "extensions/my-ext"}}}
+:dev {:extra-deps {com.acme.ext/my-tool {:local/root "extensions/my-ext"}}}
 ```
 
 ### Dynamic Loading
@@ -208,7 +231,7 @@ If an extension's `activation-fn` or `prompt` fn throws, the error is
 logged at `:error` level and that extension's prompt is skipped —
 the query still runs.
 
-## Quick Example
+## Quick Example — a tools-only extension
 
 ```clojure
 (ns com.acme.ext.search
@@ -225,17 +248,14 @@ the query still runs.
      :arglists '([query])
      :examples ["(search/find \"neural\")"]}))
 
-(def search-ext
+(ext/register-global!
   (ext/extension
-    {:ext/namespace     'com.acme.ext.search
-     :ext/doc           "Document search"
-     :ext/group         "knowledge"
-     :ext/ns-alias      {:ns 'vis.ext.search :alias 'search}
-     :ext/prompt        "Prefer search before manual file scans."
-     :ext/symbols       [find-symbol]}))
-
-;; Self-register at load time
-(ext/register-global! search-ext)
+    {:ext/namespace 'com.acme.ext.search
+     :ext/doc       "Document search"
+     :ext/group     "knowledge"
+     :ext/ns-alias  {:ns 'vis.ext.search :alias 'search}
+     :ext/prompt    "Prefer search before manual file scans."
+     :ext/symbols   [find-symbol]}))
 ```
 
 The LLM sees in the system prompt:
@@ -249,6 +269,137 @@ Prefer search before manual file scans.
 
 And calls `(search/find "neural")` from `:code` blocks. Bare
 `(find "neural")` does not resolve.
+
+## Concrete examples for every surface
+
+Real in-tree examples — every package below ships exactly one
+`META-INF/vis.edn` and exactly one `(ext/register-global! …)` call.
+
+### `:ext/symbols` — SCI sandbox tools
+
+`extensions/vis-common-operations/.../core.clj` — read/list/grep/patch:
+
+```clojure
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.ext.common-operations.core
+     :ext/doc       "Common filesystem operations: read, list, grep, patch."
+     :ext/version   "0.3.0"
+     :ext/group     "filesystem"
+     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+     :ext/symbols   all-symbols
+     :ext/prompt    combined-prompt}))
+```
+
+### `:ext/cli` — commands under `vis extensions <cmd>`
+
+`packages/vis-core/.../channels/cli.clj` ships the `vis extensions list`
+subcommand:
+
+```clojure
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.channels.cli
+     :ext/doc       "vis-core's contribution to the `vis extensions` subtree."
+     :ext/cli       [{:cmd/name   "list"
+                      :cmd/doc    "List every registered extension."
+                      :cmd/usage  "vis extensions list"
+                      :cmd/run-fn cli-extensions!}]}))
+```
+
+`:ext/cli` ALWAYS mounts under `["extensions"]`. The dispatcher
+defaults `:cmd/parent` for entries that omit it. Three forms work:
+
+1. **Flat** (most common): just `:cmd/name` + `:cmd/run-fn` → `vis extensions <name>`.
+2. **Embedded subcommands**: the entry carries its own `:cmd/subcommands` vector → the whole tree mounts at `vis extensions <name>` and below.
+3. **Deeper nest via parent path**: each entry sets `:cmd/parent ["extensions" "git"]` etc. → `vis extensions git <name>`.
+
+Any `:cmd/parent` that doesn't start with `"extensions"` is rejected
+at registration time with `:type :ext/cli-bad-parent`. Top-level
+binary commands (`vis run`, `vis auth`, …) are NOT extension
+commands; they use `cmd/register-global!` directly inside vis-core.
+
+See [Extension Spec — `:ext/cli`](spec.md#extcli----extensions-subcommands)
+for full examples of each form.
+
+### `:ext/channels` — a `vis channels <id>` front-end
+
+`packages/vis-tui/.../tui/screen.clj`:
+
+```clojure
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.channels.tui.screen
+     :ext/doc       "Lanterna-based terminal UI channel."
+     :ext/version   "0.3.0"
+     :ext/channels  [{:channel/id        :tui
+                      :channel/cmd       "tui"
+                      :channel/doc       "Interactive terminal UI."
+                      :channel/usage     "vis tui [--conversation-id ID | --resume]"
+                      :channel/owns-tty? true
+                      :channel/main-fn   #'channel-main}]}))
+```
+
+### `:ext/providers` — an LLM auth provider
+
+`packages/vis-provider-github-copilot/.../github_copilot.clj`:
+
+```clojure
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.providers.github-copilot
+     :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
+     :ext/version   "0.3.0"
+     :ext/providers [{:provider/id           :github-copilot
+                      :provider/label        "GitHub Copilot"
+                      :provider/status-fn    #'status
+                      :provider/logout-fn    #'logout!
+                      :provider/detect-fn    #'detect-oauth-token
+                      :provider/auth-fn      #'interactive-auth!
+                      :provider/get-token-fn #'get-copilot-token!}]}))
+```
+
+### `:ext/persistance` — a backend implementation
+
+`packages/vis-persistance-sqlite/.../sqlite/core.clj`:
+
+```clojure
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace   'com.blockether.vis.persistance.sqlite.core
+     :ext/doc         "SQLite + Flyway persistence backend."
+     :ext/version     "0.3.0"
+     :ext/persistance [{:persistance/id :sqlite
+                        :persistance/ns 'com.blockether.vis.persistance.sqlite.core}]}))
+```
+
+### Multiple surfaces in one extension
+
+Nothing prevents an extension from filling many slots at once —
+an extension that ships SCI tools, a CLI command, AND a channel:
+
+```clojure
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.acme.ext.git
+     :ext/doc       "Git integration: SCI tools + CLI + a web-hook channel."
+     :ext/group     "vcs"
+     :ext/ns-alias  {:ns 'vis.ext.git :alias 'git}
+     :ext/symbols   [git-status-sym git-blame-sym]
+     :ext/cli       [{:cmd/name   "blame"
+                      :cmd/doc    "Run git blame on a path."
+                      :cmd/run-fn #'cli-blame}]
+     :ext/channels  [{:channel/id      :git-webhook
+                      :channel/cmd     "git-webhook"
+                      :channel/doc     "Receive GitHub webhooks."
+                      :channel/main-fn #'webhook-main}]}))
+```
+
+The registrar walks each slot in turn. The user gets:
+
+- `(git/status)` / `(git/blame ...)` in the SCI sandbox
+- `vis extensions blame` on the CLI
+- `vis channels git-webhook` for the webhook front-end
 
 ## Sections
 

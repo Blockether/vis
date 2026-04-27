@@ -7,9 +7,9 @@ Single SQLite DB for everything: `~/.vis/vis.mdb/vis.db`.
 > (and its `-wal` / `-shm` / `-journal` sidecars) to `vis.db` so
 > upgraded installs keep their data without manual intervention.
 
-Schema source of truth: `packages/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`.
+Schema source of truth: `packages/vis-persistance/resources/db/sqlite/migration/V1__schema.sql`. The SQL ships in the **`vis-persistance`** facade jar (so the schema travels with the API) while the SQLite/Flyway runtime lives in `vis-persistance-sqlite` and points its migration runner at the classpath resource via `MIGRATIONS = "classpath:db/sqlite/migration"`.
 
-Flyway migration location: `classpath:db/migration`.
+Flyway migration location: `classpath:db/sqlite/migration`.
 
 ## Entity Tree
 
@@ -87,9 +87,11 @@ One run/retry state for `query_soul`.
 | `run_label` | TEXT | |
 | `status` | TEXT | `running\|done\|error\|interrupted` |
 | `metadata` | TEXT | JSON-encoded |
+| `prior_outcome` | TEXT | nullable; one of `complete\|abandoned\|cancelled\|error`. Set on the terminal iteration (and by `sweep-orphaned-running-queries!` for crashed runs) so the next turn's handover digest can summarize the previous turn without scanning every iteration. |
 | `created_at` | INTEGER | |
 
 Constraints: `UNIQUE(query_soul_id, version)`
+Indexes: `idx_query_state_soul(query_soul_id, version)`, `idx_query_state_forked_from(forked_from_query_state_id)`
 
 ### 5) `iteration`
 One LLM round-trip inside a `query_state`.
@@ -111,10 +113,14 @@ One LLM round-trip inside a `query_state`.
 | `llm_error` | TEXT | |
 | `llm_returned_empty_expressions` | INTEGER | 0/1, default 0 |
 | `metadata` | TEXT | JSON — active extensions, etc. |
+| `plan_state` | BLOB | nullable; **Nippy-encoded** `:plan_state` map (carries keyword values, so JSON would round-trip lossily). The latest non-null plan is the live `<plan>` block. |
+| `breadcrumb` | TEXT | nullable; ≤120c past-tense one-liner authored by the model in `:breadcrumb`. Joined into `<breadcrumbs>` (last K=20). |
+| `plan_diff` | BLOB | nullable; **Nippy-encoded**. Populated only when this iteration's plan changed vs the prior iteration. |
 | `created_at` | INTEGER | |
 | `finished_at` | INTEGER | nullable |
 
 Constraints: `UNIQUE(query_state_id, position)`
+Indexes: `idx_iteration_query_state(query_state_id, position)`, `idx_iteration_query_state_created(query_state_id, created_at)`
 
 #### Iteration Metadata
 
@@ -147,7 +153,7 @@ Branch-local identity for var/call/literal expression nodes.
 | `created_at` | INTEGER | |
 
 Constraints: `CHECK(kind <> 'literal' OR state_mode = 'stateless')`
-
+Indexes: `idx_expression_soul_state_kind(conversation_state_id, kind, created_at)`
 Unique partial index: `uq_expression_soul_state_name(conversation_state_id, name) WHERE name IS NOT NULL`
 
 ### 7) `expression_dependency`
@@ -163,8 +169,8 @@ Directed dependency edges between expression souls.
 | `created_at` | INTEGER | |
 
 Constraints: `CHECK(downstream <> upstream)`, `UNIQUE(downstream, upstream)`
-
-Triggers enforce same `conversation_state_id` across endpoints.
+Indexes: `idx_expr_dep_downstream`, `idx_expr_dep_upstream`, `idx_expr_dep_state(conversation_state_id)`
+Triggers enforce same `conversation_state_id` across endpoints (`trg_expr_dep_same_state_ai/au`).
 
 ### 8) `expression_state`
 Versioned expression output snapshots emitted per iteration.
@@ -186,8 +192,8 @@ Versioned expression output snapshots emitted per iteration.
 | `created_at` | INTEGER | |
 
 Constraints: `UNIQUE(expression_soul_id, version)`, `CHECK((success=1 AND error IS NULL) OR (success=0 AND error IS NOT NULL))`
-
-Triggers enforce: first version = 0, stateless expressions only get version 0.
+Indexes: `idx_expression_state_soul(expression_soul_id, version)`, `idx_expression_state_iteration(iteration_id)`
+Triggers (`trg_expression_state_stateless_ai/au`) enforce: first version = 0, stateless expressions only ever get version 0 and at most one row.
 
 ### 9) `log`
 Structured logs with optional scope references.
@@ -207,7 +213,7 @@ Structured logs with optional scope references.
 | `expression_state_id` | TEXT FK | nullable |
 | `created_at` | INTEGER | |
 
-Scoped partial indexes for each nullable FK.
+Indexes: `idx_log_level(level, created_at)`, `idx_log_created(created_at)`, `idx_log_event_created(event, created_at)`, plus a partial index per nullable FK (`idx_log_conv_soul`, `idx_log_conv_state`, `idx_log_query_soul`, `idx_log_query_state`, `idx_log_iteration`, `idx_log_expression_soul`, `idx_log_expression_state`).
 
 ### 10) `search` (FTS5)
 Full-text search virtual table.

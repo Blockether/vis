@@ -53,8 +53,9 @@ When an iteration throws:
 
 1. If the error is **infrastructure** (router down, DB closed, JVM): re-throw — the turn aborts.
 2. Otherwise: normalize the error and append it as the next user message; continue the loop.
-3. If consecutive errors reach **5**, attempt a **strategy restart** (fresh prompt assembly, reset call counts). Up to **3** restarts.
-4. After 3 failed restarts, the budget is considered exhausted and the turn ends with `:status :error`.
+3. A `[system_nudge]` fires at `CONSECUTIVE_ERROR_NUDGE_AT` (=2) consecutive errors so the model gets one warning to re-emit `:plan` with a different strategy.
+4. If consecutive errors reach `max-consecutive-errors` (default **3**, overridable via `:max-consecutive-errors`), the loop attempts a **strategy restart** — fresh prompt assembly + reset counters — up to `max-restarts` (default **3**, overridable via `:max-restarts`).
+5. After the final restart still fails, the turn ends with `:status :error`.
 
 ## Budget Extension
 
@@ -86,9 +87,12 @@ a lossy summarization chain:
   couldn't carry.
 
 Older reasonings are no longer auto-shipped. When the model genuinely
-needs them, the (opt-in) `vis-ext-self-debug` extension exposes
-`(self/breadcrumbs N)` and `(self/turn-history N)` for programmatic
-introspection without wasting iterations on `(var-history)` round-trips.
+needs them, the (opt-in) `vis-self-debug` extension exposes
+`(self/turn)`, `(self/conversation)`, `(self/conversations)`,
+`(self/var-history 'sym)`, and `(self/find-attempts pattern)` for
+programmatic introspection without wasting iterations on a chain of
+built-in `(var-history …)` round-trips. See
+[Self-debug extension](../extensions/vis-self-debug.md).
 
 ## SYSTEM vars: `QUERY`, `REASONING`, `ANSWER`
 

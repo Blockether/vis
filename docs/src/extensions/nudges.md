@@ -32,19 +32,23 @@ current environment, `:ext/nudge-fn` is not called at all.
 ### Context Map
 
 ```clojure
-{:environment            env       ;; the full environment map (see Environment Map)
- :iteration              int       ;; 0-indexed current iteration number
- :current-max-iterations int       ;; live budget cap (includes runtime extensions)
- :prev-expressions       [map]     ;; previous iteration's expressions:
-                                   ;;   [{:code str :result any :error str?
-                                   ;;     :stdout str :stderr str
-                                   ;;     :execution-time-ms int
-                                   ;;     :timeout? bool :repaired? bool} …]
-                                   ;;   nil on iteration 0 or after error recovery
- :prev-iteration         int       ;; iteration index that produced prev-expressions
-                                   ;;   -1 when prev-expressions is nil
- :user-var-count          int}      ;; user-defined vars in the sandbox
+{:environment            env    ;; the full environment map (see Environment Map)
+ :iteration              int    ;; 0-indexed current iteration number
+ :current-max-iterations int    ;; live budget cap (includes runtime extensions)
+ :previous-expressions   [map]  ;; previous iteration's expressions:
+                                ;;   [{:code str :result any :error str?
+                                ;;     :stdout str :stderr str
+                                ;;     :execution-time-ms int
+                                ;;     :timeout? bool :repaired? bool} …]
+                                ;;   nil on iteration 0 or after error recovery
+ :plan-state             map?   ;; the most-recent persisted :plan-state map
+                                ;;   ({:goal :items :open :decided}), or nil
+                                ;;   when the model has not emitted a plan yet
+ :user-var-count         int}   ;; user-defined vars in the sandbox
 ```
+
+Key names spell out the full word (`:previous-expressions`, not
+`:prev-expressions`) per the no-abbreviation rule in `AGENTS.md`.
 
 ### Rules
 
@@ -63,9 +67,9 @@ current environment, `:ext/nudge-fn` is not called at all.
    :ext/group     "tools"
    :ext/prompt    "Prefer batching by 10 items at a time."
    :ext/symbols   [my-tool-sym]
-   :ext/nudge-fn  (fn [{:keys [environment iteration prev-expressions]}]
+   :ext/nudge-fn  (fn [{:keys [environment iteration previous-expressions]}]
                     (when (and (> iteration 5)
-                              (some :timeout? prev-expressions))
+                              (some :timeout? previous-expressions))
                       "[system_nudge] my-tool calls are timing out. Try smaller batch sizes."))})
 ```
 

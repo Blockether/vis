@@ -6,8 +6,8 @@
    `conversations/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.loop.runtime.conversation.core`."
-  (:require [com.blockether.vis.channel :as channel]
-            [com.blockether.vis.config :as config]
+  (:require [com.blockether.vis.config :as config]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [com.blockether.vis.channels.telegram.api :as tg]
@@ -134,10 +134,16 @@
   (config/init-cli!)
   (-main))
 
-(channel/register-global!
-  {:channel/id      :telegram
-   :channel/cmd     "telegram"
-   :channel/doc     "Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)."
-   :channel/usage   "vis telegram"
-   :channel/main-fn #'channel-main})
+(ext/register-global!
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.channels.telegram.bot
+     :ext/doc       "Telegram bot channel — long-poll loop wired into conversations."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/channels  [{:channel/id      :telegram
+                      :channel/cmd     "telegram"
+                      :channel/doc     "Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)."
+                      :channel/usage   "vis telegram"
+                      :channel/main-fn #'channel-main}]}))
 
