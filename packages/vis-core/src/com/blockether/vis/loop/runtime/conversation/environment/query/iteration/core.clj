@@ -616,19 +616,14 @@
       "\n</recent_thought>")))
 
 (defn- format-system-state-block
-  "Render the always-present <system_state> block: loop-managed
-   pointers in one place — SYSTEM vars (QUERY / ANSWER / REASONING)
-   plus the bounded PRIOR_TURN digest.
-
-   SYSTEM-var names follow `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no
-   earmuffs). PRIOR_TURN is a digest pseudo-name — NOT a real sandbox
-   binding, just a rendered key grouped here for the model's
-   convenience.
+  "Render the always-present <system_state> block: SYSTEM vars
+   (QUERY / ANSWER / REASONING, registered in `sci-env/SYSTEM_VAR_NAMES`)
+   plus the bounded PRIOR_TURN digest. PRIOR_TURN is a digest
+   pseudo-name, not a sandbox binding.
 
    Bounded by construction:
    - SYSTEM-var values truncated to 500 chars each.
-   - PRIOR_TURN ships only `:goal :counts :outcome :abandon-reason`,
-     never the full plan body or transcript."
+   - PRIOR_TURN ships only `:goal :counts :outcome :abandon-reason`."
   [{:keys [system-vars prior-turn]}]
   (let [vars-lines (->> [["QUERY"     (:QUERY system-vars)]
                          ["ANSWER"    (:ANSWER system-vars)]

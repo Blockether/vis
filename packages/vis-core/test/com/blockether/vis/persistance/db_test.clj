@@ -126,11 +126,11 @@
         (expect (= :done (:status q)))
         (expect (= "gpt-4o" (:model q))))))
 
-  (it "normalizes :safety-cap-reached to error"
+  (it "persists :error without renormalization"
     (let [s   (store)
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/update-query! s qid {:status :safety-cap-reached})
+      (db/update-query! s qid {:status :error})
       (expect (= :error (:status (first (db/db-list-conversation-queries s cid))))))))
 
 ;; =============================================================================

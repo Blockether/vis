@@ -122,9 +122,8 @@ The model sees **one context message** per iteration:
 - `<recent_thought>` — last iteration's `:thinking` text (≤4000 chars).
 - `<system_state>` — SYSTEM vars (`QUERY`, `REASONING`, `ANSWER`)
   inlined with current values + `PRIOR_TURN` digest of the previous
-  turn (`{:goal :counts :outcome :abandon-reason}`). SYSTEM vars are
-  UPPERCASE — not earmuffed — to match the Clojure constant idiom
-  and avoid implying dynamic-var semantics.
+  turn (`{:goal :counts :outcome :abandon-reason}`). UPPERCASE marks
+  them as constants.
 - `<var_index>` — user-defined vars only, rendered as type-aware
   pseudo-source. Cheap values inline (`(def s "hello")`,
   `(def v [1 2 3 4 5])`); large values fall back to a schema preview
@@ -133,14 +132,14 @@ The model sees **one context message** per iteration:
   live in `<system_state>` instead. Forgotten / persisted-only vars
   surface in a separate `<vars_archive>` subblock with name + version
   count only.
-- `[system_nudge]` — budget, repetition, extension hints.
+- `[system_nudge]` — repetition + extension hints.
 
-Older reasonings live in the breadcrumb chain (one line per iteration)
-and the persisted plan slot. The optional `vis-self-debug` extension
-adds `(self/turn)` / `(self/conversation)` / `(self/conversations)` /
-`(self/var-history 'sym)` / `(self/find-attempts pattern)` for
-programmatic introspection of the live turn, the conversation tree,
-and prior attempts.
+Reasoning continuity lives in the breadcrumb chain (one line per
+iteration) and the persisted plan slot. The optional `vis-self-debug`
+extension adds `(self/turn)` / `(self/conversation)` /
+`(self/conversations)` / `(self/var-history 'sym)` /
+`(self/find-attempts pattern)` for programmatic introspection of the
+live turn, the conversation tree, and prior attempts.
 
 ## Secure by default
 

@@ -90,31 +90,16 @@ field, no auto-detect, no separate "SCI expression" mode.
   "{{summary}}"
   ```
 
-This collapse replaces the earlier `:answer-type` enum
-(`mustache-text` / `mustache-markdown` / `sci-expression`) and the
-implicit "single-token resolves to a sandbox var" shortcut. Both are
-gone.
-
 ## Loop termination
 
-The loop runs **until the model emits `:answer`**. There is no
-model-visible iteration budget, no `request-more-iterations` SCI
-binding, no `<system_state>.ITERATION` pointer the model has to
-budget against. The model decides when it's done by finalizing.
+The loop runs **until the model emits `:answer`**, the user cancels,
+or the consecutive-error budget is exhausted. The model decides when
+it's done by finalizing; the user decides when to bail by
+cancelling.
 
-The runtime keeps a **single hard runaway-protection cap** as a
-safety belt:
-`com.blockether.vis.persistance.spec/SAFETY_ITERATION_CAP` (currently
-100). If the loop ever runs that many iterations without seeing
-`:answer`, it terminates with `:status :safety-cap-reached` and a
-fallback message that says the model got stuck. The cap is high
-enough that legitimate work never trips it; reaching it is a bug,
-not a contract.
-
-The cap is also **invisible to the model** — it never appears in
-`<system_state>`, system prompt, nudges, or any other projection
-slot. Callers that need a tighter cap for tests can override via
-`:safety-cap` on `query!` / `conversations/send!`.
+The consecutive-error budget (`max-consecutive-errors`, default 3,
+with `max-restarts` strategy resets, default 3) is the only
+automatic termination path apart from finalize / cancel.
 
 ## Plan, breadcrumbs, recent thought
 
@@ -133,36 +118,21 @@ a lossy summarization chain:
   `:thinking` text, capped at 4000 chars. For nuance the breadcrumb
   couldn't carry.
 
-Older reasonings are no longer auto-shipped. When the model genuinely
-needs them, the (opt-in) `vis-self-debug` extension exposes
-`(self/turn)`, `(self/conversation)`, `(self/conversations)`,
-`(self/var-history 'sym)`, and `(self/find-attempts pattern)` for
-programmatic introspection without wasting iterations on a chain of
-built-in `(var-history …)` round-trips. See
+For deeper introspection, the opt-in `vis-self-debug` extension
+exposes `(self/turn)`, `(self/conversation)`, `(self/conversations)`,
+`(self/var-history 'sym)`, and `(self/find-attempts pattern)`. See
 [Self-debug extension](../extensions/vis-self-debug.md).
 
 ## SYSTEM vars
 
-The sandbox-visible system vars carrying the user's current query, the
-model's last reasoning text, and the prior-turn final answer are named
-**`QUERY`, `REASONING`, `ANSWER`** — ALL CAPS, no earmuffs. They are
-explicitly defined at environment construction (`(def QUERY nil)` etc.)
-so the symbols always resolve, even before the first turn.
-
-Uppercase, not earmuffs, because:
-
-- Earmuffs are Clojure's idiom for *dynamic vars* (`*out*`, `*ns*`).
-  These are plain SCI bindings, not dynamic; the earmuff signal misled
-  readers into thinking they could `binding`-shadow them.
-- Uppercase aligns with the Clojure idiom for *constants*
-  (`MAX_VAL`, `URL_PATTERN`). The SYSTEM vars are read-only from the
-  model's POV; the loop owns mutation.
-
-The registry is fixed: `SYSTEM_VAR_NAMES = #{QUERY ANSWER REASONING}`.
+`QUERY`, `REASONING`, `ANSWER` are read-only sandbox bindings
+carrying the current user request, the model's last reasoning text,
+and the prior turn's final answer. UPPERCASE marks them as constants;
+the registry `SYSTEM_VAR_NAMES = #{QUERY ANSWER REASONING}` is fixed.
 See `loop.runtime.conversation.environment.core/system-var-sym?` for
-the predicate. SYSTEM vars are *excluded* from `<var_index>` (their
-current values appear inlined in `<system_state>` instead) and never
-subject to auto-forget.
+the predicate. SYSTEM vars are excluded from `<var_index>` (their
+current values appear inlined in `<system_state>` instead) and are
+not subject to auto-forget.
 
 ## Cross-turn handover digest
 

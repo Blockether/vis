@@ -10,19 +10,6 @@
   (:import
    [java.util Base64]))
 
-(def SAFETY_ITERATION_CAP
-  "Hard runaway-protection cap. The iteration loop terminates when
-   it has run this many iterations without seeing a `:final` answer.
-   This is NOT a budget the model can think about, request to extend,
-   or see -- it is a safety belt for runaway loops only. The model
-   decides when to stop by emitting `:answer`; nothing else does.
-
-   Set high enough that legitimate work never trips it (100). If a
-   real conversation hits this cap, that's a bug -- the model is
-   stuck and the loop should be cancelled by the user, not silently
-   extended."
-  100)
-
 (def DEFAULT_EVAL_TIMEOUT_MS
   "Default timeout in milliseconds for code evaluation in SCI sandbox."
   120000)
@@ -338,10 +325,6 @@
 (def ITERATION_SPEC_REASONING
   "Fixed reasoning variant — alias for ITERATION_SPEC_BASE."
   ITERATION_SPEC_BASE)
-
-;; SUB_RLM_QUERY_SPEC was removed — sub-RLMs now run through the same
-;; iteration-loop as the main RLM, producing a full trace (thinking +
-;; code + final + vars + persistence) instead of a flat {:content :code}
 
 (defn bytes->base64
   "Converts raw bytes to a base64 string.

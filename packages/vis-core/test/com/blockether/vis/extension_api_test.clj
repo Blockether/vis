@@ -89,9 +89,11 @@
       (expect (string? (:footer (first first-events))))
       (expect (= :unchanged (:status last-event)))))
 
-  (it "vis.core no longer re-exports the extension contract"
-    ;; The split lives forever — if these come back, the extension
-    ;; library got dragged into the runtime again. Fail loud.
+  (it "vis.core does not re-export the extension contract"
+    ;; The extension authoring API lives on `com.blockether.vis.extension`;
+    ;; vis.core is the runtime facade only. Re-exporting these
+    ;; names from vis.core would drag the extension library into
+    ;; the runtime classpath. Fail loud if any leak in.
     (expect (not (some #{'extension 'symbol 'value 'register-global!
                          'registered-extensions 'discover-extensions!
                          'load-extension! 'reload-extension!

@@ -27,9 +27,8 @@
    - :constants   — Map of {symbol value} constants for SCI sandbox
    - :model       — Override default model selection
 
-   The iteration loop runs until the model emits `:answer`. There is
-   no per-agent budget; runaway protection is handled by the runtime
-   safety cap (`com.blockether.vis.persistance.spec/SAFETY_ITERATION_CAP`).
+   The iteration loop runs until the model emits `:answer` or the
+   user cancels. There is no per-agent budget and no iteration cap.
 
    Example:
      (agent {:name \"code-reviewer\"
@@ -57,8 +56,8 @@
    - :cost         — {:input-cost N :output-cost N :total-cost N :model str}
    - :trace        — Full iteration trace
    - :confidence   — :high/:medium/:low (when present)
-   - :status       — Only on failure: :safety-cap-reached, :error, etc.
-   - :error        — Error message (only on failure)
+   - :status — Only on failure (`:error` or `:cancelled`).
+   - :error  — Error message (only on failure).
 
    Options:
    - :spec     — Output spec for structured responses

@@ -56,8 +56,7 @@
   [status]
   (case status
     (:success :done)                       "done"
-    (:error :safety-cap-reached
-            :error-budget-exhausted)              "error"
+    :error                                 "error"
     (:cancelled :interrupted)              "interrupted"
     :running                               "running"
     ;; fallback

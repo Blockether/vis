@@ -195,10 +195,15 @@
         input-top    (- rows input-box-h 1)
         msg-top      0
         msg-bottom   input-top
-        ;; Mirror `draw-messages-area!`'s gutter math so width
-        ;; calculations match the renderer exactly.
-        msg-side-pad 4 ;; 2 left + 2 right gutter
-        bubble-w     (max 1 (- cols msg-side-pad))
+        ;; Single source of truth for the gutter math lives in
+        ;; `render.clj` (`MSG_SIDE_PAD`). Reference it directly; do
+        ;; NOT inline a literal here. Two layers disagreeing by even
+        ;; one column makes `format-iteration-entry` size labels for
+        ;; one bubble-w while `draw-chat-bubble!` paints into a
+        ;; different bubble-w — right-aligned labels (`CODE 3`,
+        ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
+        ;; mismatch. Use the const, never the value.
+        bubble-w     (max 1 (- cols render/MSG_SIDE_PAD))
         progress-extra {:now-ms         now-ms
                         :query-start-ms query-start-ms
                         :cancelling?    (boolean cancelling?)}

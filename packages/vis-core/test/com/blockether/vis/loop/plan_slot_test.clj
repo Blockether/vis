@@ -219,7 +219,7 @@
 ;; =============================================================================
 
 ;; =============================================================================
-;; SYSTEM_VAR_NAMES — fixed registry (UPPERCASE, no earmuffs)
+;; SYSTEM_VAR_NAMES — fixed registry of UPPERCASE constants
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
@@ -233,8 +233,7 @@
       (expect (true?  (system-var-sym? 'QUERY)))
       (expect (true?  (system-var-sym? 'ANSWER)))
       (expect (true?  (system-var-sym? 'REASONING)))
-      (expect (false? (system-var-sym? 'CONFIG)))    ;; user uppercase var
-      (expect (false? (system-var-sym? '*query*)))   ;; non-registered earmuff form
+      (expect (false? (system-var-sym? 'CONFIG)))
       (expect (false? (system-var-sym? 'foo))))))
 
 (defdescribe projection-test
@@ -293,10 +292,9 @@
       (expect (re-find #"i3\.2" out))))
 
   (it "never renders an ITERATION pointer line"
-    ;; The per-iteration pointer used to live in
-    ;; <system_state>.ITERATION as `{:current N :budget M :remaining K}`.
-    ;; The budget concept was removed (see
-    ;; rlm-spec/SAFETY_ITERATION_CAP) so the line is gone entirely.
+    ;; The model has no iteration counter / budget / remaining
+    ;; pointer; <system_state> carries QUERY / ANSWER / REASONING /
+    ;; PRIOR_TURN only. Guard against any future regression.
     (let [out (iterate/build-iteration-context {}
                 {:iteration 0
                  :active-extensions []

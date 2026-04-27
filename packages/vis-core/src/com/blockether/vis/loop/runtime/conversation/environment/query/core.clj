@@ -238,7 +238,7 @@
 
 (defn inject-system-var-snapshots
   "Append SYSTEM-var entries to a vars-snapshot vec for persistence.
-   Names match `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no earmuffs)."
+   Names match `sci-env/SYSTEM_VAR_NAMES`."
   [vars-snapshot {:keys [iteration query thinking final-result final-answer]}]
   (cond-> vars-snapshot
     (zero? iteration) (conj {:name "QUERY"     :value query        :code ";; SYSTEM var"})
@@ -285,18 +285,16 @@
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble → ask LLM → execute → persist
-   until the model emits `:answer`, or until the runaway-protection
-   safety cap (`rlm-spec/SAFETY_ITERATION_CAP`) is hit. There is no
-   model-visible budget; the cap is a runtime safety belt, not a
-   contract."
+   until the model emits `:answer`, the user cancels, or the
+   consecutive-error budget is exhausted. There is NO iteration cap.
+   If a buggy model never finalizes, the user cancels."
   [environment query
    {:keys [system-prompt
            query-id history-messages
-           safety-cap max-consecutive-errors max-restarts
+           max-consecutive-errors max-restarts
            hooks cancel-atom current-iteration-atom
            reasoning-default routing]}]
-  (let [safety-cap (or safety-cap rlm-spec/SAFETY_ITERATION_CAP)
-        ;; Tightened from 5 to 3. Three consecutive failures is enough
+  (let [;; Tightened from 5 to 3. Three consecutive failures is enough
         ;; signal that the current approach is wrong; the nudge fires
         ;; at CONSECUTIVE_ERROR_NUDGE_AT (= 2) so the model gets a
         ;; warning before the strategy-restart kicks in.
@@ -394,25 +392,6 @@
               (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
                       :trace trace :iterations iteration} (finalize-cost)))
 
-            (>= iteration safety-cap)
-            (let [last-thinking (some->> trace reverse (map :thinking)
-                                  (filter #(and (string? %) (not (str/blank? %)))) first)
-                  errors-block  (recent-errors-block trace 3)
-                  fallback (str "Warning: runaway-protection safety cap ("
-                             safety-cap
-                             " iterations) reached without a final answer.\n\n"
-                             ;; Surface the actual provider failures FIRST when present
-                             ;; -- they're the load-bearing diagnostic.
-                             errors-block
-                             (when last-thinking (str "**Last reasoning:**\n\n" (truncate last-thinking 800) "\n\n"))
-                             (if errors-block
-                               "**What to try:** Fix the provider error above (config / model availability), then retry."
-                               "**What to try:** The model is stuck. Cancel and rephrase the request."))]
-              (iterate/log-stage! :error iteration {:reason :safety-cap-reached :cap safety-cap})
-              (merge {:answer fallback
-                      :status :safety-cap-reached :status-id (status->id :safety-cap-reached)
-                      :trace trace :iterations iteration} (finalize-cost)))
-
             :else
             (if (>= consecutive-errors max-consecutive-errors)
               (if (< restarts max-restarts)
@@ -428,13 +407,12 @@
                 (let [errors-block (recent-errors-block trace 3)
                       fallback     (str "Warning: Too many errors (" consecutive-errors ") across "
                                      (inc restarts) " restart(s).\n\n"
-                                     ;; Same shared formatter as the safety-cap
-                                     ;; branch — includes the raw provider payload
+                                     ;; Includes the raw provider payload
                                      ;; (e.g. an HTTP plain-text auth rejection) so
                                      ;; the user can act on it instead of guessing.
                                      errors-block)]
                   (merge {:answer fallback
-                          :status :error-budget-exhausted :status-id (status->id :error-budget-exhausted)
+                          :status :error :status-id (status->id :error)
                           :trace trace :iterations iteration} (finalize-cost))))
 
               (let [reasoning-level (when has-reasoning?
@@ -812,10 +790,7 @@
     (cond
       abandon?                                          :abandoned
       (= status :cancelled)                             :cancelled
-      (contains? #{:safety-cap-reached
-                   :error-budget-exhausted
-                   :error}
-        status)                                          :error
+      (= status :error)                                  :error
       :else                                              :complete)))
 
 (defn run-query!
@@ -855,12 +830,11 @@
   "Validates inputs, resolves SCI bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
-  (let [{:keys [spec model safety-cap
+  (let [{:keys [spec model
                 max-context-tokens
                 system-prompt debug? hooks cancel-atom eval-timeout-ms
                 reasoning-default routing]
-         :or   {safety-cap rlm-spec/SAFETY_ITERATION_CAP
-                debug?     false}} opts]
+         :or   {debug? false}} opts]
     (when-not (:db-info env)
       (anomaly/incorrect! "Invalid RLM environment" {:type :vis/invalid-env}))
     (when-not (and (vector? messages) (seq messages))
@@ -937,7 +911,6 @@
        :environment            environment
        :environment-id         environment-id
        :spec                   spec
-       :safety-cap             safety-cap
        :max-context-tokens     max-context-tokens
        :system-prompt          system-prompt
        :debug?                 debug?
@@ -955,13 +928,12 @@
 (defn- run-iteration-phase
   "Runs the main iteration loop via run-query!.
    Returns iteration-result, query-id, cost atoms, and merge-cost! fn."
-  [{:keys [environment query-str history-messages spec safety-cap
+  [{:keys [environment query-str history-messages spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
            reasoning-default routing]}]
   (let [iteration-result (run-query! environment query-str
-                           (cond-> {:safety-cap             safety-cap
-                                    :output-spec            spec
+                           (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
                                     :system-prompt          system-prompt
                                     :reasoning-default      reasoning-default
@@ -1010,7 +982,7 @@
                           (assoc :model (str root-model)))]
     (if status
       ;; failure path — surface the fallback answer (built by the loop for
-      ;; :max-iterations / :error-budget-exhausted) to the caller. Leaving
+      ;; :error) to the caller. Leaving
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
       (do
@@ -1077,10 +1049,6 @@
    `opts` - Map, optional:
      - :spec - Output spec for structured answers.
      - :model - Override config's default model.
-     - :safety-cap - Hard runaway-protection cap (default:
-       `rlm-spec/SAFETY_ITERATION_CAP`, currently 100). The loop
-       runs until the model emits `:answer`; this cap only fires if
-       the model gets stuck. Not a model-visible budget.
       - :max-context-tokens - Token budget for context.
       - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
         code evaluation, LLM responses at :info level with :rlm-phase context.
@@ -1100,13 +1068,13 @@
      - :cost - Cost map {:input-cost N :output-cost N :total-cost N}.
      - :confidence - Confidence level (:high/:medium/:low) from final iteration.
       - :reasoning - String summary of how the answer was derived (from LLM's FINAL call).
-      - :status - Only present on failure, e.g. :safety-cap-reached."
+      - :status - Only present on failure (`:error` or `:cancelled`)."
   ([environment messages]
    (query! environment messages {}))
   ([environment messages opts]
    (let [ctx (prepare-query-context environment messages opts)
          {:keys [eval-timeout-ms concurrency
-                 debug? query-str root-model safety-cap
+                 debug? query-str root-model
                  db-info
                  environment-id]} ctx
          merged-concurrency (merge rlm-spec/DEFAULT_CONCURRENCY concurrency)]
@@ -1121,7 +1089,6 @@
                        :conversation-soul-id (:conversation-id environment)}
          (iterate/log-stage! :query-start 0
            {:model root-model
-            :safety-cap safety-cap
             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
             :query query-str})
          (let [start-time   (System/nanoTime)
