@@ -8,6 +8,7 @@
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.config :as config]
+            [com.blockether.vis.error :as vis-error]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
@@ -386,7 +387,7 @@
                                  {:on-chunk    on-chunk
                                   :cancel-atom (cancellation/cancel-atom token)})]
                     (if (:error result)
-                      (dispatch [:message-received (str "Error: " (:error result))])
+                      (dispatch [:message-received (vis-error/format-error (:error result))])
                       (dispatch [:message-received (:answer result)
                                  (select-keys result
                                    [:model :iterations :duration-ms :tokens
@@ -401,5 +402,5 @@
                     (if (cancellation/cancellation? t)
                       (dispatch [:message-received "Cancelled by user."
                                  {:status :cancelled}])
-                      (dispatch [:message-received (str "Error: " (or (ex-message t) (str t)))])))))]
+                      (dispatch [:message-received (vis-error/format-error (or (ex-message t) (str t)))])))))]
       (cancellation/set-future! token fut))))

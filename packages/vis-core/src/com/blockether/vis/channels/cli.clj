@@ -23,6 +23,7 @@
             [com.blockether.vis.commandline :as cmd]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.core :as core]
+            [com.blockether.vis.error :as vis-error]
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.core :as conv-core]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
@@ -169,7 +170,7 @@
             (System/exit 1)))
 
         (:error result)
-        (do (stdout! (str "Error: " (:error result)))
+        (do (stdout! (vis-error/format-error (:error result)))
           (shutdown-agents)
           (System/exit 1))
 
@@ -289,7 +290,7 @@
       (when-let [auth-fn (:provider/auth-fn provider)]
         (try (auth-fn stdout!)
           (catch Exception e
-            (stdout! (str "  ✗ Authentication failed: " (ex-message e))))))))
+            (stdout! (vis-error/format-error (str "Authentication failed: " (ex-message e)))))))))
   (shutdown-agents))
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────

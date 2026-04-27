@@ -197,7 +197,7 @@
         msg-bottom   input-top
         ;; Mirror `draw-messages-area!`'s gutter math so width
         ;; calculations match the renderer exactly.
-        msg-side-pad 6 ;; 3 left + 3 right gutter
+        msg-side-pad 4 ;; 2 left + 2 right gutter
         bubble-w     (max 1 (- cols msg-side-pad))
         progress-extra {:now-ms         now-ms
                         :query-start-ms query-start-ms

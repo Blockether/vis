@@ -10,6 +10,7 @@
   (:require
    [clojure.set]
    [clojure.string :as str]
+   [com.blockether.vis.error :as vis-error]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.vis.extension :as ext]
 
@@ -545,18 +546,23 @@
 ;; the breadcrumbs preserve the strategic frame at one line per iteration.
 
 (def ^:private PLAN_STATUS_DISPLAY
-  {:in_progress "in_progress"
-   :in-progress "in_progress"  ;; tolerate kebab-case input
+  {:in-progress "in-progress"
    :pending     "pending"
    :done        "done"
    :blocked     "blocked"})
 
-(defn- normalize-plan-status [s]
-  (cond (keyword? s) (or (PLAN_STATUS_DISPLAY s)
-                       (PLAN_STATUS_DISPLAY (-> s name (str/replace "_" "-") keyword))
-                       (name s))
-    (string? s)  (or (PLAN_STATUS_DISPLAY (keyword s)) s)
-    :else        "pending"))
+(defn- normalize-plan-status [status]
+  (cond
+    (keyword? status)
+    (or (PLAN_STATUS_DISPLAY status)
+      (PLAN_STATUS_DISPLAY (-> status name (str/replace "_" "-") keyword))
+      (name status))
+
+    (string? status)
+    (or (PLAN_STATUS_DISPLAY (-> status (str/replace "_" "-") keyword))
+      status)
+
+    :else "pending"))
 
 (defn- plan-item-line [{:keys [id content status evidence]}]
   (let [status-s (normalize-plan-status status)
@@ -680,7 +686,7 @@
 ;; -- Cross-field plan validation -----------------------------------------
 ;;
 ;; svar's spec engine validates structural shape; the cross-field
-;; rules (≤20 items, exactly-one :in_progress, monotonic ids) are
+;; rules (≤20 items, exactly-one :in-progress, monotonic ids) are
 ;; checked here in Clojure and surfaced as a structured error map
 ;; that the iteration loop renders into a `[system_nudge]` line via
 ;; `format-loop-nudge`.
@@ -694,7 +700,7 @@
   [plan-state]
   (when (map? plan-state)
     (let [items (or (:items plan-state) [])
-          in-progress-items (filter #(= :in_progress (item-status-key %)) items)
+          in-progress-items (filter #(= :in-progress (item-status-key %)) items)
           ids (mapv :id items)]
       (cond
         (> (count items) PLAN_MAX_ITEMS)
@@ -707,7 +713,7 @@
         (> (count in-progress-items) 1)
         {:type :vis/plan-multiple-in-progress
          :message (str "<plan> has " (count in-progress-items)
-                    " :in_progress items. Set exactly one :in_progress at a time.")
+                    " :in-progress items. Set exactly one :in-progress at a time.")
          :data {:in-progress-ids (mapv :id in-progress-items)}}
 
         (and (seq ids) (not= ids (sort ids)))
@@ -717,16 +723,18 @@
 
 (defn item-status-key
   "Normalize a plan item's :status to a canonical keyword
-   (`:pending`, `:in_progress`, `:done`, `:blocked`). Tolerates both
+   (`:pending`, `:in-progress`, `:done`, `:blocked`). Tolerates both
    keyword and string inputs."
   [item]
-  (let [s (:status item)
-        k (cond (keyword? s) s
-            (string? s) (keyword s)
-            :else :pending)]
-    (case k
-      :in-progress :in_progress
-      k)))
+  (let [status (:status item)
+        status-keyword
+        (cond
+          (keyword? status) (keyword (str/replace (name status) "_" "-"))
+          (string? status)  (keyword (str/replace status "_" "-"))
+          :else :pending)]
+    (case status-keyword
+      :in-progress :in-progress
+      status-keyword)))
 
 ;; ---------------------------------------------------------------------------
 ;; Loop nudge formatter — the user-facing string the model sees on the
@@ -752,7 +760,7 @@
                    (let [open-ids (:open-item-ids data)]
                      (str "Cannot finalize: plan items "
                        (str/join ", " (map #(str "[" % "]") open-ids))
-                       " are :in_progress / :pending. Either complete them with cited "
+                       " are :in-progress / :pending. Either complete them with cited "
                        "evidence (set :status :done with :evidence iN.K), or set "
                        ":abandon-reason describing what blocks completion."))
 
@@ -762,6 +770,9 @@
                      " to ONE approach. If reality has changed enough that this many"
                      " edits made sense, set :abandon-reason and re-emit a single"
                      " fresh plan with the lessons learned in :decided.")
+
+                   :vis/low-confidence-on-answer
+                   ":answer with :confidence :low requires :abandon-reason describing what would raise confidence."
 
                    :vis/consecutive-errors
                    (str (:count data) " consecutive errors. The current approach is"
@@ -918,7 +929,7 @@
              :counts         (-> {}
                                (assoc :done (or (:done bucket) 0))
                                (assoc :pending (or (:pending bucket) 0))
-                               (assoc :in_progress (or (:in_progress bucket) 0))
+                               (assoc :in-progress (or (:in-progress bucket) 0))
                                (assoc :blocked (or (:blocked bucket) 0)))
              :outcome        outcome
              :abandon-reason abandon-reason})))
@@ -1318,9 +1329,9 @@
               final-answer raw-answer
               confidence (or (:confidence parsed) :high)
               validation-error (or (when-not answer-type
-                                     ":answer-type is required with :answer. Set mustache-text or mustache-markdown.")
+                                     (vis-error/missing-answer-type-message))
                                  (when expression-errors
-                                   (str "Code errors before final: " (:error (first expression-errors))))
+                                   (vis-error/final-answer-code-error-message (:error (first expression-errors))))
 
                                  mustache-missing)
               expressions (when expression-results
@@ -1336,7 +1347,9 @@
             {:thinking thinking
              :next-model next-model :next-reasoning next-reasoning
              :expressions (or expressions
-                            [{:id 0 :code final-answer :result nil :stdout "" :stderr ""
+                            [{:id 0
+                              :code vis-error/final-answer-validation-code-placeholder
+                              :result nil :stdout "" :stderr ""
                               :error validation-error}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)

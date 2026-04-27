@@ -57,7 +57,7 @@ Two conditional rules apply on top of the spec:
 | `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/group` and `:ext/ns-alias` become required. |
 | `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol → Class}` — Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
 | `:ext/imports`           | ✗              | `{}`                  | `{short-symbol → fq-symbol}` — short-name imports for sandbox interop (`(LocalDate/now)` style). |
-| `:ext/ns-alias`          | conditional     | —                    | `{:ns 'vis.ext.fs :alias 'fs}` — **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file …)` — bare `(read-file …)` does not resolve. |
+| `:ext/ns-alias`          | conditional     | —                    | `{:ns 'vis.ext.tools :alias 'vis}` — **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(vis/cat …)` — bare `(cat …)` does not resolve. |
 | `:ext/cli`               | ✗              | `[]`                  | Vector of [`vis-commandline`](packages.md#package-map) command maps (`{:cmd/name … :cmd/doc … :cmd/run-fn … :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** — the dispatcher defaults `:cmd/parent` to `["extensions"]` for entries that don't specify one, and rejects entries whose `:cmd/parent` doesn't start with `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` are NOT extension commands; they use `cmd/register-global!` directly. See the [CLI command slot](#cli-command-slot) section below for the three accepted forms. |
 | `:ext/channels`          | ✗              | `[]`                  | Vector of channel descriptors (`{:channel/id :channel/cmd :channel/doc :channel/main-fn :channel/usage? :channel/owns-tty?}`). Each entry is forwarded to `channel/register-global!`; it appears under `vis channels <cmd>`. See [Channels](../architecture/channels.md). |
 | `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn …}`). Each entry is forwarded via `requiring-resolve` to `com.blockether.vis.provider/register-global!` so vis-extension keeps zero compile-time dep on vis-provider. |
@@ -148,6 +148,7 @@ The `symbol` constructor produces a function entry for `:ext/symbols`:
 | `:after-fn` | ✗ | — | `(fn [env f args result] → map)` — exit decorator (transform result). See [Symbol Decorators](hooks.md). |
 | `:on-error-fn` | ✗ | — | `(fn [err env f args] → map)` — error decorator (recover, retry, or rethrow). See [Symbol Decorators](hooks.md). |
 | `:on-parse-error-fn` | ✗ | — | `(fn [{:code :error :sym :environment}] → string\|nil)` — parse rescue (not a decorator) that fires when SCI/edamame rejects the LLM's source AND this symbol's name appears in the broken code. See [Symbol Decorators](hooks.md). |
+| `:autobind-fn` | ✗ | — | `(fn [{:keys [args result environment]}] → map\|nil)` — post-call hook that asks the runtime to persist tool results into sandbox vars. Return `{:bindings [{:kind :file :id path :content value :doc "..." :tag "sha"}]}`. Return `nil` to skip autobind for that call. |
 
 ## Constant binding
 
@@ -191,8 +192,8 @@ Example:
 ```clojure
 (ext/render-prompt
   {:ext/doc "Filesystem tools"
-   :ext/ns-alias {:ns 'vis.ext.fs :alias 'fs}
-   :ext/symbols [read-file-sym patch-file-sym]
+   :ext/ns-alias {:ns 'vis.ext.tools :alias 'vis}
+   :ext/symbols [read-file-sym patch-sym]
    :usage-note "positional args only"})
 ```
 

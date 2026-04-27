@@ -92,17 +92,17 @@
 
 (defn- banned-slurp
   "Sandbox `slurp` override that rejects every call. Agent-facing file
-   reads go through `read-file` exclusively — line-numbered output, path
+   reads go through `vis/cat` exclusively — line-numbered output, path
    sanity, size cap, offset/limit paging, and var-source tracking all
    live there. `slurp` returns raw bytes with none of that, making it a
    cache-coherency footgun: a var bound from `slurp` can't be validated
    against the filesystem the next iteration, so the agent silently
    trusts stale content. Better to refuse the call and point at
-   `read-file`."
+   `vis/cat`."
   [& _args]
-  (throw (ex-info (str "slurp is banned in the sandbox — use (read-file \"path\") "
-                    "or (read-file \"path\" offset limit). "
-                    "read-file is the only sanctioned file read: line-numbered, "
+  (throw (ex-info (str "slurp is banned in the sandbox — use (vis/cat \"path\") "
+                    "or (vis/cat \"path\" offset limit). "
+                    "vis/cat is the only sanctioned file read: line-numbered, "
                     "size-capped, symlink-safe, and tracked by <var_index> for "
                     "staleness between iterations.")
            {:type :tool/banned :tool 'slurp})))
@@ -163,7 +163,7 @@
                        're-seq safe-re-seq
                        're-matches safe-re-matches
                        ;; `slurp` is BANNED. Every file read goes through
-                       ;; `read-file` so var_index can track mtime/size and
+                       ;; `vis/cat` so var_index can track mtime/size and
                        ;; mark cached reads as `valid`/`stale`/`missing`
                        ;; between iterations. `slurp` bypassed all of that.
                        'slurp banned-slurp}
@@ -312,7 +312,7 @@
                                                ;; `slurp` intentionally NOT denied at the SCI level: we
                                                ;; shadow it in sandbox bindings with `banned-slurp`,
                                                ;; which throws a descriptive ex-info pointing at
-                                               ;; `read-file`. Keeping it as a sandbox binding (not a
+                                               ;; `vis/cat`. Keeping it as a sandbox binding (not a
                                                ;; deny) gives the LLM a useful error message instead of
                                                ;; SCI's generic "not allowed". `spit` stays denied —
                                                ;; `write-file` is the audited path that renders diffs.

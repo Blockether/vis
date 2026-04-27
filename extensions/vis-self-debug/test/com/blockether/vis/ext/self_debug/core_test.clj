@@ -77,7 +77,7 @@
   (it "carries the sticky plan and the breadcrumb chain in the snapshot"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          plan {:goal "g" :items [{:id 1 :content "a" :status :in_progress}]}]
+          plan {:goal "g" :items [{:id 1 :content "a" :status :in-progress}]}]
       (store-iteration! s query-id {:plan-state plan :breadcrumb "i0 first"})
       (store-iteration! s query-id {:breadcrumb "i1 second"})
       (let [turn ((private-fn "self-turn") (env s conversation-id))]

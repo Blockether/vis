@@ -206,8 +206,8 @@
                  ::spec/type        :spec.type/keyword
                  ::spec/cardinality :spec.cardinality/one
                  ::spec/required    true
-                 ::spec/values      ["pending" "in_progress" "done" "blocked"]
-                 ::spec/description "Item status. Exactly ONE :in_progress at a time across the whole plan."})
+                 ::spec/values      ["pending" "in-progress" "done" "blocked"]
+                 ::spec/description "Item status. Exactly ONE :in-progress at a time across the whole plan."})
     (spec/field {::spec/name        :evidence
                  ::spec/type        :spec.type/string
                  ::spec/cardinality :spec.cardinality/one
@@ -229,7 +229,7 @@
                  ::spec/target      :plan_item
                  ::spec/cardinality :spec.cardinality/many
                  ::spec/required    true
-                 ::spec/description "Ordered TODO list. ≤20 items. EXACTLY ONE :in_progress at a time (or zero if all done)."})
+                 ::spec/description "Ordered TODO list. ≤20 items. EXACTLY ONE :in-progress at a time (or zero if all done)."})
     (spec/field {::spec/name        :open
                  ::spec/type        :spec.type/string
                  ::spec/cardinality :spec.cardinality/many
@@ -261,7 +261,7 @@
    the last K breadcrumbs + the most recent `:thinking` text.
 
    When `:answer` is set with any plan item still :pending or
-   :in_progress, `:abandon-reason` is required. The iteration handler
+   :in-progress, `:abandon-reason` is required. The iteration handler
    enforces this cross-field rule (svar's spec engine doesn't model
    conditional requireds)."
   [{:keys [include-thinking?]}]
@@ -283,7 +283,7 @@
                       ::spec/target      :plan_state
                       ::spec/cardinality :spec.cardinality/one
                       ::spec/required    false
-                      ::spec/description "Structured plan. EMIT ON ITER 0. Carried verbatim across iters until you re-emit. Re-emit only when reality forces a real change. Max 20 items. Exactly one :in_progress."})
+                      ::spec/description "Structured plan. EMIT ON ITER 0. Carried verbatim across iters until you re-emit. Re-emit only when reality forces a real change. Max 20 items. Exactly one :in-progress."})
          (spec/field {::spec/name        :breadcrumb
                       ::spec/type        :spec.type/string
                       ::spec/cardinality :spec.cardinality/one

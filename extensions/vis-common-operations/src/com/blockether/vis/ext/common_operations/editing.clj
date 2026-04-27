@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.common-operations.editing
   "Filesystem editing module of the `vis-common-operations` extension —
-   read, list, grep, patch.
+   cat, ls, rg, patch.
 
    This namespace owns the actual tool implementations and exposes
    `editing-symbols` for the aggregator (`com.blockether.vis.ext
@@ -142,7 +142,7 @@
 ;; Parse-error rescue (extension-wide :ext/on-parse-error-fn)
 ;;
 ;; The LLM occasionally writes a raw `\X` inside a string literal in
-;; the SOURCE it emits — e.g. `(vis/grep-files "foo\|bar")` instead of
+;; the SOURCE it emits — e.g. `(vis/rg "foo\|bar")` instead of
 ;; the correctly escaped `"foo\\|bar"`. Edamame rejects that with
 ;;
 ;;   "[line L, col C] Unsupported escape character: \X"
@@ -380,16 +380,50 @@
                             false
                             (recur parent)))))))))))))))
 
-(defn- read-file
-  "Read file contents with optional offset/limit (1-indexed lines).
+(defn- coerce-cat-opts
+  "Normalize the optional second arg of (vis/cat path opts) into
+   {:offset :limit :char-limit}. Accepts:
 
-   Default `(vis/read-file path)` returns a preview capped to 1500 chars.
-   Use offset/limit to continue with more lines."
-  ([path] (read-file path nil nil default-read-char-limit))
-  ([path offset] (read-file path offset nil nil))
-  ([path offset limit] (read-file path offset limit nil))
-  ([path offset limit char-limit]
-   (let [f        (ensure-existing-file! path)
+   - nil / absent  -> all defaults
+   - a map         -> picked apart by key (unknown keys ignored)
+   - an integer    -> {:offset n} (back-compat: positional offset)
+
+   Anything else throws so a typo at call-site (e.g. passing a
+   keyword like :all instead of an opts map) surfaces here."
+  [opts]
+  (cond
+    (nil? opts)
+    {:offset nil :limit nil :char-limit default-read-char-limit}
+
+    (map? opts)
+    {:offset     (get opts :offset)
+     :limit      (get opts :limit)
+     :char-limit (get opts :char-limit default-read-char-limit)}
+
+    (integer? opts)
+    {:offset opts :limit nil :char-limit default-read-char-limit}
+
+    :else
+    (throw (ex-info (str "Invalid (vis/cat) opts: " (pr-str opts)
+                      ". Expected a map like {:offset 60 :limit 100} or an integer offset.")
+             {:type :ext.common-operations.editing/invalid-cat-opts :opts opts}))))
+
+(defn- read-file
+  "Read file contents.
+
+   Variadic shape, opts is a map. See cat-symbol :examples for
+   concrete call patterns; in short:
+
+     (vis/cat path)             ; preview capped to 1500 chars
+     (vis/cat path opts)        ; opts is a map of {:offset :limit :char-limit}
+     (vis/cat path offset)      ; back-compat: integer offset
+
+   Default `(vis/cat path)` returns a preview capped to 1500 chars.
+   Use opts {:offset N :limit M} to continue with more lines."
+  ([path] (read-file path nil))
+  ([path opts]
+   (let [{:keys [offset limit char-limit]} (coerce-cat-opts opts)
+         f        (ensure-existing-file! path)
          lines    (str/split-lines (slurp f))
          total    (count lines)
          off      (max 0 (dec (or offset 1)))
@@ -437,7 +471,7 @@
    :hidden? (.isHidden f)})
 
 (def ^:private default-list-depth
-  "Default tree depth for (vis/list-files): top level + one level of children."
+  "Default tree depth for (vis/ls): top level + one level of children."
   2)
 
 (defn- depth->limit
@@ -475,28 +509,68 @@
           (visible-children f hidden? respect-gitignore?)))
       base)))
 
+(defn- path-not-found-message
+  [path]
+  (let [working-directory (System/getProperty "user.dir")]
+    (str "Path not found: " path
+      " (working directory: " working-directory "). "
+      "Do not assume common folders like src/. Start with "
+      "(vis/ls \".\").")))
+
+(defn- coerce-ls-opts
+  "Normalize the optional second arg of (vis/ls path opts) into
+   {:depth :hidden? :respect-gitignore?}. Accepts:
+
+   - nil / absent  -> all defaults
+   - a map         -> picked apart by key (unknown keys ignored)
+   - an integer    -> {:depth n} (back-compat: positional depth still works)
+   - true / false  -> {:depth n} (true = unbounded, false = depth 1)
+
+   Anything else throws so a typo at call-site (e.g. passing a
+   keyword like :deep instead of an opts map) surfaces here, not
+   three layers down."
+  [opts]
+  (cond
+    (nil? opts)
+    {:depth default-list-depth :hidden? false :respect-gitignore? default-respect-gitignore?}
+
+    (map? opts)
+    {:depth              (get opts :depth default-list-depth)
+     :hidden?            (boolean (get opts :hidden? false))
+     :respect-gitignore? (boolean (get opts :respect-gitignore? default-respect-gitignore?))}
+
+    (or (integer? opts) (true? opts) (false? opts))
+    {:depth opts :hidden? false :respect-gitignore? default-respect-gitignore?}
+
+    :else
+    (throw (ex-info (str "Invalid (vis/ls) opts: " (pr-str opts)
+                      ". Expected a map like {:depth 3 :hidden? true} or an integer depth.")
+             {:type :ext.common-operations.editing/invalid-ls-opts :opts opts}))))
+
 (defn- list-files
   "List files/dirs at path as a tree of
    {:name :path :type :size :hidden? :children}.
 
-   Positional args only:
-   - ()
-   - (path)
-   - (path depth)                          ; integer, true (unbounded), or false (1)
-   - (path depth hidden?)
-   - (path depth hidden? respect-gitignore?)
+   Variadic shape, ALL arguments optional. See ls-symbol :examples
+   for concrete call patterns; in short:
 
-   Default depth is 2 (top level + one level of children).
-   By default, .gitignore is respected."
-  ([] (list-files "." default-list-depth false default-respect-gitignore?))
-  ([path] (list-files path default-list-depth false default-respect-gitignore?))
-  ([path depth] (list-files path depth false default-respect-gitignore?))
-  ([path depth hidden?] (list-files path depth hidden? default-respect-gitignore?))
-  ([path depth hidden? respect-gitignore?]
-   (let [f         (safe-path path)
+     (vis/ls)              ; cwd, default depth (2)
+     (vis/ls path)         ; same defaults at PATH
+     (vis/ls path opts)    ; opts is a map of
+                           ;   {:depth :hidden? :respect-gitignore?}
+     (vis/ls path depth)   ; back-compat: integer / true / false
+
+   Default depth is 2 (top level + one level of children); pass
+   :depth true for an unbounded tree. By default .gitignore is
+   respected."
+  ([] (list-files "." nil))
+  ([path] (list-files path nil))
+  ([path opts]
+   (let [{:keys [depth hidden? respect-gitignore?]} (coerce-ls-opts opts)
+         f         (safe-path path)
          depth-lim (depth->limit depth)]
      (when-not (.exists f)
-       (throw (ex-info (str "Path not found: " path)
+       (throw (ex-info (path-not-found-message path)
                 {:type :ext.common-operations.editing/not-found :path path})))
      (when-not (.isDirectory f)
        (throw (ex-info (str "Not a directory: " path)
@@ -529,26 +603,55 @@
      :line (inc idx)
      :text text}))
 
+(defn- coerce-rg-opts
+  "Normalize the optional third arg of (vis/rg pattern path opts) into
+   {:limit :hidden? :respect-gitignore?}. Accepts:
+
+   - nil / absent  -> all defaults
+   - a map         -> picked apart by key (unknown keys ignored)
+   - an integer    -> {:limit n} (back-compat: positional limit)
+
+   Anything else throws so a typo at call-site (e.g. passing a
+   keyword like :all instead of an opts map) surfaces here."
+  [opts]
+  (cond
+    (nil? opts)
+    {:limit default-grep-limit :hidden? false :respect-gitignore? default-respect-gitignore?}
+
+    (map? opts)
+    {:limit              (get opts :limit default-grep-limit)
+     :hidden?            (boolean (get opts :hidden? false))
+     :respect-gitignore? (boolean (get opts :respect-gitignore? default-respect-gitignore?))}
+
+    (integer? opts)
+    {:limit opts :hidden? false :respect-gitignore? default-respect-gitignore?}
+
+    :else
+    (throw (ex-info (str "Invalid (vis/rg) opts: " (pr-str opts)
+                      ". Expected a map like {:limit 50 :hidden? true} or an integer limit.")
+             {:type :ext.common-operations.editing/invalid-rg-opts :opts opts}))))
+
 (defn- grep-files
   "Search for pattern in files. Always returns structured maps.
 
-   Positional args only:
-   - (pattern)
-   - (pattern path)
-   - (pattern path limit)
-   - (pattern path limit hidden?)
-   - (pattern path limit hidden? respect-gitignore?)
+   Variadic shape, opts is a map. See rg-symbol :examples for
+   concrete call patterns; in short:
+
+     (vis/rg pattern)               ; search cwd, default limit 200
+     (vis/rg pattern path)          ; search PATH, default limit 200
+     (vis/rg pattern path opts)     ; opts is a map of
+                                    ;   {:limit :hidden? :respect-gitignore?}
+     (vis/rg pattern path limit)    ; back-compat: integer limit
 
    By default, .gitignore is respected."
-  ([pattern] (grep-files pattern "." default-grep-limit false default-respect-gitignore?))
-  ([pattern path] (grep-files pattern path default-grep-limit false default-respect-gitignore?))
-  ([pattern path limit] (grep-files pattern path limit false default-respect-gitignore?))
-  ([pattern path limit hidden?] (grep-files pattern path limit hidden? default-respect-gitignore?))
-  ([pattern path limit hidden? respect-gitignore?]
-   (let [f   (safe-path path)
+  ([pattern] (grep-files pattern "." nil))
+  ([pattern path] (grep-files pattern path nil))
+  ([pattern path opts]
+   (let [{:keys [limit hidden? respect-gitignore?]} (coerce-rg-opts opts)
+         f   (safe-path path)
          pat (compile-safe-pattern pattern)]
      (when-not (.exists f)
-       (throw (ex-info (str "Path not found: " path)
+       (throw (ex-info (path-not-found-message path)
                 {:type :ext.common-operations.editing/not-found :path path})))
      (let [files   (if (.isDirectory f)
                      (filter #(and (.isFile ^java.io.File %)
@@ -863,43 +966,50 @@
 ;; Extension definition
 ;; =============================================================================
 
-(def read-file-symbol
-  (ext/symbol 'read-file read-file
-    {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
-     :arglists '([path] [path offset] [path offset limit])
-     :examples ["(vis/read-file \"src/core.clj\")"
-                "(vis/read-file \"big.log\" 100 50)"]
+(def cat-symbol
+  (ext/symbol 'cat read-file
+    {:doc (str "Read file contents. Use the opts MAP for paging "
+            "(non-default offset/limit) -- you almost never need "
+            "anything past `(vis/cat path)` for a first look.")
+     :arglists '([path] [path opts])
+     :examples ["(vis/cat \"README.md\")"
+                "(vis/cat \"path/to/file.clj\" {:offset 60 :limit 100})"
+                "(vis/cat \"path/to/file.clj\" {:char-limit 4000})"]
      :on-error-fn rescue-path-args
      :autobind-fn read-file-autobind}))
 
-(def list-files-symbol
-  (ext/symbol 'list-files list-files
-    {:doc "List files/dirs as a tree of {:name :path :type :size :hidden? :children}. Default depth is 2 (top level + one level of children). Pass an integer for custom depth, true for unbounded, or false/0 for current level only. Directory :size is the recursive byte sum. Respects .gitignore by default. Positional args only."
-     :arglists '([] [path] [path depth] [path depth hidden?] [path depth hidden? respect-gitignore?])
-     :examples ["(vis/list-files)"
-                "(vis/list-files \"src\")"
-                "(vis/list-files \"src\" 3)"
-                "(vis/list-files \"src\" true)"
-                "(vis/list-files \"src\" 2 true)"
-                "(vis/list-files \"src\" 2 true false)"]
+(def ls-symbol
+  (ext/symbol 'ls list-files
+    {:doc (str "List files/dirs as a tree of "
+            "{:name :path :type :size :hidden? :children}. "
+            "All args optional. Use the opts MAP for non-default "
+            "depth/hidden/gitignore settings -- you almost never "
+            "need anything past `(vis/ls)` or `(vis/ls path)`.")
+     :arglists '([] [path] [path opts])
+     :examples ["(vis/ls)"
+                "(vis/ls \".\")"
+                "(vis/ls \"src\" {:depth 3})"
+                "(vis/ls \".\" {:depth true :hidden? true})"]
      :on-error-fn rescue-path-args}))
 
-(def grep-files-symbol
-  (ext/symbol 'grep-files grep-files
-    {:doc "Search files with RE2/J (linear-time regex, ReDoS-safe). Always returns structured maps. Respects .gitignore by default. Positional args only."
-     :arglists '([pattern] [pattern path] [pattern path limit] [pattern path limit hidden?] [pattern path limit hidden? respect-gitignore?])
-     :examples ["(vis/grep-files \"TODO\")"
-                "(vis/grep-files \"defn\" \"src\")"
-                "(vis/grep-files \"defn|defmacro\" \"src\" 50)"
-                "(vis/grep-files \"defn\" \"src\" 50 true)"
-                "(vis/grep-files \"defn\" \"src\" 50 true false)"]
+(def rg-symbol
+  (ext/symbol 'rg grep-files
+    {:doc (str "Search files with RE2/J (linear-time regex, ReDoS-safe). "
+            "Equivalent to ripgrep for this sandbox. Always returns "
+            "structured maps. Use the opts MAP for non-default "
+            "limit/hidden/gitignore settings.")
+     :arglists '([pattern] [pattern path] [pattern path opts])
+     :examples ["(vis/rg \"TODO\")"
+                "(vis/rg \"TODO\" \"src\")"
+                "(vis/rg \"defn|defmacro\" \"src\" {:limit 50})"
+                "(vis/rg \"foo\" \".\" {:limit 100 :hidden? true})"]
      :on-error-fn       rescue-grep-args
      ;; Parse-time rescue: when the LLM emits e.g.
-     ;;   (vis/grep-files \"foo\\|bar\")
+     ;;   (vis/rg \"foo\\|bar\")
      ;; — raw `\|` inside the string literal — edamame errors out
      ;; before any tool dispatch. The iteration loop notices the
-     ;; broken form mentions `vis/grep-files`, calls THIS hook, and
-     ;; retries with the doubled backslash. See `rescue-parse-error`.
+     ;; broken form mentions `vis/rg`, calls THIS hook, and retries
+     ;; with the doubled backslash. See `rescue-parse-error`.
      :on-parse-error-fn rescue-parse-error}))
 
 (def patch-symbol
@@ -909,10 +1019,10 @@
                  [path patch-text]
                  [edits]
                  [codex-payload])
-     :examples ["(vis/patch \"src/core.clj\" \"old text\" \"new text\")"
-                "(vis/patch \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
-                "(vis/patch [{:path \"src/core.clj\" :search \"old\" :replace \"new\"} {:path \"README.md\" :search \"alpha\" :replace \"beta\"}])"
-                "(vis/patch \"*** Begin Patch\n*** Update File: src/core.clj\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n*** End Patch\")"]
+     :examples ["(vis/patch \"path/to/file.clj\" \"old text\" \"new text\")"
+                "(vis/patch \"path/to/file.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
+                "(vis/patch [{:path \"path/to/file.clj\" :search \"old\" :replace \"new\"} {:path \"README.md\" :search \"alpha\" :replace \"beta\"}])"
+                "(vis/patch \"*** Begin Patch\n*** Update File: path/to/file.clj\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n*** End Patch\")"]
      :on-error-fn rescue-path-args
      :autobind-fn patch-autobind}))
 
@@ -920,17 +1030,39 @@
   "Vector of `ext/symbol` definitions exported by this module. The
    sibling `core` namespace concatenates every module's symbol vector
    into the single `vis-common-operations` extension."
-  [read-file-symbol
-   list-files-symbol
-   grep-files-symbol
+  [cat-symbol
+   ls-symbol
+   rg-symbol
    patch-symbol])
 
 (def editing-prompt
   "Module-specific prompt fragment merged into the extension prompt by
    the `core` aggregator. Lives next to the symbols so a future
-   reorganization moves both pieces together."
-  "RULES:
-- NEVER guess file paths. Always discover paths first with (vis/list-files) or (vis/grep-files pattern).
-- There is NO write-file tool. Use vis/patch ALWAYS.
-- To create a new file, use vis/patch with an EMPTY SEARCH block.
-- Prefer the smallest unique SEARCH block that matches exactly once.")
+   reorganization moves both pieces together.
+
+   This is a FLOW, not a list of admonitions. The model already knows
+   not to invent paths; what it needs is a concrete recipe for how to
+   compose the four tools so it doesn't re-read files or fan out one
+   patch per edit. Keep this fragment short -- every line earns its
+   place."
+  "EDITING FLOW (compose, don't probe):
+
+1. LOCATE.  (vis/ls path) finds files. (vis/rg pattern path) finds the
+   exact line. Always pass a path -- do not run vis/rg over the whole repo.
+2. LOAD.    (vis/cat path) reads the file AND autobinds it to
+   file/<munged-path>. Reuse that var with (subs file/x ...),
+   (re-find #\"...\" file/x), (str/split-lines file/x). Re-reading the
+   same path is a bug -- the var is already there.
+3. EDIT.    (vis/patch path \"old\" \"new\") rewrites in place. SEARCH
+   must match EXACTLY ONCE; pick the smallest unique snippet. Multiple
+   edits in one turn = ONE call:
+     (vis/patch [{:path p :search s :replace r} ...]).
+4. CREATE.  (vis/patch path \"\" full-content) -- empty SEARCH means
+   \"insert at start of (possibly new) file\".
+
+TUNING. ls / cat / rg take an OPTS MAP as their last arg:
+  (vis/ls path {:depth :hidden? :respect-gitignore?})
+  (vis/cat path {:offset :limit :char-limit})
+  (vis/rg pattern path {:limit :hidden? :respect-gitignore?})
+Skip the opts map 90% of the time; reach for it only when the
+defaults don't fit (paging a huge file, scanning hidden dirs, etc.).")
