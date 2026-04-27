@@ -95,6 +95,23 @@
         (expect (= 1 duplicates))
         (expect (= 1 total)))))
 
+  (it "intra-iter duplicates count: identical calls in the SAME iter"
+    ;; The seen-set rolls forward as we walk the iter's expressions,
+    ;; so the SECOND occurrence of `(grep \"X\")` within one iter
+    ;; counts as a duplicate. Without this, calls like 'three
+    ;; identical greps in one :code array' would report 0
+    ;; duplicates even though the dedup short-circuit fires for
+    ;; calls 2 and 3.
+    (let [seen (atom #{})
+          [duplicates total] (iterate/count-duplicates seen
+                               [{:code "(grep \"X\")"}
+                                {:code "(grep \"X\")"}
+                                {:code "(grep \"X\")"}
+                                {:code "(read-file \"a\")"}])]
+      (expect (= 2 duplicates))                                       ;; calls #2 and #3
+      (expect (= 4 total))
+      (expect (= 2 (count @seen)))))                                  ;; only 2 distinct hashes seeded
+
   (it "handles an empty expressions vec gracefully"
     (let [seen (atom #{})
           [duplicates total] (iterate/count-duplicates seen [])]

@@ -253,6 +253,6 @@ And calls `(search/find "neural")` from `:code` blocks. Bare
 ## Sections
 
 - [Extension Spec](spec.md) - all keys, defaults, validation
-- [Hook Protocol](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn`
+- [Symbol Decorators](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn` (decorators around the target fn) + `:on-parse-error-fn` (parse rescue)
 - [Environment Map](environment.md) - every key in the environment
 - [Nudge System](nudges.md) - built-in + extension nudges

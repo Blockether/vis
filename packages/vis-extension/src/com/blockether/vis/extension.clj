@@ -54,31 +54,34 @@
 ;; concrete call patterns, e.g. ["(search-documents \"neural\")"]
 (s/def :ext.symbol/examples (s/and vector? seq #(every? non-blank-string? %)))
 
-;; Before hook: (fn [env f args] → map). Runs before :fn.
+;; Entry decorator: (fn [env f args] → map). Wraps :fn on the way in.
 ;; Receives the environment, the implementation fn, and the original args.
-;; Returns a map — see Hook Protocol in EXTENSION.md:
+;; Returns a map — see Symbol Decorators in docs/src/extensions/hooks.md:
 ;;   {:args [...]}    — override args passed to :fn
 ;;   {:fn f'}         — override the implementation fn
 ;;   {:env env'}      — override env for the call
 ;;   {:result val}    — short-circuit: skip :fn entirely, return val
 ;; Missing keys keep the current value. Throw to abort.
+;; This is the same pattern as Ring middleware / Pedestal :enter.
 (s/def :ext.symbol/before-fn fn?)
 
-;; After hook: (fn [env f args result] → map). Runs after :fn returns.
+;; Exit decorator: (fn [env f args result] → map). Wraps :fn on the way out.
 ;; Receives the environment, the implementation fn, the args, and the raw result.
-;; Returns a map — see Hook Protocol in EXTENSION.md:
+;; Returns a map — see Symbol Decorators in docs/src/extensions/hooks.md:
 ;;   {:result val}    — override the result
 ;;   {:env :fn :args} — override (rarely needed)
 ;; Missing keys keep the current value.
+;; This is the same pattern as Ring middleware / Pedestal :leave.
 (s/def :ext.symbol/after-fn fn?)
 
-;; Error handler: (fn [err env f args] → map). Called when :fn throws.
+;; Error decorator: (fn [err env f args] → map). Called when :fn throws.
 ;; Receives the exception, environment, the implementation fn, and the original args.
-;; Returns a map — see Hook Protocol in EXTENSION.md:
+;; Returns a map — see Symbol Decorators in docs/src/extensions/hooks.md:
 ;;   {:result val}    — use as fallback result
 ;;   {:error err}     — throw this error instead
 ;;   {:fn f' :args a'} — retry with (possibly different) fn and args
 ;; If no :on-error-fn is defined, the original exception propagates.
+;; This is the same pattern as Pedestal :error.
 (s/def :ext.symbol/on-error-fn fn?)
 
 ;; Source-code rewriter for SCI/edamame parse errors that mention this
@@ -281,7 +284,7 @@
       :arglists '([query] [query opts])
       :examples [\"(search-documents \\\"neural\\\")\"]
       ;; Runtime hooks — fire AFTER `:fn` is dispatched. Each returns a
-      ;; MAP, not a direct value. See Hook Protocol in EXTENSION.md.
+      ;; MAP, not a direct value. See Symbol Decorators in docs/src/extensions/hooks.md.
       :before-fn   (fn [env f args] {:args (transform args)})    ;; override args/fn/env, or {:result v} to short-circuit
       :after-fn    (fn [env f args result] {:result (transform result)})  ;; override result
       :on-error-fn (fn [err env f args] {:result fallback})    ;; recover, retry, or {:error e} to re-throw

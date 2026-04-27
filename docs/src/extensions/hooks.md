@@ -1,81 +1,127 @@
-# Hook Protocol
+# Symbol Decorators
 
-Every hook returns a **map** (runtime hooks) or a **string-or-nil**
-(parse-error rescue). Missing keys in a runtime-hook return keep the
-current value.
+Three of the four hooks on a symbol are **decorators** around the
+target fn — same pattern as Ring middleware, Pedestal interceptors,
+or AOP around-advice. They wrap `:fn`, can transform inputs, transform
+outputs, short-circuit, and recover from errors.
 
-## Invocation Pipeline
+The fourth hook (`:on-parse-error-fn`) is a different beast: it fires
+**before** any dispatch, when SCI/edamame can't even parse the LLM's
+source string. It's documented in its own section below.
+
+## The Decorator Pipeline
 
 ```
-  source string ──────┬─ parses? ─yes─→ :before-fn → :fn → :after-fn → result
-                       │                                  │
-                       │                                  └─ throws → :on-error-fn
+  parses? ──yes──→ :before-fn ──→ :fn ──→ :after-fn ──→ result
+                       │            │
+                       │            └── throws ──→ :on-error-fn
                        │
-                       └─ parses? ─no─→ :on-parse-error-fn (symbol-level)
-                                            └─ falls back to :ext/on-parse-error-fn
+                       └── {:result v} short-circuits past :fn
+                       └── {:fn :args :env} overrides what :fn sees
+
+  parses? ──no───→ :on-parse-error-fn  (see "Parse-Error Rescue" below)
 ```
 
-`wrap-extension` wires the runtime hooks. The iteration loop wires
-the parse-error hooks via `try-rescue-parse-error`.
+`wrap-extension` installs the decorators automatically when the
+extension is registered. Direct calls to `invoke-symbol-wrapper` are
+rarely needed.
 
-`wrap-extension` wires this up automatically. Direct calls via
-`invoke-symbol-wrapper` are rarely needed.
+Every decorator returns a **map**. Missing keys keep the current value
+— there is no positional return, no `nil`-means-default magic. The
+return shape is the contract.
 
-## `:before-fn` — `(fn [env f args] → map)`
+## `:before-fn` — entry decorator
 
-Called before the implementation fn. Can transform inputs or short-circuit.
+```clojure
+(fn [environment f args] → map)
+```
+
+Runs before `:fn`. Can rewrite inputs or skip the call entirely.
 
 | Return key | Effect |
 |------------|--------|
-| `:env` | Override env for the call |
-| `:fn` | Override the implementation fn |
+| `:environment` | Override the environment passed to `:fn` |
+| `:fn` | Swap in a different implementation fn |
 | `:args` | Override the args vector |
-| `:result` | **Short-circuit** — skip `:fn` entirely, return this value |
+| `:result` | **Short-circuit** — skip `:fn` and `:after-fn` is still called with this result |
 
-## `:after-fn` — `(fn [env f args result] → map)`
+Use it for: argument normalization, permission checks that abort with
+a synthetic result, swapping in a mock fn for testing.
 
-Called after the implementation fn returns. Can transform the result.
+## `:after-fn` — exit decorator
 
-| Return key | Effect |
-|------------|--------|
-| `:result` | Override the result |
-| `:env`, `:fn`, `:args` | Override (rarely needed) |
+```clojure
+(fn [environment f args result] → map)
+```
 
-## `:on-error-fn` — `(fn [err env f args] → map)`
-
-Called when `:fn` throws. The return map determines recovery:
+Runs after `:fn` returns successfully. Can transform the result.
 
 | Return key | Effect |
 |------------|--------|
-| `:result` | Use this as the fallback result |
-| `:error` | Throw this error instead |
-| `:fn` / `:args` | **Retry** — re-invoke with (possibly different) fn and args |
+| `:result` | Override the result the caller sees |
+| `:environment`, `:fn`, `:args` | Override (rarely useful here) |
 
-If no `:on-error-fn` is defined, the original exception propagates.
+Use it for: result truncation, telemetry, post-processing, attaching
+metadata.
 
-## `:on-parse-error-fn` — `(fn [{:code :error :sym :environment}] → string|nil)`
+## `:on-error-fn` — error decorator
 
-Called when SCI/edamame rejects the LLM's source code **before** any
-tool fn is dispatched. Symbol-level: fires only when the broken
-source mentions this symbol (bare or `alias/sym`).
+```clojure
+(fn [error environment f args] → map)
+```
 
-Return:
+Runs when `:fn` throws. The return map decides what happens next.
 
-| Value | Effect |
-|-------|--------|
-| A new source string | The iteration loop retries the parse with it; if it parses cleanly the rewritten code runs and the resulting expression is tagged `:repaired? true` |
-| `nil` | Pass — the next matching symbol's hook is consulted, then the extension-level `:ext/on-parse-error-fn`, then the original error is surfaced to the LLM |
+| Return key | Effect |
+|------------|--------|
+| `:result` | Swallow the error, return this as the fallback |
+| `:error` | Replace the original exception with this one and rethrow |
+| `:fn` and/or `:args` | **Retry** — re-invoke with the (possibly different) fn and args |
 
-The iteration loop walks every active extension and resolves in this
-order:
+If no `:on-error-fn` is defined, the original exception propagates to
+the iteration loop unchanged.
+
+Use it for: graceful degradation, "did you mean…?" retries with
+corrected args, wrapping low-level exceptions in extension-specific
+error types.
+
+## Composition Order
+
+There is **one** decorator of each kind per symbol. Vis does not stack
+multiple `:before-fn`s on the same symbol — if an extension needs to
+compose behavior, the extension author composes the fns themselves
+when building the symbol map. This is deliberate: stacked invisible
+decorators are exactly the debuggability hole we don't want.
+
+## Parse-Error Rescue (not a decorator)
+
+```clojure
+:on-parse-error-fn
+(fn [{:keys [code error sym environment]}] → string|nil)
+```
+
+This fires **before** any dispatch, when SCI/edamame rejects the
+LLM's source. There is no `:fn` to wrap yet — the source string isn't
+even a valid form. Conceptually closer to a reader macro or a
+preprocessor than to function decoration.
+
+Symbol-level: only fires when the broken source mentions this symbol
+(bare or `alias/sym`).
+
+| Return value | Effect |
+|--------------|--------|
+| A new source string | The iteration loop retries the parse with it. If it parses cleanly the rewritten code runs and the resulting expression is tagged `:repaired? true`. |
+| `nil` | Pass — the next matching symbol's hook is consulted, then the extension-level `:ext/on-parse-error-fn`, then the original error is surfaced to the LLM. |
+
+Resolution order, walking every active extension:
 
 1. **Symbol-level** `:ext.symbol/on-parse-error-fn` whose symbol name
    appears in the broken source.
 2. **Extension-level** `:ext/on-parse-error-fn` as a catch-all for
    cross-cutting rewrites.
 
-First non-nil rewrite different from `code` wins. Hooks that throw
-are logged and skipped — a buggy hook can never break query
+First non-`nil` rewrite different from `code` wins. Hooks that throw
+are logged and skipped — a buggy rescue can never break query
 execution.
 
 Example (from `vis-common-operations`):
@@ -84,8 +130,8 @@ Example (from `vis-common-operations`):
 (ext/symbol 'grep-files grep-files
   {:doc      "Search files with RE2/J."
    :arglists '([pattern] [pattern path])
-   :on-error-fn       rescue-grep-args        ;; runtime: bad regex
-   :on-parse-error-fn rescue-parse-error})    ;; parse: bare `\|`
+   :on-error-fn       rescue-grep-args        ;; runtime decorator: bad regex
+   :on-parse-error-fn rescue-parse-error})    ;; parse rescue: bare `\|`
 ```
 
 When the LLM emits `(fs/grep-files "foo\|bar")` (raw `\|` instead of
@@ -94,14 +140,29 @@ form and calls `rescue-parse-error`, which doubles the backslash so
 the re-parse succeeds and the tool fn runs with the LLM's intended
 string.
 
+## A Note on Naming
+
+If you've used Ring middleware, Pedestal interceptors, Python's
+`functools` decorators, or any AOP framework, you know this pattern.
+`:before-fn` / `:after-fn` / `:on-error-fn` are exactly `:enter` /
+`:leave` / `:error` from Pedestal, or the around / before / after /
+after-throwing quadrant from AOP, or a Ring middleware split into
+phases. The names are different; the contract is the same.
+
+We kept the `-fn` suffix because Vis extension maps mix decorator
+fns with non-fn metadata (`:doc`, `:arglists`, `:examples`) and the
+suffix prevents collisions. It is **not** because these are something
+fundamentally different from decorators. They aren't. They're
+decorators.
+
 ## Observability
 
-All hook invocations are logged via `taoensso.telemere/log!`:
+Every decorator invocation is logged via `taoensso.telemere/log!`:
 
 | Level | Event |
 |-------|-------|
 | `:info` | Symbol invocation start/end with elapsed ms |
-| `:debug` | Individual hook start/end (before, after, fn return) |
+| `:debug` | Individual decorator start/end (before, after, fn return) |
 | `:warn` | `:fn` threw; `:on-error-fn` invoked |
 
 Log data includes `:ext` (namespace), `:sym` (symbol name), `:phase`,

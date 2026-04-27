@@ -17,7 +17,7 @@
 
 - [Overview](extensions/overview.md)
 - [Extension Spec](extensions/spec.md)
-- [Hook Protocol](extensions/hooks.md)
+- [Symbol Decorators](extensions/hooks.md)
 - [Environment Map](extensions/environment.md)
 - [Nudge System](extensions/nudges.md)
 - [Self-debug extension](extensions/vis-self-debug.md)

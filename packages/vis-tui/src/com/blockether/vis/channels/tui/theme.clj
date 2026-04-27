@@ -57,7 +57,7 @@
 (def code-duration-fg  (TextColor$RGB. 130 130 130))  ;; muted duration text
 (def code-result-fg    (TextColor$RGB. 70 70 70))     ;; dim result text
 (def code-error-result-fg (TextColor$RGB. 180 40 40)) ;; red result text (on red bg)
-(def code-border-fg    (TextColor$RGB. 200 200 200))  ;; subtle border for code section
+(def code-border-fg    (TextColor$RGB. 90 95 110))    ;; darker neutral — table borders / code-section dividers (heavy box-drawing chars need real contrast)
 (def stdout-bg         (TextColor$RGB. 247 244 238))  ;; warm beige — stdout output
 (def stdout-fg         (TextColor$RGB. 80 80 80))     ;; dim text in stdout
 (def stdout-label-fg   (TextColor$RGB. 155 155 155))  ;; muted "stdout" label
