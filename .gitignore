@@ -45,3 +45,6 @@ docs/book/
 # mdbook-mermaid install assets — regenerable via `mdbook-mermaid install docs`
 docs/mermaid.min.js
 docs/mermaid-init.js
+
+# verify.sh transient output (run logs)
+.verification/

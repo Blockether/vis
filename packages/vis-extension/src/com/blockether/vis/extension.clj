@@ -20,7 +20,8 @@
 
    Use `(extension spec)` to build and validate."
   (:refer-clojure :exclude [symbol])
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [taoensso.telemere :as tel]))
@@ -30,7 +31,6 @@
 ;; =============================================================================
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-(defn- fn-or-string? [x] (or (fn? x) (non-blank-string? x)))
 
 ;; =============================================================================
 ;; Symbol entry spec
@@ -192,7 +192,7 @@
   "When :ext/symbols is non-empty, :ext/ns-alias must be present."
   [ext]
   (or (empty? (:ext/symbols ext))
-      (some? (:ext/ns-alias ext))))
+    (some? (:ext/ns-alias ext))))
 
 (s/def ::extension
   (s/and
@@ -256,8 +256,7 @@
         examples           (assoc :ext.symbol/examples (vec examples))
         (:before-fn opts)  (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)   (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts)(assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
-
+        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
 
 (defn value
   "Build a value symbol entry - a plain constant/data binding.
@@ -390,11 +389,11 @@
 
 (defn- log! [level id ext-ns sym phase ms extra-msg]
   (tel/log! {:level level :id id
-               :data {:ext ext-ns :sym sym :phase phase :ms ms}
-               :msg (str ext-ns "/" sym " :invoke"
-                      (when phase (str " " phase))
-                      (when ms (str " " (format "%.1fms" (double ms))))
-                      (when extra-msg (str " " extra-msg)))}))
+             :data {:ext ext-ns :sym sym :phase phase :ms ms}
+             :msg (str ext-ns "/" sym " :invoke"
+                    (when phase (str " " phase))
+                    (when ms (str " " (format "%.1fms" (double ms))))
+                    (when extra-msg (str " " extra-msg)))}))
 
 (defn- run-before [ext-ns sym-entry env f args]
   (if-let [before (:ext.symbol/before-fn sym-entry)]
@@ -489,7 +488,7 @@
                         (contains? recovery :result) recovery
                         (contains? recovery :error)  (throw (:error recovery))
                         :else {:result (apply (get recovery :fn f)
-                                         (vec (get recovery :args args)))}))))))  
+                                         (vec (get recovery :args args)))}))))))
 
             {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
             ms (elapsed-ms t0)]
@@ -786,7 +785,7 @@
     (doseq [^java.net.URL url urls]
       (try
         (let [content (slurp url)
-              ns-syms (clojure.edn/read-string content)]
+              ns-syms (edn/read-string content)]
           (when (and (sequential? ns-syms) (seq ns-syms))
             (doseq [ns-sym ns-syms]
               (when (and (symbol? ns-sym) (not (contains? already ns-sym)))
@@ -829,7 +828,7 @@
   [ext-ns {cmd-name :cmd, cmd-doc :doc, cmd-args :args, runner :fn}]
   {:cmd/name cmd-name
    :cmd/doc  (str (or cmd-doc "")
-              (when ext-ns (str "  (" ext-ns ")")))
+               (when ext-ns (str "  (" ext-ns ")")))
    :cmd/args (vec (or cmd-args []))
    :cmd/run-fn (fn [parsed _residual]
                  (let [r (runner parsed)]

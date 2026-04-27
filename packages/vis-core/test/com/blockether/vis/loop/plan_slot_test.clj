@@ -280,7 +280,7 @@
                 {:iteration 4 :current-max-iterations 10
                  :active-extensions []
                  :expressions-by-iteration [[3 [{:code "(+ 1 2)" :result 3 :execution-time-ms 1}
-                                           {:code "(* 2 2)" :result 4 :execution-time-ms 1}]]]})]
+                                                {:code "(* 2 2)" :result 4 :execution-time-ms 1}]]]})]
       (expect (re-find #"<recent>" out))
       (expect (re-find #"i3\.1" out))
       (expect (re-find #"i3\.2" out))))

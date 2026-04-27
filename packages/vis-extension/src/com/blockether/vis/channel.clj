@@ -170,8 +170,7 @@
                      (.getContextClassLoader (Thread/currentThread))
                      CHANNELS_RESOURCE))
                  (catch Exception _ nil))
-        before (set (keys @global-registry))
-        loaded (atom 0)]
+        before (set (keys @global-registry))]
     (doseq [^java.net.URL url urls]
       (try
         (let [ns-syms (edn/read-string (slurp url))]

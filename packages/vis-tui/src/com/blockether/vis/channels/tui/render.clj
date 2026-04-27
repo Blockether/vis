@@ -2,8 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.primitives :as p]
-            [com.blockether.vis.channels.tui.theme :as t]
-)
+            [com.blockether.vis.channels.tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [java.util LinkedHashMap]))
 
@@ -33,7 +32,7 @@
 
 (def ^:private ^:const fmt-cache-cap 512)
 
-(defn- ^LinkedHashMap make-fmt-cache []
+(defn- make-fmt-cache ^LinkedHashMap []
   (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
     (removeEldestEntry [_eldest]
       (> (.size ^LinkedHashMap this) fmt-cache-cap))))
@@ -325,8 +324,6 @@
 
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 
-
-
 ;; Line markers live in primitives — aliases for local readability.
 (def ^:private thinking-marker  p/MARKER_THINKING)
 (def ^:private code-marker      p/MARKER_CODE)
@@ -412,7 +409,7 @@
   [g {:keys [role text timestamp duration-ms model iterations tokens cost]} start-row left max-w]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
-        label     (if user? "you" "vis")
+        label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
         ;; message column. Applies to plain text AND to every
@@ -481,19 +478,26 @@
       ;; as their base fill — this includes plain text and markdown lines.
       (let [iter-bg      t/iter-header-bg
             answer-start (or (some (fn [[i l]] (when (str/starts-with? l answer-hdr-marker) i))
-                              (map-indexed vector lines))
+                               (map-indexed vector lines))
                            (count lines))]
         (doseq [[i line] (map-indexed vector lines)]
           (p/clear-styles! g)
           (let [in-answer? (> i answer-start)
-                ;; Symmetric inner padding: text + marker fills both
-                ;; start at `bx + h-pad` and span `content-w` cols
-                ;; (= bubble-w - 2*h-pad). Right-aligned labels in
-                ;; format-iteration-entry inherit the same column,
-                ;; so they're inset from the right edge by h-pad.
+                ;; Two coordinate systems per content row:
+                ;;   text  at `x = bx + h-pad`, runs `content-w` cols  — keeps
+                ;;         body padded inside the column.
+                ;;   fills at `fbx = bx`,        run  `bubble-w`  cols — every
+                ;;         marker zone (code, answer, stdout, iteration
+                ;;         header, thinking, table…) paints the FULL message
+                ;;         column so the colored band reaches both edges of
+                ;;         the messages area instead of leaving a 2-col
+                ;;         white strip on each side.
+                ;; Right-aligned labels in `format-iteration-entry` write at
+                ;; `x` and inherit `content-w`, so they still sit inset from
+                ;; the right edge by h-pad even though the bg fills past them.
                 x   (+ bx h-pad) y (+ btop i)
-                iw  content-w
-                fbx (+ bx h-pad)]
+                iw  bubble-w
+                fbx bx]
             ;; Pre-fill answer zone bg so ALL line types get it
             (when in-answer?
               (p/set-bg! g t/answer-bg)
@@ -654,8 +658,8 @@
 
               ;; ── Markdown table (answer) ── grid on code-block bg
               (or (str/starts-with? line md-table-head-marker)
-                  (str/starts-with? line md-table-sep-marker)
-                  (str/starts-with? line md-table-row-marker))
+                (str/starts-with? line md-table-sep-marker)
+                (str/starts-with? line md-table-row-marker))
               (let [tbg t/code-block-bg
                     tfg (if (str/starts-with? line md-table-head-marker)
                           t/code-block-fg t/code-block-fg)
@@ -718,8 +722,8 @@
 
               ;; ── Markdown table (thinking) ── grid on code-block bg, italic body
               (or (str/starts-with? line th-md-table-head-marker)
-                  (str/starts-with? line th-md-table-sep-marker)
-                  (str/starts-with? line th-md-table-row-marker))
+                (str/starts-with? line th-md-table-sep-marker)
+                (str/starts-with? line th-md-table-row-marker))
               (let [tbg t/code-block-bg
                     head?   (str/starts-with? line th-md-table-head-marker)
                     border? (str/starts-with? line th-md-table-sep-marker)
@@ -800,14 +804,6 @@
   (reduce + 0 (map #(bubble-height % max-w) messages)))
 
 ;;; ── Progress timeline formatting ───────────────────────────────────────────
-
-(defn- truncate-line [s max-len]
-  (let [s (str s)]
-    (if (> (count s) max-len)
-      (str (subs s 0 (max 0 (- max-len 1))) "...")
-      s)))
-
-
 
 (defn- label-text
   "Format a label string: UPPERCASED text + plain number.
@@ -1108,17 +1104,17 @@
   (when (string? s)
     (let [t (str/trim s)]
       (and (>= (count t) 3)
-           (str/starts-with? t "|")
-           (str/ends-with?   t "|")
-           (> (count (str/split t #"\|")) 2)))))
+        (str/starts-with? t "|")
+        (str/ends-with?   t "|")
+        (> (count (str/split t #"\|")) 2)))))
 
 (defn- table-separator-row?
   "Truthy when `s` is the `|---|:---:|---:|` style separator that
    marks the divider between header and body of a markdown table."
   [s]
   (and (table-row? s)
-       (let [t (str/trim s)]
-         (boolean (re-matches #"^\|\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|$" t)))))
+    (let [t (str/trim s)]
+      (boolean (re-matches #"^\|\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|$" t)))))
 
 (defn- parse-table-row
   "Split `| a | b | c |` into [\"a\" \"b\" \"c\"]. Strips outer pipes,
@@ -1131,9 +1127,9 @@
         cells (str/split inner #"\|" -1)]
     (mapv (fn [c]
             (-> (or c "")
-                str/trim
-                (str/replace #"\*\*([^*]+)\*\*" "$1")
-                (str/replace #"`([^`]+)`" "$1")))
+              str/trim
+              (str/replace #"\*\*([^*]+)\*\*" "$1")
+              (str/replace #"`([^`]+)`" "$1")))
       cells)))
 
 (defn- pad-cell
@@ -1267,7 +1263,7 @@
 
                ;; GFM pipe table: header + |---| + rows
                (and (table-row? line)
-                    (table-separator-row? (first rst)))
+                 (table-separator-row? (first rst)))
                (let [[tbl tail] (consume-table lines max-w m)]
                  (recur (seq tail) false (into acc tbl)))
 
@@ -1329,8 +1325,8 @@
 
                ;; Bold-only line: **text**
                (and (str/starts-with? (str/trim line) "**")
-                    (str/ends-with? (str/trim line) "**")
-                    (> (count (str/trim line)) 4))
+                 (str/ends-with? (str/trim line) "**")
+                 (> (count (str/trim line)) 4))
                (let [trimmed (str/trim line)
                      inner   (subs trimmed 2 (- (count trimmed) 2))]
                  (recur rst false

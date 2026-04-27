@@ -12,7 +12,6 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.bench.common :as common]
-   [com.blockether.svar.core :as svar]
    [taoensso.trove :as trove])
   (:import
    (java.nio.file Files)
@@ -53,7 +52,7 @@
   (let [filled-tests (mapv #(str/replace % "__" candidate) tests)
         test-forms (str/join "\n"
                      (map-indexed
-                       (fn [i test-str]
+                       (fn [_i test-str]
                          (str "(swap! results conj (try (if " test-str
                            " :pass [:fail " (pr-str (subs test-str 0 (min 80 (count test-str)))) "])"
                            " (catch Exception e [:error " (pr-str (subs test-str 0 (min 80 (count test-str)))) " (ex-message e)])))"))

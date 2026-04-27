@@ -50,7 +50,7 @@
         provs (vec (:providers cfg))
         ;; Replace existing or append
         updated (let [idx (some (fn [[i p]] (when (= (:id p) pid) i))
-                        (map-indexed vector provs))]
+                            (map-indexed vector provs))]
                   (if idx
                     (assoc provs idx provider)
                     (conj provs provider)))
@@ -139,10 +139,10 @@
    (let [timeline (atom {})  ;; iteration-num → latest chunk
          as-vec   #(mapv val (sort-by key %))]
      {:on-chunk  (fn [chunk]
-                  (let [iter (:iteration chunk)
-                        tl   (swap! timeline assoc iter chunk)]
-                    (when on-update
-                      (on-update (as-vec tl) chunk))))
+                   (let [iter (:iteration chunk)
+                         tl   (swap! timeline assoc iter chunk)]
+                     (when on-update
+                       (on-update (as-vec tl) chunk))))
       :get-timeline #(as-vec @timeline)})))
 
 (defn format-date
@@ -325,7 +325,7 @@
       "No extension commands available. Run 'vis extensions' to see registered extensions."
       (str "Extension commands:\n\n"
         (str/join "\n\n"
-          (map (fn [{:keys [cmd doc ext-ns] :as c}]
+          (map (fn [{:keys [cmd doc ext-ns]}]
                  (str "  vis ext " (pad cmd 20) (or doc "") "  (" ext-ns ")"))
             cmds))))))
 

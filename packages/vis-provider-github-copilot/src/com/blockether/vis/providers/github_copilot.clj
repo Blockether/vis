@@ -23,7 +23,7 @@
             [taoensso.telemere :as tel])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-                          HttpResponse$BodyHandlers]
+            HttpResponse$BodyHandlers]
            [java.time Duration]))
 
 ;; =============================================================================
@@ -242,8 +242,8 @@
 
            :else
            (throw (ex-info (str "Device flow failed: " (or (:error_description resp)
-                                                          (:error resp)
-                                                          "unknown error"))
+                                                         (:error resp)
+                                                         "unknown error"))
                     {:response resp}))))))))
 
 ;; =============================================================================
@@ -277,12 +277,12 @@
    Opts:
      :enterprise-domain — for GHE (e.g. \"github.mycompany.com\")"
   ([] (get-copilot-token! nil))
-  ([{:keys [enterprise-domain] :as opts}]
+  ([opts]
    (let [cached @token-cache
          now    (System/currentTimeMillis)]
      (if (and cached
-              (:token cached)
-              (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS)))
+           (:token cached)
+           (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS)))
        ;; Cached token is still valid
        {:token (:token cached) :api-url (:api-url cached)}
        ;; Need to refresh
@@ -346,11 +346,11 @@
     (cond-> {:authenticated? (some? detected)}
       detected
       (assoc :source (:source detected)
-             :oauth-token-preview (let [t (:oauth-token detected)]
-                                    (str (subs t 0 (min 8 (count t))) "...")))
+        :oauth-token-preview (let [t (:oauth-token detected)]
+                               (str (subs t 0 (min 8 (count t))) "...")))
       (and cached (:token cached))
       (assoc :copilot-token-valid? (> (:expires-at-ms cached) now)
-             :expires-in-ms (- (:expires-at-ms cached) now)))))
+        :expires-in-ms (- (:expires-at-ms cached) now)))))
 
 (defn logout!
   "Clear all cached and persisted tokens."

@@ -4,7 +4,6 @@
   (:require [borkdude.dynaload :as dl]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.channels.tui.dialogs :as dlg]
             [com.blockether.vis.channels.tui.primitives :as p]
@@ -136,9 +135,9 @@
   "True only when every required github-copilot var resolved."
   []
   (and @copilot-start-device-flow!
-       @copilot-poll-for-token!
-       @copilot-get-copilot-token!
-       @copilot-detect-oauth-token))
+    @copilot-poll-for-token!
+    @copilot-get-copilot-token!
+    @copilot-detect-oauth-token))
 
 (defn- copilot-oauth-flow!
   "Run the GitHub Copilot OAuth device flow inside the TUI.
@@ -160,7 +159,7 @@
           exchange-fn copilot-get-copilot-token!
           detect-fn   copilot-detect-oauth-token]
       ;; Already authenticated?
-      (if-let [existing (detect-fn)]
+      (if (detect-fn)
         (try
           (let [{:keys [token]} (exchange-fn)]
             token)
@@ -184,8 +183,7 @@
               ;; The poll runs in background; once authorized it returns
               (loop [attempt 0]
                 (if (realized? result)
-                  (let [{:keys [oauth-token]} @result
-                        {:keys [token]} (exchange-fn)]
+                  (let [{:keys [token]} (exchange-fn)]
                     (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
                     token)
                   (do
@@ -230,8 +228,6 @@
                 ;; For Copilot, don't persist the short-lived API token —
                 ;; config.clj resolves it dynamically from the OAuth token.
                 (and api-key (not oauth?)) (assoc :api-key api-key)))))))))
-
-
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,

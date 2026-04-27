@@ -113,9 +113,14 @@ The model sees **one context message** per iteration:
   turn (`{:goal :counts :outcome :abandon-reason}`). SYSTEM vars are
   UPPERCASE — not earmuffed — to match the Clojure constant idiom
   and avoid implying dynamic-var semantics.
-- `<var_index>` — user-defined vars only, rendered as compact
-  pseudo-source (e.g. `(def ^{:v 3 :s :l :t :map :n 12} foo ...)`).
-  SYSTEM vars are excluded; they live in `<system_state>` instead.
+- `<var_index>` — user-defined vars only, rendered as type-aware
+  pseudo-source. Cheap values inline (`(def s "hello")`,
+  `(def v [1 2 3 4 5])`); large values fall back to a schema preview
+  (`(def big-map {:n 42 :keys-sample [:a :b :c]})`). Stats live in a
+  `;;` comment line above each entry. SYSTEM vars are excluded; they
+  live in `<system_state>` instead. Forgotten / persisted-only vars
+  surface in a separate `<vars_archive>` subblock with name + version
+  count only.
 - `[system_nudge]` — budget, repetition, extension hints.
 
 Older reasonings live in the breadcrumb chain (one line per iteration)

@@ -1,7 +1,8 @@
 (ns com.blockether.vis.channels.tui.state
   "Re-frame-like state management for the TUI.
    Single app-db atom, pure event handlers, side effects via reg-fx."
-  (:require [com.blockether.vis.channels.cancellation :as cancellation]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.channels.cancellation :as cancellation]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.chat :as chat]
             [com.blockether.vis.channels.tui.input :as input]
@@ -194,7 +195,7 @@
     (assoc db :input new-input)))
 
 (defn- text->input-state [text]
-  (let [lines (vec (or (seq (clojure.string/split (or text "") #"\n" -1)) [""]))
+  (let [lines (vec (or (seq (str/split (or text "") #"\n" -1)) [""]))
         crow  (dec (count lines))
         ccol  (count (nth lines crow))]
     {:lines lines :crow crow :ccol ccol}))
@@ -301,18 +302,18 @@
           trace    (get-in db [:progress :iterations])
           response (-> (chat/assistant-msg (or answer ""))
                      (cond-> query-id                (assoc :query-id query-id)
-                             (seq trace)              (assoc :trace trace :raw-answer (or answer ""))
-                             (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
-                             model      (assoc :model model)
-                             iterations (assoc :iterations iterations)
-                             tokens     (assoc :tokens tokens)
-                             cost       (assoc :cost cost)
-                             confidence (assoc :confidence confidence)))]
+                       (seq trace)              (assoc :trace trace :raw-answer (or answer ""))
+                       (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
+                       model      (assoc :model model)
+                       iterations (assoc :iterations iterations)
+                       tokens     (assoc :tokens tokens)
+                       cost       (assoc :cost cost)
+                       confidence (assoc :confidence confidence)))]
       (-> db
         (update :messages pop)
         (update :messages conj response)
         (assoc :msg-scroll nil :loading? false :progress nil
-               :cancel-token nil :cancelling? false)
+          :cancel-token nil :cancelling? false)
         (dissoc :query-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
@@ -321,7 +322,7 @@
   (fn [conv text token]
     (let [fut (future
                 (try
-                  (let [{:keys [on-chunk get-timeline]}
+                  (let [{:keys [on-chunk]}
                         (channels/make-progress-tracker
                           {:on-update (fn [timeline _chunk]
                                         (try (dispatch [:set-progress-iterations timeline])
@@ -332,7 +333,7 @@
                     (if (:error result)
                       (dispatch [:message-received (str "Error: " (:error result))])
                       (dispatch [:message-received (:answer result)
-                                  (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence :query-id])])))
+                                 (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence :query-id])])))
                   (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in
                     ;; InterruptedException, CancellationException, and

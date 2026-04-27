@@ -29,12 +29,12 @@
 
   (it "assembles canonical extension prompt inside the loop and appends extra notes"
     (let [environment {:extensions (atom [(ext/extension
-                                           {:ext/namespace 'com.acme.ext.fs
-                                            :ext/doc       "Filesystem tools"
-                                            :ext/group     "filesystem"
-                                            :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
-                                            :ext/prompt    "RULES:\n- Discover paths first."
-                                            :ext/symbols   [read-symbol retries-value]})])}
+                                            {:ext/namespace 'com.acme.ext.fs
+                                             :ext/doc       "Filesystem tools"
+                                             :ext/group     "filesystem"
+                                             :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+                                             :ext/prompt    "RULES:\n- Discover paths first."
+                                             :ext/symbols   [read-symbol retries-value]})])}
           ;; assemble-system-prompt requires :active-extensions — compute
           ;; ONCE per call site (here, once per snapshot) and pass in.
           active-exts   (vis/active-extensions environment)

@@ -124,7 +124,45 @@ accumulate stale plan context here. The next turn's plan is fresh.
 ## Var-index
 
 `<var_index>` is the latest namespace snapshot of *user-defined* vars
-only. When a symbol shows `:v N`, the full persisted version timeline
-is available via `(var-history 'sym)`. SYSTEM vars do NOT appear in
-`<var_index>` — they live in `<system_state>` with their current values
-inlined.
+only. SYSTEM vars do NOT appear here — they live in `<system_state>`.
+
+Rendering is **type-aware**: cheap values get their actual content
+inlined so the model never has to round-trip via `(var-history 'sym)`
+just to read what's in a var. Expensive values fall back to a schema
+preview. Stats live in a `;;` comment line, **never** as reader-macro
+metadata onto the symbol.
+
+```
+;; v=3 scope=live n=2
+(def s "hello")
+;; v=1 scope=live n=12
+(def m {:keys [:status :id :name :owner :created-at :updated-at :tags :owner-id]})
+;; v=1 scope=live n=42
+(def big-map {:n 42 :keys-sample [:a :b :c :d :e :f]})
+;; v=2 scope=live n=4
+(def callers [{:path "src/x.clj"} {:path "src/y.clj"} …])
+;; v=1 scope=live
+(defn foo-fn [x opts] "Update foo-fn arity. …")
+```
+
+Rules:
+
+- `:string ≤200c` → inline literal.
+- `:string >200c` → `{:string-size N :head "first 80c…"}`.
+- `:map ≤8 keys` → `{:keys […]}`.
+- `:map  >8 keys` → `{:n N :keys-sample […]}`.
+- `:vector|:set|:list|:seq ≤5 elems` → inline `[…]`.
+- `:vector|:set|:list|:seq >5 elems` → `{:n N :head […]}`.
+- `:fn` → arglists + first docstring line.
+- `:nil|:bool|:int|:float|:keyword|:symbol` → inline literal.
+
+Forgotten / persisted-only vars (not currently live in the sandbox
+but present in the DB var registry) are routed to a separate
+`<vars_archive>` subblock with name + version count only —
+`(var-history 'sym)` recovers the full history on demand.
+
+```
+<vars_archive>
+  archived-var  ;; v=3 (call (var-history 'archived-var) to inspect)
+</vars_archive>
+```

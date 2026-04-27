@@ -111,9 +111,7 @@
                      :interval          :monthly
                      :max-file-size     4000000
                      :max-num-parts     8
-                     :max-num-intervals 6}))
-
-)
+                     :max-num-intervals 6})))
 (defn shutdown!
   "Flush and stop all handlers. Call after screen stops."
   []
@@ -157,8 +155,8 @@
         ;; models, which svar's spec layer correctly classifies as
         ;; `not-a-map` and the iteration loop has nowhere to go from
         ;; there. Reinstate only after the gateway side is fixed.
-        :default-models ["glm-5-turbo" "glm-5.1" "gpt-5-mini" "gpt-4o"
-                         "minimax-m2.5" "gemini-2.5-pro"]})))
+       :default-models ["glm-5-turbo" "glm-5.1" "gpt-5-mini" "gpt-4o"
+                        "minimax-m2.5" "gemini-2.5-pro"]})))
 
 (defn provider-presets
   "All known provider presets. Includes Blockether when BLOCKETHER_* env vars are set."

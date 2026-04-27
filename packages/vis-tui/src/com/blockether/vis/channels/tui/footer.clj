@@ -193,7 +193,7 @@
   (if (empty? spans)
     0
     (+ (reduce + 0 (map #(count (:text %)) spans))
-       (* (dec (count spans)) (count separator)))))
+      (* (dec (count spans)) (count separator)))))
 
 (defn- total-width
   "Width of all three regions plus mandatory inter-region gaps and edge
@@ -209,10 +209,10 @@
                  (and (seq l) (or (seq c) (seq r))) inc
                  (and (seq c) (seq r))             inc)]
     (+ edge-pad
-       (* gap n-gaps)
-       (spans-width l separator)
-       (spans-width c separator)
-       (spans-width r separator))))
+      (* gap n-gaps)
+      (spans-width l separator)
+      (spans-width c separator)
+      (spans-width r separator))))
 
 (defn- shrink-to-fit
   "Drop highest-:priority segments one at a time until the row fits.
@@ -251,9 +251,9 @@
       (let [c (if (zero? i)
                 c
                 (do (p/clear-styles! g)
-                    (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-                    (p/put-str! g c row separator)
-                    (+ c (count separator))))]
+                  (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+                  (p/put-str! g c row separator)
+                  (+ c (count separator))))]
         (p/clear-styles! g)
         (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
         (when (:bold? s) (p/enable! g p/BOLD))

@@ -120,8 +120,8 @@
           cid (db/store-conversation! s {:channel :vis})
           qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (db/update-query! s qid {:status :success :answer "42"
-                                :tokens {:input 100 :output 50}
-                                :cost {:total-cost 0.005 :model "gpt-4o"}})
+                               :tokens {:input 100 :output 50}
+                               :cost {:total-cost 0.005 :model "gpt-4o"}})
       (let [q (first (db/db-list-conversation-queries s cid))]
         (expect (= :done (:status q)))
         (expect (= "gpt-4o" (:model q))))))
@@ -1130,15 +1130,14 @@
                                                     {:code "(vec (range 5))" :result [0 1 2 3 4]}]
                                       :duration-ms 5})
           rows (raw-query s {:select [:est.result :est.expr]
-                            :from [[:expression_state :est]]
-                            :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
-                            :where [:= :es.kind "call"]
-                            :order-by [[:est.created_at :asc]]})]
+                             :from [[:expression_state :est]]
+                             :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
+                             :where [:= :es.kind "call"]
+                             :order-by [[:est.created_at :asc]]})]
       ;; (range) → ref
       (expect (= {:vis/ref :expr} (thaw-blob (:result (first rows)))))
       ;; (vec (range 5)) → realized vector, stored as data
-      (expect (= [0 1 2 3 4] (thaw-blob (:result (second rows)))))))
-)
+      (expect (= [0 1 2 3 4] (thaw-blob (:result (second rows))))))))
 ;; =============================================================================
 ;; Integration: store → wipe sandbox → restore → use
 ;; =============================================================================

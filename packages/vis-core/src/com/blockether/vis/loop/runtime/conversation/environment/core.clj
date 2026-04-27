@@ -11,9 +11,6 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
 
-(defn- truncate-str [s n]
-  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
-
 (defn- shape [v]
   (cond (map? v) :map (vector? v) :vector (set? v) :set (list? v) :list
     (string? v) :string (number? v) :number (keyword? v) :keyword
@@ -393,38 +390,158 @@
       (if (= n MAX_VAR_INDEX_COUNT) (str MAX_VAR_INDEX_COUNT "+") n))
     :else nil))
 
+;; ---------------------------------------------------------------------------
+;; Type-aware var rendering
+;;
+;; Cheap values get their actual content inlined so the model never has to
+;; round-trip via `(var-history 'sym)` just to see what's in a var. Expensive
+;; values fall back to a schema preview (key list, head, size). The render
+;; emits VALID Clojure shape — stats live in a `;;` comment line, never as
+;; reader-macro metadata onto the symbol (the old `^{:v N :s :l :t :map}` form
+;; was fake-Clojure that confused parser priors).
+;; ---------------------------------------------------------------------------
+
+(def ^:private STRING_INLINE_MAX_CHARS 200)
+(def ^:private STRING_HEAD_PREVIEW_CHARS 80)
+(def ^:private MAP_INLINE_MAX_KEYS 8)
+(def ^:private MAP_KEYS_SAMPLE_SIZE 6)
+(def ^:private SEQ_INLINE_MAX_ELEMS 5)
+(def ^:private SEQ_HEAD_SAMPLE_SIZE 3)
+(def ^:private DOCSTRING_FIRST_LINE_CHARS 100)
+
+(defn- truncate-string [s n]
+  (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
+
+(defn- map-keys-preview [val]
+  (let [ks (vec (keys val))]
+    (if (<= (count ks) MAP_INLINE_MAX_KEYS)
+      {:inline? true :keys ks}
+      {:inline? false
+       :keys-sample (vec (take MAP_KEYS_SAMPLE_SIZE ks))
+       :total (count ks)})))
+
+(defn- seq-head-preview [val]
+  (let [n (var-size val false)
+        sample-count (cond
+                       (string? n) SEQ_HEAD_SAMPLE_SIZE          ;; "1000+" — lazy/big
+                       (number? n) (min n SEQ_HEAD_SAMPLE_SIZE)
+                       :else SEQ_HEAD_SAMPLE_SIZE)
+        head (vec (take sample-count val))]
+    {:total n :head head}))
+
+(defn- stats-comment
+  "Render the per-entry stats as a single `;;` comment line. Replaces the
+   fake-Clojure metadata-on-symbol form. `:scope` uses full words
+   (`:live | :forgotten | :system`); `:v` is the persisted version count."
+  [{:keys [version status size]}]
+  (let [scope-word (case status
+                     :sys :system
+                     :f   :forgotten
+                     :l   :live
+                     status)]
+    (str ";; v=" version " scope=" (name scope-word)
+      (when (some? size) (str " n=" size)))))
+
+(defn- docstring-first-line [arglists]
+  ;; arglists meta is `([x] [x opts])` shape; the docstring (when any) is
+  ;; on the var's :doc key. Helpers below rebuild the entry from sandbox
+  ;; metadata so we receive arglists + doc separately.
+  nil)
+
+(defn- render-fn-form
+  [{:keys [sym arglists doc] :as entry}]
+  (let [stats   (stats-comment entry)
+        single? (and (sequential? arglists)
+                  (= 1 (count arglists))
+                  (vector? (first arglists)))
+        doc-line (when (and (string? doc) (not (str/blank? doc)))
+                   (truncate-string
+                     (-> (str doc) str/split-lines first str/trim)
+                     DOCSTRING_FIRST_LINE_CHARS))
+        body (cond
+               doc-line (str " \"" doc-line "\" …")
+               :else " …")
+        sig  (cond
+               single? (pr-str (first arglists))
+               (seq arglists) (str/join " " (map pr-str arglists))
+               :else "[& args]")]
+    (str stats "\n(defn " sym " " sig body ")")))
+
+(defn- render-data-form
+  "Render a non-fn var with type-aware preview. Cheap values inline; large
+   values fall back to a schema map (`{:n N :keys-sample […]}` etc.)."
+  [{:keys [sym type val] :as entry}]
+  (let [stats (stats-comment entry)
+        body  (case type
+                :nil   "nil"
+                :bool  (pr-str val)
+                :int   (pr-str val)
+                :float (pr-str val)
+                :keyword (pr-str val)
+                :symbol  (pr-str val)
+                :string (let [s val]
+                          (if (<= (count s) STRING_INLINE_MAX_CHARS)
+                            (pr-str s)
+                            (pr-str {:string-size (count s)
+                                     :head (truncate-string s STRING_HEAD_PREVIEW_CHARS)})))
+                :map (let [{:keys [inline? keys keys-sample total]} (map-keys-preview val)]
+                       (if inline?
+                         (pr-str {:keys keys})
+                         (pr-str {:n total :keys-sample keys-sample})))
+                (:vector :set :list :seq)
+                (let [{:keys [total head]} (seq-head-preview val)]
+                  (cond
+                    (and (number? total) (<= total SEQ_INLINE_MAX_ELEMS))
+                    (pr-str (vec val))
+                    :else
+                    (pr-str {:n total :head head})))
+                ;; unknown type — punt to a value-only stub
+                (pr-str {:type type}))]
+    (str stats "\n(def " sym " " body ")")))
+
+(defn- render-archive-form
+  "Render an entry from `<vars_archive>` — a forgotten or persisted-only
+   var. Just the name + version count; the full body is one
+   `(var-history 'sym)` away."
+  [{:keys [sym version]}]
+  (str "  " sym "  ;; v=" version " (call (var-history '" sym ") to inspect)"))
+
 (defn- render-var-form
-  [{:keys [sym version status type size arglists]}]
-  (let [meta-map (cond-> {:v version :s status}
-                   (and type (not= status :sys)) (assoc :t type)
-                   (some? size) (assoc :n size))
-        single-arglist? (and (sequential? arglists)
-                          (= 1 (count arglists))
-                          (vector? (first arglists)))
-        fn-form? (= type :fn)]
-    (if fn-form?
-      (if single-arglist?
-        (str "(defn ^" (pr-str meta-map) " " sym " " (pr-str (first arglists)) " ...)")
-        (str "(defn ^"
-          (pr-str (cond-> meta-map
-                    (seq arglists) (assoc :args arglists)))
-          " " sym " ...)"))
-      (str "(def ^" (pr-str meta-map) " " sym " ...)"))))
+  "Live-var render path. Persisted-only entries are routed to the archive
+   block by the caller; this function should only see live entries."
+  [{:keys [type] :as entry}]
+  (if (= type :fn)
+    (render-fn-form entry)
+    (render-data-form entry)))
 
 (defn build-var-index
-  "Builds a compact pseudo-source `<var_index>` from user-defined vars in the
-   SCI context. Filters out initial bindings (tools, helpers) using
-   `initial-ns-keys`. Returns nil if no user vars exist.
+  "Build the `<var_index>` block from user-defined vars in the SCI sandbox.
 
-   Render format:
-     (def  ^{:v N :s :l|:f|:sys :t kw :n size?} sym ...)
-     (defn ^{:v N :s :l|:f|:sys :t :fn :n size?} sym [args] ...)
+   Returns either nil (no user vars), a string with just the live-var
+   pseudo-source, or a string with the live-var block + `<vars_archive>`
+   subblock listing forgotten / persisted-only var names.
 
-   The block is intentionally index-like, not executable source: `...` bodies
-   save tokens because the actual defining expressions already live in the DB,
-   journal, and `var-history`. SYSTEM vars sort first; the rest are
-   newest-touched first. Forgotten vars remain visible so the model knows they
-   exist and can call `(var-history 'sym)` to inspect old values."
+   Live-var rendering is type-aware:
+   - `:string ≤200c` → inline literal.
+   - `:string >200c` → `{:string-size N :head \"first 80c…\"}`.
+   - `:map ≤8 keys` → `{:keys […]}`.
+   - `:map  >8 keys` → `{:n N :keys-sample […]}`.
+   - `:vector|:set|:list|:seq ≤5 elems` → inline `[…]`.
+   - `:vector|:set|:list|:seq >5 elems` → `{:n N :head […]}`.
+   - `:fn` → arglists + first docstring line.
+   - `:nil|:bool|:int|:float|:keyword|:symbol` → inline literal.
+
+   SYSTEM vars (QUERY/REASONING/ANSWER) are excluded entirely — their
+   current values appear in `<system_state>` instead. Initial-ns
+   bindings (tools, helpers) are also excluded.
+
+   Forgotten / persisted-only vars (not currently live in the sandbox
+   but present in the DB var registry) are routed to a separate
+   `<vars_archive>` subblock with name + version count only —
+   `(var-history 'sym)` recovers the full history on demand.
+
+   Sort order: live vars by recency-of-most-recent-version (newest
+   first); archive entries alphabetically."
   ([sci-ctx initial-ns-keys]
    (build-var-index sci-ctx initial-ns-keys nil nil nil nil))
   ([sci-ctx initial-ns-keys sandbox]
@@ -446,37 +563,49 @@
                            :when (symbol? s)]
                        [s {:val (if (instance? clojure.lang.IDeref v) @v v)
                            :arglists (:arglists (meta v))
-                           :version (get-in var-registry [s :version] 1)}]))
+                           :doc      (:doc (meta v))
+                           :version  (get-in var-registry [s :version] 1)}]))
          persisted-info (when var-registry
                           (into {}
                             (for [[sym _] var-registry
                                   :when (and (symbol? sym)
                                           (not (contains? live-info sym))
-                                          (not (contains? initial-ns-keys sym)))]
+                                          (not (contains? initial-ns-keys sym))
+                                          (not (system-var-sym? sym)))]
                               [sym {:val ::persisted
                                     :version (get-in var-registry [sym :version] 1)}])))
-         var-info (merge persisted-info live-info)
-         entries (->> var-info
-                   (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
-                   ;; SYSTEM vars (QUERY/REASONING/ANSWER) live in
-                   ;; <system_state> with their current values inlined.
-                   ;; Drop them from <var_index> entirely so the user-facing
-                   ;; var list is just user-defined state.
-                   (remove (fn [[sym _]] (system-var-sym? sym)))
-                   (sort-by (fn [[sym _]]
-                              [(- (long (recency-of sym)))
-                               (str sym)]))
-                   (mapv (fn [[sym {:keys [val arglists version]}]]
-                           (let [persisted? (= val ::persisted)
-                                 system?    false]
-                             {:sym sym
-                              :version version
-                              :status (var-status-keyword {:system? system? :persisted? persisted?})
-                              :type (var-type-keyword val persisted?)
-                              :size (var-size val persisted?)
-                              :arglists arglists}))))]
-     (when (seq entries)
-       (str/join "\n" (map render-var-form entries))))))
+         keep? (fn [[sym _]]
+                 (and (not (contains? initial-ns-keys sym))
+                   (not (system-var-sym? sym))))
+         live-entries (->> live-info
+                        (filter keep?)
+                        (sort-by (fn [[sym _]]
+                                   [(- (long (recency-of sym))) (str sym)]))
+                        (mapv (fn [[sym {:keys [val arglists doc version]}]]
+                                {:sym sym
+                                 :version version
+                                 :status (var-status-keyword {:system? false :persisted? false})
+                                 :type (var-type-keyword val false)
+                                 :size (var-size val false)
+                                 :val val
+                                 :arglists arglists
+                                 :doc doc})))
+         archive-entries (->> (or persisted-info {})
+                           (filter keep?)
+                           (sort-by (comp str first))
+                           (mapv (fn [[sym {:keys [version]}]]
+                                   {:sym sym :version version})))
+         live-block (when (seq live-entries)
+                      (str/join "\n" (map render-var-form live-entries)))
+         archive-block (when (seq archive-entries)
+                         (str "<vars_archive>\n"
+                           (str/join "\n" (map render-archive-form archive-entries))
+                           "\n</vars_archive>"))]
+     (cond
+       (and live-block archive-block) (str live-block "\n" archive-block)
+       live-block                     live-block
+       archive-block                  archive-block
+       :else                          nil))))
 
 ;; =============================================================================
 ;; Sandbox restore — rebuild SCI bindings from DB

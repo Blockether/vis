@@ -242,7 +242,7 @@
 (defn iteration-loop
   "The core iteration loop. Runs N iterations of: assemble â†’ ask LLM â†’ execute â†’ persist."
   [environment query
-   {:keys [output-spec max-context-tokens system-prompt
+   {:keys [system-prompt
            query-id history-messages
            max-iterations max-consecutive-errors max-restarts
            hooks cancel-atom current-iteration-atom
@@ -254,9 +254,7 @@
         effective-max-iterations (fn [] (if max-iterations-atom-binding @max-iterations-atom-binding max-iterations))
         effective-model (:name (resolve-effective-model (:router environment)))
         _ (assert effective-model "Router must resolve a root model")
-        max-context-tokens (or max-context-tokens
-                             (long (* 0.6 (router/context-limit effective-model))))
-        has-reasoning? (boolean (provider-has-reasoning? (:router environment)))
+        has-reasoning? (provider-has-reasoning? (:router environment))
         base-reasoning-level (or (iterate/normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per query. Threaded through both the
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
@@ -303,11 +301,11 @@
         ;; Metadata persisted on each iteration row â€” reuses the
         ;; precomputed `active-exts` (no second activation pass).
         iteration-metadata (fn []
-                        (when (seq active-exts)
-                          {:extensions (mapv (fn [ext]
-                                               (cond-> {:namespace (str (:ext/namespace ext))}
-                                                 (:ext/version ext) (assoc :version (:ext/version ext))))
-                                         active-exts)}))]
+                             (when (seq active-exts)
+                               {:extensions (mapv (fn [ext]
+                                                    (cond-> {:namespace (str (:ext/namespace ext))}
+                                                      (:ext/version ext) (assoc :version (:ext/version ext))))
+                                              active-exts)}))]
     (sci-env/bind-and-bump! environment 'QUERY query)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (loop-core/auto-forget-stale-vars! environment)
@@ -380,7 +378,7 @@
                                       (or previous-next-reasoning
                                         (iterate/reasoning-level-for-errors base-reasoning-level consecutive-errors)))
                     _ (iterate/log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
-                    ;; €” sticky plan + breadcrumb chain + last
+                    ;; ï¿½ï¿½ sticky plan + breadcrumb chain + last
                     ;; iteration's :thinking. All come from DB so the
                     ;; projection is always rebuilt from persisted
                     ;; state, never accumulated in messages.
@@ -396,7 +394,7 @@
                                        (iterate/load-prior-turn-digest
                                          db-info (:conversation-id environment) query-id))
                     expressions-by-iteration (when (seq previous-expressions)
-                                          [[(or previous-iteration 0) previous-expressions]])
+                                               [[(or previous-iteration 0) previous-expressions]])
                     iteration-context (iterate/build-iteration-context environment
                                         {:iteration              iteration
                                          :current-max-iterations (effective-max-iterations)
@@ -460,11 +458,11 @@
                           empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
                                             (:reasoning (:data iteration-error-data)))
                           err-iteration-id (db/store-iteration! (:db-info environment)
-                                        {:query-id query-id :vars [] :expressions nil
-                                         :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
-                                         :llm-messages effective-messages
-                                         :llm-model (str (:name resolved-model))
-                                         :metadata (iteration-metadata)})]
+                                             {:query-id query-id :vars [] :expressions nil
+                                              :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
+                                              :llm-messages effective-messages
+                                              :llm-model (str (:name resolved-model))
+                                              :metadata (iteration-metadata)})]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                       ;; Live error chunk â€” lets the TUI / web bubble show
                       ;; \"iteration N failed: <msg>\" the moment it happens, instead
@@ -487,10 +485,10 @@
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking expressions final-result next-model next-reasoning]} iteration-result
-                        ;; €” plan/breadcrumb fields from svar parse
+                        ;; ï¿½ï¿½ plan/breadcrumb fields from svar parse
                         new-plan-state    (:plan-state iteration-result)
                         breadcrumb-text   (:breadcrumb iteration-result)
-                        ;; €” plan-edit-distance + change marker.
+                        ;; ï¿½ï¿½ plan-edit-distance + change marker.
                         ;; Compute against the sticky plan (loaded above)
                         ;; so we record the diff for THIS iteration.
                         plan-validation   (when new-plan-state
@@ -517,7 +515,7 @@
                            :var-history-recall-count
                            (count (filter #(and (string? (:code %))
                                              (re-find #"\(var-history\b" (:code %)))
-                             (or expressions [])))
+                                    (or expressions [])))
                            :expression-redundancy-fraction 0.0   ;; populated by the dedup atom
                            :dedup-saves                    0     ;; populated by the dedup atom
                            :plan-validation-error          (some-> plan-validation :type name)})
@@ -554,18 +552,18 @@
                         (vec (keep iterate/format-loop-nudge
                                [gate-violation plan-validation-violation]))
                         iteration-id (db/store-iteration! (:db-info environment)
-                                  {:query-id query-id :expressions expressions :vars vars-snapshot
-                                   :thinking thinking
-                                   :answer (when final-result (iterate/answer-str (:answer final-result)))
-                                   :duration-ms (or (:duration-ms iteration-result) 0)
-                                   :llm-messages (:llm-messages iteration-result)
-                                   :llm-model (:llm-model iteration-result)
+                                       {:query-id query-id :expressions expressions :vars vars-snapshot
+                                        :thinking thinking
+                                        :answer (when final-result (iterate/answer-str (:answer final-result)))
+                                        :duration-ms (or (:duration-ms iteration-result) 0)
+                                        :llm-messages (:llm-messages iteration-result)
+                                        :llm-model (:llm-model iteration-result)
                                    ;; Plan slot persistence.
-                                   :plan-state (when (and new-plan-state (nil? plan-validation))
-                                                 new-plan-state)
-                                   :breadcrumb breadcrumb-text
-                                   :plan-diff  plan-diff
-                                   :metadata iteration-metadata-with-metrics})
+                                        :plan-state (when (and new-plan-state (nil? plan-validation))
+                                                      new-plan-state)
+                                        :breadcrumb breadcrumb-text
+                                        :plan-diff  plan-diff
+                                        :metadata iteration-metadata-with-metrics})
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                         _ (emit-hook! on-iteration
                             {:iteration iteration
@@ -706,7 +704,7 @@
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec model max-iterations
-                max-context-tokens concurrency
+                max-context-tokens
                 system-prompt debug? hooks cancel-atom eval-timeout-ms
                 reasoning-default routing]
          :or   {max-iterations      rlm-spec/MAX_ITERATIONS
@@ -821,9 +819,9 @@
 (defn- run-iteration-phase
   "Runs the main iteration loop via run-query!.
    Returns iteration-result, query-id, cost atoms, and merge-cost! fn."
-  [{:keys [environment query-str messages history-messages spec max-iterations
+  [{:keys [environment query-str history-messages spec max-iterations
            max-context-tokens system-prompt
-           current-iteration-atom hooks cancel-atom db-info
+           current-iteration-atom hooks cancel-atom
            reasoning-default routing]}]
   (let [iteration-result (run-query! environment query-str
                            (cond-> {:max-iterations         max-iterations
@@ -971,7 +969,7 @@
    (let [ctx (prepare-query-context environment messages opts)
          {:keys [eval-timeout-ms concurrency
                  debug? query-str root-model max-iterations
-                 db-info max-iterations-atom
+                 db-info
                  environment-id]} ctx
          merged-concurrency (merge rlm-spec/DEFAULT_CONCURRENCY concurrency)]
      (binding [rlm-spec/*rlm-ctx*               {:rlm-environment-id environment-id :rlm-type :main
@@ -991,7 +989,7 @@
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
                {:keys [iteration-result query-id
-                       total-tokens-atom total-cost-atom merge-cost!]} phase2
+                       total-tokens-atom total-cost-atom]} phase2
                {iteration-answer :answer
                 trace       :trace
                 iterations  :iterations

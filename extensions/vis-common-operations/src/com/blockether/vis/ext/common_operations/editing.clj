@@ -46,7 +46,7 @@
   [err _env f args]
   (let [msg (ex-message err)]
     (if (and msg (or (str/includes? msg "not a relative path")
-                     (str/includes? msg "Path escapes working directory")))
+                   (str/includes? msg "Path escapes working directory")))
       (let [fixed-path (absolute->relative (str (first args)))]
         {:fn f :args (vec (cons fixed-path (rest args)))})
       {:error err})))
@@ -112,7 +112,7 @@
         bad-char  (or (extract-bad-escape-char re2j-msg)
                     (extract-bad-escape-char msg))
         path-err? (some #(and % (or (str/includes? % "not a relative path")
-                                    (str/includes? % "Path escapes working directory")))
+                                  (str/includes? % "Path escapes working directory")))
                     [msg re2j-msg])]
     (cond
       ;; RE2/J told us exactly which escape it choked on. Try a
@@ -239,7 +239,6 @@
                           (if (.equals parent-canon root-canon)
                             false
                             (recur parent)))))))))))))))
-
 
 (defn- read-file
   "Read file contents with optional offset/limit (1-indexed lines).

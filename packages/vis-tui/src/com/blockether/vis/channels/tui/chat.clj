@@ -7,10 +7,28 @@
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.channels.cancellation :as cancellation]
-            [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.persistance.core :as db]
-            [taoensso.telemere :as t]))
+            [taoensso.telemere :as t])
+  (:import [java.io PrintWriter StringWriter]))
+
+(defn- exception->log-data
+  "Build a log-friendly map from an exception that preserves EVERYTHING
+   diagnostic: class, message, ex-data, full stack trace, and the
+   cause chain. The whole point is that when an error reaches the
+   chat boundary, the next person reading `~/.vis/vis.log` should not
+   have to guess where it came from — the stack is right there.
+
+   `.printStackTrace` includes nested causes (\"Caused by: …\" blocks)
+   by default, so a single string captures the entire chain without
+   manual recursion."
+  [^Throwable e]
+  (let [sw (StringWriter.)]
+    (.printStackTrace e (PrintWriter. sw))
+    {:class   (.getName (class e))
+     :message (or (ex-message e) (.toString e))
+     :ex-data (ex-data e)
+     :stack   (.toString sw)}))
 
 (defn user-msg
   "Create a structured user message with timestamp."
@@ -38,8 +56,8 @@
                         answer    (or (:answer q) "")
                         model     (:model q)
                         tokens    (cond-> {}
-                                   (:input-tokens q)  (assoc :input (:input-tokens q))
-                                   (:output-tokens q) (assoc :output (:output-tokens q)))
+                                    (:input-tokens q)  (assoc :input (:input-tokens q))
+                                    (:output-tokens q) (assoc :output (:output-tokens q)))
                         iters     (:iterations q)
                         dur-ms    (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
@@ -73,7 +91,9 @@
                     [user-msg ai-msg])))
         queries))
     (catch Exception e
-      (t/log! :warn (str "Failed to rebuild history: " (ex-message e)))
+      (t/log! {:level :warn :id ::rebuild-history-failed
+               :data  (exception->log-data e)
+               :msg   (str "Failed to rebuild history: " (ex-message e))})
       [])))
 
 (defn make-conversation
@@ -120,9 +140,9 @@
   ([conv text] (query! conv text {}))
   ([{:keys [id]} text {:keys [on-chunk cancel-atom]}]
    (try
-      (let [send-opts (cond-> {}
-                        on-chunk    (assoc :hooks {:on-chunk on-chunk})
-                        cancel-atom (assoc :cancel-atom cancel-atom))
+     (let [send-opts (cond-> {}
+                       on-chunk    (assoc :hooks {:on-chunk on-chunk})
+                       cancel-atom (assoc :cancel-atom cancel-atom))
            result (conversations/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            answer (or (:answer result)
@@ -130,16 +150,16 @@
                     "[empty response]")
            model  (or (get-in result [:cost :model]) (get result :model))
            tokens (:tokens result)
-           cost   (:cost result)]
-       (let [confidence (:confidence result)]
-         (cond-> {:answer      (if (string? answer) answer (pr-str answer))
-                  :iterations  (or (:iterations result) 1)
-                  :duration-ms (:duration-ms result)
-                  :query-id    (:query-id result)}
-           model      (assoc :model model)
-           tokens     (assoc :tokens tokens)
-           cost       (assoc :cost cost)
-           confidence (assoc :confidence confidence))))
+           cost   (:cost result)
+           confidence (:confidence result)]
+       (cond-> {:answer      (if (string? answer) answer (pr-str answer))
+                :iterations  (or (:iterations result) 1)
+                :duration-ms (:duration-ms result)
+                :query-id    (:query-id result)}
+         model      (assoc :model model)
+         tokens     (assoc :tokens tokens)
+         cost       (assoc :cost cost)
+         confidence (assoc :confidence confidence)))
      ;; future-cancel from the TUI translates to thread interruption.
      ;; The shared channels.cancellation predicate folds in
      ;; InterruptedException, CancellationException, and any runtime
@@ -149,7 +169,15 @@
        (if (cancellation/cancellation? e)
          (do (.interrupt (Thread/currentThread))
            {:answer "_Cancelled by user._" :iterations 0 :status :cancelled})
-         (do (t/log! :error (str "Query failed: " (ex-message e)))
+         (do
+           ;; Log EVERYTHING. Stripping a stack trace at the channel
+           ;; boundary is how a `[SQLITE_CANTOPEN]` ends up untriagable
+           ;; — the user sees a one-liner and the log has the same
+           ;; one-liner. With the full trace, the next failure pinpoints
+           ;; the exact JDBC call that opened the bad handle.
+           (t/log! {:level :error :id ::query-failed
+                    :data  (exception->log-data e)
+                    :msg   (str "Query failed: " (ex-message e))})
            {:error (conversations/error->user-message e)}))))))
 
 (defn dispose!
