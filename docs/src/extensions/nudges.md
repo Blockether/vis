@@ -3,7 +3,7 @@
 Nudges are short `[system_nudge]` strings injected into the iteration
 prompt to steer the LLM's behavior. They come from two sources:
 
-1. **Built-in nudges** — `iteration/core.clj` (budget warning, var-index overflow,
+1. **Built-in nudges** — `iteration/core.clj` (var-index overflow,
    repetition detection)
 2. **Extension nudges** — any extension's `:ext/nudge-fn`
 
@@ -13,10 +13,6 @@ prompt to steer the LLM's behavior. They come from two sources:
 |-------|--------------|
 | Var-index overflow | >150 user-defined vars in the sandbox |
 | Repetition warning | Same code/result pair seen ≥3 times |
-
-There is no iteration-budget nudge; the loop runs until the model
-emits `:answer`, with a runtime safety cap that the model never sees.
-See [Iteration Flow — Loop termination](../architecture/iteration-flow.md#loop-termination).
 
 ## Extension nudges
 

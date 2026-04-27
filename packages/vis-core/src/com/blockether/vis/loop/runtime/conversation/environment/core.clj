@@ -333,15 +333,12 @@
 
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 
-;; SYSTEM vars are the read-only bindings the loop maintains for the
+;; SYSTEM vars are read-only bindings the loop maintains for the
 ;; agent: QUERY (current user query), REASONING (last iteration's
-;; thinking), ANSWER (previous turn's final answer). UPPERCASE matches
-;; the Clojure idiom for constants and avoids the earmuff misread
-;; (earmuffs imply dynamic-var semantics, which these are not).
-;;
-;; The set is a fixed registry; adding to it is a deliberate API
-;; change, not a free-form pattern. See AGENTS.md → "SYSTEM vars are
-;; UPPERCASE and explicitly defined".
+;; thinking), ANSWER (previous turn's final answer). UPPERCASE marks
+;; them as constants. The set is a fixed registry; adding to it is a
+;; deliberate API change. See AGENTS.md → "SYSTEM vars are UPPERCASE
+;; and explicitly defined".
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
    var?' check is needed: var-index sort+status, auto-forget guard,

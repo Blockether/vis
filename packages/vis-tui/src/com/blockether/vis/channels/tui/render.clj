@@ -160,6 +160,25 @@
         (str (subs bar 0 start) label (subs bar end)))
       bar)))
 
+;; ----------------------------------------------------------------------------
+;; Sideless box-border padding
+;;
+;; The input box uses a sideless variant of `draw-box-border!` (top +
+;; bottom rules, no left/right rails, no corner glyphs). Both rules
+;; sit inset from the screen edges by `INPUT_BORDER_HORIZONTAL_PAD`
+;; columns on each side so the rule visually anchors to the message
+;; column instead of running edge-to-edge.
+;;
+;; Tweak this single number to grow / shrink both rules symmetrically.
+;; The previous bullet-point tuning history (4 → 5 → 4 → 3 → 2)
+;; lived inline in `draw-box-border!`; lifting it to a const def keeps
+;; the painter's body free of magic numbers and makes layout reviews
+;; trivial — grep for `INPUT_BORDER_HORIZONTAL_PAD`.
+(def ^:private INPUT_BORDER_HORIZONTAL_PAD
+  "Cols of empty space on each end of the input-box top/bottom rules.
+   Total rule width = `cols - 2 * INPUT_BORDER_HORIZONTAL_PAD`."
+  2)
+
 (defn- draw-box-border!
   "Draw a single-line box border. Optionally embeds a centered hint
    string on the top edge (typically the keybinding strip).
@@ -205,9 +224,7 @@
        ;; `pad` cols of empty space on each side; bar spans the inner
        ;; (cols - 2*pad) columns. No corners, no side rails. Top hint
        ;; embeds inside the padded bar.
-       (let [pad        5    ;; matches msg-margin-left + 1 on each end so the
-             ;; rule terminates one column before the scrollbar / message edge,
-             ;; visually framing the input box without crowding the bubble column.
+       (let [pad        INPUT_BORDER_HORIZONTAL_PAD
              rule-w     (max 0 (- cols (* 2 pad)))
              padded-bar (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
          (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint))
@@ -2048,13 +2065,27 @@
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 
-(def ^:private msg-margin-top    1)  ;; rows above first message
-(def ^:private msg-margin-bottom 1)  ;; rows below last message
-(def ^:private msg-margin-left   2)  ;; cols left gutter (matches input box gutter)
-(def ^:private msg-margin-right  3)  ;; cols right gutter — 1 col padding +
-;; scrollbar (at cols-2) + 1 col edge.
-;; The +1 padding keeps message content from
-;; visually butting against the scrollbar.
+;; -- Messages-area layout constants ----------------------------------------
+;;
+;; PUBLIC because `screen.clj` must compute bubble width with the same
+;; gutter math the painter uses; if the two layers disagree by even one
+;; column, `format-iteration-entry` sizes labels (`CODE 3`, `✓ 3ms`,
+;; `FINAL ANSWER`) for one bubble-w while `draw-chat-bubble!` paints
+;; into a different bubble-w and the right-aligned labels wrap onto
+;; two lines.
+;;
+;; Single source of truth lives here; the consumer in `screen.clj` is
+;; required to derive its own width from `MSG_SIDE_PAD` rather than a
+;; literal.
+(def ^:const MSG_MARGIN_TOP    1)  ;; rows above first message
+(def ^:const MSG_MARGIN_BOTTOM 1)  ;; rows below last message
+(def ^:const MSG_MARGIN_LEFT   2)  ;; cols left gutter
+(def ^:const MSG_MARGIN_RIGHT  3)  ;; cols right gutter (1 col padding before
+;; the scrollbar at cols-2, then 1 col edge after).
+(def ^:const MSG_SIDE_PAD      (+ MSG_MARGIN_LEFT MSG_MARGIN_RIGHT))
+;; ^ Convenience: the total horizontal gutter consumed on each row.
+;; `bubble-w = cols - MSG_SIDE_PAD`. Both this file's painter and
+;; `screen.clj`'s height calculator MUST use this exact derivation.
 
 (defn draw-messages-area!
   "Draw structured chat messages as left-aligned blocks inside a clean,
@@ -2068,9 +2099,9 @@
    `messages` is a vec of {:role :user|:assistant, :text str}.
    `scroll` is a row offset into the virtual content, or nil for auto-bottom."
   [^TextGraphics g messages box-top box-bottom cols scroll]
-  (let [text-top   (+ box-top msg-margin-top)
-        inner-h    (max 0 (- box-bottom text-top msg-margin-bottom))
-        bubble-w   (max 1 (- cols msg-margin-left msg-margin-right))
+  (let [text-top   (+ box-top MSG_MARGIN_TOP)
+        inner-h    (max 0 (- box-bottom text-top MSG_MARGIN_BOTTOM))
+        bubble-w   (max 1 (- cols MSG_SIDE_PAD))
         heights    (mapv #(bubble-height % bubble-w) messages)
         total-h    (reduce + 0 heights)
         eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
@@ -2089,7 +2120,7 @@
               msg-h   (nth heights idx)]
           (when (and (> (+ msg-top msg-h) 0)
                   (< msg-top inner-h))
-            (draw-chat-bubble! clip (nth messages idx) msg-top msg-margin-left bubble-w))))
+            (draw-chat-bubble! clip (nth messages idx) msg-top MSG_MARGIN_LEFT bubble-w))))
 
       (when (> total-h inner-h)
         (let [max-scroll (max 1 (- total-h inner-h))
