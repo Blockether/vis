@@ -1,24 +1,26 @@
 (ns com.blockether.vis.ext.self-debug.core-test
-  "Tests for the self-debug extension. Each test bootstraps a synthetic
-   conversation + query + iteration rows in an in-memory SQLite DB, then
-   invokes the impl fns directly with a fake env map. The extension's
-   `:before-fn` env-injection layer is exercised by an integration test
-   at the end."
+  "Tests for the self-debug extension's consolidated API. Five
+   functions, each returning a map or vector. Each test bootstraps
+   synthetic conversation + query + iteration rows in an in-memory
+   SQLite DB, then invokes the impl fns directly with a fake env map."
   (:require
-   [com.blockether.vis.ext.self-debug.core :as self-debug]
    [com.blockether.vis.persistance.core :as db]
    [com.blockether.vis.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
 
+;; The extension's core ns calls `register-global!` at load time;
+;; required eagerly so the impl fns are interned before tests run.
+(require '[com.blockether.vis.ext.self-debug.core])
+
 (h/use-mem-store!)
 
 ;; -----------------------------------------------------------------------------
-;; Helpers — synthesize a query + iterations directly via the DB facade
-;; so we don't have to spin up a full SCI environment.
+;; Helpers
 ;; -----------------------------------------------------------------------------
 
 (defn- bootstrap [store]
-  (let [conversation-id (db/store-conversation! store {:channel :vis :title "self-debug test"})
+  (let [conversation-id (db/store-conversation! store
+                          {:channel :vis :title "self-debug test"})
         query-id (db/store-query! store
                    {:parent-conversation-id conversation-id
                     :query "what's the plan?"
@@ -39,150 +41,129 @@
       thinking   (assoc :thinking thinking))))
 
 (defn- env [store conversation-id]
-  ;; Bare-minimum env map: enough for the impl fns to read DB and
-  ;; resolve the current query. The atoms are stubs the
-  ;; iteration-budget read uses.
   {:db-info store
    :conversation-id conversation-id
    :current-iteration-atom (atom 2)
    :max-iterations-atom (atom 10)})
 
-;; Indirection through the var registry — every impl fn is private
-;; (defn-) but the extension wraps each one through a public `:ext/symbol`,
-;; so the test reaches into the ns to call them directly. This keeps the
-;; impls private without losing test coverage.
+;; The impl fns are private — reach via the var registry so tests
+;; don't depend on a public re-export.
 (defn- private-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.self-debug.core" name))))
 
 ;; -----------------------------------------------------------------------------
-;; self/plan
+;; (self/turn) — single rich snapshot of the current turn
 ;; -----------------------------------------------------------------------------
 
-(defdescribe self-plan-test
-  (it "returns nil when no plan has ever been emitted"
-    (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id {:thinking "no plan yet"})
-      (expect (nil? ((private-fn "self-plan") (env s conversation-id))))))
+(defdescribe self-turn-test
+  (it "returns nil when DB is unreachable"
+    (expect (nil? ((private-fn "self-turn") {:conversation-id "x"}))))
 
-  (it "returns the most recent non-nil plan"
+  (it "returns a snapshot map with goal / status / iteration / cost / elapsed-ms / empty plan"
+    (let [s (h/store)
+          {:keys [conversation-id]} (bootstrap s)
+          turn ((private-fn "self-turn") (env s conversation-id))]
+      (expect (= "what's the plan?" (:goal turn)))
+      (expect (= :running (:status turn)))
+      (expect (map? (:iteration turn)))
+      (expect (= 3 (:current (:iteration turn))))
+      (expect (= 10 (:budget (:iteration turn))))
+      (expect (map? (:cost turn)))
+      (expect (vector? (:breadcrumbs turn)))
+      (expect (vector? (:attempts turn)))
+      (expect (vector? (:errors turn)))
+      (expect (nil? (:plan turn)))))
+
+  (it "carries the sticky plan and the breadcrumb chain in the snapshot"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          plan-v1 {:goal "v1" :items [{:id 1 :content "a" :status :pending}]}
-          plan-v2 {:goal "v2" :items [{:id 1 :content "a" :status :done}
-                                      {:id 2 :content "b" :status :in_progress}]}]
-      (store-iteration! s query-id {:plan-state plan-v1 :breadcrumb "i0"})
-      (store-iteration! s query-id {:breadcrumb "i1 — no plan re-emit"})
-      (store-iteration! s query-id {:plan-state plan-v2 :breadcrumb "i2"})
-      (let [plan ((private-fn "self-plan") (env s conversation-id))]
-        (expect (= "v2" (:goal plan)))
-        (expect (= 2 (count (:items plan))))))))
-
-;; -----------------------------------------------------------------------------
-;; self/breadcrumbs
-;; -----------------------------------------------------------------------------
-
-(defdescribe self-breadcrumbs-test
-  (it "returns oldest-first breadcrumbs"
-    (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id {:breadcrumb "i0 first"})
+          plan {:goal "g" :items [{:id 1 :content "a" :status :in_progress}]}]
+      (store-iteration! s query-id {:plan-state plan :breadcrumb "i0 first"})
       (store-iteration! s query-id {:breadcrumb "i1 second"})
-      (store-iteration! s query-id {:breadcrumb "i2 third"})
-      (let [chain ((private-fn "self-breadcrumbs") (env s conversation-id))]
-        (expect (= 3 (count chain)))
-        (expect (= "i0 first" (:breadcrumb (first chain))))
-        (expect (= "i2 third" (:breadcrumb (last chain)))))))
+      (let [turn ((private-fn "self-turn") (env s conversation-id))]
+        (expect (= "g" (-> turn :plan :goal)))
+        (expect (= 2 (count (:breadcrumbs turn))))
+        (expect (= "i0 first" (-> turn :breadcrumbs first :breadcrumb))))))
 
-  (it "n parameter clips to the last N entries"
-    (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (doseq [index (range 5)]
-        (store-iteration! s query-id {:breadcrumb (str "i" index)}))
-      (let [chain ((private-fn "self-breadcrumbs") (env s conversation-id) 2)]
-        (expect (= 2 (count chain)))
-        (expect (= "i3" (:breadcrumb (first chain))))
-        (expect (= "i4" (:breadcrumb (last chain)))))))
-
-  (it "skips iterations without a breadcrumb"
-    (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id {:thinking "no breadcrumb"})
-      (store-iteration! s query-id {:breadcrumb "real one"})
-      (let [chain ((private-fn "self-breadcrumbs") (env s conversation-id))]
-        (expect (= 1 (count chain)))
-        (expect (= "real one" (:breadcrumb (first chain))))))))
-
-;; -----------------------------------------------------------------------------
-;; self/attempts and self/errors
-;; -----------------------------------------------------------------------------
-
-(defdescribe self-attempts-test
-  (it "returns every code-block executed in this query"
+  (it "splits attempts and errors so callers don't have to filter twice"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (store-iteration! s query-id
         {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
-                       {:id 1 :code "(* 2 2)" :result 4 :execution-time-ms 1}]})
-      (store-iteration! s query-id
-        {:expressions [{:id 0 :code "(grep ...)" :error "boom" :execution-time-ms 5}]})
-      (let [attempts ((private-fn "self-attempts") (env s conversation-id))]
-        (expect (= 3 (count attempts)))
-        (expect (= "(+ 1 2)" (:code (first attempts))))
-        (expect (= "(grep ...)" (:code (last attempts))))
-        (expect (= "boom" (:error (last attempts)))))))
+                       {:id 1 :code "(boom)"  :error "boom" :execution-time-ms 1}]})
+      (let [turn ((private-fn "self-turn") (env s conversation-id))]
+        (expect (= 2 (count (:attempts turn))))
+        (expect (= 1 (count (:errors turn))))
+        (expect (= "boom" (-> turn :errors first :error)))))))
 
-  (it "errors filter returns only failed entries"
+;; -----------------------------------------------------------------------------
+;; (self/conversation [id]) — current or specific conversation
+;; -----------------------------------------------------------------------------
+
+(defdescribe self-conversation-test
+  (it "no-arg form returns the current conversation"
+    (let [s (h/store)
+          {:keys [conversation-id]} (bootstrap s)
+          conversation ((private-fn "self-conversation") (env s conversation-id))]
+      (expect (= conversation-id (:id conversation)))
+      (expect (= :vis (:channel conversation)))
+      (expect (vector? (:turns conversation)))
+      (expect (= 1 (:turn-count conversation)))))
+
+  (it "arg form fetches any conversation by id"
+    (let [s (h/store)
+          {:keys [conversation-id]} (bootstrap s)
+          other (db/store-conversation! s {:channel :telegram :title "other"})]
+      (let [conversation ((private-fn "self-conversation") (env s conversation-id) other)]
+        (expect (= other (:id conversation)))
+        (expect (= :telegram (:channel conversation)))
+        (expect (= 0 (:turn-count conversation))))))
+
+  (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
-                       {:id 1 :code "(boom)" :error "kaboom" :execution-time-ms 1}]})
-      (let [errors ((private-fn "self-errors") (env s conversation-id))]
-        (expect (= 1 (count errors)))
-        (expect (= "kaboom" (:error (first errors))))))))
+      (db/update-query! s query-id
+        {:answer "42" :iterations 1 :duration-ms 50 :status :done
+         :prior-outcome :complete})
+      (let [conversation ((private-fn "self-conversation") (env s conversation-id))
+            turn (first (:turns conversation))]
+        (expect (= "what's the plan?" (:goal turn)))
+        (expect (= "42" (:answer turn)))
+        (expect (= :complete (:outcome turn)))))))
 
 ;; -----------------------------------------------------------------------------
-;; self/iteration-budget
+;; (self/conversations [channel]) — list across one or all channels
 ;; -----------------------------------------------------------------------------
 
-(defdescribe self-iteration-budget-test
-  (it "reads the live atoms and computes :remaining correctly"
+(defdescribe self-conversations-test
+  (it "no-arg form scans every known channel"
+    (let [s (h/store)
+          a (db/store-conversation! s {:channel :vis :title "vis-a"})
+          b (db/store-conversation! s {:channel :telegram :title "tg-b"})
+          all ((private-fn "self-conversations") (env s a))
+          ids (set (map :id all))]
+      (expect (contains? ids a))
+      (expect (contains? ids b))))
+
+  (it "channel-arg form filters to one channel"
+    (let [s (h/store)
+          a (db/store-conversation! s {:channel :vis :title "vis-a"})
+          _ (db/store-conversation! s {:channel :telegram :title "tg-b"})
+          tui-list ((private-fn "self-conversations") (env s a) :telegram)]
+      (expect (= 1 (count tui-list)))
+      (expect (= :telegram (:channel (first tui-list))))))
+
+  (it "every entry carries id, channel, title, turn-count"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          environment (assoc (env s conversation-id)
-                        :current-iteration-atom (atom 6)
-                        :max-iterations-atom (atom 30))]
-      (let [budget ((private-fn "self-iteration-budget") environment)]
-        (expect (= 7 (:current budget)))   ;; current is 1-based
-        (expect (= 30 (:budget budget)))
-        (expect (= 23 (:remaining budget))))))
-
-  (it "tolerates missing atoms (no-iteration env)"
-    (let [budget ((private-fn "self-iteration-budget") {})]
-      (expect (= 1 (:current budget)))
-      (expect (= 0 (:budget budget)))
-      (expect (= 0 (:remaining budget))))))
+          all ((private-fn "self-conversations") (env s conversation-id))
+          this (first (filter #(= conversation-id (:id %)) all))]
+      (expect (some? this))
+      (expect (= "self-debug test" (:title this)))
+      (expect (= 1 (:turn-count this))))))
 
 ;; -----------------------------------------------------------------------------
-;; self/turn-history
-;; -----------------------------------------------------------------------------
-
-(defdescribe self-turn-history-test
-  (it "returns every query for the conversation, oldest-first"
-    (let [s (h/store)
-          {:keys [conversation-id]} (bootstrap s)
-          q2-id (db/store-query! s
-                  {:parent-conversation-id conversation-id
-                   :query "second turn" :status :running})]
-      (store-iteration! s q2-id {:plan-state {:goal "second"} :breadcrumb "i0"})
-      (let [history ((private-fn "self-turn-history") (env s conversation-id))]
-        (expect (= 2 (count history)))
-        (expect (= "what's the plan?" (:goal (first history))))
-        (expect (= "second turn" (:goal (last history))))))))
-
-;; -----------------------------------------------------------------------------
-;; self/var-history — wraps db-var-history; smoke test only
+;; (self/var-history sym [conv-id])
 ;; -----------------------------------------------------------------------------
 
 (defdescribe self-var-history-test
@@ -194,26 +175,70 @@
   (it "tolerates string sym names"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)]
-      (expect (= [] ((private-fn "self-var-history") (env s conversation-id) "still-undefined"))))))
+      (expect (= [] ((private-fn "self-var-history") (env s conversation-id) "still-undefined")))))
+
+  (it "explicit conv-id form queries a different conversation"
+    (let [s (h/store)
+          {:keys [conversation-id]} (bootstrap s)
+          other (db/store-conversation! s {:channel :vis :title "other"})]
+      (expect (= [] ((private-fn "self-var-history") (env s conversation-id) 'foo other))))))
+
+;; -----------------------------------------------------------------------------
+;; (self/find-attempts pattern [conv-id])
+;; -----------------------------------------------------------------------------
+
+(defdescribe self-find-attempts-test
+  (it "one-arg form regex-searches the current turn"
+    (let [s (h/store)
+          {:keys [conversation-id query-id]} (bootstrap s)]
+      (store-iteration! s query-id
+        {:expressions [{:id 0 :code "(+ 1 2)"        :result 3 :execution-time-ms 1}
+                       {:id 1 :code "(grep \"FOO\")" :result [] :execution-time-ms 1}
+                       {:id 2 :code "(grep \"BAR\")" :result [] :execution-time-ms 1}]})
+      (let [hits ((private-fn "self-find-attempts") (env s conversation-id) "grep")]
+        (expect (= 2 (count hits)))
+        (expect (every? #(re-find #"grep" (:code %)) hits))
+        ;; :turn-id resolves to the latest query of the conversation — a
+        ;; UUID identifying the turn the attempt belongs to.
+        (expect (= query-id (-> hits first :turn-id)))
+        (expect (every? #(= query-id (:turn-id %)) hits)))))
+
+  (it "accepts a Pattern object directly"
+    (let [s (h/store)
+          {:keys [conversation-id query-id]} (bootstrap s)]
+      (store-iteration! s query-id
+        {:expressions [{:id 0 :code "(defn foo [x] x)" :result nil :execution-time-ms 1}]})
+      (let [hits ((private-fn "self-find-attempts") (env s conversation-id) #"\bdefn\b")]
+        (expect (= 1 (count hits))))))
+
+  (it "two-arg form scans every turn of the given conversation"
+    (let [s (h/store)
+          {:keys [conversation-id]} (bootstrap s)
+          q2 (db/store-query! s
+               {:parent-conversation-id conversation-id
+                :query "second turn" :status :running})]
+      ;; Leave q1 empty; fill q2.
+      (store-iteration! s q2
+        {:expressions [{:id 0 :code "(grep \"target\")" :result [] :execution-time-ms 1}]})
+      (let [hits ((private-fn "self-find-attempts") (env s conversation-id) "grep" conversation-id)]
+        (expect (= 1 (count hits)))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Failure modes — every fn must return nil/[], NEVER throw
 ;; -----------------------------------------------------------------------------
 
 (defdescribe failure-mode-test
-  ;; Spec contract: every fn returns nil-or-empty on missing context;
-   ;; never throws. The empty-vec vs. nil distinction is irrelevant
-   ;; downstream — callers chain through `(when (seq …))` either way.
   (let [empty-result? #(or (nil? %) (and (coll? %) (empty? %)))]
-    (it "returns nil-or-empty when DB is unreachable (nil :db-info)"
-      (expect (empty-result? ((private-fn "self-plan") {:conversation-id "x"})))
-      (expect (empty-result? ((private-fn "self-breadcrumbs") {:conversation-id "x"})))
-      (expect (empty-result? ((private-fn "self-attempts") {:conversation-id "x"})))
-      (expect (empty-result? ((private-fn "self-turn-history") {:conversation-id "x"})))
-      (expect (empty-result? ((private-fn "self-var-history") {:conversation-id "x"} 'foo))))
+    (it "returns nil-or-empty when DB is unreachable"
+      (let [environment {:conversation-id "x"}]
+        (expect (empty-result? ((private-fn "self-turn") environment)))
+        (expect (empty-result? ((private-fn "self-conversation") environment)))
+        (expect (empty-result? ((private-fn "self-conversations") environment)))
+        (expect (empty-result? ((private-fn "self-var-history") environment 'foo)))
+        (expect (empty-result? ((private-fn "self-find-attempts") environment "grep")))))
 
     (it "returns nil-or-empty when conversation-id is missing"
-      (let [s (h/store)]
-        (expect (empty-result? ((private-fn "self-plan") {:db-info s})))
-        (expect (empty-result? ((private-fn "self-breadcrumbs") {:db-info s})))
-        (expect (empty-result? ((private-fn "self-turn-history") {:db-info s})))))))
+      (let [s (h/store)
+            environment {:db-info s}]
+        (expect (empty-result? ((private-fn "self-turn") environment)))
+        (expect (empty-result? ((private-fn "self-conversation") environment)))))))

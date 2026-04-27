@@ -35,7 +35,10 @@
    `create-rlm-conn` call triggers a lazy `requiring-resolve` of
    `com.blockether.vis.extension/discover-extensions!`, memoized for
    the process lifetime."
-  (:require [clojure.edn :as edn]))
+  ;; No deps on the rest of vis. The unified extension loader
+  ;; (`com.blockether.vis.extension/discover-extensions!`) is invoked
+  ;; lazily through `requiring-resolve` in the discovery delay below.
+  )
 
 ;; =============================================================================
 ;; Backend registry
