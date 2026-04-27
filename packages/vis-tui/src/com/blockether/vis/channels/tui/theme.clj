@@ -22,11 +22,18 @@
 (def dialog-hint     (TextColor$RGB. 120 120 120))  ;; muted hint text
 (def dialog-hint-key (TextColor$RGB. 50 50 50))     ;; near-black key labels
 
-;; Chat messages — user (visible blue-gray block, distinct from assistant)
-(def user-bubble-bg    (TextColor$RGB. 224 232 245))  ;; soft blue-gray block — user input clearly stands out
-(def user-bubble-fg    (TextColor$RGB. 25 35 55))     ;; near-black with cool tint
-(def user-bubble-border (TextColor$RGB. 215 225 240)) ;; (unused — kept for back-compat)
-(def user-role-fg      (TextColor$RGB. 40 95 185))    ;; bold blue accent "you" label
+;; Chat messages — user (warm light-yellow block, high-contrast text)
+;;
+;; Distinct from `warning-bg` (which is more saturated and means "pay
+;; attention, something went wrong"). User-bubble is a pale,
+;; paper-like tint so user input reads as its own zone without
+;; competing with warnings or with the white assistant area.
+;; Foreground is a near-black warm tone so the WCAG luminance ratio
+;; against the yellow stays above 12:1 — readable in any terminal.
+(def user-bubble-bg    (TextColor$RGB. 254 248 215))  ;; very pale warm yellow — "user said this" zone
+(def user-bubble-fg    (TextColor$RGB. 25 22 5))      ;; near-black warm — high contrast on the yellow
+(def user-bubble-border (TextColor$RGB. 240 225 175)) ;; (unused — kept for back-compat)
+(def user-role-fg      (TextColor$RGB. 130 90 0))     ;; bold amber accent for the "You" label
 
 ;; Chat messages — assistant (no background fill, terminal bg shows through)
 (def ai-bubble-bg      (TextColor$RGB. 255 255 255))  ;; white — same as terminal

@@ -387,6 +387,46 @@
 (defn- warning-message? [text]
   (and (string? text) (str/starts-with? text "Warning:")))
 
+(defn- paint-table-data-line!
+  "Two-pass paint for a table header or body row.
+
+   The line carries both box-drawing chrome (`│┌─┐│├┼┤│└┴┘` etc.)
+   and cell text. Painting it as a single string would force one
+   foreground for everything; the chrome ends up the same dark color
+   as the text and the table reads as solid ink. We split the work:
+
+     pass 1  paint the whole line in `border-fg` (muted) on `bg`
+     pass 2  walk every region BETWEEN consecutive `│` chars and
+             overdraw the cell text in `text-fg` (optionally bold)
+
+   The result: chrome stays quiet, cell text reads sharp, headers
+   show bold without dragging the column dividers along with them.
+
+   `body-styles` (e.g. `[p/BOLD]` for header rows, `[p/ITALIC]` for
+   thinking-mode body rows) applies to the text overdraw only — not
+   to the chrome pass."
+  [g x y line text-fg border-fg bg body-styles]
+  (p/clear-styles! g)
+  (p/set-colors! g border-fg bg)
+  (p/put-str! g x y line)
+  (p/clear-styles! g)
+  (p/set-colors! g text-fg bg)
+  (let [n (count line)
+        paint-seg! (fn [start end]
+                     (when (and start (< start end))
+                       (let [seg (subs line start end)]
+                         (when (pos? (count seg))
+                           (if (seq body-styles)
+                             (p/styled g body-styles
+                               (p/put-str! g (+ x start) y seg))
+                             (p/put-str! g (+ x start) y seg))))))]
+    (loop [i 0 seg-start nil]
+      (cond
+        (= i n)               (paint-seg! seg-start i)
+        (= (.charAt line i) \│) (do (paint-seg! seg-start i)
+                                  (recur (inc i) nil))
+        :else                  (recur (inc i) (or seg-start i))))))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `msg` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -434,6 +474,13 @@
         ;; block so they're impossible to miss in the timeline.
         bg-color  (cond
                     warning? t/warning-bg
+                    ;; User messages fill their content rows with a
+                    ;; very pale warm-yellow block so "you said this"
+                    ;; reads as its own zone, distinct from the white
+                    ;; assistant area. Cancelled / warning paths
+                    ;; already had their own bg; user is the third
+                    ;; flavor.
+                    user?    t/user-bubble-bg
                     :else    t/terminal-bg)
         fg-color  (cond
                     cancelled? t/dialog-hint
@@ -479,9 +526,31 @@
       ;; structured-trace marker zones (code blocks, stdout, answer
       ;; section). Roles are visually distinguished by the colored
       ;; label and the blank row beneath it (no horizontal divider).
+      ;; Bulk fill the content rows for the cases that want a
+      ;; bubble-wide colored block: warnings (amber alarm) and user
+      ;; messages (warm light-yellow zone). Assistant plain text and
+      ;; cancelled status keep terminal bg — their per-line marker
+      ;; switch handles any zone-specific fills (code blocks,
+      ;; answer-bg, stdout, etc.) on its own.
+      ;;
+      ;; Warnings: fill ONLY the content rows so the amber alarm
+      ;; reads as the message itself, no extra chrome.
       (when warning?
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
+      ;;
+      ;; User messages: fill content rows PLUS one row above (the
+      ;; blank breathing row between label and content) and one row
+      ;; below (the would-be meta-row, always empty for user msgs
+      ;; per `meta-parts (when (and (not user?) ...) ...)`). The two
+      ;; extra rows give the yellow block visible vertical padding
+      ;; — the bubble reads as a proper highlighted zone instead of
+      ;; a single-row band hugging the text. Total bubble height is
+      ;; unchanged (those rows were already allocated to label-gap
+      ;; and meta-row); we're just painting bg into them.
+      (when user?
+        (p/set-bg! g bg-color)
+        (p/fill-rect! g bx (dec btop) bubble-w (+ (max 1 bubble-h) 2)))
 
       ;; Text content — per-line styling via invisible marker prefixes
       ;;
@@ -668,19 +737,25 @@
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Markdown table (answer) ── grid on code-block bg
+              ;; Chrome (│┌─┐├┼┤└┴┘─) stays in muted `code-border-fg`,
+              ;; cell text in dark `code-block-fg`, headers bold.
               (or (str/starts-with? line md-table-head-marker)
                 (str/starts-with? line md-table-sep-marker)
                 (str/starts-with? line md-table-row-marker))
-              (let [tbg t/code-block-bg
-                    tfg (if (str/starts-with? line md-table-head-marker)
-                          t/code-block-fg t/code-block-fg)
-                    head? (str/starts-with? line md-table-head-marker)
-                    border? (str/starts-with? line md-table-sep-marker)]
-                (p/set-colors! g (if border? t/code-border-fg tfg) tbg)
+              (let [stripped (subs line 1)
+                    head?    (str/starts-with? line md-table-head-marker)
+                    border?  (str/starts-with? line md-table-sep-marker)
+                    tbg      t/code-block-bg]
+                (p/clear-styles! g)
+                (p/set-colors! g t/code-border-fg tbg)
                 (p/fill-rect! g fbx y iw 1)
-                (if head?
-                  (p/styled g [p/BOLD] (p/put-str! g x y (subs line 1)))
-                  (p/put-str! g x y (subs line 1))))
+                (if border?
+                  ;; Pure box-drawing line — single muted paint.
+                  (p/put-str! g x y stripped)
+                  ;; Header / body data row — dual-color split.
+                  (paint-table-data-line! g x y stripped
+                    t/code-block-fg t/code-border-fg tbg
+                    (when head? [p/BOLD]))))
 
               ;; ── Thinking-mode markdown headings ── dim italic on iter bg
               (str/starts-with? line th-md-h1-marker)
@@ -732,19 +807,28 @@
                 (p/put-str! g x y (subs line 1)))
 
               ;; ── Markdown table (thinking) ── grid on code-block bg, italic body
+              ;; Same dual-color treatment as the answer-mode table,
+              ;; with italic on text segments to match the rest of
+              ;; the thinking zone (every thinking-mode marker uses
+              ;; italic; staying consistent keeps the zone readable
+              ;; as one cohesive dim region).
               (or (str/starts-with? line th-md-table-head-marker)
                 (str/starts-with? line th-md-table-sep-marker)
                 (str/starts-with? line th-md-table-row-marker))
-              (let [tbg t/code-block-bg
-                    head?   (str/starts-with? line th-md-table-head-marker)
-                    border? (str/starts-with? line th-md-table-sep-marker)
-                    tfg     (if border? t/code-border-fg t/code-result-fg)]
-                (p/set-colors! g tfg tbg)
+              (let [stripped (subs line 1)
+                    head?    (str/starts-with? line th-md-table-head-marker)
+                    border?  (str/starts-with? line th-md-table-sep-marker)
+                    tbg      t/code-block-bg]
+                (p/clear-styles! g)
+                (p/set-colors! g t/code-border-fg tbg)
                 (p/fill-rect! g fbx y iw 1)
-                (cond
-                  head?   (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x y (subs line 1)))
-                  border? (p/put-str! g x y (subs line 1))
-                  :else   (p/styled g [p/ITALIC] (p/put-str! g x y (subs line 1)))))
+                (if border?
+                  (p/put-str! g x y stripped)
+                  (paint-table-data-line! g x y stripped
+                    t/code-result-fg t/code-border-fg tbg
+                    (cond
+                      head? [p/BOLD p/ITALIC]
+                      :else [p/ITALIC]))))
 
               ;; ── Legacy separator — dim ──
               (str/starts-with? line sep-marker)
@@ -1112,10 +1196,17 @@
    answer will land), so the user sees the agent thinking/working in
    place instead of a status line wedged into the input box.
 
-   Layout while loading:
-     [spinner] phase… elapsed · Esc to cancel
-     <blank>
+   Layout while loading (spinner ALWAYS at the bottom):
      <iteration trace, if iterations exist and not hidden>
+     <blank>
+     [spinner] phase… elapsed · Esc to cancel
+
+   The activity row sits last so it tracks the natural reading
+   direction — trace history flows top-down like a transcript, and
+   \"what's happening RIGHT NOW\" lives where the cursor is about to
+   write next. Putting the spinner above the trace forced the user
+   to look at a moving line, then drop their eye further down to
+   read static history that doesn't change. Inverted now.
 
    `progress` is the `:progress` slot from app-db: `{:iterations [...]}`.
    `bubble-w` is the outer bubble width in chars (we subtract the
@@ -1148,7 +1239,7 @@
                                           content-w (inc idx))))
                               (collapse-repeated-error-runs iterations)))]
      (if (seq trace-lines)
-       (str/join "\n" (into [spinner-line ""] trace-lines))
+       (str/join "\n" (conj (conj trace-lines "") spinner-line))
        spinner-line))))
 
 ;;; ── Markdown table parsing ───────────────────────────────────────────────
@@ -1188,23 +1279,79 @@
               (str/replace #"`([^`]+)`" "$1")))
       cells)))
 
+(defn- numeric-cell?
+  "True when `s` parses as a number after stripping spaces, NBSP,
+   thousands separators, and surrounding whitespace. Handles Polish
+   formatting like `4 879`, `12 104`, `1,5`, `-3.14`. Empty cells
+   are NOT numeric — they shouldn't pin a column to right-align on
+   their own."
+  [s]
+  (let [t (some-> s str str/trim)]
+    (and (string? t)
+      (pos? (count t))
+      (try
+        (let [normalized (-> t
+                          (str/replace "\u00a0" "")  ;; NBSP
+                          (str/replace " " "")
+                          (str/replace "," "."))]
+          (Double/parseDouble normalized)
+          true)
+        (catch NumberFormatException _ false)))))
+
+(defn- column-align
+  "Return `:right` when every non-empty body cell in `col-cells` is
+   numeric; `:left` otherwise. Headers are excluded from the
+   detection — a header named \"2024\" shouldn't right-align a
+   column of free-form text below it. Empty body cells are ignored."
+  [col-cells]
+  (let [filled (filter (fn [s] (and s (pos? (count (str/trim (str s)))))) col-cells)]
+    (if (and (seq filled) (every? numeric-cell? filled))
+      :right
+      :left)))
+
 (defn- pad-cell
-  "Render one cell as ` <content padded to width w> `.
-   Truncates with an ellipsis when the cell text exceeds `w`."
-  [text w]
+  "Render one cell padded to `w` columns with the given alignment.
+   Returns ` <padded content> ` — the leading and trailing spaces are
+   mandatory: they sit between the `│` column dividers, giving every
+   cell a one-space inner margin so text never touches the vertical
+   lines.
+
+   `align` is `:left` (default, trailing pad) or `:right` (leading
+   pad). Numeric columns are auto-detected as `:right` so columns of
+   `389 / 12 104 / 4 879` line up on the units position — the only
+   way numeric tables read naturally."
+  [text w align]
   (let [t (str text)
         t (cond
             (<= (count t) w) t
-            (>= w 2) (str (subs t 0 (max 0 (dec w))) "…")
-            :else    (subs t 0 (max 0 w)))]
-    (str " " t (repeat-str \space (max 0 (- w (count t)))) " ")))
+            (>= w 2)         (str (subs t 0 (max 0 (dec w))) "…")
+            :else            (subs t 0 (max 0 w)))
+        pad (repeat-str \space (max 0 (- w (count t))))
+        body (case align
+               :right (str pad t)
+               (str t pad))]
+    (str " " body " ")))
 
 (defn- render-table
   "Render a parsed markdown table (headers vec + rows vec-of-vecs) as
-   a list of marker-prefixed display lines using box-drawing chars.
-   `markers` is `{:thead :tsep :trow}` from `md-marker-sets`.
-   Tables that exceed `max-w` get their column widths shrunk
-   proportionally so the result always fits inside the bubble."
+   a list of marker-prefixed display lines.
+
+   Style: full grid — square outer corners (`┌┐└┘`), `┬┼┴` T-junctions
+   where columns meet horizontals, `│` between columns, `─` for
+   horizontals.
+
+   The drawing of these lines is split across two passes by
+   `paint-table-line!` (in the per-line marker switch above): the
+   box-drawing glyphs paint in the muted `code-border-fg` so the
+   chrome doesn't compete with the content, and the cell text on
+   top paints in `code-block-fg` (bold for header rows). Putting
+   everything in the same dark color made the grid read as solid
+   ink — the user complaint that triggered this design.
+
+   `markers` is `{:thead :tsep :trow}` from `md-marker-sets`. Tables
+   that exceed `max-w` get their column widths shrunk proportionally
+   so the result always fits inside the bubble."
+   
   [headers rows max-w {:keys [thead tsep trow]}]
   (let [n-cols    (max 1 (apply max (count headers) (map count rows)))
         pad-cells (fn [r] (vec (concat r (repeat (max 0 (- n-cols (count r))) ""))))
@@ -1216,37 +1363,46 @@
                   (count (nth h i ""))
                   (map #(count (nth % i "")) rs)))
           (range n-cols))
-        ;; total width = sum(col)+ 2 padding per col + (n+1) verticals
+        ;; Total layout width = sum(col widths) + 2*n_cols (per-cell
+        ;; one-space padding on each side of the cell text) +
+        ;; (n_cols + 1) verticals (the `│` column dividers, one on
+        ;; each end + one between every pair of cells).
         overhead   (+ (* 2 n-cols) (inc n-cols))
         avail      (max n-cols (- max-w overhead))
         sum-w      (max 1 (reduce + 0 col-widths-raw))
         col-widths (if (<= (+ sum-w overhead) max-w)
                      col-widths-raw
-                     (let [scale (/ (double avail) sum-w)
+                     (let [scale  (/ (double avail) sum-w)
                            shrunk (mapv #(max 1 (int (* % scale))) col-widths-raw)
-                           ;; redistribute leftover so total fits exactly
-                           used  (reduce + 0 shrunk)
-                           extra (max 0 (- avail used))]
+                           used   (reduce + 0 shrunk)
+                           extra  (max 0 (- avail used))]
                        (if (zero? extra)
                          shrunk
                          (vec (map-indexed
                                 (fn [i w] (if (< i extra) (inc w) w))
                                 shrunk)))))
-        bar      (fn [w] (repeat-str \─ (+ w 2)))
-        top-line (str "┌" (str/join "┬" (map bar col-widths)) "┐")
-        sep-line (str "├" (str/join "┼" (map bar col-widths)) "┤")
-        bot-line (str "└" (str/join "┴" (map bar col-widths)) "┘")
+        bar        (fn [w] (repeat-str \─ (+ w 2)))
+        top-line   (str "┌" (str/join "┬" (map bar col-widths)) "┐")
+        head-sep   (str "├" (str/join "┼" (map bar col-widths)) "┤")
+        bot-line   (str "└" (str/join "┴" (map bar col-widths)) "┘")
+        ;; Per-column alignment: numeric columns right-align, every
+        ;; other column stays left. The header inherits the column's
+        ;; alignment so the title sits over the data correctly
+        ;; (e.g. a `Predkosc (km/h)` header above right-aligned
+        ;; integers also right-aligns).
+        col-aligns (mapv (fn [i] (column-align (map #(nth % i "") rs)))
+                     (range n-cols))
         format-row (fn [cells]
                      (str "│"
                        (str/join "│"
                          (map-indexed
-                           (fn [i c] (pad-cell c (nth col-widths i)))
+                           (fn [i c] (pad-cell c (nth col-widths i) (nth col-aligns i)))
                            cells))
                        "│"))]
     (vec (concat
            [(str tsep top-line)]
            [(str thead (format-row h))]
-           [(str tsep sep-line)]
+           [(str tsep head-sep)]
            (mapv #(str trow (format-row %)) rs)
            [(str tsep bot-line)]))))
 
