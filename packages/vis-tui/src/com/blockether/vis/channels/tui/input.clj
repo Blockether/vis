@@ -147,7 +147,7 @@
 
 (defn handle-key
   "Process keystroke. Returns {:action kw, :state s}."
-  [key state]
+  [^KeyStroke key state]
   (let [ktype (.getKeyType key)]
     (condp = ktype
       ;; Esc — the screen loop turns this into a cancel when a query is

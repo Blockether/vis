@@ -55,10 +55,10 @@
 ;; Open /dev/tty directly for Lanterna — independent of System/out.
 ;; Delayed so non-TUI entrypoints do not fail at class-load time.
 (def tty-in  (delay (FileInputStream.  "/dev/tty")))
-(def tty-out (delay (FileOutputStream. "/dev/tty")))
+(def tty-out (delay ^java.io.OutputStream (FileOutputStream. "/dev/tty")))
 
 ;; Capture original stdout before redirection. CLI prints user-facing output here.
-(def original-stdout System/out)
+(def ^java.io.PrintStream original-stdout System/out)
 
 (defn init!
   "Redirect System/out and System/err to log file. Lanterna uses tty-in/tty-out."

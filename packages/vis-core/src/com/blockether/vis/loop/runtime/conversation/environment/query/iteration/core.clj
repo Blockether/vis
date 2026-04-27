@@ -211,6 +211,45 @@
           (map vector expressions hashes))))
     [duplicates total]))
 
+(defn dedup-cache-lookup
+  "Returns a synthetic execution-result map when `expression`'s
+   canonical hash is already in `dedup-cache-atom`, else nil. The
+   cached map carries the prior result + a `:cached-from` annotation
+   pointing at the iteration-id that originally produced it.
+
+   The synthetic result has `:execution-time-ms 0` and `:cached? true`
+   so downstream rendering / metadata collection can flag the
+   short-circuit."
+  [dedup-cache-atom expression]
+  (when (and dedup-cache-atom expression)
+    (let [h   (canonical-expression-hash expression)
+          hit (get @dedup-cache-atom h)]
+      (when hit
+        (assoc hit
+          :cached? true
+          :execution-time-ms 0)))))
+
+(defn dedup-cache-record!
+  "Record `result` in `dedup-cache-atom` keyed by the canonical hash of
+   `expression`. No-op when the result is an error/timeout (retries are
+   legitimate). The recorded entry carries an `:cached-from` field
+   naming the iteration-id where the call originally succeeded."
+  [dedup-cache-atom expression result iteration-id]
+  (when (and dedup-cache-atom expression result
+          (nil? (:error result))
+          (not (:timeout? result)))
+    (let [h (canonical-expression-hash expression)]
+      (swap! dedup-cache-atom
+        (fn [cache]
+          (if (contains? cache h)
+            cache
+            (assoc cache h
+              {:result            (:result result)
+               :stdout            (:stdout result)
+               :stderr            (:stderr result)
+               :cached-from       iteration-id
+               :original-duration (:execution-time-ms result)})))))))
+
 (def ^:private DEF_HEADS '#{def defn defn- defmacro})
 
 (defn extract-defining-name
@@ -248,33 +287,59 @@
                             :error (ex-message t)}}))))))
 
 (defn- execute-code
-  [{:keys [sci-ctx sandbox-ns] :as environment} code & {:keys [timeout-ms doc]}]
+  "Run a single :code block through the SCI sandbox.
+
+   Optional kwargs:
+     :timeout-ms          — hard-cap eval time, clamped at the
+                            *eval-timeout-ms* bounds.
+     :doc                 — docstring to attach to the var defined by
+                            this :expr.
+     :dedup-cache-atom    — per-query `{hash -> cached-result}` atom.
+                            When the canonical hash of `code` is
+                            already in the cache, the SCI eval is
+                            skipped and a synthetic `:cached?`
+                            result is returned. Misses fall through
+                            to a real eval and the success is
+                            recorded back into the cache.
+     :iteration-id        — `iN.K` string used as `:cached-from` on
+                            cache writes. Required when
+                            `:dedup-cache-atom` is provided."
+  [{:keys [sci-ctx sandbox-ns] :as environment} code
+   & {:keys [timeout-ms doc dedup-cache-atom iteration-id]}]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
-          lint-error (detect-common-mistakes code)]
-      (if lint-error
+          lint-error (detect-common-mistakes code)
+          cached     (dedup-cache-lookup dedup-cache-atom code)]
+      (cond
+        lint-error
         {:result nil :stdout "" :stderr "" :error lint-error
          :execution-time-ms 0 :timeout? false}
-        (if-let [parse-error (parse-clojure-syntax code)]
-          ;; Parse failed — give every active extension's
-          ;; :ext/on-parse-error-fn a shot at rewriting the source.
-          ;; First non-nil rewrite that itself parses cleanly is
-          ;; executed; the resulting expression is tagged :repaired?
-          ;; true so the iteration loop can surface the rescue.
-          (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
-            (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time)]
+
+        ;; Dedup short-circuit: a prior successful execution of this
+        ;; same canonical form returns its cached result without re-
+        ;; running. The model sees `:cached? true` so it knows the
+        ;; value came from the cache, not a fresh run.
+        cached cached
+
+        :else
+        (let [parse-error (parse-clojure-syntax code)]
+          (if parse-error
+            (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
+              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time)]
+                (when (nil? (:error exec))
+                  (attach-doc-meta! environment rescued doc)
+                  (dedup-cache-record! dedup-cache-atom rescued exec iteration-id))
+                (assoc exec
+                  :repaired? true
+                  :original-code code
+                  :original-error parse-error))
+              {:result nil :stdout "" :stderr "" :error parse-error
+               :execution-time-ms 0 :timeout? false})
+            (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time)]
               (when (nil? (:error exec))
-                (attach-doc-meta! environment rescued doc))
-              (assoc exec
-                :repaired? true
-                :original-code code
-                :original-error parse-error))
-            {:result nil :stdout "" :stderr "" :error parse-error
-             :execution-time-ms 0 :timeout? false})
-          (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time)]
-            (when (nil? (:error exec))
-              (attach-doc-meta! environment code doc))
-            exec))))))
+                (attach-doc-meta! environment code doc)
+                (dedup-cache-record! dedup-cache-atom code exec iteration-id))
+              exec)))))))
 
 (def ^:const SLOW_EXECUTION_MS 5000)
 (def ^:const EXECUTION_SAFETY_CAP_CHARS MAX_RESULT_DISPLAY_CHARS)
@@ -338,6 +403,70 @@
         ;; signal; cheaper than re-comparing lengths.
         truncated? (boolean (re-find #" …<\+\d+ chars>$" bounded))]
     [bounded truncated?]))
+
+;; ---------------------------------------------------------------------------
+;; <attempts> ledger — deduped log of executed code blocks across the
+;; entire turn so far, addressable by `iN.K` ids. Replaces the
+;; old strategy of "the model has to remember every call it made"
+;; with explicit projection-time visibility. The PEV gate's
+;; `:evidence iN.K` references resolve into this block.
+;; ---------------------------------------------------------------------------
+
+(def ^:const ATTEMPTS_KEEP_LAST 50)
+(def ^:const ATTEMPTS_VALUE_MAX_CHARS 120)
+(def ^:const ATTEMPTS_CODE_MAX_CHARS 200)
+
+#_{:clj-kondo/ignore [:unused-private-var]} ;; WIP: pending wire-in to build-iteration-context
+(defn- format-attempts-block
+  "Render the deduped attempts ledger as `<attempts>`. Each entry is a
+   one-liner: `iN.K  <code> -> <result-or-error>`. Bounded by
+   `ATTEMPTS_KEEP_LAST` (50) so multi-iteration turns can't blow up
+   the projection. Dedup uses canonical hashes so the same call is
+   never listed twice; the `iN.K` id refers to the FIRST occurrence."
+  [attempts]
+  (when (seq attempts)
+    (let [seen (volatile! #{})
+          rows (vec
+                 (keep (fn [{:keys [iteration-id code result error]}]
+                         (let [h (canonical-expression-hash code)]
+                           (when-not (contains? @seen h)
+                             (vswap! seen conj h)
+                             (let [code-str  (truncate (str/trim (str code))
+                                               ATTEMPTS_CODE_MAX_CHARS)
+                                   value-str (cond
+                                               error
+                                               (str "ERROR: " (truncate (str error) 200))
+                                               :else
+                                               (safe-pr-str result
+                                                 {:max-chars ATTEMPTS_VALUE_MAX_CHARS
+                                                  :print-length 8
+                                                  :print-level 4}))]
+                               (str "  " iteration-id "  " code-str " → " value-str)))))
+                   attempts))
+          kept (take-last ATTEMPTS_KEEP_LAST rows)]
+      (when (seq kept)
+        (str "<attempts>\n" (str/join "\n" kept) "\n</attempts>")))))
+
+(defn build-attempts-from-iterations
+  "Walk persisted iteration rows and pull every executed expression
+   into a flat seq of `{:iteration-id :code :result :error}` maps the
+   `<attempts>` block can render. Used by the loop to gather the full
+   query-so-far ledger; the underlying DB queries are the same shape
+   the self-debug extension uses."
+  [db-info iterations]
+  (vec
+    (mapcat (fn [iteration]
+              (let [iteration-position (:position iteration)]
+                (try
+                  (mapv (fn [position row]
+                          {:iteration-id (str "i" iteration-position "." (inc position))
+                           :code         (:code row)
+                           :result       (:result row)
+                           :error        (:error row)})
+                    (range)
+                    (db/db-list-iteration-expressions db-info (:id iteration)))
+                  (catch Throwable _ []))))
+      iterations)))
 
 (defn- format-recent-block
   "Render the last `RECENT_KEEP_ITERS` iterations of expression results
@@ -602,6 +731,19 @@
                        " are :in_progress / :pending. Either complete them with cited "
                        "evidence (set :status :done with :evidence iN.K), or set "
                        ":abandon-reason describing what blocks completion."))
+
+                   :vis/plan-churn
+                   (str "You have changed the plan " (:edit-distance data)
+                     " times across " (:iteration-count data) " iterations. Commit"
+                     " to ONE approach. If reality has changed enough that this many"
+                     " edits made sense, set :abandon-reason and re-emit a single"
+                     " fresh plan with the lessons learned in :decided.")
+
+                   :vis/consecutive-errors
+                   (str (:count data) " consecutive errors. The current approach is"
+                     " not working. Re-emit :plan with a different strategy, or set"
+                     " :abandon-reason describing what blocks progress.")
+
                    (str "Loop violation: " (or type :unknown))))]
       (str "[system_nudge] " body))))
 
@@ -859,7 +1001,7 @@
 
    Returns the joined block or nil when every component is blank."
   [environment {:keys [iteration current-max-iterations
-                       plan-state breadcrumbs
+                       plan-state breadcrumbs attempts
                        expressions-by-iteration recent-thought
                        system-vars prior-turn
                        call-counts-atom
@@ -870,6 +1012,7 @@
              {:type :vis/missing-active-extensions})))
   (let [plan-block (format-plan-block plan-state)
         breadcrumbs-block (format-breadcrumbs-block breadcrumbs)
+        attempts-block (format-attempts-block attempts)
         recent-block (format-recent-block expressions-by-iteration)
         ;; Repetition warning still consumes flat (last-iteration) expressions —
         ;; pluck them out of the canonical pairs once.
@@ -913,6 +1056,7 @@
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [plan-block
                  breadcrumbs-block
+                 attempts-block
                  recent-block
                  recent-thought-block
                  system-state-block
@@ -1018,8 +1162,15 @@
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
-   Returns map with :thinking :expressions :final-result :api-usage etc."
-  [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk]
+   Returns map with :thinking :expressions :final-result :api-usage etc.
+
+   Optional `:dedup-cache-atom` is the per-query cache that skips
+   re-execution of identical canonical forms. The handler builds
+   `iteration-id`s as `iN.K` (1-based) and threads them into each
+   `execute-code` call so cache hits carry a stable `:cached-from`
+   reference."
+  [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk
+                                   dedup-cache-atom]
                             :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
@@ -1082,12 +1233,15 @@
                                   raw-code))
               code-blocks (mapv :expr code-entries)
               expression-results (when (seq code-blocks)
-                                   (mapv (fn [{:keys [expr time-ms doc]}]
+                                   (mapv (fn [position {:keys [expr time-ms doc]}]
                                            (if-let [err (literal-code-block-error expr)]
                                              {:result nil :error err
                                               :stdout "" :stderr "" :execution-time-ms 0}
                                              (execute-code environment expr
-                                               :timeout-ms time-ms :doc doc)))
+                                               :timeout-ms time-ms :doc doc
+                                               :dedup-cache-atom dedup-cache-atom
+                                               :iteration-id (str "i" iteration "." (inc position)))))
+                                     (range)
                                      code-entries))
               expression-errors (when expression-results
                                   (seq (clojure.core/filter :error expression-results)))
@@ -1168,10 +1322,13 @@
                                (log-stage! :code-exec iteration
                                  {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms
                                   :doc? (boolean doc)})
-                               (let [result (if-let [err (literal-code-block-error expr)]
+                               (let [iteration-id (str "i" iteration "." (inc idx))
+                                     result (if-let [err (literal-code-block-error expr)]
                                               {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
                                               (let [r (execute-code environment expr
-                                                        :timeout-ms time-ms :doc doc)]
+                                                        :timeout-ms time-ms :doc doc
+                                                        :dedup-cache-atom dedup-cache-atom
+                                                        :iteration-id iteration-id)]
                                                 (log-stage! :code-result iteration
                                                   {:idx (inc idx) :total total-blocks
                                                    :execution-time-ms (:execution-time-ms r)

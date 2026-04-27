@@ -42,7 +42,7 @@
                     (.header builder "Authorization" (str "Bearer " api-key))
                     builder)
           request (.build builder)
-          resp    (.send http-client request (HttpResponse$BodyHandlers/ofString))
+          resp    (.send ^HttpClient http-client request (HttpResponse$BodyHandlers/ofString))
           parsed  (svar/str->data (.body resp))
           body    (or (:value parsed) parsed)
           models  (or (:data body) [])]

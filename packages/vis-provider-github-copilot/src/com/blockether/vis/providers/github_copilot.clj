@@ -73,14 +73,16 @@
                                   "="
                                   (java.net.URLEncoder/encode (str v) "UTF-8")))
                  params))
-        builder (-> (HttpRequest/newBuilder)
-                  (.uri (URI/create url))
-                  (.timeout (Duration/ofSeconds 30))
-                  (.header "Accept" "application/json")
-                  (.header "Content-Type" "application/x-www-form-urlencoded")
-                  (.POST (HttpRequest$BodyPublishers/ofString body)))
-        builder (reduce-kv (fn [b k v] (.header b k v)) builder
-                  (merge COPILOT_HEADERS (or extra-headers {})))
+        ^java.net.http.HttpRequest$Builder builder
+        (-> (HttpRequest/newBuilder)
+          (.uri (URI/create url))
+          (.timeout (Duration/ofSeconds 30))
+          (.header "Accept" "application/json")
+          (.header "Content-Type" "application/x-www-form-urlencoded")
+          (.POST (HttpRequest$BodyPublishers/ofString body)))
+        ^java.net.http.HttpRequest$Builder builder
+        (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder
+          (merge COPILOT_HEADERS (or extra-headers {})))
         resp    (.send ^java.net.http.HttpClient @http-client
                   (.build builder) (HttpResponse$BodyHandlers/ofString))
         status  (.statusCode resp)]
@@ -90,13 +92,15 @@
 (defn- get-json
   "GET with Bearer auth, return parsed JSON map."
   [url bearer-token]
-  (let [builder (-> (HttpRequest/newBuilder)
-                  (.uri (URI/create url))
-                  (.timeout (Duration/ofSeconds 30))
-                  (.header "Accept" "application/json")
-                  (.header "Authorization" (str "Bearer " bearer-token))
-                  (.GET))
-        builder (reduce-kv (fn [b k v] (.header b k v)) builder COPILOT_HEADERS)
+  (let [^java.net.http.HttpRequest$Builder builder
+        (-> (HttpRequest/newBuilder)
+          (.uri (URI/create url))
+          (.timeout (Duration/ofSeconds 30))
+          (.header "Accept" "application/json")
+          (.header "Authorization" (str "Bearer " bearer-token))
+          (.GET))
+        ^java.net.http.HttpRequest$Builder builder
+        (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder COPILOT_HEADERS)
         resp    (.send ^java.net.http.HttpClient @http-client
                   (.build builder) (HttpResponse$BodyHandlers/ofString))
         status  (.statusCode resp)]
@@ -217,8 +221,8 @@
    (let [url       (if enterprise-domain
                      (str "https://" enterprise-domain "/login/oauth/access_token")
                      ACCESS_TOKEN_URL)
-         deadline  (+ (System/currentTimeMillis) (* (or expires-in 900) 1000))
-         interval-ms (* (max 5 (or interval 5)) 1000)]
+         deadline  (+ (System/currentTimeMillis) (* (long (or expires-in 900)) 1000))
+         interval-ms (long (* (max 5 (long (or interval 5))) 1000))]
      (loop []
        (when (> (System/currentTimeMillis) deadline)
          (throw (ex-info "Device flow expired — user did not authorize in time" {})))

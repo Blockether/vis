@@ -4,6 +4,7 @@
             [com.blockether.vis.channels.tui.primitives :as p]
             [com.blockether.vis.channels.tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
+           [com.googlecode.lanterna.graphics TextGraphics]
            [java.util LinkedHashMap]))
 
 ;;; ── Render caches ──────────────────────────────────────────────────────────
@@ -163,32 +164,32 @@
    dedicated footer row took over (see
    `com.blockether.vis.channels.tui.footer`). The bottom edge is now
    always a plain horizontal rule."
-  [g box-top box-bottom cols top-hint]
+  [^TextGraphics g box-top box-bottom cols top-hint]
   (let [inner-w (- cols 2)
         bar     (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
     (.setForegroundColor g t/border-fg)
     (.setBackgroundColor g t/terminal-bg)
 
     ;; Top: ┌── top-hint ──┐
-    (.setCharacter g 0 box-top Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-    (.putString g 1 box-top (embed-in-bar bar top-hint))
-    (.setCharacter g (dec cols) box-top Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+    (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+    (.putString g 1 (int box-top) (embed-in-bar bar top-hint))
+    (.setCharacter g (int (dec cols)) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
 
     ;; Bottom: └──────┘ (plain rule — status moved to footer row).
-    (.setCharacter g 0 box-bottom Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-    (.putString g 1 box-bottom bar)
-    (.setCharacter g (dec cols) box-bottom Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+    (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+    (.putString g 1 (int box-bottom) bar)
+    (.setCharacter g (int (dec cols)) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
 
     ;; Sides: │ ... │
     (doseq [row (range (inc box-top) box-bottom)]
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)
-      (.setCharacter g 0 row Symbols/SINGLE_LINE_VERTICAL)
-      (.setCharacter g (dec cols) row Symbols/SINGLE_LINE_VERTICAL))))
+      (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
+      (.setCharacter g (int (dec cols)) (int row) Symbols/SINGLE_LINE_VERTICAL))))
 
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
-  [g box-top box-bottom cols]
+  [^TextGraphics g box-top box-bottom cols]
   (let [inner-w  (- cols 2)
         text-top (inc box-top)
         rows     (- box-bottom box-top 1)]
@@ -200,7 +201,7 @@
 
 (defn draw-messages-box!
   "Draw bordered message area with top-anchored scrollable messages."
-  [g messages box-top box-bottom cols scroll]
+  [^TextGraphics g messages box-top box-bottom cols scroll]
   (let [inner-rows (- box-bottom box-top 1)
         text-top   (inc box-top)
         text-w     (- cols 4)
@@ -230,7 +231,7 @@
    bottom border is always a plain horizontal rule — live status
    (model / run-state / ctx %) lives in the dedicated footer row
    below this box (see `footer/draw-footer!`)."
-  [g {:keys [lines crow ccol]} box-top text-rows cols hint]
+  [^TextGraphics g {:keys [lines crow ccol]} box-top text-rows cols hint]
   (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
         text-top   (+ (inc box-top) input-pad-y)
         text-w     (- cols 2 (* 2 input-pad-x))
@@ -260,7 +261,7 @@
 
 (defn fill-background!
   "Fill entire screen with the terminal background color."
-  [g cols rows]
+  [^TextGraphics g cols rows]
   (.setBackgroundColor g t/terminal-bg)
   (.setForegroundColor g t/text-fg)
   (.fillRectangle g (TerminalPosition. 0 0) (TerminalSize. cols rows) \space))
@@ -272,7 +273,7 @@
    `body` can be a string or vec of strings. Long lines are wrapped to fit.
    Optional `max-w` limits dialog width (defaults to 60% of screen)."
   ([g cols rows title body] (draw-dialog! g cols rows title body nil))
-  ([g cols rows title body max-w]
+  ([^TextGraphics g cols rows title body max-w]
    (let [limit-w     (or max-w (max 30 (int (* cols 0.6))))
          content-w   (- limit-w 6) ;; padding inside dialog
          raw-lines   (if (string? body) [body] body)
@@ -302,15 +303,15 @@
      ;; Border
      (.setForegroundColor g t/dialog-border)
      (.setBackgroundColor g t/dialog-bg)
-     (.setCharacter g box-left  box-top    Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-     (.setCharacter g box-right box-top    Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
-     (.setCharacter g box-left  box-bottom Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-     (.setCharacter g box-right box-bottom Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+     (.setCharacter g (int box-left)  (int box-top)    Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+     (.setCharacter g (int box-right) (int box-top)    Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+     (.setCharacter g (int box-left)  (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+     (.setCharacter g (int box-right) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
      (.putString g (inc box-left) box-top h-bar)
      (.putString g (inc box-left) box-bottom h-bar)
      (doseq [r (range (inc box-top) box-bottom)]
-       (.setCharacter g box-left  r Symbols/SINGLE_LINE_VERTICAL)
-       (.setCharacter g box-right r Symbols/SINGLE_LINE_VERTICAL))
+       (.setCharacter g (int box-left)  (int r) Symbols/SINGLE_LINE_VERTICAL)
+       (.setCharacter g (int box-right) (int r) Symbols/SINGLE_LINE_VERTICAL))
 
      ;; Title
      (.setForegroundColor g t/dialog-title-bg)
@@ -405,7 +406,7 @@
    `body-styles` (e.g. `[p/BOLD]` for header rows, `[p/ITALIC]` for
    thinking-mode body rows) applies to the text overdraw only — not
    to the chrome pass."
-  [g x y line text-fg border-fg bg body-styles]
+  [^TextGraphics g x y ^String line text-fg border-fg bg body-styles]
   (p/clear-styles! g)
   (p/set-colors! g border-fg bg)
   (p/put-str! g x y line)
@@ -448,7 +449,7 @@
    answer-bg, stdout, etc.).
 
    Returns the number of screen rows consumed (including spacing)."
-  [g {:keys [role text timestamp duration-ms model iterations tokens cost status]} start-row left max-w]
+  [^TextGraphics g {:keys [role text timestamp duration-ms model iterations tokens cost status]} start-row left max-w]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
         ;; Cancelled turns are status messages, not real answers —
@@ -1686,7 +1687,7 @@
    `opts` is currently unused (kept for back-compat)."
   ([g messages box-top box-bottom cols scroll]
    (draw-messages-area! g messages box-top box-bottom cols scroll nil))
-  ([g messages box-top box-bottom cols scroll _opts]
+  ([^TextGraphics g messages box-top box-bottom cols scroll _opts]
    (let [text-top   (+ box-top msg-margin-top)
          inner-h    (max 0 (- box-bottom text-top msg-margin-bottom))
          bubble-w   (max 1 (- cols msg-margin-left msg-margin-right))

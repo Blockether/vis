@@ -31,7 +31,7 @@
 ;; livelock: render writes layout → version bumps → render wakes → same
 ;; layout → same version bump → …
 
-(defonce render-monitor
+(defonce ^Object render-monitor
   ^{:doc "Monitor object the render thread .waits on. Notify-all on every
           dispatch that changes display state."}
   (Object.))

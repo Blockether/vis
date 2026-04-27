@@ -1,16 +1,17 @@
 (ns com.blockether.vis.channels.tui.primitives
   "Low-level drawing primitives wrapping Lanterna TextGraphics.
    All rendering code should use these instead of raw Java interop."
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols]))
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols]
+           [com.googlecode.lanterna.graphics TextGraphics]))
 
 ;;; ── Color ──────────────────────────────────────────────────────────────────
 
-(defn set-fg! [g color] (.setForegroundColor g color) g)
-(defn set-bg! [g color] (.setBackgroundColor g color) g)
+(defn set-fg! [^TextGraphics g color] (.setForegroundColor g color) g)
+(defn set-bg! [^TextGraphics g color] (.setBackgroundColor g color) g)
 
 (defn set-colors!
   "Set both foreground and background color in one call."
-  [g fg bg]
+  [^TextGraphics g fg bg]
   (.setForegroundColor g fg)
   (.setBackgroundColor g bg)
   g)
@@ -27,26 +28,26 @@
 
 (defn enable!
   "Enable one or more text styles. `modifiers` are SGR constants (BOLD, ITALIC, etc.)."
-  [g & modifiers]
+  [^TextGraphics g & modifiers]
   (.enableModifiers g (into-array SGR modifiers))
   g)
 
 (defn disable!
   "Disable one or more text styles."
-  [g & modifiers]
+  [^TextGraphics g & modifiers]
   (.disableModifiers g (into-array SGR modifiers))
   g)
 
 (defn clear-styles!
   "Remove all active text styles."
-  [g]
+  [^TextGraphics g]
   (.clearModifiers g)
   g)
 
 (defn with-style
   "Execute `body-fn` (fn [g] ...) with the given styles enabled, then restore.
    Returns the result of `body-fn`."
-  [g styles body-fn]
+  [^TextGraphics g styles body-fn]
   (let [prev (vec (.getActiveModifiers g))]
     (.enableModifiers g (into-array SGR styles))
     (let [result (body-fn g)]
@@ -71,13 +72,13 @@
 
 (defn put-str!
   "Draw a string at (col, row). Control characters are sanitized."
-  [g col row text]
+  [^TextGraphics g col row text]
   (.putString g (int col) (int row) (sanitize-for-lanterna (str text)))
   g)
 
 (defn set-char!
   "Draw a single character at (col, row)."
-  [g col row ch]
+  [^TextGraphics g col row ch]
   (.setCharacter g (int col) (int row) (char ch))
   g)
 
@@ -86,7 +87,7 @@
 (defn fill-rect!
   "Fill a rectangle at (col, row) of size w×h with the given char (default space)."
   ([g col row w h]    (fill-rect! g col row w h \space))
-  ([g col row w h ch]
+  ([^TextGraphics g col row w h ch]
    (.fillRectangle g (TerminalPosition. (int col) (int row))
      (TerminalSize. (int w) (int h)) (char ch))
    g))
