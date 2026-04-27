@@ -11,6 +11,7 @@
    [clojure.set]
    [clojure.string :as str]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
+   [com.blockether.vis.extension :as ext]
 
    [com.blockether.vis.persistance.core :as db]
    [com.blockether.vis.persistance.spec :as rlm-spec
@@ -148,7 +149,65 @@
         {:result nil :stdout "" :stderr "" :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
-(defn- execute-code [{:keys [sci-ctx sandbox-ns]} code & {:keys [timeout-ms]}]
+(defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time]
+  (let [execution-result (if timeout-ms
+                           (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
+                             (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                           (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+        execution-time (- (System/currentTimeMillis) start-time)]
+    (if (:timeout? execution-result)
+      (assoc execution-result :execution-time-ms execution-time :timeout? true)
+      (assoc execution-result :execution-time-ms execution-time :timeout? false))))
+
+(defn- try-extension-parse-rescue
+  "Walk the environment's active extensions and ask each one's
+   `:ext/on-parse-error-fn` to rewrite `code`. Returns the rewritten
+   string when the rescue both differs from the original AND parses
+   cleanly. nil otherwise. Read-only on the environment."
+  [environment code parse-error]
+  (when-let [exts (some-> (:extensions environment) deref seq)]
+    (when-let [fixed (ext/try-rescue-parse-error exts code parse-error environment)]
+      (when (nil? (parse-clojure-syntax fixed))
+        fixed))))
+
+(def ^:private DEF_HEADS '#{def defn defn- defmacro})
+
+(defn extract-defining-name
+  "Return the symbol named by a `(def NAME …)` / `(defn NAME …)` /
+   `(defn- NAME …)` / `(defmacro NAME …)` form, or nil otherwise.
+   Tolerant: parse errors return nil rather than throwing."
+  [expression]
+  (try
+    (let [forms (edamame/parse-string-all expression edamame-opts)
+          form  (first forms)]
+      (when (and (= 1 (count forms))
+              (seq? form)
+              (contains? DEF_HEADS (first form))
+              (symbol? (second form)))
+        (second form)))
+    (catch Throwable _ nil)))
+
+(defn- attach-doc-meta!
+  "Attach `doc-string` as :doc metadata to the var named by `expression`'s
+   defining form, if any. No-op when `expression` is not a (def…) /
+   (defn…) shape, when doc-string is blank, or when the SCI eval throws.
+   Failures are logged at :debug; the caller's eval already succeeded
+   so a metadata-attach failure must NOT propagate."
+  [{:keys [sci-ctx sandbox-ns]} expression doc-string]
+  (when (and sci-ctx (string? doc-string) (not (str/blank? doc-string)))
+    (when-let [defining-name (extract-defining-name expression)]
+      (try
+        (let [sandbox (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)
+              attach-form (str "(when-let [v (resolve '" defining-name ")]"
+                            "  (alter-meta! v assoc :doc " (pr-str doc-string) "))")]
+          (sci/eval-string+ sci-ctx attach-form (when sandbox {:ns sandbox})))
+        (catch Throwable t
+          (tel/log! {:level :debug :id ::attach-doc-failed
+                     :data {:name (str defining-name)
+                            :error (ex-message t)}}))))))
+
+(defn- execute-code
+  [{:keys [sci-ctx sandbox-ns] :as environment} code & {:keys [timeout-ms doc]}]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
           lint-error (detect-common-mistakes code)]
@@ -156,30 +215,88 @@
         {:result nil :stdout "" :stderr "" :error lint-error
          :execution-time-ms 0 :timeout? false}
         (if-let [parse-error (parse-clojure-syntax code)]
-          {:result nil :stdout "" :stderr "" :error parse-error
-           :execution-time-ms 0 :timeout? false}
-          (let [execution-result (if timeout-ms
-                                   (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
-                                     (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
-                                   (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
-                execution-time (- (System/currentTimeMillis) start-time)]
-            (if (:timeout? execution-result)
-              (assoc execution-result :execution-time-ms execution-time :timeout? true)
-              (assoc execution-result :execution-time-ms execution-time :timeout? false))))))))
+          ;; Parse failed — give every active extension's
+          ;; :ext/on-parse-error-fn a shot at rewriting the source.
+          ;; First non-nil rewrite that itself parses cleanly is
+          ;; executed; the resulting expression is tagged :repaired?
+          ;; true so the iteration loop can surface the rescue.
+          (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
+            (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time)]
+              (when (nil? (:error exec))
+                (attach-doc-meta! environment rescued doc))
+              (assoc exec
+                :repaired? true
+                :original-code code
+                :original-error parse-error))
+            {:result nil :stdout "" :stderr "" :error parse-error
+             :execution-time-ms 0 :timeout? false})
+          (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time)]
+            (when (nil? (:error exec))
+              (attach-doc-meta! environment code doc))
+            exec))))))
 
 (def ^:const SLOW_EXECUTION_MS 5000)
 (def ^:const EXECUTION_SAFETY_CAP_CHARS MAX_RESULT_DISPLAY_CHARS)
 (def ^:const EXECUTION_STDERR_CHARS 2000)
+(def ^:const EXECUTION_STDOUT_CHARS 2000)
 (def ^:const RECENT_THOUGHT_MAX_CHARS 4000)
 (def ^:const BREADCRUMBS_KEEP_LAST 20)
 (def ^:const RECENT_KEEP_ITERS 1)
 (def ^:const PLAN_MAX_ITEMS 20)
 
-(defn- truncated-pr-str [v]
-  (let [s (strip-sandbox-ns (pr-str v))]
-    (if (> (count s) EXECUTION_SAFETY_CAP_CHARS)
-      [(truncate s EXECUTION_SAFETY_CAP_CHARS) true]
-      [s false])))
+;; Print-cap defaults for `safe-pr-str` — chosen so a wide flat
+;; collection or a deep nested map still pr-strs without materializing
+;; an unbounded JVM string before truncation. Override per call site
+;; when a tighter or looser bound is required.
+(def ^:const PRINT_LENGTH_DEFAULT 64)
+(def ^:const PRINT_LEVEL_DEFAULT  8)
+(def ^:const PRINT_CHARS_DEFAULT  1000)
+
+(defn safe-pr-str
+  "Bounded `pr-str`. Three overlapping caps so the resulting string
+   never materializes more than the configured bound regardless of
+   input size:
+
+   1. `:print-length` (default `PRINT_LENGTH_DEFAULT`) — binds
+      `*print-length*`, capping element count per collection during
+      pr.
+   2. `:print-level` (default `PRINT_LEVEL_DEFAULT`) — binds
+      `*print-level*`, capping nesting depth during pr.
+   3. `:max-chars` (default `PRINT_CHARS_DEFAULT`) — final clip on the
+      already-bounded string.
+
+   Returns either the full bounded string or, when the char cap was
+   hit, the prefix + a `…<+N chars>` suffix so the caller / model
+   knows the value was clipped.
+
+   Use this anywhere a value of unbounded user/model origin is being
+   embedded into a projection / log / nudge. Reserve raw `pr-str` for
+   building Clojure source code (where size is bounded by the
+   surrounding form) and for scalars whose printed size is bounded by
+   their type."
+  ([v] (safe-pr-str v nil))
+  ([v {:keys [print-length print-level max-chars]
+       :or   {print-length PRINT_LENGTH_DEFAULT
+              print-level  PRINT_LEVEL_DEFAULT
+              max-chars    PRINT_CHARS_DEFAULT}}]
+   (let [bounded (binding [*print-length* print-length
+                           *print-level*  print-level]
+                   (pr-str v))]
+     (if (> (count bounded) max-chars)
+       (str (subs bounded 0 max-chars)
+         " …<+" (- (count bounded) max-chars) " chars>")
+       bounded))))
+
+(defn- truncated-pr-str
+  "Wrapper used by `<recent>` rendering. Returns `[bounded-string
+   truncated?]`. Strips sandbox-ns prefix so the projection is clean."
+  [v]
+  (let [bounded (strip-sandbox-ns
+                  (safe-pr-str v {:max-chars EXECUTION_SAFETY_CAP_CHARS}))
+        ;; safe-pr-str's clip-marker (" …<+N chars>") is the truncation
+        ;; signal; cheaper than re-comparing lengths.
+        truncated? (boolean (re-find #" …<\+\d+ chars>$" bounded))]
+    [bounded truncated?]))
 
 (defn- format-recent-block
   "Render the last `RECENT_KEEP_ITERS` iterations of expression results
@@ -198,7 +315,7 @@
                         :let [{:keys [code error result stdout stderr execution-time-ms]} expr]]
                     (let [code-str      (str/trim (or code ""))
                           stdout-suffix (when-not (str/blank? stdout)
-                                          (str " :stdout " (pr-str stdout)))
+                                          (str " :stdout " (pr-str (truncate stdout EXECUTION_STDOUT_CHARS))))
                           stderr-suffix (when-not (str/blank? stderr)
                                           (str " :stderr " (pr-str (truncate stderr EXECUTION_STDERR_CHARS))))
                           time-ms       (or execution-time-ms 0)
@@ -338,19 +455,27 @@
                          ["REASONING" (:REASONING system-vars)]]
                      (keep (fn [[label v]]
                              (when (some? v)
-                               (let [s (pr-str v)]
-                                 (str "  " label "  " (truncate s 500)))))))
+                               (str "  " label "  "
+                                 (safe-pr-str v {:max-chars 500
+                                                 :print-length 32
+                                                 :print-level 5}))))))
         iteration-line (format-iteration-info
                          {:iteration              iteration
                           :current-max-iterations current-max-iterations})
         prior-lines (when (seq prior-turn)
                       [(str "  PRIOR_TURN {:goal "
-                         (pr-str (or (:goal prior-turn) ""))
+                         (safe-pr-str (or (:goal prior-turn) "")
+                           {:max-chars 200 :print-length 16})
                          " :outcome " (or (:outcome prior-turn) :unknown)
                          (when (:abandon-reason prior-turn)
-                           (str " :abandon-reason " (pr-str (:abandon-reason prior-turn))))
+                           (str " :abandon-reason "
+                             (safe-pr-str (:abandon-reason prior-turn)
+                               {:max-chars 300})))
                          (when (:counts prior-turn)
-                           (str " :counts " (pr-str (:counts prior-turn))))
+                           (str " :counts "
+                             ;; counts is a tiny `{:done N :pending N :…}`
+                             ;; map; bounded by construction. pr-str fine.
+                             (pr-str (:counts prior-turn))))
                          "}")])
         all-lines (concat vars-lines
                     (when iteration-line [iteration-line])
@@ -617,10 +742,16 @@
 (defn- repetition-warning
   [call-counts-atom previous-expressions]
   (when (and call-counts-atom (seq previous-expressions))
-    (let [keys* (mapv (fn [{:keys [code error result]}]
+    ;; Fingerprint ignores the result content — we only care whether the
+    ;; SAME `:code` was issued repeatedly. Hashing the result was a
+    ;; bug: identical calls with non-deterministic results (timestamps,
+    ;; uuids) used to slip past the dedup check, AND a 1MB result was
+    ;; pr-str'd into the fingerprint string every iteration. Code-only
+    ;; key is both correct and cheap.
+    (let [keys* (mapv (fn [{:keys [code error]}]
                         (if error
                           [:error-only (str/trim (str error))]
-                          [(str/trim (str code)) (pr-str result)]))
+                          [:code-only (str/trim (str code))]))
                   previous-expressions)
           max-count (swap! call-counts-atom
                       (fn [m]
@@ -901,17 +1032,21 @@
               code-entries (vec (keep (fn [block]
                                         (when (map? block)
                                           (let [expr (str (:expr block ""))
-                                                time-ms (:time-ms block)]
+                                                time-ms (:time-ms block)
+                                                doc     (:doc block)]
                                             (when-not (str/blank? expr)
-                                              {:expr expr :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}))))
+                                              (cond-> {:expr expr
+                                                       :time-ms (or time-ms (throw (ex-info "Code block missing :time-ms" {:expr expr})))}
+                                                doc (assoc :doc doc))))))
                                   raw-code))
               code-blocks (mapv :expr code-entries)
               expression-results (when (seq code-blocks)
-                                   (mapv (fn [{:keys [expr time-ms]}]
+                                   (mapv (fn [{:keys [expr time-ms doc]}]
                                            (if-let [err (literal-code-block-error expr)]
                                              {:result nil :error err
                                               :stdout "" :stderr "" :execution-time-ms 0}
-                                             (execute-code environment expr :timeout-ms time-ms)))
+                                             (execute-code environment expr
+                                               :timeout-ms time-ms :doc doc)))
                                      code-entries))
               expression-errors (when expression-results
                                   (seq (clojure.core/filter :error expression-results)))
@@ -988,12 +1123,14 @@
                             result
                             (recur (rest remaining) (conj result (first remaining)))))
               total-blocks (count coalesced)
-              executed (mapv (fn [idx {:keys [expr time-ms]}]
+              executed (mapv (fn [idx {:keys [expr time-ms doc]}]
                                (log-stage! :code-exec iteration
-                                 {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms})
+                                 {:idx (inc idx) :total total-blocks :code expr :time-ms time-ms
+                                  :doc? (boolean doc)})
                                (let [result (if-let [err (literal-code-block-error expr)]
                                               {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
-                                              (let [r (execute-code environment expr :timeout-ms time-ms)]
+                                              (let [r (execute-code environment expr
+                                                        :timeout-ms time-ms :doc doc)]
                                                 (log-stage! :code-result iteration
                                                   {:idx (inc idx) :total total-blocks
                                                    :execution-time-ms (:execution-time-ms r)

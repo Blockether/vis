@@ -533,47 +533,99 @@
            @global-registry))))
 
 ;; ----------------------------------------------------------------------------
-;; Auto-discovery
+;; Unified plug-in auto-discovery
+;;
+;; ONE classpath scan, ONE resource per jar (`META-INF/vis.edn`), ONE
+;; entry point. Replaces the five obsolete per-type resources
+;; (`META-INF/vis/{extensions,channels,commandline,persistance-backends,providers}.edn`)
+;; that each had an identical loader bolted onto a different subsystem
+;; package.
+;;
+;; Resource shape (a flat EDN vector of namespace symbols):
+;;
+;;     ;; resources/META-INF/vis.edn in your plug-in jar
+;;     [com.acme.ext.git.core           ; ext/register-global!
+;;      com.acme.channel.web.bot        ; channel/register-global!
+;;      com.acme.commands.git           ; cmd/register-global!
+;;      com.acme.providers.openai       ; provider/register-global!
+;;      com.acme.persistance.postgres]  ; persistance/register-backend!
+;;
+;; Each loaded namespace is responsible for calling whatever
+;; `register-global!` (or `register-backend!`) it needs. The loader
+;; itself is type-agnostic -- it just `require`s. New plug-in surfaces
+;; (themes, skills, future-thing) require ZERO changes here: drop a
+;; jar with a `META-INF/vis.edn` listing namespaces that register into
+;; the new surface, and they boot the same way everything else does.
+;;
+;; Why one resource is enough: the old per-type files only differed in
+;; their FILE PATH; the loader code was copy-pasted across five
+;; subsystems. The CHOICE of which registry a namespace populates was
+;; already made by `(register-global! ...)` calls inside the loaded
+;; code, NOT by which discovery fn invoked the require. So the path
+;; discriminator added zero information -- it was pure cargo cult.
 ;; ----------------------------------------------------------------------------
 
-(def ^:private COMMANDS_RESOURCE "META-INF/vis/commandline.edn")
+(def ^:private PLUGIN_RESOURCE "META-INF/vis.edn")
 
-(defn discover-commands!
-  "Scan the classpath for every `META-INF/vis/commandline.edn`
-   resource. Each file is an EDN vector of namespace symbols whose
-   load triggers `register-global!`. Returns the count of commands
-   added by this call (for diagnostics).
+(defn discover-plugins!
+  "Scan the classpath for every `META-INF/vis.edn` resource and
+   `require` each namespace symbol listed inside. The loaded
+   namespaces self-register into whichever subsystem registry they
+   target (extensions, channels, commands, providers, persistence
+   backends, ...).
 
-   Idempotent through the underlying `require` cache \u2014 calling
-   it twice does no extra work."
+   Returns the count of namespaces this call actually loaded
+   (excluding ones already required by an earlier discovery pass or
+   by the JVM warm-up). Idempotent through Clojure's `require` cache
+   -- calling it twice does no extra work, but the returned count
+   reflects only the namespaces newly required during THIS invocation.
+
+   Failures (broken EDN, missing namespace, throwing
+   `register-global!`) are logged at `:error` per offending entry and
+   the scan continues. A bad plug-in cannot abort discovery for its
+   siblings."
   []
-  (let [urls   (try
-                 (enumeration-seq
-                   (.getResources
-                     (.getContextClassLoader (Thread/currentThread))
-                     COMMANDS_RESOURCE))
-                 (catch Exception _ nil))
-        before (count @global-registry)]
+  (let [urls    (try
+                  (enumeration-seq
+                    (.getResources
+                      (.getContextClassLoader (Thread/currentThread))
+                      PLUGIN_RESOURCE))
+                  (catch Exception _ nil))
+        loaded  (atom 0)
+        seen    (atom #{})]
     (doseq [^java.net.URL url urls]
       (try
         (let [ns-syms (edn/read-string (slurp url))]
           (when (sequential? ns-syms)
             (doseq [ns-sym ns-syms]
-              (when (symbol? ns-sym)
+              (when (and (symbol? ns-sym) (not (@seen ns-sym)))
+                (swap! seen conj ns-sym)
                 (try (require ns-sym)
+                  (swap! loaded inc)
                   (tel/log! {:level :info :id ::discover
-                             :data  {:command-ns ns-sym :source (str url)}
-                             :msg   (str "Auto-discovered commandline ns '"
+                             :data  {:plugin-ns ns-sym :source (str url)}
+                             :msg   (str "Auto-discovered plug-in ns '"
                                       ns-sym "' from " url)})
                   (catch Throwable t
                     (tel/log! {:level :error :id ::discover-failed
-                               :data  {:command-ns ns-sym :source (str url)
+                               :data  {:plugin-ns ns-sym :source (str url)
                                        :class (.getName (class t))
                                        :message (ex-message t)}
-                               :msg   (str "Failed to load commandline ns '"
+                               :msg   (str "Failed to load plug-in ns '"
                                         ns-sym "': " (ex-message t))})))))))
         (catch Throwable t
           (tel/log! {:level :error :id ::discover-parse-failed
                      :data  {:source (str url) :message (ex-message t)}
                      :msg   (str "Failed to parse " url ": " (ex-message t))}))))
-    (- (count @global-registry) before)))
+    @loaded))
+
+(defn discover-commands!
+  "Backwards-compatible alias for `discover-plugins!`.
+
+   Loading any namespace via the unified plug-in scan that calls
+   `register-global!` populates the commandline registry, so an
+   explicit per-type discover fn is no longer required. Kept for
+   external code that may still call this name; new code should call
+   `discover-plugins!` directly."
+  []
+  (discover-plugins!))

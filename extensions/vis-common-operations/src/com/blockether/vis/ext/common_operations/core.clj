@@ -34,6 +34,11 @@
    coherent block per extension instead of N tiny disjointed snippets."
   (str/join "\n\n" [editing/editing-prompt]))
 
+;; Parse-error rescue lives at the SYMBOL level (see
+;; `grep-files-symbol` in editing.clj) so the iteration loop only
+;; fires it when the broken source actually mentions the symbol it
+;; repairs. No extension-wide hook is needed here.
+
 (def extension
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.common-operations.core

@@ -145,8 +145,13 @@
                        cancel-atom (assoc :cancel-atom cancel-atom))
            result (conversations/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
+           ;; Plain text — the bubble renderer dims it via the
+           ;; `:status :cancelled` field we propagate below, NOT via
+           ;; markdown italic. Underscores would just render as
+           ;; literal underscores once markdown processing is
+           ;; skipped for cancelled messages.
            answer (or (:answer result)
-                    (when cancelled? "_Cancelled by user._")
+                    (when cancelled? "Cancelled by user.")
                     "[empty response]")
            model  (or (get-in result [:cost :model]) (get result :model))
            tokens (:tokens result)
@@ -159,7 +164,8 @@
          model      (assoc :model model)
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)
-         confidence (assoc :confidence confidence)))
+         confidence (assoc :confidence confidence)
+         cancelled? (assoc :status :cancelled)))
      ;; future-cancel from the TUI translates to thread interruption.
      ;; The shared channels.cancellation predicate folds in
      ;; InterruptedException, CancellationException, and any runtime
@@ -168,7 +174,7 @@
      (catch Exception e
        (if (cancellation/cancellation? e)
          (do (.interrupt (Thread/currentThread))
-           {:answer "_Cancelled by user._" :iterations 0 :status :cancelled})
+           {:answer "Cancelled by user." :iterations 0 :status :cancelled})
          (do
            ;; Log EVERYTHING. Stripping a stack trace at the channel
            ;; boundary is how a `[SQLITE_CANTOPEN]` ends up untriagable

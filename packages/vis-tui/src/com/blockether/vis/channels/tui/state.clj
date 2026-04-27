@@ -296,19 +296,27 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost confidence query-id]}]]]
+  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost confidence query-id status]}]]]
     (let [start    (:query-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
+          ;; Cancelled turns get a `:status :cancelled` flag on the
+          ;; message so the bubble renderer can dim the content. We
+          ;; also keep the trace off cancelled messages — a partial
+          ;; iteration trace next to a \"Cancelled by user.\"
+          ;; placeholder is more confusing than informative.
+          cancelled? (= :cancelled status)
           response (-> (chat/assistant-msg (or answer ""))
                      (cond-> query-id                (assoc :query-id query-id)
-                       (seq trace)              (assoc :trace trace :raw-answer (or answer ""))
+                       (and (not cancelled?) (seq trace))
+                       (assoc :trace trace :raw-answer (or answer ""))
                        (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                        model      (assoc :model model)
                        iterations (assoc :iterations iterations)
                        tokens     (assoc :tokens tokens)
                        cost       (assoc :cost cost)
-                       confidence (assoc :confidence confidence)))]
+                       confidence (assoc :confidence confidence)
+                       status     (assoc :status status)))]
       (-> db
         (update :messages pop)
         (update :messages conj response)
@@ -333,13 +341,18 @@
                     (if (:error result)
                       (dispatch [:message-received (str "Error: " (:error result))])
                       (dispatch [:message-received (:answer result)
-                                 (select-keys result [:model :iterations :duration-ms :tokens :cost :confidence :query-id])])))
+                                 (select-keys result
+                                   [:model :iterations :duration-ms :tokens
+                                    :cost :confidence :query-id :status])])))
                   (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in
                     ;; InterruptedException, CancellationException, and
                     ;; runtime wrappers around them — keep all the
-                    ;; channel-shaped logic in one place.
+                    ;; channel-shaped logic in one place. The bubble
+                    ;; renderer dims the result based on `:status
+                    ;; :cancelled`, so we attach it explicitly here.
                     (if (cancellation/cancellation? t)
-                      (dispatch [:message-received "_Cancelled by user._"])
+                      (dispatch [:message-received "Cancelled by user."
+                                 {:status :cancelled}])
                       (dispatch [:message-received (str "Error: " (or (ex-message t) (str t)))])))))]
       (cancellation/set-future! token fut))))

@@ -148,6 +148,13 @@ EVERY ITERATION:
     `(doc fn)` for tool docs. `(shape x)` for schema-only view of any value.
     When a `[system_nudge]` appears, follow it. Nudges are actionable directives.
 
+    DOC YOUR DEFS. Every code block is a `:code_block` map with optional
+    `:doc`; when `:expr` is `(def name val)` or `(defn name [args] body)`,
+    set `:doc` to a one-line description of the var's purpose. The loop
+    attaches it as :doc metadata; `<var_index>` then shows it next to the
+    var. Future iterations — yours and the next turn's — read those docs
+    from `<var_index>` instead of having to re-derive what each var is for.
+
   STEP 3 — REPORT.
     Emit :breadcrumb (≤120 chars, past tense). Cite the active item id, what
     happened, and (when relevant) which iN.K result advanced it.

@@ -12,9 +12,16 @@
    number (least important) until it fits the available width.
 
    States (driven by `:loading?`, `:cancelling?` from app-db):
-     idle       \u2192 LEFT=model    CENTER=\u2205                    RIGHT=ctx-left% \u00b7 cost
-     running    \u2192 LEFT=model    CENTER=spinner+iter+elapsed   RIGHT=ctx-left%
-     cancelling \u2192 LEFT=model    CENTER=cancelling\u2026             RIGHT=ctx-left%
+     idle       \u2192 LEFT=model    CENTER=\u2205           RIGHT=ctx-left% \u00b7 cost
+     running    \u2192 LEFT=model    CENTER=\u2205           RIGHT=ctx-left% \u00b7 cost
+     cancelling \u2192 LEFT=model    CENTER=cancelling\u2026  RIGHT=ctx-left% \u00b7 cost
+
+   Run-state (spinner, iteration counter, elapsed time, current
+   phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
+   block. Putting it in the footer too was a duplicate \u2014 same
+   `\u280b 11.2s` showing twice on screen. The footer keeps slow-changing
+   identity + budget bits; the bubble keeps the live activity story,
+   including escalating slow-warnings when the provider hangs.
 
    Every numeric format uses `Locale/ROOT` so a Polish JVM doesn't
    produce mixed `5,8k` next to English `k`. The previous footer
@@ -23,9 +30,7 @@
    reason run-state had to live inside the assistant bubble; this
    namespace replaces that whole path."
   (:require [com.blockether.svar.internal.router :as router]
-            [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.primitives :as p]
-            [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.channels.tui.theme :as t]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core])
   (:import [java.util Locale]))
@@ -126,14 +131,13 @@
      2  model name, elapsed (running)
      3  iter counter, model reasoning suffix
      4  cost"
-  [db now-ms]
-  (let [{:keys [messages loading? cancelling? progress query-start-ms]} db
+  [db _now-ms]
+  (let [{:keys [messages cancelling?]} db
         info       (chosen-model-info)
         model      (:name info)
         reasoning? (boolean (:reasoning? info))
         ctx        (ctx-left-info messages model)
-        cost-str   (format-cost (session-cost messages))
-        iter-n     (count (or (:iterations progress) []))]
+        cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       model
@@ -152,22 +156,15 @@
              :fg t/footer-warning-fg :bold? true
              :region :center :priority 1})
 
-      (and loading? (not cancelling?))
-      (conj {:text (render/spinner-frame now-ms)
-             :fg t/footer-spinner-fg :bold? true
-             :region :center :priority 1})
-
-      (and loading? (not cancelling?) (pos? iter-n))
-      (conj {:text (str "iter " iter-n)
-             :fg t/footer-fg :bold? false
-             :region :center :priority 3})
-
-      (and loading? query-start-ms)
-      (conj {:text (or (channels/format-duration
-                         (max 0 (- now-ms (long query-start-ms))))
-                     "0ms")
-             :fg t/footer-fg-muted :bold? false
-             :region :center :priority 2})
+      ;; Spinner / iter-counter / elapsed: deliberately NOT here.
+      ;; The bubble's `progress->text` already carries that, with
+      ;; phase ("sending request to provider" / "thinking (iter 3)")
+      ;; AND an elapsed-aware slow-warning escalator that turns into
+      ;; "provider unresponsive, Esc to cancel" past 2 minutes.
+      ;; Duplicating it in the footer is what the user complained
+      ;; about — same `⠋ 11.2s` shown twice. `cancelling…` stays
+      ;; because it's a whole-conversation status, not just
+      ;; current-iteration.
 
       ;; ── RIGHT ─────────────────────────────────────────────────────────────
       ctx

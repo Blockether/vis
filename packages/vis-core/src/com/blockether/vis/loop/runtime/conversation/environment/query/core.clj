@@ -601,7 +601,7 @@
                         (when on-chunk
                           (on-chunk {:iteration iteration :thinking thinking
                                      :code (mapv :code expressions)
-                                     :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (pr-str (:result %))) expressions)
+                                     :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (iterate/safe-pr-str (:result %))) expressions)
                                      :stdouts (mapv #(or (:stdout %) "") expressions)
                                      :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                      :successes (mapv #(nil? (:error %)) expressions)
@@ -631,7 +631,7 @@
                           (when on-chunk
                             (on-chunk {:iteration iteration :thinking thinking
                                        :code (mapv :code expressions)
-                                       :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (pr-str (:result %))) expressions)
+                                       :results (mapv #(if (:error %) (str "ERROR: " (:error %)) (iterate/safe-pr-str (:result %))) expressions)
                                        :stdouts (mapv #(or (:stdout %) "") expressions)
                                        :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                        :successes (mapv #(nil? (:error %)) expressions)

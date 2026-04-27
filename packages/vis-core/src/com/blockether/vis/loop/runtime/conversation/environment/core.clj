@@ -408,6 +408,27 @@
 (def ^:private SEQ_INLINE_MAX_ELEMS 5)
 (def ^:private SEQ_HEAD_SAMPLE_SIZE 3)
 (def ^:private DOCSTRING_FIRST_LINE_CHARS 100)
+;; Per-entry char cap when rendering collection bodies. A 5-element
+;; vector of 1000-char strings would otherwise blow up to 5000+ chars
+;; even though our element-count check passes. This is the SAFETY net.
+(def ^:private VAR_INDEX_BODY_MAX_CHARS 600)
+(def ^:private VAR_INDEX_PRINT_LENGTH 32)
+(def ^:private VAR_INDEX_PRINT_LEVEL 6)
+
+(defn- bounded-pr-str
+  "Local mirror of `iteration.core/safe-pr-str` for the var-index render
+   path — reuses `*print-length*` + `*print-level*` to short-circuit
+   pr during printing, then clips the resulting string. Kept here so
+   the env-core namespace doesn't depend on iteration.core (would be
+   a cycle)."
+  [v]
+  (let [bounded (binding [*print-length* VAR_INDEX_PRINT_LENGTH
+                          *print-level*  VAR_INDEX_PRINT_LEVEL]
+                  (pr-str v))]
+    (if (> (count bounded) VAR_INDEX_BODY_MAX_CHARS)
+      (str (subs bounded 0 VAR_INDEX_BODY_MAX_CHARS)
+        " …<+" (- (count bounded) VAR_INDEX_BODY_MAX_CHARS) " chars>")
+      bounded)))
 
 (defn- truncate-string [s n]
   (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
@@ -442,12 +463,6 @@
     (str ";; v=" version " scope=" (name scope-word)
       (when (some? size) (str " n=" size)))))
 
-(defn- docstring-first-line [arglists]
-  ;; arglists meta is `([x] [x opts])` shape; the docstring (when any) is
-  ;; on the var's :doc key. Helpers below rebuild the entry from sandbox
-  ;; metadata so we receive arglists + doc separately.
-  nil)
-
 (defn- render-fn-form
   [{:keys [sym arglists doc] :as entry}]
   (let [stats   (stats-comment entry)
@@ -469,35 +484,52 @@
 
 (defn- render-data-form
   "Render a non-fn var with type-aware preview. Cheap values inline; large
-   values fall back to a schema map (`{:n N :keys-sample […]}` etc.)."
-  [{:keys [sym type val] :as entry}]
+   values fall back to a schema map (`{:n N :keys-sample […]}` etc.).
+   When a `:doc` is set on the var meta, embed the first line of the
+   docstring before the body — same UX as render-fn-form, so all
+   var-defining forms surface their purpose in `<var_index>`."
+  [{:keys [sym type val doc] :as entry}]
   (let [stats (stats-comment entry)
+        doc-line (when (and (string? doc) (not (str/blank? doc)))
+                   (truncate-string
+                     (-> (str doc) str/split-lines first str/trim)
+                     DOCSTRING_FIRST_LINE_CHARS))
         body  (case type
-                :nil   "nil"
-                :bool  (pr-str val)
-                :int   (pr-str val)
-                :float (pr-str val)
+                ;; Scalars: pr-str output is bounded by the type. A
+                ;; literal `true` / `42` / `:foo` cannot blow up.
+                :nil     "nil"
+                :bool    (pr-str val)
+                :int     (pr-str val)
+                :float   (pr-str val)
                 :keyword (pr-str val)
                 :symbol  (pr-str val)
-                :string (let [s val]
-                          (if (<= (count s) STRING_INLINE_MAX_CHARS)
-                            (pr-str s)
-                            (pr-str {:string-size (count s)
-                                     :head (truncate-string s STRING_HEAD_PREVIEW_CHARS)})))
-                :map (let [{:keys [inline? keys keys-sample total]} (map-keys-preview val)]
-                       (if inline?
-                         (pr-str {:keys keys})
-                         (pr-str {:n total :keys-sample keys-sample})))
+                ;; Strings: capped before pr-str, so the printed form is
+                ;; bounded by STRING_HEAD_PREVIEW_CHARS + quotes.
+                :string  (let [s val]
+                           (if (<= (count s) STRING_INLINE_MAX_CHARS)
+                             (pr-str s)
+                             (pr-str {:string-size (count s)
+                                      :head (truncate-string s STRING_HEAD_PREVIEW_CHARS)})))
+                ;; Collections route through bounded-pr-str so an inline
+                ;; render of a 5-element vec of 1000-char strings can't
+                ;; produce a 5000+ char body.
+                :map     (let [{:keys [inline? keys keys-sample total]} (map-keys-preview val)]
+                           (if inline?
+                             (bounded-pr-str {:keys keys})
+                             (bounded-pr-str {:n total :keys-sample keys-sample})))
                 (:vector :set :list :seq)
                 (let [{:keys [total head]} (seq-head-preview val)]
                   (cond
                     (and (number? total) (<= total SEQ_INLINE_MAX_ELEMS))
-                    (pr-str (vec val))
+                    (bounded-pr-str (vec val))
                     :else
-                    (pr-str {:n total :head head})))
+                    (bounded-pr-str {:n total :head head})))
                 ;; unknown type — punt to a value-only stub
                 (pr-str {:type type}))]
-    (str stats "\n(def " sym " " body ")")))
+    (str stats
+      "\n(def " sym
+      (when doc-line (str " \"" doc-line "\""))
+      " " body ")")))
 
 (defn- render-archive-form
   "Render an entry from `<vars_archive>` — a forgotten or persisted-only

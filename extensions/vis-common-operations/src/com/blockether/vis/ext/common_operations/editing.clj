@@ -136,6 +136,95 @@
 
       :else {:error err})))
 
+;; -----------------------------------------------------------------------------
+;; Parse-error rescue (extension-wide :ext/on-parse-error-fn)
+;;
+;; The LLM occasionally writes a raw `\X` inside a string literal in
+;; the SOURCE it emits — e.g. `(fs/grep-files "foo\|bar")` instead of
+;; the correctly escaped `"foo\\|bar"`. Edamame rejects that with
+;;
+;;   "[line L, col C] Unsupported escape character: \X"
+;;
+;; Symbol-level :on-error-fn cannot help — the parse fails before any
+;; tool fn is dispatched. The extension-wide :ext/on-parse-error-fn
+;; hook (walked by `loop.runtime.….iteration.core/execute-code`) gets
+;; the source string + error message and can return a rewritten
+;; source. Here we double the offending backslash at the reported
+;; line/col so the source becomes `"foo\\|bar"` and parses cleanly.
+;; -----------------------------------------------------------------------------
+
+(def ^:private parse-error-escape-re
+  ;; edamame format: "[line 1, col 12] Unsupported escape character: \|"
+  ;; Capture line, col, and the offending char.
+  #"\[line (\d+), col (\d+)\] Unsupported escape character: \\(.)")
+
+(defn- line-col->index
+  "Translate edamame's 1-based [line, col] into a 0-based char index
+   into `code`. Returns nil when the position is past the end."
+  ^Long [^String code line col]
+  (loop [i 0, ln 1, c 1]
+    (cond
+      (and (= ln line) (= c col)) i
+      (>= i (.length code))       nil
+      :else
+      (let [ch (.charAt code i)]
+        (if (= ch \newline)
+          (recur (inc i) (inc ln) 1)
+          (recur (inc i) ln       (inc c)))))))
+
+(defn- safe-double-escape-char?
+  "True when doubling the backslash in front of `ch` is a meaningful
+   repair. Punctuation regex meta chars qualify; alphanumerics do
+   NOT — those are most likely a real typo (`\\q` for `\\d`) and silently
+   converting them into `\\\\q` (literal backslash + q in regex) would
+   change meaning."
+  [^Character ch]
+  (contains? safe-deescape-meta-chars ch))
+
+(defn- find-backslash-near
+  "Edamame's [line, col] for an unsupported-escape error doesn't always
+   point at the backslash itself — different versions land on the
+   backslash, on the offending char immediately after it, or even one
+   past that. Scan a tiny window around `idx` for the nearest `\\`
+   that is followed by `bad-char`. Returns the index of the backslash,
+   or nil."
+  [^String code ^long idx ^Character bad-char]
+  (let [n (.length code)]
+    (some (fn [^long probe]
+            (when (and (>= probe 0) (< probe n)
+                    (= \\ (.charAt code probe))
+                    (< (inc probe) n)
+                    (= bad-char (.charAt code (inc probe))))
+              probe))
+      [idx (dec idx) (- idx 2) (inc idx)])))
+
+(defn- rescue-parse-error
+  "Symbol-level `:on-parse-error-fn` hook. Recovers from edamame's
+   \"Unsupported escape character: \\X\" by doubling the lone backslash
+   so the resulting Clojure string literal contains a real `\\X`. Returns
+   the rewritten source, or nil to let the iteration loop surface the
+   original error to the LLM.
+
+   ctx keys: :code (string), :error (string), :sym (symbol),
+   :environment (env map). Only :code and :error are read; :sym is
+   ignored — every symbol mentioned in a broken form would benefit
+   from the same string-literal repair."
+  [{:keys [^String code ^String error]}]
+  (when (and (string? code) (string? error))
+    (when-let [m (re-find parse-error-escape-re error)]
+      (let [line     (Long/parseLong (nth m 1))
+            col      (Long/parseLong (nth m 2))
+            bad-char (.charAt ^String (nth m 3) 0)]
+        (when (safe-double-escape-char? bad-char)
+          (when-let [idx (line-col->index code line col)]
+            (when-let [bsl-idx (find-backslash-near code idx bad-char)]
+              ;; Repair only the single offending site — if more bad
+              ;; escapes lurk downstream the next parse will raise,
+              ;; the rescue will fire again, and so on.
+              (str (subs code 0 bsl-idx)
+                "\\\\"
+                (subs code (inc bsl-idx))))))))))
+
 (defn- safe-path
   "Resolve path relative to CWD. Rejects traversal outside CWD."
   ^java.io.File [^String path]
@@ -607,7 +696,14 @@
                 "(fs/grep-files \"defn|defmacro\" \"src\" 50)"
                 "(fs/grep-files \"defn\" \"src\" 50 true)"
                 "(fs/grep-files \"defn\" \"src\" 50 true false)"]
-     :on-error-fn rescue-grep-args}))
+     :on-error-fn       rescue-grep-args
+     ;; Parse-time rescue: when the LLM emits e.g.
+     ;;   (fs/grep-files \"foo\\|bar\")
+     ;; — raw `\|` inside the string literal — edamame errors out
+     ;; before any tool dispatch. The iteration loop notices the
+     ;; broken form mentions `fs/grep-files`, calls THIS hook, and
+     ;; retries with the doubled backslash. See `rescue-parse-error`.
+     :on-parse-error-fn rescue-parse-error}))
 
 (def patch-file-symbol
   (ext/symbol 'patch-file patch-file
@@ -626,6 +722,7 @@
    list-files-symbol
    grep-files-symbol
    patch-file-symbol])
+
 
 (def editing-prompt
   "Module-specific prompt fragment merged into the extension prompt by
