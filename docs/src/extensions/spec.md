@@ -35,7 +35,7 @@ a running env.
 | `:ext/activation-fn` | ✗ | `(constantly true)` | `(fn [env] → bool)` — when falsy, all symbols are unbound and nudge-fn is skipped |
 | `:ext/prompt` | ✗ | — | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt |
 | `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
-| `:ext/on-parse-error-fn` | ✗ | — | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Hook Protocol](hooks.md). |
+| `:ext/on-parse-error-fn` | ✗ | — | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
 | `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.common-operations.core]` |
 | `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
 | `:ext/author` | ✗ | — | Author name or org, e.g. `"Blockether"` |
@@ -57,10 +57,10 @@ a running env.
 | `:doc` | ✓ | — | One-liner shown in the sandbox var's docstring |
 | `:arglists` | ✓ | — | Argument signatures, e.g. `'([query] [query opts])` |
 | `:examples` | ✗ | derived from `:arglists` | Usage examples injected into system prompt |
-| `:before-fn` | ✗ | — | `(fn [env f args] → map)` — pre-call hook |
-| `:after-fn` | ✗ | — | `(fn [env f args result] → map)` — post-call hook |
-| `:on-error-fn` | ✗ | — | `(fn [err env f args] → map)` — error handler |
-| `:on-parse-error-fn` | ✗ | — | `(fn [{:code :error :sym :environment}] → string\|nil)` — source rewriter that fires when SCI/edamame rejects the LLM's source AND this symbol's name appears in the broken code. See [Hook Protocol](hooks.md). |
+| `:before-fn` | ✗ | — | `(fn [env f args] → map)` — entry decorator (transform args / short-circuit). See [Symbol Decorators](hooks.md). |
+| `:after-fn` | ✗ | — | `(fn [env f args result] → map)` — exit decorator (transform result). See [Symbol Decorators](hooks.md). |
+| `:on-error-fn` | ✗ | — | `(fn [err env f args] → map)` — error decorator (recover, retry, or rethrow). See [Symbol Decorators](hooks.md). |
+| `:on-parse-error-fn` | ✗ | — | `(fn [{:code :error :sym :environment}] → string\|nil)` — parse rescue (not a decorator) that fires when SCI/edamame rejects the LLM's source AND this symbol's name appears in the broken code. See [Symbol Decorators](hooks.md). |
 
 ## `value` — constant binding
 

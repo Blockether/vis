@@ -423,10 +423,20 @@
                              (p/put-str! g (+ x start) y seg))))))]
     (loop [i 0 seg-start nil]
       (cond
-        (= i n)               (paint-seg! seg-start i)
-        (= (.charAt line i) \│) (do (paint-seg! seg-start i)
-                                  (recur (inc i) nil))
-        :else                  (recur (inc i) (or seg-start i))))))
+        (= i n)
+        (paint-seg! seg-start i)
+
+        ;; Heavy `┃` is the new column divider; light `│` stays
+        ;; recognized so any legacy or copy-pasted light-glyph row
+        ;; still splits correctly. Every other char belongs to a
+        ;; cell-text segment.
+        (or (= (.charAt line i) \┃)
+          (= (.charAt line i) \│))
+        (do (paint-seg! seg-start i)
+          (recur (inc i) nil))
+
+        :else
+        (recur (inc i) (or seg-start i))))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -1431,15 +1441,21 @@
                          (vec (map-indexed
                                 (fn [i w] (if (< i extra) (inc w) w))
                                 shrunk)))))
-        bar        (fn [w] (repeat-str \─ (+ w 2)))
-        top-line   (str "┌" (str/join "┬" (map bar col-widths)) "┐")
-        head-sep   (str "├" (str/join "┼" (map bar col-widths)) "┤")
+        ;; Heavy box-drawing variants — the table reads as a real
+        ;; grid instead of a wireframe. Light glyphs (`┌─┬─┐│├─┼─┤│
+        ;; └─┴─┘`) plus the muted `code-border-fg` made the chrome
+        ;; almost invisible against the table bg; heavy glyphs
+        ;; (`┏━┳━┓┃┣━╋━┫┃┗━┻━┛`) plus a darker fg make borders
+        ;; properly visible without resorting to bold-on-everything.
+        bar        (fn [w] (repeat-str \━ (+ w 2)))
+        top-line   (str "┏" (str/join "┳" (map bar col-widths)) "┓")
+        head-sep   (str "┣" (str/join "╋" (map bar col-widths)) "┫")
         ;; Same shape as `head-sep` — inserted between every pair of
         ;; body rows so each row sits in its own visual cell. Without
         ;; this the body looked like a stack of pipe-separated text
         ;; rows; with it, the table reads as a proper grid.
         row-sep    head-sep
-        bot-line   (str "└" (str/join "┴" (map bar col-widths)) "┘")
+        bot-line   (str "┗" (str/join "┻" (map bar col-widths)) "┛")
         ;; Per-column alignment: numeric columns right-align, every
         ;; other column stays left. The header inherits the column's
         ;; alignment so the title sits over the data correctly
@@ -1448,12 +1464,12 @@
         col-aligns (mapv (fn [i] (column-align (map #(nth % i "") rs)))
                      (range n-cols))
         format-row (fn [cells]
-                     (str "│"
-                       (str/join "│"
+                     (str "┃"
+                       (str/join "┃"
                          (map-indexed
                            (fn [i c] (pad-cell c (nth col-widths i) (nth col-aligns i)))
                            cells))
-                       "│"))]
+                       "┃"))]
     (vec (concat
            [(str tsep top-line)]
            [(str thead (format-row h))]

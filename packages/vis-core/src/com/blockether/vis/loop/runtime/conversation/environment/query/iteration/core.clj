@@ -188,28 +188,27 @@
 
 (defn count-duplicates
   "Count how many entries in `expressions` have a canonical hash that
-   already lives in `seen-hashes-atom`. After counting, the atom is
-   updated with the hashes of every SUCCESSFUL expression in this iter
-   (errors / timeouts are NOT recorded — retrying after failure is
-   legitimate, not redundant).
+   already lives in `seen-hashes-atom`, INCLUDING intra-iteration
+   duplicates. The seen-set is grown incrementally during the walk:
+   `(grep \"X\")` followed by another `(grep \"X\")` in the same iter
+   counts the second occurrence as a duplicate. After counting, the
+   atom is updated with the SUCCESSFUL hashes (errors / timeouts are
+   NOT recorded — retrying after failure is legitimate).
 
-   Returns `[duplicates total]` so callers can compute the redundancy
-   fraction without re-walking the seq."
+   Returns `[duplicates total]`."
   [seen-hashes-atom expressions]
-  (let [total (count expressions)
-        hashes (mapv #(canonical-expression-hash (or (:code %) "")) expressions)
-        seen-now @seen-hashes-atom
-        duplicates (count (filter seen-now hashes))]
-    (swap! seen-hashes-atom
-      (fn [seen]
-        (transduce
-          (comp
-            (filter (fn [[exec _]] (nil? (:error exec))))
-            (map second))
-          (completing conj)
-          seen
-          (map vector expressions hashes))))
-    [duplicates total]))
+  (let [{:keys [duplicates seen]}
+        (reduce (fn [{:keys [duplicates seen]} expression]
+                  (let [h      (canonical-expression-hash (or (:code expression) ""))
+                        is-dup (contains? seen h)
+                        ok?    (and (nil? (:error expression))
+                                 (not (:timeout? expression)))]
+                    {:duplicates (if is-dup (inc duplicates) duplicates)
+                     :seen (if (and ok? (not is-dup)) (conj seen h) seen)}))
+          {:duplicates 0 :seen @seen-hashes-atom}
+          expressions)]
+    (reset! seen-hashes-atom seen)
+    [duplicates (count expressions)]))
 
 (defn dedup-cache-lookup
   "Returns a synthetic execution-result map when `expression`'s

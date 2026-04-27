@@ -63,7 +63,8 @@
           :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
                        "--enable-native-access=ALL-UNNAMED"
                        "--sun-misc-unsafe-memory-access=allow"]
-          :extra-deps {com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}
+          :extra-deps {com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}
+                       com.blockether/vis-self-debug         {:local/root "extensions/vis-self-debug"}}
           :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
   ;; Aggregate test runner. Lists every package test tree containing
