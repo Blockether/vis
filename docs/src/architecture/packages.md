@@ -36,7 +36,7 @@ re-listing it.
 > `:vis`. The CLI agent doesn't register any channel at all but
 > writes its conversations under `:cli`.
 
-## Auto-discovery resource
+## Auto-discovery
 
 ONE classpath-scan mechanism, ONE resource per jar (`META-INF/vis.edn`),
 ONE entry point on the **author** side

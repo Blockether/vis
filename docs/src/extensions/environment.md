@@ -5,9 +5,9 @@ Every callback an extension receives — `:ext/activation-fn`, optional
 `:after-fn`, `:on-error-fn`) — operates on the **environment**. This
 is the runtime map that represents one live conversation context.
 
-## All Keys
+## All keys
 
-### Conversation-scoped (set at `create-environment` time)
+### Conversation-scoped keys
 
 These keys exist on every environment for its entire lifetime:
 
@@ -25,7 +25,7 @@ These keys exist on every environment for its entire lifetime:
 | `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :environment <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
 | `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level queries. |
 
-### Query-scoped (added by the query engine per turn)
+### Query-scoped keys
 
 These keys are `assoc`'d onto the environment map when a query starts
 (`query/core.clj :: prepare-query-context`). They do **not** exist on
@@ -37,7 +37,7 @@ the base environment returned by `create-environment`.
 | `:current-iteration-atom` | `atom of int` | Plain integer counter for the iteration in flight (0-indexed). Bumped before every `store-iteration!`. Read by extensions that want to know which iteration they're in. |
 | `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `store-iteration!`. Used for sub-RLM parenting and for log correlation. |
 
-## Safe Operations
+## Safe operations
 
 - **Read** any key for conditional logic (`:db-info`, `:conversation-id`,
   `:sci-ctx`, `:router`, `:initial-ns-keys`).
@@ -47,7 +47,7 @@ the base environment returned by `create-environment`.
 - **Read** sandbox vars via
   `(get-in @(:env (:sci-ctx env)) [:namespaces 'sandbox sym])`.
 
-## Prohibited Operations
+## Prohibited operations
 
 - **Close** `:db-info` — the runtime owns the connection lifecycle.
 - **Swap** `:extensions` directly — use `register-extension!`.

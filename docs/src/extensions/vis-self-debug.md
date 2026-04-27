@@ -16,9 +16,9 @@ alias.
 
 ## API
 
-### `(self/turn)`
+### Current turn snapshot
 
-Snapshot of the current turn as a single map:
+Call: `(self/turn)`. Snapshot of the current turn as a single map:
 
 ```clojure
 {:id          "uuid"
@@ -42,8 +42,9 @@ data. For just reading the plan / breadcrumbs / iteration pointer,
 the projection (`<plan>`, `<breadcrumbs>`, `<system_state>`) already
 delivers them in your prompt — no `self/turn` call needed.
 
-### `(self/conversation [conversation-id])`
+### Single conversation snapshot
 
+Call: `(self/conversation)` or `(self/conversation conversation-id)`.
 Snapshot of one conversation:
 
 ```clojure
@@ -59,8 +60,9 @@ Snapshot of one conversation:
 No-arg form returns the **current** conversation. Pass a UUID
 to inspect any other conversation in the DB.
 
-### `(self/conversations [channel])`
+### Conversation list
 
+Call: `(self/conversations)` or `(self/conversations channel)`.
 Vector of every known conversation, newest-first:
 
 ```clojure
@@ -78,8 +80,9 @@ No-arg form scans every channel (`:vis`, `:tui`, `:telegram`,
   (self/conversations))               ;; → cross-channel search by title
 ```
 
-### `(self/var-history sym [conversation-id])`
+### Var history
 
+Call: `(self/var-history sym)` or `(self/var-history sym conversation-id)`.
 Full version timeline for a var:
 
 ```clojure
@@ -91,8 +94,9 @@ Full version timeline for a var:
 Defaults to the **current** conversation. Pass a UUID to read from
 another conversation. Accepts symbol or string for `sym`.
 
-### `(self/find-attempts pattern [conversation-id])`
+### Search past attempts
 
+Call: `(self/find-attempts pattern)` or `(self/find-attempts pattern conversation-id)`.
 Regex search over executed `:code` strings:
 
 ```clojure
@@ -109,7 +113,7 @@ either a string (compiled to a `Pattern`) or a `Pattern` directly.
 (self/find-attempts "foo-fn" prior)   ;; any conversation
 ```
 
-## When to use
+## When to use it
 
 - You need to programmatically manipulate state (`(filter :error
   (:attempts (self/turn)))`, `(count (:turns (self/conversation)))`).
@@ -118,7 +122,7 @@ either a string (compiled to a `Pattern`) or a `Pattern` directly.
 - You want regex search over historical attempts.
 - You want token / cost visibility (the projection has none).
 
-## When NOT to use
+## When NOT to use it
 
 - For state already in the projection: `<plan>`, `<breadcrumbs>`,
   `<system_state>`, `<var_index>`. Reading the projection is free —

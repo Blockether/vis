@@ -20,7 +20,7 @@ The model sees exactly what it needs: the previous iteration's results,
 a var index of everything it has defined, and system nudges. Everything
 else is one function call away.
 
-## The Problem
+## The problem
 
 Every coding agent (Claude Code, OpenCode, Pi, Hermes) runs the same loop:
 
@@ -59,7 +59,7 @@ Every compaction loses signal. The model forgets, re-reads, forgets.
 Other costs: one tool per round-trip (no composition), requires
 `function_calling` API support, hallucinated tool names.
 
-## How Vis Works
+## How Vis works
 
 No tool calls. No message accumulation. No compaction.
 
@@ -142,7 +142,7 @@ adds `(self/turn)` / `(self/conversation)` / `(self/conversations)` /
 programmatic introspection of the live turn, the conversation tree,
 and prior attempts.
 
-## Secure by Default
+## Secure by default
 
 In tool-call agents, every tool has direct host access. `bash` runs
 shell commands. `write_file` writes anywhere. The harness adds
@@ -174,7 +174,7 @@ convenience — it's the security model.
 on the JVM. Full Clojure semantics, deny-list sandboxing, per-block
 timeouts, selective Java interop, persistent vars across evaluations.
 
-## What We Took From Others
+## What we took from others
 
 **Pi** — extension system design (activation guards, lifecycle hooks).
 Pi's extensions persist state via `appendEntry()` into JSONL session

@@ -8,7 +8,7 @@ This page covers the **user-facing** invocations. For the architecture
 behind them, jump to [Architecture Overview](architecture/overview.md);
 for the package layout, [Packages](architecture/packages.md).
 
-## Install / run from source
+## Install and run from source
 
 ```bash
 git clone https://github.com/Blockether/vis.git
@@ -41,9 +41,9 @@ Provider config + credentials live under `~/.vis/`:
 
 ```
 ~/.vis/
-\u251c\u2500\u2500 config.edn           single active provider, model, etc.
-\u251c\u2500\u2500 vis.mdb/vis.db       SQLite database (every conversation, every iteration)
-\u2514\u2500\u2500 vis.log              stderr log (when a TTY-owning channel is active)
+├── config.edn           single active provider, model, etc.
+├── vis.mdb/vis.db       SQLite database (every conversation, every iteration)
+└── vis.log              stderr log (when a TTY-owning channel is active)
 ```
 
 Run `vis doctor` any time to sanity-check the environment (config
@@ -51,9 +51,9 @@ present, DB writable, providers reachable).
 
 ## The four ways to talk to the agent
 
-### 1. CLI agent (one-shot) \u2014 `vis run`
+### One-shot CLI agent
 
-Best for scripts, CI, and quick one-liners. Creates a fresh
+Best for scripts, CI, and quick one-liners. `vis run` creates a fresh
 conversation in the `:cli` channel namespace, runs a single query,
 prints the answer, exits.
 
@@ -75,11 +75,11 @@ Past CLI runs are browsable later:
 vis conversations cli
 ```
 
-### 2. TUI chat \u2014 `vis channels tui`
+### Interactive TUI chat
 
-Interactive Lanterna terminal UI. Multi-turn, with a sidebar of past
-conversations, the `[?]` system-prompt inspector, and copy/paste
-dialogs.
+`vis channels tui` opens the Lanterna terminal UI. Multi-turn, with
+a sidebar of past conversations, the `[?]` system-prompt inspector,
+and copy/paste dialogs.
 
 ```bash
 vis channels tui                                  # fresh conversation
@@ -88,14 +88,14 @@ vis channels tui --conversation-id <UUID>         # resume a specific one (full 
 ```
 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
-**Never bind `Ctrl+Y`** \u2014 the kernel intercepts it and suspends
+**Never bind `Ctrl+Y`** — the kernel intercepts it and suspends
 the whole process; this is documented in `AGENTS.md`.
 
-### 3. Telegram bot \u2014 `vis channels telegram`
+### Telegram bot
 
-Long-poll loop that wires Telegram chats into the conversation
-runtime. Each chat-id maps 1:1 to a conversation in the `:telegram`
-channel namespace.
+`vis channels telegram` runs a long-poll loop that wires Telegram
+chats into the conversation runtime. Each chat-id maps 1:1 to a
+conversation in the `:telegram` channel namespace.
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
@@ -108,9 +108,10 @@ Past Telegram conversations:
 vis conversations telegram
 ```
 
-### 4. Programmatic \u2014 `com.blockether.vis.core`
+### Programmatic embedding
 
-For embedding Vis in your own Clojure program:
+For embedding Vis in your own Clojure program, require
+`com.blockether.vis.core`:
 
 ```clojure
 (require '[com.blockether.vis.core :as vis]
@@ -119,18 +120,18 @@ For embedding Vis in your own Clojure program:
 
 (def env (vis/create-environment (cfg/make-router) {:db :memory}))
 
-(vis/query! env [(llm/user \"What is 2+2?\")])
-;; => {:answer \"4\" :iterations 1 :duration-ms 312 :tokens {...} :cost {...}}
+(vis/query! env [(llm/user "What is 2+2?")])
+;; => {:answer "4" :iterations 1 :duration-ms 312 :tokens {...} :cost {...}}
 
 (vis/dispose-environment! env)
 ```
 
-Full API reference: [Public API on `com.blockether.vis.core`](architecture/packages.md#package-map).
+Full API reference: [Public API](architecture/packages.md#package-map).
 
 ## Browsing past conversations
 
-Every conversation \u2014 from any channel \u2014 lives in a single
-SQLite DB at `~/.vis/vis.mdb/vis.db`. Inspect it through the CLI:
+Every conversation — from any channel — lives in a single SQLite DB
+at `~/.vis/vis.mdb/vis.db`. Inspect it through the CLI:
 
 ```bash
 vis conversations             # default: :vis (TUI)
@@ -145,12 +146,12 @@ The output table includes the conversation ID; pass it to
 ## Extensions
 
 Extensions add tools to the SCI sandbox. Drop an extension jar on the
-classpath \u2014 it self-registers via the unified `META-INF/vis.edn`
+classpath — it self-registers via the unified `META-INF/vis.edn`
 at startup.
 
 ```bash
 vis extensions                       # list everything that registered
-vis ext <cmd> [args\u2026]                # run an extension's exported CLI command
+vis ext <cmd> [args…]                # run an extension's exported CLI command
 ```
 
 The bundled `extensions/vis-common-operations` package adds `read`,
@@ -159,7 +160,7 @@ The bundled `extensions/vis-common-operations` package adds `read`,
 
 ```clojure
 ;; deps.edn
-:dev {:extra-deps {com.blockether/vis-common-operations {:local/root \"extensions/vis-common-operations\"}}}
+:dev {:extra-deps {com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}}
 ```
 
 To author your own extension, see [Extension System](extensions/overview.md).
@@ -168,15 +169,15 @@ To author your own extension, see [Extension System](extensions/overview.md).
 
 | Command                    | Purpose                                                           |
 | -------------------------- | ----------------------------------------------------------------- |
-| `vis run \"prompt\"`        | One-shot agent query (CLI agent).                                  |
-| `vis channels tui [\u2026]`    | Lanterna TUI chat.                                                |
+| `vis run "prompt"`         | One-shot agent query (CLI agent).                                 |
+| `vis channels tui […]`     | Lanterna TUI chat.                                                |
 | `vis channels telegram`    | Telegram long-poll bot.                                           |
 | `vis auth <provider>`      | Provider OAuth flow.                                              |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.               |
 | `vis doctor`               | Environment diagnostics.                                          |
 | `vis extensions`           | List registered extensions.                                       |
-| `vis ext <cmd> [\u2026]`       | Run an extension-provided CLI command.                            |
-| `vis channels <name> [\u2026]` | Run any registered channel by `:channel/cmd` name.                |
+| `vis ext <cmd> […]`        | Run an extension-provided CLI command.                            |
+| `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                |
 | `vis help`                 | Print the help tree (same as no args).                            |
 
 `vis "free-form prompt"` (no leading sub-command) falls back to
@@ -184,8 +185,8 @@ To author your own extension, see [Extension System](extensions/overview.md).
 
 ## Where to next
 
-- [Introduction](README.md) \u2014 why code-eval over tool-calls
-- [Architecture Overview](architecture/overview.md) \u2014 how the layers fit together
-- [Packages](architecture/packages.md) \u2014 every `vis-*` jar, dep direction, auto-discovery
-- [Extension System](extensions/overview.md) \u2014 add tools, prompts, nudges
-- [Channels](architecture/channels.md) \u2014 build your own front-end
+- [Introduction](README.md) — why code-eval over tool-calls
+- [Architecture Overview](architecture/overview.md) — how the layers fit together
+- [Packages](architecture/packages.md) — every `vis-*` jar, dep direction, auto-discovery
+- [Extension System](extensions/overview.md) — add tools, prompts, nudges
+- [Channels](architecture/channels.md) — build your own front-end

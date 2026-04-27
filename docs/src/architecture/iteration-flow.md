@@ -30,7 +30,7 @@ user message
 3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
 4. **Persist + Decide** — `store-iteration!`, attach extension metadata, route to next step
 
-## System Prompt Assembly
+## System prompt assembly
 
 `loop-core/assemble-system-prompt` is the **single source of truth** for
 the system message content. Both iteration loop paths and the TUI
@@ -47,7 +47,7 @@ the system message content. Both iteration loop paths and the TUI
 The iteration spec schema (svar’s `spec->prompt`) is appended separately
 by svar as a final user message — it is NOT part of the system message.
 
-## Error Recovery
+## Error recovery
 
 When an iteration throws:
 
@@ -57,7 +57,7 @@ When an iteration throws:
 4. If consecutive errors reach `max-consecutive-errors` (default **3**, overridable via `:max-consecutive-errors`), the loop attempts a **strategy restart** — fresh prompt assembly + reset counters — up to `max-restarts` (default **3**, overridable via `:max-restarts`).
 5. After the final restart still fails, the turn ends with `:status :error`.
 
-## Budget Extension
+## Budget extension
 
 The default budget is **4 iterations** — deliberately tight so the LLM
 must plan. When more work is genuinely needed, the LLM calls
@@ -69,7 +69,7 @@ The intended behavior is: read the nudge, decide whether more work is
 actually needed, and if yes call `(request-more-iterations n)`
 immediately instead of limping into a bad finalize.
 
-## Plan slot, breadcrumbs, recent thought
+## Plan, breadcrumbs, recent thought
 
 Reasoning continuity is delivered by **three structured slots**, not by
 a lossy summarization chain:
@@ -94,7 +94,7 @@ programmatic introspection without wasting iterations on a chain of
 built-in `(var-history …)` round-trips. See
 [Self-debug extension](../extensions/vis-self-debug.md).
 
-## SYSTEM vars: `QUERY`, `REASONING`, `ANSWER`
+## SYSTEM vars
 
 The sandbox-visible system vars carrying the user's current query, the
 model's last reasoning text, and the prior-turn final answer are named
@@ -125,7 +125,7 @@ At iteration 0 of turn N, `<system_state>.PRIOR_TURN` carries a
 reasoning, not the transcript. Multi-turn conversations cannot
 accumulate stale plan context here. The next turn's plan is fresh.
 
-## Var-index
+## Var index
 
 `<var_index>` is the latest namespace snapshot of *user-defined* vars
 only. SYSTEM vars do NOT appear here — they live in `<system_state>`.

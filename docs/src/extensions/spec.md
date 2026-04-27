@@ -1,12 +1,14 @@
 # Extension Spec
 
-## Auto-Discovery
+## Auto-discovery
 
 Extensions are auto-discovered from the unified `META-INF/vis.edn` on
-the classpath. See [Overview — Auto-Discovery](overview.md#auto-discovery-from-classpath-recommended)
+the classpath. See [Overview — Classpath auto-discovery](overview.md#classpath-auto-discovery)
 for the full convention.
 
-## `extension` — build and validate
+## Building an extension
+
+The constructor lives at `com.blockether.vis.extension/extension`:
 
 ```clojure
 (require '[com.blockether.vis.extension :as ext])
@@ -56,17 +58,17 @@ Two conditional rules apply on top of the spec:
 | `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol → Class}` — Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
 | `:ext/imports`           | ✗              | `{}`                  | `{short-symbol → fq-symbol}` — short-name imports for sandbox interop (`(LocalDate/now)` style). |
 | `:ext/ns-alias`          | conditional     | —                    | `{:ns 'vis.ext.fs :alias 'fs}` — **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(fs/read-file …)` — bare `(read-file …)` does not resolve. |
-| `:ext/cli`               | ✗              | `[]`                  | Vector of [`vis-commandline`](packages.md#package-map) command maps (`{:cmd/name … :cmd/doc … :cmd/run-fn … :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** — the dispatcher defaults `:cmd/parent` to `["extensions"]` for entries that don't specify one, and rejects entries whose `:cmd/parent` doesn't start with `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` are NOT extension commands; they use `cmd/register-global!` directly. See the [`:ext/cli` section](#extcli----extensions-subcommands) below for the three accepted forms. |
+| `:ext/cli`               | ✗              | `[]`                  | Vector of [`vis-commandline`](packages.md#package-map) command maps (`{:cmd/name … :cmd/doc … :cmd/run-fn … :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** — the dispatcher defaults `:cmd/parent` to `["extensions"]` for entries that don't specify one, and rejects entries whose `:cmd/parent` doesn't start with `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` are NOT extension commands; they use `cmd/register-global!` directly. See the [CLI command slot](#cli-command-slot) section below for the three accepted forms. |
 | `:ext/channels`          | ✗              | `[]`                  | Vector of channel descriptors (`{:channel/id :channel/cmd :channel/doc :channel/main-fn :channel/usage? :channel/owns-tty?}`). Each entry is forwarded to `channel/register-global!`; it appears under `vis channels <cmd>`. See [Channels](../architecture/channels.md). |
 | `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn …}`). Each entry is forwarded via `requiring-resolve` to `com.blockether.vis.provider/register-global!` so vis-extension keeps zero compile-time dep on vis-provider. |
 | `:ext/persistance`       | ✗              | `[]`                  | Vector of persistence-backend descriptors (`{:persistance/id <kw> :persistance/ns <fq-symbol>}`). Each entry is forwarded via `requiring-resolve` to `com.blockether.vis.persistance.core/register-backend!`. |
 
-## `:ext/cli` — extensions subcommands
+## CLI command slot
 
 `:ext/cli` is the slot for commands an extension contributes to
 `vis extensions <cmd>`. Three forms accepted:
 
-### Flat (most common)
+### Flat entry
 
 No `:cmd/parent` — the dispatcher inserts `["extensions"]` for you:
 
@@ -78,7 +80,7 @@ No `:cmd/parent` — the dispatcher inserts `["extensions"]` for you:
 
 → `vis extensions blame`.
 
-### Embedded `:cmd/subcommands` vector
+### Embedded subcommand vector
 
 The entry carries its whole subcommand tree inline:
 
@@ -92,7 +94,7 @@ The entry carries its whole subcommand tree inline:
 → `vis extensions docker`, `vis extensions docker ps`,
 `vis extensions docker logs`.
 
-### Deeper nest via `:cmd/parent`
+### Deeper nesting
 
 Mount entries at any depth under `vis extensions …` by specifying a
 `:cmd/parent` whose first element is `"extensions"`:
@@ -114,7 +116,7 @@ Mount entries at any depth under `vis extensions …` by specifying a
 → `vis extensions git`, `vis extensions git status`,
 `vis extensions git blame`.
 
-### Rejected: any non-`"extensions"` parent
+### Rejected placements
 
 ```clojure
 :ext/cli [{:cmd/name "rogue" :cmd/parent ["channels"] :cmd/run-fn ...}]
@@ -129,7 +131,9 @@ placements (the binary's own built-ins, custom command trees), use
 `cmd/register-global!`; only the `vis extensions list` subcommand
 goes through `:ext/cli`.
 
-## `symbol` — function binding
+## Function binding
+
+The `symbol` constructor produces a function entry for `:ext/symbols`:
 
 ```clojure
 (ext/symbol sym-name f opts) → validated fn symbol entry
@@ -145,7 +149,9 @@ goes through `:ext/cli`.
 | `:on-error-fn` | ✗ | — | `(fn [err env f args] → map)` — error decorator (recover, retry, or rethrow). See [Symbol Decorators](hooks.md). |
 | `:on-parse-error-fn` | ✗ | — | `(fn [{:code :error :sym :environment}] → string\|nil)` — parse rescue (not a decorator) that fires when SCI/edamame rejects the LLM's source AND this symbol's name appears in the broken code. See [Symbol Decorators](hooks.md). |
 
-## `value` — constant binding
+## Constant binding
+
+The `value` constructor produces a non-fn entry for `:ext/symbols`:
 
 ```clojure
 (ext/value sym-name val opts) → validated value symbol entry
@@ -155,7 +161,10 @@ goes through `:ext/cli`.
 |-----|----------|-------------|
 | `:doc` | ✓ | One-liner description |
 
-## `render-prompt` — canonical prompt preview / renderer
+## Prompt preview helper
+
+`render-prompt` returns the canonical LLM-facing prompt block for a
+set of symbols, exactly as the loop would render it:
 
 ```clojure
 (ext/render-prompt opts) → prompt-string
@@ -187,7 +196,10 @@ Example:
    :usage-note "positional args only"})
 ```
 
-## `wrap-extension` — bind into SCI
+## SCI binding helper
+
+`wrap-extension` is the lower-level helper the runtime uses to attach
+an extension's symbols to a live env:
 
 ```clojure
 (ext/wrap-extension ext env) → {sym → fn-or-value}
@@ -198,7 +210,11 @@ Wraps every function symbol through `invoke-symbol-wrapper`
 are returned as `{sym → value}`. Each wrapped fn closes over
 the extension, symbol entry, and environment.
 
-## `validate!` — standalone validation
+## Standalone validation
+
+`validate!` is the spec check the `extension` constructor uses
+internally. Safe to call directly when you want to validate a map
+you built by hand:
 
 ```clojure
 (ext/validate! ext) → normalized ext (or throws)
@@ -211,7 +227,7 @@ Called internally by `extension`; safe to call standalone.
 > and `validate!` normalize strings to `(constantly s)` before
 > validation.
 
-## Full Example
+## Full example
 
 ```clojure
 (ns com.blockether.vis.ext.documents

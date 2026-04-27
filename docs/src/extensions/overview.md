@@ -22,7 +22,7 @@ to the SCI sandbox. An extension is a namespace-like bundle that groups
 related tools, constants, prompt context, and per-iteration nudges into
 a single validated unit.
 
-## What an Extension Can Do
+## What an extension can do
 
 An extension is a single `(ext/extension {…})` data map declaring
 zero or more of FIVE surfaces. The same `(ext/register-global! …)`
@@ -51,7 +51,7 @@ No extension is required to populate every slot — a TUI jar fills only `:ext/c
 
 Two ways to register extensions:
 
-### Global Registry (recommended)
+### Global registry (recommended)
 
 Call `register-global!` at namespace load time. When any environment
 is created, all global extensions are automatically installed in
@@ -72,7 +72,7 @@ dependency order.
 Drop the jar on the classpath → namespace loads → extension
 self-registers → every new environment gets it.
 
-### Auto-Discovery from Classpath (recommended)
+### Classpath auto-discovery
 
 Extensions can be discovered **automatically** without any manual
 `require`. Place a single `META-INF/vis.edn` file in your extension's
@@ -127,7 +127,7 @@ extensions/my-ext/
 :dev {:extra-deps {com.acme.ext/my-tool {:local/root "extensions/my-ext"}}}
 ```
 
-### Dynamic Loading
+### Dynamic loading
 
 An extension can load other extensions at runtime:
 
@@ -139,7 +139,7 @@ An extension can load other extensions at runtime:
 This is how meta-extensions (extension packs) work - one extension
 `require`s others dynamically.
 
-### Per-Environment (ad-hoc)
+### Per-environment (ad-hoc)
 
 ```clojure
 (register-extension! environment my-ext)
@@ -161,7 +161,7 @@ From classpath jar to live tool call:
 7. **Nudge (per iteration)** — active extensions' `:ext/nudge-fn` is invoked
 8. **Hooks (per call)** — `:before-fn` → `:fn` → `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
-## Namespace Aliases (required when `:ext/symbols` is non-empty)
+## Namespace aliases
 
 An extension that ships any `:ext/symbols` **must** declare
 `:ext/ns-alias` — a map with `:ns` (the full SCI namespace symbol)
@@ -198,7 +198,7 @@ Extension-declared `:ext/classes` and `:ext/imports` are also injected
 into the SCI context, so `(LocalDate/now)` works if an extension
 exposes `java.time.LocalDate`.
 
-## Prompt Injection
+## Prompt injection
 
 Every active extension contributes a prompt block to the **system
 prompt** at the start of each query. This is how the LLM knows which
@@ -231,7 +231,7 @@ If an extension's `activation-fn` or `prompt` fn throws, the error is
 logged at `:error` level and that extension's prompt is skipped —
 the query still runs.
 
-## Quick Example — a tools-only extension
+## Quick example
 
 ```clojure
 (ns com.acme.ext.search
@@ -270,12 +270,12 @@ Prefer search before manual file scans.
 And calls `(search/find "neural")` from `:code` blocks. Bare
 `(find "neural")` does not resolve.
 
-## Concrete examples for every surface
+## One example per surface
 
 Real in-tree examples — every package below ships exactly one
 `META-INF/vis.edn` and exactly one `(ext/register-global! …)` call.
 
-### `:ext/symbols` — SCI sandbox tools
+### Sandbox tools
 
 `extensions/vis-common-operations/.../core.clj` — read/list/grep/patch:
 
@@ -291,7 +291,7 @@ Real in-tree examples — every package below ships exactly one
      :ext/prompt    combined-prompt}))
 ```
 
-### `:ext/cli` — commands under `vis extensions <cmd>`
+### CLI commands
 
 `packages/vis-core/.../channels/cli.clj` ships the `vis extensions list`
 subcommand:
@@ -319,10 +319,10 @@ at registration time with `:type :ext/cli-bad-parent`. Top-level
 binary commands (`vis run`, `vis auth`, …) are NOT extension
 commands; they use `cmd/register-global!` directly inside vis-core.
 
-See [Extension Spec — `:ext/cli`](spec.md#extcli----extensions-subcommands)
-for full examples of each form.
+See [Extension Spec — CLI command slot](spec.md#cli-command-slot) for
+full examples of each form.
 
-### `:ext/channels` — a `vis channels <id>` front-end
+### Channel front-end
 
 `packages/vis-tui/.../tui/screen.clj`:
 
@@ -340,7 +340,7 @@ for full examples of each form.
                       :channel/main-fn   #'channel-main}]}))
 ```
 
-### `:ext/providers` — an LLM auth provider
+### LLM provider
 
 `packages/vis-provider-github-copilot/.../github_copilot.clj`:
 
@@ -359,7 +359,7 @@ for full examples of each form.
                       :provider/get-token-fn #'get-copilot-token!}]}))
 ```
 
-### `:ext/persistance` — a backend implementation
+### Persistence backend
 
 `packages/vis-persistance-sqlite/.../sqlite/core.clj`:
 
@@ -373,7 +373,7 @@ for full examples of each form.
                         :persistance/ns 'com.blockether.vis.persistance.sqlite.core}]}))
 ```
 
-### Multiple surfaces in one extension
+### Multiple surfaces at once
 
 Nothing prevents an extension from filling many slots at once —
 an extension that ships SCI tools, a CLI command, AND a channel:
@@ -401,7 +401,7 @@ The registrar walks each slot in turn. The user gets:
 - `vis extensions blame` on the CLI
 - `vis channels git-webhook` for the webhook front-end
 
-## Sections
+## Where next
 
 - [Extension Spec](spec.md) - all keys, defaults, validation
 - [Symbol Decorators](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn` (decorators around the target fn) + `:on-parse-error-fn` (parse rescue)

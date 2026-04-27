@@ -156,6 +156,32 @@
     g))
 
 ;;; ── Display-width (terminal columns, not Java chars) ──────────────────────
+;;
+;; Inline span sentinels are a SECOND PUA range (\uE110…\uE117);
+;; see the `INLINE_*` constants further down in this file. The
+;; range bounds + the `inline-sentinel?` predicate are inlined here
+;; so display-width and friends can reference them without a forward
+;; declare; the canonical name lives with the marker constants block.
+
+(def INLINE_BOLD_ON     "\uE110")
+(def INLINE_BOLD_OFF    "\uE111")
+(def INLINE_ITALIC_ON   "\uE112")
+(def INLINE_ITALIC_OFF  "\uE113")
+(def INLINE_STRIKE_ON   "\uE114")
+(def INLINE_STRIKE_OFF  "\uE115")
+(def INLINE_CODE_ON     "\uE116")
+(def INLINE_CODE_OFF    "\uE117")
+
+(def ^:private ^:const INLINE_SENTINEL_LO 0xE110)
+(def ^:private ^:const INLINE_SENTINEL_HI 0xE117)
+
+(defn inline-sentinel?
+  "True when `g` (a single grapheme String) is one of the eight inline
+   span sentinels above. Cheap range check, no map lookup."
+  [^String g]
+  (and (= 1 (.length g))
+    (let [c (int (.charAt g 0))]
+      (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
@@ -175,9 +201,13 @@
       (loop [i 0 width 0]
         (if (>= i n)
           width
-          (recur (inc i)
-            (+ width
-              (if (.isDoubleWidth ^TextCharacter (aget cells i)) 2 1))))))))
+          (let [tc ^TextCharacter (aget cells i)
+                g  ^String (.getCharacterString tc)
+                w  (cond
+                     (inline-sentinel? g) 0
+                     (.isDoubleWidth tc)  2
+                     :else                1)]
+            (recur (inc i) (+ width w))))))))
 
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
@@ -199,10 +229,13 @@
       (loop [i 0 char-idx 0 used 0]
         (if (>= i n)
           char-idx
-          (let [tc        ^TextCharacter (aget cells i)
-                grapheme  ^String (.getCharacterString tc)
+          (let [tc           ^TextCharacter (aget cells i)
+                grapheme     ^String (.getCharacterString tc)
                 grapheme-len (long (.length grapheme))
-                w         (if (.isDoubleWidth tc) 2 1)]
+                w            (cond
+                               (inline-sentinel? grapheme) 0
+                               (.isDoubleWidth tc)         2
+                               :else                       1)]
             (if (> (+ used w) max-cols)
               char-idx
               (recur (inc i) (+ char-idx grapheme-len) (+ used w)))))))))
@@ -225,24 +258,118 @@
     (let [cells (TextCharacter/fromString ^String s)
           n     (alength cells)
           sb    (StringBuilder.)]
+      ;; Walk every grapheme, emit it iff it fits, stop on overflow.
+      ;; The earlier (= next max-cols) early-exit was deleted because
+      ;; it stranded trailing zero-width sentinels (style closers): if
+      ;; the budget filled exactly on a visible char and the next
+      ;; grapheme was a `INLINE_*_OFF`, the closer never made it into
+      ;; the output and the SGR style leaked past the cut. The
+      ;; structure below keeps walking sentinels for free (their `w`
+      ;; is zero, so `next` stays under budget) and only stops when a
+      ;; visible grapheme would push past `max-cols`.
       (loop [i 0 used 0]
         (if (>= i n)
           (.toString sb)
           (let [tc   ^TextCharacter (aget cells i)
-                w    (if (.isDoubleWidth tc) 2 1)
+                gs   ^String (.getCharacterString tc)
+                w    (cond
+                       (inline-sentinel? gs) 0
+                       (.isDoubleWidth tc)   2
+                       :else                 1)
                 next (+ used w)]
-            (cond
-              (= next max-cols)
-              (do (.append sb (.getCharacterString tc))
-                (.toString sb))
-
-              (> next max-cols)
+            (if (> next max-cols)
+              ;; A wide grapheme would have straddled the cut: drop it
+              ;; and pad with one space so the result's display-width
+              ;; is exactly `max-cols`. Sentinels can't reach this
+              ;; branch (their `w` is zero, so `next` never exceeds).
               (do (when (< used max-cols) (.append sb \space))
                 (.toString sb))
-
-              :else
-              (do (.append sb (.getCharacterString tc))
+              ;; In-budget OR zero-width sentinel: append, advance,
+              ;; continue. For sentinels `w` is 0 so `used` stays put.
+              (do (.append sb gs)
                 (recur (inc i) next)))))))))
+
+;;; ── Inline-styled line painter ─────────────────────────────────────────────
+
+(defn paint-styled-line!
+  "Paint a single line at (x, y) honouring inline span sentinels.
+
+   The line may contain interleaved text and `INLINE_*_ON`/`OFF`
+   sentinels (range \\uE110…\\uE117). Sentinels themselves are NEVER
+   painted; they toggle the SGR style (BOLD/ITALIC/CROSSED-OUT) or
+   the fg/bg colors (CODE) for the spans that follow.
+
+   `base-fg` / `base-bg` are the colors used for non-code spans.
+   Code spans force `code-fg` / `code-bg` until INLINE_CODE_OFF.
+
+   Robustness contract:
+   - Walks by GRAPHEME CLUSTER (lanterna's `TextCharacter/fromString`),
+     so column tracking is exact for emoji + CJK.
+   - Unmatched / dangling sentinels (e.g. an OFF without a prior ON,
+     or a line that ends mid-bold) are tolerated: the painter never
+     leaks SGR state across calls because it `clear-styles!`s + resets
+     colors at entry, and any active state at end-of-line is implicitly
+     dropped on the next call.
+   - When NO sentinel appears in the line this collapses to a single
+     `put-str!` call — the same as the old non-styled path — so the
+     hot path is not penalised for the common case.
+
+   This is the entry point that lets the markdown renderer support
+   **bold** / *italic* / ~~strike~~ / `code` mid-line without
+   abandoning the marker-prefix-per-line architecture above."
+  [^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
+  (.clearModifiers g)
+  (.setForegroundColor g base-fg)
+  (.setBackgroundColor g base-bg)
+  (let [cells (TextCharacter/fromString line)
+        n     (alength cells)]
+    (if (zero? n)
+      nil
+      ;; Fast path: no sentinels at all → single putString.
+      (if (loop [i 0]
+            (cond
+              (>= i n) true
+              (inline-sentinel? (.getCharacterString ^TextCharacter (aget cells i))) false
+              :else (recur (inc i))))
+        (.putString g (int x) (int y) line)
+        ;; Slow path: walk graphemes, buffer text segments, flush on
+        ;; style transitions.
+        (let [sb     (StringBuilder.)
+              styles (java.util.EnumSet/noneOf SGR)
+              col    (int-array 1 0)
+              code?  (boolean-array 1 false)
+              flush! (fn []
+                       (when (pos? (.length sb))
+                         (let [seg (.toString sb)]
+                           (if (aget code? 0)
+                             (do (.setForegroundColor g code-fg)
+                               (.setBackgroundColor g code-bg)
+                               (.clearModifiers g))
+                             (do (.setForegroundColor g base-fg)
+                               (.setBackgroundColor g base-bg)
+                               (.clearModifiers g)
+                               (when-not (.isEmpty styles)
+                                 (.enableModifiers g (into-array SGR styles)))))
+                           (.putString g (+ (int x) (aget col 0)) (int y) seg)
+                           (aset col 0 (int (+ (aget col 0) (display-width seg))))
+                           (.setLength sb 0))))]
+          (dotimes [i n]
+            (let [tc ^TextCharacter (aget cells i)
+                  gs ^String (.getCharacterString tc)]
+              (cond
+                (= gs INLINE_BOLD_ON)    (do (flush!) (.add styles SGR/BOLD))
+                (= gs INLINE_BOLD_OFF)   (do (flush!) (.remove styles SGR/BOLD))
+                (= gs INLINE_ITALIC_ON)  (do (flush!) (.add styles SGR/ITALIC))
+                (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove styles SGR/ITALIC))
+                (= gs INLINE_STRIKE_ON)  (do (flush!) (.add styles SGR/CROSSED_OUT))
+                (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove styles SGR/CROSSED_OUT))
+                (= gs INLINE_CODE_ON)    (do (flush!) (aset code? 0 true))
+                (= gs INLINE_CODE_OFF)   (do (flush!) (aset code? 0 false))
+                :else                    (.append sb gs))))
+          (flush!)
+          (.clearModifiers g)
+          (.setForegroundColor g base-fg)
+          (.setBackgroundColor g base-bg))))))
 
 ;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 
@@ -420,3 +547,9 @@
 (def MARKER_TH_MD_TABLE_ROW  "\uE029") ;; markdown table data row (thinking)
 (def MARKER_TH_MD_QUOTE      "\uE02A") ;; markdown blockquote (thinking)
 (def MARKER_TH_MD_HR         "\uE02B") ;; markdown horizontal rule (thinking)
+
+;; Inline span sentinels (\uE110…\uE117) live in their own section
+;; near the top of this file because both the width math
+;; (`display-width` etc.) AND the painter (`paint-styled-line!`)
+;; need them; defining them here would force a forward declare.
+;; Search UP for `INLINE_BOLD_ON`.

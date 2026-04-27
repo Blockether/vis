@@ -7,7 +7,7 @@ prompt to steer the LLM's behavior. They come from two sources:
    repetition detection)
 2. **Extension nudges** — any extension's `:ext/nudge-fn`
 
-## Built-in Nudges
+## Built-in nudges
 
 | Nudge | When it fires |
 |-------|--------------|
@@ -20,7 +20,7 @@ if more work is genuinely needed, call `(request-more-iterations n)`
 from `:code` immediately. Do not ignore the nudge and drift into a
 weak forced finalize.
 
-## Extension Nudges
+## Extension nudges
 
 When an extension provides `:ext/nudge-fn`, it is called **every
 iteration** with a context map. Return a `[system_nudge] …` string to
@@ -29,7 +29,7 @@ inject, or `nil` to skip.
 `:ext/activation-fn` is checked first — if it returns falsy for the
 current environment, `:ext/nudge-fn` is not called at all.
 
-### Context Map
+### Context map
 
 ```clojure
 {:environment            env    ;; the full environment map (see Environment Map)

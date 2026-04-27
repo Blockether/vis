@@ -9,7 +9,7 @@ The fourth hook (`:on-parse-error-fn`) is a different beast: it fires
 **before** any dispatch, when SCI/edamame can't even parse the LLM's
 source string. It's documented in its own section below.
 
-## The Decorator Pipeline
+## The decorator pipeline
 
 ```
   parses? ──yes──→ :before-fn ──→ :fn ──→ :after-fn ──→ result
@@ -30,7 +30,9 @@ Every decorator returns a **map**. Missing keys keep the current value
 — there is no positional return, no `nil`-means-default magic. The
 return shape is the contract.
 
-## `:before-fn` — entry decorator
+## Entry decorator
+
+Slot key: `:before-fn`. Signature:
 
 ```clojure
 (fn [environment f args] → map)
@@ -48,7 +50,9 @@ Runs before `:fn`. Can rewrite inputs or skip the call entirely.
 Use it for: argument normalization, permission checks that abort with
 a synthetic result, swapping in a mock fn for testing.
 
-## `:after-fn` — exit decorator
+## Exit decorator
+
+Slot key: `:after-fn`. Signature:
 
 ```clojure
 (fn [environment f args result] → map)
@@ -64,7 +68,9 @@ Runs after `:fn` returns successfully. Can transform the result.
 Use it for: result truncation, telemetry, post-processing, attaching
 metadata.
 
-## `:on-error-fn` — error decorator
+## Error decorator
+
+Slot key: `:on-error-fn`. Signature:
 
 ```clojure
 (fn [error environment f args] → map)
@@ -85,7 +91,7 @@ Use it for: graceful degradation, "did you mean…?" retries with
 corrected args, wrapping low-level exceptions in extension-specific
 error types.
 
-## Composition Order
+## Composition order
 
 There is **one** decorator of each kind per symbol. Vis does not stack
 multiple `:before-fn`s on the same symbol — if an extension needs to
@@ -93,10 +99,11 @@ compose behavior, the extension author composes the fns themselves
 when building the symbol map. This is deliberate: stacked invisible
 decorators are exactly the debuggability hole we don't want.
 
-## Parse-Error Rescue (not a decorator)
+## Parse-error rescue
+
+Not a decorator. Slot key: `:on-parse-error-fn`. Signature:
 
 ```clojure
-:on-parse-error-fn
 (fn [{:keys [code error sym environment]}] → string|nil)
 ```
 
@@ -140,7 +147,7 @@ form and calls `rescue-parse-error`, which doubles the backslash so
 the re-parse succeeds and the tool fn runs with the LLM's intended
 string.
 
-## A Note on Naming
+## A note on naming
 
 If you've used Ring middleware, Pedestal interceptors, Python's
 `functools` decorators, or any AOP framework, you know this pattern.
