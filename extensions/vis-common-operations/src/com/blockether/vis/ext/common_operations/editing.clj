@@ -16,6 +16,7 @@
    [clojure.string :as str]
    [com.blockether.vis.extension :as ext])
   (:import [com.google.re2j Pattern]
+           [java.math BigInteger]
            [org.eclipse.jgit.ignore IgnoreNode]))
 
 ;; =============================================================================
@@ -24,6 +25,7 @@
 
 (def ^:private default-grep-limit 200)
 (def ^:private default-read-char-limit 1500)
+(def ^:private default-autobind-max-bytes (* 256 1024))
 (def ^:private default-respect-gitignore? true)
 
 ;; =============================================================================
@@ -140,7 +142,7 @@
 ;; Parse-error rescue (extension-wide :ext/on-parse-error-fn)
 ;;
 ;; The LLM occasionally writes a raw `\X` inside a string literal in
-;; the SOURCE it emits — e.g. `(fs/grep-files "foo\|bar")` instead of
+;; the SOURCE it emits — e.g. `(vis/grep-files "foo\|bar")` instead of
 ;; the correctly escaped `"foo\\|bar"`. Edamame rejects that with
 ;;
 ;;   "[line L, col C] Unsupported escape character: \X"
@@ -260,6 +262,55 @@
                {:type :ext.common-operations.editing/is-directory :path path})))
     f))
 
+(defn- sha1
+  ^String [^String text]
+  (let [digest (java.security.MessageDigest/getInstance "SHA-1")
+        bytes  (.digest digest (.getBytes text "UTF-8"))]
+    (format "%040x" (BigInteger. 1 bytes))))
+
+(defn- line-count
+  ^long [^String text]
+  (if (str/blank? text)
+    0
+    (count (str/split-lines text))))
+
+(defn- file-content-for-autobind
+  "Read full file content for autobind when the file is small enough.
+   Returns nil for oversized files."
+  [path]
+  (let [file (ensure-existing-file! path)
+        file-length (.length file)]
+    (when (<= file-length default-autobind-max-bytes)
+      (slurp file))))
+
+(defn- read-file-autobind
+  [{:keys [args]}]
+  (let [path (str (first args))]
+    (when-let [full-content (file-content-for-autobind path)]
+      {:bindings
+       [{:kind    :file
+         :id      path
+         :content full-content
+         :doc     (str path " — " (count full-content) " chars / "
+                    (line-count full-content) " lines")
+         :tag     (sha1 full-content)}]})))
+
+(defn- patch-autobind
+  [{:keys [result]}]
+  (let [files (or (:files result) [])]
+    (when (seq files)
+      {:bindings
+       (vec
+         (keep (fn [{:keys [path]}]
+                 (when-let [full-content (file-content-for-autobind path)]
+                   {:kind    :file
+                    :id      path
+                    :content full-content
+                    :doc     (str path " — " (count full-content) " chars / "
+                               (line-count full-content) " lines")
+                    :tag     (sha1 full-content)}))
+           files))})))
+
 (defn- repo-root
   ^java.io.File []
   (loop [f (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
@@ -332,7 +383,7 @@
 (defn- read-file
   "Read file contents with optional offset/limit (1-indexed lines).
 
-   Default `(fs/read-file path)` returns a preview capped to 1500 chars.
+   Default `(vis/read-file path)` returns a preview capped to 1500 chars.
    Use offset/limit to continue with more lines."
   ([path] (read-file path nil nil default-read-char-limit))
   ([path offset] (read-file path offset nil nil))
@@ -386,7 +437,7 @@
    :hidden? (.isHidden f)})
 
 (def ^:private default-list-depth
-  "Default tree depth for (fs/list-files): top level + one level of children."
+  "Default tree depth for (vis/list-files): top level + one level of children."
   2)
 
 (defn- depth->limit
@@ -603,54 +654,210 @@
                   (conj blocks {:index index :search search :replace replace})
                   (inc index))))))))))
 
-(defn- apply-search-replace-patch
-  [path patch-text]
-  (let [f        (safe-path path)
-        existed? (.exists f)
-        _        (when (and existed? (.isDirectory f))
-                   (throw (ex-info (str "Path is a directory: " path)
-                            {:type :ext.common-operations.editing/is-directory :path path})))
-        original (if existed? (slurp f) "")
-        blocks   (parse-search-replace-patch patch-text)
-        _        (when (and (not existed?)
-                         (some #(not= "" (:search %)) blocks))
-                   (throw (ex-info (str "Cannot patch non-existent file " path
-                                     " unless every SEARCH block is empty")
-                            {:type :ext.common-operations.editing/patch-create-requires-empty-search
-                             :path path})))
-        patched  (reduce (fn [content block]
-                           (apply-one-replacement content block path))
-                   original blocks)]
-    (when-let [parent (.getParentFile f)]
-      (.mkdirs parent))
-    (spit f patched)
+(defn- apply-blocks-to-content
+  [content blocks path]
+  (reduce (fn [current-content block]
+            (apply-one-replacement current-content block path))
+    content
+    blocks))
+
+(defn- parse-codex-patch
+  "Parse a `*** Begin Patch` payload containing one or more file sections.
+
+   Supported section headers:
+   - `*** Update File: path`
+   - `*** Add File: path`
+
+   Each section body is standard SEARCH/REPLACE text."
+  [patch-text]
+  (let [lines (str/split-lines (str patch-text))]
+    (when-not (and (seq lines)
+                (= "*** Begin Patch" (first lines))
+                (= "*** End Patch" (last lines)))
+      (throw (ex-info "Invalid Codex patch payload: missing *** Begin Patch / *** End Patch"
+               {:type :ext.common-operations.editing/patch-invalid-format})))
+    (loop [remaining-lines (butlast (rest lines))
+           sections []
+           current-path nil
+           current-body []
+           create? false]
+      (if (empty? remaining-lines)
+        (let [sections (if current-path
+                         (conj sections {:path current-path
+                                         :create? create?
+                                         :patch-text (str/join "\n" current-body)})
+                         sections)]
+          (when (empty? sections)
+            (throw (ex-info "Invalid Codex patch payload: no file sections"
+                     {:type :ext.common-operations.editing/patch-invalid-format})))
+          sections)
+        (let [line (first remaining-lines)
+              update-prefix "*** Update File: "
+              add-prefix "*** Add File: "
+              update-header? (str/starts-with? line update-prefix)
+              add-header? (str/starts-with? line add-prefix)]
+          (if (or update-header? add-header?)
+            (let [next-path (str/trim (subs line (count (if update-header? update-prefix add-prefix))))
+                  finished-sections (if current-path
+                                      (conj sections {:path current-path
+                                                      :create? create?
+                                                      :patch-text (str/join "\n" current-body)})
+                                      sections)]
+              (recur (rest remaining-lines)
+                finished-sections
+                next-path
+                []
+                add-header?))
+            (recur (rest remaining-lines)
+              sections
+              current-path
+              (conj current-body line)
+              create?)))))))
+
+(defn- normalize-vector-edit
+  [position {:keys [path patch-text patch edits search replace]}]
+  (let [resolved-patch (or patch-text patch)
+        blocks (cond
+                 (and search (contains? #{"" nil} replace))
+                 [{:index 1 :search (str search) :replace ""}]
+
+                 (and (some? search) (some? replace))
+                 [{:index 1 :search (str search) :replace (str replace)}]
+
+                 (seq edits)
+                 (mapv (fn [index {:keys [search replace]}]
+                         {:index (inc index)
+                          :search (str (or search ""))
+                          :replace (str (or replace ""))})
+                   (range)
+                   edits)
+
+                 (string? resolved-patch)
+                 (parse-search-replace-patch resolved-patch)
+
+                 :else
+                 (throw (ex-info (str "Invalid patch edit entry at position " position)
+                          {:type :ext.common-operations.editing/patch-invalid-edit
+                           :position position
+                           :entry {:path path :keys (keys {:path path :patch-text patch-text :patch patch :edits edits :search search :replace replace})}})))]
+    (when-not (string? path)
+      (throw (ex-info (str "Invalid patch edit entry at position " position ": :path must be a string")
+               {:type :ext.common-operations.editing/patch-invalid-edit
+                :position position})))
     {:path path
-     :status :ok
-     :op :patch-file
-     :created? (not existed?)
-     :applied (count blocks)}))
+     :blocks blocks
+     :create? false}))
 
-(defn- patch-file
-  "Apply a Codex-style SEARCH/REPLACE patch to a file.
+(defn- normalize-patch-plan
+  [arguments]
+  (cond
+    ;; Mode 1 — single triple: (vis/patch path search replace)
+    (= 3 (count arguments))
+    (let [[path search replace] arguments]
+      [{:path (str path)
+        :blocks [{:index 1 :search (str search) :replace (str replace)}]
+        :create? false}])
 
-     (fs/patch-file path patch-text)
+    ;; Mode 2 — single file SEARCH/REPLACE text: (vis/patch path patch-text)
+    (= 2 (count arguments))
+    (let [[path patch-text] arguments]
+      [{:path (str path)
+        :blocks (parse-search-replace-patch (str patch-text))
+        :create? false}])
 
-   `patch-text` contains one or more blocks:
+    ;; Mode 3 — vector edit plan: (vis/patch [{:path ... :search ... :replace ...} ...])
+    (and (= 1 (count arguments)) (vector? (first arguments)))
+    (let [edit-vector (first arguments)]
+      (mapv normalize-vector-edit (range) edit-vector))
 
-     <<<<<<< SEARCH
-     old text
-     =======
-     new text
-     >>>>>>> REPLACE
+    ;; Mode 4 — Codex payload: (vis/patch "*** Begin Patch ...")
+    (and (= 1 (count arguments)) (string? (first arguments)))
+    (let [payload (first arguments)]
+      (if (str/starts-with? (str/trim payload) "*** Begin Patch")
+        (mapv (fn [{:keys [path patch-text create?]}]
+                {:path path
+                 :blocks (parse-search-replace-patch patch-text)
+                 :create? create?})
+          (parse-codex-patch payload))
+        (throw (ex-info "Single-argument vis/patch expects a Codex `*** Begin Patch` payload string"
+                 {:type :ext.common-operations.editing/patch-invalid-arity
+                  :args arguments}))))
 
-   Create a new file by using an EMPTY SEARCH block:
+    :else
+    (throw (ex-info "Invalid vis/patch call shape"
+             {:type :ext.common-operations.editing/patch-invalid-arity
+              :args arguments}))))
 
-     <<<<<<< SEARCH
-     =======
-     full file contents here
-     >>>>>>> REPLACE"
-  [path patch-text]
-  (apply-search-replace-patch path patch-text))
+(defn- apply-patch-plan
+  [patch-plan]
+  (let [workspace
+        (reduce (fn [state {:keys [path]}]
+                  (if (contains? state path)
+                    state
+                    (let [file (safe-path path)
+                          exists? (.exists file)
+                          _ (when (and exists? (.isDirectory file))
+                              (throw (ex-info (str "Path is a directory: " path)
+                                       {:type :ext.common-operations.editing/is-directory :path path})))
+                          content (if exists? (slurp file) "")]
+                      (assoc state path {:file file
+                                         :exists? exists?
+                                         :original-content content
+                                         :content content
+                                         :applied 0}))))
+          {}
+          patch-plan)
+        patched-workspace
+        (reduce (fn [state {:keys [path blocks create?]}]
+                  (let [{:keys [exists? content]} (get state path)
+                        _ (when (and (not exists?)
+                                  (not create?)
+                                  (some #(not= "" (:search %)) blocks))
+                            (throw (ex-info (str "Cannot patch non-existent file " path
+                                              " unless every SEARCH block is empty")
+                                     {:type :ext.common-operations.editing/patch-create-requires-empty-search
+                                      :path path})))
+                        next-content (apply-blocks-to-content content blocks path)]
+                    (assoc-in (assoc-in state [path :content] next-content)
+                      [path :applied]
+                      (+ (get-in state [path :applied] 0) (count blocks)))))
+          workspace
+          patch-plan)
+        changed-paths
+        (->> patched-workspace
+          (filter (fn [[_ {:keys [original-content content]}]]
+                    (not= original-content content)))
+          (map first)
+          vec)]
+    ;; Disk write happens only after EVERY edit validated in-memory.
+    (doseq [path changed-paths]
+      (let [{:keys [file content]} (get patched-workspace path)]
+        (when-let [parent (.getParentFile file)]
+          (.mkdirs parent))
+        (spit file content)))
+    {:status :ok
+     :op :patch
+     :files (mapv (fn [path]
+                    (let [{:keys [exists? applied content]} (get patched-workspace path)]
+                      {:path path
+                       :created? (not exists?)
+                       :applied applied
+                       :size (count content)}))
+              changed-paths)
+     :files-touched (count changed-paths)}))
+
+(defn- patch
+  "Unified patch surface.
+
+   Supported modes:
+   - (vis/patch path search replace)
+   - (vis/patch path search-replace-text)
+   - (vis/patch [{:path ... :search ... :replace ...} ...])
+   - (vis/patch \"*** Begin Patch ... *** End Patch\")"
+  [& arguments]
+  (-> arguments
+    normalize-patch-plan
+    apply-patch-plan))
 
 ;; =============================================================================
 ;; Extension definition
@@ -660,47 +867,54 @@
   (ext/symbol 'read-file read-file
     {:doc "Read file contents with optional line offset/limit. Default path-only call returns a 1500-char preview."
      :arglists '([path] [path offset] [path offset limit])
-     :examples ["(fs/read-file \"src/core.clj\")"
-                "(fs/read-file \"big.log\" 100 50)"]
-     :on-error-fn rescue-path-args}))
+     :examples ["(vis/read-file \"src/core.clj\")"
+                "(vis/read-file \"big.log\" 100 50)"]
+     :on-error-fn rescue-path-args
+     :autobind-fn read-file-autobind}))
 
 (def list-files-symbol
   (ext/symbol 'list-files list-files
     {:doc "List files/dirs as a tree of {:name :path :type :size :hidden? :children}. Default depth is 2 (top level + one level of children). Pass an integer for custom depth, true for unbounded, or false/0 for current level only. Directory :size is the recursive byte sum. Respects .gitignore by default. Positional args only."
      :arglists '([] [path] [path depth] [path depth hidden?] [path depth hidden? respect-gitignore?])
-     :examples ["(fs/list-files)"
-                "(fs/list-files \"src\")"
-                "(fs/list-files \"src\" 3)"
-                "(fs/list-files \"src\" true)"
-                "(fs/list-files \"src\" 2 true)"
-                "(fs/list-files \"src\" 2 true false)"]
+     :examples ["(vis/list-files)"
+                "(vis/list-files \"src\")"
+                "(vis/list-files \"src\" 3)"
+                "(vis/list-files \"src\" true)"
+                "(vis/list-files \"src\" 2 true)"
+                "(vis/list-files \"src\" 2 true false)"]
      :on-error-fn rescue-path-args}))
 
 (def grep-files-symbol
   (ext/symbol 'grep-files grep-files
     {:doc "Search files with RE2/J (linear-time regex, ReDoS-safe). Always returns structured maps. Respects .gitignore by default. Positional args only."
      :arglists '([pattern] [pattern path] [pattern path limit] [pattern path limit hidden?] [pattern path limit hidden? respect-gitignore?])
-     :examples ["(fs/grep-files \"TODO\")"
-                "(fs/grep-files \"defn\" \"src\")"
-                "(fs/grep-files \"defn|defmacro\" \"src\" 50)"
-                "(fs/grep-files \"defn\" \"src\" 50 true)"
-                "(fs/grep-files \"defn\" \"src\" 50 true false)"]
+     :examples ["(vis/grep-files \"TODO\")"
+                "(vis/grep-files \"defn\" \"src\")"
+                "(vis/grep-files \"defn|defmacro\" \"src\" 50)"
+                "(vis/grep-files \"defn\" \"src\" 50 true)"
+                "(vis/grep-files \"defn\" \"src\" 50 true false)"]
      :on-error-fn       rescue-grep-args
      ;; Parse-time rescue: when the LLM emits e.g.
-     ;;   (fs/grep-files \"foo\\|bar\")
+     ;;   (vis/grep-files \"foo\\|bar\")
      ;; — raw `\|` inside the string literal — edamame errors out
      ;; before any tool dispatch. The iteration loop notices the
-     ;; broken form mentions `fs/grep-files`, calls THIS hook, and
+     ;; broken form mentions `vis/grep-files`, calls THIS hook, and
      ;; retries with the doubled backslash. See `rescue-parse-error`.
      :on-parse-error-fn rescue-parse-error}))
 
-(def patch-file-symbol
-  (ext/symbol 'patch-file patch-file
-    {:doc "Patch a file with a Codex-style SEARCH/REPLACE patch text. Use an empty SEARCH block to create a new file."
-     :arglists '([path patch-text])
-     :examples ["(fs/patch-file \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
-                "(fs/patch-file \"new-file.txt\" \"<<<<<<< SEARCH\n=======\nhello\n>>>>>>> REPLACE\")"]
-     :on-error-fn rescue-path-args}))
+(def patch-symbol
+  (ext/symbol 'patch patch
+    {:doc "Unified patch tool. Supports path+search+replace, path+SEARCH/REPLACE text, multi-edit vectors, and Codex `*** Begin Patch` payloads."
+     :arglists '([path search replace]
+                 [path patch-text]
+                 [edits]
+                 [codex-payload])
+     :examples ["(vis/patch \"src/core.clj\" \"old text\" \"new text\")"
+                "(vis/patch \"src/core.clj\" \"<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\")"
+                "(vis/patch [{:path \"src/core.clj\" :search \"old\" :replace \"new\"} {:path \"README.md\" :search \"alpha\" :replace \"beta\"}])"
+                "(vis/patch \"*** Begin Patch\n*** Update File: src/core.clj\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n*** End Patch\")"]
+     :on-error-fn rescue-path-args
+     :autobind-fn patch-autobind}))
 
 (def editing-symbols
   "Vector of `ext/symbol` definitions exported by this module. The
@@ -709,14 +923,14 @@
   [read-file-symbol
    list-files-symbol
    grep-files-symbol
-   patch-file-symbol])
+   patch-symbol])
 
 (def editing-prompt
   "Module-specific prompt fragment merged into the extension prompt by
    the `core` aggregator. Lives next to the symbols so a future
    reorganization moves both pieces together."
   "RULES:
-- NEVER guess file paths. Always discover paths first with (fs/list-files) or (fs/grep-files pattern).
-- There is NO write-file tool. Use fs/patch-file ALWAYS.
-- To create a new file, use fs/patch-file with an EMPTY SEARCH block.
+- NEVER guess file paths. Always discover paths first with (vis/list-files) or (vis/grep-files pattern).
+- There is NO write-file tool. Use vis/patch ALWAYS.
+- To create a new file, use vis/patch with an EMPTY SEARCH block.
 - Prefer the smallest unique SEARCH block that matches exactly once.")

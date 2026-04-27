@@ -42,11 +42,11 @@
 (def extension
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.common-operations.core
-     :ext/doc       "Common filesystem operations: read, list, grep, patch."
-     :ext/version   "0.3.0"
+     :ext/doc       "Common Vis operations: read, list, grep, patch."
+     :ext/version   "0.4.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
-     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+     :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
      :ext/group     "filesystem"
      :ext/prompt    combined-prompt
      :ext/symbols   all-symbols}))

@@ -170,30 +170,61 @@
     vec))
 
 (defn restorable-var-snapshots
-  "Returns serializable snapshots of user vars introduced by this iteration."
+  "Returns serializable snapshots of user vars introduced by this iteration.
+
+   Includes both explicit `(def ...)` vars and runtime autobind vars
+   emitted by extension symbols via `:autobind-fn`."
   [environment expressions]
   (let [execution->defs (mapv (fn [{:keys [error] :as execution}]
                                 [execution (when-not error
                                              (set (map symbol (extract-def-names [execution]))))])
                           expressions)
         defined (into #{} (mapcat second) execution->defs)
-        sym->exec (reduce (fn [acc [{:keys [code execution-time-ms]} defs]]
-                            (if (and code (seq defs))
-                              (reduce #(assoc %1 %2 {:expr code :time-ms execution-time-ms}) acc defs)
-                              acc))
-                    {}
-                    execution->defs)
-        locals (iterate/get-locals environment)]
-    (->> locals
-      (keep (fn [[sym value]]
-              (when (contains? defined sym)
-                (let [realized (realize-value value)
-                      exec-info (get sym->exec sym)]
-                  ;; Accept ALL values — freeze-safe in the persistence layer
-                  ;; handles non-serializable types (fns → {:vis/ref :expr}).
-                  (cond-> {:name (str sym) :value realized :code (:expr exec-info)}
-                    (:time-ms exec-info) (assoc :time-ms (:time-ms exec-info)))))))
-      vec)))
+        symbol->execution (reduce (fn [acc [{:keys [code execution-time-ms]} defs]]
+                                    (if (and code (seq defs))
+                                      (reduce #(assoc %1 %2 {:expr code :time-ms execution-time-ms}) acc defs)
+                                      acc))
+                            {}
+                            execution->defs)
+        locals (iterate/get-locals environment)
+        def-snapshots
+        (->> locals
+          (keep (fn [[symbol-name value]]
+                  (when (contains? defined symbol-name)
+                    (let [realized-value (realize-value value)
+                          execution-information (get symbol->execution symbol-name)]
+                      ;; Accept ALL values — freeze-safe in the persistence layer
+                      ;; handles non-serializable types (fns → {:vis/ref :expr}).
+                      (cond-> {:name (str symbol-name)
+                               :value realized-value
+                               :code (:expr execution-information)}
+                        (:time-ms execution-information)
+                        (assoc :time-ms (:time-ms execution-information)))))))
+          vec)
+        autobind-snapshots
+        (->> expressions
+          (mapcat (fn [expression]
+                    (or (:autobind-events expression) [])))
+          (keep (fn [{:keys [status symbol value kind id]}]
+                  (when (and (= status :bound) symbol)
+                    {:name (str symbol)
+                     :value value
+                     :code ";; AUTOBIND"
+                     :metadata {:autobind true
+                                :kind kind
+                                :id id}})))
+          ;; Last writer wins per symbol within this iteration.
+          (reduce (fn [acc snapshot]
+                    (assoc acc (:name snapshot) snapshot))
+            {})
+          vals
+          vec)
+        snapshots-by-name
+        (reduce (fn [acc snapshot]
+                  (assoc acc (:name snapshot) snapshot))
+          {}
+          (concat autobind-snapshots def-snapshots))]
+    (vec (vals snapshots-by-name))))
 
 (defn update-system-vars!
   "Rebind REASONING and ANSWER in the SCI sandbox after an iteration.
@@ -336,6 +367,8 @@
                                                       (:ext/version ext) (assoc :version (:ext/version ext))))
                                               active-exts)}))]
     (sci-env/bind-and-bump! environment 'QUERY query)
+    (when-let [autobind-events-atom (:autobind-events-atom environment)]
+      (reset! autobind-events-atom []))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (loop-core/auto-forget-stale-vars! environment)
     (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]

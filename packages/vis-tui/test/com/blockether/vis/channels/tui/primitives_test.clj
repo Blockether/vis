@@ -12,8 +12,12 @@
 
 (def ASCII       "abc")          ;; 3 cells / 3 chars / 3 columns
 (def CJK         "日本語")        ;; 3 cells / 3 chars / 6 columns (each glyph double-width)
-(def EMOJI_BMP   "\u2615")        ;; 1 cell  / 1 char  / 1 column  (☕ — BMP, single column per Unicode)
-(def EMOJI_SMP   "\uD83D\uDCC1")  ;; 1 cell  / 2 chars / 2 columns (📁 — supplementary plane)
+(def EMOJI_BMP_TEXT   "\u2615")  ;; 1 cell / 1 char / TWO cols (☕ hot beverage — Emoji_Presentation=Yes)
+(def EMOJI_BMP_NARROW "\u2764")  ;; 1 cell / 1 char / 1  col   (❤ heavy heart — Emoji_Presentation=No, narrow without VS-16)
+(def EMOJI_BMP_WIDE   "\u2705")  ;; 1 cell / 1 char / TWO cols (✅ white check mark button — the bug)
+(def EMOJI_BMP_STAR   "\u2B50")  ;; 1 cell / 1 char / TWO cols (⭐ star)
+(def EMOJI_BMP_BOLT   "\u26A1")  ;; 1 cell / 1 char / TWO cols (⚡ high voltage)
+(def EMOJI_SMP   "\uD83D\uDCC1")  ;; 1 cell / 2 chars / 2 columns (📁 — supplementary plane)
 (def FLAG_PL     "\uD83C\uDDF5\uD83C\uDDF1") ;; 1 cell / 4 chars / 2 columns (🇵🇱 — regional indicator pair)
 (def MIXED       (str "x " EMOJI_SMP " y")) ;; "x 📁 y" — 5 cells / 6 chars / 6 columns
 
@@ -21,13 +25,32 @@
   (describe "display-width counts terminal columns, not Java chars"
     (it "ASCII matches char count"            (expect (= 3 (p/display-width ASCII))))
     (it "CJK is two columns per glyph"        (expect (= 6 (p/display-width CJK))))
-    (it "BMP emoji ☕ is one column"           (expect (= 1 (p/display-width EMOJI_BMP))))
     (it "SMP emoji 📁 is two columns, not two chars"
       (expect (= 2 (p/display-width EMOJI_SMP))))
     (it "Regional-indicator flag 🇵🇱 is two columns, not four chars"
       (expect (= 2 (p/display-width FLAG_PL))))
     (it "Mixed ASCII + emoji line is six columns"
       (expect (= 6 (p/display-width MIXED)))))
+
+  (describe "BMP `Emoji_Presentation=Yes` chars are TWO columns (lanterna fork fix)"
+    ;; Pre-fix lanterna's TextCharacter.isDoubleWidth() returned false
+    ;; for these because they're single-`char` BMP code points, not CJK,
+    ;; not multi-`char` graphemes, and pass `isPrintableCharacter`.
+    ;; The vis-3.1.5-vis.2 fork adds an explicit Emoji_Presentation=Yes
+    ;; range check; this test pins it for the four chars that hit the
+    ;; user's table-rendering bug.
+    (it "☕ hot beverage is 2 cols"     (expect (= 2 (p/display-width EMOJI_BMP_TEXT))))
+    (it "✅ white check mark is 2 cols" (expect (= 2 (p/display-width EMOJI_BMP_WIDE))))
+    (it "⭐ star is 2 cols"             (expect (= 2 (p/display-width EMOJI_BMP_STAR))))
+    (it "⚡ high voltage is 2 cols"     (expect (= 2 (p/display-width EMOJI_BMP_BOLT)))))
+
+  (describe "BMP `Emoji_Presentation=No` chars stay narrow (1 col) until VS-16 widens them"
+    ;; Per Unicode: ❤, ☀, ☂ default to TEXT presentation. They become
+    ;; wide only when followed by VS-16 (U+FE0F). The lanterna fork
+    ;; respects this distinction.
+    (it "❤ heart alone is 1 col"   (expect (= 1 (p/display-width EMOJI_BMP_NARROW))))
+    (it "❤️ heart + VS-16 is 2 cols"
+      (expect (= 2 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F"))))))
 
   (describe "edge cases"
     (it "nil is zero"   (expect (= 0 (p/display-width nil))))

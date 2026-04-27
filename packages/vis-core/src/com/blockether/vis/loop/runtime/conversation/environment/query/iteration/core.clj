@@ -285,6 +285,20 @@
                      :data {:name (str defining-name)
                             :error (ex-message t)}}))))))
 
+(defn- capture-new-autobind-events
+  [environment event-start-count]
+  (when-let [autobind-events-atom (:autobind-events-atom environment)]
+    (let [all-events @autobind-events-atom
+          total-count (count all-events)]
+      (when (< event-start-count total-count)
+        (vec (subvec all-events event-start-count total-count))))))
+
+(defn- maybe-assoc-autobind-events
+  [execution-result autobind-events]
+  (if (seq autobind-events)
+    (assoc execution-result :autobind-events autobind-events)
+    execution-result))
+
 (defn- execute-code
   "Run a single :code block through the SCI sandbox.
 
@@ -307,6 +321,10 @@
    & {:keys [timeout-ms doc dedup-cache-atom iteration-id]}]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
+          autobind-events-atom (:autobind-events-atom environment)
+          event-start-count (if autobind-events-atom
+                              (count @autobind-events-atom)
+                              0)
           lint-error (detect-common-mistakes code)
           cached     (dedup-cache-lookup dedup-cache-atom code)]
       (cond
@@ -328,17 +346,21 @@
                 (when (nil? (:error exec))
                   (attach-doc-meta! environment rescued doc)
                   (dedup-cache-record! dedup-cache-atom rescued exec iteration-id))
-                (assoc exec
-                  :repaired? true
-                  :original-code code
-                  :original-error parse-error))
+                (-> (assoc exec
+                      :repaired? true
+                      :original-code code
+                      :original-error parse-error)
+                  (maybe-assoc-autobind-events
+                    (capture-new-autobind-events environment event-start-count))))
               {:result nil :stdout "" :stderr "" :error parse-error
                :execution-time-ms 0 :timeout? false})
             (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time)]
               (when (nil? (:error exec))
                 (attach-doc-meta! environment code doc)
                 (dedup-cache-record! dedup-cache-atom code exec iteration-id))
-              exec)))))))
+              (maybe-assoc-autobind-events
+                exec
+                (capture-new-autobind-events environment event-start-count)))))))))
 
 (def ^:const SLOW_EXECUTION_MS 5000)
 (def ^:const EXECUTION_SAFETY_CAP_CHARS MAX_RESULT_DISPLAY_CHARS)
@@ -481,7 +503,7 @@
     (when (seq kept)
       (let [lines (for [[iteration-position exprs] kept
                         [k expr]         (map-indexed vector exprs)
-                        :let [{:keys [code error result stdout stderr execution-time-ms]} expr]]
+                        :let [{:keys [code error result stdout stderr execution-time-ms autobind-events]} expr]]
                     (let [code-str      (str/trim (or code ""))
                           stdout-suffix (when-not (str/blank? stdout)
                                           (str " :stdout " (pr-str (truncate stdout EXECUTION_STDOUT_CHARS))))
@@ -490,12 +512,15 @@
                           time-ms       (or execution-time-ms 0)
                           slow-suffix   (when (> time-ms SLOW_EXECUTION_MS)
                                           (str " (" time-ms "ms SLOW)"))
+                          autobind-suffix (when (seq autobind-events)
+                                            (str " " (str/join " " (keep :footer autobind-events))))
                           value-part    (if error
                                           (str "ERROR: " (truncate error 400))
                                           (let [v (realize-value result)
                                                 [value-str truncated?] (truncated-pr-str v)]
                                             (str value-str
-                                              (when truncated? " :truncated? true"))))]
+                                              (when truncated? " :truncated? true")
+                                              (or autobind-suffix ""))))]
                       (str "  i" iteration-position "." (inc k) "  " code-str " → " value-part
                         (or slow-suffix "")
                         (or stdout-suffix "")
@@ -1304,7 +1329,8 @@
                                      :result (:result result) :stdout (:stdout result)
                                      :stderr (:stderr result) :error (:error result)
                                      :execution-time-ms (:execution-time-ms result)
-                                     :repaired? (:repaired? result)})
+                                     :repaired? (:repaired? result)
+                                     :autobind-events (:autobind-events result)})
                               (range) code-blocks expression-results))]
           (if validation-error
             {:thinking thinking
@@ -1367,7 +1393,8 @@
                                    :error (:error result)
                                    :execution-time-ms (:execution-time-ms result)
                                    :timeout? (:timeout? result)
-                                   :repaired? (:repaired? result)})
+                                   :repaired? (:repaired? result)
+                                   :autobind-events (:autobind-events result)})
                             (range) code-blocks expression-results)]
           (cond-> {:thinking thinking
                    :next-model next-model :next-reasoning next-reasoning

@@ -485,6 +485,8 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
   (let [depth-atom               (atom 0)
         db-info                  (create-rlm-conn db)
         var-index-atom           (atom {:index nil :revision -1 :current-revision 0})
+        autobind-events-atom     (atom [])
+        autobind-registry-atom   (atom {})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :conversation-id nil})
@@ -524,6 +526,8 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
              :depth-atom      depth-atom
              :db-info         db-info
              :var-index-atom  var-index-atom
+             :autobind-events-atom autobind-events-atom
+             :autobind-registry-atom autobind-registry-atom
              :state-atom      state-atom
              :sci-ctx         sci-ctx
              :sandbox-ns      sandbox-ns
@@ -559,6 +563,138 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
   (when-let [db-info (:db-info environment)]
     (dispose-rlm-conn! db-info)))
 
+(def ^:private AUTOBIND_KIND_HANDLERS
+  {:file (fn [identifier]
+           (let [sanitized (-> (str identifier)
+                             (str/replace "\\" "/")
+                             (str/replace #"^\./" "")
+                             (str/replace #"^/+" "")
+                             (str/replace "/" "__")
+                             (str/replace #"\." "-")
+                             (str/replace #"[^A-Za-z0-9_\-]" "-"))
+                 suffix (if (str/blank? sanitized) "root" sanitized)]
+             (symbol (str "file__" suffix))))
+   :dir  (fn [identifier]
+           (let [sanitized (-> (str identifier)
+                             (str/replace "\\" "/")
+                             (str/replace #"^\./" "")
+                             (str/replace #"^/+" "")
+                             (str/replace "/" "__")
+                             (str/replace #"\." "-")
+                             (str/replace #"[^A-Za-z0-9_\-]" "-"))
+                 suffix (if (str/blank? sanitized) "root" sanitized)]
+             (symbol (str "dir__" suffix))))})
+
+(defn- trim-sha-tag
+  [tag]
+  (let [value (str tag)]
+    (if (> (count value) 8)
+      (subs value 0 8)
+      value)))
+
+(defn- autobind-symbol-for
+  [kind identifier]
+  (if-let [handler (get AUTOBIND_KIND_HANDLERS kind)]
+    (handler identifier)
+    (throw (ex-info (str "Unsupported autobind kind: " kind)
+             {:type :autobind/unsupported-kind
+              :kind kind
+              :identifier identifier}))))
+
+(defn- attach-autobind-doc!
+  [{:keys [sci-ctx sandbox-ns]} symbol-name doc-string]
+  (when (and (string? doc-string) (not (str/blank? doc-string)))
+    (try
+      (sci/eval-string+ sci-ctx
+        (str "(when-let [v (resolve '" symbol-name ")]"
+          " (alter-meta! v assoc :doc " (pr-str doc-string) "))")
+        {:ns sandbox-ns})
+      (catch Throwable _ nil))))
+
+(defn- apply-autobind-binding!
+  [environment _source-symbol {:keys [kind id content doc tag]}]
+  (let [symbol-name  (autobind-symbol-for kind id)
+        registry-atom (:autobind-registry-atom environment)
+        previous      (get @registry-atom symbol-name)
+        unchanged?    (and (some? tag) (= tag (:tag previous)))]
+    (if unchanged?
+      (let [version (or (:version previous) 1)]
+        {:symbol symbol-name
+         :status :unchanged
+         :version version
+         :kind kind
+         :id id
+         :footer (str "[autobind → " symbol-name " unchanged v=" version "]")})
+      (do
+        (sci-env/bind-and-bump! environment symbol-name content)
+        (attach-autobind-doc! environment symbol-name doc)
+        (let [next-version (inc (or (:version previous) 0))
+              _            (swap! registry-atom assoc symbol-name {:version next-version
+                                                                   :tag tag})
+              sha-part     (when (some? tag)
+                             (str " sha=" (trim-sha-tag tag)))]
+          {:symbol symbol-name
+           :status :bound
+           :version next-version
+           :kind kind
+           :id id
+           :value content
+           :footer (str "[autobind → " symbol-name " v=" next-version
+                     (or sha-part "") "]")})))))
+
+(defn- run-symbol-autobind!
+  [environment extension symbol-entry arguments result]
+  (when-let [autobind-fn (:ext.symbol/autobind-fn symbol-entry)]
+    (let [events-atom (:autobind-events-atom environment)
+          source-symbol (:ext.symbol/sym symbol-entry)]
+      (try
+        (let [autobind-result (autobind-fn {:args arguments
+                                            :result result
+                                            :environment environment})
+              bindings        (vec (or (:bindings autobind-result) []))
+              binding-events  (mapv (fn [binding-entry]
+                                      (try
+                                        (apply-autobind-binding! environment source-symbol binding-entry)
+                                        (catch Throwable throwable
+                                          {:symbol nil
+                                           :status :failed
+                                           :kind (:kind binding-entry)
+                                           :id (:id binding-entry)
+                                           :footer (str "[autobind failed: " (ex-message throwable) "]")})))
+                                bindings)]
+          (when (and events-atom (seq binding-events))
+            (swap! events-atom into binding-events)))
+        (catch Throwable throwable
+          (when events-atom
+            (swap! events-atom conj
+              {:symbol nil
+               :status :failed
+               :footer (str "[autobind hook failed: " (ex-message throwable) "]")}))
+          (tel/log! {:level :warn :id ::autobind-fn-failed
+                     :data {:ext (:ext/namespace extension)
+                            :symbol source-symbol
+                            :error (ex-message throwable)}}))))))
+
+(defn- wrap-extension-with-autobind
+  [extension environment]
+  (let [wrapped             (ext/wrap-extension extension environment)
+        symbol-entry-by-name (into {}
+                               (map (fn [symbol-entry]
+                                      [(:ext.symbol/sym symbol-entry) symbol-entry]))
+                               (:ext/symbols extension))]
+    (into {}
+      (map (fn [[symbol-name symbol-value]]
+             (let [symbol-entry (get symbol-entry-by-name symbol-name)
+                   autobind-fn  (:ext.symbol/autobind-fn symbol-entry)]
+               [symbol-name
+                (if (and symbol-entry autobind-fn (fn? symbol-value))
+                  (fn [& arguments]
+                    (let [result (apply symbol-value arguments)]
+                      (run-symbol-autobind! environment extension symbol-entry (vec arguments) result)
+                      result))
+                  symbol-value)])))
+      wrapped)))
+
 (defn register-extension!
   "Register a validated extension into `environment`.
 
@@ -593,10 +729,10 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
       (let [ns-sym  (:ext/namespace ext)
             without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
         (conj without ext))))
-  ;; Bind extension symbols ONLY into the aliased namespace \u2014 never
-  ;; into sandbox. The LLM must always use the alias: `(fs/read-file ...)`,
-  ;; not `(read-file ...)`.
-  (let [wrapped (ext/wrap-extension ext environment)
+  ;; Bind extension symbols ONLY into the aliased namespace — never
+  ;; into sandbox. The LLM must always use the alias form
+  ;; `(alias/symbol ...)`, not `(symbol ...)`.
+  (let [wrapped (wrap-extension-with-autobind ext environment)
         sci-ctx (:sci-ctx environment)]
     (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
       (let [ext-ns      (sci/create-ns ns-sym)
