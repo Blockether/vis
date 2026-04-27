@@ -229,6 +229,96 @@
         ;; 'bold code more' = 14 chars
         (expect (= 14 (p/display-width out)))))))
 
+(defdescribe paint-styled-line-stacking-test
+  ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered
+  ;; bold-without-italic because paint-styled-line! cleared the
+  ;; wrapping italic at entry. We pin the fix by recording the SGR
+  ;; set on every paint call via a stub TextGraphics, then asserting
+  ;; bold + italic stack correctly.
+  (let [;; Capture every (putString ...) as [text {:fg :bg :sgr}].
+        captured (atom [])
+        active   (atom #{})
+        fg       (atom nil)
+        bg       (atom nil)
+        ;; Lanterna's TextGraphics is an interface with ~30 methods;
+        ;; we proxy the four paint-styled-line! actually calls.
+        graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                   (clearModifiers []
+                     (reset! active #{})
+                     this)
+                   (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                     (swap! active into (seq arr))
+                     this)
+                   (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                     (apply swap! active disj (seq arr))
+                     this)
+                   (getActiveModifiers []
+                     ;; Return a defensive EnumSet so paint-styled-line!
+                     ;; can `EnumSet/copyOf` it.
+                     (if (empty? @active)
+                       (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                       (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                   (setForegroundColor [c] (reset! fg c) this)
+                   (setBackgroundColor [c] (reset! bg c) this)
+                   (putString
+                     ([col row text]
+                      (swap! captured conj [text {:fg @fg :bg @bg :sgr @active}])
+                      this)))]
+
+    (describe "paint-styled-line! inherits the wrapping SGR modifiers"
+      (it "BOLD inside a wrapping ITALIC stacks to bold-italic"
+        (reset! captured [])
+        (reset! active #{com.googlecode.lanterna.SGR/ITALIC})
+        (let [line (str "plain " p/INLINE_BOLD_ON "loud" p/INLINE_BOLD_OFF " tail")]
+          (p/paint-styled-line! graphics 0 0 line
+            (com.googlecode.lanterna.TextColor$RGB. 0 0 0)
+            (com.googlecode.lanterna.TextColor$RGB. 255 255 255)
+            (com.googlecode.lanterna.TextColor$RGB. 50 50 50)
+            (com.googlecode.lanterna.TextColor$RGB. 240 240 240))
+          ;; Three segments: "plain ", "loud", " tail"
+          (let [segs @captured]
+            (expect (= 3 (count segs)))
+            (let [[seg0 seg1 seg2] segs]
+              ;; Segment 1: 'plain ' — inherits italic only.
+              (expect (= "plain " (first seg0)))
+              (expect (contains? (:sgr (second seg0)) com.googlecode.lanterna.SGR/ITALIC))
+              (expect (not (contains? (:sgr (second seg0)) com.googlecode.lanterna.SGR/BOLD)))
+              ;; Segment 2: 'loud' — italic + bold stacked.
+              (expect (= "loud" (first seg1)))
+              (expect (contains? (:sgr (second seg1)) com.googlecode.lanterna.SGR/ITALIC))
+              (expect (contains? (:sgr (second seg1)) com.googlecode.lanterna.SGR/BOLD))
+              ;; Segment 3: ' tail' — italic again, bold cleared.
+              (expect (= " tail" (first seg2)))
+              (expect (contains? (:sgr (second seg2)) com.googlecode.lanterna.SGR/ITALIC))
+              (expect (not (contains? (:sgr (second seg2)) com.googlecode.lanterna.SGR/BOLD)))))))
+
+      (it "At exit, the inherited SGR set is restored exactly"
+        ;; Caller relies on `(p/styled g [p/ITALIC] (paint-styled-line! ...))`
+        ;; ending with the same modifier state it started with, so its
+        ;; own cleanup can finalise correctly.
+        (reset! captured [])
+        (reset! active #{com.googlecode.lanterna.SGR/ITALIC})
+        (p/paint-styled-line! graphics 0 0
+          (str p/INLINE_BOLD_ON "x" p/INLINE_BOLD_OFF)
+          (com.googlecode.lanterna.TextColor$RGB. 0 0 0)
+          (com.googlecode.lanterna.TextColor$RGB. 255 255 255)
+          (com.googlecode.lanterna.TextColor$RGB. 50 50 50)
+          (com.googlecode.lanterna.TextColor$RGB. 240 240 240))
+        (expect (= #{com.googlecode.lanterna.SGR/ITALIC} @active)))
+
+      (it "Dangling sentinel (no close) doesn't leak BOLD past the call"
+        (reset! captured [])
+        (reset! active #{com.googlecode.lanterna.SGR/ITALIC})
+        (p/paint-styled-line! graphics 0 0
+          (str "open " p/INLINE_BOLD_ON "never closes")
+          (com.googlecode.lanterna.TextColor$RGB. 0 0 0)
+          (com.googlecode.lanterna.TextColor$RGB. 255 255 255)
+          (com.googlecode.lanterna.TextColor$RGB. 50 50 50)
+          (com.googlecode.lanterna.TextColor$RGB. 240 240 240))
+        ;; Even though the line ended mid-bold, the inherited italic
+        ;; (NOT bold) is what the caller sees on exit.
+        (expect (= #{com.googlecode.lanterna.SGR/ITALIC} @active))))))
+
 (defdescribe round-trip-pad-cell-test
   (describe "pad-cell tolerates sentinel-bearing text"
     (let [pad-cell @#'render/pad-cell]
