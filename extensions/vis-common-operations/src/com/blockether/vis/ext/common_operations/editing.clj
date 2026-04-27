@@ -1,8 +1,12 @@
-(ns com.blockether.vis.ext.editing
-  "Editing extension — read, list, grep, patch.
+(ns com.blockether.vis.ext.common-operations.editing
+  "Filesystem editing module of the `vis-common-operations` extension —
+   read, list, grep, patch.
 
-   Self-registers via `register-global!` at namespace load time.
-   Drop on the classpath and every new environment gets it.
+   This namespace owns the actual tool implementations and exposes
+   `editing-symbols` for the aggregator (`com.blockether.vis.ext
+   .common-operations.core`). It does NOT call `register-global!`; the
+   sibling `core` namespace assembles every common-operations module
+   into a single extension and registers it.
 
    Depends ONLY on `com.blockether/vis-extension` (the slim extension
    contract). The full vis runtime is intentionally not pulled in here."
@@ -140,7 +144,7 @@
         abs (.getCanonicalPath f)]
     (when-not (str/starts-with? abs cwd)
       (throw (ex-info (str "Path escapes working directory: " path)
-               {:type :ext.editing/path-traversal :path path :resolved abs})))
+               {:type :ext.common-operations.editing/path-traversal :path path :resolved abs})))
     f))
 
 (defn- rel-path
@@ -161,10 +165,10 @@
   (let [f (safe-path path)]
     (when-not (.exists f)
       (throw (ex-info (str "File not found: " path)
-               {:type :ext.editing/not-found :path path})))
+               {:type :ext.common-operations.editing/not-found :path path})))
     (when (.isDirectory f)
       (throw (ex-info (str "Path is a directory: " path)
-               {:type :ext.editing/is-directory :path path})))
+               {:type :ext.common-operations.editing/is-directory :path path})))
     f))
 
 (defn- repo-root
@@ -309,7 +313,7 @@
     (or (false? d) (nil? d)) 1
     (integer? d) (max 0 (long d))
     :else (throw (ex-info (str "Invalid depth: " (pr-str d))
-                   {:type :ext.editing/invalid-depth :depth d}))))
+                   {:type :ext.common-operations.editing/invalid-depth :depth d}))))
 
 (defn- visible-children
   "Direct children of dir, filtered by hidden? + gitignore, sorted by path."
@@ -354,10 +358,10 @@
          depth-lim (depth->limit depth)]
      (when-not (.exists f)
        (throw (ex-info (str "Path not found: " path)
-                {:type :ext.editing/not-found :path path})))
+                {:type :ext.common-operations.editing/not-found :path path})))
      (when-not (.isDirectory f)
        (throw (ex-info (str "Not a directory: " path)
-                {:type :ext.editing/not-directory :path path})))
+                {:type :ext.common-operations.editing/not-directory :path path})))
      (mapv #(file->tree % (dec depth-lim) hidden? respect-gitignore?)
        (visible-children f hidden? respect-gitignore?)))))
 
@@ -367,7 +371,7 @@
     (Pattern/compile (str pattern))
     (catch Exception e
       (throw (ex-info (str "Invalid regex pattern: " pattern)
-               {:type :ext.editing/invalid-regex
+               {:type :ext.common-operations.editing/invalid-regex
                 :pattern pattern
                 :error (ex-message e)})))))
 
@@ -406,7 +410,7 @@
          pat (compile-safe-pattern pattern)]
      (when-not (.exists f)
        (throw (ex-info (str "Path not found: " path)
-                {:type :ext.editing/not-found :path path})))
+                {:type :ext.common-operations.editing/not-found :path path})))
      (let [files   (if (.isDirectory f)
                      (filter #(and (.isFile ^java.io.File %)
                                 (or hidden? (not (.isHidden ^java.io.File %))))
@@ -445,7 +449,7 @@
       (cond
         (zero? count)
         (throw (ex-info (str "SEARCH block " index " not found in " path)
-                 {:type :ext.editing/patch-no-match
+                 {:type :ext.common-operations.editing/patch-no-match
                   :path path
                   :block index
                   :search search}))
@@ -453,7 +457,7 @@
         (> count 1)
         (throw (ex-info (str "SEARCH block " index " matches " count
                           " times in " path ". Must be unique.")
-                 {:type :ext.editing/patch-ambiguous
+                 {:type :ext.common-operations.editing/patch-ambiguous
                   :path path
                   :block index
                   :matches count
@@ -482,7 +486,7 @@
         (do
           (when-not (str/starts-with? remaining search-marker)
             (throw (ex-info "Invalid patch format: expected <<<<<<< SEARCH"
-                     {:type :ext.editing/patch-invalid-format
+                     {:type :ext.common-operations.editing/patch-invalid-format
                       :block index})))
           (let [after-search (subs remaining (count search-marker))
                 after-search (if (str/starts-with? after-search "\n")
@@ -491,7 +495,7 @@
                 split-idx (.indexOf after-search (str "\n" split-marker "\n"))]
             (when (neg? split-idx)
               (throw (ex-info "Invalid patch format: missing ======= separator"
-                       {:type :ext.editing/patch-invalid-format
+                       {:type :ext.common-operations.editing/patch-invalid-format
                         :block index})))
             (let [search (subs after-search 0 split-idx)
                   after-split (subs after-search
@@ -499,7 +503,7 @@
                   replace-idx (.indexOf after-split (str "\n" replace-marker))]
               (when (neg? replace-idx)
                 (throw (ex-info "Invalid patch format: missing >>>>>>> REPLACE terminator"
-                         {:type :ext.editing/patch-invalid-format
+                         {:type :ext.common-operations.editing/patch-invalid-format
                           :block index})))
               (let [replace (subs after-split 0 replace-idx)
                     after-replace (subs after-split
@@ -517,14 +521,14 @@
         existed? (.exists f)
         _        (when (and existed? (.isDirectory f))
                    (throw (ex-info (str "Path is a directory: " path)
-                            {:type :ext.editing/is-directory :path path})))
+                            {:type :ext.common-operations.editing/is-directory :path path})))
         original (if existed? (slurp f) "")
         blocks   (parse-search-replace-patch patch-text)
         _        (when (and (not existed?)
                          (some #(not= "" (:search %)) blocks))
                    (throw (ex-info (str "Cannot patch non-existent file " path
                                      " unless every SEARCH block is empty")
-                            {:type :ext.editing/patch-create-requires-empty-search
+                            {:type :ext.common-operations.editing/patch-create-requires-empty-search
                              :path path})))
         patched  (reduce (fn [content block]
                            (apply-one-replacement content block path))
@@ -616,25 +620,20 @@
      :on-error-fn rescue-path-args}))
 
 (def editing-symbols
+  "Vector of `ext/symbol` definitions exported by this module. The
+   sibling `core` namespace concatenates every module's symbol vector
+   into the single `vis-common-operations` extension."
   [read-file-symbol
    list-files-symbol
    grep-files-symbol
    patch-file-symbol])
 
-(def editing-extension
-  (ext/extension
-    {:ext/namespace 'com.blockether.vis.ext.editing
-     :ext/doc "Filesystem tools: read, list, grep, patch."
-     :ext/version "0.3.0"
-     :ext/author "Blockether"
-     :ext/license "Apache-2.0"
-     :ext/ns-alias {:ns 'vis.ext.fs :alias 'fs}
-     :ext/group "filesystem"
-     :ext/prompt "RULES:
+(def editing-prompt
+  "Module-specific prompt fragment merged into the extension prompt by
+   the `core` aggregator. Lives next to the symbols so a future
+   reorganization moves both pieces together."
+  "RULES:
 - NEVER guess file paths. Always discover paths first with (fs/list-files) or (fs/grep-files pattern).
 - There is NO write-file tool. Use fs/patch-file ALWAYS.
 - To create a new file, use fs/patch-file with an EMPTY SEARCH block.
-- Prefer the smallest unique SEARCH block that matches exactly once."
-     :ext/symbols editing-symbols}))
-
-(ext/register-global! editing-extension)
+- Prefer the smallest unique SEARCH block that matches exactly once.")

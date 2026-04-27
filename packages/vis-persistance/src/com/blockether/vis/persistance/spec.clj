@@ -246,7 +246,7 @@
        in JSON), false for reasoning providers (CoT is native, no
        duplication).
 
-   ## Plan slot (Phase 1)
+   ## Plan slot
 
    Iteration responses MAY include a structured `:plan` (see
    `PLAN_STATE_SPEC`) and `:breadcrumb` (≤120c past-tense one-liner).

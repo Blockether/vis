@@ -219,7 +219,20 @@
 
 (def ^:private FRESH_ITER_CARRY
   {:previous-expressions nil :previous-iteration -1
-   :previous-next-model nil :previous-next-reasoning nil})
+   :previous-next-model nil :previous-next-reasoning nil
+   ;; nudges the loop wants to surface to the
+   ;; model on the NEXT iteration. Populated when the prior iter hit
+   ;; a gate violation, a plan-validation error, etc. Cleared after
+   ;; one delivery so the same nudge isn't repeated.
+   :pending-loop-nudges []})
+
+;; Soft retry budget for plan-validation. A model that emits a 21-item
+;; plan once gets one nudge; if it does it again we accept the prior
+;; plan and move on (a buggy validator must not soft-lock the loop).
+(def ^:private MAX_PLAN_VALIDATION_RETRIES 1)
+
+;; Same idea for the open-plan gate: one nudge, then accept.
+(def ^:private MAX_GATE_RETRIES 1)
 
 (def ^:private balanced-reasoning :balanced)
 
@@ -304,7 +317,11 @@
                           FRESH_ITER_CARRY)]
         (let [{:keys [iteration messages trace consecutive-errors restarts
                       previous-expressions previous-iteration
-                      previous-next-model previous-next-reasoning]} loop-state]
+                      previous-next-model previous-next-reasoning
+                      pending-loop-nudges
+                      gate-retries plan-validation-retries]} loop-state
+              gate-retries (or gate-retries 0)
+              plan-validation-retries (or plan-validation-retries 0)]
           (when current-iteration-atom (reset! current-iteration-atom iteration))
           (cond
             (when cancel-atom @cancel-atom)
@@ -363,7 +380,7 @@
                                       (or previous-next-reasoning
                                         (iterate/reasoning-level-for-errors base-reasoning-level consecutive-errors)))
                     _ (iterate/log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
-                    ;; Phase 1 â€” sticky plan + breadcrumb chain + last
+                    ;; €” sticky plan + breadcrumb chain + last
                     ;; iteration's :thinking. All come from DB so the
                     ;; projection is always rebuilt from persisted
                     ;; state, never accumulated in messages.
@@ -388,8 +405,13 @@
                                          :recent-thought         recent-thought
                                          :system-vars            system-vars
                                          :prior-turn             prior-turn
-                                         :expressions-by-iteration    expressions-by-iteration
+                                         :expressions-by-iteration expressions-by-iteration
                                          :call-counts-atom       call-counts-atom
+                                         ;; surface
+                                         ;; gate-violation / plan-validation
+                                         ;; nudges from the prior iter exactly
+                                         ;; once.
+                                         :loop-nudges            (or pending-loop-nudges [])
                                          :active-extensions      active-exts})
                     base-messages (iterate/trim-to-initial-history messages (count initial-messages))
                     effective-messages (cond-> base-messages
@@ -465,10 +487,10 @@
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking expressions final-result next-model next-reasoning]} iteration-result
-                        ;; Phase 1 â€” plan/breadcrumb fields from svar parse
+                        ;; €” plan/breadcrumb fields from svar parse
                         new-plan-state    (:plan-state iteration-result)
                         breadcrumb-text   (:breadcrumb iteration-result)
-                        ;; Phase 0b â€” plan-edit-distance + change marker.
+                        ;; €” plan-edit-distance + change marker.
                         ;; Compute against the sticky plan (loaded above)
                         ;; so we record the diff for THIS iteration.
                         plan-validation   (when new-plan-state
@@ -487,7 +509,7 @@
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
                                          :final-result final-result :final-answer final-answer})
-                        ;; Augment iteration metadata with Phase 0/0b counters.
+                        ;; Augment iteration metadata with the iteration-level counters.
                         iteration-metadata-with-metrics
                         (merge (or (iteration-metadata) {})
                           {:plan-edit-distance plan-edit-dist
@@ -496,27 +518,41 @@
                            (count (filter #(and (string? (:code %))
                                              (re-find #"\(var-history\b" (:code %)))
                              (or expressions [])))
-                           :expression-redundancy-fraction 0.0   ;; populated in Phase 2
-                           :dedup-saves                    0     ;; populated in Phase 2
+                           :expression-redundancy-fraction 0.0   ;; populated by the dedup atom
+                           :dedup-saves                    0     ;; populated by the dedup atom
                            :plan-validation-error          (some-> plan-validation :type name)})
-                        ;; PEV gate (PLAN.md Â§10.1): if the model emitted
-                        ;; :answer with open plan items and no
-                        ;; :abandon-reason, surface a structured nudge
-                        ;; that the next iteration will see. We don't reject
-                        ;; the answer here yet (Phase 6 makes it strict);
-                        ;; for now we annotate so the model gets a hint.
+                        ;; The PEV gate actively rejects :answer when
+                        ;; the plan still has open items and no
+                        ;; :abandon-reason. Up to MAX_GATE_RETRIES; after
+                        ;; that the answer goes through (a buggy gate
+                        ;; must not soft-lock the loop).
                         gate-violation
                         (when (and final-result
                                 effective-plan
                                 (some #(contains? #{:in_progress :pending}
                                          (iterate/item-status-key %))
                                   (:items effective-plan))
-                                (str/blank? (str (:abandon-reason final-result))))
+                                (str/blank? (str (:abandon-reason final-result)))
+                                (< gate-retries MAX_GATE_RETRIES))
                           {:type :vis/incomplete-plan-on-answer
-                           :open-item-ids (mapv :id
-                                            (filter #(contains? #{:in_progress :pending}
-                                                       (iterate/item-status-key %))
-                                              (:items effective-plan)))})
+                           :data {:open-item-ids
+                                  (mapv :id
+                                    (filter #(contains? #{:in_progress :pending}
+                                               (iterate/item-status-key %))
+                                      (:items effective-plan)))}})
+                        ;; Plan-validation surfaces the validator's
+                        ;; structured error on the next iteration, up
+                        ;; to MAX_PLAN_VALIDATION_RETRIES.
+                        plan-validation-violation
+                        (when (and plan-validation
+                                (< plan-validation-retries MAX_PLAN_VALIDATION_RETRIES))
+                          plan-validation)
+                        ;; Aggregate loop-nudges to surface on the next
+                        ;; iteration. `format-loop-nudge` gates nil input
+                        ;; and returns the [system_nudge]-prefixed line.
+                        next-pending-loop-nudges
+                        (vec (keep iterate/format-loop-nudge
+                               [gate-violation plan-validation-violation]))
                         iteration-id (db/store-iteration! (:db-info environment)
                                   {:query-id query-id :expressions expressions :vars vars-snapshot
                                    :thinking thinking
@@ -524,7 +560,7 @@
                                    :duration-ms (or (:duration-ms iteration-result) 0)
                                    :llm-messages (:llm-messages iteration-result)
                                    :llm-model (:llm-model iteration-result)
-                                   ;; Phase 1 plan slot persistence.
+                                   ;; Plan slot persistence.
                                    :plan-state (when (and new-plan-state (nil? plan-validation))
                                                  new-plan-state)
                                    :breadcrumb breadcrumb-text
@@ -540,7 +576,24 @@
                             "on-iteration (success)")
                         trace-entry {:iteration iteration :thinking thinking
                                      :expressions expressions :final? (boolean final-result)}]
-                    (if final-result
+                    (cond
+                      ;; Â§15.1 PEV gate active: a final-result with open
+                      ;; plan items and no :abandon-reason is REJECTED.
+                      ;; Drop final-result, queue nudge for next iter,
+                      ;; bump gate-retries, recur.
+                      gate-violation
+                      (do (iterate/log-stage! :gate-rejected iteration
+                            {:open-items (-> gate-violation :data :open-item-ids)
+                             :retry      (inc gate-retries)})
+                        (recur (merge loop-state
+                                 {:iteration (inc iteration)
+                                  :trace (conj trace (assoc trace-entry :gate-rejected? true))
+                                  :previous-next-model next-model
+                                  :previous-next-reasoning next-reasoning
+                                  :pending-loop-nudges next-pending-loop-nudges
+                                  :gate-retries (inc gate-retries)})))
+
+                      final-result
                       (do (iterate/log-stage! :final iteration
                             {:answer (truncate (iterate/answer-str (:answer final-result)) 200)
                              :confidence (:confidence final-result) :iterations (inc iteration)})
@@ -562,12 +615,17 @@
                                  (:reasoning final-result) (assoc :reasoning (:reasoning final-result)))
                           (finalize-cost)))
 
+                      :else
                       (if (empty? expressions)
                         (do (iterate/log-stage! :empty iteration {})
                           (iterate/log-stage! :iteration-end iteration {:blocks 0 :errors 0 :times []})
                           (recur (merge loop-state
                                    {:iteration (inc iteration) :trace (conj trace trace-entry)
-                                    :previous-next-model next-model :previous-next-reasoning next-reasoning})))
+                                    :previous-next-model next-model :previous-next-reasoning next-reasoning
+                                    :pending-loop-nudges next-pending-loop-nudges
+                                    :plan-validation-retries (if plan-validation
+                                                               (inc plan-validation-retries)
+                                                               plan-validation-retries)})))
 
                         (do (iterate/log-stage! :iteration-end iteration
                               {:blocks (count expressions) :errors (count (filter :error expressions))
@@ -585,6 +643,10 @@
                                 _ (when had-success? (swap! var-index-atom update :current-revision inc))]
                             (recur (merge loop-state
                                      {:iteration (inc iteration) :messages messages
+                                      :pending-loop-nudges next-pending-loop-nudges
+                                      :plan-validation-retries (if plan-validation
+                                                                 (inc plan-validation-retries)
+                                                                 plan-validation-retries)
                                       :trace (conj trace trace-entry) :consecutive-errors next-errors
                                       :previous-expressions expressions :previous-iteration iteration
                                       :previous-next-model next-model
@@ -609,7 +671,7 @@
 (defn run-query!
   "Store query â†’ iteration-loop â†’ update query â†’ return result.
 
-   Phase 1: derives `:prior-outcome` (one of `:complete`,
+   Derives `:prior-outcome` (one of `:complete`,
    `:abandoned`, `:cancelled`, `:error`) from the loop result and
    persists it on the `query_state` row. The next turn's
    `<system_state>` digest reads it."
@@ -636,7 +698,7 @@
     (assoc result :query-id query-id :prior-outcome prior-outcome)))
 
 ;; -----------------------------------------------------------------------------
-;; Phase 1 - Prepare query context
+;; Prepare query context
 ;; -----------------------------------------------------------------------------
 
 (defn- prepare-query-context
@@ -753,7 +815,7 @@
        :history-messages       history-messages})))
 
 ;; -----------------------------------------------------------------------------
-;; Phase 2 - Run iteration phase
+;; Run iteration phase
 ;; -----------------------------------------------------------------------------
 
 (defn- run-iteration-phase
@@ -797,7 +859,7 @@
      :merge-cost!       merge-cost!}))
 
 ;; -----------------------------------------------------------------------------
-;; Phase 5 - Finalize query result
+;; Finalize query result
 ;; -----------------------------------------------------------------------------
 
 (defn- finalize-query-result

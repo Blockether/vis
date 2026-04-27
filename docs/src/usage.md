@@ -74,23 +74,23 @@ Past CLI runs are browsable later:
 vis conversations cli
 ```
 
-### 2. TUI chat \u2014 `vis channel tui`
+### 2. TUI chat \u2014 `vis channels tui`
 
 Interactive Lanterna terminal UI. Multi-turn, with a sidebar of past
 conversations, the `[?]` system-prompt inspector, and copy/paste
 dialogs.
 
 ```bash
-vis channel tui                                  # fresh conversation
-vis channel tui --resume                         # resume the most recent :vis conversation
-vis channel tui --conversation-id <UUID>         # resume a specific one (full or short ID)
+vis channels tui                                  # fresh conversation
+vis channels tui --resume                         # resume the most recent :vis conversation
+vis channels tui --conversation-id <UUID>         # resume a specific one (full or short ID)
 ```
 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
 **Never bind `Ctrl+Y`** \u2014 the kernel intercepts it and suspends
 the whole process; this is documented in `AGENTS.md`.
 
-### 3. Telegram bot \u2014 `vis channel telegram`
+### 3. Telegram bot \u2014 `vis channels telegram`
 
 Long-poll loop that wires Telegram chats into the conversation
 runtime. Each chat-id maps 1:1 to a conversation in the `:telegram`
@@ -98,7 +98,7 @@ channel namespace.
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
-vis channel telegram
+vis channels telegram
 ```
 
 Past Telegram conversations:
@@ -139,7 +139,7 @@ vis conversations cli         # CLI one-shots
 ```
 
 The output table includes the conversation ID; pass it to
-`vis channel tui --conversation-id <ID>` to resume in the TUI.
+`vis channels tui --conversation-id <ID>` to resume in the TUI.
 
 ## Extensions
 
@@ -152,12 +152,13 @@ vis extensions                       # list everything that registered
 vis ext <cmd> [args\u2026]                # run an extension's exported CLI command
 ```
 
-The bundled `extensions/editing` package adds `read`, `write`, `grep`,
-`list`, and `patch`. Add it to your run alias:
+The bundled `extensions/vis-common-operations` package adds `read`,
+`list`, `grep`, and `patch` (filesystem tools, namespaced under the
+`fs/` alias). Add it to your run alias:
 
 ```clojure
 ;; deps.edn
-:run {:extra-deps {com.blockether.vis.ext/editing {:local/root \"extensions/editing\"}}}
+:run {:extra-deps {com.blockether/vis-common-operations {:local/root \"extensions/vis-common-operations\"}}}
 ```
 
 To author your own extension, see [Extension System](extensions/overview.md).
@@ -167,14 +168,14 @@ To author your own extension, see [Extension System](extensions/overview.md).
 | Command                    | Purpose                                                           |
 | -------------------------- | ----------------------------------------------------------------- |
 | `vis run \"prompt\"`        | One-shot agent query (CLI agent).                                  |
-| `vis channel tui [\u2026]`     | Lanterna TUI chat.                                                |
-| `vis channel telegram`     | Telegram long-poll bot.                                           |
+| `vis channels tui [\u2026]`    | Lanterna TUI chat.                                                |
+| `vis channels telegram`    | Telegram long-poll bot.                                           |
 | `vis auth <provider>`      | Provider OAuth flow.                                              |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.               |
 | `vis doctor`               | Environment diagnostics.                                          |
 | `vis extensions`           | List registered extensions.                                       |
 | `vis ext <cmd> [\u2026]`       | Run an extension-provided CLI command.                            |
-| `vis channel <name> [\u2026]`  | Run any registered channel by `:channel/cmd` name.                |
+| `vis channels <name> [\u2026]` | Run any registered channel by `:channel/cmd` name.                |
 | `vis help`                 | Print the help tree (same as no args).                            |
 
 `vis "free-form prompt"` (no leading sub-command) falls back to

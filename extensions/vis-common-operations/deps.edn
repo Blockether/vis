@@ -1,7 +1,8 @@
 {:paths ["src" "resources"]
- ;; Editing extension only depends on the slim extension contract,
- ;; NOT the full vis runtime. Same module that vis-core itself uses,
- ;; just pulled directly so this jar stays small and decoupled.
+ ;; The vis-common-operations extension only depends on the slim
+ ;; extension contract, NOT the full vis runtime. Same module that
+ ;; vis-core itself uses, just pulled directly so this jar stays
+ ;; small and decoupled.
  :deps {com.blockether/vis-extension {:local/root "../../packages/vis-extension"}
         ;; RE2/J — linear-time regex (ReDoS-safe). Used by the grep tool so
         ;; agent-supplied patterns can never burn the box with catastrophic

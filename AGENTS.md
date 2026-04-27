@@ -174,8 +174,8 @@ Only AFTER the DB has been inspected may you form a hypothesis, propose a fix, o
 
 ```bash
 bin/vis                        # prints the help tree (no implicit "default channel")
-bin/vis channel tui            # TUI chat
-bin/vis channel telegram       # Telegram bot
+bin/vis channels tui           # TUI chat
+bin/vis channels telegram      # Telegram bot
 bin/vis run "prompt"           # one-shot agent query
 clojure -M:test                # aggregate test runner across packages
 ```

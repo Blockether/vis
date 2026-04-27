@@ -4,12 +4,25 @@
    This namespace provides the shared provider/config management layer
    used by TUI, web, CLI, and Telegram channels. Single source of truth
    for provider state — changes here are reflected everywhere."
-  (:require [clojure.string :as str]
+  (:require [borkdude.dynaload :as dl]
+            [clojure.string :as str]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
             [taoensso.telemere :as tel]))
+
+;;; ── zprint (dynaload — lazy, cached) ─────────────────────────
+;;
+;; zprint is a hard dep of vis-core but its load cost is non-trivial
+;; (~hundreds of ms). Dynaload defers the load to first use AND caches
+;; the resolved var, so subsequent `format-clojure` calls are a single
+;; IFn invocation. The `:default` keeps `format-clojure` working as a
+;; pass-through if a slim build ever excludes zprint.
+
+(def ^:private zprint-str-fn
+  (dl/dynaload 'zprint.core/zprint-str
+    {:default (fn [s & _] s)}))
 
 ;;; ── Provider state ─────────────────────────────────────────────────────────
 ;;
@@ -145,9 +158,8 @@
    Falls back to the original string on any error."
   [code-str width]
   (try
-    (let [formatted ((requiring-resolve 'zprint.core/zprint-str)
-                      code-str width {:parse-string? true
-                                      :style :community})]
+    (let [formatted (zprint-str-fn code-str width {:parse-string? true
+                                                   :style :community})]
       (if (clojure.string/blank? formatted) code-str (clojure.string/trimr formatted)))
     (catch Exception _ code-str)))
 

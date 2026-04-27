@@ -64,5 +64,16 @@
 (def answer-fg         (TextColor$RGB. 25 25 25))     ;; near-black answer text
 (def confidence-fg     (TextColor$RGB. 140 140 140))  ;; muted confidence label
 
+;; Footer (dedicated row below the input box)
+;; Codex-style three-region status: left=identity, center=run-state, right=budget.
+;; Colors are tuned to match the existing muted palette — the footer should
+;; sit quietly until ctx pressure or an active turn pulls the eye to it.
+(def footer-fg          (TextColor$RGB. 60 60 60))    ;; default text
+(def footer-fg-muted    (TextColor$RGB. 140 140 140)) ;; separators, low-priority segments, cost
+(def footer-fg-strong   (TextColor$RGB. 30 30 30))    ;; model name (bold)
+(def footer-spinner-fg  (TextColor$RGB. 80 160 80))   ;; running spinner — same green as ai-role-fg
+(def footer-warning-fg  (TextColor$RGB. 180 110 0))   ;; ctx ≤ 30% left, cancelling…
+(def footer-error-fg    (TextColor$RGB. 200 40 40))   ;; ctx ≤ 10% left — red, bold
+
 ;; Padding
 (def pad-x 1)

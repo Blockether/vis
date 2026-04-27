@@ -22,12 +22,10 @@
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.commandline :as cmd]
             [com.blockether.vis.config :as config]
+            [com.blockether.vis.core :as core]
             [com.blockether.vis.loop.runtime.conversation.core :as conv-core]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
             [com.blockether.vis.persistance.core :as db]
-            [honey.sql :as sql]
-            [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs]
             [taoensso.telemere :as tel]))
 
 ;;; ── vis-provider lookup (dynaload — zero compile-time dep on it) ───────
@@ -41,9 +39,6 @@
     {:default (constantly [])}))
 
 ;;; ── Output helpers ──────────────────────────────────────────────────────
-
-(defn- core-fn [sym]
-  (requiring-resolve (symbol "com.blockether.vis.core" (name sym))))
 
 (defn- stdout!
   "Print to the real terminal via the saved original stdout. Other
@@ -300,8 +295,8 @@
 
 (defn- cli-doctor! [_parsed _residual]
   (config/init-cli!)
-  (let [env ((core-fn 'create-environment) (query/get-router)
-             {:db (config/resolve-db-spec)})]
+  (let [env (core/create-environment (query/get-router)
+              {:db (config/resolve-db-spec)})]
     (try
       (let [db-info (:db-info env)]
         (stdout! "vis doctor")
@@ -320,26 +315,24 @@
                          mb   (fn [b] (format "%.0fMB" (/ (double b) 1048576)))]
                      (str (mb used) " / " (mb max)))))
         (stdout! (str "  DB path:      " (or (:path db-info) "none")))
+        ;; Use the conversation API — it owns the channel-metadata
+        ;; storage layout (JSON-extracted from conversation_soul.metadata
+        ;; via the persistence backend). Reaching into raw JDBC here used
+        ;; to query a non-existent `conversation` table and silently
+        ;; reported 0 for every channel.
         (let [active-envs (count @conv-core/cache)
-              sidecar-ds  (some-> db-info :datasource)
               count-ch    (fn [ch]
-                            (try
-                              (when sidecar-ds
-                                (count (jdbc/execute! sidecar-ds
-                                         (sql/format {:select [:*]
-                                                      :from   [:conversation]
-                                                      :where  [:= :channel (name ch)]})
-                                         {:builder-fn rs/as-unqualified-lower-maps})))
+                            (try (count (conv-core/by-channel ch))
                               (catch Exception _ 0)))
-              vis-n  (or (count-ch :vis) 0)
-              cli-n  (or (count-ch :cli) 0)
-              tg-n   (or (count-ch :telegram) 0)
+              vis-n  (count-ch :vis)
+              cli-n  (count-ch :cli)
+              tg-n   (count-ch :telegram)
               total  (+ vis-n cli-n tg-n)]
           (stdout! (str "  Conversations:  " total
                      " (" vis-n " vis, " cli-n " cli, " tg-n " telegram)"
                      " — " active-envs " active in memory"))))
       (finally
-        ((core-fn 'dispose-environment!) env)
+        (core/dispose-environment! env)
         (shutdown-agents)))))
 
 ;;; ── `vis extensions` ────────────────────────────────────────────────────

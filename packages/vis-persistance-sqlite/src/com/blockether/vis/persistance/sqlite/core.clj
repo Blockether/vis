@@ -407,7 +407,7 @@
 (defn update-query!
   "Update the latest query_state with final outcome.
 
-   Phase 1: when `:prior-outcome` is provided (one of `:complete`,
+   When `:prior-outcome` is provided (one of `:complete`,
    `:abandoned`, `:cancelled`, `:error`), it lands in the dedicated
    `prior_outcome` column so the next turn's handover digest can read
    it without scanning every iteration. The column is bounded by a
@@ -483,9 +483,9 @@
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
    Returns the iteration UUID.
 
-   Phase 1: persists structured `:plan-state`, `:breadcrumb`, `:plan-diff`
-   into the iteration row when present. Pre-Phase-1 callers (no plan keys)
-   continue to work — the columns stay NULL."
+   Persists the structured `:plan-state`, `:breadcrumb`, `:plan-diff`
+   columns when the caller supplies them; otherwise the columns
+   remain NULL."
   [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
                    llm-messages llm-model
                    plan-state breadcrumb plan-diff]}]
@@ -665,7 +665,7 @@
 
 (defn- attach-prior-outcome [row->qmap]
   ;; Surface :prior-outcome on the query map when the column has a value.
-  ;; Pre-V2 rows have NULL → absent key, matching legacy callers.
+  ;; NULL columns surface as an absent key on the returned map.
   (fn [row]
     (cond-> (row->qmap row)
       (:prior_outcome row) (assoc :prior-outcome (keyword (:prior_outcome row))))))
@@ -691,8 +691,8 @@
     (some? (:llm_error row))            (assoc :error (:llm_error row))
     (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
     (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
-    ;; Phase 1: surface plan slot fields when populated. NULL columns stay
-    ;; absent so legacy callers see the same shape as pre-Phase-1.
+    ;; surface plan slot fields when populated. NULL columns stay
+    ;; absent so the returned map keeps a tight shape.
     ;; Nippy round-trips keywords/sets/etc. losslessly — no shim needed.
     (some? (:plan_state row))           (assoc :plan-state (<-blob (:plan_state row)))
     (some? (:breadcrumb row))           (assoc :breadcrumb (:breadcrumb row))
