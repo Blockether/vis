@@ -85,6 +85,23 @@
 ;; This is the same pattern as Pedestal :error.
 (s/def :ext.symbol/on-error-fn fn?)
 
+;; Post-call autobind hook.
+;; (fn [{:keys [args result environment]}] → map|nil)
+;; Called only after a successful symbol call (after :after-fn).
+;; Return nil to opt out for this invocation.
+;;
+;; Non-nil return map shape:
+;;   {:bindings [{:kind keyword
+;;                :id any
+;;                :content any
+;;                :doc string?
+;;                :tag any?}
+;;               ...]}
+;;
+;; The runtime owns symbol naming and persistence. Hooks only describe
+;; WHAT should be bound (kind + id + content), not HOW symbols are named.
+(s/def :ext.symbol/autobind-fn fn?)
+
 ;; Source-code rewriter for SCI/edamame parse errors that mention this
 ;; symbol. (fn [{:code :error :sym :environment}] → string-or-nil).
 ;; The iteration loop scans the broken source for any registered
@@ -116,7 +133,8 @@
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists :ext.symbol/examples]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
-          :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn]))
+          :ext.symbol/on-error-fn :ext.symbol/autobind-fn
+          :ext.symbol/on-parse-error-fn]))
 
 ;; Value symbol: just name + value + doc. No hooks, no arglists.
 (s/def ::val-symbol-entry
@@ -287,8 +305,8 @@
 
 ;; Optional SCI namespace alias for this extension's symbols.
 ;; When set, a dedicated SCI namespace is created and aliased so
-;; the LLM can call `(fs/read-file "x")` in addition to `(read-file "x")`.
-;; e.g. {:ns 'vis.ext.fs :alias 'fs}
+;; the LLM can call `(vis/read-file "x")` in addition to `(read-file "x")`.
+;; e.g. {:ns 'vis.ext.tools :alias 'vis}
 (s/def :ext/ns-alias
   (s/and map?
     #(symbol? (:ns %))
@@ -350,7 +368,7 @@
 
    Required: :doc, :arglists
    Optional: :examples, :before-fn, :after-fn, :on-error-fn,
-             :on-parse-error-fn
+             :autobind-fn, :on-parse-error-fn
 
    Defaults:
      :examples — derived from :arglists when not provided
@@ -364,6 +382,8 @@
       :before-fn   (fn [env f args] {:args (transform args)})    ;; override args/fn/env, or {:result v} to short-circuit
       :after-fn    (fn [env f args result] {:result (transform result)})  ;; override result
       :on-error-fn (fn [err env f args] {:result fallback})    ;; recover, retry, or {:error e} to re-throw
+      :autobind-fn (fn [{:keys [args result environment]}]
+                     {:bindings [{:kind :file :id (first args) :content result}]})
       ;; Parse-time hook — fires when SCI/edamame rejects the LLM's
       ;; source AND this symbol's name appears in the broken code.
       ;; Returns rewritten source (string) or nil.
@@ -383,6 +403,7 @@
         (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
+        (:autobind-fn opts)       (assoc :ext.symbol/autobind-fn (:autobind-fn opts))
         (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))))))
 
 (defn value
@@ -429,7 +450,7 @@
 
    Accepts an extension map or any map with:
    - :ext/doc      or :heading
-   - :ext/ns-alias optional {:alias 'fs}
+   - :ext/ns-alias optional {:alias 'vis}
    - :ext/symbols  vector of ext/symbol + ext/value entries
    - :usage-note   optional extra note added to the heading
    - :notes        optional string or seq of extra lines appended verbatim
@@ -803,12 +824,12 @@
      :ext/classes        — optional, {fq-symbol → Class}, default {}
      :ext/imports        — optional, {short-symbol → fq-symbol}, default {}
      :ext/ns-alias       — required when :ext/symbols is non-empty,
-                           {:ns 'vis.ext.fs :alias 'fs}
+                           {:ns 'vis.ext.tools :alias 'vis}
                            Creates a dedicated SCI namespace with that alias.
                            Symbols are bound ONLY into this aliased namespace,
                            NEVER into the `sandbox` namespace directly. The
                            alias is auto-required in the sandbox so the LLM
-                           must call (fs/read-file ...) — bare
+                           must call (vis/read-file ...) — bare
                            (read-file ...) does not resolve.
 
    Example:

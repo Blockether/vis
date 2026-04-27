@@ -2,7 +2,7 @@
   "Tests for the editing extension's error-rescue helpers.
 
    The story: the LLM occasionally over-escapes regex patterns when
-   calling `(fs/grep-files ...)` — e.g. `\\|` to mean a literal pipe,
+   calling `(vis/grep-files ...)` — e.g. `\\|` to mean a literal pipe,
    `\\.` to mean a literal dot — and RE2/J rejects only the malformed
    ones with `\"invalid escape sequence: `\\X`\"`.
 
@@ -229,7 +229,7 @@
     {:ext/namespace 'com.blockether.vis.ext.common-operations.test-fake
      :ext/doc       "Fake editing extension for tests."
      :ext/group     "filesystem"
-     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+     :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
      ;; The spec demands :ext/prompt be a fn (env→string); the
      ;; non-fn shorthand is normalized by `ext/extension` itself, but
      ;; passing a fn directly avoids relying on that normalization in
@@ -298,11 +298,11 @@
 (defdescribe rescue-parse-error-test
 
   (it "doubles the lone backslash in front of a regex meta char"
-    (let [code  "(fs/grep-files \"foo\\|bar\")"
+    (let [code  "(vis/grep-files \"foo\\|bar\")"
           err   (edamame-error-msg code)
           _     (expect (some? err))
           fixed (rescue-parse-error {:code code :error err :environment {}})]
-      (expect (= "(fs/grep-files \"foo\\\\|bar\")" fixed))
+      (expect (= "(vis/grep-files \"foo\\\\|bar\")" fixed))
       ;; And critically: the rewrite parses cleanly.
       (expect (nil? (edamame-error-msg fixed)))))
 
@@ -365,19 +365,19 @@
       (expect (fn? hook))
       ;; Smoke-test the symbol-level hook directly: the broken `\|` case
       ;; gets repaired so the LLM's intent (literal pipe) is preserved.
-      (let [code "(fs/grep-files \"a\\|b\")"
+      (let [code "(vis/grep-files \"a\\|b\")"
             err  (edamame-error-msg code)
             out  (hook {:code code :error err
                         :sym 'grep-files :environment {}})]
-        (expect (= "(fs/grep-files \"a\\\\|b\")" out)))))
+        (expect (= "(vis/grep-files \"a\\\\|b\")" out)))))
 
   (it "the registered extension routes parse rescue through the symbol hook"
     (require '[com.blockether.vis.ext.common-operations.core :as core])
     (let [registered @(resolve 'core/extension)
-          code       "(fs/grep-files \"a\\|b\")"
+          code       "(vis/grep-files \"a\\|b\")"
           err        (edamame-error-msg code)]
       ;; No extension-level catch-all anymore.
       (expect (nil? (:ext/on-parse-error-fn registered)))
       ;; But try-rescue-parse-error finds the symbol hook by name.
-      (expect (= "(fs/grep-files \"a\\\\|b\")"
+      (expect (= "(vis/grep-files \"a\\\\|b\")"
                 (ext/try-rescue-parse-error [registered] code err {}))))))

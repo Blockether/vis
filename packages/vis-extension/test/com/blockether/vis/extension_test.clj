@@ -24,14 +24,14 @@
 
   (it "renders canonical prompt text from symbol docstrings + arglists"
     (expect
-      (= (str "Filesystem tools (use fs/ prefix; positional args only)\n"
-           "- (fs/read-file path) or (fs/read-file path offset limit) \u2014 Read a file preview.\n"
-           "- fs/max-retries \u2014 Maximum retry attempts.\n"
+      (= (str "Filesystem tools (use vis/ prefix; positional args only)\n"
+           "- (vis/read-file path) or (vis/read-file path offset limit) \u2014 Read a file preview.\n"
+           "- vis/max-retries \u2014 Maximum retry attempts.\n"
            "RULES:\n"
            "- Discover paths first.")
         (ext/render-prompt
           {:ext/doc "Filesystem tools"
-           :ext/ns-alias {:ns 'vis.ext.fs :alias 'fs}
+           :ext/ns-alias {:ns 'vis.ext.tools :alias 'vis}
            :ext/symbols [read-symbol retries-value]
            :usage-note "positional args only"
            :notes ["RULES:" "- Discover paths first."]})))))
@@ -50,12 +50,20 @@
       (expect (= 42 (:ext.symbol/val v)))
       (expect (= "Cap." (:ext.symbol/doc v)))))
 
+  (it "extension/symbol accepts :autobind-fn"
+    (let [autobind-fn (fn [_] {:bindings []})
+          symbol-entry (ext/symbol 'read-file (fn [& _] nil)
+                         {:doc "Read a file."
+                          :arglists '([path])
+                          :autobind-fn autobind-fn})]
+      (expect (= autobind-fn (:ext.symbol/autobind-fn symbol-entry)))))
+
   (it "extension/extension fills :ext/activation-fn + :ext/classes defaults"
     (let [e (ext/extension
               {:ext/namespace 'com.acme.ext.fs
                :ext/doc       "Filesystem tools"
                :ext/group     "filesystem"
-               :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+               :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                :ext/prompt    "placeholder"
                :ext/symbols   [read-symbol retries-value]})]
       (expect (fn? (:ext/activation-fn e)))
@@ -99,21 +107,21 @@
   (it "fires a SYMBOL-level hook only when the broken code mentions it"
     (let [grep (sym-with-parse-rescue 'grep-files
                  (fn [{:keys [code]}] (str/replace code "X" "Y")))
-          ext  (ext-with-syms 'ns-a 'fs [grep])]
-      ;; Code mentions `fs/grep-files` — hook fires.
-      (expect (= "(fs/grep-files \"Y\")"
-                (ext/try-rescue-parse-error [ext] "(fs/grep-files \"X\")" "err" {})))
+          ext  (ext-with-syms 'ns-a 'vis [grep])]
+      ;; Code mentions `vis/grep-files` — hook fires.
+      (expect (= "(vis/grep-files \"Y\")"
+                (ext/try-rescue-parse-error [ext] "(vis/grep-files \"X\")" "err" {})))
       ;; Code does NOT mention grep-files — hook is skipped.
       (expect (nil?
                 (ext/try-rescue-parse-error [ext] "(other-tool \"X\")" "err" {})))))
 
   (it "matches both bare and ns-aliased call forms"
     (let [grep (sym-with-parse-rescue 'grep-files (fn [_] "REPAIRED"))
-          ext  (ext-with-syms 'ns 'fs [grep])]
+          ext  (ext-with-syms 'ns 'vis [grep])]
       (expect (= "REPAIRED"
                 (ext/try-rescue-parse-error [ext] "(grep-files \"x\")" "err" {})))
       (expect (= "REPAIRED"
-                (ext/try-rescue-parse-error [ext] "(fs/grep-files \"x\")" "err" {})))))
+                (ext/try-rescue-parse-error [ext] "(vis/grep-files \"x\")" "err" {})))))
 
   (it "walks every matching symbol; first non-nil rewrite wins"
     (let [a (sym-with-parse-rescue 'foo (fn [_] nil))
@@ -134,24 +142,24 @@
 
   (it "falls back to the EXTENSION-level hook when no symbol matches"
     (let [grep (sym-with-parse-rescue 'grep-files (fn [_] "NEVER"))
-          ext  (ext-with-syms 'ns 'fs [grep] (fn [_] "FROM-EXT"))]
+          ext  (ext-with-syms 'ns 'vis [grep] (fn [_] "FROM-EXT"))]
       ;; No mention of grep-files — symbol hook skipped — ext hook fires.
       (expect (= "FROM-EXT"
                 (ext/try-rescue-parse-error [ext] "(unrelated)" "err" {})))))
 
   (it "prefers SYMBOL-level rescue over the extension-level fallback"
     (let [grep (sym-with-parse-rescue 'grep-files (fn [_] "FROM-SYM"))
-          ext  (ext-with-syms 'ns 'fs [grep] (fn [_] "FROM-EXT"))]
+          ext  (ext-with-syms 'ns 'vis [grep] (fn [_] "FROM-EXT"))]
       (expect (= "FROM-SYM"
-                (ext/try-rescue-parse-error [ext] "(fs/grep-files \"x\")" "err" {})))))
+                (ext/try-rescue-parse-error [ext] "(vis/grep-files \"x\")" "err" {})))))
 
   (it "passes :code, :error, :sym, :environment to symbol hooks"
     (let [seen (atom nil)
           grep (sym-with-parse-rescue 'grep-files
                  (fn [ctx] (reset! seen ctx) nil))
-          ext  (ext-with-syms 'ns 'fs [grep])]
-      (ext/try-rescue-parse-error [ext] "(fs/grep-files)" "the-err" {:env :sentinel})
-      (expect (= {:code        "(fs/grep-files)"
+          ext  (ext-with-syms 'ns 'vis [grep])]
+      (ext/try-rescue-parse-error [ext] "(vis/grep-files)" "the-err" {:env :sentinel})
+      (expect (= {:code        "(vis/grep-files)"
                   :error       "the-err"
                   :sym         'grep-files
                   :environment {:env :sentinel}}

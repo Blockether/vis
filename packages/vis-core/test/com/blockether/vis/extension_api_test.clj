@@ -14,7 +14,10 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.extension :as ext]
-   [lazytest.core :refer [defdescribe it expect]]))
+   [com.blockether.vis.loop.core :as loop-core]
+   [com.blockether.vis.loop.runtime.conversation.environment.core :as environment-core]
+   [lazytest.core :refer [defdescribe it expect]]
+   [sci.core :as sci]))
 
 (def ^:private read-symbol
   (ext/symbol 'read-file (fn [& _] nil)
@@ -32,7 +35,7 @@
                                             {:ext/namespace 'com.acme.ext.fs
                                              :ext/doc       "Filesystem tools"
                                              :ext/group     "filesystem"
-                                             :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+                                             :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                                              :ext/prompt    "RULES:\n- Discover paths first."
                                              :ext/symbols   [read-symbol retries-value]})])}
           ;; assemble-system-prompt requires :active-extensions — compute
@@ -40,10 +43,10 @@
           active-exts   (vis/active-extensions environment)
           system-prompt (vis/assemble-system-prompt environment
                           {:active-extensions active-exts})]
-      (expect (str/includes? system-prompt "[namespace: fs → vis.ext.fs]"))
-      (expect (str/includes? system-prompt "Filesystem tools (use fs/ prefix)"))
-      (expect (str/includes? system-prompt "- (fs/read-file path) or (fs/read-file path offset limit) — Read a file preview."))
-      (expect (str/includes? system-prompt "- fs/max-retries — Maximum retry attempts."))
+      (expect (str/includes? system-prompt "[namespace: vis → vis.ext.tools]"))
+      (expect (str/includes? system-prompt "Filesystem tools (use vis/ prefix)"))
+      (expect (str/includes? system-prompt "- (vis/read-file path) or (vis/read-file path offset limit) — Read a file preview."))
+      (expect (str/includes? system-prompt "- vis/max-retries — Maximum retry attempts."))
       (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))))
 
   (it "vis.core no longer re-exports the extension contract"
