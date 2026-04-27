@@ -84,21 +84,25 @@
       (into []
         (mapcat
           (fn [line]
-            (if (<= (count line) max-width)
+            (if (<= (p/display-width line) max-width)
               [line]
               (loop [remaining line
                      acc       []]
-                (if (<= (count remaining) max-width)
+                (if (<= (p/display-width remaining) max-width)
                   (conj acc remaining)
-                     ;; Find last space within max-width
-                  (let [chunk   (subs remaining 0 max-width)
+                     ;; `cut` is the CHAR index that bounds the longest
+                     ;; prefix fitting in `max-width` COLUMNS without
+                     ;; splitting a grapheme. Char-index, not column,
+                     ;; because we still need to slice `remaining`.
+                  (let [cut     (p/col-prefix-end remaining max-width)
+                        chunk   (subs remaining 0 cut)
                         last-sp (str/last-index-of chunk " ")]
                     (if (and last-sp (pos? last-sp))
                          ;; Break at word boundary
                       (recur (subs remaining (inc (int last-sp)))
                         (conj acc (subs remaining 0 (int last-sp))))
-                         ;; No space found — hard break
-                      (recur (subs remaining max-width)
+                         ;; No space found — hard break at column boundary
+                      (recur (subs remaining cut)
                         (conj acc chunk)))))))))
         input-lines))))
 
@@ -215,8 +219,10 @@
     (doseq [[i msg] (map-indexed vector visible)]
       (.setForegroundColor g t/box-fg)
       (.setBackgroundColor g t/box-bg)
-      (.putString g (inc t/pad-x) (+ text-top i)
-        (subs msg 0 (min (count msg) text-w))))))
+      ;; truncate-cols handles "shorter than width" (returns input verbatim)
+      ;; and column-aware truncation in one call. No min-clamp needed.
+      (p/put-str! g (inc t/pad-x) (+ text-top i)
+        (p/truncate-cols msg text-w)))))
 
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 
@@ -1505,7 +1511,12 @@
   "Parse markdown text into marker-prefixed lines for styled rendering.
 
    Supports:
-     - `# / ## / ###` ATX headings (1–3)
+     - `# / ## / ###` ATX headings (1–3) styled distinctly
+     - `#### / ##### / ######` (H4–H6) collapsed onto the H3
+       marker — terminal palettes can't visually distinguish six
+       heading levels, and rendering raw `####` into the answer
+       body is worse than re-using the deepest styled heading.
+       Same convention as `glow` / `mdcat` / `bat`.
      - `**bold**` line
      - `⁠```` fenced code blocks (any info string)
      - `- ` / `* ` / `+ ` bullet lists
@@ -1555,11 +1566,18 @@
                (let [[tbl tail] (consume-table lines max-w m)]
                  (recur (seq tail) false (into acc tbl)))
 
-               ;; Heading 3
-               (str/starts-with? line "### ")
-               (recur rst false
-                 (into acc (mapv #(str (:h3 m) %)
-                             (wrap-text (subs line 4) max-w))))
+               ;; Heading 3 — and H4/H5/H6 collapsed onto the H3
+               ;; marker. Terminal palettes top out at ~3 visually
+               ;; distinct heading styles; matching `glow`/`mdcat`,
+               ;; we render anything deeper than H3 as H3 rather
+               ;; than leaking raw `####` into the body. The regex
+               ;; allows 3-6 leading hashes and a single space.
+               (re-matches #"^#{3,6} .*" line)
+               (let [hash-count (count (re-find #"^#+" line))
+                     body       (subs line (inc hash-count))]
+                 (recur rst false
+                   (into acc (mapv #(str (:h3 m) %)
+                               (wrap-text body max-w)))))
 
                ;; Heading 2
                (str/starts-with? line "## ")
@@ -1739,46 +1757,43 @@
    surfaced via the input-box bottom status line, not here.
 
    `messages` is a vec of {:role :user|:assistant, :text str}.
-   `scroll` is a row offset into the virtual content, or nil for auto-bottom.
-   `opts` is currently unused (kept for back-compat)."
-  ([g messages box-top box-bottom cols scroll]
-   (draw-messages-area! g messages box-top box-bottom cols scroll nil))
-  ([^TextGraphics g messages box-top box-bottom cols scroll _opts]
-   (let [text-top   (+ box-top msg-margin-top)
-         inner-h    (max 0 (- box-bottom text-top msg-margin-bottom))
-         bubble-w   (max 1 (- cols msg-margin-left msg-margin-right))
-         heights    (mapv #(bubble-height % bubble-w) messages)
-         total-h    (reduce + 0 heights)
-         eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
-                      (min s (max 0 (- total-h inner-h))))
-         offsets    (reductions + 0 heights)]
+   `scroll` is a row offset into the virtual content, or nil for auto-bottom."
+  [^TextGraphics g messages box-top box-bottom cols scroll]
+  (let [text-top   (+ box-top msg-margin-top)
+        inner-h    (max 0 (- box-bottom text-top msg-margin-bottom))
+        bubble-w   (max 1 (- cols msg-margin-left msg-margin-right))
+        heights    (mapv #(bubble-height % bubble-w) messages)
+        total-h    (reduce + 0 heights)
+        eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
+                     (min s (max 0 (- total-h inner-h))))
+        offsets    (reductions + 0 heights)]
 
      ;; Background fill (no border, no title bar).
-     (p/set-colors! g t/text-fg t/terminal-bg)
-     (p/fill-rect! g 0 box-top cols (max 0 (- box-bottom box-top)))
+    (p/set-colors! g t/text-fg t/terminal-bg)
+    (p/fill-rect! g 0 box-top cols (max 0 (- box-bottom box-top)))
 
-     (let [clip (.newTextGraphics g
-                  (TerminalPosition. 0 text-top)
-                  (TerminalSize. cols inner-h))]
-       (doseq [idx (range (count messages))]
-         (let [msg-top (- (long (nth offsets idx)) eff-scroll)
-               msg-h   (nth heights idx)]
-           (when (and (> (+ msg-top msg-h) 0)
-                   (< msg-top inner-h))
-             (draw-chat-bubble! clip (nth messages idx) msg-top msg-margin-left bubble-w))))
+    (let [clip (.newTextGraphics g
+                 (TerminalPosition. 0 text-top)
+                 (TerminalSize. cols inner-h))]
+      (doseq [idx (range (count messages))]
+        (let [msg-top (- (long (nth offsets idx)) eff-scroll)
+              msg-h   (nth heights idx)]
+          (when (and (> (+ msg-top msg-h) 0)
+                  (< msg-top inner-h))
+            (draw-chat-bubble! clip (nth messages idx) msg-top msg-margin-left bubble-w))))
 
-       (when (> total-h inner-h)
-         (let [max-scroll (max 1 (- total-h inner-h))
-               track-h    inner-h
-               thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
-               thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
+      (when (> total-h inner-h)
+        (let [max-scroll (max 1 (- total-h inner-h))
+              track-h    inner-h
+              thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
+              thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
                ;; Place the scrollbar inside the right gutter so it
                ;; never overlaps message content.
-               bar-col    (- cols 2)
-               bar-top    text-top]
-           (doseq [r (range track-h)]
-             (p/set-colors! g t/border-fg t/terminal-bg)
-             (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
-           (doseq [r (range thumb-h)]
-             (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-             (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588))))))))
+              bar-col    (- cols 2)
+              bar-top    text-top]
+          (doseq [r (range track-h)]
+            (p/set-colors! g t/border-fg t/terminal-bg)
+            (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
+          (doseq [r (range thumb-h)]
+            (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+            (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588)))))))

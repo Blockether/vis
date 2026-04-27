@@ -1,7 +1,22 @@
 (ns com.blockether.vis.channels.tui.primitives
   "Low-level drawing primitives wrapping Lanterna TextGraphics.
-   All rendering code should use these instead of raw Java interop."
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols]
+   All rendering code should use these instead of raw Java interop.
+
+   Width-math contract
+   ===================
+
+   String width here means **display columns the terminal will paint**,
+   NOT Java `.length()` and NOT (count s). Those count UTF-16 code units;
+   a single emoji like \uD83D\uDCC1 is two code units but two columns,
+   a CJK glyph like \u65E5 is one code unit but two columns, a flag
+   sequence \uD83C\uDDF5\uD83C\uDDF1 is four code units, one grapheme,
+   two columns. Mix the two and your alignment drifts.
+
+   Use `display-width` and `truncate-cols` for any string that could
+   contain non-ASCII. Plain `count`/`subs` are still allowed for ASCII
+   internals (box-drawing strings we authored, single-glyph keystroke
+   labels, etc.) where the answer is identical and the call is a hot path."
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TextCharacter]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
 ;;; ── Color ──────────────────────────────────────────────────────────────────
@@ -140,52 +155,148 @@
     (put-str! g (inc left) row (horiz-line inner))
     g))
 
-;;; ── Flex layout (pure string functions) ─────────────────────────────────────
+;;; ── Display-width (terminal columns, not Java chars) ──────────────────────
+
+(defn display-width
+  "Number of terminal columns `s` will occupy when painted by lanterna.
+
+   Built on `TextCharacter/fromString`, the same routine
+   `AbstractTextGraphics.putString` uses internally after PR #625, so
+   what we measure matches what the renderer actually paints — grapheme
+   clusters honoured (BreakIterator-based), CJK + emoji counted as two
+   columns, ASCII as one.
+
+   Returns 0 for nil/empty input."
+  ^long [s]
+  (if (or (nil? s) (zero? (.length ^CharSequence s)))
+    0
+    (let [cells (TextCharacter/fromString ^String s)
+          n     (alength cells)]
+      (loop [i 0 width 0]
+        (if (>= i n)
+          width
+          (recur (inc i)
+            (+ width
+              (if (.isDoubleWidth ^TextCharacter (aget cells i)) 2 1))))))))
+
+(defn col-prefix-end
+  "Return the char-index `i` such that `(subs s 0 i)` is the longest
+   prefix of `s` whose `display-width` is ≤ `max-cols` AND that does NOT
+   split a grapheme cluster.
+
+   Use this when you need both the prefix and the position of the
+   un-consumed remainder (e.g. in word-wrapping). For just the prefix,
+   `truncate-cols` is friendlier.
+
+   Returns 0 for nil/empty or non-positive `max-cols`."
+  ^long [s ^long max-cols]
+  (cond
+    (or (nil? s) (<= max-cols 0)) 0
+    (<= (display-width s) max-cols) (long (.length ^CharSequence s))
+    :else
+    (let [cells (TextCharacter/fromString ^String s)
+          n     (alength cells)]
+      (loop [i 0 char-idx 0 used 0]
+        (if (>= i n)
+          char-idx
+          (let [tc        ^TextCharacter (aget cells i)
+                grapheme  ^String (.getCharacterString tc)
+                grapheme-len (long (.length grapheme))
+                w         (if (.isDoubleWidth tc) 2 1)]
+            (if (> (+ used w) max-cols)
+              char-idx
+              (recur (inc i) (+ char-idx grapheme-len) (+ used w)))))))))
+
+(defn truncate-cols
+  "Return the longest prefix of `s` that fits in at most `max-cols`
+   terminal columns, never splitting a grapheme cluster.
+
+   Edge cases honoured:
+   - nil or `max-cols <= 0` returns `\"\"`.
+   - If a double-width grapheme would straddle the cut, it is dropped
+     (NOT half-included), and one space is appended in its place so the
+     returned string's `display-width` is exactly `max-cols`. This keeps
+     `pad-right` / `pad-left` idempotent under repeated truncation."
+  ^String [s ^long max-cols]
+  (cond
+    (or (nil? s) (<= max-cols 0)) ""
+    (<= (display-width s) max-cols) s
+    :else
+    (let [cells (TextCharacter/fromString ^String s)
+          n     (alength cells)
+          sb    (StringBuilder.)]
+      (loop [i 0 used 0]
+        (if (>= i n)
+          (.toString sb)
+          (let [tc   ^TextCharacter (aget cells i)
+                w    (if (.isDoubleWidth tc) 2 1)
+                next (+ used w)]
+            (cond
+              (= next max-cols)
+              (do (.append sb (.getCharacterString tc))
+                (.toString sb))
+
+              (> next max-cols)
+              (do (when (< used max-cols) (.append sb \space))
+                (.toString sb))
+
+              :else
+              (do (.append sb (.getCharacterString tc))
+                (recur (inc i) next)))))))))
+
+;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 
 (defn pad-right
-  "Pad string to `w` chars, right-filling with spaces. Truncates if too long."
+  "Pad string to `w` terminal columns, right-filling with spaces.
+   Truncates (column-aware) if too wide."
   [s w]
-  (let [txt (or s "")
-        len (count txt)]
+  (let [txt  (or s "")
+        cols (display-width txt)
+        w    (long w)]
     (cond
-      (= len w) txt
-      (> len w) (subs txt 0 w)
-      :else     (str txt (apply str (repeat (- w len) \space))))))
+      (= cols w) txt
+      (> cols w) (truncate-cols txt w)
+      :else     (str txt (apply str (repeat (- w cols) \space))))))
 
 (defn pad-left
-  "Pad string to `w` chars, left-filling with spaces. Truncates if too long."
+  "Pad string to `w` terminal columns, left-filling with spaces.
+   Truncates (column-aware) if too wide."
   [s w]
-  (let [txt (or s "")
-        len (count txt)]
+  (let [txt  (or s "")
+        cols (display-width txt)
+        w    (long w)]
     (cond
-      (= len w) txt
-      (> len w) (subs txt 0 w)
-      :else     (str (apply str (repeat (- w len) \space)) txt))))
+      (= cols w) txt
+      (> cols w) (truncate-cols txt w)
+      :else     (str (apply str (repeat (- w cols) \space)) txt))))
 
 (defn center-text
-  "Center string within `w` chars, padding both sides."
+  "Center string within `w` terminal columns, padding both sides.
+   Truncates (column-aware) if too wide."
   [s w]
-  (let [txt (or s "")
-        len (count txt)]
+  (let [txt  (or s "")
+        cols (display-width txt)
+        w    (long w)]
     (cond
-      (>= len w) (subs txt 0 w)
-      :else      (let [left-pad  (quot (- w len) 2)
-                       right-pad (- w len left-pad)]
+      (>= cols w) (truncate-cols txt w)
+      :else      (let [left-pad  (quot (- w cols) 2)
+                       right-pad (- w cols left-pad)]
                    (str (apply str (repeat left-pad \space))
                      txt
                      (apply str (repeat right-pad \space)))))))
 
 (defn space-between
-  "Distribute items across `w` chars with equal gaps between them.
+  "Distribute items across `w` terminal columns with equal gaps.
    First item flush-left, last item flush-right, rest evenly spaced.
    Like CSS justify-content: space-between."
   [items w]
-  (let [n (count items)]
+  (let [n (count items)
+        w (long w)]
     (cond
       (zero? n) (apply str (repeat w \space))
       (= n 1)   (center-text (first items) w)
       :else
-      (let [total-text (reduce + (map count items))
+      (let [total-text (long (reduce + (map display-width items)))
             total-gaps (- w total-text)
             gap-count  (dec n)
             base-gap   (max 1 (quot total-gaps gap-count))
@@ -196,32 +307,34 @@
             (concat
                  ;; Distribute remainder across first gaps
               (map (fn [i]
-                     (apply str (repeat (+ base-gap (if (< i extra) 1 0)) \space)))
+                     (apply str (repeat (+ base-gap (if (< (long i) (long extra)) 1 0)) \space)))
                 (range gap-count))
                  ;; sentinel so interleave doesn't drop last item
               [""])))))))
 
 (defn space-around
-  "Distribute items across `w` chars with equal space around each item.
-   Like CSS justify-content: space-around."
+  "Distribute items across `w` terminal columns with equal space
+   around each item. Like CSS justify-content: space-around."
   [items w]
-  (let [n (count items)]
+  (let [n (count items)
+        w (long w)]
     (cond
       (zero? n) (apply str (repeat w \space))
       (= n 1)   (center-text (first items) w)
       :else
-      (let [total-text (reduce + (map count items))
+      (let [total-text (long (reduce + (map display-width items)))
             total-gaps (- w total-text)
             slots      (* 2 n) ;; each item gets space on both sides
             base       (max 0 (quot total-gaps slots))
             unit-gap   (apply str (repeat base \space))
             ;; Build: gap item gap | gap item gap | ...
             parts      (mapcat (fn [item] [unit-gap item unit-gap]) items)
-            result     (apply str parts)]
+            result     (apply str parts)
+            result-w   (display-width result)]
         (cond
-          (= (count result) w) result
-          (< (count result) w) (str result (apply str (repeat (- w (count result)) \space)))
-          :else                (subs result 0 w))))))
+          (= result-w w) result
+          (< result-w w) (str result (apply str (repeat (- w result-w) \space)))
+          :else          (truncate-cols result w))))))
 
 (defn v-center-offset
   "Compute vertical offset to center `content-h` rows within `container-h` rows."

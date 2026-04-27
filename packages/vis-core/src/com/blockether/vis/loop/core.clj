@@ -473,7 +473,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
 
      `:db` accepted forms:
        nil               \u2014 no DB (SCI-only execution)
-       :temp             \u2014 ephemeral SQLite DB
+       :memory           \u2014 ephemeral in-process SQLite DB
        path string       \u2014 persistent SQLite DB at path
        {:path p}         \u2014 persistent SQLite DB at path
        {:datasource ds}  \u2014 caller-owned DataSource (not closed on dispose)

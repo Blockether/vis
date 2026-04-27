@@ -104,12 +104,6 @@
             (catch Throwable _ nil)))))
      ([] nil))))
 
-;; Backwards-compat alias for older callers that asked for the SQLite
-;; handler by name. The handler is no longer SQLite-specific — it
-;; routes through the facade — but the old name keeps existing
-;; `(tel/add-handler! :db (handler:sqlite-db))` calls working.
-(def handler:sqlite-db handler:db)
-
 (defn setup!
   "Initialize telemere: console + persistence handler. Call once at
    startup."

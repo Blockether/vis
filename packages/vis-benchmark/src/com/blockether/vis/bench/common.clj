@@ -66,7 +66,7 @@
           queries (when conv-id (db/db-list-conversation-queries db-info conv-id))]
       (when (seq queries)
         (let [enriched (mapv (fn [q]
-                               (let [iters (vec (db/db-list-query-iterations db-info [:id (:id q)]))]
+                               (let [iters (vec (db/db-list-query-iterations db-info (:id q)))]
                                  (assoc q :conversation conv :iterations iters)))
                          queries)]
           (spit edn-path (pr-str enriched))
