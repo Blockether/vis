@@ -391,10 +391,10 @@
   [^TerminalScreen screen settings]
   (let [options [{:key :show-thinking
                   :label "Show thinking / reasoning"
-                  :description "LLM's chain-of-thought above each iteration's code blocks"}
+                  :description "LLM's chain-of-thought reasoning above each iteration"}
                  {:key :show-iterations
-                  :label "Show iteration trace"
-                  :description "Per-iteration history of code, results, and stdout"}
+                  :label "Show full execution trace"
+                  :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
                  {:key :show-timestamps
                   :label "Show per-message timestamps"
                   :description "Date+time next to every 'You' / 'Vis' label"}

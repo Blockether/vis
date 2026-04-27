@@ -555,11 +555,26 @@
 
       ;; Text content — per-line styling via invisible marker prefixes
       ;;
-      ;; After the answer-hdr marker, all remaining lines get answer-bg
-      ;; as their base fill — this includes plain text and markdown lines.
+      ;; The \"answer zone\" starts at the first line carrying ANY
+      ;; structural answer-* marker. Every line AFTER that index
+      ;; renders on `answer-bg`. We used to anchor strictly on
+      ;; `answer-hdr-marker` (the right-aligned \"FINAL ANSWER\"
+      ;; superscript), but that marker became opt-in via
+      ;; `:show-final-answer-header` — when off, the answer body lost
+      ;; its blue zone and rendered on white terminal bg. Now we
+      ;; accept any of the three structural markers
+      ;; `format-answer-with-thinking*` always emits:
+      ;;   answer-sep-marker  bold rule between trace and answer
+      ;;   answer-hdr-marker  optional \"FINAL ANSWER\" superscript
+      ;;   answer-pad-marker  blank padding above/below the answer
+      ;; Whichever appears first wins.
       (let [iter-bg      t/iter-header-bg
-            answer-start (or (some (fn [[i l]] (when (str/starts-with? l answer-hdr-marker) i))
-                               (map-indexed vector lines))
+            answer-marker? (fn [^String l]
+                             (or (str/starts-with? l answer-sep-marker)
+                               (str/starts-with? l answer-hdr-marker)
+                               (str/starts-with? l answer-pad-marker)))
+            answer-start (or (some (fn [[i l]] (when (answer-marker? l) i))
+                              (map-indexed vector lines))
                            (count lines))]
         (doseq [[i line] (map-indexed vector lines)]
           (p/clear-styles! g)
@@ -737,16 +752,26 @@
                 (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
-              ;; ── Markdown table (answer) ── grid on code-block bg
+              ;; ── Markdown table (answer) ── grid blends into surrounding zone
               ;; Chrome (│┌─┐├┼┤└┴┘─) stays in muted `code-border-fg`,
-              ;; cell text in dark `code-block-fg`, headers bold.
+              ;; cell text in dark text color, headers bold.
+              ;;
+              ;; Background follows context: if the table is INSIDE
+              ;; the answer zone (after `answer-hdr-marker`) it sits
+              ;; on `answer-bg` so it visually belongs to the answer
+              ;; block; otherwise on `code-block-bg` (e.g. a plain
+              ;; assistant message without an answer zone). The user
+              ;; complaint that triggered this: tables in the answer
+              ;; zone used to break the answer's blue band with a
+              ;; different gray, looking like an alien element.
               (or (str/starts-with? line md-table-head-marker)
                 (str/starts-with? line md-table-sep-marker)
                 (str/starts-with? line md-table-row-marker))
               (let [stripped (subs line 1)
                     head?    (str/starts-with? line md-table-head-marker)
                     border?  (str/starts-with? line md-table-sep-marker)
-                    tbg      t/code-block-bg]
+                    tbg      (if in-answer? t/answer-bg t/code-block-bg)
+                    tfg      (if in-answer? t/answer-fg  t/code-block-fg)]
                 (p/clear-styles! g)
                 (p/set-colors! g t/code-border-fg tbg)
                 (p/fill-rect! g fbx y iw 1)
@@ -755,7 +780,7 @@
                   (p/put-str! g x y stripped)
                   ;; Header / body data row — dual-color split.
                   (paint-table-data-line! g x y stripped
-                    t/code-block-fg t/code-border-fg tbg
+                    tfg t/code-border-fg tbg
                     (when head? [p/BOLD]))))
 
               ;; ── Thinking-mode markdown headings ── dim italic on iter bg
@@ -807,19 +832,22 @@
                 (p/fill-rect! g fbx y iw 1)
                 (p/put-str! g x y (subs line 1)))
 
-              ;; ── Markdown table (thinking) ── grid on code-block bg, italic body
+              ;; ── Markdown table (thinking) ── grid blends into thinking zone
               ;; Same dual-color treatment as the answer-mode table,
               ;; with italic on text segments to match the rest of
               ;; the thinking zone (every thinking-mode marker uses
               ;; italic; staying consistent keeps the zone readable
-              ;; as one cohesive dim region).
+              ;; as one cohesive dim region). Background is
+              ;; `iter-header-bg` so the table merges into the
+              ;; surrounding thinking block instead of breaking it
+              ;; with a different shade.
               (or (str/starts-with? line th-md-table-head-marker)
                 (str/starts-with? line th-md-table-sep-marker)
                 (str/starts-with? line th-md-table-row-marker))
               (let [stripped (subs line 1)
                     head?    (str/starts-with? line th-md-table-head-marker)
                     border?  (str/starts-with? line th-md-table-sep-marker)
-                    tbg      t/code-block-bg]
+                    tbg      t/iter-header-bg]
                 (p/clear-styles! g)
                 (p/set-colors! g t/code-border-fg tbg)
                 (p/fill-rect! g fbx y iw 1)
@@ -998,7 +1026,19 @@
                         ;; behavior so the reasoning never disappears.
                         (mapv #(str thinking-marker %)
                           (wrap-text (str/trim thinking) fill-w)))]
-            (vec (concat [(str thinking-marker "")] lines [(str thinking-marker "")]))))
+            ;; Leading blank: only when an iteration header is rendered
+            ;; above us. When the header is off, thinking is the FIRST
+            ;; content under the bubble's blank breathing row already
+            ;; — a second leading blank would compound to a double-gap
+            ;; under the \"Vis\" label.
+            ;; Trailing blank stays unconditional because thinking is
+            ;; always followed by either code, error, or the answer
+            ;; separator, and the gap reads as the natural section
+            ;; break between thinking and what comes next.
+            (vec (concat
+                   (when show-header? [(str thinking-marker "")])
+                   lines
+                   [(str thinking-marker "")]))))
 
         ;; Iteration-level error block. Header + wrapper message + raw
         ;; provider response (when the spec layer captured one). Same

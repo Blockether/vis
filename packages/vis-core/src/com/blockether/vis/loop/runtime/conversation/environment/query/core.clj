@@ -685,7 +685,9 @@
                                   :previous-next-model next-model
                                   :previous-next-reasoning next-reasoning
                                   :pending-loop-nudges next-pending-loop-nudges
-                                  :gate-retries (inc gate-retries)})))
+                                  :gate-retries (inc gate-retries)
+                                  :churn-nudged? next-churn-nudged?
+                                  :consecutive-error-nudged? next-consecutive-error-nudged?})))
 
                       final-result
                       (do (iterate/log-stage! :final iteration
@@ -719,7 +721,9 @@
                                     :pending-loop-nudges next-pending-loop-nudges
                                     :plan-validation-retries (if plan-validation
                                                                (inc plan-validation-retries)
-                                                               plan-validation-retries)})))
+                                                               plan-validation-retries)
+                                    :churn-nudged? next-churn-nudged?
+                                    :consecutive-error-nudged? next-consecutive-error-nudged?})))
 
                         (do (iterate/log-stage! :iteration-end iteration
                               {:blocks (count expressions) :errors (count (filter :error expressions))
@@ -744,7 +748,9 @@
                                       :trace (conj trace trace-entry) :consecutive-errors next-errors
                                       :previous-expressions expressions :previous-iteration iteration
                                       :previous-next-model next-model
-                                      :previous-next-reasoning next-reasoning}))))))))))))))))
+                                      :previous-next-reasoning next-reasoning
+                                      :churn-nudged? next-churn-nudged?
+                                      :consecutive-error-nudged? next-consecutive-error-nudged?}))))))))))))))))
 
 (defn- ->prior-outcome
   "Map a query-loop result to one of the four canonical outcomes
