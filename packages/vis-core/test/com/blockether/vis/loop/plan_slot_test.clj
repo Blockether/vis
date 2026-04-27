@@ -240,7 +240,7 @@
 (defdescribe projection-test
   (it "renders <plan> when plan-state is provided"
     (let [out (iterate/build-iteration-context {}
-                {:iteration 1 :current-max-iterations 10
+                {:iteration 1
                  :active-extensions []
                  :plan-state {:goal "ship phase 1"
                               :items [{:id 1 :content "spec" :status :done}
@@ -252,7 +252,7 @@
 
   (it "renders <breadcrumbs> with iN prefix"
     (let [out (iterate/build-iteration-context {}
-                {:iteration 2 :current-max-iterations 10
+                {:iteration 2
                  :active-extensions []
                  :breadcrumbs [{:position 0 :breadcrumb "decomposed"}
                                {:position 1 :breadcrumb "[1] done"}]})]
@@ -263,7 +263,7 @@
   (it "renders <recent_thought> capped at 4000c"
     (let [long-thought (apply str (repeat 5000 "x"))
           out (iterate/build-iteration-context {}
-                {:iteration 1 :current-max-iterations 10
+                {:iteration 1
                  :active-extensions []
                  :recent-thought long-thought})]
       (expect (re-find #"<recent_thought>" out))
@@ -272,7 +272,7 @@
 
   (it "renders <system_state> with QUERY and PRIOR_TURN digest"
     (let [out (iterate/build-iteration-context {}
-                {:iteration 0 :current-max-iterations 10
+                {:iteration 0
                  :active-extensions []
                  :system-vars {:QUERY "do the thing"}
                  :prior-turn  {:goal "previous goal" :outcome :complete
@@ -284,7 +284,7 @@
 
   (it "renders <recent> with addressable iN.K ids"
     (let [out (iterate/build-iteration-context {}
-                {:iteration 4 :current-max-iterations 10
+                {:iteration 4
                  :active-extensions []
                  :expressions-by-iteration [[3 [{:code "(+ 1 2)" :result 3 :execution-time-ms 1}
                                                 {:code "(* 2 2)" :result 4 :execution-time-ms 1}]]]})]
@@ -292,20 +292,23 @@
       (expect (re-find #"i3\.1" out))
       (expect (re-find #"i3\.2" out))))
 
-  (it "renders <system_state>.ITERATION when iteration + budget are supplied"
-    ;; The per-iteration pointer lives in
-    ;; <system_state>.ITERATION; verify the new location.
+  (it "never renders an ITERATION pointer line"
+    ;; The per-iteration pointer used to live in
+    ;; <system_state>.ITERATION as `{:current N :budget M :remaining K}`.
+    ;; The budget concept was removed (see
+    ;; rlm-spec/SAFETY_ITERATION_CAP) so the line is gone entirely.
     (let [out (iterate/build-iteration-context {}
-                {:iteration 0 :current-max-iterations 10
-                 :active-extensions []})]
+                {:iteration 0
+                 :active-extensions []
+                 :system-vars {:QUERY "do the thing"}})]
       (expect (re-find #"<system_state>" out))
-      (expect (re-find #"ITERATION  \{:current 1 :budget 10 :remaining 9\}" out))
-      (expect (not (re-find #"<plan>" out)))
-      (expect (not (re-find #"<breadcrumbs>" out)))))
+      (expect (not (re-find #"ITERATION" out)))
+      (expect (not (re-find #":budget" out)))
+      (expect (not (re-find #":remaining" out)))))
 
   (it "renders loop-nudges as [system_nudge] lines"
     (let [out (iterate/build-iteration-context {}
-                {:iteration 0 :current-max-iterations 10
+                {:iteration 0
                  :active-extensions []
                  :loop-nudges ["Cannot finalize: plan items [3] are :pending."
                                "[system_nudge] Already prefixed nudge stays as-is."]})]

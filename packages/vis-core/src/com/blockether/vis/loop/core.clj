@@ -177,12 +177,8 @@ EVERY ITERATION:
     If you must stop without finishing, set :answer AND :abandon-reason.
       e.g. :abandon-reason \"need access to GitHub API token to verify [4]\"
     The loop rejects :answer with open items unless :abandon-reason is set.
-
-  BUDGET ESCAPE.
-    Budget short and ≥1 item :in-progress with visible progress?
-      → prefer (request-more-iterations N) in :code.
-    Items blocked or info missing? → emit :answer + :abandon-reason.
-    Don't run out of budget silently.
+    The loop runs until you emit :answer -- there is NO iteration
+    budget you need to track. Stop when the work is done.
 
 DIRECT ANSWER (greetings, plain prose): empty :code `[]`, no :plan needed,
   emit :answer immediately.

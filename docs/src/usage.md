@@ -60,7 +60,6 @@ prints the answer, exits.
 ```bash
 vis run "What is 2+2?"
 vis run --model gpt-4o "Explain the auth flow"
-vis run --max-iterations 10 "Refactor utils.clj"
 vis run --json "Summarize foo.clj"            # machine-readable output
 vis run --edn  "Summarize foo.clj"            # EDN output
 vis run --trace "Refactor utils.clj"          # include the iteration trace in output

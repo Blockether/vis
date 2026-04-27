@@ -13,8 +13,7 @@
    `com.blockether.vis.extension` directly."
   (:require
    [com.blockether.vis.loop.core :as loop-core]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
-   [com.blockether.vis.persistance.spec :as rlm-spec]))
+   [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]))
 
 ;; =============================================================================
 ;; Constants
@@ -26,11 +25,6 @@
 ;; `query!` / `dispose-environment!` from this namespace, or
 ;; `bin/vis <cmd>` from the shell.
 ;; =============================================================================
-
-(def MAX_ITERATIONS
-  "Default iteration budget per query (4). System nudges tell the LLM
-   how to extend on demand when needed. No cap."
-  rlm-spec/MAX_ITERATIONS)
 
 ;; =============================================================================
 ;; Environment lifecycle

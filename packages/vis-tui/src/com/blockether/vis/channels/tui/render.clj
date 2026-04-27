@@ -200,12 +200,18 @@
            (.setBackgroundColor g t/terminal-bg)
            (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
            (.setCharacter g (int (dec cols)) (int row) Symbols/SINGLE_LINE_VERTICAL)))
-       ;; Sideless variant: top + bottom rules span the FULL width
-       ;; (cols cells, not inner-w), no corner glyphs, no side rails.
-       ;; Top hint embeds in the full-width bar.
-       (let [full-bar (repeat-str Symbols/SINGLE_LINE_HORIZONTAL cols)]
-         (.putString g 0 (int box-top) (embed-in-bar full-bar top-hint))
-         (.putString g 0 (int box-bottom) full-bar))))))
+       ;; Sideless variant: top + bottom rules with horizontal padding
+       ;; on each end so the rule doesn't kiss the screen edges.
+       ;; `pad` cols of empty space on each side; bar spans the inner
+       ;; (cols - 2*pad) columns. No corners, no side rails. Top hint
+       ;; embeds inside the padded bar.
+       (let [pad        5    ;; matches msg-margin-left + 1 on each end so the
+             ;; rule terminates one column before the scrollbar / message edge,
+             ;; visually framing the input box without crowding the bubble column.
+             rule-w     (max 0 (- cols (* 2 pad)))
+             padded-bar (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
+         (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint))
+         (.putString g (int pad) (int box-bottom) padded-bar))))))
 
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
@@ -2045,7 +2051,10 @@
 (def ^:private msg-margin-top    1)  ;; rows above first message
 (def ^:private msg-margin-bottom 1)  ;; rows below last message
 (def ^:private msg-margin-left   2)  ;; cols left gutter (matches input box gutter)
-(def ^:private msg-margin-right  2)  ;; cols right gutter (room for scrollbar + air)
+(def ^:private msg-margin-right  3)  ;; cols right gutter — 1 col padding +
+;; scrollbar (at cols-2) + 1 col edge.
+;; The +1 padding keeps message content from
+;; visually butting against the scrollbar.
 
 (defn draw-messages-area!
   "Draw structured chat messages as left-aligned blocks inside a clean,

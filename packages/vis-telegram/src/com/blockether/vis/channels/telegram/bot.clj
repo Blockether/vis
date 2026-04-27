@@ -56,8 +56,7 @@
             (tg/send-chat-action! token chat-id "typing")
             (let [{:keys [id]} (conversations/for-telegram-chat! chat-id)
                   result       (conversations/send! id text
-                                 {:max-context-tokens 2200
-                                  :max-iterations 12})
+                                 {:max-context-tokens 2200})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
                   env          (conversations/env-for id)
                   model-name   (:name (query-core/resolve-effective-model (:router env)))]

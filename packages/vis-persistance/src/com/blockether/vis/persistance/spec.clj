@@ -10,12 +10,18 @@
   (:import
    [java.util Base64]))
 
-(def MAX_ITERATIONS
-  "Default iteration budget per query. Deliberately tight (4). Most simple
-   queries finalize in 1-2 iterations. When the budget is nearly exhausted
-   a system nudge tells the LLM how to extend it on demand. There is no
-   cap on how high the budget can grow."
-  4)
+(def SAFETY_ITERATION_CAP
+  "Hard runaway-protection cap. The iteration loop terminates when
+   it has run this many iterations without seeing a `:final` answer.
+   This is NOT a budget the model can think about, request to extend,
+   or see -- it is a safety belt for runaway loops only. The model
+   decides when to stop by emitting `:answer`; nothing else does.
+
+   Set high enough that legitimate work never trips it (100). If a
+   real conversation hits this cap, that's a bug -- the model is
+   stuck and the loop should be cancelled by the user, not silently
+   extended."
+  100)
 
 (def DEFAULT_EVAL_TIMEOUT_MS
   "Default timeout in milliseconds for code evaluation in SCI sandbox."

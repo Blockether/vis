@@ -43,8 +43,7 @@
 (defn- env [store conversation-id]
   {:db-info store
    :conversation-id conversation-id
-   :current-iteration-atom (atom 2)
-   :max-iterations-atom (atom 10)})
+   :current-iteration-atom (atom 2)})
 
 ;; The impl fns are private — reach via the var registry so tests
 ;; don't depend on a public re-export.
@@ -67,7 +66,7 @@
       (expect (= :running (:status turn)))
       (expect (map? (:iteration turn)))
       (expect (= 3 (:current (:iteration turn))))
-      (expect (= 10 (:budget (:iteration turn))))
+      (expect (= [:current] (vec (keys (:iteration turn)))))
       (expect (map? (:cost turn)))
       (expect (vector? (:breadcrumbs turn)))
       (expect (vector? (:attempts turn)))

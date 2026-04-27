@@ -209,14 +209,13 @@
           prior-turn       (iterate/load-prior-turn-digest
                              db-info (:conversation-id env) query-id)
           iteration-context-block (iterate/build-iteration-context env
-                                    {:iteration              0
-                                     :current-max-iterations rlm-spec/MAX_ITERATIONS
-                                     :plan-state             sticky-plan
-                                     :breadcrumbs            breadcrumb-chain
-                                     :system-vars            {:QUERY query-text}
-                                     :prior-turn             prior-turn
-                                     :call-counts-atom       (atom {})
-                                     :active-extensions      active-exts})
+                                    {:iteration         0
+                                     :plan-state        sticky-plan
+                                     :breadcrumbs       breadcrumb-chain
+                                     :system-vars       {:QUERY query-text}
+                                     :prior-turn        prior-turn
+                                     :call-counts-atom  (atom {})
+                                     :active-extensions active-exts})
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
           iteration-spec (if has-reasoning?
                            rlm-spec/ITERATION_SPEC_REASONING

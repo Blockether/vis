@@ -11,14 +11,12 @@ prompt to steer the LLM's behavior. They come from two sources:
 
 | Nudge | When it fires |
 |-------|--------------|
-| Budget warning | ≤2 iterations remaining in the budget |
 | Var-index overflow | >150 user-defined vars in the sandbox |
 | Repetition warning | Same code/result pair seen ≥3 times |
 
-When the budget warning fires, the intended agent behavior is explicit:
-if more work is genuinely needed, call `(request-more-iterations n)`
-from `:code` immediately. Do not ignore the nudge and drift into a
-weak forced finalize.
+There is no iteration-budget nudge; the loop runs until the model
+emits `:answer`, with a runtime safety cap that the model never sees.
+See [Iteration Flow — Loop termination](../architecture/iteration-flow.md#loop-termination).
 
 ## Extension nudges
 
@@ -34,7 +32,6 @@ current environment, `:ext/nudge-fn` is not called at all.
 ```clojure
 {:environment            env    ;; the full environment map (see Environment Map)
  :iteration              int    ;; 0-indexed current iteration number
- :current-max-iterations int    ;; live budget cap (includes runtime extensions)
  :previous-expressions   [map]  ;; previous iteration's expressions:
                                 ;;   [{:code str :result any :error str?
                                 ;;     :stdout str :stderr str

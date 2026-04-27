@@ -29,7 +29,7 @@ Call: `(self/turn)`. Snapshot of the current turn as a single map:
  :attempts    [{:iteration-id :iteration :code :result :error
                 :stdout :stderr :duration-ms} ...]
  :errors      [...]                                    ;; subset of :attempts where :error is set
- :iteration   {:current N :budget M :remaining K}     ;; mirrors <system_state>.ITERATION
+ :iteration   {:current N}                            ;; current iteration (1-indexed)
  :cost        {:input-tokens :output-tokens :reasoning-tokens
                :cached-tokens :total-cost :model}
  :redundancy  {:duplicate-count N :total-count N

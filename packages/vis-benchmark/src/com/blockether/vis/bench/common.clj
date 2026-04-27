@@ -79,7 +79,7 @@
     (fs/delete-tree db-path)))
 
 (def ^:private DEFAULT_QUERY_ENV_OPTS
-  {:max-iterations 20 :debug? true})
+  {:debug? true})
 
 (defn run-vis-task!
   "High-level wrapper that runs a single task through query/query! with full

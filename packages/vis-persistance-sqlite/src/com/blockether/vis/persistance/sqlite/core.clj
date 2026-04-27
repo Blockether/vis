@@ -56,7 +56,7 @@
   [status]
   (case status
     (:success :done)                       "done"
-    (:error :max-iterations
+    (:error :safety-cap-reached
             :error-budget-exhausted)              "error"
     (:cancelled :interrupted)              "interrupted"
     :running                               "running"

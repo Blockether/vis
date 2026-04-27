@@ -63,15 +63,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- iteration-pointer
-  "Snapshot of the live iteration counter. Reads the env atoms set by
-   the iteration-loop's prepared context."
+  "Snapshot of the live iteration counter. Reads the env atom set by
+   the iteration-loop's prepared context. The loop runs until the
+   model emits `:answer` -- there is no model-visible budget, so the
+   pointer carries only `:current`."
   [env]
-  (let [current-zero-based (or (safe-deref (:current-iteration-atom env)) 0)
-        current (inc (long current-zero-based))
-        budget  (or (safe-deref (:max-iterations-atom env)) 0)]
-    {:current   current
-     :budget    budget
-     :remaining (max 0 (- (long budget) current))}))
+  (let [current-zero-based (or (safe-deref (:current-iteration-atom env)) 0)]
+    {:current (inc (long current-zero-based))}))
 
 (defn- attempts-from-iterations
   "Walk `iterations` (in DB order) and collect every executed

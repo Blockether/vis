@@ -615,41 +615,21 @@
       (truncate thinking RECENT_THOUGHT_MAX_CHARS)
       "\n</recent_thought>")))
 
-(defn- format-iteration-info
-  "Render the per-loop ITERATION pointer as a single inline map. Lives
-   inside <system_state> next to QUERY/ANSWER/REASONING because it is
-   the same flavor of data: 'what the loop knows about your current
-   pointer.' Replaces the standalone `[iteration N/M]` header line.
-
-   Returns nil when iteration data is missing (test fixtures with no
-   loop bookkeeping); the parent block renders without ITERATION in
-   that case."
-  [{:keys [iteration current-max-iterations]}]
-  (when (and (some? iteration) (some? current-max-iterations))
-    (let [current   (long iteration)
-          one-based (inc current)
-          budget    (long current-max-iterations)
-          remaining (max 0 (- budget one-based))]
-      (str "  ITERATION  {:current " one-based
-        " :budget " budget
-        " :remaining " remaining "}"))))
-
 (defn- format-system-state-block
-  "Render the always-present <system_state> block: loop-managed pointers
-   in one place — SYSTEM vars (QUERY / ANSWER / REASONING) plus the
-   current ITERATION pointer plus the bounded PRIOR_TURN digest.
+  "Render the always-present <system_state> block: loop-managed
+   pointers in one place — SYSTEM vars (QUERY / ANSWER / REASONING)
+   plus the bounded PRIOR_TURN digest.
 
    SYSTEM-var names follow `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no
-   earmuffs). PRIOR_TURN and ITERATION are digest / pointer
-   pseudo-names — NOT real sandbox bindings, just rendered keys grouped
-   here for the model's convenience.
+   earmuffs). PRIOR_TURN is a digest pseudo-name — NOT a real sandbox
+   binding, just a rendered key grouped here for the model's
+   convenience.
 
    Bounded by construction:
    - SYSTEM-var values truncated to 500 chars each.
    - PRIOR_TURN ships only `:goal :counts :outcome :abandon-reason`,
-     never the full plan body or transcript.
-   - ITERATION is a 3-key map; size is rounding error."
-  [{:keys [system-vars prior-turn iteration current-max-iterations]}]
+     never the full plan body or transcript."
+  [{:keys [system-vars prior-turn]}]
   (let [vars-lines (->> [["QUERY"     (:QUERY system-vars)]
                          ["ANSWER"    (:ANSWER system-vars)]
                          ["REASONING" (:REASONING system-vars)]]
@@ -659,9 +639,6 @@
                                  (safe-pr-str v {:max-chars 500
                                                  :print-length 32
                                                  :print-level 5}))))))
-        iteration-line (format-iteration-info
-                         {:iteration              iteration
-                          :current-max-iterations current-max-iterations})
         prior-lines (when (seq prior-turn)
                       [(str "  PRIOR_TURN {:goal "
                          (safe-pr-str (or (:goal prior-turn) "")
@@ -677,9 +654,7 @@
                              ;; map; bounded by construction. pr-str fine.
                              (pr-str (:counts prior-turn))))
                          "}")])
-        all-lines (concat vars-lines
-                    (when iteration-line [iteration-line])
-                    prior-lines)]
+        all-lines (concat vars-lines prior-lines)]
     (when (seq all-lines)
       (str "<system_state>\n" (str/join "\n" all-lines) "\n</system_state>"))))
 
@@ -943,19 +918,9 @@
 ;; Nudges — per-iteration system hints injected into the iteration context
 ;; ---------------------------------------------------------------------------
 
-(def ^:private BUDGET_WARNING_WINDOW 2)
 ;; A single repeat is enough signal: with <attempts> in the projection,
 ;; a single repeat is enough signal that the model should change strategy.
 (def ^:private REPETITION_THRESHOLD 1)
-
-(defn- budget-warning
-  [{:keys [iteration current-max-iterations]}]
-  (let [iteration (long (or iteration 0))
-        max-iters (long (or current-max-iterations 0))
-        remaining (- max-iters (inc iteration))]
-    (when (<= remaining BUDGET_WARNING_WINDOW)
-      (str "[system_nudge] " (max 0 remaining) " iteration(s) left. "
-        "Either finalize with :answer NOW, or call (request-more-iterations N) in :code alongside your other operations to extend."))))
 
 (defn- repetition-warning
   [call-counts-atom previous-expressions]
@@ -1025,9 +990,9 @@
         every iteration. This fn does NOT re-evaluate `:ext/activation-fn`.
 
    Optional:
-     `:iteration`, `:current-max-iterations`, `:plan-state`,
-     `:breadcrumbs`, `:expressions-by-iteration`, `:recent-thought`,
-     `:system-vars`, `:prior-turn`, `:call-counts-atom`,
+     `:iteration`, `:plan-state`, `:breadcrumbs`,
+     `:expressions-by-iteration`, `:recent-thought`, `:system-vars`,
+     `:prior-turn`, `:call-counts-atom`,
      `:loop-nudges` (vec of strings; gate-violation / plan-validation
         directives that the loop wants to surface to the model on the
         NEXT iteration —). Each entry is
@@ -1035,7 +1000,7 @@
         missing.
 
    Returns the joined block or nil when every component is blank."
-  [environment {:keys [iteration current-max-iterations
+  [environment {:keys [iteration
                        plan-state breadcrumbs attempts
                        expressions-by-iteration recent-thought
                        system-vars prior-turn
@@ -1054,20 +1019,17 @@
         last-iteration-expressions (some-> expressions-by-iteration last second)
         recent-thought-block (format-recent-thought-block recent-thought)
         system-state-block (format-system-state-block
-                             {:system-vars            system-vars
-                              :prior-turn             prior-turn
-                              :iteration              iteration
-                              :current-max-iterations current-max-iterations})
+                             {:system-vars system-vars
+                              :prior-turn  prior-turn})
         var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
-        nudge-ctx {:environment            environment
-                   :iteration              iteration
-                   :current-max-iterations current-max-iterations
-                   :previous-expressions   last-iteration-expressions
-                   :plan-state             plan-state
-                   :user-var-count         0}
+        nudge-ctx {:environment          environment
+                   :iteration            iteration
+                   :previous-expressions last-iteration-expressions
+                   :plan-state           plan-state
+                   :user-var-count       0}
         ;; Loop nudges (gate-violation, plan-validation, etc.) are
         ;; injected by the iteration loop based on the PRIOR iteration's
         ;; outcome; rendered as `[system_nudge]` lines so the model
@@ -1079,11 +1041,7 @@
                                        n
                                        (str "[system_nudge] " n))))))
         built-in-nudges (keep identity
-                          [(when (and iteration current-max-iterations)
-                             (budget-warning
-                               {:iteration              iteration
-                                :current-max-iterations current-max-iterations}))
-                           (repetition-warning call-counts-atom last-iteration-expressions)])
+                          [(repetition-warning call-counts-atom last-iteration-expressions)])
         ext-nudges (collect-extension-nudges active-extensions nudge-ctx)
         all-nudges (concat loop-nudge-lines built-in-nudges ext-nudges)
         nudges-block (when (seq all-nudges)
