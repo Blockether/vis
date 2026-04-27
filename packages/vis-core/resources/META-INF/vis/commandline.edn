@@ -1,4 +1,0 @@
-;; Commandline plug-ins exported by vis-core. Loading the namespace
-;; self-registers every built-in (`run`, `auth`, `doctor`,
-;; `conversations`, `extensions`) into the global commandline registry.
-[com.blockether.vis.channels.cli]

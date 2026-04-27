@@ -1,5 +1,5 @@
 (ns com.blockether.vis.channel
-  "Channel registry — dynamic, plug-in CLI front-ends.
+  "Channel registry — dynamic, extension-supplied CLI front-ends.
 
    A *channel* is a vis adapter (TUI, Telegram bot, …) discovered and
    dispatched at runtime. The CLI core in vis-core does
@@ -11,9 +11,9 @@
    Two ways to register:
 
    1. **Global registry** — `(register-global! spec)` at namespace load
-      time. The CLI calls `(discover-channels!)` once at boot, which
-      requires every `META-INF/vis/channels.edn` namespace, triggering
-      their `register-global!` calls.
+      time. The CLI calls `(ext/discover-extensions!)` once at boot,
+      which requires every namespace listed in any `META-INF/vis.edn`
+      on the classpath, triggering their `register-global!` calls.
 
    2. **Programmatic** — anyone holding a channel spec can call
       `(register-global! spec)` directly (handy for tests / embedded
@@ -32,16 +32,18 @@
         :channel/owns-tty? true
         :channel/main-fn   (fn [args] (run-chat! (parse-args args)))})
 
-   Auto-discovery: ship `META-INF/vis/channels.edn` in the jar's
-   resources/ listing every namespace that calls `register-global!`:
+   Auto-discovery: ship the unified `META-INF/vis.edn` in the jar's
+   resources/ listing every namespace that calls `register-global!`
+   (channels, extensions, commands, providers, persistence backends —
+   the loader is type-agnostic):
 
      [com.blockether.vis.channels.tui.screen
       com.blockether.vis.channels.telegram.bot]
 
-   `discover-channels!` scans the classpath for that resource and
-   `require`s each namespace exactly once."
-  (:require [clojure.edn :as edn]
-            [clojure.spec.alpha :as s]
+   `com.blockether.vis.extension/discover-extensions!` scans the
+   classpath for every such resource and `require`s each namespace
+   exactly once."
+  (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.commandline :as cmd]
             [taoensso.telemere :as tel]))
@@ -147,54 +149,14 @@
 
 ;; =============================================================================
 ;; Classpath auto-discovery
+;;
+;; There is no channel-specific scanner. The single source of truth
+;; is `com.blockether.vis.extension/discover-extensions!` (in this same
+;; jar), which scans every `META-INF/vis.edn` on the classpath and
+;; `require`s the namespaces listed inside. Any of those namespaces
+;; that calls `(channel/register-global! ...)` lands in this registry
+;; as a side effect. No further code needed here.
 ;; =============================================================================
-
-(def ^:private CHANNELS_RESOURCE "META-INF/vis/channels.edn")
-
-(defn discover-channels!
-  "Scan the classpath for every `META-INF/vis/channels.edn` resource.
-
-   Each file is an EDN vector of namespace symbols, e.g.:
-
-     [com.blockether.vis.channels.tui.screen
-      com.blockether.vis.channels.telegram.bot]
-
-   Every listed namespace is `require`d, which triggers its
-   `register-global!` call. Already-loaded namespaces are silently
-   skipped. Returns the count of channels added to the registry by
-   this call (for diagnostics)."
-  []
-  (let [urls   (try
-                 (enumeration-seq
-                   (.getResources
-                     (.getContextClassLoader (Thread/currentThread))
-                     CHANNELS_RESOURCE))
-                 (catch Exception _ nil))
-        before (set (keys @global-registry))]
-    (doseq [^java.net.URL url urls]
-      (try
-        (let [ns-syms (edn/read-string (slurp url))]
-          (when (sequential? ns-syms)
-            (doseq [ns-sym ns-syms]
-              (when (symbol? ns-sym)
-                (try
-                  (require ns-sym)
-                  (tel/log! {:level :info :id ::discover
-                             :data  {:channel-ns ns-sym :source (str url)}
-                             :msg   (str "Auto-discovered channel ns '" ns-sym
-                                      "' from " url)})
-                  (catch Throwable t
-                    (tel/log! {:level :error :id ::discover-failed
-                               :data  {:channel-ns ns-sym :source (str url)
-                                       :class (.getName (class t))
-                                       :message (ex-message t)}
-                               :msg   (str "Failed to load channel ns '"
-                                        ns-sym "': " (ex-message t))})))))))
-        (catch Throwable t
-          (tel/log! {:level :error :id ::discover-parse-failed
-                     :data  {:source (str url) :message (ex-message t)}
-                     :msg   (str "Failed to parse " url ": " (ex-message t))}))))
-    (- (count @global-registry) (count before))))
 
 ;; =============================================================================
 ;; CLI bridge — the `vis channel` parent
@@ -224,12 +186,12 @@
   "Compose subcommands for the `vis channels` parent from TWO sources:
 
      1. Every entry in the channel registry (TUI, Telegram, web, …)
-     2. Every commandline plug-in registered with
+     2. Every commandline extension registered with
         `:cmd/parent [\"channels\"]` (escape hatch for non-channel
         adapters that still want to live under `vis channels`)
 
    Source #1 wins on name collision — channels are first-class so a
-   stray plug-in can't shadow a real channel name. Both sorted
+   stray extension can't shadow a real channel name. Both sorted
    together so help output is alphabetic."
   []
   (let [from-channels (mapv channel->command (registered-channels))

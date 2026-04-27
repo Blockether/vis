@@ -125,7 +125,7 @@
   (start!)
   @(promise))
 
-;;; ── Channel registration (auto-discovered via META-INF/vis/channels.edn) ──
+;;; ── Channel registration (auto-discovered via META-INF/vis.edn) ──
 
 (defn- channel-main
   "Channel entry point. Boots the CLI runtime config, then starts the

@@ -518,7 +518,7 @@
     (when (pos? @exit-code)
       (System/exit @exit-code))))
 
-;;; ── Channel registration (auto-discovered via META-INF/vis/channels.edn) ──
+;;; ── Channel registration (auto-discovered via META-INF/vis.edn) ──
 
 (channel/register-global!
   {:channel/id        :tui

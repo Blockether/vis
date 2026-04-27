@@ -4,24 +4,30 @@ A **channel** is a vis adapter — a user-facing front-end that turns
 external input (terminal keys, HTTP requests, Telegram messages) into
 calls to the runtime API in `com.blockether.vis.loop.runtime.conversation.core`.
 
-Channels are **plug-ins**, not features hard-coded in `vis-core`. They
-follow the same lifecycle as extensions:
+Channels are EXTENSIONS, not features hard-coded in `vis-core`. The
+word "extension" is the umbrella term for everything extensible
+in vis: ext symbols, channels, CLI commands, providers, persistence
+backends. They all share one classpath-discovery resource and one
+loader.
 
-| Concern              | Extensions (`com.blockether.vis.extension`) | Channels (`com.blockether.vis.channel`) |
-| -------------------- | ------------------------------------------- | --------------------------------------- |
-| What they add        | tools/values to the SCI sandbox             | sub-commands under `vis channels`       |
-| Registration         | `register-global!` at ns load               | `register-global!` at ns load           |
-| Auto-discovery       | `META-INF/vis/extensions.edn`               | `META-INF/vis/channels.edn`             |
-| Spec / validation    | `clojure.spec` + `extension`                | `clojure.spec` + `channel`              |
-| Consumed by          | `register-extensions!` per env              | `cli/-main` dispatcher                  |
+| Concern              | Ext symbols (`com.blockether.vis.extension`) | Channels (`com.blockether.vis.channel`) |
+| -------------------- | -------------------------------------------- | --------------------------------------- |
+| What they add        | tools/values to the SCI sandbox              | sub-commands under `vis channels`       |
+| Registration         | `register-global!` at ns load                | `register-global!` at ns load           |
+| Auto-discovery       | `META-INF/vis.edn` (unified)                 | `META-INF/vis.edn` (same file)          |
+| Spec / validation    | `clojure.spec` + `extension`                 | `clojure.spec` + `channel`              |
+| Consumed by          | `register-extensions!` per env               | `cli/-main` dispatcher                  |
 
 `vis-core` ships zero channel implementations. The CLI dispatcher
-calls `channel/discover-channels!` once at boot and exposes every
-registered channel under the `vis channels` sub-command tree. Each
-channel's `:channel/cmd` becomes the leaf name (`vis channels tui`,
-`vis channels telegram`, …). The dispatcher never references a
-concrete channel namespace — `vis-core` stays usable when an
-optional channel jar is absent.
+calls `com.blockether.vis.extension/discover-extensions!` once at
+boot, which scans every `META-INF/vis.edn` on the classpath and
+`require`s the namespaces inside. Every namespace that calls
+`(channel/register-global! ...)` lands in the channel registry as a
+side effect; the `vis channels` sub-command tree exposes each one.
+Each channel's `:channel/cmd` becomes the leaf name (`vis channels
+tui`, `vis channels telegram`, …). The dispatcher never references a
+concrete channel namespace — `vis-core` stays usable when an optional
+channel jar is absent.
 
 ## Channel descriptor
 
@@ -90,7 +96,7 @@ Identical to writing an extension:
 
 1. Create your `*-main` function: `(fn [args-vec] …)`.
 2. Call `(channel/register-global! {…})` at namespace load.
-3. Ship `META-INF/vis/channels.edn` listing your namespace.
+3. Ship `META-INF/vis.edn` (the unified extension manifest) listing your namespace.
 
 The next `clojure -M:run` (or `vis` binary launch) picks up the new
 channel automatically and exposes it as `vis channels <your-cmd>` —

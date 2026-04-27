@@ -59,35 +59,43 @@ self-registers → every new environment gets it.
 ### Auto-Discovery from Classpath (recommended)
 
 Extensions can be discovered **automatically** without any manual
-`require`. Place a `META-INF/vis/extensions.edn` file in your
-extension's `resources/` directory:
+`require`. Place a single `META-INF/vis.edn` file in your extension's
+`resources/` directory listing every namespace whose load should
+trigger registration:
 
 ```edn
 [com.acme.ext.git
  com.acme.ext.search]
 ```
 
-When `create-environment` runs, it calls `discover-extensions!` which:
+When `create-environment` runs (or the CLI dispatcher boots), it
+calls `com.blockether.vis.extension/discover-extensions!` which:
 
-1. Scans the classpath for **all** `META-INF/vis/extensions.edn` files
+1. Scans the classpath for **all** `META-INF/vis.edn` files
    (via `ClassLoader.getResources`)
 2. Reads each file as a vector of namespace symbols
 3. `require`s each namespace (triggering its `register-global!` call)
-4. Skips namespaces that are already registered
+4. De-duplicates so a namespace listed in two jars is required only once
 5. Logs every success at `:info` and every failure at `:error`
 
+The loader is **type-agnostic**: the same `META-INF/vis.edn` resource
+holds the namespaces for ext symbols, channels, CLI commands,
+providers, and persistence backends. Whichever `register-global!`
+(or `register-backend!`) the loaded namespace happens to call decides
+which subsystem registry it ends up in.
+
 This means: add the extension jar/local-root to your deps.edn aliases,
-ensure it has a `META-INF/vis/extensions.edn` in its resources, and
-it will be loaded automatically. No imports, no requires, no wiring.
+ensure it has a `META-INF/vis.edn` in its resources, and it will be
+loaded automatically. No imports, no requires, no wiring.
 
 **Directory layout for an extension:**
 
 ```
 extensions/my-ext/
-├── deps.edn                         ;; {:paths ["src" "resources"] ...}
+├── deps.edn                  ;; {:paths ["src" "resources"] ...}
 ├── resources/
-│   └── META-INF/vis/extensions.edn   ;; [com.acme.ext.my-tool]
-└── src/com/acme/ext/my_tool.clj     ;; calls register-global! at load time
+│   └── META-INF/vis.edn      ;; [com.acme.ext.my-tool]
+└── src/com/acme/ext/my_tool.clj  ;; calls register-global! at load time
 ```
 
 **deps.edn alias:**
@@ -120,7 +128,7 @@ For extensions that shouldn't be global.
 
 From classpath jar to live tool call:
 
-0. **discover-extensions!** — scan `META-INF/vis/extensions.edn` on the classpath
+0. **discover-extensions!** — scan `META-INF/vis.edn` on the classpath
 1. **ext/extension** — build and validate the extension spec
 2. **register-global!** — add to the process-level registry
 3. **Topo-sort** — order by `:ext/requires` dependencies (throws `missing-dependencies` if a required extension is absent)

@@ -393,10 +393,12 @@
    Optional `:duration-ms` for assistant response time.
    `left` and `max-w` define the horizontal bounds.
 
-   Layout (NO border, both roles left-anchored):
+   Layout (no outer border, no horizontal rule under the label,
+   both roles left-anchored):
      [role-label]                              [timestamp]
+     [blank breathing row]
      [content lines, each with role bg fill]
-     [meta line, dimmed]
+     [meta line, dimmed (skipped for cancelled status)]
      [blank gap]
 
    User content rows get a subtle blue-gray background block
@@ -466,20 +468,17 @@
       (p/set-colors! g t/dialog-hint t/terminal-bg)
       (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str))
 
-    ;; Row 1: horizontal rule directly under the label. Hard divider
-    ;; so the user/assistant header reads as a banner above its
-    ;; content instead of floating in space.
-    (p/set-colors! g t/border-fg t/terminal-bg)
-    (p/put-str! g bx (+ start-row 1) (repeat-str \u2500 bubble-w))
-
-    ;; Row 2: blank breathing room between the rule and the content.
-    ;; Content begins on row 3 (= start-row + 3).
-    (let [btop (+ start-row 3)]
+    ;; Row 1: blank breathing row — the only separator between the
+    ;; role banner and the content. We used to draw a full-width
+    ;; horizontal rule here; whitespace alone reads cleanly enough
+    ;; without the visual noise of a hard divider on every message.
+    ;; Content begins on row 2 (= start-row + 2).
+    (let [btop (+ start-row 2)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg — the only fills come from
       ;; structured-trace marker zones (code blocks, stdout, answer
       ;; section). Roles are visually distinguished by the colored
-      ;; label above the rule.
+      ;; label and the blank row beneath it (no horizontal divider).
       (when warning?
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
@@ -780,33 +779,36 @@
 
       ;; Below-content meta row.
       ;;
-      ;; Final per-message layout (no outer box, no bg fill):
+      ;; Final per-message layout (no outer box, no bg fill, no
+      ;; horizontal rule under the label):
       ;;   row 0          : label + timestamp
-      ;;   row 1          : horizontal rule directly below the label
-      ;;   row 2          : blank breathing row between rule and content
-      ;;   row 3 … 2+N    : wrapped content (with marker-zone fills)
-      ;;   row 3+N        : meta (right-aligned, dim)
-      ;;   row 4+N        : single blank gap before the next message
+      ;;   row 1          : blank breathing row
+      ;;   row 2 … 1+N    : wrapped content (with marker-zone fills)
+      ;;   row 2+N        : meta (right-aligned, dim) — skipped for cancelled
+      ;;   row 3+N        : single blank gap before the next message
       (p/clear-styles! g)
       (let [meta-row (+ btop bubble-h)]
         (when meta-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) meta-row meta-str))
         ;; Return: rows consumed
-        ;;   = label(1) + rule(1) + post-rule-gap(1) + content(N) + meta(1) + gap(1)
-        (+ 1 1 1 bubble-h 1 1)))))
+        ;;   = label(1) + breathing-gap(1) + content(N) + meta(1) + gap(1)
+        (+ 1 1 bubble-h 1 1)))))
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
-   label(1) + rule(1) + post-rule-gap(1) + wrapped-lines + meta(1) + gap(1).
+   label(1) + breathing-gap(1) + wrapped-lines + meta(1) + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
-   layout math stays consistent across the height calc and the draw."
+   layout math stays consistent across the height calc and the draw.
+   The horizontal rule under the role label was deleted in favor of
+   a single blank row — fewer pixels of chrome, same readable
+   separation between banner and content."
   [{:keys [text]} max-w]
   (let [bubble-w  max-w
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
         lines     (wrap-text text content-w)]
-    (+ 1 1 1 (count lines) 1 1)))
+    (+ 1 1 (count lines) 1 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by `:text` identity + width — same

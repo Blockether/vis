@@ -1,7 +1,7 @@
 {:paths ["src" "resources"]
  ;; GitHub Copilot OAuth provider — device-flow authentication +
  ;; token lifecycle. Self-registers with `com.blockether.vis.provider`
- ;; at namespace load via `META-INF/vis/providers.edn`.
+ ;; at namespace load via the unified `META-INF/vis.edn`.
  :deps
  {org.clojure/clojure       {:mvn/version "1.12.4"}
   com.blockether/vis-provider {:local/root "../vis-provider"}

@@ -109,7 +109,7 @@
    'com.blockether/vis-commandline
    "Reusable command-line primitives — command tree, dispatch, help rendering."
    'com.blockether/vis-extension
-   "Plug-in spec — extension + channel registries with classpath autodiscovery."
+   "Extension contract — ext + channel registries plus the unified `META-INF/vis.edn` classpath autodiscovery."
    'com.blockether/vis-logging
    "Telemere → persistence facade log handler (dynaload, no JDBC)."
    'com.blockether/vis-persistance
@@ -119,7 +119,7 @@
    'com.blockether/vis-persistance-sqlite-flyway
    "Flyway migrator for the SQLite backend — applies vis-persistance's V*__schema.sql files."
    'com.blockether/vis-provider
-   "Generic LLM provider registry — plug-in spec, no concrete provider."
+   "Generic LLM provider registry — extension contract, no concrete provider."
    'com.blockether/vis-provider-github-copilot
    "GitHub Copilot OAuth device-flow provider for the vis-provider registry."
    'com.blockether/vis-tui

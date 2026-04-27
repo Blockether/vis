@@ -15,9 +15,9 @@ re-listing it.
 | Package                  | Purpose                                                                                        | Channel id  | Notes                                                                  |
 | ------------------------ | ---------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------- |
 | `vis-core`               | Public API facade, runtime loop, query/iteration engine, SCI sandbox, conversation lifecycle, CLI dispatcher (`channels.cli`) and one-shot agent (`channels.cli.agent`). | `:cli`      | The only package consumers must depend on directly. The `:cli` channel id is what the CLI agent's `conversations/create!` uses; it is not a `channel/register-global!` registration. |
-| `vis-extension`          | Standalone plug-in contract: `com.blockether.vis.extension` (SCI tools) + `com.blockether.vis.channel` (CLI front-ends). Slim deps (telemere + clojure.spec). | —           | Extensions and third-party channels depend on this, **not** on `vis-core`. The runtime helpers that need a live env (`active-extensions`, `assemble-system-prompt`, `register-extension!`) stay on `vis-core`. |
-| `vis-commandline`        | Reusable command-tree primitives (`command`, `dispatch!`, arg parsing, help rendering, global registry, `META-INF/vis/commandline.edn` auto-discovery). | —           | `vis-core/channels.cli` builds the whole `vis` command tree out of these. Third-party packages can register top-level or nested commands without touching `vis-core`. |
-| `vis-persistance`        | Persistence FACADE: public API (`persistance.core`), spec (`persistance.spec`), id/kw/now-ms helpers (`persistance.base`). | —           | No JDBC dep. Concrete backends self-register at load time via `META-INF/vis/persistance-backends.edn`. |
+| `vis-extension`          | Standalone extension contract: `com.blockether.vis.extension` (SCI tools, the unified `META-INF/vis.edn` loader) + `com.blockether.vis.channel` (CLI front-ends). Slim deps (telemere + clojure.spec). | —           | Every extension surface (ext symbols, channels, third-party CLI commands, providers, persistence backends) depends on this, **not** on `vis-core`. The runtime helpers that need a live env (`active-extensions`, `assemble-system-prompt`, `register-extension!`) stay on `vis-core`. |
+| `vis-commandline`        | Reusable command-tree primitives (`command`, `dispatch!`, arg parsing, help rendering, global registry). The CLI dispatcher (`commandline.main`) calls `vis-extension/discover-extensions!` via `requiring-resolve` so this jar stays standalone. | —           | `vis-core/channels.cli` builds the whole `vis` command tree out of these. Third-party packages can register top-level or nested commands without touching `vis-core`. |
+| `vis-persistance`        | Persistence FACADE: public API (`persistance.core`), spec (`persistance.spec`), id/kw/now-ms helpers (`persistance.base`). | —           | No JDBC dep. Concrete backends self-register at load time through the unified `META-INF/vis.edn` loader. |
 | `vis-persistance-sqlite` | SQLite + Flyway backend. Owns every JDBC dep (sqlite-jdbc, next.jdbc, honeysql, flyway, nippy) and the `db/sqlite/migration/V1__schema.sql` resource. | —           | Loading `com.blockether.vis.persistance.sqlite.core` auto-registers the `:sqlite` backend with the facade. |
 | `vis-logging`            | Telemere setup + persistence-backed log handler. Uses `borkdude/dynaload` to look up `persistance.core/log!` so it has no hard dep on any persistence jar. | —           | Opt-in. Adopters who only want console logging can pull this in without dragging the JDBC stack. |
 | `vis-provider`           | Vendor auth/token plumbing (currently GitHub Copilot OAuth + device flow + token exchange).   | —           | Zero `vis-core` deps. `vis-core` resolves these via `requiring-resolve`. |
@@ -35,22 +35,36 @@ re-listing it.
 > `:vis`. The CLI agent doesn't register any channel at all but
 > writes its conversations under `:cli`.
 
-## Auto-discovery resources
+## Auto-discovery resource
 
-Three independent classpath-scan mechanisms — same shape, different
-scope. Each is an EDN vector of namespace symbols; loading them
-triggers a `register-global!` side effect.
+ONE classpath-scan mechanism, ONE resource per jar (`META-INF/vis.edn`),
+ONE entry point: `com.blockether.vis.extension/discover-extensions!`.
+The resource is a flat EDN vector of namespace symbols; the loader
+`require`s every namespace and each one's `register-global!` (or
+`register-backend!`) side-effect lands it in the matching subsystem
+registry.
 
-| Resource                          | Registry                                                | Scanned by                                             |
-| --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
-| `META-INF/vis/extensions.edn`     | `com.blockether.vis.extension/register-global!`         | `extension/discover-extensions!` — called from `create-environment` |
-| `META-INF/vis/channels.edn`       | `com.blockether.vis.channel/register-global!`           | `channel/discover-channels!` — called once at `cli/-main` boot |
-| `META-INF/vis/commandline.edn`    | `com.blockether.vis.commandline/register-global!`       | `commandline/discover-commands!` — called once at `cli/-main` boot |
-| `META-INF/vis/persistance-backends.edn` | persistence facade backend registry               | called from `persistance.core/create-rlm-conn`          |
+| Subsystem                       | Registration call                                       |
+| ------------------------------- | ------------------------------------------------------- |
+| Extension symbols (SCI sandbox) | `com.blockether.vis.extension/register-global!`         |
+| Channels (`vis channels <id>`)  | `com.blockether.vis.channel/register-global!`           |
+| CLI commands                    | `com.blockether.vis.commandline/register-global!`       |
+| LLM providers                   | `com.blockether.vis.provider/register-global!`          |
+| Persistence backends            | `com.blockether.vis.persistance.core/register-backend!` |
 
-Drop a jar on the classpath that ships any of these resources and the
-relevant subsystem picks it up at the next process boot — no edits to
-`vis-core`, no `:require`s in user code.
+The loader is **type-agnostic**: it does not care which subsystem a
+namespace targets. New extension surfaces (themes, skills, anything
+future) require zero changes — ship a jar with a `META-INF/vis.edn`
+listing namespaces that register into the new surface and they boot
+the same way everything else does.
+
+Drop a jar on the classpath that ships a `META-INF/vis.edn` and every
+namespace inside is auto-discovered at the next process boot — no
+edits to `vis-core`, no `:require`s in user code. The CLI dispatcher
+calls `discover-extensions!` once at `-main` startup; SDK callers
+that bypass the CLI also get a lazy safety-net call from
+`vis-core/loop.core/create-environment` and from
+`vis-persistance/core/create-rlm-conn`.
 
 ## Dependency direction
 

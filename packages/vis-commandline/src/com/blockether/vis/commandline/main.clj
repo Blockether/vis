@@ -2,20 +2,25 @@
   "CLI dispatcher entry point.
 
    This namespace is the `vis` binary. It owns nothing about specific
-   commands \u2014 every subcommand (built-in or plug-in) registers itself
-   into `com.blockether.vis.commandline`'s global registry. `-main`
-   composes the registered commands into a root tree, walks it, and
-   dispatches.
+   commands -- every subcommand (built-in or extension-supplied)
+   registers itself into `com.blockether.vis.commandline`'s global
+   registry. `-main` composes the registered commands into a root
+   tree, walks it, and dispatches.
 
-   Discovery happens through dynaload \u2014 we attempt to load
-   `com.blockether.vis.channel`, `com.blockether.vis.extension`, and
-   `com.blockether.vis.persistance.core`'s discovery fns IF those jars
-   are on the classpath, but never require them at compile time. That
-   makes vis-commandline genuinely standalone: dropping just this jar
-   gives you a working CLI that prints empty help. Add more jars and
-   their `META-INF/vis/commandline.edn` registrations show up\n   automatically."
-  (:require [borkdude.dynaload :as dl]
-            [clojure.string :as str]
+   Discovery is one classpath scan, owned by `vis-extension`. The
+   single source of truth is
+   `com.blockether.vis.extension/discover-extensions!`, which finds
+   every `META-INF/vis.edn` resource and `require`s the namespaces
+   listed inside. Each loaded namespace self-registers into whichever
+   subsystem registry it targets (extension symbols, channels,
+   commands, providers, persistence backends, ...). vis-commandline
+   stays genuinely standalone: we resolve the loader through
+   `requiring-resolve` so this jar carries zero compile-time dep on
+   vis-extension. Drop just this jar and you get a working CLI that
+   prints empty help; add `vis-extension` plus more extension jars and
+   their unified `META-INF/vis.edn` registrations show up
+   automatically."
+  (:require [clojure.string :as str]
             [com.blockether.vis.commandline :as cmd]
             [taoensso.telemere :as tel]))
 
@@ -24,7 +29,7 @@
 ;;
 ;; Telemere ships with a `:default/console` handler that prints EVERY
 ;; signal to stdout. That fills the terminal with registration noise
-;; before the user ever sees the help text — painful UX for a CLI.
+;; before the user ever sees the help text -- painful UX for a CLI.
 ;;
 ;; Default behavior:
 ;;   - stdout stays clean
@@ -47,7 +52,7 @@
 
 (defn- configure-logging!
   "Route Telemere signals away from stdout (and into the log file)
-   unless `--debug` was given. Idempotent — the same handler keys
+   unless `--debug` was given. Idempotent -- the same handler keys
    are reused so re-running this is a no-op."
   [args]
   (let [debug? (debug-mode? args)
@@ -64,35 +69,23 @@
         (catch Throwable _ nil)))))
 
 ;; =============================================================================
-;; Optional plug-in discovery (dynaloaded \u2014 zero compile-time deps)
+;; Extension discovery
+;;
+;; ONE call. The unified loader lives in `vis-extension`, resolved
+;; lazily through `requiring-resolve` so this dispatcher jar stays
+;; standalone (no hard dep on vis-extension at compile time). If
+;; `vis-extension` isn't on the classpath, discovery is silently
+;; skipped and only manually-registered commands appear in the tree.
 ;; =============================================================================
 
-(def ^:private discover-extensions!
-  (dl/dynaload 'com.blockether.vis.extension/discover-extensions!
-    {:default (constantly 0)}))
-
-(def ^:private discover-channels!
-  (dl/dynaload 'com.blockether.vis.channel/discover-channels!
-    {:default (constantly 0)}))
-
-(def ^:private discover-persistance-backends!
-  (dl/dynaload 'com.blockether.vis.persistance.core/discover-backends!
-    {:default (constantly 0)}))
-
-(def ^:private discover-providers!
-  (dl/dynaload 'com.blockether.vis.provider/discover-providers!
-    {:default (constantly 0)}))
-
 (defn discover-all!
-  "Run every plug-in surface's classpath autodiscovery. Each call is
-   guarded against missing jars via `borkdude.dynaload` defaults so a
-   stripped distribution doesn't crash. Returns nil."
+  "Run the unified extension discovery scan. Idempotent through
+   Clojure's `require` cache. Returns nil."
   []
-  (try (discover-extensions!)            (catch Throwable _ nil))
-  (try (discover-channels!)              (catch Throwable _ nil))
-  (try (discover-providers!)             (catch Throwable _ nil))
-  (try (discover-persistance-backends!)  (catch Throwable _ nil))
-  (cmd/discover-commands!)
+  (try
+    (when-let [v (requiring-resolve 'com.blockether.vis.extension/discover-extensions!)]
+      (v))
+    (catch Throwable _ nil))
   nil)
 
 ;; =============================================================================
@@ -100,7 +93,7 @@
 ;;
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
 ;; comes from the global commandline registry. Built-ins (run, auth,
-;; doctor, \u2026) are registered by vis-core; the `vis channel` and
+;; doctor, ...) are registered by vis-core; the `vis channel` and
 ;; `vis ext` parents are registered by vis-extension. Add a third-
 ;; party jar with its own `cmd/register-global!` calls and its
 ;; commands appear here without any code change.
@@ -110,7 +103,7 @@
 
 (defn root-command
   "Build the root `vis` command tree. Subcommands are pulled fresh on
-   every call so newly registered plug-ins show up immediately."
+   every call so newly registered extensions show up immediately."
   []
   (cmd/command
     {:cmd/name        "vis"
@@ -153,20 +146,20 @@
         (not-any? #{"--help" "-h"} residual)))))
 
 (defn -main
-  "Discover plug-ins, walk the command tree, dispatch.
+  "Discover extensions, walk the command tree, dispatch.
 
    Behavior:
-     - No args                → top-level help
-     - `help` / `--help` / `-h` → help for the resolved command
-     - Recognized command     → invoke its `:cmd/run-fn`
-     - Unknown command        → top-level help + exit 1
+     - No args                  -> top-level help
+     - `help` / `--help` / `-h` -> help for the resolved command
+     - Recognized command       -> invoke its `:cmd/run-fn`
+     - Unknown command          -> top-level help + exit 1
 
-   No magical fallback to a `run`-as-prompt shortcut — the dispatcher
+   No magical fallback to a `run`-as-prompt shortcut -- the dispatcher
    is a pure command tree. Anyone who wants the old single-arg
    ergonomics can register a `:cmd/run-fn` on the root via a custom
-   plug-in."
+   extension."
   [& args]
-  ;; Quiet stdout BEFORE any plug-in load triggers Telemere registration
+  ;; Quiet stdout BEFORE any extension load triggers Telemere registration
   ;; spam — the user only sees logs when they pass --debug / --verbose / -v
   ;; (or set VIS_DEBUG=1).
   (configure-logging! args)
@@ -181,7 +174,7 @@
       ;; `vis help` is a universal synonym for `vis --help`. Without
       ;; this branch the dispatcher would treat `help` as an unknown
       ;; command, print the tree, AND tag it with "Unknown command:
-      ;; help" + exit 1 — which surprised everyone who tried it.
+      ;; help" + exit 1 -- which surprised everyone who tried it.
       (= ["help"] (vec args))
       (println (cmd/render-tree root))
 

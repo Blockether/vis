@@ -256,18 +256,24 @@ here.
 Quick mental map (use `packages.md` for details):
 
 - `vis-core` — only package consumers must depend on directly
-- `vis-extension` + `vis-commandline` — slim plug-in contracts
+- `vis-extension` + `vis-commandline` — slim extension contracts (vis-extension also owns the unified classpath loader)
 - `vis-persistance` (+ `vis-persistance-sqlite`) — storage facade + backend
 - `vis-logging`, `vis-provider` — optional cross-cutting utilities
 - `vis-tui`, `vis-telegram` — channel implementations
 - `vis-benchmark` — benchmark harness (`:bench` alias only)
 
-Three classpath-scan auto-discovery resources, all the same shape
-(EDN vector of namespace symbols loaded at startup):
-`META-INF/vis/extensions.edn`, `META-INF/vis/channels.edn`,
-`META-INF/vis/commandline.edn` (plus the persistence-backend variant).
-Drop a jar that ships any of them on the classpath and `vis-core`
-picks it up at the next process boot — no edits required.
+ONE classpath-scan auto-discovery resource: `META-INF/vis.edn`. EDN
+vector of namespace symbols loaded at startup by the single loader
+`com.blockether.vis.extension/discover-extensions!`. Each namespace
+self-registers into whichever subsystem registry it targets
+(extension symbols, channels, CLI commands, providers, persistence
+backends) via the matching `register-global!` / `register-backend!`
+call. Drop a jar that ships a `META-INF/vis.edn` on the classpath
+and `vis-core` picks it up at the next process boot — no edits
+required. There are NO per-subsystem resource files anymore; the
+old `META-INF/vis/{extensions,channels,commandline,providers,
+persistance-backends}.edn` paths were collapsed into the unified
+`META-INF/vis.edn` and removed without backwards-compat aliases.
 
 Docs build: `cd docs && mdbook-mermaid install . && mdbook serve --open`
 (mdBook source lives at the repo root under `docs/`, not inside any
@@ -398,7 +404,7 @@ above.
 
 Third-party channels register themselves at namespace load via
 `com.blockether.vis.channel/register-global!` and ship a
-`META-INF/vis/channels.edn` resource. The CLI dispatcher discovers
+unified `META-INF/vis.edn` resource. The CLI dispatcher discovers
 them; nothing in `vis-core` references a concrete channel namespace.
 See `docs/src/architecture/channels.md`.
 
@@ -429,15 +435,17 @@ All under `packages/vis-core/src/com/blockether/vis/`:
 
 - `packages/vis-persistance/src/com/blockether/vis/persistance/{core,base,spec}.clj` —
   facade API (`create-rlm-conn`, `db-list-conversations`, etc.) + spec.
-  Backends self-register via `META-INF/vis/persistance-backends.edn`.
+  Backends self-register via the unified `META-INF/vis.edn` resource.
 - `packages/vis-persistance-sqlite/src/com/blockether/vis/persistance/sqlite/core.clj` —
   SQLite + Flyway backend. Schema: `resources/db/sqlite/migration/V1__schema.sql`.
 - `packages/vis-extension/src/com/blockether/vis/extension.clj` —
   extension spec, symbol/value builders, hook protocol, global
-  registry, classpath discovery (`META-INF/vis/extensions.edn`).
+  registry, unified classpath discovery (`META-INF/vis.edn`) for
+  every extension surface (ext symbols, channels, CLI commands,
+  providers, backends).
 - `packages/vis-extension/src/com/blockether/vis/channel.clj` —
   channel descriptor spec + global registry + classpath discovery
-  (`META-INF/vis/channels.edn`).
+  (registered through the unified `META-INF/vis.edn`).
 
 Use `find`/`grep` to explore the tree — no static directory doc exists.
 
@@ -637,4 +645,4 @@ them with a bounded, structured, sticky projection.
 - **TUI (`vis-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes the env, the conversation stays in the `:vis` channel so other inspectors can see it.
 - **Telegram (`vis-telegram`)** — registered channel id `:telegram`. `conversations/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conversations/send!` with the Telegram persona system prompt.
 - **CLI `agent/run!`** — one-shot. Creates a fresh conversation in the `:cli` channel and runs a single query. Conversations persist — past runs are browsable via `(conversations/by-channel :cli)`.
-- **Third-party channels** — ship a jar with a `META-INF/vis/channels.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-core`.
+- **Third-party channels** — ship a jar with a `META-INF/vis.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-core`.

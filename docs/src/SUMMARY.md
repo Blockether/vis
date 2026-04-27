@@ -24,4 +24,5 @@
 - [Hook Protocol](extensions/hooks.md)
 - [Environment Map](extensions/environment.md)
 - [Nudge System](extensions/nudges.md)
+- [Self-debug extension](extensions/vis-self-debug.md)
 

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.provider
-  "LLM provider registry — same plug-in pattern as channels, extensions,
+  "LLM provider registry. Same extension pattern as channels, ext symbols,
    commandline, and persistance backends.
 
    A provider is an authentication/credential strategy for talking to
@@ -34,11 +34,10 @@
         :provider/auth-fn      #'interactive-auth!
         :provider/get-token-fn #'get-token!})
 
-   Auto-discovery: ship `META-INF/vis/providers.edn` in the jar's
+   Auto-discovery: ship the unified `META-INF/vis.edn` in the jar's
    resources/ listing every namespace that calls `register-global!`.
-   The CLI dispatcher's plug-in loader picks it up at boot."
-  (:require [clojure.edn :as edn]
-            [clojure.spec.alpha :as s]
+   The CLI dispatcher's `ext/discover-extensions!` picks it up at boot."
+  (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [taoensso.telemere :as tel]))
 
@@ -113,43 +112,13 @@
 
 ;; =============================================================================
 ;; Auto-discovery
+;;
+;; There is no provider-specific scanner. The single source of truth
+;; is `com.blockether.vis.extension/discover-extensions!`, which scans
+;; every `META-INF/vis.edn` on the classpath and `require`s the
+;; namespaces listed inside. Any of those namespaces that calls
+;; `(provider/register-global! ...)` lands in this registry as a side
+;; effect. The CLI dispatcher (`vis-commandline.main`) invokes the
+;; loader once at boot; provider-aware code paths that bypass the CLI
+;; (SDK callers, tests) can `requiring-resolve` it themselves.
 ;; =============================================================================
-
-(def ^:private PROVIDERS_RESOURCE "META-INF/vis/providers.edn")
-
-(defn discover-providers!
-  "Scan the classpath for every `META-INF/vis/providers.edn` resource.
-   Each file is an EDN vector of namespace symbols whose load triggers
-   `register-global!`. Returns the count of providers added by this
-   call (for diagnostics). Idempotent through `require`'s cache."
-  []
-  (let [urls   (try
-                 (enumeration-seq
-                   (.getResources
-                     (.getContextClassLoader (Thread/currentThread))
-                     PROVIDERS_RESOURCE))
-                 (catch Exception _ nil))
-        before (set (keys @global-registry))]
-    (doseq [^java.net.URL url urls]
-      (try
-        (let [ns-syms (edn/read-string (slurp url))]
-          (when (sequential? ns-syms)
-            (doseq [ns-sym ns-syms]
-              (when (symbol? ns-sym)
-                (try (require ns-sym)
-                  (tel/log! {:level :info :id ::discover
-                             :data  {:provider-ns ns-sym :source (str url)}
-                             :msg   (str "Auto-discovered provider ns '"
-                                      ns-sym "' from " url)})
-                  (catch Throwable t
-                    (tel/log! {:level :error :id ::discover-failed
-                               :data  {:provider-ns ns-sym :source (str url)
-                                       :class (.getName (class t))
-                                       :message (ex-message t)}
-                               :msg   (str "Failed to load provider ns '"
-                                        ns-sym "': " (ex-message t))})))))))
-        (catch Throwable t
-          (tel/log! {:level :error :id ::discover-parse-failed
-                     :data  {:source (str url) :message (ex-message t)}
-                     :msg   (str "Failed to parse " url ": " (ex-message t))}))))
-    (- (count @global-registry) (count before))))

@@ -24,6 +24,7 @@
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.commandline :as cmd]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -920,57 +921,102 @@
      ext)))
 
 ;; =============================================================================
-;; Classpath auto-discovery
+;; Unified extension auto-discovery
+;;
+;; ONE classpath scan, ONE resource per jar (`META-INF/vis.edn`), ONE
+;; entry point. Every extension surface in the system -- ext symbols,
+;; channels, commands, providers, persistence backends -- routes
+;; through this single fn. "Extension" here is the SUPERSET term: a
+;; channel is a kind of extension, a CLI command is a kind of
+;; extension, a provider is a kind of extension. The bespoke
+;; per-subsystem `discover-*!` fns are gone; this is the only
+;; discovery mechanism in the codebase.
+;;
+;; The loader is type-agnostic: it just `require`s every namespace
+;; listed in every `META-INF/vis.edn` it finds on the classpath;
+;; whichever of those namespaces calls `(ext/register-global! ...)`,
+;; `(channel/register-global! ...)`, `(cmd/register-global! ...)`,
+;; `(provider/register-global! ...)`, or `(persistance/register-backend!
+;; ...)` ends up in the matching subsystem registry as a side effect.
+;;
+;; Resource shape (a flat EDN vector of namespace symbols):
+;;
+;;     ;; resources/META-INF/vis.edn in your extension jar
+;;     [com.acme.ext.git.core           ; ext/register-global!
+;;      com.acme.channel.web.bot        ; channel/register-global!
+;;      com.acme.commands.git           ; cmd/register-global!
+;;      com.acme.providers.openai       ; provider/register-global!
+;;      com.acme.persistance.postgres]  ; persistance/register-backend!
+;;
+;; New extension surfaces (themes, skills, future-thing) require ZERO
+;; changes here: drop a jar with a `META-INF/vis.edn` listing
+;; namespaces that register into the new surface, and they boot the
+;; same way everything else does.
+;;
+;; Why this lives in `vis-extension`: the EXTENSION package is the
+;; canonical home for everything extension-shaped. vis-commandline,
+;; vis-persistance, and vis-provider all stay free of bespoke
+;; scanners; they each `requiring-resolve` THIS fn when they need a
+;; lazy safety-net discovery (e.g. SDK callers that bypass the CLI
+;; dispatcher).
 ;; =============================================================================
 
-(def ^:private EXTENSIONS_RESOURCE "META-INF/vis/extensions.edn")
+(def ^:private EXTENSIONS_RESOURCE "META-INF/vis.edn")
 
 (defn discover-extensions!
-  "Scan the classpath for `META-INF/vis/extensions.edn` resources.
+  "Scan the classpath for every `META-INF/vis.edn` resource and
+   `require` each namespace symbol listed inside. The loaded
+   namespaces self-register into whichever subsystem registry they
+   target (extension symbols, channels, commands, providers,
+   persistence backends, ...). `Extension` here is the umbrella term:
+   every extension surface in vis -- channels, commands, providers,
+   backends -- is treated as a kind of extension and discovered
+   through this one fn.
 
-   Each file contains a vector of namespace symbols, e.g.:
-     [com.blockether.vis.ext.common-operations.core
-      com.acme.ext.git]
+   Returns the count of namespaces this call actually loaded (deduped
+   across resource files within a single invocation). Idempotent
+   through Clojure's `require` cache -- calling it twice does no extra
+   work.
 
-   Every discovered namespace is `require`d (which triggers its
-   `register-global!` call). Already-registered namespaces are
-   skipped. Returns the count of newly loaded extensions.
-
-   Convention: drop a `META-INF/vis/extensions.edn` into your
-   extension's resources/ and it will be picked up automatically
-   on any classpath that includes it — no manual `require` needed."
+   Failures (broken EDN, missing namespace, throwing
+   `register-global!`) are logged at `:error` per offending entry and
+   the scan continues. A bad extension cannot abort discovery for its
+   siblings."
   []
-  (let [urls  (try
-                (enumeration-seq
-                  (.getResources
-                    (.getContextClassLoader (Thread/currentThread))
-                    EXTENSIONS_RESOURCE))
-                (catch Exception _ nil))
-        already (into #{} (keys @global-registry))
-        loaded  (atom 0)]
+  (let [urls   (try
+                 (enumeration-seq
+                   (.getResources
+                     (.getContextClassLoader (Thread/currentThread))
+                     EXTENSIONS_RESOURCE))
+                 (catch Exception _ nil))
+        loaded (atom 0)
+        seen   (atom #{})]
     (doseq [^java.net.URL url urls]
       (try
         (let [content (slurp url)
               ns-syms (edn/read-string content)]
-          (when (and (sequential? ns-syms) (seq ns-syms))
+          (when (sequential? ns-syms)
             (doseq [ns-sym ns-syms]
-              (when (and (symbol? ns-sym) (not (contains? already ns-sym)))
+              (when (and (symbol? ns-sym) (not (@seen ns-sym)))
+                (swap! seen conj ns-sym)
                 (try
                   (require ns-sym)
                   (swap! loaded inc)
-                  (tel/log! {:level :info :id ::discover-ext
-                             :data {:ext ns-sym :source (str url)}
-                             :msg (str "Auto-discovered extension '" ns-sym "' from " url)})
+                  (tel/log! {:level :info :id ::discover-extension
+                             :data  {:extension-ns ns-sym :source (str url)}
+                             :msg   (str "Auto-discovered extension ns '"
+                                      ns-sym "' from " url)})
                   (catch Throwable t
-                    (tel/log! {:level :error :id ::discover-ext-failed
-                               :data {:ext ns-sym :source (str url)
-                                      :class (.getName (class t))
-                                      :message (ex-message t)}
-                               :msg (str "Failed to load auto-discovered extension '" ns-sym "': " (ex-message t))})))))))
+                    (tel/log! {:level :error :id ::discover-extension-failed
+                               :data  {:extension-ns ns-sym :source (str url)
+                                       :class (.getName (class t))
+                                       :message (ex-message t)}
+                               :msg   (str "Failed to load extension ns '"
+                                        ns-sym "': " (ex-message t))})))))))
         (catch Throwable t
-          (tel/log! {:level :error :id ::discover-ext-parse-failed
-                     :data {:source (str url) :message (ex-message t)}
-                     :msg (str "Failed to parse " url ": " (ex-message t))}))))
+          (tel/log! {:level :error :id ::discover-extension-parse-failed
+                     :data  {:source (str url) :message (ex-message t)}
+                     :msg   (str "Failed to parse " url ": " (ex-message t))}))))
     @loaded))
 
 ;; =============================================================================
@@ -983,11 +1029,9 @@
 ;; required-arg validation, and dispatch all work uniformly.
 ;;
 ;; Lives here (not in vis-commandline) because the bridge needs the
-;; extension registry; lives at the foot of the file so the runtime
-;; helpers above don't depend on commandline.
+;; extension registry. The `cmd` alias was already established at the
+;; top-of-ns require form.
 ;; =============================================================================
-
-(require '[com.blockether.vis.commandline :as cmd])
 
 (defn- ext-cli->command
   "Adapt one extension's `:ext/cli` entry to a vis-commandline command map."
@@ -1004,7 +1048,7 @@
   "Compose subcommands for the `vis extensions` parent from TWO sources:
 
      1. Every registered extension's `:ext/cli` entries (legacy adapter)
-     2. Every commandline plug-in registered with
+     2. Every commandline extension registered with
         `:cmd/parent [\"extensions\"]` (preferred, more powerful API)
 
    Source #1 wins on name collision — a third-party package can't
