@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's `:thinking`), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `ITERATION` / `PRIOR_TURN` — ITERATION carries `{:current :budget :remaining}` and replaces the legacy standalone `[iter N/M]` header), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension + loop-injected)
+1. **Build Context** — `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's `:thinking`), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `PRIOR_TURN`), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension + loop-injected)
 2. **Ask LLM** — svar structured JSON output: code blocks + optional
    `:final`. The call site is `(llm/ask! (:router environment) …)`,
    i.e. the env's snapshot router — NOT the global
@@ -95,17 +95,26 @@ This collapse replaces the earlier `:answer-type` enum
 implicit "single-token resolves to a sandbox var" shortcut. Both are
 gone.
 
-## Budget extension
+## Loop termination
 
-The default budget is **4 iterations** — deliberately tight so the LLM
-must plan. When more work is genuinely needed, the LLM calls
-`(request-more-iterations n)` from `:code` to extend on demand.
-There is **no cap** on how high the budget can grow.
+The loop runs **until the model emits `:answer`**. There is no
+model-visible iteration budget, no `request-more-iterations` SCI
+binding, no `<system_state>.ITERATION` pointer the model has to
+budget against. The model decides when it's done by finalizing.
 
-This is especially important when a budget `[system_nudge]` fires.
-The intended behavior is: read the nudge, decide whether more work is
-actually needed, and if yes call `(request-more-iterations n)`
-immediately instead of limping into a bad finalize.
+The runtime keeps a **single hard runaway-protection cap** as a
+safety belt:
+`com.blockether.vis.persistance.spec/SAFETY_ITERATION_CAP` (currently
+100). If the loop ever runs that many iterations without seeing
+`:answer`, it terminates with `:status :safety-cap-reached` and a
+fallback message that says the model got stuck. The cap is high
+enough that legitimate work never trips it; reaching it is a bug,
+not a contract.
+
+The cap is also **invisible to the model** — it never appears in
+`<system_state>`, system prompt, nudges, or any other projection
+slot. Callers that need a tighter cap for tests can override via
+`:safety-cap` on `query!` / `conversations/send!`.
 
 ## Plan, breadcrumbs, recent thought
 

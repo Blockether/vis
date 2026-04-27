@@ -107,7 +107,7 @@
   (it "shows `vis run` usage and flag list"
     (let [{:keys [exit out]} (run-vis "run" "--help")]
       (expect (zero? exit))
-      (expect (contains-all? out ["vis run" "FLAGS" "--json" "--model" "--max-iterations"])))))
+      (expect (contains-all? out ["vis run" "FLAGS" "--json" "--model"])))))
 
 (defdescribe vis-auth-help
   (it "shows the auth command tree"

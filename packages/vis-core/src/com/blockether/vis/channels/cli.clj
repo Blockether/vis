@@ -98,12 +98,6 @@
           ("--help" "-h")    (assoc opts :help? true :prompt "")
           "--debug"          (recur more (assoc opts :debug? true) prompt-parts)
           "--model"          (recur (next more) (assoc opts :model (first more)) prompt-parts)
-          "--max-iterations" (recur (next more)
-                               (assoc opts
-                                 :max-iterations (parse-long (first more))
-                                 :max-iterations-raw (first more)
-                                 :max-iterations-provided? true)
-                               prompt-parts)
           "--name"           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
           "--db"             (recur (next more) (assoc opts :db (first more)) prompt-parts)
           (recur more opts (conj prompt-parts arg)))))))
@@ -113,18 +107,7 @@
   (stdout! "")
   (stdout! "Examples:")
   (stdout! "  vis run \"What is 2+2?\"")
-  (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis run --model gpt-4o --max-iterations 10 \"Explain auth flow\""))
-
-(defn- validate-run-opts!
-  [{:keys [max-iterations max-iterations-raw max-iterations-provided?]}]
-  (when max-iterations-provided?
-    (when-not (and (integer? max-iterations) (pos? max-iterations))
-      (throw (ex-info "--max-iterations must be an integer >= 1"
-               {:type :cli/invalid-arg
-                :arg "--max-iterations"
-                :value max-iterations-raw
-                :parsed max-iterations})))))
+  (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\""))
 
 (defn- cli-run!
   "`vis run` handler. `_parsed` is unused — we re-parse the residual
@@ -133,20 +116,12 @@
   (config/init-cli!)
   (let [{:keys [prompt json? edn? trace? help? agent-name db] :as opts}
         (parse-run-args residual)]
-    (try
-      (validate-run-opts! opts)
-      (catch Exception e
-        (stdout! (str "Validation error: " (ex-message e)))
-        (print-run-usage!)
-        (shutdown-agents)
-        (System/exit 1)))
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
       (System/exit 0))
     (let [agent-def (agent/agent {:name (or agent-name "cli")})
           run-opts  (cond-> (dissoc opts :prompt :json? :edn? :trace? :compact?
-                              :agent-name :max-iterations-raw
-                              :max-iterations-provided? :db)
+                              :agent-name :db)
                       db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
@@ -368,17 +343,15 @@
         [{:cmd/name  "run"
           :cmd/doc   "Run a one-shot agent query and print the answer."
           :cmd/usage "vis run [FLAGS] \"prompt\""
-          :cmd/args  [{:name "json"           :kind :flag :type :boolean :doc "Output result as JSON."}
-                      {:name "edn"            :kind :flag :type :boolean :doc "Output result as EDN."}
-                      {:name "trace"          :kind :flag :type :boolean :doc "Show full execution trace."}
-                      {:name "debug"          :kind :flag :type :boolean :doc "Enable svar debug logging."}
-                      {:name "model"          :kind :flag :type :string  :doc "Override the LLM model."}
-                      {:name "max-iterations" :kind :flag :type :int     :doc "Initial iteration budget (default 4, min 1; the LLM extends on demand via (request-more-iterations N))."}
-                      {:name "name"           :kind :flag :type :string  :doc "Agent name."}
-                      {:name "db"             :kind :flag :type :string  :doc "DB target: PATH or :memory."}]
+          :cmd/args  [{:name "json"   :kind :flag :type :boolean :doc "Output result as JSON."}
+                      {:name "edn"    :kind :flag :type :boolean :doc "Output result as EDN."}
+                      {:name "trace"  :kind :flag :type :boolean :doc "Show full execution trace."}
+                      {:name "debug"  :kind :flag :type :boolean :doc "Enable svar debug logging."}
+                      {:name "model"  :kind :flag :type :string  :doc "Override the LLM model."}
+                      {:name "name"   :kind :flag :type :string  :doc "Agent name."}
+                      {:name "db"     :kind :flag :type :string  :doc "DB target: PATH or :memory."}]
           :cmd/examples ["vis run \"What is 2+2?\""
-                         "vis run --json --model gpt-4o \"Explain the auth flow\""
-                         "vis run --max-iterations 10 \"Refactor src/foo.clj\""]
+                         "vis run --json --model gpt-4o \"Explain the auth flow\""]
           :cmd/run-fn cli-run!}
 
          {:cmd/name  "auth"

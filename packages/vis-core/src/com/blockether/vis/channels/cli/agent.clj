@@ -14,7 +14,6 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.channels.core :as channels]
    [com.blockether.vis.loop.runtime.conversation.core :as conversations]
-   [com.blockether.vis.persistance.spec :as spec]
    [com.blockether.vis.config :as config]))
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
@@ -23,22 +22,23 @@
   "Create an agent definition (data map).
 
    Options:
-   - :name           — Agent name (string, default \"default\")
-   - :description    — What the agent does
-   - :constants      — Map of {symbol value} constants for SCI sandbox
-   - :model          — Override default model selection
-   - :max-iterations — Initial iteration budget (default 4, no cap)
+   - :name        — Agent name (string, default \"default\")
+   - :description — What the agent does
+   - :constants   — Map of {symbol value} constants for SCI sandbox
+   - :model       — Override default model selection
+
+   The iteration loop runs until the model emits `:answer`. There is
+   no per-agent budget; runaway protection is handled by the runtime
+   safety cap (`com.blockether.vis.persistance.spec/SAFETY_ITERATION_CAP`).
 
    Example:
      (agent {:name \"code-reviewer\"
              :description \"Reviews Clojure code for quality\"
-             :model \"gpt-4o\"
-             :max-iterations 10})"
+             :model \"gpt-4o\"})"
   [{:keys [name] :as opts}]
   (let [agent-name (or name "default")]
-    (merge {:name           agent-name
-            :constants      {}
-            :max-iterations spec/MAX_ITERATIONS}
+    (merge {:name      agent-name
+            :constants {}}
       opts)))
 
 ;;; ── Execution ────────────────────────────────────────────────────────────
@@ -57,20 +57,19 @@
    - :cost         — {:input-cost N :output-cost N :total-cost N :model str}
    - :trace        — Full iteration trace
    - :confidence   — :high/:medium/:low (when present)
-   - :status       — Only on failure: :max-iterations, :error, etc.
+   - :status       — Only on failure: :safety-cap-reached, :error, etc.
    - :error        — Error message (only on failure)
 
    Options:
-   - :spec           — Output spec for structured responses
-   - :model          — Override model
-   - :max-iterations — Override max iterations
-   - :on-chunk       — Streaming callback fn
-   - :debug?         — Enable debug logging (default false)
-   - :config         — Provider config override (skips ~/.vis/config.edn)
+   - :spec     — Output spec for structured responses
+   - :model    — Override model
+   - :on-chunk — Streaming callback fn
+   - :debug?   — Enable debug logging (default false)
+   - :config   — Provider config override (skips ~/.vis/config.edn)
 
    Each call creates a fresh conversation in the `:cli` channel.
    Past runs are browsable via `(conversations/by-channel :cli)`."
-  [agent-def prompt & [{:keys [spec model max-iterations on-chunk
+  [agent-def prompt & [{:keys [spec model on-chunk
                                debug? config]
                         :as _opts}]]
   (let [_cfg      (config/resolve-config config)
@@ -78,12 +77,11 @@
         title     (let [t (str/trim prompt-s)]
                     (if (> (count t) 100) (str (subs t 0 97) "…") t))
         {conv-id :id} (conversations/create! :cli {:title title})
-        iters     (or max-iterations (:max-iterations agent-def) spec/MAX_ITERATIONS)
         mdl       (or model (:model agent-def))
         tracker   (when on-chunk
                     (channels/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
         on-chunk* (when tracker (:on-chunk tracker))
-        q-opts    (cond-> {:max-iterations iters}
+        q-opts    (cond-> {}
                     spec      (assoc :spec spec)
                     mdl       (assoc :model mdl)
                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})
