@@ -29,11 +29,11 @@
 
   (it "produces different hashes for different forms"
     (expect (not= (iterate/canonical-expression-hash "(grep \"X\")")
-                 (iterate/canonical-expression-hash "(grep \"Y\")"))))
+              (iterate/canonical-expression-hash "(grep \"Y\")"))))
 
   (it "produces different hashes for forms with different head sym"
     (expect (not= (iterate/canonical-expression-hash "(grep \"X\")")
-                 (iterate/canonical-expression-hash "(read-file \"X\")"))))
+              (iterate/canonical-expression-hash "(read-file \"X\")"))))
 
   (it "falls back to raw-string hash on parse failure (never throws)"
     ;; A truncated form like \"(def\" is unparseable; the helper must

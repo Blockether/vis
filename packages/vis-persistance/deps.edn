@@ -25,7 +25,7 @@
  :deps
  {org.clojure/clojure       {:mvn/version "1.12.4"}
   ;; svar internal spec (used by persistance.spec for shared types)
-  com.blockether/svar       {:mvn/version "0.3.10"}
+  com.blockether/svar       {:mvn/version "0.3.11"}
   ;; JSON + EDN — used in persistance.spec only, no SQL libs.
   com.cnuernber/charred     {:mvn/version "1.038"}
   io.github.tonsky/fast-edn {:mvn/version "1.1.3"}

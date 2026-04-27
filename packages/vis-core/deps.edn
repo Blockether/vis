@@ -23,7 +23,7 @@
 
   hiccup/hiccup                             {:mvn/version "2.0.0"}
   ;; LLM structured output
-  com.blockether/svar                       {:mvn/version "0.3.10"}
+  com.blockether/svar                       {:mvn/version "0.3.11"}
   ;; Anomaly - standardized error categories (used by RLM)
   com.blockether/anomaly                    {:mvn/version "1.0.1"}
   ;; Browser automation (Playwright)
