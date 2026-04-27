@@ -172,7 +172,7 @@
 
         collect-fn (case agent-name
                      :vis (fn [task]
-                                  (collect-vis-prediction! router task model run-ts))
+                            (collect-vis-prediction! router task model run-ts))
                      :pi        (fn [task]
                                   (collect-pi-prediction! task pi-model)))]
 
@@ -368,7 +368,7 @@
 ;; =============================================================================
 
 (defn- print-swebench-summary
-  [agent-name model total-q predictions results report-map]
+  [agent-name model total-q predictions results _report-map]
   (let [resolved    (count (filter #(= :resolved (:harness-status %)) results))
         unresolved  (count (filter #(= :unresolved (:harness-status %)) results))
         errors      (count (filter #(= :error (:harness-status %)) results))
@@ -403,7 +403,6 @@
   [opts]
   (let [agent-name (get opts :agent :vis)
         model      (get opts :model "gpt-4o")
-        provider   (get opts :provider :blockether)
         router     (:router opts)
         offset     (get opts :offset 0)
         limit      (get opts :limit nil)
@@ -426,10 +425,10 @@
                    (filter #(contains? ids (:instance_id %)) dataset)
                    (drop offset dataset))
         tasks    (vec (cond->> (shuffle filtered) limit (take limit)))
-        total-q  (count tasks)]
+        total-q  (count tasks)
 
-    ;; Phase 1: Collect predictions
-    (let [predictions (collect-predictions! agent-name tasks router model run-ts)
+        ;; Phase 1: Collect predictions
+        predictions (collect-predictions! agent-name tasks router model run-ts)
 
           ;; Phase 2: Write predictions.jsonl
           predictions-path (write-predictions! predictions run-id model)
@@ -464,28 +463,28 @@
           total-dur  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
           avg-dur    (if (pos? total-q) (/ (double total-dur) total-q) 0.0)
           total-cost (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
-          avg-iters  (when (= agent-name :vis)
-                       (let [iters (keep :iterations predictions)]
-                         (when (seq iters)
-                           (/ (double (reduce + 0 iters)) (count iters)))))]
+        avg-iters  (when (= agent-name :vis)
+                     (let [iters (keep :iterations predictions)]
+                       (when (seq iters)
+                         (/ (double (reduce + 0 iters)) (count iters)))))]
 
-      ;; Phase 6: Print summary
-      (print-swebench-summary agent-name model total-q predictions results report-map)
-      (println (format "\nPredictions: %s" predictions-path))
-      (println (format "Results saved to: %s" saved))
+    ;; Phase 6: Print summary
+    (print-swebench-summary agent-name model total-q predictions results report-map)
+    (println (format "\nPredictions: %s" predictions-path))
+    (println (format "Results saved to: %s" saved))
 
-      {:bench            "swebench-verified"
-       :mode             agent-name
-       :model            model
-       :total-questions  total-q
-       :total-dataset    total-ds
-       :correct          resolved
-       :incorrect        unresolved
-       :errors           (if harness-ok? errors-cnt total-q)
-       :accuracy         accuracy
-       :avg-duration-ms  avg-dur
-       :avg-iterations   avg-iters
-       :total-cost       total-cost
-       :results          results
-       :saved-to         saved
-       :predictions-path predictions-path})))
+    {:bench            "swebench-verified"
+     :mode             agent-name
+     :model            model
+     :total-questions  total-q
+     :total-dataset    total-ds
+     :correct          resolved
+     :incorrect        unresolved
+     :errors           (if harness-ok? errors-cnt total-q)
+     :accuracy         accuracy
+     :avg-duration-ms  avg-dur
+     :avg-iterations   avg-iters
+     :total-cost       total-cost
+     :results          results
+     :saved-to         saved
+     :predictions-path predictions-path}))

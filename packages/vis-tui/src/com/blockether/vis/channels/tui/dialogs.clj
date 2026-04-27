@@ -568,7 +568,6 @@
              (str (role-label role) ": " (or text "")))))
     (str/join "\n\n")))
 
-
 (defn copy-dialog!
   "Show copy dialog for chat messages.
    Space toggles, A toggles all, Enter copies selected, Esc cancels."

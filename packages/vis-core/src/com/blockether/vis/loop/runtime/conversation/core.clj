@@ -43,8 +43,66 @@
           {} m))))
   nil)
 
-(defn error->user-message [^Throwable e]
-  (or (ex-message e) "Internal error"))
+(defn- causal-chain
+  "Walk `(.getCause e)` until a fixed point or cycle is hit. Returns the
+   chain in causal order (innermost first), bounded so a self-referential
+   cause graph can't loop forever."
+  [^Throwable e]
+  (loop [acc [] cur e seen #{}]
+    (cond
+      (nil? cur)        (reverse acc)
+      (contains? seen cur) (reverse acc)
+      (>= (count acc) 16)  (reverse acc)
+      :else (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
+
+(defn- sqlite-cantopen-message?
+  "True when any link in the cause chain looks like a SQLite open
+   failure. Detection is text-based on purpose — we don't want a hard
+   compile-time dep on `org.sqlite.SQLiteException` from this namespace."
+  [^Throwable e]
+  (boolean
+    (some (fn [^Throwable t]
+            (let [m (or (ex-message t) "")]
+              (or (.contains m "[SQLITE_CANTOPEN]")
+                (.contains m "unable to open database file")
+                (.contains m "Unable to open the database file"))))
+      (causal-chain e))))
+
+(defn error->user-message
+  "Translate an exception from the query pipeline into something a
+   human reading a chat bubble can act on.
+
+   For most exceptions we still surface `(ex-message e)` verbatim —
+   provider errors, validation issues, etc. are often self-explanatory.
+   The one case we rewrite is `SQLITE_CANTOPEN`, because the raw
+   message (\"unable to open the database file\") is meaningless
+   without context: the underlying file at `~/.vis/vis.mdb/rlm.db`
+   was either deleted out from under the running JVM, or moved, or
+   the process lost write permissions to the directory. Anyone
+   hitting this on the chat surface needs to know what to inspect,
+   not the JDBC error code."
+  [^Throwable e]
+  (cond
+    (sqlite-cantopen-message? e)
+    (let [home   (System/getProperty "user.home")
+          dbpath (str home "/.vis/vis.mdb/rlm.db")
+          dbdir  (str home "/.vis/vis.mdb")
+          dirf   (java.io.File. dbdir)
+          filef  (java.io.File. dbpath)]
+      (str "Vis database is unavailable. "
+        "Expected file: " dbpath ". "
+        (cond
+          (not (.exists filef))
+          "The file is missing — likely deleted while Vis was running. Restart Vis to recreate it."
+
+          (not (.canWrite dirf))
+          (str "The directory " dbdir " is not writable by this process.")
+
+          :else
+          "The handle was lost mid-session. Restart Vis to reconnect.")))
+
+    :else
+    (or (ex-message e) "Internal error")))
 
 (defn- open-env!
   [id {:keys [channel external-id title]}]
@@ -151,18 +209,18 @@
           prior-turn       (iterate/load-prior-turn-digest
                              db-info (:conversation-id env) query-id)
           iteration-context-block (iterate/build-iteration-context env
-                     {:iteration              0
-                      :current-max-iterations rlm-spec/MAX_ITERATIONS
-                      :plan-state             sticky-plan
-                      :breadcrumbs            breadcrumb-chain
-                      :system-vars            {:QUERY query-text}
-                      :prior-turn             prior-turn
-                      :call-counts-atom       (atom {})
-                      :active-extensions      active-exts})
+                                    {:iteration              0
+                                     :current-max-iterations rlm-spec/MAX_ITERATIONS
+                                     :plan-state             sticky-plan
+                                     :breadcrumbs            breadcrumb-chain
+                                     :system-vars            {:QUERY query-text}
+                                     :prior-turn             prior-turn
+                                     :call-counts-atom       (atom {})
+                                     :active-extensions      active-exts})
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
           iteration-spec (if has-reasoning?
-                      rlm-spec/ITERATION_SPEC_REASONING
-                      rlm-spec/ITERATION_SPEC_NON_REASONING)
+                           rlm-spec/ITERATION_SPEC_REASONING
+                           rlm-spec/ITERATION_SPEC_NON_REASONING)
           spec-prompt (svar-spec/spec->prompt iteration-spec)]
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
         system-prompt
@@ -218,7 +276,7 @@
             :iterations    (or iterations 0)
             :duration-ms   (or duration-ms 0)
             :status        :interrupted
-            ;; �� mark crashed/cancelled turns so the next turn's
+            ;; �� mark crashed/cancelled turns so the next turn's
             ;; handover digest renders the right outcome instead of
             ;; falling through to a derived guess.
             :prior-outcome :cancelled})

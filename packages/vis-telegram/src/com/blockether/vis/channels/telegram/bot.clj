@@ -64,8 +64,8 @@
                 (str answer (format-footer result model-name))))
             (catch Exception e
               (tel/log! {:level :error :id ::handle-message
-                           :data {:sender sender :chat-id chat-id :error (ex-message e)}
-                           :msg (str "error handling msg from " sender " in chat " chat-id)})
+                         :data {:sender sender :chat-id chat-id :error (ex-message e)}
+                         :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
                      (str "Warning: " (conversations/error->user-message e)))
                 (catch Exception _ nil)))))))))
@@ -79,8 +79,8 @@
                       (catch InterruptedException _ ::interrupted)
                       (catch Exception e
                         (tel/log! {:level :error :id ::poll-error
-                                      :data {:error (ex-message e)}
-                                      :msg "poll error"})
+                                   :data {:error (ex-message e)}
+                                   :msg "poll error"})
                         (Thread/sleep 2000)
                         []))]
         (cond
@@ -104,7 +104,7 @@
       (.start t)
       (reset! poll-thread t)
       (tel/log! {:level :info :id ::started}
-  "Telegram bot running"))))
+        "Telegram bot running"))))
 
 (defn stop! []
   (when (compare-and-set! running? true false)
@@ -113,13 +113,13 @@
       (reset! poll-thread nil))
     (conversations/close-all!)
     (tel/log! {:level :info :id ::stopped}
-  "Telegram bot stopped")))
+      "Telegram bot stopped")))
 
 (defn -main [& _]
   (.addShutdownHook (Runtime/getRuntime)
     (Thread. ^Runnable (fn []
                          (tel/log! {:level :info :id ::shutdown}
-  "Shutting down Telegram bot")
+                           "Shutting down Telegram bot")
                          (stop!))
       "vis-telegram-shutdown"))
   (start!)

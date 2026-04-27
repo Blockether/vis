@@ -14,7 +14,7 @@
 
    [com.blockether.vis.persistance.core :as db]
    [com.blockether.vis.persistance.spec :as rlm-spec
-    :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING
+    :refer [ITERATION_SPEC_NON_REASONING
             *eval-timeout-ms* *rlm-ctx* clamp-eval-timeout-ms]]
    [com.blockether.vis.loop.mustache :as mustache]
    [com.blockether.svar.internal.llm :as llm]
@@ -596,8 +596,6 @@
                    :msg "load-prior-turn-digest failed"})
         nil))))
 
-
-
 ;; ---------------------------------------------------------------------------
 ;; Nudges â€” per-iteration system hints injected into the iteration context
 ;; ---------------------------------------------------------------------------
@@ -751,8 +749,6 @@
     (when (seq parts)
       (str/join "\n" parts))))
 
-
-
 ;; ---------------------------------------------------------------------------
 ;; Error normalization
 ;; ---------------------------------------------------------------------------
@@ -852,7 +848,7 @@
   "Runs a single RLM iteration: ask! â†’ check final â†’ execute code.
    Returns map with :thinking :expressions :final-result :api-usage etc."
   [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk]
-                        :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
+                            :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
@@ -861,7 +857,7 @@
                                             :got reasoning-level}))))
           ;; Stream reasoning chunks to the TUI while the LLM is thinking
           streaming-fn (when on-chunk
-                         (fn [{:keys [reasoning done?] :as chunk}]
+                         (fn [{:keys [reasoning done?]}]
                            (when (or (some? reasoning) done?)
                              (on-chunk {:iteration iteration
                                         :thinking  (some-> reasoning str)
@@ -892,7 +888,7 @@
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
                      :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
                      :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}
-          ;; €” surface plan slot fields from svar parse so
+          ;; ï¿½ï¿½ surface plan slot fields from svar parse so
           ;; downstream `store-iteration!` can persist them. Keep keys
           ;; absent when blank/missing.
           plan-state-raw  (:plan parsed)
@@ -911,14 +907,14 @@
                                   raw-code))
               code-blocks (mapv :expr code-entries)
               expression-results (when (seq code-blocks)
-                             (mapv (fn [{:keys [expr time-ms]}]
-                                     (if-let [err (literal-code-block-error expr)]
-                                       {:result nil :error err
-                                        :stdout "" :stderr "" :execution-time-ms 0}
-                                       (execute-code environment expr :timeout-ms time-ms)))
-                               code-entries))
+                                   (mapv (fn [{:keys [expr time-ms]}]
+                                           (if-let [err (literal-code-block-error expr)]
+                                             {:result nil :error err
+                                              :stdout "" :stderr "" :execution-time-ms 0}
+                                             (execute-code environment expr :timeout-ms time-ms)))
+                                     code-entries))
               expression-errors (when expression-results
-                            (seq (clojure.core/filter :error expression-results)))
+                                  (seq (clojure.core/filter :error expression-results)))
               raw-answer (str raw-final-answer)
               locals (try (get-locals environment) (catch Throwable _ {}))
               single-token? (and (re-matches #"\S+" raw-answer)
@@ -987,11 +983,10 @@
               ;; Coalesce fragments: join unbalanced blocks with the next
               coalesced (loop [remaining normalized
                                result []]
+                          ;; Without form-repair, pass blocks through as-is
                           (if (empty? remaining)
                             result
-                            (let [{:keys [expr time-ms]} (first remaining)]
-                              ;; Without form-repair, pass blocks through as-is
-                              (recur (rest remaining) (conj result (first remaining))))))
+                            (recur (rest remaining) (conj result (first remaining)))))
               total-blocks (count coalesced)
               executed (mapv (fn [idx {:keys [expr time-ms]}]
                                (log-stage! :code-exec iteration

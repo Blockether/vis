@@ -253,8 +253,7 @@
       ;; conversation_soul.metadata contains channel — we need to filter by it.
       ;; SQLite json_extract works on the metadata column.
       (mapv (fn [row]
-              (let [soul-meta (<-json (:soul_metadata row))
-                    state-meta (<-json (:state_metadata row))]
+              (let [soul-meta (<-json (:soul_metadata row))]
                 {:id          (->uuid (:id row))
                  :channel     (->kw-back (:channel soul-meta))
                  :external-id (:external-id soul-meta)
@@ -939,7 +938,6 @@
                      :depends-on (vec (filter soul-ids (get-in adj [soul-id :depends-on])))
                      :depended-by (vec (filter soul-ids (get-in adj [soul-id :depended-by])))}))
             sorted))))))
-
 
 ;; =============================================================================
 ;; Backend registration

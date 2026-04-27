@@ -88,7 +88,7 @@
             ;; full render.  DELTA is safe because it only touches dirty cells.
             (try (.refresh screen Screen$RefreshType/DELTA)
               (catch Exception _ nil))))
-        new-size)
+      new-size)
     (.getTerminalSize screen)))
 
 (defn- apply-settings
@@ -132,11 +132,6 @@
   [{:keys [lines]}]
   (let [n (count lines)]
     (min input-max-lines (max input-min-lines n))))
-
-(defn- short-id
-  [id]
-  (when-let [s (some-> id str)]
-    (subs s 0 (min 8 (count s)))))
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box.
@@ -220,7 +215,7 @@
                         loading? (boolean (:loading? db))
                         animate? (and loading?
                                    (>= (- now-ms (long last-frame-ms))
-                                       spinner-tick-ms))]
+                                     spinner-tick-ms))]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
                           (or (not= last-v version)
@@ -238,7 +233,7 @@
                     ;; resize race or null cell will recover next frame.
                     (try (require 'taoensso.telemere)
                       ((resolve 'taoensso.telemere/log!)
-                        :warn (str "render frame failed: " (or (ex-message t) (str t))))
+                       :warn (str "render frame failed: " (or (ex-message t) (str t))))
                       (catch Throwable _ nil))
                     [false last-cols last-rows last-frame-ms])
                   (finally (.unlock draw-lock))))]
@@ -302,160 +297,158 @@
   ;; surfaces as a `:vis/user-error` and `channel-main` prints a
   ;; clean, actionable message + exit code 2 (no trace, no torn-down
   ;; terminal state).
-  (let [resumed-from-flag (when-let [cid (:conversation-id opts)]
-                            (or (chat/resume-conversation cid)
-                                (throw (ex-info (format-conversation-not-found cid)
-                                         {:vis/user-error true
-                                          :id             cid}))))]
-  (state/init!)
+   (let [resumed-from-flag (when-let [cid (:conversation-id opts)]
+                             (or (chat/resume-conversation cid)
+                               (throw (ex-info (format-conversation-not-found cid)
+                                        {:vis/user-error true
+                                         :id             cid}))))]
+     (state/init!)
 
   ;; Load persisted config
-  (when-let [c (config/load-config)]
-    (state/dispatch [:set-config c]))
+     (when-let [c (config/load-config)]
+       (state/dispatch [:set-config c]))
 
-  (let [terminal (UnixTerminal. @config/tty-in @config/tty-out (Charset/defaultCharset))
-        _        (input/register-custom-patterns! terminal)
-        screen   (TerminalScreen. terminal)
+     (let [terminal (UnixTerminal. @config/tty-in @config/tty-out (Charset/defaultCharset))
+           _        (input/register-custom-patterns! terminal)
+           screen   (TerminalScreen. terminal)
         ;; Render thread handle is held in a volatile so the `finally`
         ;; clause can join it. (Locals from the `try` body aren't in
         ;; scope inside `finally`.)
-        render-thread (volatile! nil)]
-    (.startScreen screen)
-    (try
+           render-thread (volatile! nil)]
+       (.startScreen screen)
+       (try
       ;; Show provider dialog on first launch if no config
-      (when-not (:config @state/app-db)
-        (when (not (:dialog-open? @state/app-db))
-          (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-            (state/dispatch [:set-config c]))))
+         (when-not (:config @state/app-db)
+           (when (not (:dialog-open? @state/app-db))
+             (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+               (state/dispatch [:set-config c]))))
 
       ;; Sweep orphaned running queries from previous crashes so they
       ;; don't show raw query text in the rebuilt history.
-      (try (conversations/sweep-orphaned-running-queries!) (catch Throwable _ nil))
+         (try (conversations/sweep-orphaned-running-queries!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
       ;; The --conversation-id case was already validated above (before
       ;; Lanterna started), so here we only need the pre-resolved value.
-      (when-let [config (:config @state/app-db)]
-        (let [{:keys [id history]}
-              (if (:conversation-id opts)
-                resumed-from-flag
-                (if (:resume opts)
+         (when-let [config (:config @state/app-db)]
+           (let [{:keys [id history]}
+                 (if (:conversation-id opts)
+                   resumed-from-flag
+                   (if (:resume opts)
                   ;; --resume: pick up the latest :vis conversation
-                  (if-let [latest (first (conversations/by-channel :vis))]
-                    (or (chat/resume-conversation (:id latest))
-                        (chat/make-conversation config))
-                    (chat/make-conversation config))
-                  (chat/make-conversation config)))
+                     (if-let [latest (first (conversations/by-channel :vis))]
+                       (or (chat/resume-conversation (:id latest))
+                         (chat/make-conversation config))
+                       (chat/make-conversation config))
+                     (chat/make-conversation config)))
               ;; Set title from DB if present; do not synthesize from messages.
-              conv-info (when-let [c (conversations/by-id id)] c)
-              title     (when-let [t (some-> conv-info :title)]
-                          (when-not (str/blank? t) t))]
-          (state/dispatch [:init-conversation {:id id} history])
-          (when title
-            (state/dispatch [:set-title title]))
-          (channels/register-conversation-shutdown-hook! id)))
+                 conv-info (when-let [c (conversations/by-id id)] c)
+                 title     (when-let [t (some-> conv-info :title)]
+                             (when-not (str/blank? t) t))]
+             (state/dispatch [:init-conversation {:id id} history])
+             (when title
+               (state/dispatch [:set-title title]))
+             (channels/register-conversation-shutdown-hook! id)))
 
       ;; Spawn the render thread BEFORE the input loop. It will paint
       ;; the first frame as soon as `:render-version` is non-zero (every
       ;; init dispatch above bumps it).
-      (vreset! render-thread (start-render-thread! screen))
-      (loop []
-        (let [db    @state/app-db
-              ;; Layout fields are populated by the render thread after
-              ;; the first paint. Until then, scroll handlers fall back
-              ;; to safe defaults and act as a no-op.
-              {:keys [total-h inner-h]} (:layout db)
-              total-h (or total-h 0)
-              inner-h (or inner-h 0)]
+         (vreset! render-thread (start-render-thread! screen))
+         (loop []
+           ;; Layout fields are populated by the render thread after
+           ;; the first paint. Until then, scroll handlers fall back
+           ;; to safe defaults and act as a no-op.
+           ;; Pure poll — no rendering on this thread anymore. The
+           ;; render thread handles all screen output.
+           (let [db      @state/app-db
+                 {:keys [total-h inner-h]} (:layout db)
+                 total-h (or total-h 0)
+                 inner-h (or inner-h 0)
+                 key     (.pollInput screen)]
+               (if (nil? key)
+                 (do (Thread/sleep 16) (recur))
+                 (let [{:keys [action state]} (input/handle-key key (:input db))]
+                   (state/dispatch [:update-input state])
+                   (let [run-command!
+                         (fn [cmd]
+                           (when-not (:dialog-open? @state/app-db)
+                             (case cmd
+                               :configure-provider
+                               (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                                 (state/dispatch [:set-config c]))
 
-          ;; Pure poll — no rendering on this thread anymore. The
-          ;; render thread handles all screen output.
-          (let [key (.pollInput screen)]
-            (if (nil? key)
-              (do (Thread/sleep 16) (recur))
-              (let [{:keys [action state col row]} (input/handle-key key (:input db))]
-                (state/dispatch [:update-input state])
-                (let [run-command!
-                      (fn [cmd]
-                        (when-not (:dialog-open? @state/app-db)
-                          (case cmd
-                            :configure-provider
-                            (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                              (state/dispatch [:set-config c]))
+                               :copy
+                               (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
 
-                            :copy
-                            (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
+                               :toggles
+                               (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
+                                 (state/dispatch [:update-settings s]))
 
-                            :toggles
-                            (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
-                              (state/dispatch [:update-settings s]))
-
-                            :system-prompt
-                            (with-dialog-lock
-                              #(let [conv-id (get-in @state/app-db [:conv :id])
-                                     prompt  (if conv-id
-                                               (or (conversations/effective-system-prompt conv-id)
-                                                 "(no system prompt)")
-                                               "(no conversation)")]
-                                 (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
+                               :system-prompt
+                               (with-dialog-lock
+                                 #(let [conv-id (get-in @state/app-db [:conv :id])
+                                        prompt  (if conv-id
+                                                  (or (conversations/effective-system-prompt conv-id)
+                                                    "(no system prompt)")
+                                                  "(no conversation)")]
+                                    (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
-                            nil)))]
-                  (case action
-                  :quit nil
+                               nil)))]
+                     (case action
+                       :quit nil
 
-                  :show-palette
-                  (if (:dialog-open? @state/app-db)
-                    (recur)
-                    (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
-                      (when cmd (run-command! cmd))
-                      (recur)))
+                       :show-palette
+                       (if (:dialog-open? @state/app-db)
+                         (recur)
+                         (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
+                           (when cmd (run-command! cmd))
+                           (recur)))
 
+                       :history-up
+                       (do (state/dispatch [:history-up])
+                         (recur))
 
-                  :history-up
-                  (do (state/dispatch [:history-up])
-                    (recur))
+                       :history-down
+                       (do (state/dispatch [:history-down])
+                         (recur))
 
-                  :history-down
-                  (do (state/dispatch [:history-down])
-                    (recur))
+                       :send
+                       (let [text (input/input->text state)]
+                         (state/dispatch [:reset-input])
+                         (when (and (seq (str/trim text))
+                                 (:conv @state/app-db)
+                                 (not (:loading? @state/app-db)))
+                           (state/dispatch [:send-message text]))
+                         (recur))
 
-                  :send
-                  (let [text (input/input->text state)]
-                    (state/dispatch [:reset-input])
-                    (when (and (seq (str/trim text))
-                            (:conv @state/app-db)
-                            (not (:loading? @state/app-db)))
-                      (state/dispatch [:send-message text]))
-                    (recur))
+                       :cancel
+                       (do (when (:loading? @state/app-db)
+                             (state/dispatch [:cancel-query]))
+                         (recur))
 
-                  :cancel
-                  (do (when (:loading? @state/app-db)
-                        (state/dispatch [:cancel-query]))
-                    (recur))
+                       :scroll-up
+                       (do (state/dispatch [:scroll-up 3 total-h inner-h])
+                         (recur))
 
-                  :scroll-up
-                  (do (state/dispatch [:scroll-up 3 total-h inner-h])
-                    (recur))
+                       :scroll-down
+                       (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                         (recur))
 
-                  :scroll-down
-                  (do (state/dispatch [:scroll-down 3 total-h inner-h])
-                    (recur))
-
-                  :continue (recur))))))))
-      (finally
+                       :continue (recur)))))))
+         (finally
         ;; Tell the render thread to exit and wake it so the wait
         ;; doesn't sit out its full timeout. Daemon thread, so we don't
         ;; strictly have to join — but doing so ensures the final paint
         ;; (or no paint, if shutdown? was already true) finishes before
         ;; we tear down the screen.
-        (state/dispatch [:shutdown])
-        (when-let [t @render-thread]
-          (try (.join ^Thread t 500) (catch Throwable _ nil)))
-        (when-let [conv (:conv @state/app-db)]
-          (chat/dispose! conv))
-        (.stopScreen screen)))))))
+           (state/dispatch [:shutdown])
+           (when-let [t @render-thread]
+             (try (.join ^Thread t 500) (catch Throwable _ nil)))
+           (when-let [conv (:conv @state/app-db)]
+             (chat/dispose! conv))
+           (.stopScreen screen)))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
@@ -514,12 +507,12 @@
           ;; process exit non-zero — no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
           (do (.println config/original-stdout (str "vis: " (.getMessage t)))
-              (reset! exit-code 2))
+            (reset! exit-code 2))
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
           (do (.println config/original-stdout (str "vis: fatal error — " (.getMessage t)))
-              (.printStackTrace t (java.io.PrintStream. @config/tty-out true))
-              (throw t))))
+            (.printStackTrace t (java.io.PrintStream. @config/tty-out true))
+            (throw t))))
       (finally
         (config/shutdown!)))
     (when (pos? @exit-code)

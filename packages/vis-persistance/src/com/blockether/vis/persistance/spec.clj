@@ -82,8 +82,6 @@
         (re-find #"#\([^)]*#\(" s)
         "Nested #() is illegal in Clojure. Rewrite inner #() as (fn [...] ...)"
 
-
-
         :else nil))))
 
 (defn validate-json
@@ -263,54 +261,54 @@
    conditional requireds)."
   [{:keys [include-thinking?]}]
   (let [base-fields
-          [(spec/field {::spec/name        :code
-                        ::spec/type        :spec.type/ref
-                        ::spec/target      :code_block
-                        ::spec/cardinality :spec.cardinality/many
-                        ::spec/required    true
-                        ::spec/description "Required code blocks to execute this iteration. Emit AS MANY blocks as possible — pack all independent operations into one array. Empty array `[]` when no computation needed."})
-           (spec/field {::spec/name        :next
-                        ::spec/type        :spec.type/ref
-                        ::spec/target      :next_turn
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "Optional steering for the next iteration."})
-           (spec/field {::spec/name        :plan
-                        ::spec/type        :spec.type/ref
-                        ::spec/target      :plan_state
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "Structured plan. EMIT ON ITER 0. Carried verbatim across iters until you re-emit. Re-emit only when reality forces a real change. Max 20 items. Exactly one :in_progress."})
-           (spec/field {::spec/name        :breadcrumb
-                        ::spec/type        :spec.type/string
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "≤120 char single line summarizing what THIS iteration accomplished, in the strategic frame of <plan>. Past tense. Mention which item id you advanced."})
-           (spec/field {::spec/name        :answer
-                        ::spec/type        :spec.type/string
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "Optional final answer for this iteration. Never use emoji/emoticons."})
-           (spec/field {::spec/name        :abandon-reason
-                        ::spec/type        :spec.type/string
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "Required when emitting :answer with open <plan> items. Concrete reason this turn cannot complete the plan (e.g. 'blocked: missing access to X')."})
+        [(spec/field {::spec/name        :code
+                      ::spec/type        :spec.type/ref
+                      ::spec/target      :code_block
+                      ::spec/cardinality :spec.cardinality/many
+                      ::spec/required    true
+                      ::spec/description "Required code blocks to execute this iteration. Emit AS MANY blocks as possible — pack all independent operations into one array. Empty array `[]` when no computation needed."})
+         (spec/field {::spec/name        :next
+                      ::spec/type        :spec.type/ref
+                      ::spec/target      :next_turn
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "Optional steering for the next iteration."})
+         (spec/field {::spec/name        :plan
+                      ::spec/type        :spec.type/ref
+                      ::spec/target      :plan_state
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "Structured plan. EMIT ON ITER 0. Carried verbatim across iters until you re-emit. Re-emit only when reality forces a real change. Max 20 items. Exactly one :in_progress."})
+         (spec/field {::spec/name        :breadcrumb
+                      ::spec/type        :spec.type/string
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "≤120 char single line summarizing what THIS iteration accomplished, in the strategic frame of <plan>. Past tense. Mention which item id you advanced."})
+         (spec/field {::spec/name        :answer
+                      ::spec/type        :spec.type/string
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "Optional final answer for this iteration. Never use emoji/emoticons."})
+         (spec/field {::spec/name        :abandon-reason
+                      ::spec/type        :spec.type/string
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "Required when emitting :answer with open <plan> items. Concrete reason this turn cannot complete the plan (e.g. 'blocked: missing access to X')."})
            ;; Values-only enum (svar 0.3.2+). Mustache semantics are
            ;; documented once in the ARCH section; no need to re-paste
            ;; them per iteration into the JSON schema.
-           (spec/field {::spec/name        :answer-type
-                        ::spec/type        :spec.type/keyword
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "Required with :answer; controls final answer rendering."
-                        ::spec/values      ["mustache-text" "mustache-markdown"]})
-           (spec/field {::spec/name        :confidence
-                        ::spec/type        :spec.type/keyword
-                        ::spec/cardinality :spec.cardinality/one
-                        ::spec/required    false
-                        ::spec/description "Optional confidence level."
-                        ::spec/values      ["high" "medium" "low"]})]
+         (spec/field {::spec/name        :answer-type
+                      ::spec/type        :spec.type/keyword
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "Required with :answer; controls final answer rendering."
+                      ::spec/values      ["mustache-text" "mustache-markdown"]})
+         (spec/field {::spec/name        :confidence
+                      ::spec/type        :spec.type/keyword
+                      ::spec/cardinality :spec.cardinality/one
+                      ::spec/required    false
+                      ::spec/description "Optional confidence level."
+                      ::spec/values      ["high" "medium" "low"]})]
 
         fields
         (if include-thinking?
@@ -355,7 +353,7 @@
   [^bytes bs]
   (.encodeToString (Base64/getEncoder) bs))
 
-  "Dynamic var for max recursion depth. Bound per vis! call."
+"Dynamic var for max recursion depth. Bound per vis! call."
 
 (def ^:dynamic *rlm-ctx*
   "Dynamic context for RLM debug logging. Bind with {:rlm-debug? true :rlm-phase :phase-name :rlm-environment-id \"...\"}."

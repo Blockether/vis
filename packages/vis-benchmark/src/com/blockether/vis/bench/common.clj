@@ -7,7 +7,6 @@
    [babashka.fs :as fs]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.core :as rlm]
    [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
@@ -182,9 +181,8 @@
          :timed-out?  false})
       (catch Exception e
         (tel/log! {:level :warn :id ::pi-local-error
-                     :data {:error (ex-message e)}
-}
-                     "Pi-local LLM call failed")
+                   :data {:error (ex-message e)}}
+          "Pi-local LLM call failed")
         {:output nil :duration-ms (- (System/currentTimeMillis) start) :timed-out? true}))))
 
 ;; =============================================================================
@@ -321,20 +319,18 @@
                                               (eval-fn item)
                                               (catch Throwable e
                                                 (tel/log! {:level :warn :id ::bench-error
-                                                             :data {:idx idx
-                                                                    :item (select-keys item [:id :title :task_id :instance_id])
-                                                                    :error (ex-message e)}
-}
-                                                             "Evaluation failed")
+                                                           :data {:idx idx
+                                                                  :item (select-keys item [:id :title :task_id :instance_id])
+                                                                  :error (ex-message e)}}
+                                                  "Evaluation failed")
                                                 {:error (ex-message e) :correct? false :duration-ms 0}))]
                             [(inc idx) item eval-result])))
                       batch)]
         (doseq [[f [idx orig-item]] (map vector futures batch)]
           (let [[q-num item eval-result] (or (deref f problem-timeout-ms nil)
                                            (do (tel/log! {:level :warn :id ::task-timeout
-                                                            :data {:idx idx :item (select-keys orig-item [:id :title :task_id :instance_id])}
-}
-                                                            "Task timed out (10 min)")
+                                                          :data {:idx idx :item (select-keys orig-item [:id :title :task_id :instance_id])}}
+                                                 "Task timed out (10 min)")
                                              [(inc idx) orig-item {:error "Task timeout (10 min)" :correct? false :duration-ms 0}]))
                 correct?   (boolean (:correct? eval-result))
                 error?     (boolean (:error eval-result))

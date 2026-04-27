@@ -34,7 +34,6 @@
 (def ai-bubble-border  (TextColor$RGB. 130 130 130))  ;; (unused — kept for back-compat)
 (def ai-role-fg        (TextColor$RGB. 80 160 80))    ;; green "vis" label
 
-
 ;; Status indicators
 (def status-ok  (TextColor$RGB. 40 160 60))    ;; green
 (def status-bad (TextColor$RGB. 220 50 50))    ;; red

@@ -12,7 +12,6 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.bench.common :as common]
-   [com.blockether.svar.core :as svar]
    [taoensso.trove :as trove])
   (:import
    (java.util.zip GZIPInputStream)))

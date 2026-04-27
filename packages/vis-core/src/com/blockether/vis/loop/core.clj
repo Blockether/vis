@@ -136,6 +136,11 @@ EVERY ITERATION:
                      Reference results by iN.K id. NEVER repeat a successful call;
                      read its result here instead.
     <var_index>      every `(def name val)` you've written. Survives until `:forget`.
+                     Type-aware: cheap values inline (`(def s \"hello\")`); large
+                     values show schema (`(def m {:n 42 :keys-sample [:a :b]})`).
+                     Stats live in a `;;` comment line above each entry.
+    <vars_archive>   names of `:forget`'d / persisted-only vars; call
+                     `(var-history 'sym)` to recover the body.
     If <plan>+<recent>+<system_state> already answers the query → STEP 4.
     Otherwise → STEP 2.
 
@@ -324,8 +329,8 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
   [sci-ctx names]
   (let [raw-syms (keep (fn [n]
                          (cond (symbol? n) n
-                               (string? n) (try (symbol n) (catch Throwable _ nil))
-                               :else       nil))
+                           (string? n) (try (symbol n) (catch Throwable _ nil))
+                           :else       nil))
                    names)
         {system-syms true user-syms false} (group-by (comp boolean system-var-sym?) raw-syms)]
     (when (seq system-syms)
