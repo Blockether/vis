@@ -111,47 +111,14 @@
     (catch Exception e (str "Python validation failed: " (ex-message e)))))
 
 (defn validate-final
-  "Validates a final answer based on its declared type and language.
-   answer-type and language are keyword enums from FINAL_SPEC."
-  [{:keys [answer answer-type language]}]
-  (let [s (str answer)
-        atype (or answer-type :code)
-        lang  (or language :clojure)]
-    (case atype
-      :code (case lang
-              :clojure (validate-clojure-code s)
-              :python  (validate-python s)
-              (validate-clojure-code s))
-      :data (case lang
-              :json (validate-json s)
-              :edn  (validate-edn s)
-              nil)
-      :text nil
-      ;; :sci-expression rides on Clojure's reader: refuse to ship
-      ;; an unparseable form to the sandbox eval. Runtime errors
-      ;; (undefined symbol, arity, etc.) are reported by the
-      ;; iteration handler when it actually evaluates the form, not
-      ;; here -- this validator only sees text. We do BOTH the
-      ;; structural lint (`__` placeholders, bare %-args, nested
-      ;; #()) AND a real reader round-trip so an unbalanced form is
-      ;; rejected here instead of surfacing as an opaque parse
-      ;; failure two layers down.
-      ;; clojure.core/read-string handles the full Clojure reader
-      ;; (regex literals, reader-macros) so a legitimate sandbox form
-      ;; like `(re-find #"x" s)` doesn't false-positive the way
-      ;; `edn/read-string` would. We bind `*read-eval*` to false to
-      ;; defuse `#=(...)` reader-eval before the form ever reaches
-      ;; SCI; the sandbox does its own eval gating but defense in
-      ;; depth is cheap here.
-      :sci-expression (or (validate-clojure-code s)
-                        (try
-                          (binding [*read-eval* false]
-                            (read-string s))
-                          nil
-                          (catch Exception e
-                            (str ":sci-expression failed to parse: "
-                              (ex-message e)))))
-      nil)))
+  "No-op pre-eval validator for the final `:answer`. The iteration
+   handler renders every answer as a Mustache template against
+   sandbox vars; jmustache reports its own missing-var errors at
+   render time, so there's nothing to assert here. Kept as a single
+   call site so a future stricter check has one obvious place to
+   land."
+  [_]
+  nil)
 
 (def CODE_BLOCK_SPEC
   "Spec for a single code block with its expected execution time budget."
@@ -326,16 +293,11 @@
            ;; Values-only enum (svar 0.3.2+). Mustache semantics are
            ;; documented once in the ARCH section; no need to re-paste
            ;; them per iteration into the JSON schema.
-         (spec/field {::spec/name        :answer-type
-                      ::spec/type        :spec.type/keyword
-                      ::spec/cardinality :spec.cardinality/one
-                      ::spec/required    false
-                      ::spec/description (str "Required with :answer; controls final answer rendering. "
-                                           "`mustache-text` / `mustache-markdown` render :answer as a Mustache template against sandbox vars. "
-                                           "`sci-expression` evaluates :answer as a Clojure form in the SCI sandbox "
-                                           "and uses the printed result as the final answer text -- string returns are used verbatim, "
-                                           "other values go through bounded pr-str.")
-                      ::spec/values      ["mustache-text" "mustache-markdown" "sci-expression"]})
+;; NOTE: there is intentionally NO `:answer-type` field. The
+;; iteration handler auto-detects between SCI expression / Mustache
+;; template / plain text by inspecting the trimmed `:answer` string
+;; -- see `detect-answer-mode` in this namespace. The model just
+;; emits `:answer`; one less ceremonial field for the LLM to forget.
          (spec/field {::spec/name        :confidence
                       ::spec/type        :spec.type/keyword
                       ::spec/cardinality :spec.cardinality/one

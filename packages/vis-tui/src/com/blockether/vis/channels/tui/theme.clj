@@ -64,15 +64,19 @@
 (def iter-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
 (def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
 (def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
-;; Final answer zone background. Was previously (224 235 252) — a
-;; clearly-blue tint that user feedback flagged as overpowering when
-;; the answer is the bulk of the bubble. Dialed back to a barely-
-;; perceptible cool tint that still distinguishes the answer zone
-;; from the assistant white area / code blocks but no longer competes
-;; with the heading colours or the inline code highlight. WCAG
-;; contrast for `answer-fg` (near-black) on this bg is > 18:1, so
-;; readability is unchanged.
-(def answer-bg         (TextColor$RGB. 247 250 254))  ;; subtle cool tint — 'this is the answer' without screaming it
+;; Final answer zone background.
+;;   1st pass: (224 235 252) — saturated blue, dominated the bubble.
+;;   2nd pass: (247 250 254) — barely-tinted, still visible.
+;;   3rd pass (current, per user request): identical to terminal-bg
+;;     so there is NO visual answer-zone background at all. The
+;;     answer is distinguished by the optional `FINAL ANSWER`
+;;     header glyph + heading colours, NOT by a bg block. Cleaner
+;;     read when answers are the bulk of the bubble.
+;; Kept as a separate `def` (rather than aliased to `terminal-bg`)
+;; so a future revert is a single-line theme tweak with no source
+;; surgery; every painter still uses `t/answer-bg` and just sees
+;; white today.
+(def answer-bg         (TextColor$RGB. 255 255 255))  ;; identical to terminal-bg — no zone bg
 (def answer-fg         (TextColor$RGB. 25 25 25))     ;; near-black answer text
 
 ;; Markdown heading colours (answer-mode H1/H2/H3). Pre-fix headings

@@ -65,46 +65,35 @@ Before accepting a `:final` answer, the loop applies two gates:
   `:in-progress`, `:answer` is rejected unless `:abandon-reason` is set.
 - **Confidence gate:** if `:confidence` is `:low`, `:answer` is rejected
   unless `:abandon-reason` explains what would raise confidence.
-- **Answer-type gate:** `:answer` requires `:answer-type` set to one
-  of `"mustache-text"`, `"mustache-markdown"`, or `"sci-expression"`
-  (see below).
 
 Rejected finals are turned into `[system_nudge]` messages for the next
 iteration and retried with the same bounded gate retry budget.
 
-## Final answer rendering modes
+## Final answer rendering
 
-The `:answer-type` keyword tells the loop how to turn the model's
-`:answer` string into the user-facing final answer text:
+One mode: every `:answer` is rendered as a **Mustache template against
+sandbox vars** (markdown content allowed). There is no `:answer-type`
+field, no auto-detect, no separate "SCI expression" mode.
 
-- **`mustache-text` / `mustache-markdown`** — `:answer` is a Mustache
-  template; the loop renders it against the sandbox vars
-  (`{{var}}`, `{{#list}}…{{/list}}`, `{{^val}}…{{/val}}`, `{{.}}`,
-  `{{list.size}}`). Missing referenced vars surface as a re-prompted
-  validation error.
-- **`sci-expression`** — `:answer` is a single Clojure form. The
-  loop evaluates it in the SCI sandbox **after** any `:code` blocks
-  for the same iteration have run, so the form can rely on vars
-  defined earlier this iteration. The result is then stringified:
-  `String` → verbatim, `nil` → `"nil"`, anything else → bounded
-  `pr-str`. Reader / runtime errors become validation errors that
-  re-prompt the model with the underlying SCI exception.
-
-  Use `sci-expression` when the answer is computed from existing
-  sandbox state and a Mustache template would be awkward, e.g.:
+- Plain text / markdown without `{{…}}` tags renders verbatim, so
+  prose answers pass through unchanged.
+- `{{var}}`, `{{#list}}…{{/list}}`, `{{^val}}…{{/val}}`, `{{.}}`,
+  `{{list.size}}` interpolate sandbox vars. Missing referenced vars
+  surface as a re-prompted validation error.
+- To inject a **computed** value, define it in `:code` and reference
+  the var in `:answer`:
 
   ```clojure
-  ;; :code blocks define rendered-rows as a vector of strings
-  ;; :answer-type "sci-expression"
-  ;; :answer       "(clojure.string/join \"\\n\" rendered-rows)"
+  ;; :code
+  (def summary (clojure.string/join "\n" rendered-rows))
+  ;; :answer
+  "{{summary}}"
   ```
 
-In addition to those three explicit rendering modes the loop still
-resolves the legacy `:ANSWER SHORTCUTS` (single-token answer that
-names a string var or 0-arity fn). Those shortcuts apply only when
-`:answer-type` is **not** `:sci-expression` — the explicit
-`sci-expression` mode supersedes the shortcut for any form the model
-wants to evaluate.
+This collapse replaces the earlier `:answer-type` enum
+(`mustache-text` / `mustache-markdown` / `sci-expression`) and the
+implicit "single-token resolves to a sandbox var" shortcut. Both are
+gone.
 
 ## Budget extension
 
