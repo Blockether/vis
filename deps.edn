@@ -31,7 +31,7 @@
  {:dev   {:extra-paths []
           :extra-deps {cider/cider-nrepl              {:mvn/version "0.59.0"}
                        io.github.tonsky/clj-reload    {:mvn/version "1.0.0"}
-                       com.blockether.vis.ext/editing {:local/root "extensions/editing"}}}
+                       com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}}
 
   ;; Primary alias — the `vis` CLI dispatcher. The repo-root
   ;; `bin/vis` wrapper just `exec`s `clojure -M:vis "$@"`, so
@@ -62,7 +62,7 @@
           :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
                        "--enable-native-access=ALL-UNNAMED"
                        "--sun-misc-unsafe-memory-access=allow"]
-          :extra-deps {com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
+          :extra-deps {com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}
           :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
   ;; Aggregate test runner. Lists every package test tree containing
@@ -74,15 +74,15 @@
                         "packages/vis-commandline/test"
                         "packages/vis-extension/test"
                         "packages/vis-persistance-sqlite/test"
-                        "extensions/editing/test"]
+                        "extensions/vis-common-operations/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                       com.blockether.vis.ext/editing {:local/root "extensions/editing"}}
+                       com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}
           :main-opts  ["-m" "lazytest.main"
                        "--dir" "test"
                        "--dir" "packages/vis-core/test"
                        "--dir" "packages/vis-commandline/test"
                        "--dir" "packages/vis-extension/test"
-                       "--dir" "extensions/editing/test"]}
+                       "--dir" "extensions/vis-common-operations/test"]}
 
   :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "packages/vis-benchmark"}}
           :jvm-opts    ["-Xmx8g"]

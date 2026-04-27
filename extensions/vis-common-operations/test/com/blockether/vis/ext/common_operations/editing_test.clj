@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.editing-test
+(ns com.blockether.vis.ext.common-operations.editing-test
   "Tests for the editing extension's error-rescue helpers.
 
    The story: the LLM occasionally over-escapes regex patterns when
@@ -25,7 +25,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.extension :as ext]
-   [com.blockether.vis.ext.editing :as editing]
+   [com.blockether.vis.ext.common-operations.editing :as editing]
    [lazytest.core :refer [defdescribe it expect]])
   (:import [com.google.re2j Pattern]))
 
@@ -52,14 +52,14 @@
     nil
     (catch Exception e
       (ex-info (str "Invalid regex pattern: " pattern)
-        {:type    :ext.editing/invalid-regex
+        {:type    :ext.common-operations.editing/invalid-regex
          :pattern pattern
          :error   (ex-message e)}))))
 
 (defn- path-error
   [msg path]
   (ex-info (str msg ": " path)
-    {:type :ext.editing/path-traversal :path path}))
+    {:type :ext.common-operations.editing/path-traversal :path path}))
 
 ;; =============================================================================
 ;; extract-bad-escape-char
@@ -114,7 +114,7 @@
     ;; "invalid escape sequence: `\|`" message — exactly the shape
     ;; we'd see if RE2/J had rejected it.
     (let [err (ex-info "Invalid regex pattern: \\|"
-                {:type    :ext.editing/invalid-regex
+                {:type    :ext.common-operations.editing/invalid-regex
                  :pattern "\\|"
                  :error   "error parsing regexp: invalid escape sequence: `\\|`"})
           ret (rescue-grep-args err {} :grep ["\\|" "src"])]
@@ -131,7 +131,7 @@
     ;; covered in the next test. For this case, hand-craft an error
     ;; message naming a punctuation char.)
     (let [err (ex-info "Invalid regex pattern: foo\\(bar"
-                {:type    :ext.editing/invalid-regex
+                {:type    :ext.common-operations.editing/invalid-regex
                  :pattern "foo\\(bar"
                  :error   "error parsing regexp: invalid escape sequence: `\\(`"})
           ret (rescue-grep-args err {} :grep ["foo\\(bar"])]
@@ -176,10 +176,10 @@
 
   (it "rewrites an absolute path under CWD to a relative path"
     (let [cwd (System/getProperty "user.dir")
-          abs (str cwd "/extensions/editing/deps.edn")
+          abs (str cwd "/extensions/vis-common-operations/deps.edn")
           err (path-error "not a relative path" abs)
           ret (rescue-path-args err {} :read [abs])]
-      (expect (= ["extensions/editing/deps.edn"] (:args ret)))
+      (expect (= ["extensions/vis-common-operations/deps.edn"] (:args ret)))
       (expect (= :read (:fn ret)))))
 
   (it "strips a leading slash when the path is outside CWD"
@@ -188,7 +188,7 @@
       (expect (= ["etc/passwd"] (:args ret)))))
 
   (it "surfaces unrelated errors untouched"
-    (let [err (ex-info "File not found: foo" {:type :ext.editing/not-found})
+    (let [err (ex-info "File not found: foo" {:type :ext.common-operations.editing/not-found})
           ret (rescue-path-args err {} :read ["foo"])]
       (expect (= {:error err} ret)))))
 
@@ -210,7 +210,7 @@
       (swap! calls conj pattern)
       (if (str/includes? pattern "\\")
         (throw (ex-info (str "Invalid regex pattern: " pattern)
-                 {:type    :ext.editing/invalid-regex
+                 {:type    :ext.common-operations.editing/invalid-regex
                   :pattern pattern
                   :error   (str "error parsing regexp: invalid escape sequence: `\\"
                              bad-char "`")}))
@@ -224,7 +224,7 @@
    can call invoke-symbol-wrapper without dragging in the registry."
   [sym]
   (ext/extension
-    {:ext/namespace 'com.blockether.vis.ext.editing.test-fake
+    {:ext/namespace 'com.blockether.vis.ext.common-operations.test-fake
      :ext/doc       "Fake editing extension for tests."
      :ext/group     "filesystem"
      :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}

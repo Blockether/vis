@@ -156,34 +156,36 @@
       bar)))
 
 (defn- draw-box-border!
-  "Draw a single-line box border. Optionally embed centered hint strings
-   on the top and/or bottom edges. Both edges accept independent strings
-   so a box can label its top hint (e.g. keybindings) AND its bottom hint
-   (e.g. live status) at the same time."
-  ([g box-top box-bottom cols top-hint]
-   (draw-box-border! g box-top box-bottom cols top-hint nil))
-  ([g box-top box-bottom cols top-hint bottom-hint]
-   (let [inner-w (- cols 2)
-         bar     (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
-     (.setForegroundColor g t/border-fg)
-     (.setBackgroundColor g t/terminal-bg)
+  "Draw a single-line box border. Optionally embeds a centered hint
+   string on the top edge (typically the keybinding strip).
 
-     ;; Top: ┌── top-hint ──┐
-     (.setCharacter g 0 box-top Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-     (.putString g 1 box-top (embed-in-bar bar top-hint))
-     (.setCharacter g (dec cols) box-top Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+   Live status (model, ctx %, run-state) used to live on the bottom
+   edge via a second hint argument; that path was deleted when the
+   dedicated footer row took over (see
+   `com.blockether.vis.channels.tui.footer`). The bottom edge is now
+   always a plain horizontal rule."
+  [g box-top box-bottom cols top-hint]
+  (let [inner-w (- cols 2)
+        bar     (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
+    (.setForegroundColor g t/border-fg)
+    (.setBackgroundColor g t/terminal-bg)
 
-     ;; Bottom: └── bottom-hint ──┘
-     (.setCharacter g 0 box-bottom Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-     (.putString g 1 box-bottom (embed-in-bar bar bottom-hint))
-     (.setCharacter g (dec cols) box-bottom Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+    ;; Top: ┌── top-hint ──┐
+    (.setCharacter g 0 box-top Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+    (.putString g 1 box-top (embed-in-bar bar top-hint))
+    (.setCharacter g (dec cols) box-top Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
 
-     ;; Sides: │ ... │
-     (doseq [row (range (inc box-top) box-bottom)]
-       (.setForegroundColor g t/border-fg)
-       (.setBackgroundColor g t/terminal-bg)
-       (.setCharacter g 0 row Symbols/SINGLE_LINE_VERTICAL)
-       (.setCharacter g (dec cols) row Symbols/SINGLE_LINE_VERTICAL)))))
+    ;; Bottom: └──────┘ (plain rule — status moved to footer row).
+    (.setCharacter g 0 box-bottom Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+    (.putString g 1 box-bottom bar)
+    (.setCharacter g (dec cols) box-bottom Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+
+    ;; Sides: │ ... │
+    (doseq [row (range (inc box-top) box-bottom)]
+      (.setForegroundColor g t/border-fg)
+      (.setBackgroundColor g t/terminal-bg)
+      (.setCharacter g 0 row Symbols/SINGLE_LINE_VERTICAL)
+      (.setCharacter g (dec cols) row Symbols/SINGLE_LINE_VERTICAL))))
 
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
@@ -225,18 +227,17 @@
   "Draw bordered input area with internal padding. Returns
    [cursor-col cursor-row] in screen coords.
 
-   `hint` is the keybinding strip on the TOP border (existing behavior).
-   `status` is an optional one-line live status (model, context window,
-   tokens used) embedded in the BOTTOM border."
-  ([g input box-top text-rows cols hint]
-   (draw-input-box! g input box-top text-rows cols hint nil))
-  ([g {:keys [lines crow ccol]} box-top text-rows cols hint status]
+   `hint` is the keybinding strip embedded in the TOP border. The
+   bottom border is always a plain horizontal rule — live status
+   (model / run-state / ctx %) lives in the dedicated footer row
+   below this box (see `footer/draw-footer!`)."
+  [g {:keys [lines crow ccol]} box-top text-rows cols hint]
   (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
         text-top   (+ (inc box-top) input-pad-y)
         text-w     (- cols 2 (* 2 input-pad-x))
         v-scroll   (max 0 (- crow (dec text-rows)))
         h-scroll   (max 0 (- ccol (dec text-w)))]
-    (draw-box-border! g box-top box-bottom cols hint status)
+    (draw-box-border! g box-top box-bottom cols hint)
     (fill-box-interior! g box-top box-bottom cols)
 
     ;; Text
@@ -254,7 +255,7 @@
 
     ;; Cursor position
     [(+ input-pad-x (- ccol h-scroll))
-     (+ text-top (- crow v-scroll))])))
+     (+ text-top (- crow v-scroll))]))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
 

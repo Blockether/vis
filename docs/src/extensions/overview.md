@@ -48,7 +48,7 @@ dependency order.
 (ext/register-global!
   (ext/extension
     {:ext/namespace 'com.acme.ext.git
-     :ext/requires  ['com.blockether.vis.ext.editing]
+     :ext/requires  ['com.blockether.vis.ext.common-operations.core]
      :ext/doc       "Git integration"
      ...}))
 ```
@@ -142,7 +142,7 @@ the alias prefix.
 
 ```clojure
 (ext/extension
-  {:ext/namespace 'com.blockether.vis.ext.editing
+  {:ext/namespace 'com.blockether.vis.ext.common-operations.core
    :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
    ...})
 ```

@@ -28,14 +28,14 @@ a running env.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `:ext/namespace` | ✓ | — | Fully qualified symbol, e.g. `'com.blockether.vis.ext.editing`, `'com.acme.ext.git` |
+| `:ext/namespace` | ✓ | — | Fully qualified symbol, e.g. `'com.blockether.vis.ext.common-operations.core`, `'com.acme.ext.git` |
 | `:ext/doc` | ✓ | — | Extension-level description |
 | `:ext/group` | ✓ | — | Top-level prompt group, e.g. `"knowledge"` |
 | `:ext/subgroup` | ✗ | same as `:ext/group` | Finer-grained grouping within the group |
 | `:ext/activation-fn` | ✗ | `(constantly true)` | `(fn [env] → bool)` — when falsy, all symbols are unbound and nudge-fn is skipped |
 | `:ext/prompt` | ✗ | — | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt |
 | `:ext/nudge-fn` | ✗ | — | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)) |
-| `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.editing]` |
+| `:ext/requires` | ✗ | `[]` | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.common-operations.core]` |
 | `:ext/version` | ✗ | — | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"` |
 | `:ext/author` | ✗ | — | Author name or org, e.g. `"Blockether"` |
 | `:ext/license` | ✗ | — | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"` |
@@ -161,7 +161,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/group         "knowledge"
      :ext/subgroup      "documents"
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
-     :ext/requires      ['com.blockether.vis.ext.editing]
+     :ext/requires      ['com.blockether.vis.ext.common-operations.core]
      :ext/prompt        "Prefer narrow searches before broad scans."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
      :ext/nudge-fn      (fn [{:keys [environment iteration prev-expressions]}]

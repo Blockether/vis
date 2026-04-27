@@ -1,17 +1,16 @@
 (ns com.blockether.vis.channels.tui.screen
   (:require [clojure.string :as str]
-            [com.blockether.svar.internal.router :as router]
             [com.blockether.vis.channel :as channel]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.channels.tui.chat :as chat]
+            [com.blockether.vis.channels.tui.footer :as footer]
             [com.blockether.vis.channels.tui.input :as input]
             [com.blockether.vis.channels.tui.provider :as provider]
             [com.blockether.vis.channels.tui.render :as render]
             [com.blockether.vis.channels.tui.state :as state]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.channels.tui.dialogs :as dlg]
-            [com.blockether.vis.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core])
+            [com.blockether.vis.loop.runtime.conversation.core :as conversations])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
@@ -55,120 +54,6 @@
     cancelling? hint-cancelling
     loading?    hint-loading
     :else       hint-idle))
-
-(def ^:private default-reasoning-level
-  "Mirrors `query/core.clj`'s `balanced-reasoning` constant. The TUI
-   doesn't expose a per-conversation override yet, so this is the level
-   every new turn runs at when the model supports reasoning."
-  :balanced)
-
-(defn- chosen-model-info
-  "Resolved model map for the configured root model, or nil. Carries
-   `:name`, `:reasoning?`, and the rest of svar's normalized model
-   metadata, so the status line can render reasoning support without
-   reaching into config shape directly."
-  []
-  (when-let [r (try (query-core/get-router) (catch Throwable _ nil))]
-    (try (query-core/resolve-effective-model r) (catch Throwable _ nil))))
-
-(defn- format-token-count
-  "e.g. 12345 → \"12.3k\"; 999 → \"999\"; nil/0 → nil."
-  [n]
-  (when (and (number? n) (pos? n))
-    (cond
-      (>= n 1000000) (format "%.1fM" (/ n 1e6))
-      (>= n 1000)    (format "%.1fk" (/ n 1e3))
-      :else          (str (long n)))))
-
-(defn- last-assistant-tokens
-  "Token map `{:input n :output n}` of the most recent finalized
-   assistant message, or nil if none."
-  [messages]
-  (some->> (reverse messages)
-    (some (fn [m] (when (and (= :assistant (:role m)) (:tokens m)) (:tokens m))))))
-
-(defn- estimate-next-context-chars
-  "Approximate next-iteration context size = char-count of all chat
-   messages so far. Crude (no tokenizer here), but useful as a rough
-   indicator while a turn is in flight."
-  ^long [messages]
-  (long (reduce + 0
-          (keep (fn [m]
-                  (let [t (:text m)]
-                    (when (string? t) (count t))))
-            messages))))
-
-(defn- format-ctx-segment
-  "\"12.3k/128k (10%)\" / \"128k\" / nil. `used` and `max-tokens` are
-   raw token counts (longs)."
-  [used max-tokens]
-  (let [used-str (format-token-count used)
-        max-str  (format-token-count max-tokens)]
-    (cond
-      (and used-str max-str (pos? max-tokens))
-      (let [pct (long (Math/round (* 100.0 (/ (double used) (double max-tokens)))))]
-        (str used-str "/" max-str " (" pct "%)"))
-
-      max-str max-str
-      :else   nil)))
-
-(defn- input-status-line
-  "Build the live one-line status embedded in the bottom border of the
-   input box.
-
-   Always names the chosen model + how full the context window will be
-   for the next query (estimate while loading, last turn's actual
-   `:input` tokens once a turn finishes). Adds the default reasoning
-   level when the model exposes reasoning support.
-
-   `inner-w` is the available width of the border (cols - 2). The
-   status string fits within that budget by dropping optional segments
-   (least-important first) when too wide. Returns nil if no info is
-   available yet (no provider configured).
-
-   Output is bracketed with single spaces so it doesn't touch the
-   horizontal border characters."
-  [{:keys [messages loading?]} inner-w]
-  (let [info        (chosen-model-info)
-        model       (:name info)
-        reasoning?  (boolean (:reasoning? info))
-        ctx-max     (when model
-                      (try (router/context-limit model) (catch Throwable _ nil)))
-        ;; Estimated next-query input tokens. Priority order:
-        ;;   1) prior turn's actual :input tokens  (most accurate)
-        ;;   2) ~4 chars/token over current chat   (fallback first turn)
-        ;; The estimate is what svar will most likely send for the
-        ;; *next* request, so labelling it "next" is honest.
-        last-tok    (last-assistant-tokens messages)
-        next-tok    (or (:input last-tok)
-                      (let [chars (estimate-next-context-chars messages)]
-                        (when (pos? chars) (long (/ chars 4)))))
-        ctx-segment (format-ctx-segment next-tok ctx-max)
-        ;; Last turn's output (only meaningful between turns, not while
-        ;; the next one is in flight).
-        out-str     (format-token-count (:output last-tok))
-        ;; Default reasoning level only shows when the model actually
-        ;; supports reasoning — otherwise it's misleading noise.
-        reasoning-segment (when reasoning?
-                            (str "reasoning: " (name default-reasoning-level)))
-        ;; Segments in priority order: model first, ctx utilization,
-        ;; reasoning, then last turn's output for context. The shrink
-        ;; loop drops from the tail when the line gets too wide.
-        segments (cond-> []
-                   model             (conj (str "model: " model))
-                   ctx-segment       (conj (str "ctx: " ctx-segment))
-                   reasoning-segment (conj reasoning-segment)
-                   (and (not loading?) out-str)
-                   (conj (str "last out: " out-str)))
-        budget   (max 0 (- inner-w 2))]
-    (loop [parts segments]
-      (cond
-        (empty? parts) nil
-        :else
-        (let [s (str " " (str/join "  ·  " parts) " ")]
-          (if (<= (count s) budget)
-            s
-            (recur (vec (butlast parts)))))))))
 
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
@@ -272,7 +157,12 @@
         g            (.newTextGraphics screen)
         text-rows    (input-text-rows input)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
-        input-top    (- rows input-box-h)
+        ;; Reserve the bottom-most row for the dedicated footer
+        ;; (model / run-state / ctx-left%). The input box sits
+        ;; directly above it; the messages area fills everything
+        ;; from the top down to the input-box top.
+        footer-row   (dec rows)
+        input-top    (- rows input-box-h 1)
         msg-top      0
         msg-bottom   input-top
         ;; Mirror `draw-messages-area!`'s gutter math so width
@@ -283,16 +173,13 @@
                         :query-start-ms query-start-ms
                         :cancelling?    (boolean cancelling?)}
         effective-messages (apply-settings messages progress loading? bubble-w settings progress-extra)
-        ;; Title used to live on the messages-area top border; now
-        ;; that the border is gone the conversation list / [?] dialog
-        ;; carry that information instead.
-        status-line  (input-status-line db (max 0 (- cols 2)))
         inner-h      (max 0 (- msg-bottom msg-top 2)) ;; top + bottom margins
         total-h      (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
     (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll nil)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
-                    (current-hint db) status-line)]
+                    (current-hint db))]
+      (footer/draw-footer! g db footer-row cols now-ms)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (.refresh screen Screen$RefreshType/DELTA)
     {:cols cols :rows rows :total-h total-h :inner-h inner-h}))

@@ -28,7 +28,7 @@ re-listing it.
 > **Two senses of "channel".** A *registered channel* (`:tui`,
 > `:telegram`) is a CLI front-end registered through
 > `com.blockether.vis.channel/register-global!` and exposed under
-> `vis channel <name>`. A *conversations channel* is the keyword
+> `vis channels <name>`. A *conversations channel* is the keyword
 > stored in `conversation_soul.metadata.channel` — the namespace
 > conversations are grouped under (`:vis`, `:telegram`, `:cli`).
 > `vis-tui` registers as `:tui` but writes its conversations under

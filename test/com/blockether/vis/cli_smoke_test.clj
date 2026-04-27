@@ -79,7 +79,7 @@
                                   "Conversations:"])))))
 
 (defdescribe vis-extensions
-  (it "lists `editing` as a discovered extension"
+  (it "lists the `vis-common-operations` filesystem extension as discovered"
     (let [{:keys [exit out]} (run-vis "extensions" "list")]
       (expect (zero? exit))
       (expect (contains-all? out ["Extensions"

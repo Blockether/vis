@@ -764,7 +764,7 @@
   "Scan the classpath for `META-INF/vis/extensions.edn` resources.
 
    Each file contains a vector of namespace symbols, e.g.:
-     [com.blockether.vis.ext.editing
+     [com.blockether.vis.ext.common-operations.core
       com.acme.ext.git]
 
    Every discovered namespace is `require`d (which triggers its

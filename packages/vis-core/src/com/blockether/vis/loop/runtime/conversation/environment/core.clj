@@ -458,7 +458,7 @@
          var-info (merge persisted-info live-info)
          entries (->> var-info
                    (remove (fn [[sym _]] (contains? initial-ns-keys sym)))
-                   ;; Phase 1: SYSTEM vars (QUERY/REASONING/ANSWER) live in
+                   ;; SYSTEM vars (QUERY/REASONING/ANSWER) live in
                    ;; <system_state> with their current values inlined.
                    ;; Drop them from <var_index> entirely so the user-facing
                    ;; var list is just user-defined state.

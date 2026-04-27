@@ -129,9 +129,8 @@
 
 (defn effective-system-prompt-for-query
   "Return the reconstructed prompt snapshot for a specific query-id in a
-   conversation. Uses the Phase 1 layered projection (sticky plan +
-   breadcrumb chain + recent thought + prior-turn digest) â€” the
-   `<prior_thinking>` blob is gone."
+   conversation. Renders the layered projection (sticky plan + breadcrumb chain +
+   recent thought + prior-turn digest)."
   [conversation-id query-id]
   (when-let [env (env-for conversation-id)]
     (let [;; Activate extensions ONCE for this snapshot â€” reused by both
@@ -219,7 +218,7 @@
             :iterations    (or iterations 0)
             :duration-ms   (or duration-ms 0)
             :status        :interrupted
-            ;; Phase 1 â€” mark crashed/cancelled turns so the next turn's
+            ;; €” mark crashed/cancelled turns so the next turn's
             ;; handover digest renders the right outcome instead of
             ;; falling through to a derived guess.
             :prior-outcome :cancelled})

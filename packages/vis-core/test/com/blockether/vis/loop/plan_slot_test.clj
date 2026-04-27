@@ -1,5 +1,5 @@
 (ns com.blockether.vis.loop.plan-slot-test
-  "Phase 1 + Phase 0b — plan-as-first-class-slot.
+  "Plan-as-first-class-slot.
 
    Tests for the projection layer (build-iteration-context), the persistence
    round-trip (store-iteration! → db-list-query-iterations), the sticky-carry
@@ -66,7 +66,7 @@
         (expect (= "i0  decomposed task; starting [1]" (:breadcrumb (first iters))))
         (expect (= [1 2] (:added (:plan-diff (first iters))))))))
 
-  (it "leaves columns nil when caller omits plan keys (legacy path)"
+  (it "leaves columns nil when caller omits plan keys"
     (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))]
       (store-iteration! store query-id {:thinking "tactical step"})
       (let [it (first (db/db-list-query-iterations store query-id))]
@@ -105,7 +105,7 @@
         (expect (= "i24 breadcrumb" (:breadcrumb (last chain))))))))
 
 ;; =============================================================================
-;; Plan diff (Phase 0b — plan-edit-distance metric)
+;; Plan diff — powers the plan-edit-distance metric
 ;; =============================================================================
 
 (defdescribe plan-diff-test
@@ -154,26 +154,58 @@
     (let [items (mapv (fn [i] {:id i :content (str i) :status :pending}) (range 21))
           err (iterate/validate-plan-state {:goal "g" :items items})]
       (expect (= :vis/plan-too-large (:type err)))
-      (expect (= 21 (:item-count err)))))
+      (expect (string? (:message err)))
+      (expect (= 21 (-> err :data :item-count)))))
 
   (it "rejects two :in_progress items"
     (let [err (iterate/validate-plan-state
                 {:goal "g"
                  :items [{:id 1 :content "a" :status :in_progress}
                          {:id 2 :content "b" :status :in_progress}]})]
-      (expect (= :vis/plan-multiple-in-progress (:type err)))))
+      (expect (= :vis/plan-multiple-in-progress (:type err)))
+      (expect (= [1 2] (-> err :data :in-progress-ids)))))
 
   (it "rejects non-monotonic ids"
     (let [err (iterate/validate-plan-state
                 {:goal "g"
                  :items [{:id 2 :content "a" :status :pending}
                          {:id 1 :content "b" :status :pending}]})]
-      (expect (= :vis/plan-non-monotonic-ids (:type err)))))
+      (expect (= :vis/plan-non-monotonic-ids (:type err)))
+      (expect (= [2 1] (-> err :data :ids)))))
 
   (it "tolerates :in-progress (kebab-case) as :in_progress"
     (expect (nil? (iterate/validate-plan-state
                     {:goal "g"
                      :items [{:id 1 :content "a" :status :in-progress}]})))))
+
+;; =============================================================================
+;; Loop nudge formatter — mirrors format-iteration-error for trace
+;; errors; takes a structured violation map and renders the
+;; [system_nudge] line surfaced to the model on the next iteration.
+;; =============================================================================
+
+(defdescribe format-loop-nudge-test
+  (it "renders the canonical incomplete-plan-on-answer message"
+    (let [out (iterate/format-loop-nudge
+                {:type :vis/incomplete-plan-on-answer
+                 :data {:open-item-ids [3 4]}})]
+      (expect (re-find #"^\[system_nudge\] Cannot finalize" out))
+      (expect (re-find #"\[3\], \[4\]" out))
+      (expect (re-find #":abandon-reason" out))))
+
+  (it "prefers an explicit :message over the canonical body"
+    (let [out (iterate/format-loop-nudge
+                {:type :vis/plan-too-large
+                 :message "Custom override message."
+                 :data {}})]
+      (expect (= "[system_nudge] Custom override message." out))))
+
+  (it "falls through to a generic line for an unknown :type"
+    (let [out (iterate/format-loop-nudge {:type :vis/something-else})]
+      (expect (= "[system_nudge] Loop violation: :vis/something-else" out))))
+
+  (it "returns nil for nil input so callers can keep over a sparse vec"
+    (expect (nil? (iterate/format-loop-nudge nil)))))
 
 ;; =============================================================================
 ;; Projection — build-iteration-context layered output
@@ -195,7 +227,7 @@
       (expect (true?  (system-var-sym? 'ANSWER)))
       (expect (true?  (system-var-sym? 'REASONING)))
       (expect (false? (system-var-sym? 'CONFIG)))    ;; user uppercase var
-      (expect (false? (system-var-sym? '*query*)))   ;; legacy earmuff form
+      (expect (false? (system-var-sym? '*query*)))   ;; non-registered earmuff form
       (expect (false? (system-var-sym? 'foo))))))
 
 (defdescribe projection-test
@@ -253,13 +285,25 @@
       (expect (re-find #"i3\.1" out))
       (expect (re-find #"i3\.2" out))))
 
-  (it "omits all sections when nothing supplied (returns nil-or-iteration-header-only)"
+  (it "renders <system_state>.ITERATION when iteration + budget are supplied"
+    ;; The per-iteration pointer lives in
+    ;; <system_state>.ITERATION; verify the new location.
     (let [out (iterate/build-iteration-context {}
                 {:iteration 0 :current-max-iterations 10
                  :active-extensions []})]
-      ;; iteration header is the only non-blank piece
-      (expect (re-find #"\[iteration 1/10\]" out))
+      (expect (re-find #"<system_state>" out))
+      (expect (re-find #"ITERATION  \{:current 1 :budget 10 :remaining 9\}" out))
       (expect (not (re-find #"<plan>" out)))
-      (expect (not (re-find #"<breadcrumbs>" out))))))
+      (expect (not (re-find #"<breadcrumbs>" out)))))
+
+  (it "renders loop-nudges as [system_nudge] lines"
+    (let [out (iterate/build-iteration-context {}
+                {:iteration 0 :current-max-iterations 10
+                 :active-extensions []
+                 :loop-nudges ["Cannot finalize: plan items [3] are :pending."
+                               "[system_nudge] Already prefixed nudge stays as-is."]})]
+      (expect (re-find #"\[system_nudge\] Cannot finalize" out))
+      (expect (re-find #"\[system_nudge\] Already prefixed nudge stays as-is\." out)))))
+
 
 

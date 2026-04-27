@@ -186,9 +186,9 @@
    with iN.K addressable ids.
 
    `expressions-by-iteration` is a seq of `[iteration-position [exprs]]` pairs, ordered
-   oldest-first. Phase 1 ships only the most recent iteration (RECENT_KEEP_ITERS=1)
+   oldest-first.. Only the most recent iteration is shipped
    to keep the projection bounded; the breadcrumb chain (one line per iteration)
-   plus the addressable `iN.K` ids in <attempts> (Phase 2) cover everything
+   plus the addressable `iN.K` ids in <attempts> cover everything
    else the model needs to reference."
   [expressions-by-iteration]
   (let [kept (take-last RECENT_KEEP_ITERS (or expressions-by-iteration []))]
@@ -217,7 +217,7 @@
         (when (seq lines)
           (str "<recent>\n" (str/join "\n" lines) "\n</recent>"))))))
 
-;; -- Plan-as-first-class-slot helpers (Phase 1) --------------------------
+;; -- Plan-as-first-class-slot helpers --------------------------
 ;;
 ;; Two complementary projections of the agent's reasoning state:
 ;;
@@ -230,13 +230,12 @@
 ;;                   the :breadcrumb column of recent iteration rows, ordered
 ;;                   oldest-first, prefixed by "iN ".
 ;;
-;; The pair replaces the lossy <prior_thinking> Markov chain (CRITIQUE §7.2):
-;; the plan never gets re-summarized through tactical iters, and the
-;; breadcrumbs preserve the strategic frame at one line per iteration.
+;; The plan never gets re-summarized through tactical iterations, and
+;; the breadcrumbs preserve the strategic frame at one line per iteration.
 
 (def ^:private PLAN_STATUS_DISPLAY
   {:in_progress "in_progress"
-   :in-progress "in_progress"  ;; tolerate Clojurey kebab-case from spec
+   :in-progress "in_progress"  ;; tolerate kebab-case input
    :pending     "pending"
    :done        "done"
    :blocked     "blocked"})
@@ -299,19 +298,41 @@
       (truncate thinking RECENT_THOUGHT_MAX_CHARS)
       "\n</recent_thought>")))
 
+(defn- format-iteration-info
+  "Render the per-loop ITERATION pointer as a single inline map. Lives
+   inside <system_state> next to QUERY/ANSWER/REASONING because it is
+   the same flavor of data: 'what the loop knows about your current
+   pointer.' Replaces the standalone `[iteration N/M]` header line.
+
+   Returns nil when iteration data is missing (test fixtures with no
+   loop bookkeeping); the parent block renders without ITERATION in
+   that case."
+  [{:keys [iteration current-max-iterations]}]
+  (when (and (some? iteration) (some? current-max-iterations))
+    (let [current   (long iteration)
+          one-based (inc current)
+          budget    (long current-max-iterations)
+          remaining (max 0 (- budget one-based))]
+      (str "  ITERATION  {:current " one-based
+        " :budget " budget
+        " :remaining " remaining "}"))))
+
 (defn- format-system-state-block
-  "Render the always-present <system_state> block: SYSTEM-var current
-   values + bounded prior-turn digest (PLAN.md §5.5).
+  "Render the always-present <system_state> block: loop-managed pointers
+   in one place — SYSTEM vars (QUERY / ANSWER / REASONING) plus the
+   current ITERATION pointer plus the bounded PRIOR_TURN digest.
 
-   Names follow `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no earmuffs):
-   QUERY, ANSWER, REASONING. Plus PRIOR_TURN as a digest pseudo-name
-   (not a real sandbox binding) for cross-turn handover.
+   SYSTEM-var names follow `sci-env/SYSTEM_VAR_NAMES` (UPPERCASE, no
+   earmuffs). PRIOR_TURN and ITERATION are digest / pointer
+   pseudo-names — NOT real sandbox bindings, just rendered keys grouped
+   here for the model's convenience.
 
-   Bounded by construction — only :goal, item bucket counts, :outcome,
-   and :abandon-reason from the prior turn (no full plan body, no full
-   transcript). Multi-turn conversations don't accumulate stale plan
-   context here."
-  [{:keys [system-vars prior-turn]}]
+   Bounded by construction:
+   - SYSTEM-var values truncated to 500 chars each.
+   - PRIOR_TURN ships only `:goal :counts :outcome :abandon-reason`,
+     never the full plan body or transcript.
+   - ITERATION is a 3-key map; size is rounding error."
+  [{:keys [system-vars prior-turn iteration current-max-iterations]}]
   (let [vars-lines (->> [["QUERY"     (:QUERY system-vars)]
                          ["ANSWER"    (:ANSWER system-vars)]
                          ["REASONING" (:REASONING system-vars)]]
@@ -319,6 +340,9 @@
                              (when (some? v)
                                (let [s (pr-str v)]
                                  (str "  " label "  " (truncate s 500)))))))
+        iteration-line (format-iteration-info
+                         {:iteration              iteration
+                          :current-max-iterations current-max-iterations})
         prior-lines (when (seq prior-turn)
                       [(str "  PRIOR_TURN {:goal "
                          (pr-str (or (:goal prior-turn) ""))
@@ -328,55 +352,54 @@
                          (when (:counts prior-turn)
                            (str " :counts " (pr-str (:counts prior-turn))))
                          "}")])
-        all-lines (concat vars-lines prior-lines)]
+        all-lines (concat vars-lines
+                    (when iteration-line [iteration-line])
+                    prior-lines)]
     (when (seq all-lines)
       (str "<system_state>\n" (str/join "\n" all-lines) "\n</system_state>"))))
 
 ;; -- Cross-field plan validation -----------------------------------------
 ;;
-;; svar's spec engine validates *structural* shape per the iteration spec.
-;; PLAN.md §5.1 calls out three cross-field rules svar can't model: ≤20
-;; items, exactly-one :in_progress, monotonic :id. The iteration handler
-;; calls `validate-plan-state!` after svar parse and either re-prompts
-;; (returning {:plan-validation-error msg}) or records the failure.
+;; svar's spec engine validates structural shape; the cross-field
+;; rules (≤20 items, exactly-one :in_progress, monotonic ids) are
+;; checked here in Clojure and surfaced as a structured error map
+;; that the iteration loop renders into a `[system_nudge]` line via
+;; `format-loop-nudge`.
+
+(declare item-status-key)
 
 (defn validate-plan-state
-  "Returns nil when valid, or a structured error map otherwise.
-   Side-effect-free; caller decides what to do with the error."
+  "Returns nil when the plan is valid, or an error map shaped as
+   `{:type :message :data}`. Side-effect-free; the caller hands the
+   result to `format-loop-nudge` to render the user-facing string."
   [plan-state]
   (when (map? plan-state)
-    (let [items (or (:items plan-state) [])]
+    (let [items (or (:items plan-state) [])
+          in-progress-items (filter #(= :in_progress (item-status-key %)) items)
+          ids (mapv :id items)]
       (cond
         (> (count items) PLAN_MAX_ITEMS)
         {:type :vis/plan-too-large
-         :item-count (count items)
-         :max PLAN_MAX_ITEMS
-         :nudge (str "<plan>.items has " (count items) " entries; max is "
-                  PLAN_MAX_ITEMS ". Merge or drop items.")}
+         :message (str "<plan>.items has " (count items)
+                    " entries; max is " PLAN_MAX_ITEMS
+                    ". Merge or drop items.")
+         :data {:item-count (count items) :max PLAN_MAX_ITEMS}}
 
-        (let [in-progress (filter #(= :in_progress
-                                     (-> % :status keyword
-                                       ((fn [k]
-                                          (case k
-                                            :in-progress :in_progress
-                                            k)))))
-                            items)]
-          (> (count in-progress) 1))
+        (> (count in-progress-items) 1)
         {:type :vis/plan-multiple-in-progress
-         :nudge "<plan> has more than one :in_progress item. Set exactly one in_progress at a time."}
+         :message (str "<plan> has " (count in-progress-items)
+                    " :in_progress items. Set exactly one :in_progress at a time.")
+         :data {:in-progress-ids (mapv :id in-progress-items)}}
 
-        (let [ids (mapv :id items)]
-          (and (seq ids) (not= ids (sort ids))))
+        (and (seq ids) (not= ids (sort ids)))
         {:type :vis/plan-non-monotonic-ids
-         :ids (mapv :id items)
-         :nudge "<plan>.items :id values must be monotonic and unique. Don't reuse ids."}))))
-
-;; -- Plan diff (Phase 0b: plan-edit-distance metric) ---------------------
+         :message "<plan>.items :id values must be monotonic and unique. Don't reuse ids."
+         :data {:ids ids}}))))
 
 (defn item-status-key
-  "Public helper: normalize a plan item's :status to a canonical keyword
+  "Normalize a plan item's :status to a canonical keyword
    (`:pending`, `:in_progress`, `:done`, `:blocked`). Tolerates both
-   keyword and string inputs from svar's parsed JSON."
+   keyword and string inputs."
   [item]
   (let [s (:status item)
         k (cond (keyword? s) s
@@ -386,11 +409,46 @@
       :in-progress :in_progress
       k)))
 
+;; ---------------------------------------------------------------------------
+;; Loop nudge formatter — the user-facing string the model sees on the
+;; NEXT iteration when the loop rejects the prior iteration's output
+;; (PEV gate, plan validation, etc.). Mirrors `format-iteration-error`
+;; for trace `:error` entries: takes a structured violation map and
+;; produces the `[system_nudge]`-prefixed directive line.
+;; ---------------------------------------------------------------------------
+
+(defn format-loop-nudge
+  "Render a loop-level violation map into the `[system_nudge]`-prefixed
+   directive line. Returns nil for nil input so callers can `(keep
+   format-loop-nudge …)` over a sparse vec.
+
+   Recognized `:type` values supply a canonical message body when
+   `:message` is absent; arbitrary `:type` falls through to a generic
+   `Loop violation: <type>` line."
+  [{:keys [type message data] :as violation}]
+  (when violation
+    (let [body (or message
+                 (case type
+                   :vis/incomplete-plan-on-answer
+                   (let [open-ids (:open-item-ids data)]
+                     (str "Cannot finalize: plan items "
+                       (str/join ", " (map #(str "[" % "]") open-ids))
+                       " are :in_progress / :pending. Either complete them with cited "
+                       "evidence (set :status :done with :evidence iN.K), or set "
+                       ":abandon-reason describing what blocks completion."))
+                   (str "Loop violation: " (or type :unknown))))]
+      (str "[system_nudge] " body))))
+
+;; ---------------------------------------------------------------------------
+;; Plan diff — powers the plan-edit-distance metric and the
+;; <breadcrumbs> annotation when a plan changes between iterations.
+;; ---------------------------------------------------------------------------
+
 (defn compute-plan-diff
   "Diff two plan-state maps. Returns nil when identical, or a map
    `{:added [ids] :removed [ids] :status-changed [{id :from :to}] :goal-changed? bool}`.
    Callers compute `(count added)+(count removed)+(count status-changed)`
-   for the Phase 0b `plan-edit-distance` metric."
+   for the `plan-edit-distance` metric."
   [previous-plan new-plan]
   (when (or (some? previous-plan) (some? new-plan))
     (let [previous-items (into {} (map (juxt :id identity) (or (:items previous-plan) [])))
@@ -454,7 +512,7 @@
           (swap! var-index-atom assoc :index idx :revision live-rev)
           idx)))))
 
-;; -- Sticky-plan loader (Phase 1) ---------------------------------------
+;; -- Sticky-plan loader ---------------------------------------
 ;;
 ;; The plan slot is sticky: the model writes it once and the loop carries
 ;; the most-recent persisted plan forward across iterations until the model
@@ -514,7 +572,7 @@
                 items        (or (:items final-plan) [])
                 bucket       (frequencies (map item-status-key items))
                 outcome      (or (:prior-outcome prior)
-                               ;; legacy rows lacked the column — derive
+                               ;; Fallback when :prior-outcome is missing — derive
                                ;; from query status.
                                (case (:status prior)
                                  :done :complete
@@ -545,7 +603,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private BUDGET_WARNING_WINDOW 2)
-;; Phase 2 lowered this from 3 → 1: with <attempts> in the projection,
+;; A single repeat is enough signal: with <attempts> in the projection,
 ;; a single repeat is enough signal that the model should change strategy.
 (def ^:private REPETITION_THRESHOLD 1)
 
@@ -601,15 +659,18 @@
 (defn build-iteration-context
   "Assemble the per-iteration trailing user message.
 
-   Phase 1 layered shape (PLAN.md §5.3):
-     [iteration N/M]
+   Layered shape:
      <plan>          — sticky structured TODO list (PLAN_STATE_SPEC)
      <breadcrumbs>   — last K=20 one-liners, oldest-first
      <recent>        — last iteration's expressions with iN.K addressable ids
      <recent_thought> — last iteration's :thinking text (≤4000c)
-     <system_state>  — SYSTEM vars + bounded prior-turn digest
-     <var_index>     — user-defined vars (Phase 3 will reshape rendering)
-     [system_nudge]  — budget / repetition / extension nudges
+     <system_state>  — QUERY/ANSWER/REASONING + ITERATION pointer + PRIOR_TURN digest
+     <var_index>     — user-defined vars
+     [system_nudge]  — loop / budget / repetition / extension nudges
+
+   Note: the per-iteration pointer lives in
+   `<system_state>.ITERATION` so all loop-managed pointers live in
+   one coherent block instead of fragmented across the projection.
 
    Required opts:
      `:active-extensions` — vec returned by `(loop-core/active-extensions env)`.
@@ -617,9 +678,14 @@
         every iteration. This fn does NOT re-evaluate `:ext/activation-fn`.
 
    Optional:
-     `:iteration`, `:current-max-iterations`, `:plan-state`, `:breadcrumbs`,
-     `:expressions-by-iteration`, `:recent-thought`, `:system-vars`,
-     `:prior-turn`, `:call-counts-atom`.
+     `:iteration`, `:current-max-iterations`, `:plan-state`,
+     `:breadcrumbs`, `:expressions-by-iteration`, `:recent-thought`,
+     `:system-vars`, `:prior-turn`, `:call-counts-atom`,
+     `:loop-nudges` (vec of strings; gate-violation / plan-validation
+        directives that the loop wants to surface to the model on the
+        NEXT iteration —). Each entry is
+        rendered as a `[system_nudge] …` line, prefix added if
+        missing.
 
    Returns the joined block or nil when every component is blank."
   [environment {:keys [iteration current-max-iterations
@@ -627,14 +693,12 @@
                        expressions-by-iteration recent-thought
                        system-vars prior-turn
                        call-counts-atom
+                       loop-nudges
                        active-extensions] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions — compute once per query via (loop-core/active-extensions env)"
              {:type :vis/missing-active-extensions})))
-  (let [iteration-header (when (and iteration current-max-iterations)
-                      (str "[iteration " (inc (long iteration)) "/"
-                        (long current-max-iterations) "]"))
-        plan-block (format-plan-block plan-state)
+  (let [plan-block (format-plan-block plan-state)
         breadcrumbs-block (format-breadcrumbs-block breadcrumbs)
         recent-block (format-recent-block expressions-by-iteration)
         ;; Repetition warning still consumes flat (last-iteration) expressions —
@@ -642,8 +706,10 @@
         last-iteration-expressions (some-> expressions-by-iteration last second)
         recent-thought-block (format-recent-thought-block recent-thought)
         system-state-block (format-system-state-block
-                             {:system-vars system-vars
-                              :prior-turn  prior-turn})
+                             {:system-vars            system-vars
+                              :prior-turn             prior-turn
+                              :iteration              iteration
+                              :current-max-iterations current-max-iterations})
         var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
@@ -651,9 +717,19 @@
         nudge-ctx {:environment            environment
                    :iteration              iteration
                    :current-max-iterations current-max-iterations
-                   :previous-expressions       last-iteration-expressions
+                   :previous-expressions   last-iteration-expressions
                    :plan-state             plan-state
                    :user-var-count         0}
+        ;; Loop nudges (gate-violation, plan-validation, etc.) are
+        ;; injected by the iteration loop based on the PRIOR iteration's
+        ;; outcome; rendered as `[system_nudge]` lines so the model
+        ;; sees them with the same UX as built-in/extension nudges.
+        loop-nudge-lines (->> (or loop-nudges [])
+                           (keep (fn [n]
+                                   (when (and (string? n) (not (str/blank? n)))
+                                     (if (str/starts-with? n "[system_nudge]")
+                                       n
+                                       (str "[system_nudge] " n))))))
         built-in-nudges (keep identity
                           [(when (and iteration current-max-iterations)
                              (budget-warning
@@ -661,11 +737,11 @@
                                 :current-max-iterations current-max-iterations}))
                            (repetition-warning call-counts-atom last-iteration-expressions)])
         ext-nudges (collect-extension-nudges active-extensions nudge-ctx)
-        nudges-block (when (seq (concat built-in-nudges ext-nudges))
-                       (str/join "\n" (concat built-in-nudges ext-nudges)))
+        all-nudges (concat loop-nudge-lines built-in-nudges ext-nudges)
+        nudges-block (when (seq all-nudges)
+                       (str/join "\n" all-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [iteration-header
-                 plan-block
+                [plan-block
                  breadcrumbs-block
                  recent-block
                  recent-thought-block
@@ -816,9 +892,9 @@
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
                      :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
                      :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}
-          ;; Phase 1 — surface plan slot fields from svar parse so
+          ;; �� surface plan slot fields from svar parse so
           ;; downstream `store-iteration!` can persist them. Keep keys
-          ;; absent when blank/missing so legacy callers behave the same.
+          ;; absent when blank/missing.
           plan-state-raw  (:plan parsed)
           breadcrumb-raw  (:breadcrumb parsed)
           abandon-reason  (some-> (:abandon-reason parsed) str str/trim not-empty)]

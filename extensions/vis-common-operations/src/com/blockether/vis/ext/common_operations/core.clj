@@ -1,0 +1,49 @@
+(ns com.blockether.vis.ext.common-operations.core
+  "Aggregator for the `vis-common-operations` extension.
+
+   This namespace is the single classpath-discovery entry point: the
+   `META-INF/vis/extensions.edn` resource lists THIS namespace, the
+   extension loader `require`s it, and the `register-global!` call
+   below wires every module (currently just `editing`) into the
+   global registry as one extension named
+   `com.blockether.vis.ext.common-operations.core`.
+
+   To add a new module (e.g. `shell`, `text`):
+     1. Create `com.blockether.vis.ext.common-operations.<module>`
+        exposing a `*-symbols` vector and an optional `*-prompt`
+        string. Do NOT call `register-global!` from the module.
+     2. Require it here, conj its symbols onto `all-symbols` and
+        merge its prompt into `combined-prompt`.
+
+   Depends ONLY on `com.blockether/vis-extension` (the slim extension
+   contract) so the published jar stays small and decoupled from the
+   full vis runtime."
+  (:require
+   [clojure.string :as str]
+   [com.blockether.vis.extension :as ext]
+   [com.blockether.vis.ext.common-operations.editing :as editing]))
+
+(def all-symbols
+  "Concatenation of every module's symbol vector. Order matters only
+   for human-readability in `<var_index>`; the SCI sandbox indexes by
+   name."
+  (vec editing/editing-symbols))
+
+(def combined-prompt
+  "Module prompt fragments joined with a blank line so the LLM sees one
+   coherent block per extension instead of N tiny disjointed snippets."
+  (str/join "\n\n" [editing/editing-prompt]))
+
+(def extension
+  (ext/extension
+    {:ext/namespace 'com.blockether.vis.ext.common-operations.core
+     :ext/doc       "Common filesystem operations: read, list, grep, patch."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+     :ext/group     "filesystem"
+     :ext/prompt    combined-prompt
+     :ext/symbols   all-symbols}))
+
+(ext/register-global! extension)

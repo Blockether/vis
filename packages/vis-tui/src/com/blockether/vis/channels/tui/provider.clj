@@ -1,7 +1,8 @@
 (ns com.blockether.vis.channels.tui.provider
   "TUI provider management dialogs — model picker, model manager, provider router.
    Config I/O and data helpers live in tui/config.clj."
-  (:require [clojure.string :as str]
+  (:require [borkdude.dynaload :as dl]
+            [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.channels.core :as channels]
             [com.blockether.vis.config :as config]
@@ -111,50 +112,89 @@
                    vec)]
     (select-model! screen (config/provider-base-url provider) (:api-key provider) defaults)))
 
+;;; ── GitHub Copilot OAuth (dynaload — optional provider jar) ────────
+;;
+;; com.blockether/vis-providers-github-copilot is an OPTIONAL plug-in
+;; jar. When it's missing every dynaload below stays nil (`:default`)
+;; and `copilot-oauth-flow!` shows a friendly dialog instead of
+;; throwing a CompilerException at the user.
+
+(def ^:private copilot-start-device-flow!
+  (dl/dynaload 'com.blockether.vis.providers.github-copilot/start-device-flow!
+    {:default nil}))
+(def ^:private copilot-poll-for-token!
+  (dl/dynaload 'com.blockether.vis.providers.github-copilot/poll-for-token!
+    {:default nil}))
+(def ^:private copilot-get-copilot-token!
+  (dl/dynaload 'com.blockether.vis.providers.github-copilot/get-copilot-token!
+    {:default nil}))
+(def ^:private copilot-detect-oauth-token
+  (dl/dynaload 'com.blockether.vis.providers.github-copilot/detect-oauth-token
+    {:default nil}))
+
+(defn- copilot-available?
+  "True only when every required github-copilot var resolved."
+  []
+  (and @copilot-start-device-flow!
+       @copilot-poll-for-token!
+       @copilot-get-copilot-token!
+       @copilot-detect-oauth-token))
+
 (defn- copilot-oauth-flow!
   "Run the GitHub Copilot OAuth device flow inside the TUI.
-   Shows the user code + URL, waits for authorization, returns the API key or nil."
+   Shows the user code + URL, waits for authorization, returns the API key or nil.
+
+   Returns nil immediately when the optional vis-providers-github-copilot
+   jar isn't on the classpath."
   [^TerminalScreen screen]
-  (let [start-fn   @(requiring-resolve 'com.blockether.vis.providers.github-copilot/start-device-flow!)
-        poll-fn    @(requiring-resolve 'com.blockether.vis.providers.github-copilot/poll-for-token!)
-        exchange-fn @(requiring-resolve 'com.blockether.vis.providers.github-copilot/get-copilot-token!)
-        detect-fn  @(requiring-resolve 'com.blockether.vis.providers.github-copilot/detect-oauth-token)]
-    ;; Already authenticated?
-    (if-let [existing (detect-fn)]
-      (try
-        (let [{:keys [token]} (exchange-fn)]
-          token)
-        (catch Exception _
-          (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
-          nil))
-      ;; Device flow
-      (try
-        (let [{:keys [user-code verification-uri device-code interval expires-in]}
-              (start-fn)]
-          ;; Show the code to the user
-          (dlg/confirm-dialog! screen "GitHub Copilot — Authenticate"
-            [(str "1. Open:  " verification-uri)
-             (str "2. Enter: " user-code)
-             ""
-             "Press Enter, then authorize in your browser."
-             "Vis will wait for you."])
-          ;; Poll in background, show waiting message
-          (let [result (future (poll-fn device-code interval expires-in))]
-            ;; Simple blocking wait with a confirm dialog
-            ;; The poll runs in background; once authorized it returns
-            (loop [attempt 0]
-              (if (realized? result)
-                (let [{:keys [oauth-token]} @result
-                      {:keys [token]} (exchange-fn)]
-                  (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
-                  token)
-                (do
-                  (Thread/sleep 2000)
-                  (when (< attempt 180) ;; 6 min max
-                    (recur (inc attempt))))))))
-        (catch Exception e
-          (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
-          nil)))))
+  (if-not (copilot-available?)
+    (do
+      (dlg/confirm-dialog! screen "GitHub Copilot"
+        ["This Vis build does not include the GitHub Copilot provider."
+         ""
+         "Add com.blockether/vis-providers-github-copilot to your"
+         "deps and restart Vis to enable OAuth login."])
+      nil)
+    (let [start-fn    copilot-start-device-flow!
+          poll-fn     copilot-poll-for-token!
+          exchange-fn copilot-get-copilot-token!
+          detect-fn   copilot-detect-oauth-token]
+      ;; Already authenticated?
+      (if-let [existing (detect-fn)]
+        (try
+          (let [{:keys [token]} (exchange-fn)]
+            token)
+          (catch Exception _
+            (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
+            nil))
+        ;; Device flow
+        (try
+          (let [{:keys [user-code verification-uri device-code interval expires-in]}
+                (start-fn)]
+            ;; Show the code to the user
+            (dlg/confirm-dialog! screen "GitHub Copilot — Authenticate"
+              [(str "1. Open:  " verification-uri)
+               (str "2. Enter: " user-code)
+               ""
+               "Press Enter, then authorize in your browser."
+               "Vis will wait for you."])
+            ;; Poll in background, show waiting message
+            (let [result (future (poll-fn device-code interval expires-in))]
+              ;; Simple blocking wait with a confirm dialog
+              ;; The poll runs in background; once authorized it returns
+              (loop [attempt 0]
+                (if (realized? result)
+                  (let [{:keys [oauth-token]} @result
+                        {:keys [token]} (exchange-fn)]
+                    (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
+                    token)
+                  (do
+                    (Thread/sleep 2000)
+                    (when (< attempt 180) ;; 6 min max
+                      (recur (inc attempt))))))))
+          (catch Exception e
+            (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
+            nil))))))
 
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."

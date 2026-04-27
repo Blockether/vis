@@ -14,7 +14,7 @@
 > - `packages/vis-core/src/com/blockether/vis/loop/runtime/conversation/environment/query/core.clj`
 > - `packages/vis-core/src/com/blockether/vis/loop/runtime/conversation/environment/core.clj`
 > - `packages/vis-core/src/com/blockether/vis/loop/core.clj` (`CORE_SYSTEM_PROMPT`)
-> - `extensions/editing/src/com/blockether/vis/ext/editing.clj` (the four built-in tools)
+> - `extensions/vis-common-operations/src/com/blockether/vis/ext/common_operations/editing.clj` (the four built-in tools)
 
 ---
 
@@ -301,7 +301,7 @@ materially.
 
 ## 4. The toolset is too narrow, and every default costs ≥1 extra iteration
 
-Currently registered (per `extensions/editing/src/.../editing.clj`):
+Currently registered (per `extensions/vis-common-operations/src/.../common_operations/editing.clj`):
 
 | Tool          | Default behavior                              | Ramification                              |
 | ------------- | --------------------------------------------- | ----------------------------------------- |

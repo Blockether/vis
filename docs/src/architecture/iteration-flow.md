@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — iteration header, `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's :thinking), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `PRIOR_TURN`), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension)
+1. **Build Context** — `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's `:thinking`), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `ITERATION` / `PRIOR_TURN` — ITERATION carries `{:current :budget :remaining}` and replaces the legacy standalone `[iter N/M]` header), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension + loop-injected)
 2. **Ask LLM** — svar structured JSON output: code blocks + optional
    `:final`. The call site is `(llm/ask! (:router environment) …)`,
    i.e. the env's snapshot router — NOT the global
