@@ -117,7 +117,7 @@ For embedding Vis in your own Clojure program:
          '[com.blockether.vis.config :as cfg]
          '[com.blockether.svar.internal.llm :as llm])
 
-(def env (vis/create-environment (cfg/make-router) {:db :temp}))
+(def env (vis/create-environment (cfg/make-router) {:db :memory}))
 
 (vis/query! env [(llm/user \"What is 2+2?\")])
 ;; => {:answer \"4\" :iterations 1 :duration-ms 312 :tokens {...} :cost {...}}

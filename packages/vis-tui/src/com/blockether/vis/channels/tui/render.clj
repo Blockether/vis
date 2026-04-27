@@ -418,31 +418,55 @@
   (p/put-str! g x y line)
   (p/clear-styles! g)
   (p/set-colors! g text-fg bg)
-  (let [n (count line)
-        paint-seg! (fn [start end]
-                     (when (and start (< start end))
-                       (let [seg (subs line start end)]
+  ;; Walk by grapheme cluster (lanterna's BreakIterator-based
+  ;; `TextCharacter/fromString`), tracking BOTH the char-index in
+  ;; the source string AND the screen-column offset relative to x.
+  ;;
+  ;; The two diverge whenever a wide grapheme appears (📄 = 2 chars
+  ;; / 2 cols, 🏿️ = 3 chars / 2 cols, 日 = 1 char / 2 cols, etc.).
+  ;; The PRE-FIX version used (+ x i) for the screen-col of every
+  ;; segment overdraw; that worked for ASCII but drifted by 1 col
+  ;; per VS-16 / 2 cols per flag etc., shifting the body text past
+  ;; the chrome `┃` separators and overwriting them with cell
+  ;; content. THAT was the visible “🏿️ row eats its separators” bug.
+  (let [cells (com.googlecode.lanterna.TextCharacter/fromString line)
+        n     (alength cells)
+        ;; end-col would be symmetric with end-char but lanterna's
+        ;; putString computes the actual paint advance from the seg
+        ;; itself, so we only need start-col for placement.
+        paint-seg! (fn [start-char end-char start-col]
+                     (when (and start-char (< start-char end-char))
+                       (let [seg (subs line start-char end-char)]
                          (when (pos? (count seg))
                            (if (seq body-styles)
                              (p/styled g body-styles
-                               (p/put-str! g (+ x start) y seg))
-                             (p/put-str! g (+ x start) y seg))))))]
-    (loop [i 0 seg-start nil]
-      (cond
-        (= i n)
-        (paint-seg! seg-start i)
-
-        ;; Heavy `┃` is the new column divider; light `│` stays
-        ;; recognized so any legacy or copy-pasted light-glyph row
-        ;; still splits correctly. Every other char belongs to a
-        ;; cell-text segment.
-        (or (= (.charAt line i) \┃)
-          (= (.charAt line i) \│))
-        (do (paint-seg! seg-start i)
-          (recur (inc i) nil))
-
-        :else
-        (recur (inc i) (or seg-start i))))))
+                               (p/put-str! g (+ x start-col) y seg))
+                             (p/put-str! g (+ x start-col) y seg))))))]
+    (loop [i              0
+           char-pos       0
+           col-pos        0
+           seg-start-char nil
+           seg-start-col  nil]
+      (if (>= i n)
+        (paint-seg! seg-start-char char-pos seg-start-col)
+        (let [tc        ^com.googlecode.lanterna.TextCharacter (aget cells i)
+              grapheme  ^String (.getCharacterString tc)
+              g-chars   (long (.length grapheme))
+              g-cols    (if (.isDoubleWidth tc) 2 1)
+              divider?  (and (= 1 g-chars)
+                          (or (= (.charAt grapheme 0) \┃)
+                            (= (.charAt grapheme 0) \│)))]
+          (if divider?
+            (do (paint-seg! seg-start-char char-pos seg-start-col)
+              (recur (inc i)
+                (+ char-pos g-chars)
+                (+ col-pos g-cols)
+                nil nil))
+            (recur (inc i)
+              (+ char-pos g-chars)
+              (+ col-pos g-cols)
+              (or seg-start-char char-pos)
+              (or seg-start-col col-pos))))))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -1376,23 +1400,39 @@
       :left)))
 
 (defn- pad-cell
-  "Render one cell padded to `w` columns with the given alignment.
-   Returns ` <padded content> ` — the leading and trailing spaces are
-   mandatory: they sit between the `│` column dividers, giving every
-   cell a one-space inner margin so text never touches the vertical
-   lines.
+  "Render one cell padded to `w` terminal COLUMNS with the given
+   alignment. Returns ` <padded content> ` — the leading and trailing
+   spaces are mandatory: they sit between the `│` column dividers,
+   giving every cell a one-space inner margin so text never touches
+   the vertical lines.
 
    `align` is `:left` (default, trailing pad) or `:right` (leading
    pad). Numeric columns are auto-detected as `:right` so columns of
    `389 / 12 104 / 4 879` line up on the units position — the only
-   way numeric tables read naturally."
+   way numeric tables read naturally.
+
+   Width math: every length here is **display columns**, not Java
+   chars. Without this, a cell containing ‘🏿️’ (3 Java chars / 2 cols)
+   ends up one column narrower than a sibling cell containing ‘📄’
+   (2 chars / 2 cols), which silently shifts every `┃` separator on
+   that row and breaks the grid alignment."
   [text w align]
   (let [t (str text)
+        t-cols (p/display-width t)
         t (cond
-            (<= (count t) w) t
-            (>= w 2)         (str (subs t 0 (max 0 (dec w))) "…")
-            :else            (subs t 0 (max 0 w)))
-        pad (repeat-str \space (max 0 (- w (count t))))
+            (<= t-cols w) t
+            ;; Truncate to (w-1) columns and append …; ellipsis is 1 col,
+            ;; so total width is exactly `w`. truncate-cols is
+            ;; grapheme-safe and won't split an emoji in half.
+            (>= w 2)      (str (p/truncate-cols t (dec w)) "…")
+            ;; w == 1: no room for ellipsis, just slice.
+            :else         (p/truncate-cols t w))
+        ;; Re-measure after possible truncation so the pad amount is
+        ;; expressed in COLUMNS, not Java chars. truncate-cols
+        ;; guarantees display-width ≤ (dec w); the +1 for the ellipsis
+        ;; or unchanged path keeps the math honest.
+        pad-cols (max 0 (- w (p/display-width t)))
+        pad (repeat-str \space pad-cols)
         body (case align
                :right (str pad t)
                (str t pad))]
@@ -1423,11 +1463,19 @@
         pad-cells (fn [r] (vec (concat r (repeat (max 0 (- n-cols (count r))) ""))))
         h         (pad-cells headers)
         rs        (mapv pad-cells rows)
+        ;; Per-column width = max DISPLAY-WIDTH (terminal columns) of
+        ;; every cell in that column, including the header. Using
+        ;; (count) here was the second of the two emoji-table bugs:
+        ;; 🏿️ and friends inflate Java char-count past their visual
+        ;; column count, which (a) over-allocates cell padding for
+        ;; the WIDE-CHAR-PER-CELL row and (b) under-pads sibling rows
+        ;; that don't have the wide char, drifting every `┃` after
+        ;; that column.
         col-widths-raw
         (mapv (fn [i]
                 (apply max 1
-                  (count (nth h i ""))
-                  (map #(count (nth % i "")) rs)))
+                  (p/display-width (nth h i ""))
+                  (map #(p/display-width (nth % i "")) rs)))
           (range n-cols))
         ;; Total layout width = sum(col widths) + 2*n_cols (per-cell
         ;; one-space padding on each side of the cell text) +

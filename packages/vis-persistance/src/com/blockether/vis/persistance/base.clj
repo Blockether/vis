@@ -29,9 +29,8 @@
   "Normalize an entity reference to a string ID for SQL.
    Accepts: UUID, string, or nil. Returns string or nil.
 
-   This is the ONLY way to extract a SQL-ready string from a ref.
-   The legacy `[:id <uuid>]` tagged-pair form is no longer accepted --
-   pass the plain UUID (or string) directly."
+   The ONLY way to extract a SQL-ready string from an entity
+   reference -- pass the plain UUID or string directly."
   [v]
   (cond
     (nil? v)    nil

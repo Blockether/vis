@@ -20,8 +20,6 @@ The model sees exactly what it needs: the previous iteration's results,
 a var index of everything it has defined, and system nudges. Everything
 else is one function call away.
 
-📖 **[Book](https://blockether.github.io/vis/)**
-
 ## The Problem
 
 Every coding agent (Claude Code, OpenCode, Pi, Hermes) runs the same loop:
