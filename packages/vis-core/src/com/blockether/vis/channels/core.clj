@@ -110,7 +110,7 @@
    Safe to call multiple times — each call replaces the previous hook."
   [conversation-id]
   (let [hook (Thread. (fn []
-                        (let [out config/original-stdout]
+                        (let [^java.io.PrintStream out config/original-stdout]
                           (.println out "")
                           (.println out (str "  vis channels tui --conversation-id " conversation-id))
                           (.println out "")

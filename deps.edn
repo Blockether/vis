@@ -85,6 +85,7 @@
                        "--dir" "packages/vis-core/test"
                        "--dir" "packages/vis-commandline/test"
                        "--dir" "packages/vis-extension/test"
+                       "--dir" "packages/vis-persistance-sqlite/test"
                        "--dir" "extensions/vis-common-operations/test"
                        "--dir" "extensions/vis-self-debug/test"]}
 

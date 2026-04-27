@@ -41,7 +41,7 @@ Provider config + credentials live under `~/.vis/`:
 ```
 ~/.vis/
 \u251c\u2500\u2500 config.edn           single active provider, model, etc.
-\u251c\u2500\u2500 vis.mdb/rlm.db       SQLite database (every conversation, every iteration)
+\u251c\u2500\u2500 vis.mdb/vis.db       SQLite database (every conversation, every iteration)
 \u2514\u2500\u2500 vis.log              stderr log (when a TTY-owning channel is active)
 ```
 
@@ -129,7 +129,7 @@ Full API reference: [Public API on `com.blockether.vis.core`](architecture/packa
 ## Browsing past conversations
 
 Every conversation \u2014 from any channel \u2014 lives in a single
-SQLite DB at `~/.vis/vis.mdb/rlm.db`. Inspect it through the CLI:
+SQLite DB at `~/.vis/vis.mdb/vis.db`. Inspect it through the CLI:
 
 ```bash
 vis conversations             # default: :vis (TUI)

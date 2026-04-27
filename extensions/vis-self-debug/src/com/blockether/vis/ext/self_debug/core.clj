@@ -51,17 +51,6 @@
 (defn- current-conversation-id [env]
   (:conversation-id env))
 
-(defn- current-query-id
-  "Most-recent query for the current conversation. Returns nil when
-   the env is mid-construction or the DB is unreachable."
-  [{:keys [db-info conversation-id]}]
-  (when (and db-info conversation-id)
-    (try
-      (some-> (db/db-list-conversation-queries db-info conversation-id)
-        last
-        :id)
-      (catch Throwable _ nil))))
-
 (defn- iteration-rows
   "Fetch the iteration rows for `query-id`; returns [] on any failure."
   [db-info query-id]
@@ -145,12 +134,27 @@
             :else              0))
         (catch Throwable _ nil)))))
 
+(defn- redundancy-summary
+  "Aggregate `:expression-redundancy-fraction` + `:dedup-saves` across
+   `iterations`. Returns a map the agent can use to self-check whether
+   it has been issuing duplicate calls in this turn. Total / total
+   ratio is computed from the actual expression count, not from
+   per-iter fractions averaged (which would over-weight short iters)."
+  [iterations attempt-count]
+  (let [duplicate-total (reduce + 0
+                          (keep #(get-in % [:metadata :dedup-saves]) iterations))]
+    {:duplicate-count duplicate-total
+     :total-count     attempt-count
+     :fraction        (if (pos? attempt-count)
+                        (double (/ duplicate-total attempt-count))
+                        0.0)}))
+
 (defn- turn-snapshot
   "The single-call rich snapshot returned by `(self/turn)`. Aggregates
    the data the projection ALSO surfaces (plan, breadcrumbs,
    iteration pointer) plus data the projection does NOT carry
-   (attempts, cost, elapsed-ms). The agent picks what it needs by map
-   key."
+   (attempts, cost, elapsed-ms, redundancy). The agent picks what it
+   needs by map key."
   [env]
   (let [{:keys [db-info conversation-id]} env]
     (when (and db-info conversation-id)
@@ -167,7 +171,8 @@
                      :attempts    attempts
                      :errors      (filterv :error attempts)
                      :iteration   (iteration-pointer env)
-                     :cost        (query-cost-summary query)}
+                     :cost        (query-cost-summary query)
+                     :redundancy  (redundancy-summary iterations (count attempts))}
               (elapsed-ms query) (assoc :elapsed-ms (elapsed-ms query)))))))))
 
 (defn- conversation-snapshot

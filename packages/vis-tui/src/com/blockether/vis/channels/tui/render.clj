@@ -963,16 +963,23 @@
                                   ;; Rendered in red so the user sees the actual
                                   ;; provider response (e.g. an HTTP plain-text
                                   ;; auth rejection) instead of just an empty bubble."
-  [{:keys [thinking code results stdouts durations successes error repeat-count]} code-width iter-num]
+  [{:keys [thinking code results stdouts durations successes error repeat-count]}
+   code-width iter-num & [{:keys [show-header?] :or {show-header? true}}]]
   (let [;; All marker-prefixed lines must have visible content ≤ (dec code-width)
         ;; because wrap-text in draw-chat-bubble! wraps at code-width and the
         ;; invisible 1-char marker prefix counts toward string length.
         fill-w     (max 1 (dec code-width))
-        ;; Right-aligned superscript label with 1 char right margin
+        ;; Right-aligned superscript label with 1 char right margin.
+        ;; Setting-gated by `:show-iteration-headers` — when off the
+        ;; whole `header-line` row is omitted (the trace's iteration
+        ;; bg + the iter-pad marker between blocks already separate
+        ;; iterations visually; the superscript is opt-in chrome).
         label      (label-text "iteration" iter-num)
         pad-len    (max 0 (- fill-w (count label) 1))
         header-line (str (repeat-str \space pad-len) label " ")
-        header [(str iter-hdr-marker header-line)]
+        header     (if show-header?
+                     [(str iter-hdr-marker header-line)]
+                     [])
 
         thinking-lines
         (when (and (string? thinking) (not (str/blank? thinking)))
@@ -1223,6 +1230,7 @@
          content-w        (max 10 (- bubble-w 4))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
+         show-iter-hdrs?  (get settings :show-iteration-headers false)
          {:keys [now-ms query-start-ms cancelling?]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          elapsed-ms       (when query-start-ms
@@ -1236,7 +1244,8 @@
                               (mapcat (fn [[idx entry]]
                                         (format-iteration-entry
                                           (if show-thinking? entry (dissoc entry :thinking))
-                                          content-w (inc idx))))
+                                          content-w (inc idx)
+                                          {:show-header? show-iter-hdrs?})))
                               (collapse-repeated-error-runs iterations)))]
      (if (seq trace-lines)
        (str/join "\n" (conj (conj trace-lines "") spinner-line))
@@ -1291,9 +1300,9 @@
       (pos? (count t))
       (try
         (let [normalized (-> t
-                          (str/replace "\u00a0" "")  ;; NBSP
-                          (str/replace " " "")
-                          (str/replace "," "."))]
+                           (str/replace "\u00a0" "")  ;; NBSP
+                           (str/replace " " "")
+                           (str/replace "," "."))]
           (Double/parseDouble normalized)
           true)
         (catch NumberFormatException _ false)))))
@@ -1351,7 +1360,7 @@
    `markers` is `{:thead :tsep :trow}` from `md-marker-sets`. Tables
    that exceed `max-w` get their column widths shrunk proportionally
    so the result always fits inside the bubble."
-   
+
   [headers rows max-w {:keys [thead tsep trow]}]
   (let [n-cols    (max 1 (apply max (count headers) (map count rows)))
         pad-cells (fn [r] (vec (concat r (repeat (max 0 (- n-cols (count r))) ""))))
@@ -1384,6 +1393,11 @@
         bar        (fn [w] (repeat-str \─ (+ w 2)))
         top-line   (str "┌" (str/join "┬" (map bar col-widths)) "┐")
         head-sep   (str "├" (str/join "┼" (map bar col-widths)) "┤")
+        ;; Same shape as `head-sep` — inserted between every pair of
+        ;; body rows so each row sits in its own visual cell. Without
+        ;; this the body looked like a stack of pipe-separated text
+        ;; rows; with it, the table reads as a proper grid.
+        row-sep    head-sep
         bot-line   (str "└" (str/join "┴" (map bar col-widths)) "┘")
         ;; Per-column alignment: numeric columns right-align, every
         ;; other column stays left. The header inherits the column's
@@ -1403,7 +1417,12 @@
            [(str tsep top-line)]
            [(str thead (format-row h))]
            [(str tsep head-sep)]
-           (mapv #(str trow (format-row %)) rs)
+           ;; Interleave `row-sep` between every pair of body rows
+           ;; so every row gets its own boxed cell. `interpose`
+           ;; would inject a sep but only between, not after the
+           ;; last — perfect, the bottom-line caps things off.
+           (interpose (str tsep row-sep)
+             (mapv #(str trow (format-row %)) rs))
            [(str tsep bot-line)]))))
 
 (defn- consume-table
@@ -1563,35 +1582,53 @@
   [answer trace bubble-w settings confidence]
   (let [content-w (max 10 (- bubble-w 4))
         fill-w    (max 1 (dec content-w))
-        show-thinking?   (get settings :show-thinking true)
-        show-iterations? (get settings :show-iterations true)
+        show-thinking?     (get settings :show-thinking true)
+        show-iterations?   (get settings :show-iterations true)
+        show-iter-hdrs?    (get settings :show-iteration-headers false)
+        show-final-hdr?    (get settings :show-final-answer-header false)
         trace-lines (when (and show-iterations? (seq trace))
                       (into []
                         (mapcat (fn [[idx entry]]
                                   (format-iteration-entry
                                     (if show-thinking? entry (dissoc entry :thinking))
-                                    content-w (inc idx))))
+                                    content-w (inc idx)
+                                    {:show-header? show-iter-hdrs?})))
                         (collapse-repeated-error-runs trace)))
         answer-str  (or answer "")
-        ;; Right-aligned "FINAL ANSWER" header with confidence
+        ;; Right-aligned "FINAL ANSWER" header with confidence —
+        ;; opt-in chrome. The blue answer-bg + bold horizontal rule
+        ;; (`ans-sep`) above the answer body already shout \"this is
+        ;; the answer\"; the superscript is redundant unless the
+        ;; user explicitly turns it back on.
         fa-label    (label-text "final answer")
         conf-str    (when confidence (str " · " (name confidence)))
         full-label  (str fa-label (or conf-str ""))
         fa-pad      (max 0 (- fill-w (count full-label) 1))
-        fa-hdr      (str answer-hdr-marker (repeat-str \space fa-pad) full-label " ")
-        ;; Answer lines — keep markdown markers intact so they render properly.
-        ;; The in-answer? zone in draw-chat-bubble! fills answer-bg for ALL
-        ;; lines after the answer-hdr, regardless of their marker type.
+        fa-hdr      (when show-final-hdr?
+                      (str answer-hdr-marker (repeat-str \space fa-pad) full-label " "))
+        ;; The answer-bg paint is anchored on the FIRST line carrying
+        ;; an `answer-*` marker (`draw-chat-bubble!` searches for
+        ;; `answer-hdr-marker` first; if absent, falls back to
+        ;; `answer-pad-marker` / `answer-txt-marker`). Without the
+        ;; explicit fa-hdr we just rely on the leading `ans-pad` to
+        ;; anchor the answer zone — it carries `answer-pad-marker`
+        ;; which the renderer treats as part of the answer block.
         md-lines    (markdown->lines answer-str (max 1 (- fill-w 2)))
         ans-lines   (if (seq md-lines)
                       md-lines
                       (wrap-text answer-str (max 1 (- fill-w 2))))
         ans-pad     (str answer-pad-marker "")
-        ans-sep     (str answer-sep-marker "")]
+        ans-sep     (str answer-sep-marker "")
+        answer-block (cond-> [ans-sep]
+                       fa-hdr (conj fa-hdr)
+                       :always (conj ans-pad)
+                       :always (into ans-lines)
+                       :always (conj ans-pad))]
     (if (seq trace-lines)
-      (str/join "\n" (concat trace-lines
-                       [ans-sep] [fa-hdr] [ans-pad] ans-lines [ans-pad]))
-      (str/join "\n" (concat [fa-hdr] [ans-pad] ans-lines [ans-pad])))))
+      (str/join "\n" (concat trace-lines answer-block))
+      ;; No trace — don't emit the thinking/answer separator at the
+      ;; top of an otherwise-empty bubble; jump straight to the answer.
+      (str/join "\n" (rest answer-block)))))
 
 (defn format-answer-with-thinking
   "Build the final bubble text: thinking trace + answer. Memoized by

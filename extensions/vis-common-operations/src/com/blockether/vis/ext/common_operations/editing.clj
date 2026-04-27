@@ -723,7 +723,6 @@
    grep-files-symbol
    patch-file-symbol])
 
-
 (def editing-prompt
   "Module-specific prompt fragment merged into the extension prompt by
    the `core` aggregator. Lives next to the symbols so a future

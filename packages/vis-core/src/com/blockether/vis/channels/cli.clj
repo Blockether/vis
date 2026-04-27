@@ -163,7 +163,7 @@
           (when (:error result)
             (when-let [ex (:exception result)]
               (stdout! "\nStack trace:")
-              (.printStackTrace ^Throwable ex config/original-stdout))
+              (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))
             (shutdown-agents)
             (System/exit 1)))
 

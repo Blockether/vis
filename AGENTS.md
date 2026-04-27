@@ -154,7 +154,7 @@ how we ended up with an incomprehensible god file in the first place.
 
 ### Inspect the SQLite DB before theorizing about a bug
 
-`~/.vis/vis.mdb/rlm.db` is the single source of truth for everything
+`~/.vis/vis.mdb/vis.db` is the single source of truth for everything
 that happened in every conversation — queries, iterations, final
 answers, persisted SCI vars, timings, costs. Before hypothesizing
 about a user-reported bug that references a specific `conversation-id`
@@ -174,7 +174,7 @@ into an editor scratch buffer.
 Raw SQL triage checklist:
 
 ```bash
-DB=~/.vis/vis.mdb/rlm.db
+DB=~/.vis/vis.mdb/vis.db
 CID='<conversation-soul-uuid>'
 
 # Conversation soul + state

@@ -45,15 +45,37 @@
 
 (def ^:private input-min-lines 3)
 (def ^:private input-max-lines 8)
-(def ^:private hint-idle " Enter send · Alt+Enter newline · ↑↓ scroll · Ctrl+P/N history · Ctrl+K commands ")
-(def ^:private hint-loading " Esc cancel · ↑↓ scroll · Ctrl+C quit ")
+;; Hint strip rules
+;;
+;; Idle, input EMPTY    → show newline + menu (newcomers see how to wrap +
+;;                       discover the menu).
+;; Idle, input NON-EMPTY → just menu. \"Enter send\" is monkey-obvious; once
+;;                        someone has typed they don't need that hint.
+;; Loading              → cancel + quit. Same as before.
+;; Cancelling            → progress message + quit.
+;;
+;; Removed from idle: `Enter send` (universally obvious), `↑↓ scroll`
+;; (intuitive in any text input), `Ctrl+P/N history` (now discoverable
+;; from the Ctrl+K menu).
+(def ^:private hint-idle-empty " Alt+Enter newline · Ctrl+K menu ")
+(def ^:private hint-idle-typed " Ctrl+K menu ")
+(def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
 
-(defn- current-hint [{:keys [loading? cancelling?]}]
+(defn- input-empty?
+  "True when the input editor has no text. The empty editor is `{:lines [\"\"]
+   :crow 0 :ccol 0}` — a one-element vec with the empty string — so we
+   can't just `(empty? lines)`."
+  [{:keys [lines]}]
+  (or (empty? lines)
+    (every? str/blank? lines)))
+
+(defn- current-hint [{:keys [loading? cancelling? input]}]
   (cond
-    cancelling? hint-cancelling
-    loading?    hint-loading
-    :else       hint-idle))
+    cancelling?         hint-cancelling
+    loading?            hint-loading
+    (input-empty? input) hint-idle-empty
+    :else               hint-idle-typed))
 
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
@@ -100,21 +122,34 @@
    `progress-extra` carries the wall-clock start, cancelling flag, and
    `:now-ms` so `progress->text` can render the spinner frame."
   [messages progress loading? bubble-w settings progress-extra]
-  (let [;; Apply trace→text projection and markdown to assistant messages
+  (let [;; The `:show-timestamps` toggle drops the per-message
+        ;; date/time stamp from the role-label row. We do this here
+        ;; in the projection pass instead of threading the setting
+        ;; into `draw-chat-bubble!` because the bubble already
+        ;; respects \"absent timestamp\" — it just doesn't render the
+        ;; right-aligned `time-str` when `:timestamp` is nil. Same
+        ;; behavior, fewer arg-threading scars.
+        show-timestamps? (get settings :show-timestamps false)
+        strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
+        ;; Apply trace→text projection and markdown to assistant messages.
         projected (mapv (fn [msg]
                           (cond
                             ;; Has trace: full iteration + answer rendering
                             (and (= :assistant (:role msg)) (:trace msg))
-                            (assoc msg :text
-                              (render/format-answer-with-thinking
-                                (:raw-answer msg) (:trace msg) bubble-w settings
-                                (:confidence msg)))
+                            (-> msg
+                              (assoc :text
+                                (render/format-answer-with-thinking
+                                  (:raw-answer msg) (:trace msg) bubble-w settings
+                                  (:confidence msg)))
+                              strip-ts)
                             ;; Plain assistant message: apply markdown
                             (= :assistant (:role msg))
-                            (assoc msg :text
-                              (render/format-answer-markdown (:text msg) bubble-w))
-                            ;; User messages: unchanged
-                            :else msg))
+                            (-> msg
+                              (assoc :text
+                                (render/format-answer-markdown (:text msg) bubble-w))
+                              strip-ts)
+                            ;; User messages: only timestamp gating.
+                            :else (strip-ts msg)))
                     messages)]
     ;; Replace the loading placeholder with the live progress block
     ;; (spinner + phase + iteration trace).

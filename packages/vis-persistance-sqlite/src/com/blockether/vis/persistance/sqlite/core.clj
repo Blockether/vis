@@ -159,15 +159,48 @@
               (.setLeakDetectionThreshold 60000))]
     (HikariDataSource. cfg)))
 
-(def ^:private DB_FILENAME "rlm.db")
+(def ^:private DB_FILENAME "vis.db")
+
+(def ^:private LEGACY_DB_FILENAMES
+  ;; Pre-rename file names that should be transparently picked up if a
+  ;; user upgrades from an earlier build. We rename in place on first
+  ;; open so the canonical file is always `vis.db` going forward.
+  ["rlm.db"])
 
 (def ^:private ^AtomicLong pool-counter
   ;; Monotonic suffix so multiple envs alive in the same JVM get
   ;; distinct pool names (and thread names) instead of colliding.
   (AtomicLong.))
 
+(defn- migrate-legacy-db-file!
+  "Rename a legacy DB file (e.g. `rlm.db`) to the canonical `vis.db`
+   the first time we open a directory that still has the old name.
+   Idempotent and crash-safe: if the canonical file already exists
+   we leave the legacy file alone so we never destroy data.
+
+   The SQLite backend file is opened lazily after this call, so doing
+   the rename here means upgraded users keep every conversation,
+   iteration, and persisted var without manual steps."
+  [^String dir]
+  (let [target (java.io.File. dir DB_FILENAME)]
+    (when-not (.exists target)
+      (doseq [legacy LEGACY_DB_FILENAMES]
+        (let [legacy-file (java.io.File. dir ^String legacy)]
+          (when (and (.exists legacy-file) (not (.exists target)))
+            (try
+              (.renameTo legacy-file target)
+              ;; SQLite WAL/SHM sidecars travel with the main file
+              ;; under the same basename. Move them too if present.
+              (doseq [^String suffix ["-wal" "-shm" "-journal"]]
+                (let [src (java.io.File. dir (str legacy suffix))
+                      dst (java.io.File. dir (str DB_FILENAME suffix))]
+                  (when (and (.exists src) (not (.exists dst)))
+                    (.renameTo src dst))))
+              (catch Throwable _ nil))))))))
+
 (defn- open-sqlite-at-dir [^String dir]
   (.mkdirs (java.io.File. dir))
+  (migrate-legacy-db-file! dir)
   (let [file   (str dir "/" DB_FILENAME)
         raw    (raw-sqlite-datasource (str "jdbc:sqlite:" file))
         pool   (pooled-datasource raw
@@ -774,7 +807,13 @@
     ;; Nippy round-trips keywords/sets/etc. losslessly — no shim needed.
     (some? (:plan_state row))           (assoc :plan-state (<-blob (:plan_state row)))
     (some? (:breadcrumb row))           (assoc :breadcrumb (:breadcrumb row))
-    (some? (:plan_diff row))            (assoc :plan-diff  (<-blob (:plan_diff row)))))
+    (some? (:plan_diff row))            (assoc :plan-diff  (<-blob (:plan_diff row)))
+    ;; Iteration metadata (JSON) carries the per-iter metrics:
+    ;; :plan-edit-distance, :plan-changed?,
+    ;; :var-history-recall-count, :expression-redundancy-fraction,
+    ;; :dedup-saves, :plan-validation-error, plus per-iter extension
+    ;; info.
+    (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))
 
 (defn db-list-query-iterations [db-info query-id]
   (if (and (ds db-info) query-id)
