@@ -15,9 +15,10 @@
    [com.blockether.vis.extension :as ext]
 
    [com.blockether.vis.persistance.core :as db]
-   [com.blockether.vis.persistance.spec :as rlm-spec
-    :refer [ITERATION_SPEC_NON_REASONING
-            *eval-timeout-ms* *rlm-ctx* clamp-eval-timeout-ms]]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.spec
+    :refer [ITERATION_SPEC_NON_REASONING]]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.runtime
+    :refer [*eval-timeout-ms* *rlm-context* clamp-eval-timeout-ms]]
    [com.blockether.vis.loop.mustache :as mustache]
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.svar.internal.router :as router]
@@ -160,16 +161,43 @@
       (assoc execution-result :execution-time-ms execution-time :timeout? true)
       (assoc execution-result :execution-time-ms execution-time :timeout? false))))
 
+(def ^:private parse-rescue-max-iterations
+  "Hard cap on rescue retries. Bounds pathological hooks that keep
+   rewriting the source without converging. The vast majority of
+   real-world cases (single `\\|`, two `\\|` on different lines)
+   need 1-3 iterations; 8 is generous."
+  8)
+
 (defn- try-extension-parse-rescue
   "Walk the environment's active extensions and ask each one's
-   `:ext/on-parse-error-fn` to rewrite `code`. Returns the rewritten
-   string when the rescue both differs from the original AND parses
-   cleanly. nil otherwise. Read-only on the environment."
+   `:ext/on-parse-error-fn` to rewrite `code`. Loops the rescue chain
+   so that hooks repairing only the FIRST offending site (the
+   documented contract of `rescue-parse-error`) still converge when
+   the source contains 2+ broken sites. Returns the rewritten string
+   once it parses cleanly, nil otherwise.
+
+   Termination conditions (in order):
+     1. Rewrite parses cleanly             → return rewrite.
+     2. Hook returns nil                    → return nil.
+     3. Hook returns the input unchanged    → return nil (no progress).
+     4. Iteration cap reached               → return nil (bounded).
+
+   Read-only on the environment."
   [environment code parse-error]
   (when-let [exts (some-> (:extensions environment) deref seq)]
-    (when-let [fixed (ext/try-rescue-parse-error exts code parse-error environment)]
-      (when (nil? (parse-clojure-syntax fixed))
-        fixed))))
+    (loop [current-code  code
+           current-error parse-error
+           iterations    0]
+      (when (< iterations parse-rescue-max-iterations)
+        (let [fixed (ext/try-rescue-parse-error exts current-code current-error environment)]
+          (cond
+            (nil? fixed)              nil
+            (= fixed current-code)    nil  ; no progress — bail
+            :else
+            (let [next-error (parse-clojure-syntax fixed)]
+              (if (nil? next-error)
+                fixed                       ; parses cleanly — done
+                (recur fixed next-error (inc iterations))))))))))
 
 (defn canonical-expression-hash
   "Whitespace-and-form-normalized hash of `expression`. Parses the form
@@ -320,7 +348,7 @@
                             `:dedup-cache-atom` is provided."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
    & {:keys [timeout-ms doc dedup-cache-atom iteration-id]}]
-  (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :execute-code})]
+  (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
           autobind-events-atom (:autobind-events-atom environment)
           event-start-count (if autobind-events-atom
@@ -474,7 +502,7 @@
    into a flat seq of `{:iteration-id :code :result :error}` maps the
    `<attempts>` block can render. Used by the loop to gather the full
    query-so-far ledger; the underlying DB queries are the same shape
-   the self-debug extension uses."
+   the meta extension uses."
   [db-info iterations]
   (vec
     (mapcat (fn [iteration]
@@ -829,7 +857,7 @@
 ;;
 ;; The plan slot is sticky: the model writes it once and the loop carries
 ;; the most-recent persisted plan forward across iterations until the model
-;; re-emits one. This loader returns the latest non-nil plan_state from the
+;; re-emits one. This loader returns the latest non-nil plan-state from the
 ;; current query's iteration rows; nil when no plan has ever been emitted.
 
 (defn load-effective-plan
@@ -1105,6 +1133,120 @@
         {::iteration-error iteration-error-data}))))
 
 ;; ---------------------------------------------------------------------------
+;; Schema-rejection retry (provider hiccup, not an iteration failure)
+;;
+;; Some providers (notably GLM-5.1 under :deep reasoning) occasionally
+;; return a bare JSON-string in `content` instead of the structured
+;; iteration envelope svar's spec demands. svar throws
+;; `:svar.spec/schema-rejected`; without a retry layer that exception
+;; ends up advancing the iteration counter, billing the consecutive-
+;; error budget, and writing a useless DB row — none of which describes
+;; an actual failure of the model's reasoning. Retry the SAME ask!
+;; call up to MAX_SCHEMA_REJECT_RETRIES times with a one-shot
+;; structural reminder appended to the message list. The retries
+;; cost provider tokens but do NOT cost an iteration step.
+;;
+;; Limit deliberately tight (2): if the provider can't produce a map
+;; in three tries (1 + 2 retries) the model itself is wedged and the
+;; outer loop's normal error path should kick in.
+;; ---------------------------------------------------------------------------
+
+(def ^:private MAX_SCHEMA_REJECT_RETRIES
+  "Maximum number of times to retry the SAME `llm/ask!` invocation
+   when the provider returns content that fails the iteration spec.
+   Each retry appends one extra reminder to messages. The iteration
+   counter is NOT advanced across retries — they are invisible to the
+   outer loop."
+  2)
+
+(defn- schema-rejected?
+  "True when `e` is svar's spec rejection (provider returned a non-map
+   top-level value)."
+  [^Throwable e]
+  (= :svar.spec/schema-rejected (:type (ex-data e))))
+
+(defn- schema-reject-reminder
+  "Single-message structural reminder appended to messages on retry.
+   Includes the literal raw-data preview so the model sees what it
+   sent verbatim — not just an abstract complaint."
+  [^Throwable e attempt max-attempts]
+  (let [d       (ex-data e)
+        preview (some-> (:raw-data-preview d) str)
+        recv    (some-> (:received-type d) str)]
+    {:role "user"
+     :content
+     (str "[svar/schema-reject " attempt "/" max-attempts "] Your last "
+       "response did not match the iteration spec. The top-level "
+       "value MUST be a JSON/EDN map with at least `:code` (vec). "
+       "NO prose outside the structure."
+       (when recv (str " You returned a " recv "."))
+       (when (and preview (not (str/blank? preview)))
+         (str " Preview of what you sent: " preview
+           "\n\nRe-emit the COMPLETE iteration object now.")))}))
+
+(defn ask-with-schema-retry!
+  "Wrap `llm/ask!` with bounded retries when the provider returns a
+   spec-rejected response. Returns the same shape `llm/ask!` returns;
+   re-throws any non-schema-rejection exception unchanged.
+
+   Implementation note: each retry calls `llm/ask!` with messages =
+   (original messages) ++ (one extra reminder for THIS retry). We do
+   NOT accumulate reminders across retries — each retry gets exactly
+   one reminder, replacing the previous one, so the prompt stays
+   bounded.
+
+   Telemetry: emits a `:schema-reject-retry` log stage and a soft
+   on-chunk event (`:schema-reject-retry attempt`) so the TUI can
+   surface \"provider hiccup, retrying\" instead of going silent.
+   `iteration` is the OUTER loop's iteration index, used purely for
+   logging — the iteration counter is intentionally not mutated."
+  [router base-opts {:keys [iteration on-chunk max-retries]
+                     :or   {max-retries MAX_SCHEMA_REJECT_RETRIES}}]
+  (let [base-messages (vec (:messages base-opts))]
+    ;; `reminder` is the ONE reminder to apply on this attempt (nil on
+    ;; the first call). It is replaced — never accumulated — on each
+    ;; retry, so the prompt grows by exactly one user message per
+    ;; provider-side hiccup, not by N over N retries.
+    (loop [attempt  0
+           reminder nil]
+      (let [opts (if reminder
+                   (assoc base-opts :messages (conj base-messages reminder))
+                   base-opts)
+            outcome
+            (try
+              {:ok (llm/ask! router opts)}
+              (catch clojure.lang.ExceptionInfo e
+                (if (and (schema-rejected? e) (< attempt max-retries))
+                  {:retry e}
+                  {:throw e})))]
+        (cond
+          (contains? outcome :ok)
+          (:ok outcome)
+
+          (contains? outcome :throw)
+          (throw (:throw outcome))
+
+          (contains? outcome :retry)
+          (let [e             (:retry outcome)
+                next-attempt  (inc attempt)
+                next-reminder (schema-reject-reminder e next-attempt max-retries)]
+            (log-stage! :schema-reject-retry iteration
+              {:attempt          next-attempt
+               :max-retries      max-retries
+               :received-type    (:received-type (ex-data e))
+               :raw-data-preview (:raw-data-preview (ex-data e))})
+            (when on-chunk
+              (try
+                (on-chunk {:iteration            iteration
+                           :thinking             nil
+                           :code                 nil
+                           :schema-reject-retry  next-attempt
+                           :schema-reject-max    max-retries
+                           :done?                false})
+                (catch Throwable _ nil)))
+            (recur next-attempt next-reminder)))))))
+
+;; ---------------------------------------------------------------------------
 ;; get-locals (read sandbox vars)
 ;; ---------------------------------------------------------------------------
 
@@ -1160,7 +1302,7 @@
   [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk
                                    dedup-cache-atom]
                             :or {iteration-spec ITERATION_SPEC_NON_REASONING}}]]
-  (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :run-iteration})]
+  (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
@@ -1175,13 +1317,16 @@
                                         :code      nil
                                         :done?     (boolean done?)}))))
           ask-result (binding [llm/*log-context* {:query-id (:environment-id environment) :iteration iteration}]
-                       (llm/ask! (:router environment)
+                       (ask-with-schema-retry! (:router environment)
                          (cond-> {:spec iteration-spec
                                   :messages messages
                                   :routing (or routing {})
                                   :check-context? false}
                            effective-reasoning (assoc :reasoning effective-reasoning)
-                           streaming-fn       (assoc :on-chunk streaming-fn))))
+                           streaming-fn       (assoc :on-chunk streaming-fn))
+                         {:iteration   iteration
+                          :on-chunk    on-chunk
+                          :max-retries MAX_SCHEMA_REJECT_RETRIES}))
           parsed (:result ask-result)
           model-reasoning (:reasoning ask-result)
           thinking (or model-reasoning (:thinking parsed))

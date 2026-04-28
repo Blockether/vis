@@ -6,11 +6,10 @@
    - Query execution
 
    NOTE: the extension contract (extension/symbol/value/register-global!
-   and friends) is NOT re-exported here anymore. It lives in the
-   standalone `com.blockether/vis-extension` library so extensions can
-   depend on a tiny surface (telemere + clojure.spec only) without
-   pulling the whole vis runtime. Extensions should require
-   `com.blockether.vis.extension` directly."
+   and friends) is NOT re-exported here. It lives in the
+   `com.blockether.vis.extension` namespace, which is shipped by
+   `com.blockether/vis-core`. Extensions should require that namespace
+   directly."
   (:require
    [com.blockether.vis.loop.core :as loop-core]
    [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]))
@@ -70,8 +69,8 @@
 ;; Extension helpers (extension, symbol, value, register-global!,
 ;; registered-extensions, discover-extensions!, load-extension!,
 ;; reload-extension!, render-prompt) intentionally removed from this
-;; namespace. They live in `com.blockether.vis.extension` now — require
-;; that namespace directly when authoring an extension.
+;; namespace. They live in `com.blockether.vis.extension` — require that
+;; namespace directly when authoring an extension.
 ;; =============================================================================
 
 (def query!

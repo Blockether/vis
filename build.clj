@@ -45,17 +45,11 @@
   "Every publishable package in the monorepo, in dependency-friendly
    order (deeper deps first so a sequential install fills `~/.m2`
    before any later package needs them)."
-  [{:lib 'com.blockether/vis-extension                 :dir "packages/vis-extension"}
-   {:lib 'com.blockether/vis-commandline               :dir "packages/vis-commandline"}
-   {:lib 'com.blockether/vis-persistance               :dir "packages/vis-persistance"}
-   {:lib 'com.blockether/vis-persistance-sqlite        :dir "packages/vis-persistance-sqlite"}
-   {:lib 'com.blockether/vis-persistance-sqlite-flyway :dir "packages/vis-persistance-sqlite-flyway"}
-   {:lib 'com.blockether/vis-provider                  :dir "packages/vis-provider"}
-   {:lib 'com.blockether/vis-provider-github-copilot   :dir "packages/vis-provider-github-copilot"}
-   {:lib 'com.blockether/vis-logging                   :dir "packages/vis-logging"}
-   {:lib 'com.blockether/vis-core                      :dir "packages/vis-core"}
-   {:lib 'com.blockether/vis-telegram                  :dir "packages/vis-telegram"}
-   {:lib 'com.blockether/vis-tui                       :dir "packages/vis-tui"}])
+  [{:lib 'com.blockether/vis-core                    :dir "packages/vis-core"}
+   {:lib 'com.blockether/vis-persistance-sqlite      :dir "packages/vis-persistance-sqlite"}
+   {:lib 'com.blockether/vis-provider-github-copilot :dir "packages/vis-provider-github-copilot"}
+   {:lib 'com.blockether/vis-telegram                :dir "packages/vis-telegram"}
+   {:lib 'com.blockether/vis-tui                     :dir "packages/vis-tui"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed
@@ -105,21 +99,9 @@
 (def ^:private package-descriptions
   "Per-package one-line descriptions used in the published POM."
   {'com.blockether/vis-core
-   "vis runtime — conversation/iteration loop, SCI sandbox, CLI dispatcher."
-   'com.blockether/vis-commandline
-   "Reusable command-line primitives — command tree, dispatch, help rendering."
-   'com.blockether/vis-extension
-   "Extension contract — ext + channel registries plus the unified `META-INF/vis.edn` classpath autodiscovery."
-   'com.blockether/vis-logging
-   "Telemere → persistence facade log handler (dynaload, no JDBC)."
-   'com.blockether/vis-persistance
-   "Persistence facade — backend-agnostic API + spec, no database drivers."
+   "vis runtime — conversation/iteration loop, SCI sandbox, CLI dispatcher, extension registry, provider registry, and persistence facade."
    'com.blockether/vis-persistance-sqlite
    "SQLite backend for the vis persistence facade — JDBC plumbing only, migrator-agnostic."
-   'com.blockether/vis-persistance-sqlite-flyway
-   "Flyway migrator for the SQLite backend — applies vis-persistance's V*__schema.sql files."
-   'com.blockether/vis-provider
-   "Generic LLM provider registry — extension contract, no concrete provider."
    'com.blockether/vis-provider-github-copilot
    "GitHub Copilot OAuth device-flow provider for the vis-provider registry."
    'com.blockether/vis-tui
@@ -183,8 +165,7 @@
 
 (defn- src-dirs
   "Source roots to copy into the jar. `resources/` is included only when
-   the package actually ships one (vis-tui, vis-telegram, and
-   vis-persistance-sqlite do; the others don't)."
+   the package actually ships one."
   [{:keys [dir]}]
   (let [src (str dir "/src")
         res (str dir "/resources")]

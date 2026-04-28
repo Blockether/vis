@@ -145,7 +145,7 @@ Doc files (all under the repo-root `docs/` tree, NOT inside any package):
 - `docs/src/architecture/` — overview, packages, iteration flow,
   state ownership, database schema, channels.
 - `docs/src/extensions/` — overview, extension spec, symbol
-  decorators (hooks), environment map, nudge system, vis-self-debug.
+  decorators (hooks), environment map, nudge system, vis-meta.
 
 `docs/src/SUMMARY.md` is the mdBook table of contents — keep it in
 sync when adding/removing pages. There is intentionally no
@@ -180,7 +180,7 @@ shipped to readers as broken rendering or unreadable noise.
    humans, not an API index entry.
 
    - Bad: `## \`:before-fn\` — entry decorator`,
-     `### \`(self/turn)\``,
+     `### \`(meta/turn)\``,
      `### 1) \`conversation_soul\``,
      `### Embedded \`:cmd/subcommands\` vector`,
      `### Render caches (\`channels/tui/render.clj :: fmt-cache\`)`,
@@ -191,7 +191,7 @@ shipped to readers as broken rendering or unreadable noise.
 
    The keyword / function name / table name / file path that the
    section documents goes in the **first line of the body** as a
-   short "Slot key: \`:before-fn\`" / "Call: \`(self/turn)\`" /
+   short "Slot key: \`:before-fn\`" / "Call: \`(meta/turn)\`" /
    "Table: \`conversation_soul\`" / "Lives in:
    \`channels/tui/render.clj\`" lead. The reader still gets the
    identifier; it just isn't load-bearing on the heading.
@@ -713,8 +713,9 @@ previous turn's bounded digest (`{:goal :counts :outcome
 :abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.
 
 When the agent genuinely needs older reasonings, the (opt-in)
-`vis-ext-self-debug` extension exposes `(self/breadcrumbs N)`,
-`(self/turn-history N)`, `(self/attempts)`, `(self/var-history 'sym)`.
+`vis-meta` extension exposes `(meta/diagnose)`, `(meta/failures)`,
+`(meta/turn)`, `(meta/conversation)`, `(meta/find-attempts pattern)`,
+and `(meta/var-history 'sym)`.
 The deprecated built-in `var-history` still works for backwards
 compatibility.
 

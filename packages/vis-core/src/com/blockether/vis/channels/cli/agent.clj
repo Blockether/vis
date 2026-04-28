@@ -14,6 +14,7 @@
    [com.blockether.svar.internal.llm :as llm]
    [com.blockether.vis.channels.core :as channels]
    [com.blockether.vis.loop.runtime.conversation.core :as conversations]
+   [com.blockether.vis.persistance.core :as db]
    [com.blockether.vis.config :as config]))
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
@@ -99,7 +100,7 @@
           (:confidence result) (assoc :confidence (:confidence result))))
       (catch Exception e
         {:conv-id   conv-id
-         :error     (conversations/error->user-message e)
+         :error     (db/error->user-message e)
          :type      (str (type e))
          :exception e}))))
 

@@ -1,21 +1,17 @@
-# Extension System
+# Extension system
 
-> **Library:** `com.blockether/vis-extension` (standalone Clojure deps
-> alias: `{:local/root "vis-extension"}` or, when published, the Maven
-> coordinate). Single namespace: `com.blockether.vis.extension`.
+> **Library:** `com.blockether/vis-core`. Extension authoring lives in
+> the namespace `com.blockether.vis.extension`.
 >
-> **Why a separate library:** the extension contract is intentionally
-> decoupled from the vis runtime. An extension only needs telemere +
-> clojure.spec, NOT the SCI sandbox, the SQLite stack, or any of the
-> channels. Older versions re-exported the contract through
-> `com.blockether.vis.core` — that re-export is **gone**. Authoring
-> code must require `com.blockether.vis.extension` directly.
+> **Why a dedicated namespace:** the extension contract is not re-exported
+> through `com.blockether.vis.core`. Authoring code must require
+> `com.blockether.vis.extension` directly.
 >
-> **What stays in vis-core:** the runtime composition helpers that
-> need a live environment (`active-extensions`, `assemble-system-prompt`,
-> `register-extension!` for ad-hoc per-env registration). Those live
-> on `com.blockether.vis.core` because they need the runtime they
-> compose against.
+> **What stays on the public facade:** the runtime composition helpers
+> that need a live environment (`active-extensions`,
+> `assemble-system-prompt`, `register-extension!` for ad-hoc per-env
+> registration). Those live on `com.blockether.vis.core` because they
+> need the runtime they compose against.
 
 Extensions are the **only** way to add symbols, classes, and documentation
 to the SCI sandbox. An extension is a namespace-like bundle that groups

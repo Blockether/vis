@@ -1,0 +1,4 @@
+{:paths ["src" "resources"]
+ ;; vis-meta uses the extension contract and persistence facade;
+ ;; both now live in vis-core.
+ :deps {com.blockether/vis-core {:local/root "../../packages/vis-core"}}}

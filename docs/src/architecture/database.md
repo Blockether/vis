@@ -1,8 +1,8 @@
-# Database Schema
+# Database schema
 
 Single SQLite DB for everything: `~/.vis/vis.mdb/vis.db`.
 
-Schema source of truth: `packages/vis-persistance/resources/db/sqlite/migration/V1__schema.sql`. The SQL ships in the **`vis-persistance`** facade jar (so the schema travels with the API) while the SQLite/Flyway runtime lives in `vis-persistance-sqlite` and points its migration runner at the classpath resource via `MIGRATIONS = "classpath:db/sqlite/migration"`.
+Schema source of truth: `packages/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`. The SQL ships with the SQLite backend because it is dialect-specific. The persistence facade and migration runner live in **`vis-core`**; the SQLite/Flyway runtime lives in `vis-persistance-sqlite` and points the runner at the classpath resource via `MIGRATIONS = "classpath:db/sqlite/migration"`.
 
 Flyway migration location: `classpath:db/sqlite/migration`.
 
@@ -79,7 +79,6 @@ Table: `query_state`. One run/retry state for `query_soul`.
 | `query_soul_id` | TEXT FK | → `query_soul.id`, cascade delete |
 | `forked_from_query_state_id` | TEXT FK | → `query_state.id`, set null on delete |
 | `version` | INTEGER | `>= 0` |
-| `llm_provider` | TEXT | |
 | `llm_root_model` | TEXT | |
 | `prompt_enrichment` | TEXT | |
 | `subtitle` | TEXT | |
@@ -104,10 +103,7 @@ Table: `iteration`. One LLM round-trip inside a `query_state`.
 | `status` | TEXT | `running\|done\|error\|interrupted` |
 | `llm_system_prompt` | TEXT | |
 | `llm_user_prompt` | TEXT | multimodal JSON envelope |
-| `llm_provider` | TEXT | |
 | `llm_model` | TEXT | |
-| `llm_response` | TEXT | final selected LLM response |
-| `llm_traces` | TEXT | all LLM attempts/traces |
 | `llm_full_duration_ms` | INTEGER | nullable, `>= 0` |
 | `llm_thinking` | TEXT | |
 | `llm_error` | TEXT | |

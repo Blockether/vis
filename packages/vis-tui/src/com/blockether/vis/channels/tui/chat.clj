@@ -185,7 +185,7 @@
            (t/log! {:level :error :id ::query-failed
                     :data  (exception->log-data e)
                     :msg   (str "Query failed: " (ex-message e))})
-           {:error (conversations/error->user-message e)}))))))
+           {:error (db/error->user-message e)}))))))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in

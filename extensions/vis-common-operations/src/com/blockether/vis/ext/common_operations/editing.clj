@@ -8,8 +8,8 @@
    sibling `core` namespace assembles every common-operations module
    into a single extension and registers it.
 
-   Depends ONLY on `com.blockether/vis-extension` (the slim extension
-   contract). The full vis runtime is intentionally not pulled in here."
+   Depends on `com.blockether/vis-core` and uses the extension-author
+   facade `com.blockether.vis.extension`."
   (:refer-clojure :exclude [read list])
   (:require
    [clojure.java.io :as io]
@@ -679,6 +679,44 @@
   [content old-text]
   (count (re-seq (re-pattern (java.util.regex.Pattern/quote old-text)) content)))
 
+(defn- collapse-whitespace
+  "Collapse every run of whitespace to a single space. Used by the
+   patch-no-match diagnostic to detect search blocks that differ from
+   the on-disk content only in indentation/inner whitespace."
+  ^String [^String s]
+  (str/replace s #"\s+" " "))
+
+(defn- find-whitespace-only-near-match
+  "When `search` doesn't match `content` exactly, but matches when both
+   are whitespace-collapsed, return
+     {:line N :hint \"whitespace differs\" :snippet S}
+   where N is 1-based and S is the closest on-disk line. Returns nil
+   when no such whitespace-only candidate exists.
+
+   Strategy: take the first non-blank line of the search and look for
+   on-disk lines whose whitespace-collapsed form equals it AND whose
+   raw form differs (so we don't false-positive on lines that exactly
+   matched a different SEARCH block earlier). For multi-line searches
+   this anchors at the start; that's enough information for the LLM
+   to re-emit with the right indentation."
+  [^String content ^String search]
+  (let [search-lines       (str/split-lines search)
+        first-search-line  (some #(when-not (str/blank? %) %) search-lines)]
+    (when first-search-line
+      (let [head           (str/trim (collapse-whitespace first-search-line))
+            content-lines  (str/split-lines content)
+            matches        (keep-indexed
+                             (fn [i line]
+                               (when (and (= head (str/trim (collapse-whitespace line)))
+                                       (not= line first-search-line))
+                                 [(inc i) line]))
+                             content-lines)]
+        (when (seq matches)
+          (let [[line-number snippet] (first matches)]
+            {:line    line-number
+             :hint    "whitespace differs"
+             :snippet snippet}))))))
+
 (defn- apply-one-replacement
   [content {:keys [search replace index]} path]
   (cond
@@ -690,11 +728,19 @@
     (let [count (exact-match-count content search)]
       (cond
         (zero? count)
-        (throw (ex-info (str "SEARCH block " index " not found in " path)
-                 {:type :ext.common-operations.editing/patch-no-match
-                  :path path
-                  :block index
-                  :search search}))
+        (let [near (find-whitespace-only-near-match content search)
+              base-msg (str "SEARCH block " index " not found in " path)
+              msg  (if near
+                     (str base-msg
+                       ". Closest line: " (:line near)
+                       " (whitespace differs). Re-emit with the on-disk indentation.")
+                     base-msg)]
+          (throw (ex-info msg
+                   (cond-> {:type   :ext.common-operations.editing/patch-no-match
+                            :path   path
+                            :block  index
+                            :search search}
+                     near (assoc :near-match near)))))
 
         (> count 1)
         (throw (ex-info (str "SEARCH block " index " matches " count

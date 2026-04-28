@@ -3,24 +3,21 @@
 
    This namespace is an EXTENSION, not a dispatcher. Loading it at
    startup self-registers every built-in (`run`, `auth`, `doctor`,
-   `conversations`, `extensions`) into `com.blockether.vis.commandline`
+   `conversations`, `extensions`) into `com.blockether.vis.commandline.base`
    so the dispatcher in `com.blockether.vis.commandline.main` can
    discover and invoke them.
 
-   Things that live elsewhere now:
-
-     - The dispatcher / `-main` / pre-stderr-redirect → vis-commandline
-     - The `vis channel` parent + channel-registry adapter → vis-extension
-     - The `vis ext` parent + `:ext/cli` adapter → vis-extension
+   The dispatcher, command registry, channel registry bridge, extension
+   registry, provider registry, and persistence facade all live in
+   vis-core now.
 
    The unified `META-INF/vis.edn` lists this namespace so dropping
    the vis-core jar onto the classpath is enough to get every
    built-in. No caller wiring required."
-  (:require [borkdude.dynaload :as dl]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.channels.cli.agent :as agent]
             [com.blockether.vis.channels.core :as channels]
-            [com.blockether.vis.commandline :as cmd]
+            [com.blockether.vis.commandline.base :as cmd]
             [com.blockether.vis.config :as config]
             [com.blockether.vis.core :as core]
             [com.blockether.vis.error :as vis-error]
@@ -28,17 +25,8 @@
             [com.blockether.vis.loop.runtime.conversation.core :as conv-core]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
             [com.blockether.vis.persistance.core :as db]
+            [com.blockether.vis.provider :as provider]
             [taoensso.telemere :as tel]))
-
-;;; ── vis-provider lookup (dynaload — zero compile-time dep on it) ───────
-
-(def ^:private provider-by-id
-  (dl/dynaload 'com.blockether.vis.provider/by-id
-    {:default (constantly nil)}))
-
-(def ^:private registered-providers
-  (dl/dynaload 'com.blockether.vis.provider/registered-providers
-    {:default (constantly [])}))
 
 ;;; ── Output helpers ──────────────────────────────────────────────────────
 
@@ -81,7 +69,7 @@
 (defn- parse-run-args
   "Parse `vis run` arguments into {:prompt str :json? bool …}.
 
-   Bespoke instead of `vis-commandline/parse-args` because everything
+   Bespoke instead of `commandline.base/parse-args` because everything
    that ISN'T a known flag is glued together as the prompt body."
   [args]
   (loop [args         (seq args)
@@ -232,8 +220,8 @@
   (config/init-cli!)
   (let [provider-id (some-> (first residual) keyword)
         flags       (set (rest residual))
-        provider    (when provider-id (provider-by-id provider-id))
-        all         (registered-providers)]
+        provider    (when provider-id (provider/by-id provider-id))
+        all         (provider/registered-providers)]
     (cond
       (nil? provider-id)
       (do (stdout! "Usage: vis auth <provider> [--status | --logout]")
@@ -379,7 +367,7 @@
 ;;
 ;; `extensions list` IS extensions-namespaced -- introspecting the
 ;; extension registry is naturally part of `vis extensions <cmd>`.
-;; So it goes through `:ext/cli`, where the vis-extension dispatcher
+;; So it goes through `:ext/cli`, where the extension facade
 ;; auto-mounts every entry under `[\"extensions\"]`. vis-core thus
 ;; participates in the unified extension contract for this entry, the
 ;; same way every other extension does.

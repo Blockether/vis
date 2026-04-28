@@ -41,6 +41,7 @@
 (def rescue-parse-error      #'editing/rescue-parse-error)
 (def line-col->index         #'editing/line-col->index)
 (def patch-tool              #'editing/patch)
+(def apply-one-replacement   #'editing/apply-one-replacement)
 
 ;; =============================================================================
 ;; Helpers
@@ -444,3 +445,75 @@
       ;; But try-rescue-parse-error finds the symbol hook by name.
       (expect (= "(vis/rg \"a\\\\|b\")"
                 (ext/try-rescue-parse-error [registered] code err {}))))))
+
+;; =============================================================================
+;; patch :patch-no-match diagnostics — Bug 2.C.1
+;; =============================================================================
+;;
+;; When `:search` doesn't match the file content, the existing exception
+;; only says "SEARCH block N not found in <path>" with no hint about why.
+;; The model then re-reads the file and re-guesses, often hitting the
+;; same whitespace mismatch again. The diagnostic helper documented in
+;; BUG_REPORT_2 §2.C should:
+;;
+;;   1. detect the whitespace-only-difference case and tag the ex-info
+;;      with `:near-match {:line N :hint "whitespace differs"}`,
+;;   2. include the closest on-disk line in the human-readable message
+;;      so the model can re-emit with the right indentation without
+;;      re-reading the whole file.
+;;
+;; The patch STILL fails (we don't auto-fuzz writes); we just hand the
+;; LLM enough information to fix the next attempt in one shot.
+
+(defdescribe patch-no-match-near-match-test
+
+  (it "adds :near-match {:line :hint} when the only difference is leading whitespace"
+    (let [content (str "(let [expr-label  (label-text \"code\" 1)\n"
+                    "      expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]\n"
+                    "                    (str (repeat-str \\space pl) expr-label \" \"))\n"
+                    "      fa-pad      (max 0 (- fill-w (count full-label) 1))]\n"
+                    "  ...)\n")
+          ;; Identical content but with 38 spaces of indent on line 3
+          ;; instead of the file's 20 spaces. This is exactly the
+          ;; iter-15 shape from BUG_REPORT_2.
+          search  (str "expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]\n"
+                    "                                      (str (repeat-str \\space pl) expr-label \" \")")
+          thrown  (try
+                    (apply-one-replacement
+                      content
+                      {:search search :replace "x" :index 1}
+                      "render.clj")
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? thrown))
+      (let [data (ex-data thrown)]
+        (expect (= :ext.common-operations.editing/patch-no-match (:type data)))
+        ;; The new fields the model needs:
+        (expect (map? (:near-match data)))
+        (expect (integer? (:line (:near-match data))))
+        ;; The whitespace-collapsed search matches line 2 (1-indexed)
+        ;; — the `expr-hdr (let ...` line.
+        (expect (= 2 (:line (:near-match data))))
+        (expect (= "whitespace differs" (:hint (:near-match data)))))
+      ;; And the human-readable message points at the closest line
+      ;; instead of just saying "not found".
+      (expect (str/includes? (ex-message thrown) "Closest line"))
+      (expect (str/includes? (ex-message thrown) "whitespace"))))
+
+  (it "omits :near-match when no whitespace-collapsed candidate exists"
+    ;; Genuinely-not-in-file search: no hint, original behavior preserved.
+    (let [content "alpha beta gamma\n"
+          search  "completely unrelated payload"
+          thrown  (try
+                    (apply-one-replacement
+                      content
+                      {:search search :replace "x" :index 1}
+                      "x.txt")
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? thrown))
+      (expect (= :ext.common-operations.editing/patch-no-match
+                (:type (ex-data thrown))))
+      (expect (nil? (:near-match (ex-data thrown))))
+      ;; Message stays simple when there's no useful hint to give.
+      (expect (not (str/includes? (ex-message thrown) "Closest line"))))))

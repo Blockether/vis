@@ -44,8 +44,10 @@ the system message content. Both iteration loop paths and the TUI
    symbol-derived prompt block, prefixed with `[namespace: alias → ns]`,
    plus any optional extra `:ext/prompt` tail
 
-The iteration spec schema (svar’s `spec->prompt`) is appended separately
-by svar as a final user message — it is NOT part of the system message.
+The iteration spec schema lives with the iteration engine in
+`com.blockether.vis.loop.runtime.conversation.environment.query.iteration.spec`.
+svar’s `spec->prompt` appends that schema separately as a final user
+message — it is NOT part of the system message.
 
 ## Error recovery
 
@@ -118,10 +120,11 @@ a lossy summarization chain:
   `:thinking` text, capped at 4000 chars. For nuance the breadcrumb
   couldn't carry.
 
-For deeper introspection, the opt-in `vis-self-debug` extension
-exposes `(self/turn)`, `(self/conversation)`, `(self/conversations)`,
-`(self/var-history 'sym)`, and `(self/find-attempts pattern)`. See
-[Self-debug extension](../extensions/vis-self-debug.md).
+For deeper introspection, the opt-in `vis-meta` extension exposes
+`(meta/turn)`, `(meta/conversation)`, `(meta/conversations)`,
+`(meta/var-history 'sym)`, `(meta/find-attempts pattern)`,
+`(meta/failures)`, and `(meta/diagnose)`. See
+[Meta extension](../extensions/vis-meta.md).
 
 ## SYSTEM vars
 

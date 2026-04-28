@@ -5,8 +5,8 @@
             [com.blockether.vis.config :as config]
             [com.blockether.vis.loop.core :as loop-core]
             [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.core :as iterate]
+            [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.spec :as iteration-response-spec]
             [com.blockether.vis.persistance.core :as db]
-            [com.blockether.vis.persistance.spec :as rlm-spec]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;; ---------------------------------------------------------------------------
@@ -43,67 +43,6 @@
           {} m))))
   nil)
 
-(defn- causal-chain
-  "Walk `(.getCause e)` until a fixed point or cycle is hit. Returns the
-   chain in causal order (innermost first), bounded so a self-referential
-   cause graph can't loop forever."
-  [^Throwable e]
-  (loop [acc [] cur e seen #{}]
-    (cond
-      (nil? cur)        (reverse acc)
-      (contains? seen cur) (reverse acc)
-      (>= (count acc) 16)  (reverse acc)
-      :else (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
-
-(defn- sqlite-cantopen-message?
-  "True when any link in the cause chain looks like a SQLite open
-   failure. Detection is text-based on purpose — we don't want a hard
-   compile-time dep on `org.sqlite.SQLiteException` from this namespace."
-  [^Throwable e]
-  (boolean
-    (some (fn [^Throwable t]
-            (let [^String m (or (ex-message t) "")]
-              (or (.contains m "[SQLITE_CANTOPEN]")
-                (.contains m "unable to open database file")
-                (.contains m "Unable to open the database file"))))
-      (causal-chain e))))
-
-(defn error->user-message
-  "Translate an exception from the query pipeline into something a
-   human reading a chat bubble can act on.
-
-   For most exceptions we still surface `(ex-message e)` verbatim —
-   provider errors, validation issues, etc. are often self-explanatory.
-   The one case we rewrite is `SQLITE_CANTOPEN`, because the raw
-   message (\"unable to open the database file\") is meaningless
-   without context: the underlying file at `~/.vis/vis.mdb/vis.db`
-   was either deleted out from under the running JVM, or moved, or
-   the process lost write permissions to the directory. Anyone
-   hitting this on the chat surface needs to know what to inspect,
-   not the JDBC error code."
-  [^Throwable e]
-  (cond
-    (sqlite-cantopen-message? e)
-    (let [home   (System/getProperty "user.home")
-          dbpath (str home "/.vis/vis.mdb/vis.db")
-          dbdir  (str home "/.vis/vis.mdb")
-          dirf   (java.io.File. dbdir)
-          filef  (java.io.File. dbpath)]
-      (str "Vis database is unavailable. "
-        "Expected file: " dbpath ". "
-        (cond
-          (not (.exists filef))
-          "The file is missing — likely deleted while Vis was running. Restart Vis to recreate it."
-
-          (not (.canWrite dirf))
-          (str "The directory " dbdir " is not writable by this process.")
-
-          :else
-          "The handle was lost mid-session. Restart Vis to reconnect.")))
-
-    :else
-    (or (ex-message e) "Internal error")))
-
 (defn- open-env!
   [id {:keys [channel external-id title]}]
   (let [router (query-core/get-router)
@@ -127,13 +66,13 @@
             (assoc m id {:environment env :lock (Object.)}))))
       (get @cache id))))
 
-(defonce ^:private shared-db (atom nil))
-
-(defn db-info []
-  (or @shared-db
-    (swap! shared-db
-      (fn [cur]
-        (or cur (db/create-rlm-conn (config/resolve-db-spec)))))))
+(defn db-info
+  "Return the process-wide shared DB connection bound to
+   `(config/resolve-db-spec)`. Thin wrapper over
+   `persistance.core/shared-conn!` that fills in the default db-spec
+   so frontend callers don't have to know about config resolution."
+  []
+  (db/shared-conn! (config/resolve-db-spec)))
 
 (defn create!
   ([channel] (create! channel nil))
@@ -218,8 +157,8 @@
                                      :active-extensions active-exts})
           has-reasoning? (loop-core/provider-has-reasoning? (:router env))
           iteration-spec (if has-reasoning?
-                           rlm-spec/ITERATION_SPEC_REASONING
-                           rlm-spec/ITERATION_SPEC_NON_REASONING)
+                           iteration-response-spec/ITERATION_SPEC_REASONING
+                           iteration-response-spec/ITERATION_SPEC_NON_REASONING)
           spec-prompt (svar-spec/spec->prompt iteration-spec)]
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
         system-prompt
@@ -263,30 +202,15 @@
       (catch Exception _ nil))))
 
 (defn sweep-orphaned-running-queries!
+  "Convenience wrapper: run the persistence-layer sweep against the
+   shared DB handle. Frontends call this on startup to mark queries
+   that crashed mid-write as `:interrupted`."
   ([] (sweep-orphaned-running-queries! (db-info)))
-  ([db]
-   (let [orphans (try (db/db-list-queries-by-status db :running)
-                   (catch Exception _ []))
-         answer  "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."]
-     (doseq [{:keys [id iterations duration-ms]} orphans]
-       (try
-         (db/update-query! db id
-           {:answer        answer
-            :iterations    (or iterations 0)
-            :duration-ms   (or duration-ms 0)
-            :status        :interrupted
-            ;; �� mark crashed/cancelled turns so the next turn's
-            ;; handover digest renders the right outcome instead of
-            ;; falling through to a derived guess.
-            :prior-outcome :cancelled})
-         (catch Exception _ nil)))
-     (count orphans))))
+  ([db] (db/sweep-orphaned-running-queries! db)))
 
 (defn close-all!
   []
   (doseq [[_ {:keys [environment]}] @cache]
     (try (loop-core/dispose-environment! environment) (catch Exception _ nil)))
   (reset! cache {})
-  (when-let [d @shared-db]
-    (try (db/dispose-rlm-conn! d) (catch Exception _ nil))
-    (reset! shared-db nil)))
+  (db/dispose-shared-conn!))
