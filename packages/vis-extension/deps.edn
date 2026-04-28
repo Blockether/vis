@@ -1,0 +1,24 @@
+{:paths ["src"]
+ ;; vis-extension — the extension/channel/provider/CLI-command
+ ;; contracts plus the unified classpath discovery loader.
+ ;;
+ ;; Owns:
+ ;;   - com.blockether.vis-extension.extension     (extension spec + register-global! + discover-extensions!)
+ ;;   - com.blockether.vis-extension.channel       (channel descriptor spec + registry)
+ ;;   - com.blockether.vis-extension.provider      (LLM provider descriptor spec + registry)
+ ;;   - com.blockether.vis-extension.commandline.base  (CLI command spec + registry)
+ ;;   - com.blockether.vis-extension.error         (shared error-message formatting)
+ ;;
+ ;; Depends on vis-persistance because the unified `register-global!`
+ ;; dispatches the `:ext/persistance` slot to
+ ;; `persistance.core/register-backend!`.
+ :deps
+ {org.clojure/clojure              {:mvn/version "1.12.4"}
+  com.blockether/vis-persistance   {:local/root "../vis-persistance"}
+  com.taoensso/telemere            {:mvn/version "1.2.1"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts   ["-m" "lazytest.main"]}}}

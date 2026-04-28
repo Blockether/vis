@@ -8,9 +8,9 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis.core :as rlm]
-   [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query]
-   [com.blockether.vis.persistance.core :as db]
+   [com.blockether.vis-loop.core :as rlm]
+   [com.blockether.vis-loop.loop.runtime.conversation.environment.query.core :as query]
+   [com.blockether.vis-persistance.core :as db]
    [taoensso.telemere :as tel])
   (:import
    (java.nio.file Files)

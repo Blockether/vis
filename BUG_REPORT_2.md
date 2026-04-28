@@ -45,7 +45,7 @@ only the standard `\n \t \r \" \\ \uXXXX` etc. Edamame returns
 
 ### What's already in the codebase
 
-`extensions/vis-common-operations/src/com/blockether/vis/ext/common_operations/editing.clj`:
+`extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/editing.clj`:
 
 - `rescue-parse-error` (line 204) — a `:on-parse-error-fn` hook that
   matches the edamame error message and doubles the offending `\` so
@@ -88,7 +88,7 @@ double-escape *every* pipe.
 ```bash
 cd /Users/fierycod/vis
 clojure -A:dev -e '
-(require "[com.blockether.vis.ext.common-operations.editing :as ed]
+(require "[com.blockether.vis.ext.common-editing.editing :as ed]
          [edamame.core :as edamame]")
 (defn show [label src]
   (let [err (try (edamame/parse-string-all src) nil
@@ -239,8 +239,8 @@ runs, slurps `render.clj`, calls `apply-one-replacement`, finds zero
 matches for the multi-line `:search`, throws:
 
 ```
-ExceptionInfo: SEARCH block 1 not found in packages/vis-tui/.../render.clj
-{:type :ext.common-operations.editing/patch-no-match
+ExceptionInfo: SEARCH block 1 not found in packages/vis-channel-tui/.../render.clj
+{:type :ext.common-editing.editing/patch-no-match
  :path …, :block 1, :search "expr-hdr    (let [pl (max 0 …"}
 ```
 
@@ -273,7 +273,7 @@ cd /Users/fierycod/vis
 CP=$(clojure -Spath -A:dev)
 cd /tmp/patch_repro
 java -cp "$CP" clojure.main -e '
-(require "[com.blockether.vis.ext.common-operations.editing :as ed]")
+(require "[com.blockether.vis.ext.common-editing.editing :as ed]")
 (let [patch-fn (:ext.symbol/fn ed/patch-symbol)]
   (try
     (patch-fn
@@ -291,7 +291,7 @@ Output (just verified on this machine):
 
 ```
 :MSG  SEARCH block 1 not found in render.clj
-:TYPE :ext.common-operations.editing/patch-no-match
+:TYPE :ext.common-editing.editing/patch-no-match
 ```
 
 Same exception class, same message, same `:type` keyword as the row
@@ -340,7 +340,7 @@ emit the bad input — but every Vis-side failure that follows is
 
 Two hours of tool-error iterations in this conversation turn into
 ~30 lines of edamame and patch fixtures that the test suite under
-`extensions/vis-common-operations/test/` already supports. Adding
+`extensions/common/vis-common-editing/test/` already supports. Adding
 fixtures for `(rescue-parse-error)` looped, the unbalanced-string
 case, and the whitespace-near-match patch hint would have prevented
 all three of these bugs from reaching this user.

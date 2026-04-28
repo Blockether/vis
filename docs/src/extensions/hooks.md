@@ -131,7 +131,7 @@ First non-`nil` rewrite different from `code` wins. Hooks that throw
 are logged and skipped — a buggy rescue can never break query
 execution.
 
-Example (from `vis-common-operations`):
+Example (from `vis-common-editing`):
 
 ```clojure
 (ext/symbol 'rg grep-files

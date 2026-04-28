@@ -2,23 +2,23 @@
 
 A **channel** is a vis adapter — a user-facing front-end that turns
 external input (terminal keys, HTTP requests, Telegram messages) into
-calls to the runtime API in `com.blockether.vis.loop.runtime.conversation.core`.
+calls to the runtime API in `com.blockether.vis-loop.loop.runtime.conversation.core`.
 
 Channels are one **slot** on an extension. The word "extension" is
 the umbrella term for everything extensible in vis: SCI sandbox
 symbols, CLI commands, channels, LLM providers, persistance entries.
 All five surfaces share one classpath-discovery resource
 (`META-INF/vis-extension/vis.edn`), one loader
-(`com.blockether.vis.extension/discover-extensions!`), and one
+(`com.blockether.vis-extension.extension/discover-extensions!`), and one
 author-facing entry point
-(`com.blockether.vis.extension/register-global!`). Each surface is a
+(`com.blockether.vis-extension.extension/register-global!`). Each surface is a
 slot key (`:ext/symbols`, `:ext/cli`, `:ext/channels`,
 `:ext/providers`, `:ext/persistance`); the registrar dispatches each
 populated slot to its matching internal sub-registry. See
 [Packages — Auto-discovery](packages.md#auto-discovery)
 for the full slot → sub-registry table.
 
-`vis-core` ships zero channel implementations. The CLI dispatcher
+`vis-loop` ships zero channel implementations. The CLI dispatcher
 calls `discover-extensions!` once at boot, which scans every
 `META-INF/vis-extension/vis.edn` on the classpath and `require`s the namespaces
 inside. Every `(ext/register-global! …)` call with a populated
@@ -26,7 +26,7 @@ inside. Every `(ext/register-global! …)` call with a populated
 registry as a side effect; the `vis channels` sub-command tree
 exposes each one. Each channel's `:channel/cmd` becomes the leaf name
 (`vis channels tui`, `vis channels telegram`, …). The dispatcher
-never references a concrete channel namespace — `vis-core` stays
+never references a concrete channel namespace — `vis-loop` stays
 usable when an optional channel jar is absent.
 
 ## Channel descriptor
@@ -35,14 +35,14 @@ A channel is a plain map. The canonical way to register one is to
 list it inside an extension's `:ext/channels` slot:
 
 ```clojure
-(ns com.blockether.vis.channels.tui.screen
-  (:require [com.blockether.vis.extension :as ext]))
+(ns com.blockether.vis.ext.channel-tui.screen
+  (:require [com.blockether.vis-extension.extension :as ext]))
 
 (defn channel-main [args] …)
 
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis.channels.tui.screen
+    {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
      :ext/doc       "Lanterna-based terminal UI channel."
      :ext/channels
      [{:channel/id        :tui                                      ;; required, keyword identity
@@ -54,7 +54,7 @@ list it inside an extension's `:ext/channels` slot:
 ```
 
 The lower-level `(channel/register-global! …)` call (from
-`com.blockether.vis.channel`) still works for embedded / programmatic
+`com.blockether.vis-extension.channel`) still works for embedded / programmatic
 registration, and is what `ext/register-global!` ultimately calls
 under the hood. New code should prefer the slot form because it lets
 a single jar register everything an extension contributes in one
@@ -98,14 +98,14 @@ this section only highlights which packages register a channel.
 
 | Package         | `:channel/id` | Notes                                                  |
 | --------------- | ------------- | ------------------------------------------------------ |
-| `vis-tui`       | `:tui`        | Lanterna TUI. `:channel/owns-tty? true`.              |
-| `vis-telegram`  | `:telegram`   | Long-poll bot.                                         |
+| `vis-channel-tui`       | `:tui`        | Lanterna TUI. `:channel/owns-tty? true`.              |
+| `vis-channel-telegram`  | `:telegram`   | Long-poll bot.                                         |
 
 > **The `:cli` channel id is not a registered channel.** The CLI agent
 > calls `(conversations/create! :cli …)` so its conversations show up
 > under the `:cli` namespace, but there is no `channel/register-global!`
 > for it — the `vis` dispatcher itself is the CLI surface. Same shape
-> for the TUI's `:vis` conversations channel: `vis-tui` registers the
+> for the TUI's `:vis` conversations channel: `vis-channel-tui` registers the
 > CLI-level channel id `:tui`, but it writes its conversations under
 > `:vis`. Two related but separate keywords (see
 > [Packages — Two senses of "channel"](packages.md#package-map)).
@@ -126,9 +126,9 @@ Before this split `cli.clj` carried a hard-coded `cond` with
 `(= cmd "telegram")` / `(= cmd "chat")` branches and direct
 `:require` of `tui.screen` and `telegram.bot`. That meant:
 
-- you couldn't ship `vis-core` without dragging Lanterna and the
+- you couldn't ship `vis-loop` without dragging Lanterna and the
   Telegram HTTP client onto every consumer's classpath;
-- a new channel required a PR against `vis-core`;
+- a new channel required a PR against `vis-loop`;
 - packaging a stripped-down distribution (e.g. only one channel) meant
   editing the dispatcher.
 

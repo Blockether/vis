@@ -45,7 +45,7 @@ the system message content. Both iteration loop paths and the TUI
    plus any optional extra `:ext/prompt` tail
 
 The iteration spec schema lives with the iteration engine in
-`com.blockether.vis.loop.runtime.conversation.environment.query.iteration.spec`.
+`com.blockether.vis-loop.loop.runtime.conversation.environment.query.iteration.spec`.
 svar’s `spec->prompt` appends that schema separately as a final user
 message — it is NOT part of the system message.
 
@@ -120,11 +120,11 @@ a lossy summarization chain:
   `:thinking` text, capped at 4000 chars. For nuance the breadcrumb
   couldn't carry.
 
-For deeper introspection, the opt-in `vis-meta` extension exposes
+For deeper introspection, the opt-in `vis-common-meta` extension exposes
 `(meta/turn)`, `(meta/conversation)`, `(meta/conversations)`,
 `(meta/var-history 'sym)`, `(meta/find-attempts pattern)`,
 `(meta/failures)`, and `(meta/diagnose)`. See
-[Meta extension](../extensions/vis-meta.md).
+[Meta extension](../extensions/common/vis-common-meta.md).
 
 ## SYSTEM vars
 

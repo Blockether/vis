@@ -10,8 +10,8 @@
  :deps
  {org.clojure/clojure        {:mvn/version "1.12.4"}
   ;; Runtime — RLM env, query engine, persistence, providers
-  com.blockether/vis-core    {:local/root ".."}
-  ;; Structured LLM I/O (also a transitive dep of vis-core, but listed
+  com.blockether/vis-loop    {:local/root "../packages/vis-loop"}
+  ;; Structured LLM I/O (also a transitive dep of vis-loop, but listed
   ;; explicitly because the bench harness uses svar/router directly)
   com.blockether/svar        {:mvn/version "0.3.11"}
   ;; JSON dataset parsing
