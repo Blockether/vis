@@ -1,4 +1,0 @@
-;; Extension namespaces exported by vis-telegram. The unified loader
-;; (com.blockether.vis.extension/discover-extensions!) requires each
-;; namespace at boot, triggering its (channel/register-global! ...) call.
-[com.blockether.vis.channels.telegram.bot]

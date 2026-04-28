@@ -2,7 +2,7 @@
 
 Single SQLite DB for everything: `~/.vis/vis.mdb/vis.db`.
 
-Schema source of truth: `packages/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`. The SQL ships with the SQLite backend because it is dialect-specific. The persistence facade and migration runner live in **`vis-core`**; the SQLite/Flyway runtime lives in `vis-persistance-sqlite` and points the runner at the classpath resource via `MIGRATIONS = "classpath:db/sqlite/migration"`.
+Schema source of truth: `extensions/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`. The SQL ships with the SQLite backend because it is dialect-specific. The persistence facade and migration runner live in **`vis-core`**; the SQLite/Flyway runtime lives in `vis-persistance-sqlite` and points the runner at the classpath resource via `MIGRATIONS = "classpath:db/sqlite/migration"`.
 
 Flyway migration location: `classpath:db/sqlite/migration`.
 

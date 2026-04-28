@@ -1,4 +1,0 @@
-;; Extension namespaces exported by vis-persistance-sqlite. The unified
-;; loader (com.blockether.vis.extension/discover-extensions!) requires each
-;; namespace at boot, triggering its (persistance/register-backend! ...) call.
-[com.blockether.vis.persistance.sqlite.core]

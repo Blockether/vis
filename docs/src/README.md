@@ -2,189 +2,29 @@
   <img src="https://raw.githubusercontent.com/Blockether/vis/main/docs/src/logo.png" alt="Vis logo" width="200">
 </p>
 
-**A from-the-ground-up coding agent inspired by
-[Recursive Language Models](https://arxiv.org/abs/2512.24601) (Zhang,
-Kraska & Khattab, 2025). Works with any text-based model.**
+# Vis
 
-Vis takes a fundamentally different approach from current coding agent
-harnesses. Instead of accumulating messages into an ever-growing context
-window — then desperately compacting when it overflows — Vis treats the
-context as an **external environment** the model interacts with through
-code. The model writes Clojure, a sandboxed
+A from-the-ground-up coding agent inspired by
+[Recursive Language Models](https://arxiv.org/abs/2512.24601) (Zhang,
+Kraska & Khattab, 2025). Works with any text-based model.
+
+Instead of accumulating messages into an ever-growing context window,
+Vis treats the context as an **external environment** the model
+interacts with through code. The model writes Clojure, a sandboxed
 [SCI](https://github.com/babashka/sci) interpreter executes it, and
 results flow back as a compact journal. State lives in named vars and
-a SQLite DB, not in the token budget.
+a SQLite DB, not in the token budget. No compaction, no sliding
+windows, no "summarize the last 50 messages".
 
-No compaction. No sliding windows. No "summarize the last 50 messages".
-The model sees exactly what it needs: the previous iteration's results,
-a var index of everything it has defined, and system nudges. Everything
-else is one function call away.
+## Documentation
 
-## The problem
+Everything else — rationale, getting started, architecture, extension
+system, database schema, and channel adapters — lives in the **book**:
 
-Every coding agent (Claude Code, OpenCode, Pi, Hermes) runs the same loop:
+- Source: [`docs/src/`](docs/src/) (mdBook)
+- Read locally: `cd docs && mdbook serve --open`
+- Start here: [`docs/src/README.md`](docs/src/README.md)
+- Table of contents: [`docs/src/SUMMARY.md`](docs/src/SUMMARY.md)
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant H as Harness
-    participant LLM
-    participant T as Tools
-
-    U->>H: "Fix the auth bug"
-    H->>LLM: [system, user]
-    LLM->>H: assistant + tool_use: read_file
-    H->>T: execute
-    T->>H: result
-    H->>LLM: [system, user, asst+tool_use, tool_result]
-    LLM->>H: assistant + tool_use: grep
-    H->>T: execute
-    T->>H: result
-    H->>LLM: [system, user, asst, tool_res, asst, tool_res]
-    LLM->>H: assistant + tool_use: edit_file
-    H->>T: execute
-    T->>H: result
-    H->>LLM: [sys, user, asst, res, asst, res, asst, res]
-    LLM->>H: final answer
-```
-
-Each tool call adds **2 messages** to context (assistant `tool_use` +
-`tool_result`). 10 tool calls = 20 messages. Context grows
-monotonically. ~80% of tokens end up being tool results the model may
-never reference again.
-
-When context fills up: compaction. Summarize old messages, drop results.
-Every compaction loses signal. The model forgets, re-reads, forgets.
-
-Other costs: one tool per round-trip (no composition), requires
-`function_calling` API support, hallucinated tool names.
-
-## How Vis works
-
-No tool calls. No message accumulation. No compaction.
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant V as Vis
-    participant LLM
-    participant SCI as SCI Sandbox
-
-    U->>V: "Fix the auth bug"
-    V->>LLM: [system, user requirement]
-
-    rect rgb(240, 248, 255)
-        Note over V,SCI: Iteration 1
-        LLM->>V: JSON {thinking, code: [read, grep, edit]}
-        V->>SCI: execute all 3 blocks
-        SCI->>V: 3 results
-    end
-
-    V->>LLM: [system, user req, ONE msg: journal + var_index]
-
-    rect rgb(240, 255, 240)
-        Note over V,SCI: Iteration 2
-        LLM->>V: JSON {thinking, code: [run-tests]}
-        V->>SCI: execute
-        SCI->>V: result
-    end
-
-    V->>LLM: [system, user req, ONE msg: journal + var_index]
-
-    rect rgb(255, 248, 240)
-        Note over V,SCI: Iteration 3
-        LLM->>V: JSON {final: {answer: "Fixed..."}}
-    end
-
-    V->>U: "Fixed the auth bug"
-```
-
-| | Tool-call agents | Vis |
-|---|---|---|
-| **Messages per turn** | 2 per tool call, grows O(n) | 1 per iteration, constant |
-| **Context at iter 50** | All 50 iterations accumulated | Same size as iter 1 |
-| **Compaction** | Required | Never needed |
-| **Ops per LLM call** | N tools (harness-dispatched) | N code blocks (LLM-composed, async-native via futures) |
-| **API requirement** | `function_calling` / `tool_use` | Any text-based model |
-| **State** | In context window only | Named vars + SQLite |
-| **Async** | Harness decides parallelism | LLM decides via `future`/`deref`/`pmap` |
-| **Security** | Permission prompts / trust policies | Deny-by-default sandbox, extensions grant access |
-
-The model sees **one context message** per iteration:
-- `<plan>` — sticky structured TODO list (Phase 1). Schema:
-  `{:goal :items [{:id :content :status :evidence}] :open :decided}`.
-  Max 20 items, exactly one `:in-progress`. Carried verbatim across
-  iterations until the model re-emits.
-- `<breadcrumbs>` — cumulative one-liner per iteration (last K=20),
-  authored by the model in `:breadcrumb`. Tactical "what I just did".
-- `<recent>` — last iteration's expression results with `iN.K`
-  addressable ids.
-- `<recent_thought>` — last iteration's `:thinking` text (≤4000 chars).
-- `<system_state>` — SYSTEM vars (`QUERY`, `REASONING`, `ANSWER`)
-  inlined with current values + `PRIOR_TURN` digest of the previous
-  turn (`{:goal :counts :outcome :abandon-reason}`). UPPERCASE marks
-  them as constants.
-- `<var_index>` — user-defined vars only, rendered as type-aware
-  pseudo-source. Cheap values inline (`(def s "hello")`,
-  `(def v [1 2 3 4 5])`); large values fall back to a schema preview
-  (`(def big-map {:n 42 :keys-sample [:a :b :c]})`). Stats live in a
-  `;;` comment line above each entry. SYSTEM vars are excluded; they
-  live in `<system_state>` instead. Forgotten / persisted-only vars
-  surface in a separate `<vars_archive>` subblock with name + version
-  count only.
-- `[system_nudge]` — repetition + extension hints.
-
-Reasoning continuity lives in the breadcrumb chain (one line per
-iteration) and the persisted plan slot. The optional `vis-meta`
-extension adds `(meta/turn)` / `(meta/conversation)` /
-`(meta/conversations)` / `(meta/var-history 'sym)` /
-`(meta/find-attempts pattern)` / `(meta/failures)` /
-`(meta/diagnose)` for programmatic introspection of the live turn,
-the conversation tree, prior attempts, and stalled-turn failures.
-
-## Secure by default
-
-In tool-call agents, every tool has direct host access. `bash` runs
-shell commands. `write_file` writes anywhere. The harness adds
-permission prompts ("Allow write to /etc/passwd?") or trust policies.
-Security is opt-in, bolted on.
-
-Vis inverts this. The SCI sandbox is a **deny-by-default** environment:
-
-- `eval`, `load-file`, `spit`, `sh`, `*in*`, `*out*` — **blocked**
-- File system, network, shell — **no access** unless an extension
-  grants it
-- Java interop — only classes explicitly exposed (`LocalDate`, `UUID`,
-  `Pattern`, etc.)
-- Per-block timeout — infinite loops get killed
-
-The model can only do what extensions allow. An extension that registers
-`read-file` decides the allowed paths, size caps, and tracking. An
-extension that registers `bash` decides which commands are permitted.
-No extension = no capability. There are no permission prompts because
-there is nothing to permit — the sandbox boundary is the policy.
-
-This is why the [extension system](extensions/overview.md) is the
-only way to add capabilities. It's not a plugin architecture for
-convenience — it's the security model.
-
-## Why SCI
-
-[SCI](https://github.com/babashka/sci) — sandboxed Clojure interpreter
-on the JVM. Full Clojure semantics, deny-list sandboxing, per-block
-timeouts, selective Java interop, persistent vars across evaluations.
-
-## What we took from others
-
-**Pi** — extension system design (activation guards, lifecycle hooks).
-Pi's extensions persist state via `appendEntry()` into JSONL session
-files — append-only, per-session, no structured queries. Vis gives
-extensions a shared SQLite DB with versioned snapshots, queryable
-across conversations.
-
-**Claude Code / OpenCode** — speed matters, permissions kill flow. Vis
-uses the sandbox as the permission system.
-
-**Hermes** — ambitious 5-layer memory architecture. But a 10K-line
-monolith with undocumented heuristics. Vis keeps every iteration
-inspectable with full provenance in SQLite.
+This `README.md` is intentionally minimal. Do not recreate the book in
+it.

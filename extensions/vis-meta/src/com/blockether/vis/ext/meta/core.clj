@@ -1,19 +1,24 @@
 (ns com.blockether.vis.ext.meta.core
   "Meta extension — programmatic introspection of the agent's own
-   state from inside `:code`. Seven functions, all returning maps or
+   state from inside `:code`. Ten functions, all returning maps or
    vectors so the agent can manipulate the data structurally:
 
-   - `(meta/turn)`                   → current turn snapshot (one map)
-   - `(meta/conversation [id])`      → current or specific conversation
-   - `(meta/conversations [channel])`→ list every conversation, optionally filtered
-   - `(meta/var-history sym [id])`   → version timeline for a var
+   - `(meta/turn)`                       → current turn snapshot (one map)
+   - `(meta/conversation [id])`          → current or specific conversation
+   - `(meta/conversations [channel])`    → list every conversation, optionally filtered
+   - `(meta/var-history sym [id])`       → version timeline for a var
    - `(meta/find-attempts pattern [id])` → regex search over executed code
-   - `(meta/failures [id])`          → provider + code failures as data
-   - `(meta/diagnose [id])`          → counts and next actions for stalled turns
+   - `(meta/failures [id])`              → provider + code failures as data
+   - `(meta/diagnose [id])`              → counts and next actions for stalled turns
+   - `(meta/extensions)`                 → catalog of every loaded extension
+   - `(meta/extension-docs [ref])`       → docs declared by an extension with abstracts
+   - `(meta/extension-doc ref name)`     → full Markdown body of a declared doc
+   - `(meta/extension-readme ref)`       → convenience for (extension-doc ref README.md)
 
    Every function is a pure read off the same DB tables the projection
-   layer reads from. Failures return nil/[], never throw, so a
-   misbehaving introspection call cannot break iteration execution.
+   layer reads from (or a classpath read for the doc accessors).
+   Failures return nil/[], never throw, so a misbehaving introspection
+   call cannot break iteration execution.
 
    The agent gets the data once, manipulates it via plain Clojure
    (`(filter …)`, `(get-in turn [:plan :items])`, etc.) instead of
@@ -509,6 +514,121 @@
       :next-actions (next-actions failures)})))
 
 ;; ---------------------------------------------------------------------------
+;; Extension catalog + README / doc access
+;;
+;; Every extension declares itself in a single classpath resource at
+;; `META-INF/vis-extension/vis.edn`, an EDN map keyed by id
+;; (`{<id-symbol> {:nses [...] :docs {<name> <body>}}}`). The id is the
+;; same token the LLM uses as the SCI sandbox alias (`'meta`, `'vis`,
+;; etc.). Doc bodies are inlined as Clojure strings; every body MUST
+;; begin with a YAML frontmatter block whose `abstract:` field is a
+;; one-paragraph summary. `(meta/extension-docs ...)` returns those
+;; abstracts alongside each doc descriptor so the LLM can scan the
+;; index before pulling a full body via `(meta/extension-doc ...)`.
+;; See AGENTS.md ▸ "Every extension ships a single canonical README
+;; in vis.edn".
+;; ---------------------------------------------------------------------------
+
+(defn- registered-extensions []
+  (try (ext/registered-extensions) (catch Throwable _ [])))
+
+(defn- reference-as-symbol
+  "Coerce an extension reference to the canonical id symbol used by
+   the docs registry. Accepts the id symbol itself (`'meta`), a
+   keyword (`:meta`), a string (`\"meta\"`), the alias-ns symbol
+   (`'vis.ext.meta`), or the full extension namespace (
+   `'com.blockether.vis.ext.meta.core`). Multi-segment symbols are
+   resolved through the global extension registry."
+  [reference]
+  (cond
+    (nil? reference) nil
+    (keyword? reference) (clojure.core/symbol (name reference))
+    (string? reference) (clojure.core/symbol reference)
+    (symbol? reference)
+    (if (namespace reference)
+      (clojure.core/symbol (str reference))
+      reference)
+    :else nil))
+
+(defn- extension-matches? [target extension]
+  (let [ns-sym    (some-> (:ext/namespace extension) str)
+        alias-sym (some-> (get-in extension [:ext/ns-alias :alias]) str)
+        alias-ns  (some-> (get-in extension [:ext/ns-alias :ns]) str)]
+    (boolean (some #(= target %) (remove nil? [ns-sym alias-sym alias-ns])))))
+
+(defn- resolve-extension-id
+  "Resolve `reference` to a registered extension id (symbol). Returns
+   `nil` when no extension matches. Resolution order:
+     1. The reference matches an id directly known to the docs
+        registry (cheapest path).
+     2. Otherwise, look up the extension by alias / alias-ns / full
+        namespace through the global registry, then map its namespace
+        back to the id via `extension-id-of-ns`."
+  [reference]
+  (when-let [target-sym (reference-as-symbol reference)]
+    (let [target-str (str target-sym)]
+      (or (when (contains? (set (ext/registered-extension-ids)) target-sym)
+            target-sym)
+        (some (fn [extension]
+                (when (extension-matches? target-str extension)
+                  (or (get-in extension [:ext/ns-alias :alias])
+                    (ext/extension-id-of-ns (:ext/namespace extension)))))
+          (registered-extensions))))))
+
+(defn- extension-summary [extension]
+  (let [ext-ns   (:ext/namespace extension)
+        alias    (get-in extension [:ext/ns-alias :alias])
+        id       (or alias (ext/extension-id-of-ns ext-ns))
+        doc-list (when id (ext/extension-docs id))]
+    (cond-> {:namespace ext-ns
+             :symbols   (mapv :ext.symbol/sym (:ext/symbols extension))
+             :docs      (or doc-list [])}
+      alias                    (assoc :alias alias)
+      (:ext/group extension)   (assoc :group   (:ext/group extension))
+      (:ext/version extension) (assoc :version (:ext/version extension))
+      (:ext/doc extension)     (assoc :doc     (:ext/doc extension)))))
+
+(defn- meta-extensions
+  "Catalog every loaded extension as data. Returns a vector of
+   `{:namespace :alias :group :version :doc :symbols :docs}` maps.
+   `:docs` is a vector of `{:name :abstract}` descriptors for every
+   doc the extension declares (each abstract is parsed from the doc's
+   YAML frontmatter)."
+  [_env]
+  (mapv extension-summary (registered-extensions)))
+
+(defn- meta-extension-docs
+  "With one arg, return the doc catalog for one extension as a vector
+   of `{:name :abstract}` descriptors. With no arg, return the full
+   registry as `{<id-symbol> [<descriptor> ...]}`."
+  ([_env]
+   (try (ext/extension-docs) (catch Throwable _ {})))
+  ([_env reference]
+   (when-let [id (resolve-extension-id reference)]
+     (ext/extension-docs id))))
+
+(defn- meta-extension-doc
+  "Return the full descriptor map for one declared doc, by extension
+   reference (id, alias, or full namespace) and doc name (e.g.
+   \"README.md\"). The descriptor carries
+   {:name :created-at :abstract :content :links :reflinks}; the
+   Markdown body is at `:content`. Returns `nil` when the extension
+   is not registered or declares no doc by that name."
+  [_env reference doc-name]
+  (when (string? doc-name)
+    (when-let [id (resolve-extension-id reference)]
+      (ext/extension-doc id doc-name))))
+
+(defn- meta-extension-readme
+  "Convenience: full Markdown body of an extension's canonical
+   README. Equivalent to `(:content (meta/extension-doc ref
+   \"README.md\"))`. Every extension is required to declare a README
+   in its `vis.edn`, so this returns text for any registered
+   extension that follows the convention."
+  [env reference]
+  (:content (meta-extension-doc env reference "README.md")))
+
+;; ---------------------------------------------------------------------------
 ;; Env injection — shared :before-fn for every symbol below.
 ;; Prepends the environment map to args so impl fns can be written as
 ;; ordinary `(defn- meta-foo [env & rest])` without each one having to
@@ -614,6 +734,71 @@
                  "(meta/diagnose \"3a7b2c…\")"]
      :before-fn inject-environment}))
 
+(def extensions-symbol
+  (ext/symbol 'extensions meta-extensions
+    {:doc       (str "Catalog of every loaded extension: "
+                  "[{:namespace :alias :group :version :doc :symbols "
+                  ":docs} …]. `:docs` is a vector of {:name :abstract} "
+                  "descriptors for every doc the extension declares; "
+                  "each `abstract` is parsed from the doc's YAML "
+                  "frontmatter. Use this to discover what surfaces are "
+                  "available before reaching for a specific tool.")
+     :arglists  '([])
+     :examples  ["(meta/extensions)"
+                 "(map :namespace (meta/extensions))"
+                 "(map (juxt :alias :docs) (meta/extensions))"]
+     :before-fn inject-environment}))
+
+(def extension-docs-symbol
+  (ext/symbol 'extension-docs meta-extension-docs
+    {:doc       (str "Doc index for an extension as a vector of "
+                  "summaries: {:name :created-at :abstract :links "
+                  ":reflinks} (no :content -- pull that with "
+                  "meta/extension-doc when needed). Scan abstracts "
+                  "first to decide which full body is worth a fetch. "
+                  "With no arg, returns the full registry keyed by "
+                  "extension id symbol.")
+     :arglists  '([] [extension-ref])
+     :examples  ["(meta/extension-docs)"
+                 "(meta/extension-docs 'meta)"
+                 "(map :abstract (meta/extension-docs 'meta))"
+                 "(:links (first (meta/extension-docs 'meta)))"]
+     :before-fn inject-environment}))
+
+(def extension-doc-symbol
+  (ext/symbol 'extension-doc meta-extension-doc
+    {:doc       (str "Full descriptor map for one declared extension "
+                  "doc: {:name :created-at :abstract :content :links "
+                  ":reflinks}. The first arg is the extension "
+                  "reference (id symbol, alias symbol/keyword, or full "
+                  "extension namespace); the second arg is the doc "
+                  "filename (e.g. \"README.md\"). The Markdown body is "
+                  "at :content; :links are author-declared outgoing "
+                  "references; :reflinks are auto-derived inbound "
+                  "references. Returns nil when the extension is not "
+                  "registered or declares no doc by that name.")
+     :arglists  '([extension-ref doc-name])
+     :examples  ["(meta/extension-doc 'meta \"README.md\")"
+                 "(:content (meta/extension-doc :vis \"README.md\"))"
+                 "(:links   (meta/extension-doc 'meta \"README.md\"))"
+                 "(:reflinks (meta/extension-doc 'meta \"README.md\"))"]
+     :before-fn inject-environment}))
+
+(def extension-readme-symbol
+  (ext/symbol 'extension-readme meta-extension-readme
+    {:doc       (str "Convenience: full Markdown text of an extension's "
+                  "canonical README. Equivalent to "
+                  "`(meta/extension-doc ref \"README.md\")`. The arg may "
+                  "be the full namespace symbol, the alias symbol or "
+                  "keyword, or the alias-ns symbol. Returns nil when the "
+                  "extension is not registered or ships no README.")
+     :arglists  '([extension-ref])
+     :examples  ["(meta/extension-readme 'meta)"
+                 "(meta/extension-readme 'com.blockether.vis.ext.meta.core)"
+                 "(meta/extension-readme :vis)"
+                 "(println (meta/extension-readme 'meta))"]
+     :before-fn inject-environment}))
+
 (def all-symbols
   [turn-symbol
    conversation-symbol
@@ -621,7 +806,11 @@
    var-history-symbol
    find-attempts-symbol
    failures-symbol
-   diagnose-symbol])
+   diagnose-symbol
+   extensions-symbol
+   extension-docs-symbol
+   extension-doc-symbol
+   extension-readme-symbol])
 
 ;; ---------------------------------------------------------------------------
 ;; Extension definition + global registration.
@@ -630,8 +819,8 @@
 (def extension
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.meta.core
-     :ext/doc       "Meta introspection: read your own turn, conversation, var history, attempts, and failure diagnostics from inside :code. Returns plain maps and vectors for structural manipulation."
-     :ext/version   "0.3.0"
+     :ext/doc       "Meta introspection: read your own turn, conversation, var history, attempts, failure diagnostics, and the canonical README + declared docs (with abstracts) of every loaded extension from inside :code. Returns plain maps and vectors for structural manipulation."
+     :ext/version   "0.5.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.meta :alias 'meta}
@@ -643,9 +832,13 @@
                       "content, vis/rg parsing fails, or vis/patch reports a\n"
                       "SEARCH miss. Do NOT run sqlite3 from :code for current-turn\n"
                       "triage; these functions expose the same useful signal as\n"
-                      "data. For just reading the plan or breadcrumbs, the\n"
-                      "projection (`<plan>`, `<breadcrumbs>`, `<system_state>`)\n"
-                      "is already in your prompt — use that.")
+                      "data. Use meta/extensions to discover what extensions are\n"
+                      "loaded, meta/extension-docs to scan their declared doc\n"
+                      "abstracts, and meta/extension-doc / meta/extension-readme\n"
+                      "to read the full body of any of them before guessing\n"
+                      "from symbol names. For just reading the plan or\n"
+                      "breadcrumbs, the projection (`<plan>`, `<breadcrumbs>`,\n"
+                      "`<system_state>`) is already in your prompt — use that.")
      :ext/symbols   all-symbols}))
 
 (ext/register-global! extension)

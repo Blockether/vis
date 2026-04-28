@@ -45,11 +45,16 @@
   "Every publishable package in the monorepo, in dependency-friendly
    order (deeper deps first so a sequential install fills `~/.m2`
    before any later package needs them)."
+  ;; The host lives under `packages/`; every classpath plug-in (channel,
+  ;; provider, persistence backend) lives under `extensions/`. The
+  ;; loader treats both roots identically via `META-INF/vis-extension/vis.edn`;
+  ;; the directory split exists only to separate "the runtime" from
+  ;; "things the runtime discovers".
   [{:lib 'com.blockether/vis-core                    :dir "packages/vis-core"}
-   {:lib 'com.blockether/vis-persistance-sqlite      :dir "packages/vis-persistance-sqlite"}
-   {:lib 'com.blockether/vis-provider-github-copilot :dir "packages/vis-provider-github-copilot"}
-   {:lib 'com.blockether/vis-telegram                :dir "packages/vis-telegram"}
-   {:lib 'com.blockether/vis-tui                     :dir "packages/vis-tui"}])
+   {:lib 'com.blockether/vis-persistance-sqlite      :dir "extensions/vis-persistance-sqlite"}
+   {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/vis-provider-github-copilot"}
+   {:lib 'com.blockether/vis-telegram                :dir "extensions/vis-telegram"}
+   {:lib 'com.blockether/vis-tui                     :dir "extensions/vis-tui"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed

@@ -11,7 +11,7 @@
    registry, provider registry, and persistence facade all live in
    vis-core now.
 
-   The unified `META-INF/vis.edn` lists this namespace so dropping
+   The unified `META-INF/vis-extension/vis.edn` lists this namespace so dropping
    the vis-core jar onto the classpath is enough to get every
    built-in. No caller wiring required."
   (:require [clojure.string :as str]

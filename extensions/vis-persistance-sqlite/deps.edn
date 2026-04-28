@@ -1,0 +1,46 @@
+{:paths ["src" "resources"]
+ ;; SQLite backend for the vis persistence facade.
+ ;;
+ ;; Owns:
+ ;;   - sqlite-jdbc, next.jdbc, honeysql, nippy (the JDBC plumbing)
+ ;;   - flyway-database-nc-sqlite (the dialect-specific Flyway driver
+ ;;     SQLite needs at runtime; flyway-core itself is shipped by
+ ;;     `vis-core`; this package ships the SQLite SQL resources)
+ ;;
+ ;; Loading `com.blockether.vis.persistance.sqlite.core` auto-registers
+ ;; the `:sqlite` backend with the facade. `open-store` invokes
+ ;; `vis-core`'s `persistance.migration/migrate!` against
+ ;; `classpath:db/sqlite/migration` (SQL ships in this package) so
+ ;; every store starts with the canonical schema applied.
+ :deps
+ {org.clojure/clojure                       {:mvn/version "1.12.4"}
+  ;; vis-core owns the extension-registration contract and persistence facade.
+  com.blockether/vis-core                   {:local/root "../../packages/vis-core"}
+  ;; Binary serialization for expression_state.result/error blobs
+  com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}
+  ;; JSON (used inside the SQLite query layer for blob round-trips)
+  com.cnuernber/charred                     {:mvn/version "1.038"}
+  ;; SQLite + JDBC
+  org.xerial/sqlite-jdbc                    {:mvn/version "3.53.0.0"}
+  com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1093"}
+  com.github.seancorfield/honeysql          {:mvn/version "2.7.1368"}
+  ;; Real connection pool. xerial's `SQLiteConnectionPoolDataSource`
+  ;; is a JNDI-shaped façade that opens a NEW physical SQLite
+  ;; connection on every `getConnection()` — it does NOT pool. Under
+  ;; bursty workloads (5–10 store-iteration! writes per agent turn)
+  ;; this churns WAL/-shm files, can race with directory-level
+  ;; events on macOS APFS, and surfaces sporadic SQLITE_CANTOPEN.
+  ;; HikariCP wraps the underlying `SQLiteDataSource` with a real
+  ;; pool of long-lived connections, eliminating the open/close
+  ;; thrash and giving us a single dispose hook that actually
+  ;; releases handles.
+  com.zaxxer/HikariCP                       {:mvn/version "6.2.1"}
+  ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
+  ;; — without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
+  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main"]}}}

@@ -503,7 +503,7 @@ OUTPUT: Factual, direct, concise. No AI filler. No hedging. Tables/lists over pr
                      :data {:error (ex-message t)
                             :conversation-id conversation-id}
                      :msg "Failed to restore sandbox from DB \u2014 starting empty"}))))
-    ;; Auto-discover everything from `META-INF/vis.edn` on the
+    ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
     ;; classpath, then install extensions in dependency order. The
     ;; same loader populates channel/command/provider/persistance
     ;; registries as a side effect; we just care about the extension

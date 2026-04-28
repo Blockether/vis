@@ -34,7 +34,7 @@
         :provider/auth-fn      #'interactive-auth!
         :provider/get-token-fn #'get-token!})
 
-   Auto-discovery: ship the unified `META-INF/vis.edn` in the jar's
+   Auto-discovery: ship the unified `META-INF/vis-extension/vis.edn` in the jar's
    resources/ listing every namespace that calls `register-global!`.
    The CLI dispatcher's `ext/discover-extensions!` picks it up at boot."
   (:require [clojure.spec.alpha :as s]
@@ -115,7 +115,7 @@
 ;;
 ;; There is no provider-specific scanner. The single source of truth
 ;; is `com.blockether.vis.extension/discover-extensions!`, which scans
-;; every `META-INF/vis.edn` on the classpath and `require`s the
+;; every `META-INF/vis-extension/vis.edn` on the classpath and `require`s the
 ;; namespaces listed inside. Any of those namespaces that calls
 ;; `(provider/register-global! ...)` lands in this registry as a side
 ;; effect. The CLI dispatcher (`commandline.main`) invokes the

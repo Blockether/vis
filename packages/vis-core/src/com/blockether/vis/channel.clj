@@ -12,7 +12,7 @@
 
    1. **Global registry** — `(register-global! spec)` at namespace load
       time. The CLI calls `(ext/discover-extensions!)` once at boot,
-      which requires every namespace listed in any `META-INF/vis.edn`
+      which requires every namespace listed in any `META-INF/vis-extension/vis.edn`
       on the classpath, triggering their `register-global!` calls.
 
    2. **Programmatic** — anyone holding a channel spec can call
@@ -32,7 +32,7 @@
         :channel/owns-tty? true
         :channel/main-fn   (fn [args] (run-chat! (parse-args args)))})
 
-   Auto-discovery: ship the unified `META-INF/vis.edn` in the jar's
+   Auto-discovery: ship the unified `META-INF/vis-extension/vis.edn` in the jar's
    resources/ listing every namespace that calls `register-global!`
    (channels, extensions, commands, providers, persistance entries —
    the loader is type-agnostic):
@@ -152,7 +152,7 @@
 ;;
 ;; There is no channel-specific scanner. The single source of truth
 ;; is `com.blockether.vis.extension/discover-extensions!` (in this same
-;; jar), which scans every `META-INF/vis.edn` on the classpath and
+;; jar), which scans every `META-INF/vis-extension/vis.edn` on the classpath and
 ;; `require`s the namespaces listed inside. Any of those namespaces
 ;; that calls `(channel/register-global! ...)` lands in this registry
 ;; as a side effect. No further code needed here.

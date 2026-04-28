@@ -2,7 +2,7 @@
 
 ## Auto-discovery
 
-Extensions are auto-discovered from the unified `META-INF/vis.edn` on
+Extensions are auto-discovered from the unified `META-INF/vis-extension/vis.edn` on
 the classpath. See [Overview — Classpath auto-discovery](overview.md#classpath-auto-discovery)
 for the full convention.
 

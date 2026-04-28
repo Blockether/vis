@@ -1,4 +1,0 @@
-;; Extension namespaces exported by vis-core. Loading the namespace
-;; self-registers every built-in CLI command (`run`, `auth`, `doctor`,
-;; `conversations`, `extensions`) into the global commandline registry.
-[com.blockether.vis.channels.cli]

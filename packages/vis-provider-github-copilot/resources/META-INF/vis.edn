@@ -1,4 +1,0 @@
-;; Extension namespaces exported by vis-provider-github-copilot. Loading
-;; the namespace self-registers the :github-copilot provider into the
-;; generic vis-provider registry.
-[com.blockether.vis.providers.github-copilot]
