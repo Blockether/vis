@@ -8,13 +8,13 @@
    sibling `core` namespace assembles every common-editing module
    into a single extension and registers it.
 
-   Depends on `com.blockether/vis-loop` and uses the extension-author
-   facade `com.blockether.vis-extension.extension`."
+   Depends on `com.blockether/vis-runtime` and uses the extension-author
+   facade `com.blockether.vis-sdk.core`."
   (:refer-clojure :exclude [read list])
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis-extension.extension :as ext])
+   [com.blockether.vis-sdk.core :as ext])
   (:import [com.google.re2j Pattern]
            [java.math BigInteger]
            [org.eclipse.jgit.ignore IgnoreNode]))

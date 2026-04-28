@@ -1,8 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
-            [com.blockether.vis-loop.format :as format]
+            [com.blockether.vis-sdk.core :as format]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis-extension.error :as vis-error]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
@@ -1351,7 +1350,7 @@
                 msg          (or (:message error) (str (:type error)) "unknown error")
                 raw          (some-> (get-in error [:data :raw-data]) str str/trim)
                 recv         (get-in error [:data :received-type])
-                msg-wrapped  (wrap-text (vis-error/format-error msg) (max 1 (- fill-w 2)))
+                msg-wrapped  (wrap-text (format/format-error msg) (max 1 (- fill-w 2)))
                 msg-rows     (mapv #(str err-result-marker "  " %) msg-wrapped)
                 raw-rows     (when (and raw (not (str/blank? raw)))
                                (let [hdr (str "provider returned"

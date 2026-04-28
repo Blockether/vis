@@ -29,8 +29,7 @@
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis-extension.extension :as ext]
-   [com.blockether.vis-persistance.core :as db]))
+   [com.blockether.vis-sdk.core :as ext]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Every channel-aware extension
@@ -63,7 +62,7 @@
   "Fetch the iteration rows for `query-id`; returns [] on any failure."
   [db-info query-id]
   (try
-    (db/db-list-query-iterations db-info query-id)
+    (ext/db-list-query-iterations db-info query-id)
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
@@ -96,7 +95,7 @@
                            :error        (:error row)
                            :stdout       (:stdout row)
                            :duration-ms  (:duration-ms row)})
-                    (db/db-list-iteration-expressions db-info iteration-id))
+                    (ext/db-list-iteration-expressions db-info iteration-id))
                   (catch Throwable _ []))))
       iterations)))
 
@@ -268,7 +267,7 @@
 
 (defn- expression-failures-for-iteration [db-info iteration]
   (try
-    (->> (db/db-list-iteration-expressions db-info (:id iteration))
+    (->> (ext/db-list-iteration-expressions db-info (:id iteration))
       (keep (fn [row]
               (when-let [error (:error row)]
                 (let [classification (classify-expression-failure (:code row) error)]
@@ -294,7 +293,7 @@
 
 (defn- latest-query [db-info conversation-id]
   (when (and db-info conversation-id)
-    (last (try (db/db-list-conversation-queries db-info conversation-id)
+    (last (try (ext/db-list-conversation-queries db-info conversation-id)
             (catch Throwable _ [])))))
 
 (defn- turn-snapshot
@@ -329,8 +328,8 @@
   [db-info conversation-id]
   (when (and db-info conversation-id)
     (try
-      (when-let [conversation (db/db-get-conversation db-info conversation-id)]
-        (let [queries (db/db-list-conversation-queries db-info conversation-id)
+      (when-let [conversation (ext/db-get-conversation db-info conversation-id)]
+        (let [queries (ext/db-list-conversation-queries db-info conversation-id)
               turns (mapv (fn [query]
                             (cond-> {:id (:id query)
                                      :outcome (or (:prior-outcome query)
@@ -383,7 +382,7 @@
      (try
        (mapv (fn [conversation]
                (let [conversation-id (:id conversation)
-                     queries (try (db/db-list-conversation-queries (:db-info env) conversation-id)
+                     queries (try (ext/db-list-conversation-queries (:db-info env) conversation-id)
                                (catch Throwable _ []))]
                  (cond-> {:id          conversation-id
                           :channel     (:channel conversation)
@@ -391,7 +390,7 @@
                           :created-at  (:created-at conversation)
                           :turn-count  (count queries)}
                    (:external-id conversation) (assoc :external-id (:external-id conversation)))))
-         (db/db-list-conversations (:db-info env) channel))
+         (ext/db-list-conversations (:db-info env) channel))
        (catch Throwable _ [])))))
 
 (defn- meta-var-history
@@ -403,7 +402,7 @@
   ([env sym conversation-id]
    (when (and (:db-info env) conversation-id sym)
      (try
-       (vec (db/db-var-history (:db-info env) conversation-id (as-sym sym)))
+       (vec (ext/db-var-history (:db-info env) conversation-id (as-sym sym)))
        (catch Throwable _ [])))))
 
 (defn- ->pattern
@@ -436,7 +435,7 @@
   ([env pattern conversation-id]
    (when (and (:db-info env) conversation-id)
      (let [pattern (->pattern pattern)
-           queries (try (db/db-list-conversation-queries (:db-info env) conversation-id)
+           queries (try (ext/db-list-conversation-queries (:db-info env) conversation-id)
                      (catch Throwable _ []))]
        (vec
          (mapcat (fn [query]
@@ -463,7 +462,7 @@
                      (mapv #(assoc % :turn-id (:id query)
                               :goal (:text query))
                        (failures-from-iterations (:db-info env) iterations))))
-           (db/db-list-conversation-queries (:db-info env) conversation-id)))
+           (ext/db-list-conversation-queries (:db-info env) conversation-id)))
        (catch Throwable _ [])))))
 
 (defn- classification-counts [failures]
@@ -841,4 +840,4 @@
                       "`<system_state>`) is already in your prompt — use that.")
      :ext/symbols   all-symbols}))
 
-(ext/register-global! extension)
+(ext/register-extension! extension)

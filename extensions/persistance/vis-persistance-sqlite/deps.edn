@@ -5,19 +5,19 @@
  ;;   - sqlite-jdbc, next.jdbc, honeysql, nippy (the JDBC plumbing)
  ;;   - flyway-database-nc-sqlite (the dialect-specific Flyway driver
  ;;     SQLite needs at runtime; flyway-core itself is shipped by
- ;;     `vis-loop`; this package ships the SQLite SQL resources)
+ ;;     `vis-runtime`; this package ships the SQLite SQL resources)
  ;;
  ;; Loading `com.blockether.vis.ext.persistance-sqlite.core` auto-registers
  ;; the `:sqlite` backend with the facade. `open-store` invokes
- ;; `vis-loop`'s `persistance.migration/migrate!` against
+ ;; `vis-runtime`'s `persistance.migration/migrate!` against
  ;; `classpath:db/sqlite/migration` (SQL ships in this package) so
  ;; every store starts with the canonical schema applied.
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.4"}
-  ;; vis-extension owns the extension-registration contract;
-  ;; vis-persistance owns the storage facade. vis-loop transitively
+  ;; vis-sdk owns the extension-registration contract;
+  ;; vis-sdk owns the storage facade. vis-sdk transitively
   ;; pulls both via the dep below.
-  com.blockether/vis-loop                   {:local/root "../../../packages/vis-loop"}
+  com.blockether/vis-sdk                   {:local/root "../../../packages/vis-sdk"}
   ;; Binary serialization for expression_state.result/error blobs
   com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}
   ;; JSON (used inside the SQLite query layer for blob round-trips)

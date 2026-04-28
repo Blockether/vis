@@ -365,7 +365,7 @@ that happened in every conversation — queries, iterations, final
 answers, persisted SCI vars, timings, costs. Before hypothesizing
 about a user-reported bug that references a specific `conversation-id`
 or `query-id`, **open the DB**. The conversation API
-(`com.blockether.vis-loop.loop.runtime.conversation.core`) covers the
+(`com.blockether.vis-runtime.loop.runtime.conversation.core`) covers the
 common high-level reads (list by channel, env-for, send!, delete!)
 and should be your first stop. Drop to raw SQL for schema/migration
 checks, cross-conversation aggregates, or low-level execution-row
@@ -450,7 +450,7 @@ Available aliases (root `deps.edn`): `:vis` (the `vis` CLI), `:test`,
 vis is polylith — every package declares its OWN deps in
 `packages/<name>/deps.edn`. There is intentionally NO `vis-common`
 god-bag. To bump a coordinate that several packages share (e.g.
-`com.blockether/svar` lives in `vis-loop`, `vis-channel-tui`,
+`com.blockether/svar` lives in `vis-runtime`, `vis-channel-tui`,
 `vis-persistance`, `vis-benchmark`) use the checked-in helper:
 
 ```bash
@@ -488,15 +488,15 @@ packages plus a sibling tree of classpath plug-ins:
     contracts and the unified classpath discovery loader. Depends on
     `vis-persistance` (the unified `register-global!` dispatches the
     `:ext/persistance` slot to the persistence facade).
-  - `packages/vis-loop/` — the iteration loop, the SCI sandbox, the
+  - `packages/vis-runtime/` — the iteration loop, the SCI sandbox, the
     conversation lifecycle, the cross-channel state, and the public
-    API facade (`com.blockether.vis-loop.core`). Depends on
+    API facade (`com.blockether.vis-runtime.core`). Depends on
     `vis-extension` and `vis-persistance`.
-  - `packages/vis-cli/` — the `vis` binary's CLI surface: the
+  - `packages/vis-main/` — the `vis` binary's CLI surface: the
     dispatcher (`commandline.main`), the built-in commands
     (`channels.cli`), the one-shot agent helper (`channels.cli.agent`),
     and the persistence-backed Telemere `:db` handler (`logging`).
-    Depends on `vis-loop`.
+    Depends on `vis-runtime`.
 - `extensions/` — every classpath plug-in, grouped by surface category:
   - `extensions/channels/` — `vis-channel-tui`, `vis-channel-telegram`.
   - `extensions/providers/` — `vis-provider-github-copilot`.
@@ -505,8 +505,8 @@ packages plus a sibling tree of classpath plug-ins:
     code-editing tools the agent reaches for in nearly every task).
   Each ships a `META-INF/vis-extension/vis.edn` and self-registers
   at namespace load. Every extension's `deps.edn` declares
-  `:local/root "../../../packages/vis-loop"` (vis-loop transitively
-  pulls vis-extension and vis-persistance). `vis-loop` does not
+  `:local/root "../../../packages/vis-runtime"` (vis-runtime transitively
+  pulls vis-extension and vis-persistance). `vis-runtime` does not
   require any extension by namespace.
 - `benchmarks/` — the benchmark harness (4clojure, HumanEval,
   SWE-bench Verified). NOT a classpath plug-in; pulled in via the
@@ -531,8 +531,8 @@ Quick mental map (use `packages.md` for details):
 
 - `packages/vis-persistance` — storage facade contract (leaf)
 - `packages/vis-extension` — extension/channel/provider/CLI contracts + unified discovery loader
-- `packages/vis-loop` — iteration loop + SCI sandbox + conversations + public API facade
-- `packages/vis-cli` — `vis` binary: dispatcher, built-in commands, one-shot agent, `:db` Telemere handler
+- `packages/vis-runtime` — iteration loop + SCI sandbox + conversations + public API facade
+- `packages/vis-main` — `vis` binary: dispatcher, built-in commands, one-shot agent, `:db` Telemere handler
 - `extensions/persistance/vis-persistance-sqlite` — SQLite persistence backend
 - `extensions/providers/vis-provider-github-copilot` — GitHub Copilot OAuth provider
 - `extensions/channels/vis-channel-tui`, `extensions/channels/vis-channel-telegram` — channel implementations
@@ -541,12 +541,12 @@ Quick mental map (use `packages.md` for details):
 
 ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN
 vector of namespace symbols loaded at startup by the single loader
-`com.blockether.vis-extension.extension/discover-extensions!`. Each namespace
+`com.blockether.vis-sdk.core/discover-extensions!`. Each namespace
 self-registers into whichever subsystem registry it targets
 (extension symbols, channels, CLI commands, providers, persistence
 backends) via the matching `register-global!` / `register-backend!`
 call. Drop a jar that ships a `META-INF/vis-extension/vis.edn` on the classpath
-and `vis-loop` picks it up at the next process boot — no edits
+and `vis-runtime` picks it up at the next process boot — no edits
 required. There are NO per-subsystem resource files anymore; the
 old `META-INF/vis/{extensions,channels,commandline,providers,
 persistance-backends}.edn` paths were collapsed into the unified
@@ -676,26 +676,26 @@ above.
 
 - `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/*` — Lanterna TUI
 - `extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/*` — Telegram bot
-- `packages/vis-cli/src/com/blockether/vis_cli/commandline/main.clj` — CLI dispatcher (registry-driven)
-- `packages/vis-cli/src/com/blockether/vis_cli/channels/cli.clj` — vis-cli's built-in commands (`run`, `auth`, `doctor`, `conversations`, `extensions list`)
-- `packages/vis-cli/src/com/blockether/vis_cli/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
+- `packages/vis-main/src/com/blockether/vis_main/commandline/main.clj` — CLI dispatcher (registry-driven)
+- `packages/vis-main/src/com/blockether/vis_main/channels/cli.clj` — vis-cli's built-in commands (`run`, `auth`, `doctor`, `conversations`, `extensions list`)
+- `packages/vis-main/src/com/blockether/vis_main/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
 
 Third-party channels register themselves at namespace load via
-`com.blockether.vis-extension.channel/register-global!` and ship a
+`com.blockether.vis-sdk.core/register-global!` and ship a
 unified `META-INF/vis-extension/vis.edn` resource. The CLI dispatcher
-discovers them; nothing in vis-loop references a concrete channel
+discovers them; nothing in vis-runtime references a concrete channel
 namespace. See `docs/src/architecture/channels.md`.
 
-### Runtime modules (vis-loop)
+### Runtime modules (vis-runtime)
 
-All under `packages/vis-loop/src/com/blockether/vis_loop/`:
+All under `packages/vis-runtime/src/com/blockether/vis_runtime/`:
 
 - `core.clj` — public API facade (`create-environment`,
   `dispose-environment!`, `register-extension!`, `active-extensions`,
   `assemble-system-prompt`, `query!`, `MAX_ITERATIONS`). Does NOT own
   `-main` (that's vis-cli). Extension authoring helpers (`extension`,
   `symbol`, `value`, `register-global!`, `render-prompt`) are NOT
-  re-exported — require `com.blockether.vis-extension.extension`
+  re-exported — require `com.blockether.vis-sdk.core`
   directly.
 - `config.clj` — config loader, db-path (`~/.vis/vis.mdb`), router builder
 - `loop/core.clj` — environment lifecycle + system-prompt assembly
@@ -745,7 +745,7 @@ Use `find`/`grep` to explore the tree — no static directory doc exists.
 - Use `core.clj` as the default application/use-case namespace in each bounded context.
 - Do not turn `loop.core` into a dumping ground for unrelated behavior.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
-- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It lives at `packages/vis-cli/src/com/blockether/vis_cli/channels/cli/agent.clj` alongside `channels/cli.clj` in the same package.
+- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It lives at `packages/vis-main/src/com/blockether/vis_main/channels/cli/agent.clj` alongside `channels/cli.clj` in the same package.
 
 - Prefer extracting a deep module first, then renaming callers, then deleting stale code.
 - Remove `requiring-resolve` cycles instead of spreading them further.
@@ -757,7 +757,7 @@ CLI-oriented one-shot execution layer (`channels/cli/agent.clj`).
 
 **Programmatic usage:**
 ```clojure
-(require '[com.blockether.vis-cli.channels.cli.agent :as ag])
+(require '[com.blockether.vis-main.channels.cli.agent :as ag])
 
 (def reviewer
   (ag/agent {:name "reviewer"
@@ -819,14 +819,14 @@ All application state lives in `ext/channel_tui/state.clj` using a re-frame disp
  :dialog-open? false}         ;; dialog singleton guard
 ```
 
-### Conversations (`com.blockether.vis-loop.loop.runtime.conversation.core`)
+### Conversations (`com.blockether.vis-runtime.loop.runtime.conversation.core`)
 
 **One module owns env lifecycle for every frontend.** TUI uses the
 `:vis` channel, the CLI agent uses `:cli`, Telegram uses `:telegram`.
 Conversation IDs are plain UUIDs. No name prefixes, no string lookups.
 
 ```clojure
-(require '[com.blockether.vis-loop.loop.runtime.conversation.core :as conversations])
+(require '[com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations])
 
 ;; Create / lookup
 (conversations/create! :vis)                    ;; new TUI conversation
@@ -866,8 +866,8 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
 
 **Investigating DB state:**
 ```clojure
-(require '[com.blockether.vis-loop.loop.runtime.conversation.core :as conversations]
-         '[com.blockether.vis-persistance.core :as db])
+(require '[com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
+         '[com.blockether.vis-sdk.core :as db])
 
 ;; List conversations
 (conversations/by-channel :vis)
@@ -882,7 +882,7 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
   )
 ```
 
-**Public API (`com.blockether.vis-loop.core` / `com.blockether.vis-loop.loop.core`):**
+**Public API (`com.blockether.vis-runtime.core` / `com.blockether.vis-runtime.loop.core`):**
 - `create-environment router {:db path :conversation selector}` — selector is `nil` | `:latest` | uuid | `[:id uuid]`. Nil creates a fresh conversation; an id-ref resumes an existing one.
 - `register-extension!` — register a validated extension into the environment (tools, nudges, prompt context).
 - `active-extensions environment` — vec of currently-active extensions; call ONCE per query and thread the vec through `assemble-system-prompt` + per-iteration nudge collectors.
@@ -890,11 +890,11 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
 - `query! environment [(llm/user "...")] opts` — messages must be a vector of message maps. See `conversations/send!` docstring for every opt forwarded to `query!`.
 - `dispose-environment!` — releases the environment handle; the shared SQLite DataSource stays open for sibling envs.
 
-Extension authoring API lives on `com.blockether.vis-extension.extension` —
+Extension authoring API lives on `com.blockether.vis-sdk.core` —
 `extension`, `symbol`, `value`, `register-global!`, `render-prompt`,
 `load-extension!`, `discover-extensions!`. Channel authoring API
-lives on `com.blockether.vis-extension.channel`. Neither is re-exported from
-`com.blockether.vis-loop.core` anymore.
+lives on `com.blockether.vis-sdk.core`. Neither is re-exported from
+`com.blockether.vis-runtime.core` anymore.
 
 **Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, iteration stops and the answer is the RLM result. Observability: pass `{:hooks {:on-chunk (fn [{:iteration :thinking :code :final :done?}])}}` to `conversations/send!`.
 
@@ -931,4 +931,4 @@ them with a bounded, structured, sticky projection.
 - **TUI (`vis-channel-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes the env, the conversation stays in the `:vis` channel so other inspectors can see it.
 - **Telegram (`vis-channel-telegram`)** — registered channel id `:telegram`. `conversations/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conversations/send!` with the Telegram persona system prompt.
 - **CLI `agent/run!`** — one-shot. Creates a fresh conversation in the `:cli` channel and runs a single query. Conversations persist — past runs are browsable via `(conversations/by-channel :cli)`.
-- **Third-party channels** — ship a jar with a `META-INF/vis-extension/vis.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-loop`.
+- **Third-party channels** — ship a jar with a `META-INF/vis-extension/vis.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-runtime`.

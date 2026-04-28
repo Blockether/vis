@@ -2,16 +2,12 @@
   "Re-frame-like state management for the TUI.
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
-            [com.blockether.vis-extension.cancellation :as cancellation]
-            [com.blockether.vis-loop.progress :as progress]
-            [com.blockether.vis-loop.providers :as providers]
+            [com.blockether.vis-sdk.core :as cancellation]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis-loop.config :as config]
-            [com.blockether.vis-extension.error :as vis-error]
-            [com.blockether.vis-loop.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis-loop.loop.runtime.conversation.environment.query.core :as query-core]))
+            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query-core]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -140,7 +136,7 @@
    keys are dropped so a forward-compatible future we add new
    toggles into a previously-saved config doesn't blow up here."
   []
-  (let [raw (try (config/load-config-raw) (catch Throwable _ nil))
+  (let [raw (try (cancellation/load-config-raw) (catch Throwable _ nil))
         saved (when (map? raw) (:tui-settings raw))]
     (merge default-settings (when (map? saved)
                               (select-keys saved (keys default-settings))))))
@@ -152,8 +148,8 @@
    that's already otherwise healthy."
   [settings]
   (try
-    (let [raw (or (config/load-config-raw) {})]
-      (config/save-config! (assoc raw :tui-settings settings)))
+    (let [raw (or (cancellation/load-config-raw) {})]
+      (cancellation/save-config! (assoc raw :tui-settings settings)))
     (catch Throwable _ nil)))
 
 (defn init!
@@ -186,7 +182,7 @@
 
 (reg-event-db :set-config
   (fn [db [_ config]]
-    (providers/reload-config!)
+    (cancellation/reload-config!)
     (when (seq (:providers config))
       ;; rebuild-router! only swaps the global singleton; cached envs
       ;; keep the snapshot they were created with. Reseat them too,
@@ -311,7 +307,7 @@
 
 (reg-event-fx :send-message
   (fn [db [_ text]]
-    (let [token (cancellation/make)]
+    (let [token (cancellation/cancellation-token)]
       {:db (-> db
              (update :messages conj (chat/user-msg text))
              (update :messages conj (chat/assistant-msg "Sending request to provider…"))
@@ -380,15 +376,15 @@
     (let [fut (future
                 (try
                   (let [{:keys [on-chunk]}
-                        (progress/make-progress-tracker
+                        (cancellation/make-progress-tracker
                           {:on-update (fn [timeline _chunk]
                                         (try (dispatch [:set-progress-iterations timeline])
                                           (catch Throwable _ nil)))})
                         result (chat/query! conv text
                                  {:on-chunk    on-chunk
-                                  :cancel-atom (cancellation/cancel-atom token)})]
+                                  :cancel-atom (cancellation/cancellation-atom token)})]
                     (if (:error result)
-                      (dispatch [:message-received (vis-error/format-error (:error result))])
+                      (dispatch [:message-received (cancellation/format-error (:error result))])
                       (dispatch [:message-received (:answer result)
                                  (select-keys result
                                    [:model :iterations :duration-ms :tokens
@@ -403,5 +399,5 @@
                     (if (cancellation/cancellation? t)
                       (dispatch [:message-received "Cancelled by user."
                                  {:status :cancelled}])
-                      (dispatch [:message-received (vis-error/format-error (or (ex-message t) (str t)))])))))]
-      (cancellation/set-future! token fut))))
+                      (dispatch [:message-received (cancellation/format-error (or (ex-message t) (str t)))])))))]
+      (cancellation/cancellation-set-future! token fut))))

@@ -4,21 +4,21 @@
    Codex-style three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       glm-5.1 (balanced)        \u280B iter 7 \u00b7 4.1s              97% left \u00b7 $0.04
+       glm-5.1 (balanced)        \u280B iter 7 · 4.1s              97% left · $0.04
 
    Each region holds a list of `{:text :fg :bold? :region :priority}`
-   spans separated by ' \u00b7 ' in muted color. The full segment list is
+   spans separated by ' · ' in muted color. The full segment list is
    built up-front and shrunk by dropping the highest `:priority`
    number (least important) until it fits the available width.
 
    States (driven by `:loading?`, `:cancelling?` from app-db):
-     idle       \u2192 LEFT=model    CENTER=\u2205           RIGHT=ctx-left% \u00b7 cost
-     running    \u2192 LEFT=model    CENTER=\u2205           RIGHT=ctx-left% \u00b7 cost
-     cancelling \u2192 LEFT=model    CENTER=cancelling\u2026  RIGHT=ctx-left% \u00b7 cost
+     idle       → LEFT=model    CENTER=∅           RIGHT=ctx-left% · cost
+     running    → LEFT=model    CENTER=∅           RIGHT=ctx-left% · cost
+     cancelling → LEFT=model    CENTER=cancelling…  RIGHT=ctx-left% · cost
 
    Run-state (spinner, iteration counter, elapsed time, current
    phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
-   block. Putting it in the footer too was a duplicate \u2014 same
+   block. Putting it in the footer too was a duplicate — same
    `\u280b 11.2s` showing twice on screen. The footer keeps slow-changing
    identity + budget bits; the bubble keeps the live activity story,
    including escalating slow-warnings when the provider hangs.
@@ -29,10 +29,10 @@
    `embed-in-bar`, which forced single-color rendering and was the
    reason run-state had to live inside the assistant bubble; this
    namespace replaces that whole path."
-  (:require [com.blockether.svar.internal.router :as router]
+  (:require [com.blockether.vis-sdk.core :as sdk]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis-loop.loop.runtime.conversation.environment.query.core :as query-core])
+            [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query-core])
   (:import [java.util Locale]))
 
 ;;; ── Number formatting (locale-safe) ────────────────────────────────────────
@@ -72,7 +72,7 @@
 
 (defn- estimate-next-context-chars
   "Crude pre-tokenizer estimate: total chars across all chat messages so
-   far. Off by 30-50% on first turn vs real tokenization \u2014 we mark the
+   far. Off by 30-50% on first turn vs real tokenization — we mark the
    resulting % with a leading `~` so the user knows it's an estimate."
   ^long [messages]
   (long (reduce + 0
@@ -98,7 +98,7 @@
    came from chars/4, false when from a real prior-turn :input count."
   [messages model-name]
   (when-let [ctx-max (and model-name
-                       (try (router/context-limit model-name) (catch Throwable _ nil)))]
+                       (sdk/router-context-limit model-name))]
     (when (pos? ctx-max)
       (let [last-tok (last-assistant-tokens messages)
             actual?  (some? (:input last-tok))
@@ -113,7 +113,7 @@
              :estimated? (not actual?)}))))))
 
 (defn- ctx-color
-  "Color for the ctx-left segment. Less left \u2192 hotter color."
+  "Color for the ctx-left segment. Less left → hotter color."
   [pct]
   (cond
     (<= pct 10) t/footer-error-fg
@@ -127,7 +127,7 @@
 
    `:priority` semantics: 1 = critical (never drop), higher = drop first
    when the row overflows. The full priority hierarchy:
-     1  ctx %, run-state spinner, cancelling\u2026
+     1  ctx %, run-state spinner, cancelling…
      2  model name, elapsed (running)
      3  iter counter, model reasoning suffix
      4  cost"
@@ -152,7 +152,7 @@
 
       ;; ── CENTER ────────────────────────────────────────────────────────────
       cancelling?
-      (conj {:text "cancelling\u2026"
+      (conj {:text "cancelling…"
              :fg t/footer-warning-fg :bold? true
              :region :center :priority 1})
 
@@ -180,8 +180,8 @@
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 
-(def ^:private sep "  \u00b7  ")
-(def ^:private sep-narrow " \u00b7 ")
+(def ^:private sep "  ·  ")
+(def ^:private sep-narrow " · ")
 
 (defn- region-spans [segments region]
   (filterv #(= region (:region %)) segments))
@@ -214,7 +214,7 @@
 (defn- shrink-to-fit
   "Drop highest-:priority segments one at a time until the row fits.
    Tries the wide separator first, then collapses to a narrow one
-   before sacrificing segments \u2014 looks the same on a wide terminal,
+   before sacrificing segments — looks the same on a wide terminal,
    reads the same on a 80-col one."
   [segments cols]
   (let [fit? (fn [segs sepa] (<= (total-width segs sepa) cols))]
@@ -261,7 +261,7 @@
     (map-indexed vector spans)))
 
 (defn draw-footer!
-  "Paint the footer row at `footer-row`, full width `cols`. Pure draw \u2014
+  "Paint the footer row at `footer-row`, full width `cols`. Pure draw —
    reads `db` once, computes segments, fits to width, writes cells.
    Safe to call every frame (cheap; no allocations on the hot path
    beyond the spans vector)."

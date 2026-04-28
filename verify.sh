@@ -135,7 +135,7 @@ _lint() {
     echo "clj-kondo not found — install with: brew install borkdude/brew/clj-kondo"
     return 1
   fi
-  local lint_paths=(src)
+  local lint_paths=()
   # `packages/<pkg>/src` is one level deep; `extensions/<category>/<pkg>/src`
   # is two levels deep. Both globs land here.
   for d in packages/*/src extensions/*/src extensions/*/*/src; do
@@ -158,7 +158,7 @@ _lint() {
   return 0
 }
 
-# --- GraalVM safety: walks vis-loop (root `src/`) and every extension
+# --- GraalVM safety: walks vis-runtime (root `src/`) and every extension
 #     src tree, loads each .clj with *warn-on-reflection* +
 #     *unchecked-math* :warn-on-boxed, and counts warnings emitted
 #     from project source paths.
@@ -178,12 +178,12 @@ _graal_safety() {
 
   # Run the compiler walk. We use plain `clojure -M -e` (no :vis alias)
   # to keep :main-opts out of the way. Root `deps.edn` carries
-  # vis-loop's library deps; every classpath plug-in lives in an
+  # vis-runtime's library deps; every classpath plug-in lives in an
   # alias (`:vis`, `:test`, `:dev`). Inject all of them via `-Sdeps`
   # so the walker's classpath matches the production runtime
   # (`bin/vis`) and `load-file` can resolve every `:require`.
   clojure \
-    -Sdeps '{:deps {com.blockether/vis-cli                     {:local/root "packages/vis-cli"}
+    -Sdeps '{:deps {com.blockether/vis-main                     {:local/root "packages/vis-main"}
                     com.blockether/vis-common-meta                    {:local/root "extensions/common/vis-common-meta"}
                     com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}
                     com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
@@ -193,7 +193,7 @@ _graal_safety() {
     -M -e '
     (set! *warn-on-reflection* true)
     (set! *unchecked-math* :warn-on-boxed)
-    (let [;; Root `src/` is vis-loop. Carved-out packages
+    (let [;; Root `src/` is vis-runtime. Carved-out packages
           ;; (`vis-extension`, `vis-persistance`, `vis-cli`) each
           ;; live at `packages/<pkg>/src/` (one level). Classpath
           ;; plug-ins live at `extensions/<category>/<pkg>/src/`
@@ -236,7 +236,7 @@ _graal_safety() {
   local filtered
   # Match warnings from project source paths only (skip third-party
   # jar paths). Three shapes:
-  #   /Users/.../vis/src/...                                 (vis-loop, root)
+  #   /Users/.../vis/src/...                                 (vis-runtime, root)
   #   /Users/.../vis/packages/<pkg>/src/...                  (carved-out core packages)
   #   /Users/.../vis/extensions/<category>/<pkg>/src/...     (every classpath plug-in)
   filtered=$(grep -E "Reflection warning|Boxed math warning" "$err" \
@@ -263,7 +263,7 @@ _graal_safety() {
     echo "$filtered" | grep "Reflection warning" \
       | sed -E -e 's#.*/extensions/[^/]+/([^/]+)/src.*#\1#' \
                -e 's#.*/packages/([^/]+)/src.*#\1#' \
-               -e 's#.*/vis/src/.*#vis-loop#' \
+               -e 's#.*/vis/src/.*#vis-runtime#' \
       | sort | uniq -c | sort -rn \
       | sed 's/^/  /'
     echo ""
@@ -271,7 +271,7 @@ _graal_safety() {
     echo "$filtered" | grep "Boxed math warning" \
       | sed -E -e 's#.*/extensions/[^/]+/([^/]+)/src.*#\1#' \
                -e 's#.*/packages/([^/]+)/src.*#\1#' \
-               -e 's#.*/vis/src/.*#vis-loop#' \
+               -e 's#.*/vis/src/.*#vis-runtime#' \
       | sort | uniq -c | sort -rn \
       | sed 's/^/  /'
     echo ""

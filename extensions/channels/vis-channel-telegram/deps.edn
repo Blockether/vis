@@ -2,14 +2,14 @@
  ;; Telegram channel — Bot API long-poll loop wired into the
  ;; conversation runtime. Optional channel package.
  ;;
- ;; Depends on vis-loop for `conversations/for-telegram-chat!` and
+ ;; Depends on vis-sdk for `conversations/for-telegram-chat!` and
  ;; `conversations/send!`. The CLI dispatcher resolves
  ;; `com.blockether.vis.ext.channel-telegram.bot/-main` lazily via
  ;; `requiring-resolve`, so omitting this jar still leaves the rest
  ;; of vis usable.
  :deps
  {org.clojure/clojure      {:mvn/version "1.12.4"}
-  com.blockether/vis-loop  {:local/root "../../../packages/vis-loop"}
+  com.blockether/vis-sdk  {:local/root "../../../packages/vis-sdk"}
   org.babashka/http-client {:mvn/version "0.4.23"}
   com.cnuernber/charred    {:mvn/version "1.038"}
   com.taoensso/telemere    {:mvn/version "1.2.1"}}

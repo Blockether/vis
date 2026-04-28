@@ -25,7 +25,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis-extension.extension :as ext]
+   [com.blockether.vis-sdk.core :as ext]
    [com.blockether.vis.ext.common-editing.editing :as editing]
    [lazytest.core :refer [defdescribe it expect]])
   (:import [com.google.re2j Pattern]))

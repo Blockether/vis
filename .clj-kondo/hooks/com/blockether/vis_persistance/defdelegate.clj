@@ -1,5 +1,5 @@
 (ns hooks.com.blockether.vis-persistance.defdelegate
-  "clj-kondo hook for `com.blockether.vis-persistance.core/defdelegate`.
+  "clj-kondo hook for `com.blockether.vis-sdk.core/defdelegate`.
 
    The macro generates a `defn` that resolves a backend var at call
    time and applies it. clj-kondo can't expand the runtime resolution

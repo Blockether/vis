@@ -10,7 +10,7 @@
 
    Each test gets an isolated in-memory DB. No manual setup/teardown."
   (:require
-   [com.blockether.vis-persistance.core :as db]
+   [com.blockether.vis-sdk.core :as db]
    [honey.sql :as sql]
    [lazytest.core :as lt]
    [next.jdbc :as jdbc]

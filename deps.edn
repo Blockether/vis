@@ -5,23 +5,23 @@
 ;; has the whole product on the classpath. Nothing's source lives at
 ;; the root anymore — every package owns its own `deps.edn`:
 ;;
-;;   packages/vis-persistance/   storage facade contract
-;;   packages/vis-extension/     extension/channel/provider/CLI contracts + discovery loader
-;;   packages/vis-loop/          iteration loop, SCI sandbox, public API facade
-;;   packages/vis-cli/           binary dispatcher + run/auth/doctor commands
+;;   packages/vis-sdk/           contracts package (storage facade + extension/channel/provider/CLI specs +
+;;                                config + providers + progress + format + conversation API surface)
+;;   packages/vis-runtime/          iteration loop logic ONLY (svar lives here, nowhere else)
+;;   packages/vis-main/          the `vis` binary (dispatcher + run/auth/doctor/conversations/extensions)
 ;;   extensions/<category>/<pkg>/   classpath plug-ins (channels, providers, persistance backends, common SCI tools)
 ;;   benchmarks/                 4clojure / HumanEval / SWE-bench harness
 ;;
 ;; Dependency direction:
-;;   vis-persistance ← vis-extension ← vis-loop ← vis-cli
-;;   every extension depends on vis-loop (which transitively pulls vis-extension + vis-persistance)
+;;   vis-sdk ← vis-runtime ← vis-main
+;;   every extension depends on vis-sdk only (NOT vis-runtime)
 ;;
 ;; The repo-root `bin/vis` wrapper just `exec`s `clojure -M:vis "$@"`,
 ;; so daily use is `vis <subcommand>` once `bin/` is on PATH.
 {:paths []
 
  :deps
- {com.blockether/vis-cli {:local/root "packages/vis-cli"}}
+ {com.blockether/vis-main {:local/root "packages/vis-main"}}
 
  :aliases
  {;; Dev REPL helpers + vis-common-editing for nREPL-driven exploration.
@@ -29,8 +29,8 @@
                        io.github.tonsky/clj-reload                {:mvn/version "1.0.0"}
                        com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}}}
 
-  ;; Primary alias — the `vis` CLI. vis-cli (the `:deps` above)
-  ;; transitively pulls vis-loop / vis-extension / vis-persistance.
+  ;; Primary alias — the `vis` CLI. vis-main (the `:deps` above)
+  ;; transitively pulls vis-runtime and vis-sdk.
   ;; Every classpath plug-in is added here so the unified discovery
   ;; loader (`META-INF/vis-extension/vis.edn`) wires them in at boot.
   :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI
@@ -55,16 +55,16 @@
                        com.blockether/vis-channel-tui                      {:local/root "extensions/channels/vis-channel-tui"}
                        com.blockether/vis-common-editing                  {:local/root "extensions/common/vis-common-editing"}
                        com.blockether/vis-common-meta                     {:local/root "extensions/common/vis-common-meta"}}
-          :main-opts  ["-m" "com.blockether.vis-cli.commandline.main"]}
+          :main-opts  ["-m" "com.blockether.vis-main.core"]}
 
   ;; Aggregate test runner. Every package that ships tests is listed
   ;; below so a single `clojure -M:test` exercises the whole product
   ;; on one classpath. Add a new `--dir` entry only when a package
   ;; grows its first test — lazytest errors on "no namespaces to run"
   ;; if a listed dir is empty.
-  :test  {:extra-paths ["packages/vis-loop/test"
-                        "packages/vis-extension/test"
-                        "packages/vis-cli/test"
+  :test  {:extra-paths ["packages/vis-sdk/test"
+                        "packages/vis-runtime/test"
+                        "packages/vis-main/test"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-common-editing/test"
@@ -75,9 +75,9 @@
                         com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}
                         com.blockether/vis-common-meta                    {:local/root "extensions/common/vis-common-meta"}}
           :main-opts   ["-m" "lazytest.main"
-                        "--dir" "packages/vis-loop/test"
-                        "--dir" "packages/vis-extension/test"
-                        "--dir" "packages/vis-cli/test"
+                        "--dir" "packages/vis-sdk/test"
+                        "--dir" "packages/vis-runtime/test"
+                        "--dir" "packages/vis-main/test"
                         "--dir" "extensions/persistance/vis-persistance-sqlite/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/common/vis-common-editing/test"

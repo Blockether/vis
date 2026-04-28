@@ -12,10 +12,10 @@ Read the canonical doc one of three ways:
   `(meta/extension-docs 'meta)` to scan the abstract index first.
 - From the host shell: open the EDN file linked above; the README
   body is the value at `[meta :docs "README.md"]`.
-- From a Clojure REPL with vis-loop on the classpath:
+- From a Clojure REPL with vis-runtime on the classpath:
 
   ```clojure
-  (require '[com.blockether.vis-extension.extension :as ext])
+  (require '[com.blockether.vis-sdk.core :as ext])
   (println (ext/extension-doc 'meta "README.md"))
   ```
 

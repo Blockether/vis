@@ -4,7 +4,7 @@
    synthetic conversation + query + iteration rows in an in-memory
    SQLite DB, then invokes the impl fns directly with a fake env map."
   (:require
-   [com.blockether.vis-persistance.core :as db]
+   [com.blockether.vis-sdk.core :as db]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
 

@@ -1,4 +1,4 @@
 {:paths ["src" "resources"]
  ;; vis-common-meta uses the extension contract and persistence facade;
- ;; both now live in vis-loop.
- :deps {com.blockether/vis-loop {:local/root "../../../packages/vis-loop"}}}
+ ;; both now live in vis-runtime.
+ :deps {com.blockether/vis-sdk {:local/root "../../../packages/vis-sdk"}}}
