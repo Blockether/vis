@@ -13,13 +13,8 @@
 {:paths []
 
  :deps
- {com.blockether/vis-core              {:local/root "packages/vis-core"}
-  com.blockether/vis-commandline       {:local/root "packages/vis-commandline"}
-  com.blockether/vis-extension         {:local/root "packages/vis-extension"}
-  com.blockether/vis-logging           {:local/root "packages/vis-logging"}
-  com.blockether/vis-persistance              {:local/root "packages/vis-persistance"}
-  com.blockether/vis-persistance-sqlite       {:local/root "packages/vis-persistance-sqlite"}
-  com.blockether/vis-provider          {:local/root "packages/vis-provider"}
+ {com.blockether/vis-core                    {:local/root "packages/vis-core"}
+  com.blockether/vis-persistance-sqlite      {:local/root "packages/vis-persistance-sqlite"}
   com.blockether/vis-provider-github-copilot {:local/root "packages/vis-provider-github-copilot"}
   ;; Optional channels — listed here so the dev/run binary has every
   ;; front-end available. Each is published as its own jar; downstream
@@ -37,11 +32,10 @@
   ;; `bin/vis` wrapper just `exec`s `clojure -M:vis "$@"`, so
   ;; day-to-day use is `vis <subcommand>` with no Clojure visible.
   ;;
-  ;; Dispatcher lives in vis-commandline — it discovers channels,
-  ;; extensions (the umbrella term — ext symbols, channels, CLI
-  ;; commands, providers, persistance entries) at startup via the
-  ;; unified `META-INF/vis.edn` loader in vis-extension. vis-core is
-  ;; just one of those extensions.
+  ;; Dispatcher, command registry, extension registry, provider registry,
+  ;; and persistence facade all live in vis-core. The dispatcher discovers
+  ;; channels and extensions at startup via the unified `META-INF/vis.edn`
+  ;; loader.
   :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI
           ;; (Lanterna) is not corrupted by JVM-emitted warnings:
           ;;   --enable-native-access=ALL-UNNAMED
@@ -64,7 +58,7 @@
                        "--enable-native-access=ALL-UNNAMED"
                        "--sun-misc-unsafe-memory-access=allow"]
           :extra-deps {com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}
-                       com.blockether/vis-self-debug         {:local/root "extensions/vis-self-debug"}}
+                       com.blockether/vis-meta               {:local/root "extensions/vis-meta"}}
           :main-opts  ["-m" "com.blockether.vis.commandline.main"]}
 
   ;; Aggregate test runner. Lists every package test tree containing
@@ -73,24 +67,20 @@
   ;; once they get their first test.
   :test  {:extra-paths ["test"
                         "packages/vis-core/test"
-                        "packages/vis-commandline/test"
-                        "packages/vis-extension/test"
                         "packages/vis-persistance-sqlite/test"
                         "packages/vis-tui/test"
                         "extensions/vis-common-operations/test"
-                        "extensions/vis-self-debug/test"]
+                        "extensions/vis-meta/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                        com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}
-                       com.blockether/vis-self-debug       {:local/root "extensions/vis-self-debug"}}
+                       com.blockether/vis-meta             {:local/root "extensions/vis-meta"}}
           :main-opts  ["-m" "lazytest.main"
                        "--dir" "test"
                        "--dir" "packages/vis-core/test"
-                       "--dir" "packages/vis-commandline/test"
-                       "--dir" "packages/vis-extension/test"
                        "--dir" "packages/vis-persistance-sqlite/test"
                        "--dir" "packages/vis-tui/test"
                        "--dir" "extensions/vis-common-operations/test"
-                       "--dir" "extensions/vis-self-debug/test"]}
+                       "--dir" "extensions/vis-meta/test"]}
 
   :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "packages/vis-benchmark"}}
           :jvm-opts    ["-Xmx8g"]

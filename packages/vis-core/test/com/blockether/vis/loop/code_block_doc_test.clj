@@ -3,7 +3,7 @@
 
    1. `extract-defining-name` recognizes def / defn / defn- / defmacro
       shapes and pulls the var name; rejects anything else.
-   2. End-to-end: a `:code_block` with `:expr` `(def x 1)` and `:doc \"…\"`
+   2. End-to-end: a `:code-block` with `:expr` `(def x 1)` and `:doc \"…\"`
       attaches the docstring to the var's :doc meta after eval.
    3. The new docstring shows up in render-data-form output (the
       var-index path that powers `<var_index>`)."

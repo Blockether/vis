@@ -11,6 +11,7 @@
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.loop.runtime.conversation.core :as conversations]
             [com.blockether.vis.loop.runtime.conversation.environment.query.core :as query-core]
+            [com.blockether.vis.persistance.core :as db]
             [com.blockether.vis.channels.telegram.api :as tg]
             [taoensso.telemere :as tel]))
 
@@ -67,7 +68,7 @@
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}
                          :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (vis-error/format-error (conversations/error->user-message e)))
+                     (vis-error/format-error (db/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]

@@ -11,8 +11,10 @@
    [com.blockether.vis.persistance.core :as db]
 
    [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.core :as iterate]
-   [com.blockether.vis.persistance.spec :as rlm-spec
-    :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING *rlm-ctx*]]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.iteration.spec
+    :refer [ITERATION_SPEC_NON_REASONING ITERATION_SPEC_REASONING]]
+   [com.blockether.vis.loop.runtime.conversation.environment.query.runtime :as query-runtime
+    :refer [*rlm-context*]]
    [com.blockether.vis.loop.runtime.conversation.environment.core :as sci-env]
    [com.blockether.svar.internal.util :as util]
    [edamame.core :as edamame]
@@ -372,7 +374,7 @@
       (reset! autobind-events-atom []))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (loop-core/auto-forget-stale-vars! environment)
-    (binding [*rlm-ctx* (merge *rlm-ctx* {:rlm-phase :iteration-loop})]
+    (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
       (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                 :trace [] :consecutive-errors 0 :restarts 0}
                           FRESH_ITER_CARRY)]
@@ -1077,14 +1079,14 @@
                  debug? query-str root-model
                  db-info
                  environment-id]} ctx
-         merged-concurrency (merge rlm-spec/DEFAULT_CONCURRENCY concurrency)]
-     (binding [rlm-spec/*rlm-ctx*               {:rlm-environment-id environment-id :rlm-type :main
-                                                 :rlm-debug? debug? :rlm-phase :query
-                                                 :db-info db-info
-                                                 :conversation-soul-id (:conversation-id environment)}
-               rlm-spec/*eval-timeout-ms*       (rlm-spec/clamp-eval-timeout-ms
-                                                  (or eval-timeout-ms rlm-spec/*eval-timeout-ms*))
-               rlm-spec/*concurrency*           merged-concurrency]
+         merged-concurrency (merge query-runtime/DEFAULT_CONCURRENCY concurrency)]
+     (binding [query-runtime/*rlm-context*       {:rlm-environment-id environment-id :rlm-type :main
+                                                  :rlm-debug? debug? :rlm-phase :query
+                                                  :db-info db-info
+                                                  :conversation-soul-id (:conversation-id environment)}
+               query-runtime/*eval-timeout-ms*  (query-runtime/clamp-eval-timeout-ms
+                                                  (or eval-timeout-ms query-runtime/*eval-timeout-ms*))
+               query-runtime/*concurrency*      merged-concurrency]
        (tel/with-ctx+ {:db-info db-info
                        :conversation-soul-id (:conversation-id environment)}
          (iterate/log-stage! :query-start 0

@@ -15,9 +15,8 @@
      2. Require it here, conj its symbols onto `all-symbols` and
         merge its prompt into `combined-prompt`.
 
-   Depends ONLY on `com.blockether/vis-extension` (the slim extension
-   contract) so the published jar stays small and decoupled from the
-   full vis runtime."
+   Depends on `com.blockether/vis-core` and uses the extension-author
+   facade `com.blockether.vis.extension`."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.extension :as ext]

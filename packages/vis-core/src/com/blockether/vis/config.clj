@@ -2,23 +2,13 @@
   "Shared config I/O, provider presets, logging bootstrap, and svar-native data helpers.
    Single source of truth for ~/.vis/config.edn reading/writing.
    Used by both agent.clj (programmatic) and provider.clj (TUI)."
-  (:require [borkdude.dynaload :as dl]
-            [clojure.edn :as edn]
+  (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure+.error]
+            [com.blockether.vis.provider :as provider-registry]
             [taoensso.telemere :as t])
   (:import [java.io FileInputStream FileOutputStream]))
-
-;;; ── vis-provider lookup (dynaload — zero compile-time dep on it) ───
-;;
-;; vis-provider is an OPTIONAL sibling jar. When present, every (def
-;; ^:private provider-by-id ...) below resolves; when absent, the
-;; `:default` constantly-nil keeps callers branch-friendly.
-
-(def ^:private provider-by-id
-  (dl/dynaload 'com.blockether.vis.provider/by-id
-    {:default (constantly nil)}))
 
 ;;; ── Version ─────────────────────────────────────────────────────────────
 
@@ -216,11 +206,8 @@
         api-key   (:api-key provider)
         models    (->> (:models provider) (keep ->svar-model) vec)
         base-url  (provider-base-url provider)
-        ;; vis-provider registry is dynaloaded at the top of this ns;
-        ;; when the jar is missing `provider-by-id` returns nil for
-        ;; every id and we fall through to the static-key branch.
         get-token-fn (when (nil? api-key)
-                       (some-> (provider-by-id pid) :provider/get-token-fn))]
+                       (some-> (provider-registry/by-id pid) :provider/get-token-fn))]
     (if get-token-fn
       (let [{:keys [token api-url]} (get-token-fn)]
         (cond-> {:id pid :models models :api-key token}

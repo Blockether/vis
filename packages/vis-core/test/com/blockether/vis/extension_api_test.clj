@@ -3,7 +3,7 @@
 
    The pure extension authoring tests (`ext/symbol`, `ext/value`,
    `ext/render-prompt`, `ext/extension`) live with the standalone
-   library: see `vis-extension/test/com/blockether/vis/extension_test.clj`.
+   facade: see `com.blockether.vis.extension-test`.
    This file only exercises the integration points that need vis-core
    on the classpath:
 

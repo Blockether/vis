@@ -1,7 +1,0 @@
-{:paths ["src" "resources"]
- ;; vis-self-debug pulls in the slim extension contract AND the
- ;; persistence facade — every introspection function reads from the
- ;; SQLite tables behind `vis-persistance`. No tool implementations, no
- ;; runtime loop dependency.
- :deps {com.blockether/vis-extension   {:local/root "../../packages/vis-extension"}
-        com.blockether/vis-persistance {:local/root "../../packages/vis-persistance"}}}

@@ -135,11 +135,12 @@ The model sees **one context message** per iteration:
 - `[system_nudge]` — repetition + extension hints.
 
 Reasoning continuity lives in the breadcrumb chain (one line per
-iteration) and the persisted plan slot. The optional `vis-self-debug`
-extension adds `(self/turn)` / `(self/conversation)` /
-`(self/conversations)` / `(self/var-history 'sym)` /
-`(self/find-attempts pattern)` for programmatic introspection of the
-live turn, the conversation tree, and prior attempts.
+iteration) and the persisted plan slot. The optional `vis-meta`
+extension adds `(meta/turn)` / `(meta/conversation)` /
+`(meta/conversations)` / `(meta/var-history 'sym)` /
+`(meta/find-attempts pattern)` / `(meta/failures)` /
+`(meta/diagnose)` for programmatic introspection of the live turn,
+the conversation tree, prior attempts, and stalled-turn failures.
 
 ## Secure by default
 

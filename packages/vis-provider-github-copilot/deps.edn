@@ -4,13 +4,8 @@
  ;; at namespace load via the unified `META-INF/vis.edn`.
  :deps
  {org.clojure/clojure       {:mvn/version "1.12.4"}
-  ;; vis-extension is the canonical extension-registration contract:
-  ;; this package ships a provider, providers are extensions, so the
-  ;; provider declaration goes through `ext/register-global!` with an
-  ;; `:ext/providers` slot. Stays a slim dep (clojure + spec +
-  ;; telemere + commandline).
-  com.blockether/vis-extension {:local/root "../vis-extension"}
-  com.blockether/vis-provider  {:local/root "../vis-provider"}
+  ;; vis-core owns the extension and provider registries.
+  com.blockether/vis-core    {:local/root "../vis-core"}
   ;; HTTP client for the device-flow + token-exchange calls.
   org.babashka/http-client  {:mvn/version "0.4.23"}
   ;; JSON parsing for the OAuth + token-exchange responses.
