@@ -8,7 +8,7 @@ Channels are one **slot** on an extension. The word "extension" is
 the umbrella term for everything extensible in vis: SCI sandbox
 symbols, CLI commands, channels, LLM providers, persistance entries.
 All five surfaces share one classpath-discovery resource
-(`META-INF/vis.edn`), one loader
+(`META-INF/vis-extension/vis.edn`), one loader
 (`com.blockether.vis.extension/discover-extensions!`), and one
 author-facing entry point
 (`com.blockether.vis.extension/register-global!`). Each surface is a
@@ -20,7 +20,7 @@ for the full slot → sub-registry table.
 
 `vis-core` ships zero channel implementations. The CLI dispatcher
 calls `discover-extensions!` once at boot, which scans every
-`META-INF/vis.edn` on the classpath and `require`s the namespaces
+`META-INF/vis-extension/vis.edn` on the classpath and `require`s the namespaces
 inside. Every `(ext/register-global! …)` call with a populated
 `:ext/channels` slot lands the channel descriptor in the channel
 registry as a side effect; the `vis channels` sub-command tree
@@ -114,7 +114,7 @@ this section only highlights which packages register a channel.
 
 1. Create your `*-main` function: `(fn [args-vec] …)`.
 2. At namespace load time, call `(ext/register-global! (ext/extension {… :ext/channels [{…}]}))`. (Direct `(channel/register-global! …)` is still supported for embedded use; the slot form is the canonical author-facing API.)
-3. Ship `META-INF/vis.edn` (the unified extension manifest) listing your namespace.
+3. Ship `META-INF/vis-extension/vis.edn` (the unified extension manifest) listing your namespace.
 
 The next `clojure -M:vis` (or `bin/vis` launch) picks up the new
 channel automatically and exposes it as `vis channels <your-cmd>` —

@@ -2,7 +2,7 @@
   "Aggregator for the `vis-common-operations` extension.
 
    This namespace is the single classpath-discovery entry point: the
-   unified `META-INF/vis.edn` resource lists THIS namespace, the
+   unified `META-INF/vis-extension/vis.edn` resource lists THIS namespace, the
    extension loader `require`s it, and the `register-global!` call
    below wires every module (currently just `editing`) into the
    global registry as one extension named

@@ -30,7 +30,7 @@
    ── Auto-discovery ───────────────────────────────────
 
    Backends are loaded the same way channels and other extensions are:
-   ship the unified `META-INF/vis.edn` in your jar's resources/
+   ship the unified `META-INF/vis-extension/vis.edn` in your jar's resources/
    listing the namespaces that call `register-backend!`. The first
    `create-rlm-conn` call triggers a lazy discovery pass, memoized for
    the process lifetime."
@@ -81,7 +81,7 @@
 ;;
 ;; There is no backend-specific scanner. The single source of truth is
 ;; `com.blockether.vis.extension/discover-extensions!`, which scans every
-;; `META-INF/vis.edn` on the classpath and `require`s the namespaces
+;; `META-INF/vis-extension/vis.edn` on the classpath and `require`s the namespaces
 ;; listed inside. Any of those namespaces that calls
 ;; `(register-backend! ...)` lands in this backend registry as a side
 ;; effect.

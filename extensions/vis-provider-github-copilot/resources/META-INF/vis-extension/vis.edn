@@ -1,0 +1,4 @@
+;; GitHub Copilot OAuth device-flow provider. Loading the ns calls
+;; (provider/register-global! ...). Non-LLM-facing.
+{github-copilot
+ {:nses [com.blockether.vis.providers.github-copilot]}}

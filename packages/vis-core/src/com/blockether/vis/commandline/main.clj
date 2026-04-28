@@ -9,7 +9,7 @@
 
    Discovery is one classpath scan, owned by
    `com.blockether.vis.extension/discover-extensions!`, which finds
-   every `META-INF/vis.edn` resource and `require`s the namespaces
+   every `META-INF/vis-extension/vis.edn` resource and `require`s the namespaces
    listed inside. Each loaded namespace self-registers into whichever
    subsystem registry it targets (extension symbols, channels,
    commands, providers, persistance entries, ...)."

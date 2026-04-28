@@ -71,7 +71,7 @@ self-registers → every new environment gets it.
 ### Classpath auto-discovery
 
 Extensions can be discovered **automatically** without any manual
-`require`. Place a single `META-INF/vis.edn` file in your extension's
+`require`. Place a single `META-INF/vis-extension/vis.edn` file in your extension's
 `resources/` directory listing every namespace whose load should
 trigger registration:
 
@@ -83,14 +83,14 @@ trigger registration:
 When `create-environment` runs (or the CLI dispatcher boots), it
 calls `com.blockether.vis.extension/discover-extensions!` which:
 
-1. Scans the classpath for **all** `META-INF/vis.edn` files
+1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` files
    (via `ClassLoader.getResources`)
 2. Reads each file as a vector of namespace symbols
 3. `require`s each namespace (triggering its `register-global!` call)
 4. De-duplicates so a namespace listed in two jars is required only once
 5. Logs every success at `:info` and every failure at `:error`
 
-The loader is **type-agnostic**: the same `META-INF/vis.edn` resource
+The loader is **type-agnostic**: the same `META-INF/vis-extension/vis.edn` resource
 holds the namespaces for every surface (SCI sandbox symbols,
 channels, CLI commands, providers, persistance entries). The author
 declares everything in one `(ext/extension {…})` map and calls
@@ -104,7 +104,7 @@ remain available for embedded / programmatic use, and are still what
 `ext/register-global!` ultimately invokes.
 
 This means: add the extension jar/local-root to your deps.edn aliases,
-ensure it has a `META-INF/vis.edn` in its resources, and it will be
+ensure it has a `META-INF/vis-extension/vis.edn` in its resources, and it will be
 loaded automatically. No imports, no requires, no wiring.
 
 **Directory layout for an extension:**
@@ -113,7 +113,7 @@ loaded automatically. No imports, no requires, no wiring.
 extensions/my-ext/
 ├── deps.edn                  ;; {:paths ["src" "resources"] ...}
 ├── resources/
-│   └── META-INF/vis.edn      ;; [com.acme.ext.my-tool]
+│   └── META-INF/vis-extension/vis.edn      ;; [com.acme.ext.my-tool]
 └── src/com/acme/ext/my_tool.clj  ;; calls register-global! at load time
 ```
 
@@ -147,7 +147,7 @@ For extensions that shouldn't be global.
 
 From classpath jar to live tool call:
 
-0. **discover-extensions!** — scan `META-INF/vis.edn` on the classpath
+0. **discover-extensions!** — scan `META-INF/vis-extension/vis.edn` on the classpath
 1. **ext/extension** — build and validate the extension spec
 2. **register-global!** — add to the process-level registry
 3. **Topo-sort** — order by `:ext/requires` dependencies (throws `missing-dependencies` if a required extension is absent)
@@ -271,7 +271,7 @@ And calls `(search/find "neural")` from `:code` blocks. Bare
 ## One example per surface
 
 Real in-tree examples — every package below ships exactly one
-`META-INF/vis.edn` and exactly one `(ext/register-global! …)` call.
+`META-INF/vis-extension/vis.edn` and exactly one `(ext/register-global! …)` call.
 
 ### Sandbox tools
 
@@ -322,7 +322,7 @@ full examples of each form.
 
 ### Channel front-end
 
-`packages/vis-tui/.../tui/screen.clj`:
+`extensions/vis-tui/.../tui/screen.clj`:
 
 ```clojure
 (ext/register-global!
@@ -340,7 +340,7 @@ full examples of each form.
 
 ### LLM provider
 
-`packages/vis-provider-github-copilot/.../github_copilot.clj`:
+`extensions/vis-provider-github-copilot/.../github_copilot.clj`:
 
 ```clojure
 (ext/register-global!
@@ -359,7 +359,7 @@ full examples of each form.
 
 ### Persistence backend
 
-`packages/vis-persistance-sqlite/.../sqlite/core.clj`:
+`extensions/vis-persistance-sqlite/.../sqlite/core.clj`:
 
 ```clojure
 (ext/register-global!

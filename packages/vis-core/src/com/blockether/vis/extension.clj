@@ -1157,37 +1157,70 @@
      ext)))
 
 ;; =============================================================================
-;; Unified extension auto-discovery
+;; Unified extension auto-discovery + inline extension docs
 ;;
-;; ONE classpath scan, ONE resource per jar (`META-INF/vis.edn`), ONE
-;; entry point. Every extension surface in the system -- ext symbols,
-;; channels, commands, providers, persistance entries -- routes
-;; through this single fn. "Extension" here is the SUPERSET term: a
-;; channel is a kind of extension, a CLI command is a kind of
-;; extension, a provider is a kind of extension. The bespoke
-;; per-subsystem `discover-*!` fns are gone; this is the only
-;; discovery mechanism in the codebase.
+;; ONE classpath scan, ONE resource per jar
+;; (`META-INF/vis-extension/vis.edn`), ONE entry point. Every
+;; extension surface in the system -- ext symbols, channels, commands,
+;; providers, persistance entries -- routes through this single fn.
+;; "Extension" here is the SUPERSET term: a channel is a kind of
+;; extension, a CLI command is a kind of extension, a provider is a
+;; kind of extension. The bespoke per-subsystem `discover-*!` fns are
+;; gone; this is the only discovery mechanism in the codebase.
 ;;
 ;; The loader is type-agnostic: it just `require`s every namespace
-;; listed in every `META-INF/vis.edn` it finds on the classpath;
-;; whichever of those namespaces calls `(ext/register-global! ...)`,
-;; `(channel/register-global! ...)`, `(cmd/register-global! ...)`,
-;; `(provider/register-global! ...)`, or `(persistance/register-backend!
-;; ...)` ends up in the matching subsystem registry as a side effect.
+;; listed under `:nses` in every `META-INF/vis-extension/vis.edn` it
+;; finds on the classpath; whichever of those namespaces calls
+;; `(ext/register-global! ...)`, `(channel/register-global! ...)`,
+;; `(cmd/register-global! ...)`, `(provider/register-global! ...)`, or
+;; `(persistance/register-backend! ...)` ends up in the matching
+;; subsystem registry as a side effect.
 ;;
-;; Resource shape (a flat EDN vector of namespace symbols):
+;; Resource shape (a single EDN map keyed by extension id):
 ;;
-;;     ;; resources/META-INF/vis.edn in your extension jar
-;;     [com.acme.ext.git.core           ; ext/register-global!
-;;      com.acme.channel.web.bot        ; channel/register-global!
-;;      com.acme.commands.git           ; cmd/register-global!
-;;      com.acme.providers.openai       ; provider/register-global!
-;;      com.acme.persistance.postgres]  ; persistance/register-backend!
+;;     ;; resources/META-INF/vis-extension/vis.edn
+;;     {git
+;;      {:nses [com.acme.ext.git.core           ; ext/register-global!
+;;              com.acme.channel.web.bot        ; channel/register-global!
+;;              com.acme.commands.git           ; cmd/register-global!
+;;              com.acme.providers.openai       ; provider/register-global!
+;;              com.acme.persistance.postgres]  ; persistance/register-backend!
+;;       :docs {\"README.md\" {:created-at #inst \"2026-04-28\"
+;;                              :abstract   \"...\"
+;;                              :content    \"# Git\n...\"
+;;                              :links      [{:to-id meta :to-doc \"README.md\"
+;;                                            :context \"...\"}
+;;                                           {:url \"https://...\" :context \"...\"}
+;;                                           {:file \"packages/.../foo.clj\"
+;;                                            :context \"...\"}]}
+;;              \"EXAMPLES.md\" {:created-at ... :abstract ... :content ...}}}}
 ;;
-;; New extension surfaces (themes, skills, future-thing) require ZERO
-;; changes here: drop a jar with a `META-INF/vis.edn` listing
-;; namespaces that register into the new surface, and they boot the
-;; same way everything else does.
+;; The id (top-level key, here `git`) is the LLM-facing token \u2014 same as
+;; `:ext/ns-alias :alias` on the registered extension. `:nses` is the
+;; vector of namespaces to require. `:docs` is a map
+;; `{<doc-name> <descriptor>}` where each descriptor is a map with:
+;;
+;;   :created-at \u2014 #inst, when the doc was first authored.
+;;   :abstract   \u2014 one-paragraph LLM-facing summary (mandatory).
+;;   :content    \u2014 full Markdown body (mandatory).
+;;   :links      \u2014 author-declared outgoing links. Each link is a map:
+;;                  - cross-ext doc:  {:to-id <id> :to-doc <name> :context ...}
+;;                  - same-ext doc:   {:to-doc <name> :context ...}
+;;                  - external URL:   {:url <url> :context ...}
+;;                  - repo file:      {:file <path> :context ...}
+;;
+;; The loader derives `:reflinks` automatically by inverting every
+;; cross-ext / same-ext outgoing link into a `{:from-id :from-doc
+;; :context}` entry on the target descriptor. Authors never write
+;; reflinks by hand.
+;;
+;; Why inline + structured: one resource per jar means one classpath
+;; read at boot, no nested doc tree, no path-vs-call ambiguity
+;; (`vis-extension/<id>` reads cleanly whether `<id>` is `meta`,
+;; `vis`, or anything else), and `(meta/extension-doc id name)` is a
+;; registry lookup with zero I/O. The structured shape lets the LLM
+;; scan abstracts and follow link graphs as plain Clojure data \u2014 no
+;; YAML frontmatter parsing, no Markdown link extraction.
 ;;
 ;; Why this lives in `com.blockether.vis.extension`: the extension
 ;; facade is the canonical home for everything extension-shaped. Other
@@ -1195,17 +1228,266 @@
 ;; lazy safety-net discovery can resolve THIS fn.
 ;; =============================================================================
 
-(def ^:private EXTENSIONS_RESOURCE "META-INF/vis.edn")
+(def ^:private EXTENSIONS_RESOURCE "META-INF/vis-extension/vis.edn")
+
+(defonce ^:private extension-docs-registry
+  ;; {<id-symbol>
+  ;;  {:nses [<ns-symbol> ...]
+  ;;   :docs {<doc-name>
+  ;;          {:created-at <inst>
+  ;;           :abstract   <string>
+  ;;           :content    <string>
+  ;;           :links      [<link> ...]
+  ;;           :reflinks   [<reflink> ...]}}}}
+  ;;
+  ;; Populated by `discover-extensions!` from every
+  ;; `META-INF/vis-extension/vis.edn` on the classpath. Multiple jars
+  ;; that declare the same id are merged: `:nses` are deduped
+  ;; (preserving order of first occurrence), `:docs` are merged with
+  ;; later entries winning per doc name. `:reflinks` are recomputed
+  ;; from the union of all `:links` on every merge.
+  (atom {}))
+
+(defn- valid-link? [link]
+  (and (map? link)
+    (or (and (symbol? (:to-id link)) (string? (:to-doc link)))
+      (string? (:to-doc link))
+      (string? (:url link))
+      (string? (:file link)))))
+
+(defn- normalize-doc-descriptor
+  "Validate one `[doc-name descriptor]` pair from a vis.edn `:docs`
+   map. Returns the descriptor with empty defaults filled in, or
+   `nil` when the entry is malformed (missing :abstract, missing
+   :content, etc.). Logs the rejection reason at `:warn`."
+  [doc-name descriptor]
+  (cond
+    (not (string? doc-name))
+    (do (tel/log! {:level :warn :id ::doc-bad-name
+                   :data {:doc-name doc-name}
+                   :msg  (str "Doc name must be a string, got " (pr-str doc-name))})
+      nil)
+
+    (not (map? descriptor))
+    (do (tel/log! {:level :warn :id ::doc-bad-shape
+                   :data {:doc-name doc-name :type (some-> descriptor class .getName)}
+                   :msg  (str "Doc descriptor must be a map: " doc-name)})
+      nil)
+
+    (not (string? (:abstract descriptor)))
+    (do (tel/log! {:level :warn :id ::doc-missing-abstract
+                   :data {:doc-name doc-name}
+                   :msg  (str "Doc " doc-name " missing required :abstract string")})
+      nil)
+
+    (not (string? (:content descriptor)))
+    (do (tel/log! {:level :warn :id ::doc-missing-content
+                   :data {:doc-name doc-name}
+                   :msg  (str "Doc " doc-name " missing required :content string")})
+      nil)
+
+    :else
+    {:created-at (:created-at descriptor)
+     :abstract   (:abstract descriptor)
+     :content    (:content descriptor)
+     :links      (vec (filter valid-link? (:links descriptor)))
+     :reflinks   []}))
+
+(defn- normalize-vis-edn
+  "Coerce a parsed `vis.edn` payload into the canonical map shape
+   `{<id-sym> {:nses [<ns-sym> ...] :docs {<doc-name> <descriptor>}}}`.
+   Drops malformed entries silently; returns `{}` for unrecognized
+   shapes. The legacy flat-vector, ns-keyed, and string-doc-body
+   forms are NOT supported \u2014 the migration to the structured doc
+   descriptor is a hard switch."
+  [parsed]
+  (when (map? parsed)
+    (into {}
+      (keep (fn [[id entry]]
+              (when (and (symbol? id) (map? entry))
+                (let [nses (vec (filter symbol? (:nses entry)))
+                      docs (when (map? (:docs entry))
+                             (into {}
+                               (keep (fn [[doc-name descriptor]]
+                                       (when-let [norm (normalize-doc-descriptor doc-name descriptor)]
+                                         [doc-name norm])))
+                               (:docs entry)))]
+                  (when (seq nses)
+                    [id {:nses nses :docs (or docs {})}])))))
+      parsed)))
+
+(defn registered-extension-ids
+  "Sorted vector of every extension id known to the docs registry.
+   Each id is the top-level key from a `vis.edn` and the same token
+   the LLM uses as the SCI sandbox alias."
+  []
+  (vec (sort (keys @extension-docs-registry))))
+
+(defn extension-namespaces
+  "Vector of namespaces declared under `:nses` for an id. Empty when
+   the id is unknown."
+  [id]
+  (vec (get-in @extension-docs-registry [id :nses] [])))
+
+(defn extension-id-of-ns
+  "Reverse lookup: given a namespace symbol, return the extension id
+   that registered it under `:nses`, or `nil`."
+  [ns-sym]
+  (some (fn [[id {nses :nses}]]
+          (when (some #(= ns-sym %) nses) id))
+    @extension-docs-registry))
+
+(defn extension-doc
+  "Return the full descriptor map for a declared extension doc:
+   `{:name :created-at :abstract :content :links :reflinks}`. Returns
+   `nil` when the id is unknown or no doc by that name was declared."
+  [id doc-name]
+  (when-let [descriptor (and id doc-name
+                          (get-in @extension-docs-registry [id :docs doc-name]))]
+    (assoc descriptor :name doc-name)))
+
+(defn extension-doc-content
+  "Plain `:content` body (Markdown string) of a declared doc, or `nil`
+   when the doc is unknown. Convenience over `(:content (extension-doc
+   id name))`."
+  [id doc-name]
+  (:content (extension-doc id doc-name)))
+
+(defn extension-doc-abstract
+  "Return the `:abstract` field of a declared extension doc, or `nil`
+   when the doc is unknown."
+  [id doc-name]
+  (:abstract (extension-doc id doc-name)))
+
+(defn extension-doc-summary
+  "Lightweight doc descriptor (no `:content`):
+   `{:name :created-at :abstract :links :reflinks}`. Returns `nil`
+   when the doc is unknown. Use this for catalog listings; pull the
+   full body with `extension-doc-content` only when needed."
+  [id doc-name]
+  (when-let [descriptor (and id doc-name
+                          (get-in @extension-docs-registry [id :docs doc-name]))]
+    (-> descriptor
+      (dissoc :content)
+      (assoc :name doc-name))))
+
+(defn extension-docs
+  "With one arg, return a vector of doc summaries
+   `[{:name :created-at :abstract :links :reflinks} ...]` for every
+   doc declared by `id`. With no arg, return the full registry as
+   `{<id-sym> [<summary> ...]}`. Sorted by doc name within each id so
+   the catalog is deterministic."
+  ([]
+   (into {}
+     (map (fn [[id {docs :docs}]]
+            [id (mapv #(extension-doc-summary id %) (sort (keys docs)))]))
+     @extension-docs-registry))
+  ([id]
+   (let [docs (get-in @extension-docs-registry [id :docs])]
+     (mapv #(extension-doc-summary id %) (sort (keys docs))))))
+
+(defn extension-doc-names
+  "Plain sorted vector of doc names declared by `id`."
+  [id]
+  (vec (sort (keys (get-in @extension-docs-registry [id :docs])))))
+
+(defn- merge-manifest-entry!
+  "Merge one `[id {:nses [...] :docs {name <descriptor>}}]` into the
+   registry. `:nses` are deduped (existing order preserved); `:docs`
+   is a map merge with later entries winning per name. Reflinks are
+   recomputed by `recompute-reflinks!` after every merge so a later
+   jar's links can target an earlier jar's docs."
+  [id entry]
+  (swap! extension-docs-registry
+    update id
+    (fn [existing]
+      (let [merged-nses (vec (distinct (concat (:nses existing) (:nses entry))))
+            merged-docs (merge (or (:docs existing) {}) (or (:docs entry) {}))]
+        {:nses merged-nses :docs merged-docs}))))
+
+(defn- link-target
+  "Return `[<target-id> <target-doc>]` for a cross-ext or same-ext
+   doc link, or `nil` for url/file/external links. `from-id` is the
+   id of the extension that authored the link \u2014 used to resolve
+   same-ext refs that omit `:to-id`."
+  [from-id link]
+  (cond
+    (and (symbol? (:to-id link)) (string? (:to-doc link)))
+    [(:to-id link) (:to-doc link)]
+
+    (and (nil? (:to-id link)) (string? (:to-doc link)))
+    [from-id (:to-doc link)]
+
+    :else nil))
+
+(defn- recompute-reflinks!
+  "Walk every doc's `:links` across the entire registry and rebuild
+   the `:reflinks` vector on each target. Idempotent: produces the
+   same registry shape regardless of merge order."
+  []
+  (swap! extension-docs-registry
+    (fn [registry]
+      (let [;; Strip any prior :reflinks so this pass starts clean.
+            cleared (reduce-kv
+                      (fn [acc id entry]
+                        (assoc acc id
+                          (update entry :docs
+                            (fn [docs]
+                              (reduce-kv (fn [d name descriptor]
+                                           (assoc d name (assoc descriptor :reflinks [])))
+                                {} docs)))))
+                      {} registry)
+            ;; Walk every authored link; route a {:from-id :from-doc
+            ;; :context} reflink onto the target descriptor.
+            with-reflinks
+            (reduce-kv
+              (fn [acc from-id entry]
+                (reduce-kv
+                  (fn [acc2 from-doc descriptor]
+                    (reduce
+                      (fn [acc3 link]
+                        (if-let [[to-id to-doc] (link-target from-id link)]
+                          (if (get-in acc3 [to-id :docs to-doc])
+                            (update-in acc3 [to-id :docs to-doc :reflinks]
+                              (fnil conj [])
+                              (cond-> {:from-id  from-id
+                                       :from-doc from-doc}
+                                (string? (:context link))
+                                (assoc :context (:context link))))
+                            acc3)
+                          acc3))
+                      acc2 (:links descriptor)))
+                  acc (:docs entry)))
+              cleared cleared)]
+        with-reflinks))))
+
+(defn registered-extensions-summary
+  "Pure data view of the docs registry: returns
+   `{<id> {:nses [...] :docs {<name> <summary>}}}` for every loaded
+   extension. Useful for snapshot tests and ad-hoc inspection."
+  []
+  (reduce-kv
+    (fn [acc id entry]
+      (assoc acc id
+        {:nses (:nses entry)
+         :docs (reduce-kv (fn [d name _] (assoc d name (extension-doc-summary id name)))
+                 {} (:docs entry))}))
+    {} @extension-docs-registry))
 
 (defn discover-extensions!
-  "Scan the classpath for every `META-INF/vis.edn` resource and
-   `require` each namespace symbol listed inside. The loaded
-   namespaces self-register into whichever subsystem registry they
-   target (extension symbols, channels, commands, providers,
-   persistance entries, ...). `Extension` here is the umbrella term:
-   every extension surface in vis -- channels, commands, providers,
-   backends -- is treated as a kind of extension and discovered
-   through this one fn.
+  "Scan the classpath for every `META-INF/vis-extension/vis.edn`
+   resource. Each resource is an EDN map keyed by extension id, where
+   each value declares `:nses` (vector of namespaces to `require`)
+   and `:docs` (map of doc name to inline doc body). Discovery merges
+   every entry into the docs registry, then `require`s each declared
+   namespace exactly once across all resources.
+
+   The loaded namespaces self-register into whichever subsystem
+   registry they target (extension symbols, channels, commands,
+   providers, persistance entries, ...). `Extension` here is the
+   umbrella term: every extension surface in vis -- channels,
+   commands, providers, backends -- is treated as a kind of extension
+   and discovered through this one fn.
 
    Returns the count of namespaces this call actually loaded (deduped
    across resource files within a single invocation). Idempotent
@@ -1227,30 +1509,43 @@
         seen   (atom #{})]
     (doseq [^java.net.URL url urls]
       (try
-        (let [content (slurp url)
-              ns-syms (edn/read-string content)]
-          (when (sequential? ns-syms)
-            (doseq [ns-sym ns-syms]
-              (when (and (symbol? ns-sym) (not (@seen ns-sym)))
+        (let [content   (slurp url)
+              parsed    (edn/read-string {:readers {} :default (fn [_ form] form)} content)
+              normalized (normalize-vis-edn parsed)]
+          (doseq [[id entry] normalized]
+            (merge-manifest-entry! id entry)
+            (doseq [ns-sym (:nses entry)]
+              (when (not (@seen ns-sym))
                 (swap! seen conj ns-sym)
                 (try
                   (require ns-sym)
                   (swap! loaded inc)
                   (tel/log! {:level :info :id ::discover-extension
-                             :data  {:extension-ns ns-sym :source (str url)}
+                             :data  {:extension-id id
+                                     :extension-ns ns-sym
+                                     :source (str url)}
                              :msg   (str "Auto-discovered extension ns '"
-                                      ns-sym "' from " url)})
+                                      ns-sym "' (id " id ") from " url)})
                   (catch Throwable t
                     (tel/log! {:level :error :id ::discover-extension-failed
-                               :data  {:extension-ns ns-sym :source (str url)
+                               :data  {:extension-id id
+                                       :extension-ns ns-sym
+                                       :source (str url)
                                        :class (.getName (class t))
                                        :message (ex-message t)}
                                :msg   (str "Failed to load extension ns '"
-                                        ns-sym "': " (ex-message t))})))))))
+                                        ns-sym "': " (ex-message t))}))))))
+          (when (empty? normalized)
+            (tel/log! {:level :warn :id ::discover-extension-empty
+                       :data {:source (str url)}
+                       :msg  (str url " parsed but declared no extensions")})))
         (catch Throwable t
           (tel/log! {:level :error :id ::discover-extension-parse-failed
                      :data  {:source (str url) :message (ex-message t)}
                      :msg   (str "Failed to parse " url ": " (ex-message t))}))))
+    ;; All authored links are now in the registry; invert them into
+    ;; reflinks so each target descriptor carries its inbound graph.
+    (recompute-reflinks!)
     @loaded))
 
 ;; =============================================================================

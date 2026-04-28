@@ -83,11 +83,11 @@ jobs:
           - packages/vis-extension
           - packages/vis-logging
           - packages/vis-persistance
-          - packages/vis-persistance-sqlite
+          - extensions/vis-persistance-sqlite
           - packages/vis-provider
-          - packages/vis-provider-github-copilot
-          - packages/vis-telegram
-          - packages/vis-tui
+          - extensions/vis-provider-github-copilot
+          - extensions/vis-telegram
+          - extensions/vis-tui
           - extensions/editing
     steps:
       - uses: actions/checkout@v6

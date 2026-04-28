@@ -145,7 +145,7 @@ The output table includes the conversation ID; pass it to
 ## Extensions
 
 Extensions add tools to the SCI sandbox. Drop an extension jar on the
-classpath — it self-registers via the unified `META-INF/vis.edn`
+classpath — it self-registers via the unified `META-INF/vis-extension/vis.edn`
 at startup.
 
 ```bash

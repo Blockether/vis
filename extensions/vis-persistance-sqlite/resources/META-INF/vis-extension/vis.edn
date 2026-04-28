@@ -1,0 +1,4 @@
+;; SQLite persistence backend. Loading the ns calls
+;; (persistance/register-backend! ...). Non-LLM-facing.
+{sqlite
+ {:nses [com.blockether.vis.persistance.sqlite.core]}}

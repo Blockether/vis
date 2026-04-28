@@ -466,7 +466,7 @@
 ;;        :cmd/doc    "Show git working tree status."
 ;;        :cmd/run-fn (fn [_parsed _residual] (println (status)))})
 ;;
-;; Auto-discovery: ship the unified `META-INF/vis.edn` resource in the
+;; Auto-discovery: ship the unified `META-INF/vis-extension/vis.edn` resource in the
 ;; jar's resources/ listing every namespace that calls
 ;; `register-global!`:
 ;;
@@ -537,7 +537,7 @@
 ;;
 ;; The single source of truth is
 ;; `com.blockether.vis.extension/discover-extensions!`, which scans
-;; every `META-INF/vis.edn` resource on the classpath and requires
+;; every `META-INF/vis-extension/vis.edn` resource on the classpath and requires
 ;; the namespaces listed inside. Each loaded namespace self-registers
 ;; into whichever subsystem registry it targets -- including this
 ;; commandline registry, via `register-global!` above.

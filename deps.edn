@@ -14,13 +14,13 @@
 
  :deps
  {com.blockether/vis-core                    {:local/root "packages/vis-core"}
-  com.blockether/vis-persistance-sqlite      {:local/root "packages/vis-persistance-sqlite"}
-  com.blockether/vis-provider-github-copilot {:local/root "packages/vis-provider-github-copilot"}
-  ;; Optional channels — listed here so the dev/run binary has every
-  ;; front-end available. Each is published as its own jar; downstream
-  ;; consumers can opt out simply by omitting the dep.
-  com.blockether/vis-telegram          {:local/root "packages/vis-telegram"}
-  com.blockether/vis-tui               {:local/root "packages/vis-tui"}}
+  ;; Classpath plug-ins — every package below self-registers via
+  ;; `META-INF/vis-extension/vis.edn` and lives under `extensions/`.
+  ;; The host (`vis-core`) does not require any of them by namespace.
+  com.blockether/vis-persistance-sqlite      {:local/root "extensions/vis-persistance-sqlite"}
+  com.blockether/vis-provider-github-copilot {:local/root "extensions/vis-provider-github-copilot"}
+  com.blockether/vis-telegram                {:local/root "extensions/vis-telegram"}
+  com.blockether/vis-tui                     {:local/root "extensions/vis-tui"}}
 
  :aliases
  {:dev   {:extra-paths []
@@ -67,8 +67,8 @@
   ;; once they get their first test.
   :test  {:extra-paths ["test"
                         "packages/vis-core/test"
-                        "packages/vis-persistance-sqlite/test"
-                        "packages/vis-tui/test"
+                        "extensions/vis-persistance-sqlite/test"
+                        "extensions/vis-tui/test"
                         "extensions/vis-common-operations/test"
                         "extensions/vis-meta/test"]
           :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
@@ -77,8 +77,8 @@
           :main-opts  ["-m" "lazytest.main"
                        "--dir" "test"
                        "--dir" "packages/vis-core/test"
-                       "--dir" "packages/vis-persistance-sqlite/test"
-                       "--dir" "packages/vis-tui/test"
+                       "--dir" "extensions/vis-persistance-sqlite/test"
+                       "--dir" "extensions/vis-tui/test"
                        "--dir" "extensions/vis-common-operations/test"
                        "--dir" "extensions/vis-meta/test"]}
 

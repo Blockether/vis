@@ -311,6 +311,124 @@
         (expect (every? :goal failures))))))
 
 ;; -----------------------------------------------------------------------------
+;; (meta/extensions), (meta/extension-docs ...), (meta/extension-doc ...),
+;; and (meta/extension-readme ...) — catalog + abstracts + bodies.
+;; -----------------------------------------------------------------------------
+
+(defdescribe meta-extensions-catalog-test
+  (it "includes the meta extension itself with its declared docs and abstracts"
+    (let [extensions ((private-fn "meta-extensions") {})
+          this       (some #(when (= 'com.blockether.vis.ext.meta.core (:namespace %)) %)
+                       extensions)]
+      (expect (some? this))
+      (expect (= 'meta (:alias this)))
+      (expect (vector? (:symbols this)))
+      (expect (contains? (set (:symbols this)) 'extensions))
+      (expect (contains? (set (:symbols this)) 'extension-docs))
+      (expect (contains? (set (:symbols this)) 'extension-doc))
+      (expect (contains? (set (:symbols this)) 'extension-readme))
+      ;; :docs is a vector of summary maps. Each summary carries the
+      ;; structured descriptor fields except :content; :content lives
+      ;; on the full descriptor returned by (meta/extension-doc ...).
+      (let [docs (:docs this)
+            readme (some #(when (= "README.md" (:name %)) %) docs)]
+        (expect (vector? docs))
+        (expect (some? readme))
+        (expect (string? (:abstract readme)))
+        (expect (pos? (count (:abstract readme))))
+        (expect (vector? (:links readme)))
+        (expect (vector? (:reflinks readme)))
+        ;; Summaries omit :content -- catalog stays small.
+        (expect (not (contains? readme :content))))))
+
+  (it "every entry carries :namespace, :symbols, and :docs"
+    (let [extensions ((private-fn "meta-extensions") {})]
+      (expect (every? :namespace extensions))
+      (expect (every? #(contains? % :symbols) extensions))
+      (expect (every? #(contains? % :docs) extensions)))))
+
+(defdescribe meta-extension-docs-test
+  (it "single-arg form returns summaries for a registered extension"
+    (let [docs ((private-fn "meta-extension-docs") {} 'meta)]
+      (expect (vector? docs))
+      (expect (= #{"README.md"} (set (map :name docs))))
+      (expect (every? #(string? (:abstract %)) docs))
+      (expect (every? #(vector? (:links %)) docs))
+      (expect (every? #(vector? (:reflinks %)) docs))))
+
+  (it "summaries do NOT include :content (catalog stays small)"
+    (let [docs ((private-fn "meta-extension-docs") {} 'meta)]
+      (expect (every? #(not (contains? % :content)) docs))))
+
+  (it "reflinks reflect cross-extension authored links"
+    ;; vis-meta links to vis (companion) and vis-common-operations
+    ;; links back to meta -- so each gets one inbound reflink.
+    (let [meta-readme (first ((private-fn "meta-extension-docs") {} 'meta))
+          vis-readme  (first ((private-fn "meta-extension-docs") {} 'vis))]
+      (expect (some #(= 'vis  (:from-id %)) (:reflinks meta-readme)))
+      (expect (some #(= 'meta (:from-id %)) (:reflinks vis-readme)))))
+
+  (it "no-arg form returns the full registry keyed by id symbol"
+    (let [registry ((private-fn "meta-extension-docs") {})]
+      (expect (map? registry))
+      (expect (contains? registry 'meta))))
+
+  (it "unknown reference returns nil"
+    (expect (nil? ((private-fn "meta-extension-docs") {} 'no.such.extension)))))
+
+(defdescribe meta-extension-doc-test
+  (it "returns the full descriptor map for a declared doc"
+    (let [doc ((private-fn "meta-extension-doc") {} 'meta "README.md")]
+      (expect (map? doc))
+      (expect (= "README.md" (:name doc)))
+      (expect (string? (:abstract doc)))
+      (expect (string? (:content doc)))
+      (expect (clojure.string/includes? (:content doc) "# Meta extension"))
+      (expect (vector? (:links doc)))
+      (expect (pos? (count (:links doc))))
+      (expect (vector? (:reflinks doc)))))
+
+  (it "links carry author-declared targets and contexts"
+    (let [doc   ((private-fn "meta-extension-doc") {} 'meta "README.md")
+          links (:links doc)]
+      ;; meta links to vis README (cross-ext doc), the RLM paper
+      ;; (URL), and the loader source file (file).
+      (expect (some #(= ['vis "README.md"] [(:to-id %) (:to-doc %)]) links))
+      (expect (some #(some? (:url %)) links))
+      (expect (some #(some? (:file %)) links))))
+
+  (it "returns nil for an unknown doc name"
+    (expect (nil? ((private-fn "meta-extension-doc") {} 'meta "NOPE.md"))))
+
+  (it "returns nil for an unknown extension reference"
+    (expect (nil? ((private-fn "meta-extension-doc") {} 'no.such.ext "README.md")))))
+
+(defdescribe meta-extension-readme-test
+  (it "resolves by id symbol"
+    (let [text ((private-fn "meta-extension-readme") {} 'meta)]
+      (expect (string? text))
+      (expect (clojure.string/includes? text "meta/extensions"))))
+
+  (it "resolves by id keyword"
+    (let [text ((private-fn "meta-extension-readme") {} :meta)]
+      (expect (string? text))
+      (expect (clojure.string/includes? text "meta/extension-readme"))))
+
+  (it "resolves by full extension namespace"
+    (let [text ((private-fn "meta-extension-readme") {} 'com.blockether.vis.ext.meta.core)]
+      (expect (string? text))
+      (expect (clojure.string/includes? text "# Meta extension"))))
+
+  (it "resolves by alias-ns symbol"
+    (let [text ((private-fn "meta-extension-readme") {} 'vis.ext.meta)]
+      (expect (string? text))))
+
+  (it "returns nil for an unknown extension reference"
+    (expect (nil? ((private-fn "meta-extension-readme") {} 'no.such.extension)))
+    (expect (nil? ((private-fn "meta-extension-readme") {} :nope)))
+    (expect (nil? ((private-fn "meta-extension-readme") {} nil)))))
+
+;; -----------------------------------------------------------------------------
 ;; Failure modes — every fn must return nil/[], NEVER throw
 ;; -----------------------------------------------------------------------------
 
@@ -324,7 +442,12 @@
         (expect (empty-result? ((private-fn "meta-var-history") environment 'foo)))
         (expect (empty-result? ((private-fn "meta-find-attempts") environment "grep")))
         (expect (empty-result? ((private-fn "meta-failures") environment)))
-        (expect (= 0 (:failure-count ((private-fn "meta-diagnose") environment))))))
+        (expect (= 0 (:failure-count ((private-fn "meta-diagnose") environment))))
+        (expect (vector? ((private-fn "meta-extensions") environment)))
+        (expect (map? ((private-fn "meta-extension-docs") environment)))
+        (expect (nil? ((private-fn "meta-extension-docs") environment 'no.such.ext)))
+        (expect (nil? ((private-fn "meta-extension-doc") environment 'no.such.ext "README.md")))
+        (expect (nil? ((private-fn "meta-extension-readme") environment 'no.such.ext)))))
 
     (it "returns nil-or-empty when conversation-id is missing"
       (let [s (h/store)

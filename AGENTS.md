@@ -120,6 +120,158 @@ This applies to EVERY spec, not just iteration spec:
 code_block, next_turn, all of them. If svar loaded it, the shape is
 correct by construction.
 
+### Repo-root `README.md` is a stub: rationale + book link only
+
+The repo-root `README.md` is intentionally tiny. It carries:
+
+- one short rationale paragraph (what Vis is, why RLM/SCI in one breath),
+- a pointer to the book under `docs/src/` (mdBook),
+- nothing else.
+
+It does NOT carry: architecture diagrams, mermaid sequence charts,
+getting-started instructions, install/auth steps, extension docs,
+schema tables, channel adapter notes, FAQ, comparison tables, or
+long-form prose. Every one of those belongs in the book
+(`docs/src/...`) and is reachable from `docs/src/SUMMARY.md`.
+
+Why: the book is the single source of truth (see the rule below).
+Duplicating it into `README.md` produces two versions that drift, and
+the `README.md` always loses. We have already paid for that mistake
+once — do not repeat it. If you find yourself adding a new section to
+`README.md`, that section belongs in the book; add it under
+`docs/src/...`, link it from `SUMMARY.md`, and at most add one bullet
+in the README's documentation list pointing at it.
+
+Any PR that grows `README.md` past a screenful (rationale paragraph +
+short “Documentation” list pointing into `docs/src/`) must be rejected.
+
+### Every extension declares itself in vis.edn with an inline README
+
+Every extension under `extensions/<name>/` MUST ship exactly one
+classpath manifest at:
+
+```
+resources/META-INF/vis-extension/vis.edn
+```
+
+The manifest is an EDN map keyed by extension **id** (a short symbol;
+same token the LLM uses as the SCI sandbox alias — e.g. `meta`,
+`vis`, `git`):
+
+```edn
+{meta
+ {:nses [com.blockether.vis.ext.meta.core]
+  :docs {"README.md"
+         {:created-at #inst "2026-04-28"
+          :abstract   "One-paragraph LLM-facing summary..."
+          :content    "# Meta extension\n..."
+          :links      [{:to-id vis :to-doc "README.md"
+                        :context "Companion filesystem extension"}
+                       {:url "https://arxiv.org/abs/2512.24601"
+                        :context "RLM paper"}
+                       {:file "packages/vis-core/src/com/blockether/vis/extension.clj"
+                        :context "Loader implementation"}]}}}}
+```
+
+Slots:
+
+- `:nses` — vector of namespaces the loader `require`s. Each loaded
+  ns self-registers via `register-global!` (or one of the sibling
+  registry calls). Plural form is intentional — one id can span
+  multiple namespaces (e.g. an extension that registers symbols +
+  channel + provider in three nses).
+- `:docs` — map of `{<doc-name> <descriptor>}` where each
+  `<descriptor>` is the structured map below. Doc names are
+  conventional Markdown filenames (`README.md`, `EXAMPLES.md`,
+  `MIGRATION.md`, ...).
+
+Doc descriptor fields:
+
+- `:created-at` (mandatory) — `#inst` literal, when the doc was
+  first authored.
+- `:abstract` (mandatory) — one-paragraph LLM-facing summary as a
+  plain Clojure string. NO YAML frontmatter inside `:content`; the
+  abstract is its own EDN field, not parsed out of Markdown.
+- `:content` (mandatory) — full Markdown body. Pure Markdown only,
+  no leading frontmatter block.
+- `:links` (optional) — vector of author-declared outgoing
+  references. Each link is one of:
+  - cross-extension doc:
+    `{:to-id <id> :to-doc <name> :context "..."}`
+  - same-extension doc (omit `:to-id`):
+    `{:to-doc <name> :context "..."}`
+  - external URL: `{:url "https://..." :context "..."}`
+  - repo file: `{:file "path/to/file.clj" :context "..."}`
+- `:reflinks` — **derived**, never authored. The loader inverts
+  every cross-ext / same-ext link in the registry into a
+  `{:from-id :from-doc :context}` entry on the target descriptor.
+  Authors who write a `:reflinks` field by hand are violating the
+  contract; the loader will overwrite it.
+
+Mandatory contents:
+
+- Every extension's `:docs` map MUST include a `"README.md"` entry.
+  No README → the extension is not shippable. The loader logs a
+  `:warn` and skips any doc descriptor missing `:abstract` or
+  `:content`.
+- Use real `#inst` literals for `:created-at`; the registry
+  preserves them as `java.util.Date` so the agent can sort by
+  freshness.
+
+Rules:
+
+- `vis.edn` is the **single source of truth** for that extension
+  (purpose, surface, when to use it, when not to). End users read
+  the docs via the book; the LLM reads them via
+  `(meta/extension-doc '<id> "<doc-name>")` and
+  `(meta/extension-readme '<id>)` from inside `:code`.
+- Do NOT add a second copy of any doc anywhere in the extension tree
+  (no `extensions/<name>/README.md`, no
+  `docs/src/extensions/<id>.md` containing inlined content,
+  no `extensions/<name>/src/.../README.md`). `vis.edn` is the
+  canonical location.
+- `:content` is Markdown with sentence-case headings and real UTF-8
+  characters — same rules as the book (see the docs-style rule
+  above). When the extension is end-user-facing, surface it from
+  `docs/src/SUMMARY.md` with a short manual page that points
+  readers at `(meta/extension-readme '<id>)` (the book is allowed to
+  briefly summarize, but MUST NOT inline the full body).
+- The id (top-level key in `vis.edn`) MUST equal the registered
+  extension's `:ext/ns-alias :alias`. The loader does not enforce
+  this strictly, but every reviewer should reject mismatches — if
+  the LLM types `(meta/...)`, the on-disk id is `meta`.
+- Multiple jars MAY contribute under the same id; their `:nses` are
+  deduped and their `:docs` are merged (last write wins per name).
+  `:reflinks` are recomputed across the entire registry after every
+  merge so a later jar's links can target an earlier jar's docs.
+- Editing tip: `:content` is a multi-line EDN string. The supported
+  authoring loop is to keep the Markdown body in a sibling `.md`
+  file in your source tree and re-inline it into `vis.edn` with a
+  small `pprint`-based generator script (see
+  `dev/inline-doc.clj`-style helpers, or write your own — the
+  contract is just "produce a valid EDN map"). Do NOT keep two
+  on-disk copies of the same content under version control.
+- The vis-meta extension exposes the LLM-facing surface for this:
+  `(meta/extensions)` lists every loaded extension with its docs
+  catalog; `(meta/extension-docs ext-ref)` returns the
+  `[{:name :created-at :abstract :links :reflinks} …]` summaries
+  for one extension; `(meta/extension-doc ext-ref name)` returns the
+  full descriptor including `:content`; `(meta/extension-readme
+  ext-ref)` is the README `:content` convenience.
+
+Why: agents that need to verify what an extension actually does —
+before reaching for one of its tools — must be able to read the
+extension's own description as data, not guess from symbol names.
+Inlining the docs in `vis.edn` keeps it a single classpath read at
+boot, eliminates the path-vs-call ambiguity an external doc tree
+introduced (`vis/<id>` reads as a sandbox call), and makes the
+abstract index trivially queryable.
+
+Any PR that adds a new extension without `vis.edn`, omits the
+README, omits `:abstract` or `:content` on any declared doc, hand-
+authors a `:reflinks` field, or introduces a duplicate doc somewhere
+outside `vis.edn` must be rejected.
+
 ### Always update `docs/` when touching architecture or public API
 
 `docs/src/` (mdBook) at the repo root is the single source of truth for
@@ -323,39 +475,53 @@ git commit -m "deps: bump svar to 0.3.12"
 
 ### Project Structure
 
-The codebase is a polylith-style monorepo under `packages/`. Each
-package has its own `deps.edn` and is publishable independently; the
-root `deps.edn` aggregates them via `:local/root` so a single
-`clojure -M:run` from the repo root has the whole product on the
+The codebase is a polylith-style monorepo. Source lives under two
+sibling roots, both treated identically by the classpath-discovery
+loader:
+
+- `packages/` — the host runtime (`vis-core`) and dev/research code
+  (`vis-benchmark`). Nothing under `packages/` is a classpath plug-in;
+  `vis-core` is the discovery loader itself.
+- `extensions/` — every classpath plug-in. Channels (`vis-tui`,
+  `vis-telegram`), providers (`vis-provider-github-copilot`),
+  persistence backends (`vis-persistance-sqlite`), and SCI sandbox
+  surface contributions (`vis-meta`, `vis-common-operations`) all
+  live here. Each ships a `META-INF/vis-extension/vis.edn` and
+  self-registers at namespace load. `vis-core` does not require any
+  of them by namespace.
+
+Each package has its own `deps.edn` and is publishable independently;
+the root `deps.edn` aggregates them via `:local/root` so a single
+`clojure -M:vis` from the repo root has the whole product on the
 classpath.
 
 **Canonical package list:** `docs/src/architecture/packages.md` —
-the single source of truth for what each package does, the dependency
-direction, and the auto-discovery resources. Update that page when
-adding/removing/renaming a package; do not maintain a divergent list
-here.
+the single source of truth for what each package does, where it
+lives, the dependency direction, and the auto-discovery resources.
+Update that page when adding/removing/renaming a package; do not
+maintain a divergent list here.
 
 Quick mental map (use `packages.md` for details):
 
-- `vis-core` — only package consumers must depend on directly
-- `vis-extension` + `vis-commandline` — slim extension contracts (vis-extension also owns the unified classpath loader)
-- `vis-persistance` (+ `vis-persistance-sqlite`) — storage facade + backend
-- `vis-logging`, `vis-provider` — optional cross-cutting utilities
-- `vis-tui`, `vis-telegram` — channel implementations
-- `vis-benchmark` — benchmark harness (`:bench` alias only)
+- `packages/vis-core` — host runtime and the only package consumers must depend on directly
+- `packages/vis-benchmark` — benchmark harness (`:bench` alias only; not a classpath plug-in)
+- `extensions/vis-persistance-sqlite` — SQLite persistence backend
+- `extensions/vis-provider-github-copilot` — GitHub Copilot OAuth provider
+- `extensions/vis-tui`, `extensions/vis-telegram` — channel implementations
+- `extensions/vis-meta`, `extensions/vis-common-operations` — SCI sandbox extensions
 
-ONE classpath-scan auto-discovery resource: `META-INF/vis.edn`. EDN
+ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN
 vector of namespace symbols loaded at startup by the single loader
 `com.blockether.vis.extension/discover-extensions!`. Each namespace
 self-registers into whichever subsystem registry it targets
 (extension symbols, channels, CLI commands, providers, persistence
 backends) via the matching `register-global!` / `register-backend!`
-call. Drop a jar that ships a `META-INF/vis.edn` on the classpath
+call. Drop a jar that ships a `META-INF/vis-extension/vis.edn` on the classpath
 and `vis-core` picks it up at the next process boot — no edits
 required. There are NO per-subsystem resource files anymore; the
 old `META-INF/vis/{extensions,channels,commandline,providers,
 persistance-backends}.edn` paths were collapsed into the unified
-`META-INF/vis.edn` and removed without backwards-compat aliases.
+`META-INF/vis-extension/vis.edn` and removed without backwards-compat aliases.
 
 Docs build: `cd docs && mdbook-mermaid install . && mdbook serve --open`
 (mdBook source lives at the repo root under `docs/`, not inside any
@@ -479,14 +645,14 @@ above.
 
 ### Channel adapters (one package each)
 
-- `packages/vis-tui/src/com/blockether/vis/channels/tui/*` — Lanterna TUI
-- `packages/vis-telegram/src/com/blockether/vis/channels/telegram/*` — Telegram bot
+- `extensions/vis-tui/src/com/blockether/vis/channels/tui/*` — Lanterna TUI
+- `extensions/vis-telegram/src/com/blockether/vis/channels/telegram/*` — Telegram bot
 - `packages/vis-core/src/com/blockether/vis/channels/cli.clj` — CLI dispatcher (registry-driven)
 - `packages/vis-core/src/com/blockether/vis/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
 
 Third-party channels register themselves at namespace load via
 `com.blockether.vis.channel/register-global!` and ship a
-unified `META-INF/vis.edn` resource. The CLI dispatcher discovers
+unified `META-INF/vis-extension/vis.edn` resource. The CLI dispatcher discovers
 them; nothing in `vis-core` references a concrete channel namespace.
 See `docs/src/architecture/channels.md`.
 
@@ -517,17 +683,17 @@ All under `packages/vis-core/src/com/blockether/vis/`:
 
 - `packages/vis-persistance/src/com/blockether/vis/persistance/{core,base,spec}.clj` —
   facade API (`create-rlm-conn`, `db-list-conversations`, etc.) + spec.
-  Backends self-register via the unified `META-INF/vis.edn` resource.
-- `packages/vis-persistance-sqlite/src/com/blockether/vis/persistance/sqlite/core.clj` —
+  Backends self-register via the unified `META-INF/vis-extension/vis.edn` resource.
+- `extensions/vis-persistance-sqlite/src/com/blockether/vis/persistance/sqlite/core.clj` —
   SQLite + Flyway backend. Schema: `resources/db/sqlite/migration/V1__schema.sql`.
 - `packages/vis-extension/src/com/blockether/vis/extension.clj` —
   extension spec, symbol/value builders, hook protocol, global
-  registry, unified classpath discovery (`META-INF/vis.edn`) for
+  registry, unified classpath discovery (`META-INF/vis-extension/vis.edn`) for
   every extension surface (ext symbols, channels, CLI commands,
   providers, backends).
 - `packages/vis-extension/src/com/blockether/vis/channel.clj` —
   channel descriptor spec + global registry + classpath discovery
-  (registered through the unified `META-INF/vis.edn`).
+  (registered through the unified `META-INF/vis-extension/vis.edn`).
 
 Use `find`/`grep` to explore the tree — no static directory doc exists.
 
@@ -728,4 +894,4 @@ them with a bounded, structured, sticky projection.
 - **TUI (`vis-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes the env, the conversation stays in the `:vis` channel so other inspectors can see it.
 - **Telegram (`vis-telegram`)** — registered channel id `:telegram`. `conversations/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conversations/send!` with the Telegram persona system prompt.
 - **CLI `agent/run!`** — one-shot. Creates a fresh conversation in the `:cli` channel and runs a single query. Conversations persist — past runs are browsable via `(conversations/by-channel :cli)`.
-- **Third-party channels** — ship a jar with a `META-INF/vis.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-core`.
+- **Third-party channels** — ship a jar with a `META-INF/vis-extension/vis.edn` resource, a namespace that calls `(channel/register-global! …)` at load, and a `:channel/main-fn` that consumes the CLI tail. The dispatcher picks them up automatically; no edits to `vis-core`.

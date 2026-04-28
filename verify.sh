@@ -156,12 +156,18 @@ _lint() {
   return 0
 }
 
-# --- GraalVM safety: walks every production package src tree, loads each .clj
-#     with *warn-on-reflection* + *unchecked-math* :warn-on-boxed, counts
-#     warnings emitted from project source paths.
+# --- GraalVM safety: walks every production package + extension src tree,
+#     loads each .clj with *warn-on-reflection* + *unchecked-math*
+#     :warn-on-boxed, counts warnings emitted from project source paths.
 #
 # vis-benchmark is excluded — it's a dev/research package, not on the default
 # classpath, and not shipped as a runtime jar.
+#
+# Both `packages/` and `extensions/` are walked: the loader treats them
+# identically (every classpath plug-in self-registers via
+# `META-INF/vis-extension/vis.edn`), so the GraalVM gate must too. The
+# only thing that distinguishes them on disk is which directory holds
+# the host (`packages/vis-core`) vs. the discoverable plug-ins.
 #
 # By default this is a RATCHET: fails only if the count grows beyond the
 # baseline. Pass --strict to demand zero. ---
@@ -174,15 +180,25 @@ _graal_safety() {
   err=$(mktemp)
 
   # Run the compiler walk. We use plain `clojure -M -e` (no :vis alias) to
-  # keep :main-opts out of the way; the root deps.edn aggregates every
-  # production package via :local/root, so all source is on the classpath.
-  clojure -M -e '
+  # keep :main-opts out of the way. The root deps.edn aggregates every
+  # production-classpath package via :local/root, BUT extensions whose
+  # deps live only inside aliases (`vis-meta`, `vis-common-operations`)
+  # need to be merged in via `-Sdeps` so the walker can `load-file`
+  # files that `:require` them.
+  clojure \
+    -Sdeps '{:deps {com.blockether/vis-meta               {:local/root "extensions/vis-meta"}
+                    com.blockether/vis-common-operations  {:local/root "extensions/vis-common-operations"}}}' \
+    -M -e '
     (set! *warn-on-reflection* true)
     (set! *unchecked-math* :warn-on-boxed)
     (let [skip   #{"vis-benchmark"}
-          pkg-srcs (->> (.listFiles (clojure.java.io/file "packages"))
+          roots  ["packages" "extensions"]
+          pkg-srcs (->> roots
+                     (mapcat (fn [root]
+                               (let [^java.io.File f (clojure.java.io/file root)]
+                                 (when (.isDirectory f) (.listFiles f)))))
                      (filter (fn [^java.io.File d]
-                               (and (.isDirectory d) (not (skip (.getName d))))))
+                               (and (some? d) (.isDirectory d) (not (skip (.getName d))))))
                      (map (fn [^java.io.File d] (clojure.java.io/file d "src")))
                      (filter (fn [^java.io.File f] (.exists f))))
           clj-files (mapcat (fn [^java.io.File r]
@@ -204,8 +220,11 @@ _graal_safety() {
   # whose paths are relative inside the jar, e.g. "clojure+/util.clj").
   local filtered
   filtered=$(grep -E "Reflection warning|Boxed math warning" "$err" \
-    | grep -E "/Users/[^ ]+/packages/[^/]+/src/" \
+    | grep -E "/(packages|extensions)/[^/]+/src/" \
     | sort -u)
+  # Load errors are emitted with a leading `LOAD-ERROR ` token; preserve
+  # them in $err for the dump above. Track them too so we can flag them.
+  # (Already done via `grep -c "^LOAD-ERROR" $err` later in this fn.)
   local refl_count boxed_count load_errs total
   refl_count=$( echo "$filtered" | grep -c "Reflection warning" || true)
   boxed_count=$(echo "$filtered" | grep -c "Boxed math warning" || true)
@@ -222,12 +241,12 @@ _graal_safety() {
   if [ -n "$filtered" ]; then
     echo "Per-package breakdown (reflection):"
     echo "$filtered" | grep "Reflection warning" \
-      | sed -E 's|.*/packages/([^/]+)/src.*|\1|' | sort | uniq -c | sort -rn \
+      | sed -E 's#.*/(packages|extensions)/([^/]+)/src.*#\2#' | sort | uniq -c | sort -rn \
       | sed 's/^/  /'
     echo ""
     echo "Per-package breakdown (boxed-math):"
     echo "$filtered" | grep "Boxed math warning" \
-      | sed -E 's|.*/packages/([^/]+)/src.*|\1|' | sort | uniq -c | sort -rn \
+      | sed -E 's#.*/(packages|extensions)/([^/]+)/src.*#\2#' | sort | uniq -c | sort -rn \
       | sed 's/^/  /'
     echo ""
     echo "Full filtered output: $err"
