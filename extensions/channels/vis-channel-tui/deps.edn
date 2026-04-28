@@ -1,0 +1,33 @@
+{:paths ["src" "resources"]
+ ;; TUI channel — Lanterna-based chat UI. Optional channel package.
+ ;;
+ ;; Depends on vis-loop for the runtime (conversations, env, query, db).
+ ;; vis-loop never requires this namespace directly — the CLI dispatcher
+ ;; resolves `com.blockether.vis.ext.channel-tui.screen/run-chat!` lazily
+ ;; via `requiring-resolve`, so omitting this jar still leaves the rest
+ ;; of vis usable.
+ :deps
+ {org.clojure/clojure              {:mvn/version "1.12.4"}
+  com.blockether/vis-loop          {:local/root "../../../packages/vis-loop"}
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with three patches on top:
+  ;;   1. PR #625 cherry-pick — emoji rendering in
+  ;;      StreamBasedTerminal/AbstractTextGraphics putString.
+  ;;   2. BMP `Emoji_Presentation=Yes` width detection — ✅, ⭐, ⚡,
+  ;;      ❌, ✨, ☔, ☕, ⏰, etc. (≈30 ranges, ≈100 code points)
+  ;;      now correctly counted as 2 terminal columns.
+  ;;   3. VS-16 graphemes are NOT double-width — 🏷️, ❤️, etc. report
+  ;;      `isDoubleWidth=false` so lanterna's putString cursor advance
+  ;;      matches what real terminals (macOS Terminal, iTerm2 in some
+  ;;      font configs) actually paint. Removes the per-cell padding
+  ;;      hack the markdown-table prettifier carried.
+  ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
+  ;; Source: https://github.com/Blockether/lanterna (tag vis-3.1.5)
+  ;; Retire when upstream ships equivalent fixes.
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.3"}
+  com.blockether/svar              {:mvn/version "0.3.11"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main"]}}}

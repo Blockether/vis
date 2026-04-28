@@ -1,16 +1,16 @@
 # Extension system
 
-> **Library:** `com.blockether/vis-core`. Extension authoring lives in
-> the namespace `com.blockether.vis.extension`.
+> **Library:** `com.blockether/vis-loop`. Extension authoring lives in
+> the namespace `com.blockether.vis-extension.extension`.
 >
 > **Why a dedicated namespace:** the extension contract is not re-exported
-> through `com.blockether.vis.core`. Authoring code must require
-> `com.blockether.vis.extension` directly.
+> through `com.blockether.vis-loop.core`. Authoring code must require
+> `com.blockether.vis-extension.extension` directly.
 >
 > **What stays on the public facade:** the runtime composition helpers
 > that need a live environment (`active-extensions`,
 > `assemble-system-prompt`, `register-extension!` for ad-hoc per-env
-> registration). Those live on `com.blockether.vis.core` because they
+> registration). Those live on `com.blockether.vis-loop.core` because they
 > need the runtime they compose against.
 
 Extensions are the **only** way to add symbols, classes, and documentation
@@ -31,7 +31,7 @@ slot to its matching sub-registry as a side effect.
 | `:ext/cli`         | CLI subcommands the extension contributes. **Always auto-mount under `vis extensions <cmd>`**; deeper nests like `vis extensions git status` are allowed via `:cmd/parent ["extensions" "git"]`. | `vis extensions <name>`. |
 | `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
 | `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis auth <id>`. |
-| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `persistance.core/create-rlm-conn`. |
+| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `persistance.core/create-store-connection`. |
 
 Alongside those surfaces, every extension may also:
 
@@ -60,7 +60,7 @@ dependency order.
 (ext/register-global!
   (ext/extension
     {:ext/namespace 'com.acme.ext.git
-     :ext/requires  ['com.blockether.vis.ext.common-operations.core]
+     :ext/requires  ['com.blockether.vis.ext.common-editing.core]
      :ext/doc       "Git integration"
      ...}))
 ```
@@ -81,7 +81,7 @@ trigger registration:
 ```
 
 When `create-environment` runs (or the CLI dispatcher boots), it
-calls `com.blockether.vis.extension/discover-extensions!` which:
+calls `com.blockether.vis-extension.extension/discover-extensions!` which:
 
 1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` files
    (via `ClassLoader.getResources`)
@@ -169,7 +169,7 @@ the alias prefix.
 
 ```clojure
 (ext/extension
-  {:ext/namespace 'com.blockether.vis.ext.common-operations.core
+  {:ext/namespace 'com.blockether.vis.ext.common-editing.core
    :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
    ...})
 ```
@@ -236,7 +236,7 @@ the query still runs.
   ;; Require the slim contract directly. The full vis runtime is NOT
   ;; needed (and not on the classpath) when this jar is consumed by
   ;; another extension or a sandbox host.
-  (:require [com.blockether.vis.extension :as ext]))
+  (:require [com.blockether.vis-extension.extension :as ext]))
 
 (defn- search-fn [query] ...)
 
@@ -275,12 +275,12 @@ Real in-tree examples — every package below ships exactly one
 
 ### Sandbox tools
 
-`extensions/vis-common-operations/.../core.clj` — read/list/grep/patch:
+`extensions/common/vis-common-editing/.../core.clj` — read/list/grep/patch:
 
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis.ext.common-operations.core
+    {:ext/namespace 'com.blockether.vis.ext.common-editing.core
      :ext/doc       "Common Vis operations: cat, ls, rg, patch."
      :ext/version   "0.4.0"
      :ext/group     "filesystem"
@@ -291,14 +291,14 @@ Real in-tree examples — every package below ships exactly one
 
 ### CLI commands
 
-`src/com/blockether/vis/channels/cli.clj` ships the `vis extensions list`
+`packages/vis-cli/src/com/blockether/vis_cli/channels/cli.clj` ships the `vis extensions list`
 subcommand:
 
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis.channels.cli
-     :ext/doc       "vis-core's contribution to the `vis extensions` subtree."
+    {:ext/namespace 'com.blockether.vis-cli.channels.cli
+     :ext/doc       "vis-loop's contribution to the `vis extensions` subtree."
      :ext/cli       [{:cmd/name   "list"
                       :cmd/doc    "List every registered extension."
                       :cmd/usage  "vis extensions list"
@@ -315,19 +315,19 @@ defaults `:cmd/parent` for entries that omit it. Three forms work:
 Any `:cmd/parent` that doesn't start with `"extensions"` is rejected
 at registration time with `:type :ext/cli-bad-parent`. Top-level
 binary commands (`vis run`, `vis auth`, …) are NOT extension
-commands; they use `cmd/register-global!` directly inside vis-core.
+commands; they use `cmd/register-global!` directly inside vis-loop.
 
 See [Extension Spec — CLI command slot](spec.md#cli-command-slot) for
 full examples of each form.
 
 ### Channel front-end
 
-`extensions/vis-tui/.../tui/screen.clj`:
+`extensions/channels/vis-channel-tui/.../channel_tui/screen.clj`:
 
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis.channels.tui.screen
+    {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
      :ext/doc       "Lanterna-based terminal UI channel."
      :ext/version   "0.3.0"
      :ext/channels  [{:channel/id        :tui
@@ -340,12 +340,12 @@ full examples of each form.
 
 ### LLM provider
 
-`extensions/vis-provider-github-copilot/.../github_copilot.clj`:
+`extensions/providers/vis-provider-github-copilot/.../provider_github_copilot.clj`:
 
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis.providers.github-copilot
+    {:ext/namespace 'com.blockether.vis.ext.provider-github-copilot
      :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
      :ext/version   "0.3.0"
      :ext/providers [{:provider/id           :github-copilot
@@ -359,16 +359,16 @@ full examples of each form.
 
 ### Persistence backend
 
-`extensions/vis-persistance-sqlite/.../sqlite/core.clj`:
+`extensions/persistance/vis-persistance-sqlite/.../persistance_sqlite/core.clj`:
 
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace   'com.blockether.vis.persistance.sqlite.core
+    {:ext/namespace   'com.blockether.vis.ext.persistance-sqlite.core
      :ext/doc         "SQLite + Flyway persistence backend."
      :ext/version     "0.3.0"
      :ext/persistance [{:persistance/id :sqlite
-                        :persistance/ns 'com.blockether.vis.persistance.sqlite.core}]}))
+                        :persistance/ns 'com.blockether.vis.ext.persistance-sqlite.core}]}))
 ```
 
 ### Multiple surfaces at once

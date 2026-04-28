@@ -68,7 +68,7 @@ while preserving env identity (locks, `:state-atom`, `:db-info`,
 rebuilds the global router MUST also call this:
 
 - `channels/core.clj :: set-provider!` — SDK / programmatic flow.
-- `channels/tui/state.clj :: :set-config` event — TUI provider dialog.
+- `ext/channel_tui/state.clj :: :set-config` event — TUI provider dialog.
 - Any future channel that exposes "switch model" UX must do the same.
 
 If you add a new caller of `rebuild-router!` and skip
@@ -79,7 +79,7 @@ pair as one operation.
 
 The TUI runs **two** threads against the Lanterna screen:
 
-1. **Input thread** (`channels/tui/screen.clj :: run-chat!`'s main
+1. **Input thread** (`ext/channel_tui/screen.clj :: run-chat!`'s main
    loop) — polls keys via `pollInput`, dispatches events into
    `state/app-db`, and opens modal dialogs through
    `with-dialog-lock`. **It never touches the screen buffer
@@ -87,8 +87,8 @@ The TUI runs **two** threads against the Lanterna screen:
    `pollInput`, which uses an internal input queue and is
    safe to call concurrently with drawing.
 
-2. **Render thread** (`channels/tui/screen.clj :: render-loop!`,
-   spawned daemon thread named `vis-tui-render`) — sleeps on
+2. **Render thread** (`ext/channel_tui/screen.clj :: render-loop!`,
+   spawned daemon thread named `vis-channel-tui-render`) — sleeps on
    `state/render-monitor.wait` and only repaints when one of:
    - `:render-version` advanced (every dispatch except the events in
      `no-render-bump-events` increments it, then calls
@@ -102,7 +102,7 @@ The TUI runs **two** threads against the Lanterna screen:
 
 ### Draw lock
 
-`ReentrantLock` in `channels/tui/screen.clj`. Sole lock guarding
+`ReentrantLock` in `ext/channel_tui/screen.clj`. Sole lock guarding
 screen-mutation methods:
 `doResizeIfNecessary`, `setCharacter`/`putString`, `refresh`,
 `setCursorPosition`. Held by:
@@ -117,7 +117,7 @@ thread acquires the lock and paints over the dialog area.
 
 ### Render caches
 
-`fmt-cache` in `channels/tui/render.clj`. Every hot formatter —
+`fmt-cache` in `ext/channel_tui/render.clj`. Every hot formatter —
 `format-answer-with-thinking`,
 `format-answer-markdown`, `bubble-height`, `wrap-text` — is
 identity-keyed against the source string/vec stored on the

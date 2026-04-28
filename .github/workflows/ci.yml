@@ -9,7 +9,7 @@ on:
 # Cache key reused by every job. Hashing every package deps.edn means a
 # bump in any sibling invalidates the cache once, not per job.
 env:
-  CACHE_KEY: deps-${{ hashFiles('deps.edn', 'extensions/**/deps.edn', 'benchmarks/deps.edn') }}
+  CACHE_KEY: deps-${{ hashFiles('deps.edn', 'packages/**/deps.edn', 'extensions/**/deps.edn', 'benchmarks/deps.edn') }}
 
 jobs:
   # Aggregate runner: every test from every package on a single classpath.
@@ -48,7 +48,7 @@ jobs:
         # entries here as new packages get their first test \u2014 lazytest
         # errors out on "no namespaces to run" if the dir is empty.
         package:
-          - vis-core
+          - vis-loop
           - vis-commandline
           - vis-extension
     steps:
@@ -70,7 +70,7 @@ jobs:
   # Classpath sanity: every package + every extension must resolve its own
   # deps.edn cleanly. Catches stale local-root paths, missing siblings, or
   # spec'd deps without a Maven artifact \u2014 problems that wouldn't show up in
-  # the aggregate runner because vis-core pulls everything transitively.
+  # the aggregate runner because vis-loop pulls everything transitively.
   classpath-sanity:
     runs-on: ubuntu-latest
     name: classpath / ${{ matrix.path }}
@@ -79,12 +79,15 @@ jobs:
       matrix:
         path:
           - .
+          - packages/vis-persistance
+          - packages/vis-extension
+          - packages/vis-cli
           - extensions/persistance/vis-persistance-sqlite
           - extensions/providers/vis-provider-github-copilot
-          - extensions/channels/vis-telegram
-          - extensions/channels/vis-tui
-          - extensions/common/vis-meta
-          - extensions/common/vis-editing
+          - extensions/channels/vis-channel-telegram
+          - extensions/channels/vis-channel-tui
+          - extensions/common/vis-common-meta
+          - extensions/common/vis-common-editing
     steps:
       - uses: actions/checkout@v6
       - uses: DeLaGuardo/setup-clojure@13.6.0

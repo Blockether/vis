@@ -110,11 +110,11 @@ vis conversations telegram
 ### Programmatic embedding
 
 For embedding Vis in your own Clojure program, require
-`com.blockether.vis.core`:
+`com.blockether.vis-loop.core`:
 
 ```clojure
-(require '[com.blockether.vis.core :as vis]
-         '[com.blockether.vis.config :as cfg]
+(require '[com.blockether.vis-loop.core :as vis]
+         '[com.blockether.vis-loop.config :as cfg]
          '[com.blockether.svar.internal.llm :as llm])
 
 (def env (vis/create-environment (cfg/make-router) {:db :memory}))
@@ -153,13 +153,13 @@ vis extensions                       # list everything that registered
 vis ext <cmd> [args…]                # run an extension's exported CLI command
 ```
 
-The bundled `extensions/vis-common-operations` package adds `read`,
+The bundled `extensions/common/vis-common-editing` package adds `read`,
 `list`, `grep`, and `patch` (filesystem tools, namespaced under the
 `fs/` alias). Add it to your run alias:
 
 ```clojure
 ;; deps.edn
-:dev {:extra-deps {com.blockether/vis-common-operations {:local/root "extensions/vis-common-operations"}}}
+:dev {:extra-deps {com.blockether/vis-common-editing {:local/root "extensions/common/vis-common-editing"}}}
 ```
 
 To author your own extension, see [Extension System](extensions/overview.md).

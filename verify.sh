@@ -119,10 +119,10 @@ _format() {
     echo "cljfmt not found — install with: brew install cljfmt"
     return 1
   fi
-  cljfmt check src/ test/ extensions/ build.clj || {
+  cljfmt check packages/ extensions/ build.clj || {
     echo ""
     echo "FAILED: cljfmt found formatting issues."
-    echo "Fix with:  cljfmt fix src/ test/ extensions/ build.clj"
+    echo "Fix with:  cljfmt fix packages/ extensions/ build.clj"
     return 1
   }
   echo "cljfmt: clean"
@@ -136,11 +136,9 @@ _lint() {
     return 1
   fi
   local lint_paths=(src)
-  # Two layouts coexist for safety: nested (extensions/<category>/<pkg>/src)
-  # is the canonical post-restructure layout; flat (extensions/<pkg>/src)
-  # was the previous layout, retained so this glob keeps working if
-  # anyone re-flattens during a future refactor.
-  for d in extensions/*/src extensions/*/*/src; do
+  # `packages/<pkg>/src` is one level deep; `extensions/<category>/<pkg>/src`
+  # is two levels deep. Both globs land here.
+  for d in packages/*/src extensions/*/src extensions/*/*/src; do
     [ -d "$d" ] && lint_paths+=("$d")
   done
   local output code=0
@@ -160,7 +158,7 @@ _lint() {
   return 0
 }
 
-# --- GraalVM safety: walks vis-core (root `src/`) and every extension
+# --- GraalVM safety: walks vis-loop (root `src/`) and every extension
 #     src tree, loads each .clj with *warn-on-reflection* +
 #     *unchecked-math* :warn-on-boxed, and counts warnings emitted
 #     from project source paths.
@@ -180,38 +178,43 @@ _graal_safety() {
 
   # Run the compiler walk. We use plain `clojure -M -e` (no :vis alias)
   # to keep :main-opts out of the way. Root `deps.edn` carries
-  # vis-core's library deps; every classpath plug-in lives in an
+  # vis-loop's library deps; every classpath plug-in lives in an
   # alias (`:vis`, `:test`, `:dev`). Inject all of them via `-Sdeps`
   # so the walker's classpath matches the production runtime
   # (`bin/vis`) and `load-file` can resolve every `:require`.
   clojure \
-    -Sdeps '{:deps {com.blockether/vis-meta                    {:local/root "extensions/common/vis-meta"}
-                    com.blockether/vis-editing                 {:local/root "extensions/common/vis-editing"}
+    -Sdeps '{:deps {com.blockether/vis-cli                     {:local/root "packages/vis-cli"}
+                    com.blockether/vis-common-meta                    {:local/root "extensions/common/vis-common-meta"}
+                    com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}
                     com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                     com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}
-                    com.blockether/vis-telegram                {:local/root "extensions/channels/vis-telegram"}
-                    com.blockether/vis-tui                     {:local/root "extensions/channels/vis-tui"}}}' \
+                    com.blockether/vis-channel-telegram                {:local/root "extensions/channels/vis-channel-telegram"}
+                    com.blockether/vis-channel-tui                     {:local/root "extensions/channels/vis-channel-tui"}}}' \
     -M -e '
     (set! *warn-on-reflection* true)
     (set! *unchecked-math* :warn-on-boxed)
-    (let [;; Root `src/` is vis-core. Every classpath plug-in lives
-          ;; under `extensions/<category>/<pkg>/src/`. The benchmark
-          ;; harness (`benchmarks/`) is intentionally NOT walked.
+    (let [;; Root `src/` is vis-loop. Carved-out packages
+          ;; (`vis-extension`, `vis-persistance`, `vis-cli`) each
+          ;; live at `packages/<pkg>/src/` (one level). Classpath
+          ;; plug-ins live at `extensions/<category>/<pkg>/src/`
+          ;; (two levels). The benchmark harness (`benchmarks/`) is
+          ;; intentionally NOT walked.
           root-src (clojure.java.io/file "src")
-          ;; Walk two levels under `extensions/`: each immediate child
-          ;; is a category dir (`channels`, `providers`, `persistance`,
-          ;; `common`); each grandchild is a package dir whose `src/`
-          ;; we want.
-          pkg-srcs (->> (.listFiles (clojure.java.io/file "extensions"))
+          ;; packages/<pkg>/src — one level under `packages/`.
+          package-srcs (->> (.listFiles (clojure.java.io/file "packages"))
+                         (filter (fn [^java.io.File d]
+                                   (and (some? d) (.isDirectory d))))
+                         (map (fn [^java.io.File d] (clojure.java.io/file d "src"))))
+          ;; extensions/<category>/<pkg>/src — two levels under `extensions/`.
+          ext-srcs (->> (.listFiles (clojure.java.io/file "extensions"))
                      (filter (fn [^java.io.File d]
                                (and (some? d) (.isDirectory d))))
                      (mapcat (fn [^java.io.File category]
                                (.listFiles category)))
                      (filter (fn [^java.io.File d]
                                (and (some? d) (.isDirectory d))))
-                     (map (fn [^java.io.File d] (clojure.java.io/file d "src")))
-                     (filter (fn [^java.io.File f] (.exists f)))
-                     (cons root-src)
+                     (map (fn [^java.io.File d] (clojure.java.io/file d "src"))))
+          pkg-srcs (->> (concat [root-src] package-srcs ext-srcs)
                      (filter (fn [^java.io.File f] (.exists f))))
           clj-files (mapcat (fn [^java.io.File r]
                               (filter (fn [^java.io.File f]
@@ -232,11 +235,12 @@ _graal_safety() {
   # whose paths are relative inside the jar, e.g. "clojure+/util.clj").
   local filtered
   # Match warnings from project source paths only (skip third-party
-  # jar paths). Two shapes:
-  #   /Users/.../vis/src/...                                 (vis-core, root)
+  # jar paths). Three shapes:
+  #   /Users/.../vis/src/...                                 (vis-loop, root)
+  #   /Users/.../vis/packages/<pkg>/src/...                  (carved-out core packages)
   #   /Users/.../vis/extensions/<category>/<pkg>/src/...     (every classpath plug-in)
   filtered=$(grep -E "Reflection warning|Boxed math warning" "$err" \
-    | grep -E "/vis/(src|extensions/[^/]+/[^/]+/src)/" \
+    | grep -E "/vis/(src|packages/[^/]+/src|extensions/[^/]+/[^/]+/src)/" \
     | sort -u)
   # Load errors are emitted with a leading `LOAD-ERROR ` token; preserve
   # them in $err for the dump above. Track them too so we can flag them.
@@ -258,14 +262,16 @@ _graal_safety() {
     echo "Per-package breakdown (reflection):"
     echo "$filtered" | grep "Reflection warning" \
       | sed -E -e 's#.*/extensions/[^/]+/([^/]+)/src.*#\1#' \
-               -e 's#.*/vis/src/.*#vis-core#' \
+               -e 's#.*/packages/([^/]+)/src.*#\1#' \
+               -e 's#.*/vis/src/.*#vis-loop#' \
       | sort | uniq -c | sort -rn \
       | sed 's/^/  /'
     echo ""
     echo "Per-package breakdown (boxed-math):"
     echo "$filtered" | grep "Boxed math warning" \
       | sed -E -e 's#.*/extensions/[^/]+/([^/]+)/src.*#\1#' \
-               -e 's#.*/vis/src/.*#vis-core#' \
+               -e 's#.*/packages/([^/]+)/src.*#\1#' \
+               -e 's#.*/vis/src/.*#vis-loop#' \
       | sort | uniq -c | sort -rn \
       | sed 's/^/  /'
     echo ""

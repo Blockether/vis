@@ -1,7 +1,7 @@
 (ns build
   "One build script, every package.
 
-   vis-core lives at the repo root; every classpath plug-in lives under
+   Every package lives under `packages/`; every classpath plug-in under
    `extensions/`. Each is published as its own `com.blockether/<name>`
    jar. Sibling `:local/root` deps are rewritten to `:mvn/version`
    coords pointing at the SAME shared version (read from the repo-root
@@ -16,9 +16,9 @@
      clojure -T:build deploy           # build + deploy all to Clojars
      clojure -T:build clean            # delete target/
 
-     clojure -T:build jar     :package vis-tui   # one package only
-     clojure -T:build install :package vis-tui
-     clojure -T:build deploy  :package vis-tui
+     clojure -T:build jar     :package vis-channel-tui   # one package only
+     clojure -T:build install :package vis-channel-tui
+     clojure -T:build deploy  :package vis-channel-tui
 
    The `:package` selector matches `:lib` short name (after the slash)."
   (:require [clojure.java.io :as io]
@@ -46,19 +46,28 @@
   "Every publishable package in the monorepo, in dependency-friendly
    order (deeper deps first so a sequential install fills `~/.m2`
    before any later package needs them)."
-  ;; vis-core is the project: its sources live at the repo root, so
-  ;; its build dir is `.`. Every classpath plug-in (channel, provider,
-  ;; persistence backend) lives under `extensions/<category>/<pkg>/`.
-  ;; The loader treats them all identically via
-  ;; `META-INF/vis-extension/vis.edn`; the directory layout exists
-  ;; only to separate "the runtime" from "things the runtime discovers"
-  ;; and to group plug-ins by surface (channels / providers /
-  ;; persistance / common SCI symbols).
-  [{:lib 'com.blockether/vis-core                    :dir "."}
+  ;; Order matters: each package must be installed locally before any
+  ;; package that depends on it can resolve its basis. The dep DAG is
+  ;;
+  ;;   vis-persistance         (leaf)
+  ;;     ← vis-extension       (depends on vis-persistance)
+  ;;       ← vis-loop          (loop + sandbox + facade)
+  ;;         ← vis-cli         (binary dispatcher + run/auth/doctor)
+  ;;
+  ;; Every classpath plug-in under `extensions/<category>/<pkg>/`
+  ;; depends on vis-loop (transitively pulls vis-extension +
+  ;; vis-persistance), so they publish last. The unified loader treats
+  ;; them all identically via `META-INF/vis-extension/vis.edn`; the
+  ;; directory layout exists only to separate "the runtime" from
+  ;; "things the runtime discovers" and to group plug-ins by surface.
+  [{:lib 'com.blockether/vis-persistance             :dir "packages/vis-persistance"}
+   {:lib 'com.blockether/vis-extension               :dir "packages/vis-extension"}
+   {:lib 'com.blockether/vis-loop                    :dir "packages/vis-loop"}
+   {:lib 'com.blockether/vis-cli                     :dir "packages/vis-cli"}
    {:lib 'com.blockether/vis-persistance-sqlite      :dir "extensions/persistance/vis-persistance-sqlite"}
    {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/providers/vis-provider-github-copilot"}
-   {:lib 'com.blockether/vis-telegram                :dir "extensions/channels/vis-telegram"}
-   {:lib 'com.blockether/vis-tui                     :dir "extensions/channels/vis-tui"}])
+   {:lib 'com.blockether/vis-channel-telegram        :dir "extensions/channels/vis-channel-telegram"}
+   {:lib 'com.blockether/vis-channel-tui             :dir "extensions/channels/vis-channel-tui"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed
@@ -68,7 +77,7 @@
   (into {} (map (fn [{:keys [lib]}] [lib {:mvn/version version}])) packages))
 
 (defn- pkg-by-name
-  "Resolve a `:package` selector (short name, e.g. `\"vis-tui\"`) to a
+  "Resolve a `:package` selector (short name, e.g. `\"vis-channel-tui\"`) to a
    package descriptor. Throws with the available list when missing."
   [pkg-name]
   (or (some (fn [{:keys [lib] :as p}]
@@ -107,15 +116,21 @@
 
 (def ^:private package-descriptions
   "Per-package one-line descriptions used in the published POM."
-  {'com.blockether/vis-core
-   "vis runtime — conversation/iteration loop, SCI sandbox, CLI dispatcher, extension registry, provider registry, and persistence facade."
+  {'com.blockether/vis-persistance
+   "Backend-agnostic persistence facade and Flyway-driven migration runner for vis."
+   'com.blockether/vis-extension
+   "Extension/channel/provider/CLI-command contracts and unified classpath discovery loader for vis."
+   'com.blockether/vis-loop
+   "vis runtime — conversation/iteration loop, SCI sandbox, query engine, and the public API facade."
+   'com.blockether/vis-cli
+   "vis CLI — the `vis` binary's dispatcher plus the built-in `run`, `auth`, `doctor`, and `conversations` commands."
    'com.blockether/vis-persistance-sqlite
    "SQLite backend for the vis persistence facade — JDBC plumbing only, migrator-agnostic."
    'com.blockether/vis-provider-github-copilot
    "GitHub Copilot OAuth device-flow provider for the vis-provider registry."
-   'com.blockether/vis-tui
+   'com.blockether/vis-channel-tui
    "Lanterna-based TUI channel — registers as `vis channel tui`."
-   'com.blockether/vis-telegram
+   'com.blockether/vis-channel-telegram
    "Telegram bot channel — registers as `vis channel telegram`."})
 
 (defn- build-pom-data [lib]
@@ -182,8 +197,8 @@
       (.exists (io/file res)) (conj res))))
 
 (defn- write-version-resource!
-  "vis-core embeds the resolved version into its jar as
-   `META-INF/vis/VERSION` so `com.blockether.vis.config/version` can
+  "vis-loop embeds the resolved version into its jar as
+   `META-INF/vis/VERSION` so `com.blockether.vis-loop.config/version` can
    `(io/resource ...)` it at runtime."
   [class-dir]
   (let [target (io/file class-dir "META-INF/vis/VERSION")]
@@ -219,7 +234,7 @@
                   :src-dirs  [(str dir "/src")]
                   :pom-data  (build-pom-data lib)})
     (b/copy-dir {:src-dirs srcs :target-dir class-dir})
-    (when (= lib 'com.blockether/vis-core)
+    (when (= lib 'com.blockether/vis-loop)
       (write-version-resource! class-dir))
     (b/jar {:class-dir class-dir :jar-file jar-file})
     (let [result {:lib lib :class-dir class-dir :jar-file jar-file}]
