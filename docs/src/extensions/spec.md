@@ -126,7 +126,7 @@ Mount entries at any depth under `vis extensions …` by specifying a
 `:ext/cli` is the EXTENSIONS slot. For top-level commands or other
 placements (the binary's own built-ins, custom command trees), use
 `com.blockether.vis.commandline.base/register-global!` directly. See
-`packages/vis-core/.../channels/cli.clj` for an example: `vis run`,
+`src/com/blockether/vis/channels/cli.clj` for an example: `vis run`,
 `vis auth`, `vis doctor`, `vis conversations` are registered with
 `cmd/register-global!`; only the `vis extensions list` subcommand
 goes through `:ext/cli`.
