@@ -291,7 +291,7 @@ Real in-tree examples — every package below ships exactly one
 
 ### CLI commands
 
-`packages/vis-core/.../channels/cli.clj` ships the `vis extensions list`
+`src/com/blockether/vis/channels/cli.clj` ships the `vis extensions list`
 subcommand:
 
 ```clojure

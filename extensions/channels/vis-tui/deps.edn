@@ -8,7 +8,7 @@
  ;; of vis usable.
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
-  com.blockether/vis-core          {:local/root "../../packages/vis-core"}
+  com.blockether/vis-core          {:local/root "../../.."}
   ;; Blockether fork of mabe02/lanterna 3.1.5 with three patches on top:
   ;;   1. PR #625 cherry-pick — emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.

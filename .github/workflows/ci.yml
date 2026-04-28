@@ -9,7 +9,7 @@ on:
 # Cache key reused by every job. Hashing every package deps.edn means a
 # bump in any sibling invalidates the cache once, not per job.
 env:
-  CACHE_KEY: deps-${{ hashFiles('deps.edn', 'packages/**/deps.edn', 'extensions/**/deps.edn') }}
+  CACHE_KEY: deps-${{ hashFiles('deps.edn', 'extensions/**/deps.edn', 'benchmarks/deps.edn') }}
 
 jobs:
   # Aggregate runner: every test from every package on a single classpath.
@@ -78,17 +78,13 @@ jobs:
       fail-fast: false
       matrix:
         path:
-          - packages/vis-core
-          - packages/vis-commandline
-          - packages/vis-extension
-          - packages/vis-logging
-          - packages/vis-persistance
-          - extensions/vis-persistance-sqlite
-          - packages/vis-provider
-          - extensions/vis-provider-github-copilot
-          - extensions/vis-telegram
-          - extensions/vis-tui
-          - extensions/editing
+          - .
+          - extensions/persistance/vis-persistance-sqlite
+          - extensions/providers/vis-provider-github-copilot
+          - extensions/channels/vis-telegram
+          - extensions/channels/vis-tui
+          - extensions/common/vis-meta
+          - extensions/common/vis-editing
     steps:
       - uses: actions/checkout@v6
       - uses: DeLaGuardo/setup-clojure@13.6.0

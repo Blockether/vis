@@ -9,7 +9,7 @@
  ;; of vis usable.
  :deps
  {org.clojure/clojure      {:mvn/version "1.12.4"}
-  com.blockether/vis-core  {:local/root "../../packages/vis-core"}
+  com.blockether/vis-core  {:local/root "../../.."}
   org.babashka/http-client {:mvn/version "0.4.23"}
   com.cnuernber/charred    {:mvn/version "1.038"}
   com.taoensso/telemere    {:mvn/version "1.2.1"}}

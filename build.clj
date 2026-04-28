@@ -1,11 +1,12 @@
 (ns build
   "One build script, every package.
 
-   Each package under `packages/` is published as its own
-   `com.blockether/<name>` jar. Sibling `:local/root` deps are rewritten
-   to `:mvn/version` coords pointing at the SAME shared version (read
-   from the repo-root `VERSION` file) so the published POMs reference
-   each other through Clojars instead of dangling at relative paths.
+   vis-core lives at the repo root; every classpath plug-in lives under
+   `extensions/`. Each is published as its own `com.blockether/<name>`
+   jar. Sibling `:local/root` deps are rewritten to `:mvn/version`
+   coords pointing at the SAME shared version (read from the repo-root
+   `VERSION` file) so the published POMs reference each other through
+   Clojars instead of dangling at relative paths.
 
    Tasks
    =====
@@ -45,16 +46,19 @@
   "Every publishable package in the monorepo, in dependency-friendly
    order (deeper deps first so a sequential install fills `~/.m2`
    before any later package needs them)."
-  ;; The host lives under `packages/`; every classpath plug-in (channel,
-  ;; provider, persistence backend) lives under `extensions/`. The
-  ;; loader treats both roots identically via `META-INF/vis-extension/vis.edn`;
-  ;; the directory split exists only to separate "the runtime" from
-  ;; "things the runtime discovers".
-  [{:lib 'com.blockether/vis-core                    :dir "packages/vis-core"}
-   {:lib 'com.blockether/vis-persistance-sqlite      :dir "extensions/vis-persistance-sqlite"}
-   {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/vis-provider-github-copilot"}
-   {:lib 'com.blockether/vis-telegram                :dir "extensions/vis-telegram"}
-   {:lib 'com.blockether/vis-tui                     :dir "extensions/vis-tui"}])
+  ;; vis-core is the project: its sources live at the repo root, so
+  ;; its build dir is `.`. Every classpath plug-in (channel, provider,
+  ;; persistence backend) lives under `extensions/<category>/<pkg>/`.
+  ;; The loader treats them all identically via
+  ;; `META-INF/vis-extension/vis.edn`; the directory layout exists
+  ;; only to separate "the runtime" from "things the runtime discovers"
+  ;; and to group plug-ins by surface (channels / providers /
+  ;; persistance / common SCI symbols).
+  [{:lib 'com.blockether/vis-core                    :dir "."}
+   {:lib 'com.blockether/vis-persistance-sqlite      :dir "extensions/persistance/vis-persistance-sqlite"}
+   {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/providers/vis-provider-github-copilot"}
+   {:lib 'com.blockether/vis-telegram                :dir "extensions/channels/vis-telegram"}
+   {:lib 'com.blockether/vis-tui                     :dir "extensions/channels/vis-tui"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed

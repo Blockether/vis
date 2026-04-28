@@ -11,8 +11,8 @@ overrides convenience, scope creep, and "it's just a one-line fix."
 
 Gates:
 
-1. **Format** — `cljfmt check` over `packages/`, `extensions/`, `build.clj`.
-   Fix with `cljfmt fix packages/ extensions/ build.clj`.
+1. **Format** — `cljfmt check` over `src/`, `test/`, `extensions/`, `build.clj`.
+   Fix with `cljfmt fix src/ test/ extensions/ build.clj`.
 2. **Lint** — `clj-kondo` across every package src tree. Errors and
    warnings are fatal; info-level diagnostics are advisory.
 3. **GraalVM safety** — walks every production package's `src/`, loads
@@ -21,7 +21,7 @@ Gates:
    paths only. **Ratchet**: fails if the count grows beyond
    `.verification-baseline/graal-warnings.count` (tracked file).
    Improvements ratchet down via `./verify.sh --update-baseline`.
-   `vis-benchmark` is excluded — it's a dev/research package, not on
+   `benchmarks/` is excluded — it's a dev/research package, not on
    the default classpath, not shipped as a runtime jar.
 4. **Tests** — `clojure -M:test` (lazytest, aggregate suite).
 5. **Docs build** — `cd docs && mdbook build`. The "update `docs/`
@@ -475,20 +475,29 @@ git commit -m "deps: bump svar to 0.3.12"
 
 ### Project Structure
 
-The codebase is a polylith-style monorepo. Source lives under two
-sibling roots, both treated identically by the classpath-discovery
-loader:
+The codebase is a polylith-style monorepo with one host package and a
+sibling tree of classpath plug-ins:
 
-- `packages/` — the host runtime (`vis-core`) and dev/research code
-  (`vis-benchmark`). Nothing under `packages/` is a classpath plug-in;
-  `vis-core` is the discovery loader itself.
-- `extensions/` — every classpath plug-in. Channels (`vis-tui`,
-  `vis-telegram`), providers (`vis-provider-github-copilot`),
-  persistence backends (`vis-persistance-sqlite`), and SCI sandbox
-  surface contributions (`vis-meta`, `vis-common-operations`) all
-  live here. Each ships a `META-INF/vis-extension/vis.edn` and
-  self-registers at namespace load. `vis-core` does not require any
-  of them by namespace.
+- **Repo root** — `vis-core`'s source (`src/`, `test/`, `resources/`).
+  vis-core IS the project: the host runtime, the SCI sandbox, the
+  iteration loop, the CLI dispatcher, the extension/channel/provider
+  registries, and the persistence facade. The root `deps.edn` is
+  vis-core's own; aliases pull in optional plug-ins for development.
+- `extensions/` — every classpath plug-in, grouped by surface category:
+  - `extensions/channels/` — `vis-tui`, `vis-telegram`.
+  - `extensions/providers/` — `vis-provider-github-copilot`.
+  - `extensions/persistance/` — `vis-persistance-sqlite`.
+  - `extensions/common/` — `vis-meta`, `vis-editing` (filesystem +
+    code-editing tools the agent reaches for in nearly every task).
+  Each ships a `META-INF/vis-extension/vis.edn` and self-registers
+  at namespace load. Every extension's `deps.edn` declares
+  `:local/root "../../.."` against vis-core (three levels up).
+  `vis-core` does not require any of them by namespace.
+- `benchmarks/` — the benchmark harness (4clojure, HumanEval,
+  SWE-bench Verified). NOT a classpath plug-in; pulled in via the
+  `:bench` alias only. Working directories (`results/`,
+  `trajectories/`, `swebench-harness/`) are created on demand under
+  `benchmarks/`.
 
 Each package has its own `deps.edn` and is publishable independently;
 the root `deps.edn` aggregates them via `:local/root` so a single
@@ -503,12 +512,12 @@ maintain a divergent list here.
 
 Quick mental map (use `packages.md` for details):
 
-- `packages/vis-core` — host runtime and the only package consumers must depend on directly
-- `packages/vis-benchmark` — benchmark harness (`:bench` alias only; not a classpath plug-in)
-- `extensions/vis-persistance-sqlite` — SQLite persistence backend
-- `extensions/vis-provider-github-copilot` — GitHub Copilot OAuth provider
-- `extensions/vis-tui`, `extensions/vis-telegram` — channel implementations
-- `extensions/vis-meta`, `extensions/vis-common-operations` — SCI sandbox extensions
+- `vis-core` (repo root: `src/`, `test/`, `resources/`) — host runtime and the only package consumers must depend on directly
+- `benchmarks/` — benchmark harness (`:bench` alias only; not a classpath plug-in)
+- `extensions/persistance/vis-persistance-sqlite` — SQLite persistence backend
+- `extensions/providers/vis-provider-github-copilot` — GitHub Copilot OAuth provider
+- `extensions/channels/vis-tui`, `extensions/channels/vis-telegram` — channel implementations
+- `extensions/common/vis-meta`, `extensions/common/vis-editing` — SCI sandbox extensions
 
 ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN
 vector of namespace symbols loaded at startup by the single loader
@@ -647,8 +656,8 @@ above.
 
 - `extensions/vis-tui/src/com/blockether/vis/channels/tui/*` — Lanterna TUI
 - `extensions/vis-telegram/src/com/blockether/vis/channels/telegram/*` — Telegram bot
-- `packages/vis-core/src/com/blockether/vis/channels/cli.clj` — CLI dispatcher (registry-driven)
-- `packages/vis-core/src/com/blockether/vis/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
+- `src/com/blockether/vis/channels/cli.clj` — CLI dispatcher (registry-driven)
+- `src/com/blockether/vis/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
 
 Third-party channels register themselves at namespace load via
 `com.blockether.vis.channel/register-global!` and ship a
@@ -658,7 +667,7 @@ See `docs/src/architecture/channels.md`.
 
 ### Runtime modules (vis-core)
 
-All under `packages/vis-core/src/com/blockether/vis/`:
+All under `src/com/blockether/vis/` (vis-core lives at the repo root):
 
 - `core.clj` — public API facade (`create-environment`,
   `dispose-environment!`, `register-extension!`, `active-extensions`,
@@ -708,7 +717,7 @@ Use `find`/`grep` to explore the tree — no static directory doc exists.
 - Use `core.clj` as the default application/use-case namespace in each bounded context.
 - Do not turn `loop.core` into a dumping ground for unrelated behavior.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
-- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It now lives at `packages/vis-core/src/com/blockether/vis/channels/cli/agent.clj` alongside `channels/cli.clj`.
+- Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It now lives at `src/com/blockether/vis/channels/cli/agent.clj` alongside `channels/cli.clj`.
 
 - Prefer extracting a deep module first, then renaming callers, then deleting stale code.
 - Remove `requiring-resolve` cycles instead of spreading them further.
