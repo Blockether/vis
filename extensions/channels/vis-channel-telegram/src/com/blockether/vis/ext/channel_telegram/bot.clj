@@ -5,13 +5,10 @@
    Each Telegram chat maps to a `:telegram` conversation via
    `conversations/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
-   conversation's lock in `com.blockether.vis-loop.loop.runtime.conversation.core`."
-  (:require [com.blockether.vis-loop.config :as config]
-            [com.blockether.vis-extension.error :as vis-error]
-            [com.blockether.vis-extension.extension :as ext]
-            [com.blockether.vis-loop.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis-loop.loop.runtime.conversation.environment.query.core :as query-core]
-            [com.blockether.vis-persistance.core :as db]
+   conversation's lock in `com.blockether.vis-runtime.loop.runtime.conversation.core`."
+  (:require [com.blockether.vis-sdk.core :as config]
+            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
+            [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query-core]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [taoensso.telemere :as tel]))
 
@@ -68,7 +65,7 @@
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}
                          :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (vis-error/format-error (db/error->user-message e)))
+                     (config/format-error (config/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]
@@ -135,8 +132,8 @@
   (config/init-cli!)
   (-main))
 
-(ext/register-global!
-  (ext/extension
+(config/register-extension!
+  (config/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
      :ext/doc       "Telegram bot channel — long-poll loop wired into conversations."
      :ext/version   "0.3.0"

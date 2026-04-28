@@ -6,10 +6,8 @@
    Conversation data is persisted in `~/.vis/vis.mdb` so you can come
    back to it."
   (:require [clojure.string :as str]
-            [com.blockether.vis-extension.cancellation :as cancellation]
-            [com.blockether.vis-extension.error :as vis-error]
-            [com.blockether.vis-loop.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis-persistance.core :as db]
+            [com.blockether.vis-sdk.core :as cancellation]
+            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -50,7 +48,7 @@
   [conv-id]
   (try
     (let [d       (conversations/db-info)
-          queries (db/db-list-conversation-queries d conv-id)]
+          queries (cancellation/db-list-conversation-queries d conv-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-msg  (user-msg (or (:text q) "") (or (:created-at q) (java.util.Date.)))
@@ -63,13 +61,13 @@
                         dur-ms    (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
                         ;; Rebuild trace from iterations + expressions
-                        query-iters (db/db-list-query-iterations d (:id q))
+                        query-iters (cancellation/db-list-query-iterations d (:id q))
                         trace (into []
                                 (map (fn [it]
-                                       (let [exprs (db/db-list-iteration-expressions d (:id it))
+                                       (let [exprs (cancellation/db-list-iteration-expressions d (:id it))
                                              result-strs (mapv (fn [{:keys [result error]}]
                                                                  (if error
-                                                                   (vis-error/format-error error)
+                                                                   (cancellation/format-error error)
                                                                    (pr-str result)))
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
@@ -185,7 +183,7 @@
            (t/log! {:level :error :id ::query-failed
                     :data  (exception->log-data e)
                     :msg   (str "Query failed: " (ex-message e))})
-           {:error (db/error->user-message e)}))))))
+           {:error (cancellation/error->user-message e)}))))))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in

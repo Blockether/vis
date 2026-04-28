@@ -1,13 +1,17 @@
 (ns com.blockether.vis.ext.channel-tui.provider
   "TUI provider management dialogs — model picker, model manager, provider router.
-   Config I/O and data helpers live in tui/config.clj."
-  (:require [borkdude.dynaload :as dl]
-            [clojure.string :as str]
-            [com.blockether.svar.core :as svar]
-            [com.blockether.vis-loop.config :as config]
+   Config I/O and data helpers live in tui/config.clj.
+
+   GitHub Copilot OAuth: a hard dep. The TUI ships with the
+   `vis-provider-github-copilot` jar on its classpath; the device-flow
+   fns are required directly. (The previous `dynaload` indirection has
+   been removed: explicit beats clever.)"
+  (:require [clojure.string :as str]
+            [com.blockether.vis-sdk.core :as sdk]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t])
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.provider-github-copilot :as copilot])
   (:import [com.googlecode.lanterna.input KeyType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
            [java.net URI]
@@ -43,7 +47,7 @@
                     builder)
           request (.build builder)
           resp    (.send ^HttpClient http-client request (HttpResponse$BodyHandlers/ofString))
-          parsed  (svar/str->data (.body resp))
+          parsed  (sdk/parse-llm-response (.body resp))
           body    (or (:value parsed) parsed)
           models  (or (:data body) [])]
       (->> models
@@ -103,41 +107,15 @@
 
 (defn- select-provider-model!
   [^TerminalScreen screen provider]
-  (let [defaults (->> (map config/model-name (:models provider))
-                   (concat (:default-models (config/provider-template (:id provider)))
+  (let [defaults (->> (map sdk/model-name (:models provider))
+                   (concat (:default-models (sdk/provider-template (:id provider)))
                      (:default-models provider))
                    (remove nil?)
                    distinct
                    vec)]
-    (select-model! screen (config/provider-base-url provider) (:api-key provider) defaults)))
+    (select-model! screen (sdk/provider-base-url provider) (:api-key provider) defaults)))
 
-;;; ── GitHub Copilot OAuth (dynaload — optional provider jar) ────────
-;;
-;; com.blockether/vis-providers-github-copilot is an OPTIONAL extension
-;; jar. When it's missing every dynaload below stays nil (`:default`)
-;; and `copilot-oauth-flow!` shows a friendly dialog instead of
-;; throwing a CompilerException at the user.
-
-(def ^:private copilot-start-device-flow!
-  (dl/dynaload 'com.blockether.vis.ext.provider-github-copilot/start-device-flow!
-    {:default nil}))
-(def ^:private copilot-poll-for-token!
-  (dl/dynaload 'com.blockether.vis.ext.provider-github-copilot/poll-for-token!
-    {:default nil}))
-(def ^:private copilot-get-copilot-token!
-  (dl/dynaload 'com.blockether.vis.ext.provider-github-copilot/get-copilot-token!
-    {:default nil}))
-(def ^:private copilot-detect-oauth-token
-  (dl/dynaload 'com.blockether.vis.ext.provider-github-copilot/detect-oauth-token
-    {:default nil}))
-
-(defn- copilot-available?
-  "True only when every required github-copilot var resolved."
-  []
-  (and @copilot-start-device-flow!
-    @copilot-poll-for-token!
-    @copilot-get-copilot-token!
-    @copilot-detect-oauth-token))
+;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
 
 (defn- copilot-oauth-flow!
   "Run the GitHub Copilot OAuth device flow inside the TUI.
@@ -146,58 +124,50 @@
    Returns nil immediately when the optional vis-providers-github-copilot
    jar isn't on the classpath."
   [^TerminalScreen screen]
-  (if-not (copilot-available?)
-    (do
-      (dlg/confirm-dialog! screen "GitHub Copilot"
-        ["This Vis build does not include the GitHub Copilot provider."
-         ""
-         "Add com.blockether/vis-providers-github-copilot to your"
-         "deps and restart Vis to enable OAuth login."])
-      nil)
-    (let [start-fn    copilot-start-device-flow!
-          poll-fn     copilot-poll-for-token!
-          exchange-fn copilot-get-copilot-token!
-          detect-fn   copilot-detect-oauth-token]
+  (let [start-fn    copilot/start-device-flow!
+        poll-fn     copilot/poll-for-token!
+        exchange-fn copilot/get-copilot-token!
+        detect-fn   copilot/detect-oauth-token]
       ;; Already authenticated?
-      (if (detect-fn)
-        (try
-          (let [{:keys [token]} (exchange-fn)]
-            token)
-          (catch Exception _
-            (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
-            nil))
+    (if (detect-fn)
+      (try
+        (let [{:keys [token]} (exchange-fn)]
+          token)
+        (catch Exception _
+          (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
+          nil))
         ;; Device flow
-        (try
-          (let [{:keys [user-code verification-uri device-code interval expires-in]}
-                (start-fn)]
+      (try
+        (let [{:keys [user-code verification-uri device-code interval expires-in]}
+              (start-fn)]
             ;; Show the code to the user
-            (dlg/confirm-dialog! screen "GitHub Copilot — Authenticate"
-              [(str "1. Open:  " verification-uri)
-               (str "2. Enter: " user-code)
-               ""
-               "Press Enter, then authorize in your browser."
-               "Vis will wait for you."])
+          (dlg/confirm-dialog! screen "GitHub Copilot — Authenticate"
+            [(str "1. Open:  " verification-uri)
+             (str "2. Enter: " user-code)
+             ""
+             "Press Enter, then authorize in your browser."
+             "Vis will wait for you."])
             ;; Poll in background, show waiting message
-            (let [result (future (poll-fn device-code interval expires-in))]
+          (let [result (future (poll-fn device-code interval expires-in))]
               ;; Simple blocking wait with a confirm dialog
               ;; The poll runs in background; once authorized it returns
-              (loop [attempt 0]
-                (if (realized? result)
-                  (let [{:keys [token]} (exchange-fn)]
-                    (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
-                    token)
-                  (do
-                    (Thread/sleep 2000)
-                    (when (< attempt 180) ;; 6 min max
-                      (recur (inc attempt))))))))
-          (catch Exception e
-            (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
-            nil))))))
+            (loop [attempt 0]
+              (if (realized? result)
+                (let [{:keys [token]} (exchange-fn)]
+                  (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
+                  token)
+                (do
+                  (Thread/sleep 2000)
+                  (when (< attempt 180) ;; 6 min max
+                    (recur (inc attempt))))))))
+        (catch Exception e
+          (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
+          nil)))))
 
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
   [^TerminalScreen screen existing-ids]
-  (let [available (vec (remove #(contains? existing-ids (:id %)) (config/provider-presets)))]
+  (let [available (vec (remove #(contains? existing-ids (:id %)) (sdk/provider-presets)))]
     (if (empty? available)
       (do (dlg/confirm-dialog! screen "Add Provider" "All providers already configured.") nil)
       (when-let [preset (dlg/select-dialog! screen "Add Provider" available)]
@@ -266,9 +236,9 @@
   (let [text-w  (max 0 (- inner-w 2))
         text-x  (+ left 2)
         pri     (priority-label idx)
-        host    (url-host (or (config/provider-base-url provider) ""))
+        host    (url-host (or (sdk/provider-base-url provider) ""))
         ok?     (some? (:api-key provider))
-        label   (config/display-label (:id provider))
+        label   (sdk/display-label (:id provider))
         models  (or (:models provider) [])
         model-count (count (or models []))
         root-name   (or (:name (first models)) "—")
@@ -380,16 +350,16 @@
 
 (defn- show-model-manager!
   [^TerminalScreen screen provider]
-  (let [base-url (config/provider-base-url provider)
+  (let [base-url (sdk/provider-base-url provider)
         api-key  (:api-key provider)
         models   (atom (->> (:models provider)
-                         (keep config/->svar-model)
+                         (keep sdk/->svar-model)
                          vec))
         selected (atom 0)]
     ;; If still empty after init, prompt for a model
     (when (empty? @models)
       (if-let [model-name (select-model! screen base-url api-key
-                            (:default-models (config/provider-template (:id provider))))]
+                            (:default-models (sdk/provider-template (:id provider))))]
         (swap! models conj {:name model-name})
         ;; User cancelled — return nil (no changes)
         (reset! models [])))
@@ -403,7 +373,7 @@
               _       (do (p/set-bg! g t/terminal-bg) (p/fill-rect! g 0 0 cols rows))
               cw      (min 84 (max 50 (- cols 12)))
               ch      (max 4 (card-height total))
-              title   (str (config/display-label (:id provider)) " Models")
+              title   (str (sdk/display-label (:id provider)) " Models")
               bounds  (dlg/draw-dialog-chrome! g cols rows title cw ch)
               {:keys [left inner-w]} bounds
               {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
@@ -459,15 +429,15 @@
                       (= c \a)
                       (do
                         (when-let [model-name (select-model! screen
-                                                (config/provider-base-url provider)
+                                                (sdk/provider-base-url provider)
                                                 (:api-key provider)
-                                                (->> (concat (map config/model-name @models)
-                                                       (:default-models (config/provider-template (:id provider)))
+                                                (->> (concat (map sdk/model-name @models)
+                                                       (:default-models (sdk/provider-template (:id provider)))
                                                        (:default-models provider))
                                                   (remove nil?)
                                                   distinct
                                                   vec))]
-                          (when-not (some #(= model-name (config/model-name %)) @models)
+                          (when-not (some #(= model-name (sdk/model-name %)) @models)
                             (swap! models conj {:name model-name})
                             (reset! selected (dec (count @models)))))
                         (recur))
@@ -502,7 +472,7 @@
   [provider]
   (if (:base-url provider)
     provider
-    (if-let [resolved-base-url (:base-url (config/provider-template (:id provider)))]
+    (if-let [resolved-base-url (:base-url (sdk/provider-template (:id provider)))]
       (assoc provider :base-url resolved-base-url)
       provider)))
 
@@ -513,7 +483,7 @@
   ([^TerminalScreen screen]
    (show-provider-dialog! screen nil))
   ([^TerminalScreen screen current-config]
-   (let [seed      (or current-config (config/load-config) {:providers []})
+   (let [seed      (or current-config (sdk/load-config) {:providers []})
          items     (atom (vec (or (:providers seed) [])))
          selected  (atom 0)]
      (loop []
@@ -560,9 +530,9 @@
                  (= ktype KeyType/Escape)
                  (let [cfg {:providers (->> @items
                                          (map ensure-base-url)
-                                         (map config/->svar-provider)
+                                         (map sdk/->svar-provider)
                                          vec)}]
-                   (config/save-config! cfg)
+                   (sdk/save-config! cfg)
                    cfg)
 
                    ;; ↑/↓ navigate, Alt+↑/↓ reorder
@@ -610,7 +580,7 @@
                        (when (and (pos? total)
                                (dlg/confirm-dialog! screen
                                  "Remove"
-                                 [(str "Remove " (config/display-label (:id (nth @items @selected))) "?")]))
+                                 [(str "Remove " (sdk/display-label (:id (nth @items @selected))) "?")]))
                          (swap! items #(vec (concat (subvec % 0 @selected)
                                               (subvec % (inc @selected)))))
                          (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items))))))

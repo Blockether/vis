@@ -1,15 +1,14 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
-            [com.blockether.vis-extension.extension :as ext]
+            [com.blockether.vis-sdk.core :as ext]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
-            [com.blockether.vis-loop.config :as config]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis-loop.loop.runtime.conversation.core :as conversations])
+            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
@@ -328,10 +327,10 @@
   "Register a JVM shutdown hook that prints the TUI resume command for
    the conversation the user was on. TUI-local: the printed string is
    a `vis channels tui …` sub-command, so this hook lives next to the
-   only consumer instead of in vis-loop or vis-cli."
+   only consumer instead of in vis-runtime or vis-cli."
   [conversation-id]
   (let [hook (Thread. (fn []
-                        (let [^java.io.PrintStream out config/original-stdout]
+                        (let [^java.io.PrintStream out ext/original-stdout]
                           (.println out "")
                           (.println out (str "  vis channels tui --conversation-id " conversation-id))
                           (.println out "")
@@ -359,10 +358,10 @@
      (state/init!)
 
   ;; Load persisted config
-     (when-let [c (config/load-config)]
+     (when-let [c (ext/load-config)]
        (state/dispatch [:set-config c]))
 
-     (let [terminal (UnixTerminal. @config/tty-in @config/tty-out (Charset/defaultCharset))
+     (let [terminal (UnixTerminal. @ext/tty-in @ext/tty-out (Charset/defaultCharset))
            _        (input/register-custom-patterns! terminal)
            screen   (TerminalScreen. terminal)
         ;; Render thread handle is held in a volatile so the `finally`
@@ -543,14 +542,14 @@
 
 (defn channel-main
   "Channel entry point: full TUI bootstrap. Performs the stdout/stderr
-   redirect, runs `config/init!`, then hands off to `run-chat!`. Errors
+   redirect, runs `ext/init!`, then hands off to `run-chat!`. Errors
    surface on the original terminal and the log file.
 
-   Invoked by `com.blockether.vis-extension.channel` dispatch — not called from
-   vis-loop directly."
+   Invoked by `com.blockether.vis-sdk.core` dispatch — not called from
+   vis-runtime directly."
   [args]
   (redirect-stdio-to-log!)
-  (config/init!)
+  (ext/init!)
   (let [exit-code (atom 0)]
     (try
       (run-chat! (parse-args args))
@@ -560,21 +559,21 @@
           ;; conversation id, etc. Print the message clean and let the
           ;; process exit non-zero — no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
-          (do (.println ^java.io.PrintStream config/original-stdout (str "vis: " (.getMessage t)))
+          (do (.println ^java.io.PrintStream ext/original-stdout (str "vis: " (.getMessage t)))
             (reset! exit-code 2))
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
-          (do (.println ^java.io.PrintStream config/original-stdout (str "vis: fatal error — " (.getMessage t)))
-            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @config/tty-out true))
+          (do (.println ^java.io.PrintStream ext/original-stdout (str "vis: fatal error — " (.getMessage t)))
+            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @ext/tty-out true))
             (throw t))))
       (finally
-        (config/shutdown!)))
+        (ext/shutdown!)))
     (when (pos? @exit-code)
       (System/exit @exit-code))))
 
 ;;; ── Channel registration (auto-discovered via META-INF/vis-extension/vis.edn) ──
 
-(ext/register-global!
+(ext/register-extension!
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
      :ext/doc       "Lanterna-based terminal UI channel."

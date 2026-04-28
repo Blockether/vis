@@ -1,16 +1,16 @@
 # Extension system
 
-> **Library:** `com.blockether/vis-loop`. Extension authoring lives in
-> the namespace `com.blockether.vis-extension.extension`.
+> **Library:** `com.blockether/vis-runtime`. Extension authoring lives in
+> the namespace `com.blockether.vis-sdk.core`.
 >
 > **Why a dedicated namespace:** the extension contract is not re-exported
-> through `com.blockether.vis-loop.core`. Authoring code must require
-> `com.blockether.vis-extension.extension` directly.
+> through `com.blockether.vis-runtime.core`. Authoring code must require
+> `com.blockether.vis-sdk.core` directly.
 >
 > **What stays on the public facade:** the runtime composition helpers
 > that need a live environment (`active-extensions`,
 > `assemble-system-prompt`, `register-extension!` for ad-hoc per-env
-> registration). Those live on `com.blockether.vis-loop.core` because they
+> registration). Those live on `com.blockether.vis-runtime.core` because they
 > need the runtime they compose against.
 
 Extensions are the **only** way to add symbols, classes, and documentation
@@ -81,7 +81,7 @@ trigger registration:
 ```
 
 When `create-environment` runs (or the CLI dispatcher boots), it
-calls `com.blockether.vis-extension.extension/discover-extensions!` which:
+calls `com.blockether.vis-sdk.core/discover-extensions!` which:
 
 1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` files
    (via `ClassLoader.getResources`)
@@ -236,7 +236,7 @@ the query still runs.
   ;; Require the slim contract directly. The full vis runtime is NOT
   ;; needed (and not on the classpath) when this jar is consumed by
   ;; another extension or a sandbox host.
-  (:require [com.blockether.vis-extension.extension :as ext]))
+  (:require [com.blockether.vis-sdk.core :as ext]))
 
 (defn- search-fn [query] ...)
 
@@ -291,14 +291,14 @@ Real in-tree examples — every package below ships exactly one
 
 ### CLI commands
 
-`packages/vis-cli/src/com/blockether/vis_cli/channels/cli.clj` ships the `vis extensions list`
+`packages/vis-main/src/com/blockether/vis_main/channels/cli.clj` ships the `vis extensions list`
 subcommand:
 
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis-cli.channels.cli
-     :ext/doc       "vis-loop's contribution to the `vis extensions` subtree."
+    {:ext/namespace 'com.blockether.vis-main.channels.cli
+     :ext/doc       "vis-runtime's contribution to the `vis extensions` subtree."
      :ext/cli       [{:cmd/name   "list"
                       :cmd/doc    "List every registered extension."
                       :cmd/usage  "vis extensions list"
@@ -315,7 +315,7 @@ defaults `:cmd/parent` for entries that omit it. Three forms work:
 Any `:cmd/parent` that doesn't start with `"extensions"` is rejected
 at registration time with `:type :ext/cli-bad-parent`. Top-level
 binary commands (`vis run`, `vis auth`, …) are NOT extension
-commands; they use `cmd/register-global!` directly inside vis-loop.
+commands; they use `cmd/register-global!` directly inside vis-runtime.
 
 See [Extension Spec — CLI command slot](spec.md#cli-command-slot) for
 full examples of each form.

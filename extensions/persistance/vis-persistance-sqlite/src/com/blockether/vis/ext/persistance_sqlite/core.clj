@@ -1,5 +1,12 @@
-(ns com.blockether.vis.ext.persistance-sqlite.core
+(ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}
+  com.blockether.vis.ext.persistance-sqlite.core
   "SQLite store — V1 schema implementation.
+
+   Every public defn in this file is dispatched dynamically by
+   `vis-sdk.core/defdelegate` via `ns-resolve`; clj-kondo never sees
+   the call sites. The ns-level config above silences
+   `:unused-public-var` for the whole file. The actual call surface
+   is verified through the storage facade tests.
 
    Tables (V1__schema.sql):
      conversation_soul, conversation_state,
@@ -14,8 +21,7 @@
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis-persistance.base :as base]
-   [com.blockether.vis-persistance.migration :as migration]
+   [com.blockether.vis-sdk.core :as base]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -90,7 +96,7 @@
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
 
 (defn- install-schema! [^DataSource ds]
-  (migration/migrate! ds MIGRATIONS))
+  (base/migrate! ds MIGRATIONS))
 
 ;; =============================================================================
 ;; Connection management
@@ -1033,10 +1039,8 @@
 ;; routes here.
 ;; =============================================================================
 
-(require '[com.blockether.vis-extension.extension :as ext])
-
-(ext/register-global!
-  (ext/extension
+(base/register-extension!
+  (base/extension
     {:ext/namespace 'com.blockether.vis.ext.persistance-sqlite.core
      :ext/doc       "SQLite + Flyway persistence backend."
      :ext/version   "0.3.0"

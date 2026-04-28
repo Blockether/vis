@@ -15,11 +15,11 @@
      2. Require it here, conj its symbols onto `all-symbols` and
         merge its prompt into `combined-prompt`.
 
-   Depends on `com.blockether/vis-loop` and uses the extension-author
-   facade `com.blockether.vis-extension.extension`."
+   Depends on `com.blockether/vis-runtime` and uses the extension-author
+   facade `com.blockether.vis-sdk.core`."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis-extension.extension :as ext]
+   [com.blockether.vis-sdk.core :as ext]
    [com.blockether.vis.ext.common-editing.editing :as editing]))
 
 (def all-symbols
@@ -50,4 +50,4 @@
      :ext/prompt    combined-prompt
      :ext/symbols   all-symbols}))
 
-(ext/register-global! extension)
+(ext/register-extension! extension)

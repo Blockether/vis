@@ -37,7 +37,7 @@ for large files; see the symbol's `:examples` for the full form.
 
 ```clojure
 (vis/cat \"deps.edn\")
-(vis/cat \"packages/vis-loop/src/com/blockether/vis/core.clj\"
+(vis/cat \"packages/vis-runtime/src/com/blockether/vis/core.clj\"
          {:from-line 1 :to-line 80})
 ```
 
@@ -63,7 +63,7 @@ regex literal for complex patterns.
 
 ```clojure
 (vis/rg \"TODO\")
-(vis/rg \"defn\" \"packages/vis-loop/src\")
+(vis/rg \"defn\" \"packages/vis-runtime/src\")
 (vis/rg #\"\\bdef(n|method)\\b\" \"src\")
 ```
 

@@ -370,10 +370,10 @@
 ;; generic registry. The CLI's `vis auth` lists every registered
 ;; provider; the runtime's token-resolution path looks providers up
 ;; by id. Drop this jar (or pick another `vis-provider-*` package)
-;; to swap providers without touching vis-loop.
+;; to swap providers without touching vis-runtime.
 ;; =============================================================================
 
-(require '[com.blockether.vis-extension.extension :as ext])
+(require '[com.blockether.vis-sdk.core :as ext])
 
 (defn- interactive-auth!
   "Wrap the multi-step device flow into one fn the CLI / TUI can
@@ -398,7 +398,7 @@
         (print! "  ✓ Authenticated! GitHub Copilot is ready.")
         :ok))))
 
-(ext/register-global!
+(ext/register-extension!
   (ext/extension
     {:ext/namespace 'com.blockether.vis.ext.provider-github-copilot
      :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
