@@ -36,11 +36,11 @@
     {:conversation-id conversation-id :query-id query-id}))
 
 (defn- db-store-iteration!
-  [store query-id {:keys [expressions thinking error]
-                   :or {expressions []}}]
+  [store query-id {:keys [blocks thinking error]
+                   :or {blocks []}}]
   (sdk/db-store-iteration! store
     (cond-> {:query-id    query-id
-             :expressions expressions
+             :blocks blocks
              :duration-ms 100
              :llm-model   "test-model"
              :metadata    {}}
@@ -85,8 +85,8 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
-                       {:id 1 :code "(boom)"  :error "boom" :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
+                  {:id 1 :code "(boom)"  :error "boom" :execution-time-ms 1}]})
       (let [turn ((private-fn "foundation-turn") (env s conversation-id))]
         (expect (= 2 (count (:attempts turn))))
         (expect (= 1 (count (:errors turn))))
@@ -99,15 +99,15 @@
           {:keys [conversation-id query-id]} (bootstrap s)]
       (sdk/db-store-iteration! s
         {:query-id    query-id
-         :expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
-                       {:id 1 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
+         :blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
+                  {:id 1 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
          :duration-ms 100
          :llm-model   "test-model"
          :metadata    {:dedup-saves 0
                        :expression-redundancy-fraction 0.0}})
       (sdk/db-store-iteration! s
         {:query-id    query-id
-         :expressions [{:id 0 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
+         :blocks [{:id 0 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
          :duration-ms 100
          :llm-model   "test-model"
          :metadata    {:dedup-saves 1
@@ -321,9 +321,9 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)"        :result 3 :execution-time-ms 1}
-                       {:id 1 :code "(grep \"FOO\")" :result [] :execution-time-ms 1}
-                       {:id 2 :code "(grep \"BAR\")" :result [] :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(+ 1 2)"        :result 3 :execution-time-ms 1}
+                  {:id 1 :code "(grep \"FOO\")" :result [] :execution-time-ms 1}
+                  {:id 2 :code "(grep \"BAR\")" :result [] :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) "grep")]
         (expect (= 2 (count hits)))
         (expect (every? #(re-find #"grep" (:code %)) hits))
@@ -336,7 +336,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(defn foo [x] x)" :result nil :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(defn foo [x] x)" :result nil :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) #"\bdefn\b")]
         (expect (= 1 (count hits))))))
 
@@ -348,7 +348,7 @@
                 :query "second turn" :status :running})]
       ;; Leave q1 empty; fill q2.
       (db-store-iteration! s q2
-        {:expressions [{:id 0 :code "(grep \"target\")" :result [] :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(grep \"target\")" :result [] :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) "grep" conversation-id)]
         (expect (= 1 (count hits))))))
 
@@ -356,7 +356,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) #"Unmatched delimiter")]
         ;; Defensive default: agents commonly do `(first hits)` /
         ;; `(:code (first hits))`. Returning [] keeps that path nil-safe
@@ -386,9 +386,9 @@
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(grep \"alpha\")" :result [] :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(grep \"alpha\")" :result [] :execution-time-ms 1}]})
       (db-store-iteration! s other-query-id
-        {:expressions [{:id 0 :code "(grep \"beta\")" :result [] :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(grep \"beta\")" :result [] :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts-everywhere") (env s conversation-id) #"grep")]
         (expect (= 2 (count hits)))
         ;; Each hit carries the originating :conversation-id so callers
@@ -401,7 +401,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       ;; Reproduces the exact diagnose-loop failure: agent searches for
       ;; an error that doesn't exist in the DB, expects an empty vec
       ;; back, must NOT receive nil.
@@ -441,14 +441,14 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0
-                        :code "(vis/rg \"foo\\|bar\\|baz\" \"x\")"
-                        :error "Unsupported escape character: \\|"
-                        :execution-time-ms 1}
-                       {:id 1
-                        :code "(vis/patch [{:path \"render.clj\" :search \"x\" :replace \"y\"}])"
-                        :error "SEARCH block 1 not found in render.clj"
-                        :execution-time-ms 1}]})
+        {:blocks [{:id 0
+                   :code "(vis/rg \"foo\\|bar\\|baz\" \"x\")"
+                   :error "Unsupported escape character: \\|"
+                   :execution-time-ms 1}
+                  {:id 1
+                   :code "(vis/patch [{:path \"render.clj\" :search \"x\" :replace \"y\"}])"
+                   :error "SEARCH block 1 not found in render.clj"
+                   :execution-time-ms 1}]})
       (let [diagnosis ((private-fn "foundation-diagnose") (env s conversation-id))]
         (expect (= 2 (:failure-count diagnosis)))
         (expect (= 1 (get-in diagnosis [:by-classification :regex-unsupported-escape])))
@@ -467,7 +467,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions
+        {:blocks
          (into
            (mapv (fn [i]
                    {:id i
@@ -501,13 +501,13 @@
                              :query "second turn"
                              :status :running})]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
-                        :error "Unsupported escape character: \\|"
-                        :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
+                   :error "Unsupported escape character: \\|"
+                   :execution-time-ms 1}]})
       (db-store-iteration! s second-query-id
-        {:expressions [{:id 0 :code "(vis/patch [{:path \"x\"}])"
-                        :error "SEARCH block 1 not found in x"
-                        :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(vis/patch [{:path \"x\"}])"
+                   :error "SEARCH block 1 not found in x"
+                   :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures") (env s conversation-id) conversation-id)]
         (expect (= 2 (count failures)))
         (expect (every? :turn-id failures))
@@ -517,7 +517,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures") (env s conversation-id))]
         (expect (vector? failures))
         (expect (= [] failures))))))
@@ -536,13 +536,13 @@
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
-                        :error "Unsupported escape character: \\|"
-                        :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
+                   :error "Unsupported escape character: \\|"
+                   :execution-time-ms 1}]})
       (db-store-iteration! s other-query-id
-        {:expressions [{:id 0 :code "(vis/patch [{:path \"x\"}])"
-                        :error "SEARCH block 1 not found in x"
-                        :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(vis/patch [{:path \"x\"}])"
+                   :error "SEARCH block 1 not found in x"
+                   :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures-everywhere") (env s conversation-id))]
         (expect (= 2 (count failures)))
         (expect (every? :conversation-id failures))
@@ -555,7 +555,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
-        {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures-everywhere") (env s conversation-id))]
         (expect (vector? failures))
         (expect (= [] failures)))))

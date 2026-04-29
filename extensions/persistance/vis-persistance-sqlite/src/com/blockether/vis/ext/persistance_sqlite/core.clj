@@ -659,10 +659,44 @@
 ;; Iteration — iteration table
 ;; =============================================================================
 
+(defn- prepare-blocks-blob
+  "Encode the per-iteration code-block log as one Nippy-frozen vec
+   suitable for `iteration.blocks BLOB`. Each map carries the same
+   shape every read path expects from `db-list-iteration-blocks`,
+   so the legacy per-call-row contract round-trips through the blob:
+
+     {:idx           0-based block index
+      :code          \"(some-code)\"
+      :comment       leading `;; … / #_(...)` block, absent when blank
+      :result        deep-frozen value, absent on error
+      :error         string error message, absent on success
+      :stdout/:stderr  non-blank captured streams, absent otherwise
+      :duration-ms   N
+      :timeout?      true | absent
+      :repaired?     true | absent}"
+  [blocks]
+  (let [blank? (fn [s] (or (nil? s) (and (string? s) (str/blank? s))))]
+    (->> (or blocks [])
+      (map-indexed
+        (fn [pos exec]
+          (cond-> {:idx pos
+                   :code (:code exec)}
+            (some? (:comment exec))            (assoc :comment (:comment exec))
+            (some? (:result exec))             (assoc :result (freeze-safe (:result exec)))
+            (some? (:error exec))              (assoc :error  (str (:error exec)))
+            (not (blank? (:stdout exec)))      (assoc :stdout (:stdout exec))
+            (not (blank? (:stderr exec)))      (assoc :stderr (:stderr exec))
+            (some? (:execution-time-ms exec))  (assoc :duration-ms (:execution-time-ms exec))
+            (:timeout? exec)                   (assoc :timeout? true)
+            (:repaired? exec)                  (assoc :repaired? true))))
+      vec)))
+
 (defn db-store-iteration!
-  "Store one iteration + expression_soul/expression_state rows for expressions and vars.
-   Returns the iteration UUID."
-  [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
+  "Store one iteration row + per-`(def …)` expression_soul/expression_state
+   rows. The iteration's full code-block log is written inline as a
+   Nippy blob in `iteration.blocks` (no per-call rows; see V1 schema
+   migration banner). Returns the iteration UUID."
+  [db-info {:keys [query-id blocks thinking answer answer-form-idx duration-ms vars error metadata
                    llm-messages llm-provider llm-model]}]
   (when (ds db-info)
     (let [iteration-id   (UUID/randomUUID)
@@ -697,62 +731,32 @@
                             :from   :iteration
                             :where  [:= :query_state_id query-state-id-s]}))
                       0)]
-      ;; 1. Iteration row
-      (execute! db-info
-        {:insert-into :iteration
-         :values [{:id                   iteration-id-s
-                   :query_state_id       query-state-id-s
-                   :position             position
-                   :status               (normalize-status (cond answer :done error :error :else :done))
-                   :llm_system_prompt    (when (seq llm-messages)
-                                           (:content (first (filter #(= "system" (:role %)) llm-messages))))
-                   :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
-                   :llm_provider         (when llm-provider (name (->kw llm-provider)))
-                   :llm_model            llm-model
-                   :llm_thinking         (or thinking "")
-                   :llm_full_duration_ms (or duration-ms 0)
-                   :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
-                   :llm_returned_empty_expressions (if (empty? expressions) 1 0)
-                   :metadata             (when metadata (->json metadata))
-                   :created_at           now
-                   :finished_at          now}]})
-      ;; 2. Executions → expression_soul (kind=call, stateless) + expression_state
-      (let [blank? (fn [s] (or (nil? s) (and (string? s) (str/blank? s))))]
-        (doseq [[pos exec] (map-indexed vector (or expressions []))]
-          (when conversation-state-id
-            (let [expr-soul-id (str (UUID/randomUUID))
-                  expr-state-id (str (UUID/randomUUID))]
-              (execute! db-info
-                {:insert-into :expression_soul
-                 :values [{:id                    expr-soul-id
-                           :conversation_state_id conversation-state-id
-                           :kind                  "call"
-                           :state_mode            "stateless"
-                           :metadata              (->json {:position pos})
-                           :created_at            now}]})
-              (execute! db-info
-                {:insert-into :expression_state
-                 :values [(cond-> {:id                 expr-state-id
-                                   :expression_soul_id expr-soul-id
-                                   :iteration_id       iteration-id-s
-                                   :version            0
-                                   :success            (if (:error exec) 0 1)
-                                   :expr               (:code exec)
-                                   :created_at         now}
-                            (some? (:result exec))
-                            (assoc :result (->blob (freeze-safe (:result exec))))
-                            (some? (:error exec))
-                            (assoc :error (->blob (str (:error exec))))
-                            (not (blank? (:stdout exec)))
-                            (assoc :stdout (:stdout exec))
-                            (not (blank? (:stderr exec)))
-                            (assoc :stderr (:stderr exec))
-                            (some? (:execution-time-ms exec))
-                            (assoc :duration_ms (:execution-time-ms exec))
-                            (:timeout? exec)
-                            (assoc :metadata (->json {:timeout true}))
-                            (:repaired? exec)
-                            (assoc :metadata (->json {:repaired true})))]})))))
+      ;; 1. Iteration row — includes the full block log inline as
+      ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Replaces
+      ;;    the legacy expression_soul kind='call' + expression_state
+      ;;    fanout: every reader iterated per-iteration anyway.
+      (let [blocks-vec (prepare-blocks-blob blocks)]
+        (execute! db-info
+          {:insert-into :iteration
+           :values [(cond-> {:id                   iteration-id-s
+                             :query_state_id       query-state-id-s
+                             :position             position
+                             :status               (normalize-status (cond answer :done error :error :else :done))
+                             :llm_system_prompt    (when (seq llm-messages)
+                                                     (:content (first (filter #(= "system" (:role %)) llm-messages))))
+                             :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
+                             :llm_provider         (when llm-provider (name (->kw llm-provider)))
+                             :llm_model            llm-model
+                             :llm_thinking         (or thinking "")
+                             :llm_full_duration_ms (or duration-ms 0)
+                             :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
+                             :llm_returned_empty_blocks (if (empty? blocks) 1 0)
+                             :metadata             (when metadata (->json metadata))
+                             :blocks               (->blob blocks-vec)
+                             :created_at           now
+                             :finished_at          now}
+                      (some? answer-form-idx)
+                      (assoc :answer_form_idx answer-form-idx))]}))
       ;; 3. Vars → expression_soul (kind=var, stateful) + expression_state (versioned)
       (when conversation-state-id
         (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
@@ -913,26 +917,24 @@
            :order-by [[:est.created_at :asc]]})))
     []))
 
-(defn db-list-iteration-expressions
-  "Return execution expressions for an iteration, ordered by position.
-   Each entry has :code, :result, :error, :stdout, :duration-ms."
+(defn db-list-iteration-blocks
+  "Return code blocks for an iteration, ordered by 0-based `:idx`.
+   Each entry carries :idx + :code (and optionally :comment :result
+   :error :stdout :stderr :duration-ms :timeout? :repaired?).
+
+   Source: the Nippy-encoded `iteration.blocks` BLOB. Replaces the
+   legacy expression_soul kind='call' + expression_state row join.
+   Same shape every legacy reader expects, so call sites round-trip
+   through the blob without changes."
   [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
-    (let [iteration-id-s (->ref iteration-id)]
-      (mapv (fn [r]
-              (cond-> {:code (:expr r)}
-                (some? (:result r)) (assoc :result (<-blob (:result r)))
-                (some? (:error r))  (assoc :error (<-blob (:error r)))
-                (some? (:stdout r)) (assoc :stdout (:stdout r))
-                (some? (:duration_ms r)) (assoc :duration-ms (:duration_ms r))))
-        (query! db-info
-          {:select   [:est.expr :est.result :est.error :est.stdout :est.duration_ms]
-           :from     [[:expression_state :est]]
-           :join     [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
-           :where    [:and
-                      [:= :est.iteration_id iteration-id-s]
-                      [:= :es.kind "call"]]
-           :order-by [[:est.created_at :asc]]})))
+    (let [iteration-id-s (->ref iteration-id)
+          row            (query-one! db-info
+                           {:select [:blocks]
+                            :from   :iteration
+                            :where  [:= :id iteration-id-s]})
+          decoded        (<-blob (:blocks row))]
+      (vec (or decoded [])))
     []))
 
 (defn db-latest-var-registry
@@ -1038,7 +1040,7 @@
 ;; Restore — read all vars in topological order for sandbox reconstruction
 ;; =============================================================================
 
-(defn db-restore-expressions
+(defn db-restore-blocks
   "Returns all stateful var expression_souls with their latest expression_state,
    ordered topologically (dependencies first, then by created_at).
 

@@ -28,7 +28,7 @@ current environment, `:ext/nudge-fn` is not called at all.
 ```clojure
 {:environment            env    ;; the full environment map (see Environment Map)
  :iteration              int    ;; 0-indexed current iteration number
- :previous-expressions   [map]  ;; previous iteration's expressions:
+ :previous-blocks   [map]  ;; previous iteration's blocks:
                                 ;;   [{:code str :result any :error str?
                                 ;;     :stdout str :stderr str
                                 ;;     :execution-time-ms int
@@ -37,8 +37,8 @@ current environment, `:ext/nudge-fn` is not called at all.
  :user-var-count         int}   ;; user-defined vars in the sandbox
 ```
 
-Key names spell out the full word (`:previous-expressions`, not
-`:prev-expressions`) per the no-abbreviation rule in `AGENTS.md`.
+Key names spell out the full word (`:previous-blocks`, not
+`:prev-blocks`) per the no-abbreviation rule in `AGENTS.md`.
 
 ### Rules
 
@@ -57,9 +57,9 @@ Key names spell out the full word (`:previous-expressions`, not
    :ext/group     "tools"
    :ext/prompt    "Prefer batching by 10 items at a time."
    :ext/symbols   [my-tool-sym]
-   :ext/nudge-fn  (fn [{:keys [environment iteration previous-expressions]}]
+   :ext/nudge-fn  (fn [{:keys [environment iteration previous-blocks]}]
                     (when (and (> iteration 5)
-                              (some :timeout? previous-expressions))
+                              (some :timeout? previous-blocks))
                       "[system_nudge] my-tool calls are timing out. Try smaller batch sizes."))})
 ```
 

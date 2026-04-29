@@ -107,7 +107,7 @@ Table: `iteration`. One LLM round-trip inside a `query_state`.
 | `llm_full_duration_ms` | INTEGER | nullable, `>= 0` |
 | `llm_thinking` | TEXT | |
 | `llm_error` | TEXT | |
-| `llm_returned_empty_expressions` | INTEGER | 0/1, default 0 |
+| `llm_returned_empty_blocks` | INTEGER | 0/1, default 0 |
 | `metadata` | TEXT | JSON — active extensions, etc. |
 | `created_at` | INTEGER | |
 | `finished_at` | INTEGER | nullable |
@@ -189,7 +189,7 @@ Table: `expression_state`. Versioned expression output snapshots emitted per ite
 
 Constraints: `UNIQUE(expression_soul_id, version)`, `CHECK((success=1 AND error IS NULL) OR (success=0 AND error IS NOT NULL))`
 Indexes: `idx_expression_state_soul(expression_soul_id, version)`, `idx_expression_state_iteration(iteration_id)`
-Triggers (`trg_expression_state_stateless_ai/au`) enforce: first version = 0, stateless expressions only ever get version 0 and at most one row.
+Triggers (`trg_expression_state_stateless_ai/au`) enforce: first version = 0, stateless blocks only ever get version 0 and at most one row.
 
 ### Log
 

@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — `<recent>` (last iteration's expressions with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (`QUERY`, `ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`) the model can read directly. Optional `[system_nudge]` line when the model executes the same expression twice.
+1. **Build Context** — `<recent>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`) the model can read directly. Optional `[system_nudge]` line when the model executes the same expression twice.
 2. **Ask LLM** — plain-text completion + fenced code-block
    extraction. The call site is
    `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
@@ -113,7 +113,7 @@ between iterations. Continuity is delivered by:
   addressable by `iN.K` ids.
 - **`<var_index>`** — user-defined `(def …)` bindings, type-aware
   rendering (see below).
-- **SCI bindings** — the SYSTEM vars (`QUERY`, `ANSWER`, `REASONING`,
+- **SCI bindings** — the SYSTEM vars (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`,
   `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`) the model
   can read directly from inside a fenced code block.
 
@@ -125,7 +125,7 @@ exposes `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversat
 
 ## SYSTEM vars
 
-`QUERY`, `REASONING`, `ANSWER`, `CURRENT_QUERY_ID`,
+`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`, `CURRENT_QUERY_ID`,
 `CURRENT_ITERATION_ID`, `EXTENSIONS` are read-only sandbox bindings.
 UPPERCASE marks them as constants; the registry `SYSTEM_VAR_NAMES`
 is fixed. See `com.blockether.vis.core/system-var-sym?` for the

@@ -358,9 +358,9 @@ Do NOT abbreviate domain terms in identifiers. Spell things out. Cost of a few e
 
 ### SYSTEM vars are UPPERCASE and explicitly defined
 
-Sandbox-visible system vars are **`QUERY`, `REASONING`, `ANSWER`, `TITLE`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`** — ALL CAPS, no earmuffs. The fixed registry lives at `com.blockether.vis.core/SYSTEM_VAR_NAMES`; predicate is `system-var-sym?`.
+Sandbox-visible system vars are **`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`, `CONVERSATION_TITLE`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`** — ALL CAPS, no earmuffs. The fixed registry lives at `com.blockether.vis.core/SYSTEM_VAR_NAMES`; predicate is `system-var-sym?`.
 
-Bound at environment construction so symbols always resolve, even before first turn. Subsequently rebound after each iteration via the loop's bookkeeping. `TITLE` mirrors the env's `:title-atom`, which is the in-memory cache for the conversation title (the persisted truth lives in `conversation_state.title`); the model writes through `(title "...")`, never by `def`-ing TITLE — the SYSTEM-var write guard rejects that on principle.
+Bound at environment construction so symbols always resolve, even before first turn. Subsequently rebound after each iteration via the loop's bookkeeping. `CONVERSATION_TITLE` mirrors the env's `:conversation-title-atom`, which is the in-memory cache for the conversation title (the persisted truth lives in `conversation_state.title`); the model writes through `(conversation-title "...")`, never by `def`-ing CONVERSATION_TITLE — the SYSTEM-var write guard rejects that on principle.
 
 Do NOT introduce earmuffed names (`*query*`, `*foo*`) for new system vars. Adding to `SYSTEM_VAR_NAMES` = deliberate API change, not free-form pattern.
 
@@ -377,7 +377,7 @@ Why uppercase, not earmuffs:
 (def MAX_ITER 30)                        (def MAX_ITERATIONS 30)
 (let [iter 0 prev-msg ...] ...)          (let [iteration 0 previous-message ...] ...)
 (defn run-iter [...] ...)                (defn run-iteration [...] ...)
-:expr-results                            :expression-results
+:expr-results                            :block-results
 :prev-iteration                          :previous-iteration
 (defn count-cb [cb] ...)                 (defn count-callback [callback] ...)
 ```
@@ -594,7 +594,7 @@ NO JSON iteration spec, NO schema validation around iteration responses, NO sche
 
 - `<recent>` — previous iteration's executed code blocks + results, addressable as `iN.K`.
 - `<var_index>` — type-aware snapshot of user-defined `(def …)` bindings.
-- SCI-bound SYSTEM vars the model can read directly (`QUERY`, `ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`).
+- SCI-bound SYSTEM vars the model can read directly (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`).
 - One optional `[system_nudge]` line when the model executes the same expression twice.
 
 Plus an opt-in `vis-common-foundation` extension exposing `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`, `(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`, `(foundation/failures)`, `(foundation/diagnose)`, `(foundation/extensions)`, `(foundation/extension-doc …)`, `(foundation/extension-readme …)` for the model to self-introspect.
