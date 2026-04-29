@@ -1,7 +1,7 @@
 # Meta extension
 
 Source of truth: the inlined `"README.md"` body in
-[`extensions/common/vis-common-foundation/resources/META-INF/vis-extension/vis.edn`](https://github.com/Blockether/vis/blob/main/extensions/common/vis-common-foundation/resources/META-INF/vis-extension/vis.edn).
+[`extensions/common/vis-foundation/resources/META-INF/vis-extension/vis.edn`](https://github.com/Blockether/vis/blob/main/extensions/common/vis-foundation/resources/META-INF/vis-extension/vis.edn).
 The book intentionally does NOT duplicate it (see `AGENTS.md` ▸ "Every
 extension declares itself in vis.edn with an inline README").
 
@@ -21,7 +21,7 @@ Read the canonical doc one of three ways:
 
 ## At a glance
 
-`vis-common-foundation` is the agent's read-only introspection extension. Bound
+`vis-foundation` is the agent's read-only introspection extension. Bound
 under the `foundation` alias. The functions return plain Clojure maps and
 vectors so the agent manipulates state structurally instead of
 running raw `sqlite3`. Symbols include:

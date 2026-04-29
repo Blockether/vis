@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `:ext/requires` for extension dependency declaration
 - `:ext/version`, `:ext/author`, `:ext/license` metadata
 - `register-global!`, `load-extension!`, `reload-extension!`
-- `extensions/common/vis-common-editing` package (read, list, grep, patch)
+- `extensions/common/vis-foundation` package (read, list, grep, patch)
 - mdBook documentation at https://blockether.github.io/vis/
 - Iteration metadata stores active extensions (namespace + version)
 - Apache-2.0 license

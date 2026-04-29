@@ -39,7 +39,7 @@ Two conditional rules apply on top of the spec:
 
 | Key                      | Required        | Default              | Description |
 |--------------------------|-----------------|----------------------|-------------|
-| `:ext/namespace`         | ✓              | —                    | Fully qualified symbol, e.g. `'com.blockether.vis.ext.common-editing.core`, `'com.acme.ext.git`. Also the dedup key in the global registry. |
+| `:ext/namespace`         | ✓              | —                    | Fully qualified symbol, e.g. `'com.blockether.vis.ext.foundation.editing.core`, `'com.acme.ext.git`. Also the dedup key in the global registry. |
 | `:ext/doc`               | ✓              | —                    | Extension-level description. |
 | `:ext/group`             | conditional     | —                    | Top-level prompt group (e.g. `"knowledge"`). **Required when `:ext/symbols` is non-empty.** Pure non-symbol extensions (channels-only, providers-only, persistence-only) may omit it. |
 | `:ext/subgroup`          | ✗              | same as `:ext/group` | Finer-grained grouping within the group. Defaults to `:ext/group` only when `:ext/group` is itself present. |
@@ -47,7 +47,7 @@ Two conditional rules apply on top of the spec:
 | `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt. Strings are normalized to `(constantly s)`. |
 | `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)). |
 | `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
-| `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.common-editing.core]`. |
+| `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.foundation.editing.core]`. |
 | `:ext/version`           | ✗              | —                    | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"`. |
 | `:ext/author`            | ✗              | —                    | Author name or org, e.g. `"Blockether"`. |
 | `:ext/license`           | ✗              | —                    | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"`. |
@@ -259,7 +259,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/group         "knowledge"
      :ext/subgroup      "documents"
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
-     :ext/requires      ['com.blockether.vis.ext.common-editing.core]
+     :ext/requires      ['com.blockether.vis.ext.foundation.editing.core]
      :ext/prompt        "Prefer narrow searches before broad scans."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
      :ext/nudge-fn      (fn [{:keys [environment iteration previous-blocks]}]

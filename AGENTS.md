@@ -99,7 +99,7 @@ EDN map keyed by extension **id** (short symbol; same token LLM uses as SCI sand
 
 ```edn
 {meta
- {:nses [com.blockether.vis.ext.common-foundation.core]
+ {:nses [com.blockether.vis.ext.foundation.introspection]
   :docs {"README.md"
          {:created-at  #inst "2026-04-28"
           :description "One-paragraph LLM-facing summary..."
@@ -144,7 +144,7 @@ Rules:
 - The id (top-level key in `vis.edn`) MUST equal registered ext's `:ext/ns-alias :alias`. Loader doesn't enforce strictly, but reviewers MUST reject mismatches — LLM types `(meta/...)`, on-disk id is `foundation`.
 - Multiple jars MAY contribute under same id; their `:nses` deduped, `:docs` merged (last write wins per name). `:reflinks` recomputed across entire registry after every merge -> a later jar's links can target an earlier jar's docs.
 - Editing tip: `:content` = multi-line EDN string. Supported authoring loop: keep Markdown body in sibling `.md` file in source tree, re-inline into `vis.edn` with a small `pprint`-based generator. Do NOT keep two on-disk copies of same content under version control.
-- `vis-common-foundation` exposes the LLM-facing surface: `(foundation/extensions)` lists every loaded ext + docs catalog; `(foundation/extension-docs ext-ref)` returns `[{:name :created-at :description :links :reflinks} …]` summaries for one ext; `(foundation/extension-doc ext-ref name)` returns full descriptor including `:content`; `(foundation/extension-readme ext-ref)` is the README `:content` convenience.
+- `vis-foundation` exposes the LLM-facing surface: `(foundation/extensions)` lists every loaded ext + docs catalog; `(foundation/extension-docs ext-ref)` returns `[{:name :created-at :description :links :reflinks} …]` summaries for one ext; `(foundation/extension-doc ext-ref name)` returns full descriptor including `:content`; `(foundation/extension-readme ext-ref)` is the README `:content` convenience.
 
 Why: agents that need to verify what an ext actually does — before reaching for one of its tools — must read the ext's own description as data, not guess from symbol names. Inlining docs in `vis.edn` = single classpath read at boot, eliminates path-vs-call ambiguity an external doc tree introduced (`vis/<id>` reads as a sandbox call), makes the description index trivially queryable.
 
@@ -194,9 +194,9 @@ Three rules. Non-negotiable. Every prior violation shipped to readers as broken 
 
 3. **Internal links use slugified anchors of the live heading.** Renaming a heading invalidates every `#anchor` link to it. After any heading rename, grep for old anchor across `docs/src/` and repoint or delete every reference. Example: renaming `## Auto-discovery resource` to `## Auto-discovery` changes anchor from `#auto-discovery-resource` to `#auto-discovery`; doc that linked to old anchor breaks silently — mdbook does not warn.
 
-### Triage conversations with vis-common-foundation — let vis self-analyze
+### Triage conversations with vis-foundation — let vis self-analyze
 
-`~/.vis/vis.mdb/vis.db` = single source of truth for every conversation — turns, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about a user-reported bug that references a specific `conversation-id`, **let vis self-analyze**. The `vis-common-foundation` ext (alias `foundation`) exposes that data as plain Clojure maps from `:code`; agent reaches it via `bin/vis run`. Supported triage path — there is no other.
+`~/.vis/vis.mdb/vis.db` = single source of truth for every conversation — turns, iterations, final answers, persisted SCI vars, timings, costs. Before hypothesizing about a user-reported bug that references a specific `conversation-id`, **let vis self-analyze**. The `vis-foundation` ext (alias `foundation`) exposes that data as plain Clojure maps from `:code`; agent reaches it via `bin/vis run`. Supported triage path — there is no other.
 
 ```bash
 bin/vis run --json "Use the meta extension to analyze conversation \
@@ -210,7 +210,7 @@ Returns structured JSON envelope with agent's answer, iteration trace, token usa
 
 Full meta API (`(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`, `(foundation/diagnose)`, `(foundation/failures)`, `(foundation/find-attempts pattern)`, `(foundation/var-history 'sym)`) documented inline in the extension manifest. Read via `(foundation/extension-readme 'foundation)` from `:code`; do not guess from symbol names.
 
-Question genuinely can't be expressed through meta (schema or migration debugging — debugging the persistence layer itself, not a conversation)? Extend `vis-common-foundation` with the call you wish you had instead of dropping to ad-hoc shell tools. The ext is the API; missing projection = bug in the ext, not a license to bypass it.
+Question genuinely can't be expressed through meta (schema or migration debugging — debugging the persistence layer itself, not a conversation)? Extend `vis-foundation` with the call you wish you had instead of dropping to ad-hoc shell tools. The ext is the API; missing projection = bug in the ext, not a license to bypass it.
 
 Only AFTER vis has self-analyzed may you form a hypothesis, propose a fix, or blame the model / UI / runtime loop. This rule exists because repeated incidents wasted a turn on plausible-sounding code-only explanations when one `bin/vis run` would have pinpointed the bug in two iterations.
 
@@ -294,9 +294,9 @@ vis/
 │   ├── persistance/
 │   │   └── vis-persistance-sqlite/  ← SQLite + Flyway backend
 │   ├── common/
-│   │   ├── vis-common-foundation/         ← (foundation/turn), (foundation/conversation), (foundation/diagnose), …
-│   │   ├── vis-common-environment/  ← cwd / OS / git-facts SCI helpers
-│   │   └── vis-common-editing/      ← filesystem + code-editing tools (vis/cat, vis/edit, vis/rg)
+│   │   ├── vis-foundation/         ← (foundation/turn), (foundation/conversation), (foundation/diagnose), …
+│   │   ├── vis-foundation/  ← cwd / OS / git-facts SCI helpers
+│   │   └── vis-foundation/      ← filesystem + code-editing tools (vis/cat, vis/edit, vis/rg)
 │   └── languages/
 │       └── clojure/                 ← (z/zedit …) rewrite-clj wrapper, alias `z`
 ├── benchmarks/             ← :bench alias only; NOT a classpath plug-in
@@ -597,7 +597,7 @@ NO JSON iteration spec, NO schema validation around iteration responses, NO sche
 - SCI-bound SYSTEM vars the model can read directly (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS`).
 - One optional `[system_nudge]` line when the model executes the same expression twice.
 
-Plus an opt-in `vis-common-foundation` extension exposing `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`, `(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`, `(foundation/failures)`, `(foundation/diagnose)`, `(foundation/extensions)`, `(foundation/extension-doc …)`, `(foundation/extension-readme …)` for the model to self-introspect.
+Plus an opt-in `vis-foundation` extension exposing `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`, `(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`, `(foundation/failures)`, `(foundation/diagnose)`, `(foundation/extensions)`, `(foundation/extension-doc …)`, `(foundation/extension-readme …)` for the model to self-introspect.
 
 **Do NOT reintroduce** any of: `<plan>` / `<breadcrumbs>` / `<recent_thought>` / `<system_state>` / `<vars_archive>` / `<prior_thinking>` slots, an iteration JSON spec, `ITERATION_SPEC_*` envelopes, plan-state validation, plan-edit-distance metrics, sticky-plan loaders, breadcrumb projection, `HANDOVER_KEEP_LAST` cross-query special cases, or per-iteration TODO list machinery. Every one of those was deleted on purpose ("Drastically simplify the agent" cull). The two slots above plus the SYSTEM vars cover the same ground without the projection drift the previous read-loop pathology produced.
 

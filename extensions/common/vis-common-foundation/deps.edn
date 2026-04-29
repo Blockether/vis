@@ -1,4 +1,0 @@
-{:paths ["src" "resources"]
- ;; vis-common-foundation uses the extension contract and persistence facade;
- ;; both now live in vis-runtime.
- :deps {com.blockether/vis {:local/root "../../.."}}}

@@ -1,0 +1,89 @@
+(ns com.blockether.vis.ext.foundation.environment.render-test
+  (:require
+   [clojure.string :as string]
+   [com.blockether.vis.ext.foundation.environment.render :as render]
+   [lazytest.core :refer [defdescribe expect it]]))
+
+(def ^:private base-host
+  {:cwd        "/tmp/x"
+   :user       "alice"
+   :home       "/home/alice"
+   :os-name    "Linux"
+   :os-version "6.6.0"
+   :os-arch    "aarch64"
+   :shell      "/bin/zsh"
+   :locale     "en-US"
+   :jvm        "OpenJDK 21"})
+
+(defdescribe render-test
+  (it "renders a minimal block with no git, no languages, no monorepo"
+    (let [out (render/render {:host base-host :git nil :languages nil :monorepo nil})]
+      (expect (string/starts-with? out "<environment>\n"))
+      (expect (string/ends-with?   out "</environment>\n"))
+      (expect (string/includes?    out "cwd: /tmp/x"))
+      (expect (string/includes?    out "user: alice (home: /home/alice)"))
+      (expect (string/includes?    out "platform: Linux 6.6.0 (aarch64)"))
+      (expect (not (string/includes? out "git.")))
+      (expect (not (string/includes? out "languages:")))
+      (expect (not (string/includes? out "monorepo:")))))
+
+  (it "annotates cwd as `(= git root)` when cwd matches the repo root"
+    (let [git {:root "/tmp/x" :branch "main" :detached? false
+               :worktree? false :submodules? false :clean? true
+               :modified 0 :untracked 0 :added 0 :changed 0
+               :missing 0 :removed 0 :conflicting 0}
+          out (render/render {:host base-host :git git
+                              :languages nil :monorepo nil})]
+      (expect (string/includes? out "cwd: /tmp/x (= git root)"))
+      (expect (string/includes? out "git.branch: main"))
+      (expect (string/includes? out "git.status: clean"))
+      (expect (string/includes? out "submodules: false"))
+      (expect (string/includes? out "worktree: false"))))
+
+  (it "annotates cwd as a subpath when cwd is below the repo root"
+    (let [git {:root "/tmp/repo" :branch "feat" :detached? false
+               :worktree? false :submodules? false :clean? true
+               :modified 0 :untracked 0 :added 0 :changed 0
+               :missing 0 :removed 0 :conflicting 0}
+          out (render/render {:host (assoc base-host :cwd "/tmp/repo/src/foo")
+                              :git git :languages nil :monorepo nil})]
+      (expect (string/includes? out "subpath: src/foo"))))
+
+  (it "shows detached HEAD with the short sha when off-branch"
+    (let [git {:root "/tmp/x" :branch nil :detached? true
+               :detached-sha "abcdef012345"
+               :worktree? false :submodules? false :clean? true
+               :modified 0 :untracked 0 :added 0 :changed 0
+               :missing 0 :removed 0 :conflicting 0}
+          out (render/render {:host base-host :git git
+                              :languages nil :monorepo nil})]
+      (expect (string/includes? out "git.branch: detached @ abcdef012345"))))
+
+  (it "summarizes dirty status as a comma list"
+    (let [git {:root "/tmp/x" :branch "main" :detached? false
+               :worktree? false :submodules? false :clean? false
+               :modified 3 :untracked 2 :added 0 :changed 0
+               :missing 0 :removed 0 :conflicting 0}
+          out (render/render {:host base-host :git git
+                              :languages nil :monorepo nil})]
+      (expect (string/includes? out "dirty (3 modified, 2 untracked)"))))
+
+  (it "renders top languages with bytes-percentage and a primary line"
+    (let [languages {:total-files 100 :total-bytes 100000
+                     :truncated? false :elapsed-ms 12
+                     :primary "clojure"
+                     :languages [{:language "clojure" :files 78 :bytes 78000
+                                  :files-pct 0.78 :bytes-pct 0.78}
+                                 {:language "markdown" :files 12 :bytes 12000
+                                  :files-pct 0.12 :bytes-pct 0.12}]}
+          out (render/render {:host base-host :git nil
+                              :languages languages :monorepo nil})]
+      (expect (string/includes? out "clojure 78%"))
+      (expect (string/includes? out "markdown 12%"))
+      (expect (string/includes? out "primary-language: clojure"))
+      (expect (string/includes? out "100 files"))))
+
+  (it "drops monorepo line when shape is nil"
+    (let [out (render/render {:host base-host :git nil :languages nil
+                              :monorepo {:shape nil :totals {} :files {}}})]
+      (expect (not (string/includes? out "monorepo:"))))))

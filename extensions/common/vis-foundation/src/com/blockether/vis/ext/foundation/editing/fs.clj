@@ -1,0 +1,82 @@
+(ns com.blockether.vis.ext.foundation.editing.fs
+  "Bindings for babashka.fs under the `fs/` alias.
+
+   Picks a small, useful subset — the surface a Clojure programmer
+   reaches for in path math: cwd, exists?, glob, parent, components,
+   file-name, extension, expand-home, list-dir, relativize.
+
+   No I/O conveniences here — reading file contents lives under the
+   `vis/` alias (vis/cat, vis/ls, vis/rg — vector of literal substrings).
+   The fs/ alias is just plumbing."
+  (:require
+   [babashka.fs :as fs]
+   [com.blockether.vis.core :as sdk]))
+
+(defn- as-strings [coll]
+  (mapv str coll))
+
+(defn- fs-glob [root pat]
+  (as-strings (fs/glob (str root) (str pat))))
+
+(defn- fs-list-dir [path]
+  (as-strings (fs/list-dir (str path))))
+
+(defn- fs-components [path]
+  (as-strings (fs/components (str path))))
+
+(def fs-symbols
+  [(sdk/symbol 'cwd #(str (fs/cwd))
+     {:doc "Current working directory as a string."
+      :arglists '([])
+      :examples ["(fs/cwd)"]})
+   (sdk/symbol 'exists? #(fs/exists? (str %))
+     {:doc "True iff the path exists on disk."
+      :arglists '([path])
+      :examples ["(fs/exists? \"deps.edn\")"]})
+   (sdk/symbol 'parent #(some-> (fs/parent (str %)) str)
+     {:doc "Parent directory of `path` as a string, or nil."
+      :arglists '([path])
+      :examples ["(fs/parent \"src/main.clj\")"]})
+   (sdk/symbol 'file-name #(str (fs/file-name (str %)))
+     {:doc "Final path segment as a string."
+      :arglists '([path])
+      :examples ["(fs/file-name \"src/main.clj\")"]})
+   (sdk/symbol 'extension #(some-> (fs/extension (str %)) str)
+     {:doc "File extension (without dot) or nil."
+      :arglists '([path])
+      :examples ["(fs/extension \"main.clj\")"]})
+   (sdk/symbol 'components fs-components
+     {:doc "Vector of path components as strings."
+      :arglists '([path])
+      :examples ["(fs/components \"src/main.clj\")"]})
+   (sdk/symbol 'expand-home #(str (fs/expand-home (str %)))
+     {:doc "Expand a leading `~` to the user's home directory."
+      :arglists '([path])
+      :examples ["(fs/expand-home \"~/.vis\")"]})
+   (sdk/symbol 'glob fs-glob
+     {:doc "Glob a tree. Returns a vector of matching paths as strings."
+      :arglists '([root pattern])
+      :examples ["(fs/glob \".\" \"**/*.clj\")"]})
+   (sdk/symbol 'list-dir fs-list-dir
+     {:doc "Non-recursive directory listing as a vector of paths."
+      :arglists '([dir])
+      :examples ["(fs/list-dir \"src\")"]})
+   (sdk/symbol 'relativize #(str (fs/relativize (str %1) (str %2)))
+     {:doc "Relativize `to` against `from`."
+      :arglists '([from to])
+      :examples ["(fs/relativize \"/a\" \"/a/b/c\")"]})])
+
+(def fs-prompt
+  "`fs/` = babashka.fs PATH MATH (no I/O, no mutation):
+  (fs/cwd)              working dir
+  (fs/exists? p)        does p exist?
+  (fs/parent p)         parent dir or nil
+  (fs/file-name p)      basename
+  (fs/extension p)      ext or nil
+  (fs/components p)     vec of path segments
+  (fs/expand-home p)    resolve ~/
+  (fs/glob root pat)    seq of matching paths
+  (fs/list-dir dir)     non-recursive listing
+  (fs/relativize from to)
+
+For I/O use `vis/` (cat/ls/rg/edit/write). For structured Clojure edits use `(z/zedit ...)`.")

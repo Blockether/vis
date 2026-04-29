@@ -1,0 +1,438 @@
+{foundation
+ {:nses [com.blockether.vis.ext.foundation.introspection],
+  :docs
+  {"README.md"
+   {:created-at #inst "2026-04-28T08:00:00.000-00:00",
+    :description
+    "Read-only introspection ext for SCI sandbox. Lets agent inspect own current turn, conversation history, persisted vars, prior attempts, and provider/code failure diagnostics from `:code`. Plus discover surface + canonical README of every loaded extension. Returns plain Clojure maps/vecs for structural manipulation. `(foundation/diagnose)` + `(foundation/failures)` = bounded triage. `(foundation/extensions)` + `(foundation/extension-readme)` = no symbol-name guessing.",
+    :content
+    "# Meta extension
+
+Pkg: `com.blockether/vis-common-foundation`. Src: `extensions/common/vis-common-foundation/`.
+Canonical: inlined under `[meta :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(foundation/extension-readme 'foundation)`.
+
+Opt-in. Lets agent introspect own state, conversation history, failure diagnostics, surface of every loaded ext — all from `:code`. Functions bind under `foundation` alias. Return plain maps/vecs.
+
+Pure reads off persistence data. Never throw — errors -> `nil`/`[]`. Use these for triaging stalled turns.
+
+Add jar to classpath, or `com.blockether/vis-common-foundation` to `deps.edn`, to enable.
+
+## Current turn snapshot
+
+Call: `(foundation/turn)`. One map:
+
+```clojure
+{:id          \"uuid\"
+ :goal        \"the user's request text for this turn\"
+ :status      :running
+ :attempts    [{:iteration-id :iteration :code :result :error
+                :stdout :stderr :duration-ms}]
+ :errors      [...]
+ :failures    [{:source :classification :iteration :message :advice}]
+ :iteration   {:current N}
+ :cost        {:input-tokens :output-tokens :reasoning-tokens
+               :cached-tokens :total-cost :model}
+ :redundancy  {:duplicate-count N :total-count N :fraction 0.0}
+ :elapsed-ms  N}
+```
+
+Use for programmatic turn-level manipulation. Plain reads of the iteration pointer = use the `<recent>` block already in the prompt.
+
+## Failure list
+
+Call: `(foundation/failures)` or `(foundation/failures conversation-id)`. Provider/schema + code/tool failures, normalized:
+
+```clojure
+[{:source :provider
+  :classification :provider-schema-rejected
+  :iteration 4
+  :reason :not-a-map
+  :received-type \"String\"
+  :raw-preview \"Looking at what I have so far\"
+  :advice \"...\"}
+ {:source :code
+  :classification :regex-unsupported-escape
+  :tool \"vis/rg\"
+  :iteration 9
+  :code \"(vis/rg ...)\"
+  :message \"Unsupported escape character: \\\\|\"
+  :advice \"...\"}]
+```
+
+Classifications:
+
+- `:provider-schema-rejected` — provider returned prose/string, not iteration map.
+- `:regex-unsupported-escape` — model wrote `\\|` (or other invalid Clojure escape) inside a string literal that used to be a regex pattern. After the vis/rg API change, regex strings are no longer accepted at all — advice now points at vector-of-literals.
+- `:regex-unescaped-quote` — inner quote split a regex string. Same context: vis/rg only accepts vectors of literal strings now.
+- `:patch-unbalanced-string` — malformed `vis/patch` EDN payload.
+- `:patch-no-match` — `vis/patch` SEARCH block didn't match exactly.
+
+1-arg form scans every turn in conversation, adds `:turn-id` + `:goal` to each failure.
+
+## Turn diagnosis
+
+Call: `(foundation/diagnose)` or `(foundation/diagnose conversation-id)`. Compact summary, first stop for stalled-agent triage:
+
+```clojure
+{:turn-id \"uuid\"
+ :goal \"...\"
+ :status :running
+ :failure-count 148
+ :by-classification {:code-execution-error 148}
+ :repetition-loop? true                    ;; same root cause N× — stop varying inputs
+ :repetition-clusters [{:signature [:code :code-execution-error \"File not found\"]
+                        :count 134
+                        :sample {:source :code :classification :code-execution-error
+                                 :message \"File not found: /…/markdown.clj\" …}}
+                       {:signature [:code :code-execution-error \"Path not found\"]
+                        :count 14
+                        :sample {…}}]
+ :failures [...]
+ :next-actions [\"Same error repeated 134× this turn… STOP varying inputs…\"
+                \"…\"]}
+```
+
+Provider previews, parse/tool error messages, classifications, next actions — all as Clojure data. **Read `:repetition-loop?` first.** When it is `true`, the agent has been retrying the same broken call shape (different filename / argument / regex — same root cause); the next action will spell out which signature is on fire and that varying inputs alone will not converge. Each cluster is sized at `≥ 5` matching failures.
+
+## Single conversation snapshot
+
+Call: `(foundation/conversation)` or `(foundation/conversation conversation-id)`:
+
+```clojure
+{:id                \"uuid\"
+ :channel           :tui
+ :title             \"...\"
+ :model             \"claude-sonnet-4-5\"
+ :created-at        #inst \"...\"
+ :turns             [{:id :goal :outcome :answer :iterations :total-cost}]
+ :turn-count        N
+ :in-flight-turn-id #uuid \"...\"}  ;; only when current conversation
+```
+
+No-arg = current. UUID = any other.
+
+**The in-flight turn is auto-excluded.** When the snapshot covers the
+current conversation, the row whose `:id` = `CURRENT_QUERY_ID` is
+dropped from `:turns` because its `:iterations` and `:total-cost` are
+not finalized yet — listing it would render as `null | $null` in any
+markdown table the agent composes. The excluded id is returned as
+`:in-flight-turn-id`, so callers who genuinely need to see it can
+request the unfiltered snapshot another way (or wait for the turn to
+finalize). Foreign conversations (passed `conversation-id` ≠ current)
+are returned verbatim — their turns are all complete from this env's
+perspective.
+
+## Conversation list
+
+Call: `(foundation/conversations)` or `(foundation/conversations channel)`. Newest-first vec:
+
+```clojure
+[{:id \"...\" :channel :tui :title \"...\" :created-at #inst \"...\"
+  :turn-count N :external-id \"...\"}]
+```
+
+No-arg scans every registered channel plus `:cli`. Channel kw = filter.
+
+## Var history
+
+Call: `(foundation/var-history sym)` or `(foundation/var-history sym conversation-id)`. Version timeline:
+
+```clojure
+[{:value :code :version 0}
+ {:value :code :version 1}]
+```
+
+Default = current conversation. UUID = another. `sym` = symbol or string.
+
+## Search past attempts
+
+Call: `(foundation/find-attempts pattern)` or `(foundation/find-attempts pattern conversation-id)`. Regex over executed `:code`:
+
+```clojure
+[{:turn-id :iteration-id :iteration :code :result :error}]
+```
+
+1-arg = current turn only. 2-arg = whole conversation. `pattern` = string (compiled to `Pattern`) or `Pattern`.
+
+## Extension catalog
+
+Call: `(foundation/extensions)`. Vec of every loaded ext + metadata + summary descriptor per declared doc:
+
+```clojure
+[{:namespace 'com.blockether.vis.ext.foundation.introspection
+  :alias     'foundation
+  :group     \"meta\"
+  :version   \"0.5.0\"
+  :doc       \"Meta introspection...\"
+  :symbols   [turn conversation conversations var-history
+              find-attempts failures diagnose
+              extensions extension-docs extension-doc
+              extension-readme]
+  :docs      [{:name       \"README.md\"
+               :created-at #inst \"2026-04-28\"
+               :description \"Read-only introspection extension...\"
+               :links      [...]
+               :reflinks   [...]}]}
+ ...]
+```
+
+First stop to discover surfaces before reaching for a tool. Summaries omit `:content` to keep catalog small. Pull full descriptor with `(foundation/extension-doc ...)` only when needed.
+
+## Extension docs catalog
+
+Call: `(foundation/extension-docs)` or `(foundation/extension-docs ext-ref)`. No-arg = map keyed by ext id symbol; 1-arg = summary list for one ext. Each entry has all structured fields except `:content`:
+
+```clojure
+(foundation/extension-docs 'foundation)
+;; => [{:name       \"README.md\"
+;;      :created-at #inst \"2026-04-28\"
+;;      :description   \"Read-only introspection extension...\"
+;;      :links      [...]   ;; outgoing refs authored in vis.edn
+;;      :reflinks   [...]}  ;; inbound refs derived by loader
+;;     ...]
+```
+
+Index. Scan descriptions + `:links` to pick which full doc is worth pulling.
+
+## Extension doc body
+
+Call: `(foundation/extension-doc ext-ref doc-name)`. Full descriptor map for one declared doc, inlined in ext's `META-INF/vis-extension/vis.edn` under `[<id> :docs <doc-name>]`:
+
+```clojure
+(foundation/extension-doc 'foundation \"README.md\")
+;; => {:name       \"README.md\"
+;;     :created-at #inst \"2026-04-28\"
+;;     :description   \"Read-only introspection extension...\"
+;;     :content \"# Meta extension\\n...\"   ;; full Markdown body
+;;     :links      [...]
+;;     :reflinks   [...]}
+```
+
+`ext-ref` accepts:
+
+- id symbol (`'foundation`),
+- id as kw or string (`:foundation`, `\"meta\"`),
+- alias-ns symbol (`'vis.ext.foundation`),
+- full ext namespace symbol (`'com.blockether.vis.ext.foundation.introspection`).
+
+`nil` when ext not registered or doc-name missing.
+
+## Link types
+
+`:links` = author-declared in `vis.edn`. Four shapes:
+
+- Cross-ext doc: `{:to-id <id> :to-doc <doc-name> :context \"...\"}`
+- Same-ext doc (omit `:to-id`): `{:to-doc <doc-name> :context \"...\"}`
+- URL: `{:url \"https://...\" :context \"...\"}`
+- Repo file: `{:file \"path/to/file.clj\" :context \"...\"}`
+
+`:reflinks` = auto-computed by inverting every cross-ext + same-ext link. URL/file links yield no reflinks. Hand-authored `:reflinks` violate contract — loader overwrites on every merge.
+
+## Extension README
+
+Call: `(foundation/extension-readme ext-ref)`. Wrapper for `(foundation/extension-doc ext-ref \"README.md\")`. Every ext ships a README, so always works for registered ext.
+
+```clojure
+(foundation/extension-readme 'foundation)
+(foundation/extension-readme 'com.blockether.vis.ext.foundation.introspection)
+(foundation/extension-readme :vis)             ;; vis-common-editing
+(println (foundation/extension-readme 'foundation))  ;; pretty-print full doc
+```
+
+## Use when
+
+- Failure triage without leaving sandbox: `(foundation/diagnose)` / `(foundation/failures)`.
+- Verify what an ext does: `(foundation/extension-readme 'some-ext)` — no guessing from symbol names.
+- Programmatic state manipulation: `(filter :error (:attempts (foundation/turn)))`.
+- Inspect a different conversation than current.
+- Regex search over historical attempts.
+- Token / cost visibility.
+
+## Don't use when
+
+- State already in projection (`<recent>` `<var_index>`). Projection = free; `meta/*` costs an iter round-trip.
+- As substitute for `:doc` on code blocks. Use the spec field for purpose, not introspection.
+
+## Implementation notes
+
+- **Environment-aware via `:before-fn` injection.** Each impl fn takes env map as 1st param. Shared `inject-environment` hook prepends env to args vec, so model still calls `(foundation/turn)` with 0 args.
+- **No side effects, never throws.** Pure reads. Misconfigured context -> `nil`/`[]`. Iteration unaffected.
+- **No schema change.** Reads existing `conversation_state` / `query_state` / `iteration` / `expression_state` rows via the persistence facade. Internal table names stay `query_*` (the runtime-internal vocabulary); user-facing projections expose them as `:turn` / `:turns` / `:turn-id` / `:turn-count` so the agent never has to know which is which.
+- **README discovery.** Every ext declares canonical README inline in `META-INF/vis-extension/vis.edn` under `[<id> :docs \"README.md\"]` (see `AGENTS.md` ▸ \"Every extension declares itself in vis.edn with an inline README\"). Each doc descriptor MUST carry `:description` (one-paragraph summary) + `:content` (full Markdown body) as plain EDN strings — NOT YAML frontmatter parsed from Markdown. `(foundation/extensions)`, `(foundation/extension-docs ...)`, `(foundation/extension-doc ...)`, `(foundation/extension-readme ...)` all read from this structured registry.
+",
+    :links
+    [{:to-id vis,
+      :to-doc "README.md",
+      :context "Companion filesystem and code-editing toolbelt"}
+     {:url "https://arxiv.org/abs/2512.24601",
+      :context
+      "Recursive Language Models paper (Zhang, Kraska & Khattab, 2025) -- design Vis is built on"}
+     {:file "packages/vis-extension/src/com/blockether/vis_extension/extension.clj",
+      :context
+      "Extension loader and inline-docs registry powering (foundation/extensions ...)"}]}}}
+
+vis
+ {:nses [com.blockether.vis.ext.foundation.editing.core]
+  :docs
+  {"README.md"
+   {:created-at #inst "2026-04-28T08:00:00.000-00:00"
+    :description
+    "FS + editing primitives for SCI sandbox. Two aliases. `vis/`: cat ls rg edit write. `fs/`: cwd exists? glob parent components file-name extension expand-home list-dir relativize. `vis/rg` takes a non-empty vector of LITERAL substrings (OR'd internally) — no regex DSL on the input side; for true regex use (re-seq #\"...\" (slurp f)). Read once, `(def x ...)` if reused, edit via search/replace. No patch DSL. Clojure structured edit (`clj/zedit` + `z/` zipper) lives in sibling vis-language-clojure ext."
+    :content
+    "# Common editing extension
+
+Pkg: `com.blockether/vis-common-editing`. Src: `extensions/common/vis-common-editing/`.
+
+Two aliases:
+  vis/  read+write    (cat ls rg edit write)
+  fs/   path math     (cwd exists? glob parent components file-name extension expand-home list-dir relativize)
+
+Clojure structured editing (`clj/zedit`, `z/` zipper) lives in sibling `vis-language-clojure`.
+
+## Read
+
+`(vis/cat path)` -> line-numbered content. Cap 6000 chars; opts `{:offset N :limit M :char-limit C}` for paging.
+
+## List
+
+`(vis/ls path)` -> tree map. Opts `{:depth :hidden? :respect-gitignore?}`.
+
+## Search
+
+`(vis/rg patterns path)` -> OR-of-literals grep. `patterns` = non-empty vector of literal strings; each element is matched LITERALLY (PCRE metacharacters auto-escaped) and the elements are OR'd. Examples: `(vis/rg [\"defn render\"] \"src\")`, `(vis/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})`. NO regex DSL on the input — string patterns and `#\"...\"` literals are rejected with a typed error. For genuine regex needs drop to `(re-seq #\"...\" (slurp f))` in the sandbox. Opts `{:limit :hidden? :respect-gitignore?}`.
+
+## Edit
+
+`(vis/edit path search replace)` replaces FIRST occurrence. `search` MUST be unique — add context if not. Throws on miss/ambiguity.
+
+`(vis/write path content)` overwrite/create file (creates parent dirs).
+
+AST-aware Clojure edits (rename def, add require, swap const while preserving formatting/comments): `(clj/zedit path zfn)` from `vis-language-clojure`.
+
+## Path math
+
+`fs/` = `babashka.fs` primitives. No file I/O. Use for path math; `vis/` for read/mutate."
+    :links
+    [{:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/editing.clj"
+      :context "Source: cat / ls / rg / edit / write"}
+     {:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/fs_bindings.clj"
+      :context "Source: fs/ alias bindings"}
+     {:to-id clj :to-doc "README.md"
+      :context "Sibling ext for Clojure structured editing (clj/zedit, z/...)"}
+     {:to-id foundation :to-doc "README.md"
+      :context "Companion introspection extension; pair vis/cat reads with (foundation/diagnose) when triaging stalled turns."}]}}}
+
+environment
+ {:nses [com.blockether.vis.ext.foundation.environment.core]
+  :docs
+  {"README.md"
+   {:created-at #inst "2026-04-29T00:00:00.000-00:00"
+    :description
+    "Environment-awareness ext. Owns `<environment>` block in system prompt and exposes same data as structured snapshot in `:code`. Reports JVM cwd, OS, shell, locale, JGit-derived repo facts (root, branch, dirty-status counts, submodules, worktree), bounded language scan (top languages by bytes, primary), and monorepo / multi-package shape detection (polylith, workspace, submodules) by counting per-ecosystem manifests. Runtime hardcodes nothing — this ext is the single source of truth. Drop the jar -> drop the block."
+
+    :content
+    "# Environment extension
+
+Pkg: `com.blockether/vis-common-environment`. Src: `extensions/common/vis-common-environment/`. Canonical: inlined under `[environment :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(foundation/extension-readme 'environment)`.
+
+Owns the `<environment>` block in the system prompt. Replaces the old hard-coded six-line block in `com.blockether.vis.internal.prompt/environment-block`. Adds three things the old block lacked:
+
+1. **Git repo awareness** via JGit — root, branch (or detached HEAD sha), dirty-status counts, submodule presence, linked-worktree detection.
+2. **Language stats** — bounded scan of working tree counting files+bytes per language, sorted by total bytes, with primary-language pick.
+3. **Monorepo detection** — counts of per-ecosystem manifests (`deps.edn`, `package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, ...) below repo root + shape label (`polylith`, `workspace`, `submodules`).
+
+Both prompt block and sandbox surface read one cached snapshot keyed by canonical `cwd`.
+
+## Prompt block
+
+Dense, conditional. No git repo / empty scan / single-package -> corresponding lines drop:
+
+```
+<environment>
+  cwd: /Users/me/projects/foo (= git root)
+  user: me (home: /Users/me)
+  platform: Mac OS X 14.5 (aarch64) | shell: /bin/zsh | locale: en-US
+  jvm: OpenJDK 64-Bit Server VM 21.0.4
+  git.root: /Users/me/projects/foo
+  git.branch: main
+  git.status: dirty (3 modified, 2 untracked)
+  git: submodules: false | worktree: false
+  languages: clojure 78% (1234 files), markdown 12% (89 files), edn 6% (45 files), shell 4% (12 files)
+  primary-language: clojure
+  monorepo: polylith — clojure: 8
+</environment>
+```
+
+## Sandbox surface
+
+`environment/` alias.
+
+### Snapshot
+
+`(environment/snapshot)` -> full structured map:
+
+```clojure
+{:host      {:cwd :user :home :os-name :os-version :os-arch
+             :shell :jvm :locale}
+ :git       {:root :git-dir :branch :detached? :detached-sha
+             :submodules? :worktree?
+             :clean? :modified :untracked :added :changed
+             :missing :removed :conflicting}      ;; or nil
+ :languages {:total-files :total-bytes :truncated? :elapsed-ms
+             :primary :languages [...]}           ;; or nil
+ :monorepo  {:shape :totals :files :truncated?}}  ;; :shape nil for single-package
+```
+
+Cached per canonical `cwd`. Recomputed automatically when cwd changes.
+
+### Submap accessors
+
+```clojure
+(environment/git)        ;; :git submap or nil
+(environment/languages)  ;; :languages submap
+(environment/monorepo)   ;; :monorepo submap
+```
+
+Conveniences over `(get (environment/snapshot) :…)`.
+
+### Refresh
+
+`(environment/refresh!)` drops cache, recomputes. Use after long task that changed working tree (new files, branch checkout, etc.).
+
+### Render
+
+`(environment/render)` -> the same `<environment>` block as a string. Useful for debugging / surfacing the block on demand in `:code`.
+
+## Boundaries + guarantees
+
+- **No exception leaks.** Each section (host/git/languages/monorepo) independently guarded. One failure -> `nil` for that section, no poisoning.
+- **Bounded scans.** Language scan: 1s wall-time deadline + 10000 max files. Monorepo scan: 800ms deadline. JGit `git status`: side thread, 2s timeout — huge dirty trees drop dirty-status fields rather than blocking system-prompt build.
+- **Cache locality.** Snapshot cached at ext scope, keyed by canonical `cwd`. Multiple conversations in same process share one cache entry per dir.
+
+## Use when
+
+- Need to know which repo / branch -> `(environment/git)` (one read; no shell-out).
+- Decide which language conventions apply before write/edit -> `(:primary (environment/languages))` (no `ls -R`).
+- Suspect monorepo, want shape -> `(:shape (environment/monorepo))` (no manual tree walk).
+
+## Don't use when
+
+- Real-time diff inspection. JGit is not exposed as a tool here; editing ext exposes filesystem reads and a full git client surface lives outside this ext's scope.
+- Cross-repository / workspace-of-workspaces analysis. Reports the repo containing JVM cwd and nothing else.
+
+## Implementation notes
+
+- **JGit version** pinned to same coordinate `vis-common-editing`'s `.gitignore` parser uses -> one resolved version on classpath.
+- **Reflection-clean.** All JGit + NIO call sites typed; ext contributes 0 new GraalVM warnings to verify baseline.
+- **No SCI-side I/O concentration.** `:ext/prompt` fragment reads same cache as sandbox accessors -> exactly one tree walk per `(refresh!)` boundary."
+
+    :links
+    [{:to-id foundation :to-doc "README.md"
+      :context "Companion introspection ext; (foundation/extensions) shows this ext's surface, (foundation/extension-readme 'environment) shows this doc."}
+     {:to-id vis :to-doc "README.md"
+      :context "Filesystem + code-editing toolbelt — agent typically pairs `environment` reads with `vis/cat` / `vis/rg` calls."}
+     {:url "https://eclipse.dev/jgit/"
+      :context "JGit — pure-Java git impl used to read repo facts."}
+     {:file "src/com/blockether/vis/internal/prompt.clj"
+      :context "Where original hard-coded environment-block lived; superseded by this ext."}]}}}
+}

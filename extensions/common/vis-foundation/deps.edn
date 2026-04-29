@@ -1,0 +1,17 @@
+{:paths ["src" "resources"]
+ ;; vis-foundation merges the legacy vis-common-foundation + vis-common-editing
+ ;; + vis-common-environment extensions into one classpath entry. Four ext
+ ;; aliases register from this single jar:
+ ;;   foundation/  introspection (turn, conversation, diagnose, …)
+ ;;   vis/         file I/O (cat, ls, rg, edit, write)
+ ;;   fs/          path math (cwd, glob, parent, …)
+ ;;   environment/ cwd / git / languages / monorepo shape
+ :deps {com.blockether/vis                {:local/root "../../.."}
+        ;; babashka.fs — path primitives under fs/ alias.
+        babashka/fs                       {:mvn/version "0.5.20"}
+        ;; RE2/J — linear-time regex (ReDoS-safe) used by vis/rg.
+        com.google.re2j/re2j              {:mvn/version "1.8"}
+        ;; JGit — repository discovery + branch/HEAD inspection. Used by
+        ;; both `(vis/ls)` / `(vis/rg)` (gitignore parsing) and the
+        ;; environment ext's git-snapshot reader.
+        org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}}

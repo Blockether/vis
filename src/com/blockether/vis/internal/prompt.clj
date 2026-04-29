@@ -304,7 +304,7 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
 
    The `<environment>` block (cwd, OS, git facts, languages,
    monorepo shape) is NOT assembled here. It is rendered by the
-   `vis-common-environment` extension's `:ext/prompt` fragment, so
+   `vis-foundation` extension's `:ext/prompt` fragment, so
    the runtime no longer hardcodes any environment text. Drop the
    jar, drop the block."
   [{:keys [system-prompt]}]
@@ -369,7 +369,7 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
                   ;; we duplicate the lookup here (instead of calling
                   ;; the meta extension) because the loop layer is
                   ;; upstream of every ext, including meta itself —
-                  ;; ACTIVE_EXTENSIONS must work even when vis-common-foundation
+                  ;; ACTIVE_EXTENSIONS must work even when vis-foundation
                   ;; isn't on the classpath.
                   registry-id (try (or alias (extension/extension-id-of-ns ext-ns))
                                 (catch Throwable _ nil))
