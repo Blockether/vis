@@ -2,7 +2,6 @@
   "vis iteration runtime + conversations — the library surface.
 
    Owns:
-     - Mustache template renderer for RLM answers
      - Query runtime settings (`*rlm-context*`, `*eval-timeout-ms*`, …)
      - Single-iteration runner (`run-iteration`)
      - Multi-iteration query engine + router cache (`query!`,
@@ -45,8 +44,6 @@
    [taoensso.telemere :as tel])
   (:import
    [com.oakmac.parinfer Parinfer ParinferResult]
-   [com.samskivert.mustache Mustache Mustache$Collector Mustache$Compiler
-    Mustache$Formatter Mustache$VariableFetcher]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
 (declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings auto-forget-stale-vars!
@@ -149,82 +146,6 @@
   nil)
 
 ;; =============================================================================
-;; Mustache template rendering
-;; =============================================================================
-
-(defn- clj-fetch
-  "Resolve a Mustache variable name against a Clojure context (map/coll).
-   Handles dot-path navigation, .size on collections, keyword/string/symbol
-   key lookup, and IDeref (atoms, delays)."
-  [ctx ^String name]
-  (if (str/includes? name ".")
-    (let [parts (str/split name #"\.")]
-      (reduce (fn [c part]
-                (cond
-                  (nil? c) (reduced nil)
-                  (and (= part "size") (or (sequential? c) (set? c)))
-                  (reduced (count c))
-                  (map? c)
-                  (let [v (or (get c (keyword part))
-                            (get c part)
-                            (get c (clojure.core/symbol part)))]
-                    (if (instance? clojure.lang.IDeref v) @v v))
-                  :else (reduced nil)))
-        ctx parts))
-    (cond
-      (and (= name "size") (or (sequential? ctx) (set? ctx)))
-      (count ctx)
-      (map? ctx)
-      (let [v (or (get ctx (keyword name))
-                (get ctx name)
-                (get ctx (clojure.core/symbol name)))]
-        (when (some? v)
-          (if (instance? clojure.lang.IDeref v) @v v)))
-      :else nil)))
-
-(def ^:private clj-collector
-  "jmustache Collector that works natively with Clojure persistent data."
-  (reify Mustache$Collector
-    (toIterator [_ val]
-      (cond
-        (sequential? val) (.iterator ^Iterable val)
-        (set? val)        (.iterator ^Iterable (vec val))
-        (instance? Iterable val) (.iterator ^Iterable val)
-        :else (.iterator java.util.Collections/EMPTY_LIST)))
-    (createFetcher [_ _ctx _name]
-      (reify Mustache$VariableFetcher
-        (get [_ ctx name]
-          (clj-fetch ctx name))))
-    (createFetcherCache [_] (java.util.HashMap.))))
-
-(def ^:private clj-formatter
-  "jmustache Formatter for Clojure values — keywords render as name, rest as str."
-  (reify Mustache$Formatter
-    (format [_ val]
-      (cond
-        (nil? val)     ""
-        (string? val)  val
-        (keyword? val) (name val)
-        :else          (str val)))))
-
-(def ^:private compiler
-  "Shared jmustache compiler configured for Clojure data."
-  (-> (Mustache/compiler)
-    (.withCollector clj-collector)
-    (.withFormatter clj-formatter)))
-
-(defn render
-  "Render a Mustache template string against a Clojure map context.
-   Throws on missing vars (strict mode) — caller should catch and feed
-   the error back to the LLM.
-
-   `template` — Mustache template string.
-   `ctx`      — Clojure map (keyword/string/symbol keys). Values may be
-                 strings, numbers, booleans, collections, nested maps,
-                 atoms, delays."
-  ^String [^String template ctx]
-  (let [tpl (.compile ^Mustache$Compiler compiler template)]
-    (.execute tpl ctx)))
 ;; Single-iteration runner
 ;; =============================================================================
 
@@ -333,7 +254,7 @@
    `:expr` is the verbatim source slice for that form INCLUDING any
    leading `;; comments` and `#_` discards on prior lines (so the
    model's natural `;; what this does\n(def ...)` paragraphing
-   survives into `<recent>` instead of getting silently stripped).
+   survives into `<journal>` instead of getting silently stripped).
 
    Repair pipeline when the raw source fails edamame:
      1. parinfer indent-mode rebalance → re-parse via edamame;
@@ -863,7 +784,7 @@
 ;; Rule c — \"answer in iter 0 must be the ONLY form\"
 ;;
 ;; Rule b' allows answer as the last of N top-level forms, but in
-;; iteration 0 the model has no prior `<recent>` context. If it
+;; iteration 0 the model has no prior `<journal>` context. If it
 ;; emits work-forms followed by `(answer …)` in iter 0, the answer
 ;; was formed WITHOUT observing the work's results — those land in
 ;; iter 1's prompt, not iter 0's. The answer is therefore
@@ -874,7 +795,7 @@
 ;; results ARE observed inline before the answer fires (still ONE
 ;; top-level form, allowed), OR (b) split the work into iter 0 and
 ;; emit `(answer …)` as the only form of iter 1 once the work's
-;; results are visible in `<recent>`.
+;; results are visible in `<journal>`.
 ;;
 ;; Iter 1+ is unaffected — by then the model has seen at least one
 ;; feedback round, so multi-form answer iterations carry real
@@ -903,12 +824,12 @@
   (str "(answer …) cannot fire in iteration 0 alongside other top-level "
     "work forms. This iteration had " total-forms " top-level forms; the "
     "answer was discarded. The model has not yet observed the results "
-    "of its own work in iteration 0 — those land in iteration 1's <recent>, "
+    "of its own work in iteration 0 — those land in iteration 1's <journal>, "
     "not iteration 0's. Either: (a) inline the work into the answer's "
     "argument or wrap it as `(let […] (answer …))` so the iteration has "
     "ONE top-level form whose result IS observed before answer fires, OR "
     "(b) keep the work in iteration 0 and emit (answer …) as the only "
-    "form of iteration 1 once the work's results are visible in <recent>."))
+    "form of iteration 1 once the work's results are visible in <journal>."))
 
 ;; ---------------------------------------------------------------------------
 ;; run-iteration
@@ -1073,7 +994,7 @@
           ;;   1. Rule c (first-iter informedness): in iteration 0,
           ;;      `(answer …)` must be the ONLY top-level form.
           ;;      Multi-form iter-0 answers are rejected because the
-          ;;      model has no prior `<recent>` to draw on — the
+          ;;      model has no prior `<journal>` to draw on — the
           ;;      answer was formed WITHOUT observing the iteration's
           ;;      own work, which only lands in iter 1's prompt.
           ;;
@@ -1384,7 +1305,8 @@
                          turn-query-id iteration-id
                          conversation-soul-id conversation-state-id
                          system-prompt
-                         extensions-snapshot conversation-title]}]
+                         extensions-snapshot
+                         conversation-title conversation-metadata]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
@@ -1397,6 +1319,7 @@
       (stamp "ITERATION_ID"                 (or iteration-id ""))
       (stamp "ITERATION_PREVIOUS_REASONING" (or thinking ""))
       (stamp "CONVERSATION_TITLE"           (or conversation-title ""))
+      (stamp "CONVERSATION_METADATA"        (or conversation-metadata {}))
       (stamp "CONVERSATION_PREVIOUS_ANSWER" (or final-answer "")))))
 
 (defn update-title-system-var!
@@ -1414,7 +1337,10 @@
 ;; -----------------------------------------------------------------------------
 
 (def ^:private FRESH_ITER_CARRY
-  {:previous-blocks nil :previous-iteration -1})
+  ;; `:journal-iters` is a vec of `[iteration-position {:thinking :blocks}]`
+  ;; pairs covering the LAST `prompt/JOURNAL_KEEP_ITERS` iterations
+  ;; (oldest-first). The format-journal-block renderer reads it as-is.
+  {:journal-iters []})
 
 (def ^:private balanced-reasoning :balanced)
 
@@ -1545,7 +1471,7 @@
                                 :trace [] :consecutive-errors 0 :restarts 0}
                           FRESH_ITER_CARRY)]
         (let [{:keys [iteration messages trace consecutive-errors restarts
-                      previous-blocks previous-iteration]} loop-state]
+                      journal-iters]} loop-state]
           (when current-iteration-atom (reset! current-iteration-atom iteration))
           (cond
             (when cancel-atom @cancel-atom)
@@ -1581,11 +1507,10 @@
               (let [reasoning-level (when has-reasoning?
                                       (reasoning-level-for-errors base-reasoning-level consecutive-errors))
                     _ (log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
-                    blocks-by-iteration (when (seq previous-blocks)
-                                          [[(or previous-iteration 0) previous-blocks]])
                     iteration-context (prompt/build-iteration-context environment
-                                        {:blocks-by-iteration blocks-by-iteration
-                                         :active-extensions   active-exts})
+                                        {:blocks-by-iteration journal-iters
+                                         :active-extensions   active-exts
+                                         :iteration           iteration})
                     base-messages (prompt/trim-to-initial-history messages (count initial-messages))
                     effective-messages (cond-> base-messages
                                          (not (str/blank? iteration-context))
@@ -1667,6 +1592,18 @@
                             {:thinking thinking :final-result final-result :final-answer final-answer})
                         vars-snapshot (restorable-var-snapshots environment blocks)
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
+                        conversation-row (try
+                                           (persistance/db-get-conversation
+                                             (:db-info environment)
+                                             (:conversation-id environment))
+                                           (catch Throwable _ nil))
+                        conversation-metadata (when conversation-row
+                                                (cond-> {:title       (:title conversation-row)
+                                                         :channel     (:channel conversation-row)
+                                                         :external-id (:external-id conversation-row)
+                                                         :created-at  (:created-at conversation-row)}
+                                                  (:turn-count conversation-row)
+                                                  (assoc :turn-count (:turn-count conversation-row))))
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:query              query
                                          :thinking           thinking
@@ -1685,8 +1622,14 @@
                                          :extensions-snapshot (prompt/extensions-snapshot active-exts)
                                          ;; Live conversation title; same value
                                          ;; the SCI sandbox sees as CONVERSATION_TITLE.
-                                         :conversation-title (some-> (:conversation-title-atom environment)
-                                                               deref str)})
+                                         :conversation-title    (some-> (:conversation-title-atom environment)
+                                                                  deref str)
+                                         ;; Frozen-at-this-iter map of conversation
+                                         ;; facts (channel, external-id, turn-count,
+                                         ;; created-at). Saves the model an iter
+                                         ;; round-trip when it just needs one of
+                                         ;; those fields.
+                                         :conversation-metadata conversation-metadata})
                         [redundant-count expression-count]
                         (count-duplicates seen-expression-hashes-atom
                           (or blocks []))
@@ -1775,11 +1718,24 @@
                                        :done?     false}))
                           (let [had-success? (some #(nil? (:error %)) blocks)
                                 next-errors (if had-success? 0 (inc consecutive-errors))
-                                _ (when had-success? (swap! var-index-atom update :current-revision inc))]
+                                _ (when had-success? (swap! var-index-atom update :current-revision inc))
+                                ;; Carry forward up to JOURNAL_KEEP_ITERS
+                                ;; iterations of `[pos {:thinking :blocks}]`
+                                ;; for the next iteration's `<journal>`.
+                                ;; Drops the oldest entry once the cap
+                                ;; is reached so the projection stays
+                                ;; bounded.
+                                next-recent (->> (conj (or journal-iters [])
+                                                   [iteration {:thinking thinking
+                                                               :blocks   blocks}])
+                                              (take-last prompt/JOURNAL_KEEP_ITERS)
+                                              vec)]
                             (recur (merge loop-state
-                                     {:iteration (inc iteration) :messages messages
-                                      :trace (conj trace trace-entry) :consecutive-errors next-errors
-                                      :previous-blocks blocks :previous-iteration iteration}))))))))))))))))
+                                     {:iteration          (inc iteration)
+                                      :messages           messages
+                                      :trace              (conj trace trace-entry)
+                                      :consecutive-errors next-errors
+                                      :journal-iters       next-recent}))))))))))))))))
 
 (defn- ->prior-outcome
   [result]
@@ -2733,7 +2689,7 @@
 
 (defn effective-system-prompt-for-query
   "Return the reconstructed prompt snapshot for a specific query-id in a
-   conversation. Renders the minimal projection: <recent> + <var_index>."
+   conversation. Renders the minimal projection: <journal> + <var_index>."
   [conversation-id query-id]
   (when-let [env (env-for conversation-id)]
     (let [active-exts   (prompt/active-extensions env)

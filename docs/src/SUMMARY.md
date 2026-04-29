@@ -22,4 +22,5 @@
 - [Environment Map](extensions/environment.md)
 - [Nudge System](extensions/nudges.md)
 - [vis-foundation extension](extensions/common/vis-foundation.md)
+  - [Markdown surface (`md/`)](extensions/common/markdown.md)
 

@@ -24,7 +24,12 @@
    [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
-   [com.blockether.vis.ext.foundation.introspection :as introspection]))
+   [com.blockether.vis.ext.foundation.introspection :as introspection]
+   ;; Side-effect require: registers the `md/` extension. The aggregator
+   ;; does not pull markdown symbols into its own `:ext/symbols` vec —
+   ;; markdown ships as a sibling extension under its own alias so
+   ;; `(md/h1 …)` lives in `vis.ext.md` instead of mingling with `vis/`.
+   [com.blockether.vis.ext.foundation.markdown]))
 
 (defn- combined-prompt
   "Stitch the per-area prompt fragments together. The environment

@@ -78,4 +78,20 @@ Pre-merge the agent had to context-switch between four aliases (`foundation/`, `
     [{:url "https://arxiv.org/abs/2512.24601"
       :context "Recursive Language Models paper -- design vis is built on"}
      {:file "src/com/blockether/vis/internal/prompt.clj"
-      :context "System-prompt assembler that calls vis-foundation's combined-prompt fn"}]}}}}
+      :context "System-prompt assembler that calls vis-foundation's combined-prompt fn"}]}}}
+ md
+ {:nses [com.blockether.vis.ext.foundation.markdown]
+  :docs
+  {"README.md"
+   {:created-at #inst "2026-04-29T00:00:00.000-00:00"
+    :description
+    "md/: programmatic markdown surface for `(answer …)` bodies. Pure string builders for headings, inline emphasis, lists, tables, code blocks, and — critically — link helpers (`md/link`, `md/image`, `md/file-link`, `md/anchor`) that keep cross-channel hyperlinks consistent. Replaces the dropped Mustache renderer."
+    :content
+    "# md — markdown surface\n\nPkg: `com.blockether/vis-foundation` (sibling alias to `vis/`).\nSrc: `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj`.\nDocs: `docs/src/extensions/common/markdown.md` (mdBook).\nLLM reads via `(vis/extension-readme 'md)`.\n\nThe ONLY supported way to construct an answer body. No Mustache,\nno `{{var}}` interpolation — every fn is a pure string builder. Hand\nthe final string to `(answer …)` and the runtime ships it verbatim.\n\n## Surface\n\n```clojure\n;; Headings\n(md/h1 \"Patch report\")\n(md/h2 \"Summary\")\n(md/h n title)        ; level clamped to [1, 6]\n\n;; Inline emphasis\n(md/bold s) (md/italic s) (md/bold-italic s)\n(md/strike s) (md/code s) (md/kbd s)\n\n;; Hyperlinks, images, citations — ALWAYS use these for clickable jumps\n(md/link text url)                ; [text](url)\n(md/link text url title)          ; tooltip via title attr\n(md/image alt url)                ; ![alt](url)\n(md/image alt url title)\n(md/file-link path)               ; [src/foo.clj](src/foo.clj)\n(md/file-link path line)          ; [src/foo.clj:142](src/foo.clj#L142)\n(md/anchor text)                  ; auto-slugified [#text]\n(md/anchor text slug)             ; explicit slug\n\n;; Block elements\n(md/p s)                          ; paragraph\n(md/code-block s)                 ; \\`\\`\\` fence, no lang\n(md/code-block s \"clojure\")     ; \\`\\`\\`clojure fence\n(md/blockquote s)\nmd/hr md/br                       ; constants\n(md/details summary body)         ; collapsible block\n\n;; Lists\n(md/ul items) (md/ol items)\n(md/checklist [[\"done\" true] [\"todo\" false]])\n\n;; Tables\n(md/table headers rows)\n(md/table headers rows {:align [:left :center :right]})\n\n;; Composing\n(md/join …blocks)                 ; blank line between\n(md/lines …lines)                 ; single newline between\n(md/section title body)           ; h2 + body\n(md/section level title body)\n(md/escape s)                     ; backslash-escape commonmark specials\n```\n\n## Conventions\n\n- Block fns return text WITHOUT trailing newline; compose with `(md/join …)`.\n- Cite source code with `(md/file-link path line)` so channels can render a clickable jump.\n- Use `(md/link text url \"tooltip\")` and `(md/image alt url \"tooltip\")` for URLs and diagrams.\n- Use `(md/anchor text)` for in-document jumps to later headings of the same answer.\n- Don't hand-roll `[…](…)` strings — the helpers stay in sync with channel link conventions.\n\n## Example\n\n```clojure\n(answer\n  (md/join\n    (md/h1 \"Patch report\")\n    (md/p \"Three files touched.\")\n    (md/table [\"file\" \"+/-\"]\n              [[(md/file-link \"src/core.clj\") \"+12 / -4\"]\n               [(md/file-link \"src/loop.clj\" 142) \"+0 / -38\"]])\n    (md/h2 \"Next\")\n    (md/ul [\"Run verify.sh\" \"Update CHANGELOG\"])\n    (md/code-block \"(println :done)\" \"clojure\")))\n```"
+    :links
+    [{:file "docs/src/extensions/common/markdown.md"
+      :context "mdBook page — full reference + design rationale."}
+     {:file "docs/src/architecture/iteration-flow.md"
+      :context "How `(answer …)` fits into the iteration loop; references md/ as the canonical body builder."}
+     {:file "extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj"
+      :context "Source."}]}}}}

@@ -59,7 +59,7 @@ Swap a const:
 (z/zedit \"src/foo.clj\"
   (fn [zl]
     (-> zl
-        (z/find-value z/next 'RECENT_KEEP_ITERS)
+        (z/find-value z/next 'JOURNAL_KEEP_ITERS)
         z/right
         (z/replace 4))))
 ```

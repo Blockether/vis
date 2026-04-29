@@ -8,7 +8,7 @@
         environment block + each active extension's prompt fragment.
 
      2. The trailing user message — rebuilt every iteration. Two slots:
-          <recent>      last RECENT_KEEP_ITERS iterations, code + result,
+          <journal>      last JOURNAL_KEEP_ITERS iterations, code + result,
                         addressable as iN.K. The model's working memory.
           <var_index>   user-defined `(def ...)` bindings in the SCI env.
         Extensions can append `[system_nudge]` lines via `:ext/nudge-fn`.
@@ -31,14 +31,16 @@
 ;; =============================================================================
 
 (def ^:const MAX_RESULT_DISPLAY_CHARS
-  "Hard cap on a single value's pr-str when shown to the model in <recent>."
+  "Hard cap on a single value's pr-str when shown to the model in <journal>."
   6000)
 
-(def ^:const RECENT_KEEP_ITERS
-  "Number of iterations carried in <recent>. 3 gives the model a real
-   moving window: it can compare what it just read with what it read
-   two iterations ago WITHOUT making another tool call."
-  3)
+(def ^:const JOURNAL_KEEP_ITERS
+  "Number of iterations carried in <journal>. 2 gives the model the
+   immediate-prior iteration plus one before it — enough context to
+   compare what it just observed against the prior step without
+   ballooning the projection beyond the model's working-memory
+   horizon."
+  2)
 
 ;; =============================================================================
 ;; Generic helpers
@@ -59,7 +61,7 @@
     :else v))
 
 (defn safe-pr-str
-  "Bounded pr-str. Used in <recent> rendering."
+  "Bounded pr-str. Used in <journal> rendering."
   ([v] (safe-pr-str v {}))
   ([v {:keys [max-chars print-length print-level]
        :or {max-chars MAX_RESULT_DISPLAY_CHARS
@@ -76,46 +78,85 @@
        (str "<unprintable: " (.getMessage t) ">")))))
 
 (defn truncated-pr-str
-  "Wrapper used by <recent>. Returns [bounded-str truncated?]."
+  "Wrapper used by <journal>. Returns [bounded-str truncated?]."
   [v]
   (let [bounded   (safe-pr-str v {:max-chars MAX_RESULT_DISPLAY_CHARS})
         truncated? (boolean (re-find #" …<\+\d+ chars>$" bounded))]
     [bounded truncated?]))
 
 ;; =============================================================================
-;; <recent> — last RECENT_KEEP_ITERS iterations of code + results
+;; <journal> — last JOURNAL_KEEP_ITERS iterations of code + results
 ;; =============================================================================
 
-(defn- format-recent-block
-  "Render the last RECENT_KEEP_ITERS iterations with iN.K addressable ids.
-   `blocks-by-iteration` is a seq of `[iteration-position [exprs]]`
-   pairs, oldest-first."
-  [blocks-by-iteration]
-  (let [kept (take-last RECENT_KEEP_ITERS (or blocks-by-iteration []))]
-    (when (seq kept)
-      (let [lines (for [[iteration-position exprs] kept
-                        [k expr] (map-indexed vector exprs)
-                        :let [{:keys [code error result stdout stderr execution-time-ms]} expr]]
-                    (let [code-str      (str/trim (or code ""))
-                          stdout-suffix (when-not (str/blank? stdout)
-                                          (str " :stdout " (pr-str (truncate stdout 600))))
-                          stderr-suffix (when-not (str/blank? stderr)
-                                          (str " :stderr " (pr-str (truncate stderr 600))))
-                          time-ms       (or execution-time-ms 0)
-                          slow-suffix   (when (> time-ms 5000)
-                                          (str " (" time-ms "ms)"))
-                          value-part    (if error
-                                          (str "ERROR: " (truncate error 600))
-                                          (let [v (realize-value result)
-                                                [value-str truncated?] (truncated-pr-str v)]
-                                            (str value-str
-                                              (when truncated? " :truncated? true"))))]
-                      (str "  i" iteration-position "." (inc k) "  " code-str " → " value-part
-                        (or slow-suffix "")
-                        (or stdout-suffix "")
-                        (or stderr-suffix ""))))]
-        (when (seq lines)
-          (str "<recent>\n" (str/join "\n" lines) "\n</recent>"))))))
+(defn- format-block-line
+  "One iteration's single block as a `<journal>` line. Renders
+   `iN.K  <code> → <value>` plus any non-blank stdout/stderr and a
+   slow-suffix when execution exceeded 5s. Bare-symbol blocks read
+   naturally because the `<code>` IS the symbol and `<value>` is its
+   bound content."
+  [iteration-position k expr]
+  (let [{:keys [code error result stdout stderr execution-time-ms]} expr
+        code-str      (str/trim (or code ""))
+        stdout-suffix (when-not (str/blank? stdout)
+                        (str " :stdout " (pr-str (truncate stdout 600))))
+        stderr-suffix (when-not (str/blank? stderr)
+                        (str " :stderr " (pr-str (truncate stderr 600))))
+        time-ms       (or execution-time-ms 0)
+        slow-suffix   (when (> time-ms 5000)
+                        (str " (" time-ms "ms)"))
+        value-part    (if error
+                        (str "ERROR: " (truncate error 600))
+                        (let [v (realize-value result)
+                              [value-str truncated?] (truncated-pr-str v)]
+                          (str value-str
+                            (when truncated? " :truncated? true"))))]
+    (str "  i" iteration-position "." (inc k) "  " code-str " → " value-part
+      (or slow-suffix "")
+      (or stdout-suffix "")
+      (or stderr-suffix ""))))
+
+(defn- format-journal-iteration-block
+  "One iteration's full `<journal>` segment: optional thinking line,
+   then per-block `iN.K` lines that include the leading `:comment`
+   (when present) right above the code→value line."
+  [iteration-position iteration-data]
+  (let [{:keys [thinking blocks]} iteration-data
+        header-lines (when (and (string? thinking)
+                             (not (str/blank? thinking)))
+                       [(str "  i" iteration-position " thinking: "
+                          (truncate (str/trim thinking) 800))])
+        block-lines  (vec (mapcat (fn [[k blk]]
+                                    (let [comment-text (some-> (:comment blk) str/trim)
+                                          comment-line (when (and comment-text
+                                                               (not (str/blank? comment-text)))
+                                                         (str "  i" iteration-position "."
+                                                           (inc k) "  ;; "
+                                                           (truncate comment-text 400)))]
+                                      (cond-> []
+                                        comment-line (conj comment-line)
+                                        :always      (conj (format-block-line iteration-position
+                                                             k blk)))))
+                            (map-indexed vector (or blocks []))))]
+    (vec (concat header-lines block-lines))))
+
+(defn- format-journal-block
+  "Render the last JOURNAL_KEEP_ITERS iterations with iN.K addressable
+   ids. `iters` is a seq of `[iteration-position {:thinking :blocks}]`
+   pairs, oldest-first. Each iteration's segment carries:
+     - `iN thinking: …` once at the top (when the iteration emitted
+       any reasoning text)
+     - per-block `iN.K  ;; <comment>` line above the code line, when
+       the model authored a leading `;; …` / `#_(...)` comment for
+       that form
+     - `iN.K  <code> → <value>` for every block in the iteration"
+  [iters]
+  (let [kept  (take-last JOURNAL_KEEP_ITERS (or iters []))
+        lines (->> kept
+                (mapcat (fn [[pos iteration-data]]
+                          (format-journal-iteration-block pos iteration-data)))
+                vec)]
+    (when (seq lines)
+      (str "<journal>\n" (str/join "\n" lines) "\n</journal>"))))
 
 ;; =============================================================================
 ;; <var_index> — read/cache the current SCI sandbox shape
@@ -144,18 +185,51 @@
 ;; Iteration context — the trailing user message
 ;; =============================================================================
 
+(def ^:const TITLE_REFRESH_NUDGE_PERIOD
+  "Iteration cadence at which the loop re-nudges the model to refresh
+   `CONVERSATION_TITLE`. Independent of the always-on nudge fired
+   when the title is blank. 12 lands in the middle of the
+   user-requested 10-20 range — frequent enough that the title stays
+   current as the conversation drifts, infrequent enough that a
+   settled conversation isn't pestered every turn."
+  12)
+
+(defn- title-nudge
+  "Built-in `[system_nudge]` line that fires when:
+     1. `CONVERSATION_TITLE` is currently empty, OR
+     2. `iteration` is a positive multiple of
+        `TITLE_REFRESH_NUDGE_PERIOD` (cadence reminder once a title
+        has been set).
+   Returns nil otherwise."
+  [environment iteration]
+  (let [title (some-> (:conversation-title-atom environment) deref str str/trim)
+        blank? (or (nil? title) (str/blank? title))]
+    (cond
+      blank?
+      (str "[system_nudge] CONVERSATION_TITLE is currently empty. "
+        "Set it via `(conversation-title \"…\")` (3-7-word noun phrase, "
+        "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
+        "the conversation is discoverable in the sidebar.")
+
+      (and (integer? iteration)
+        (pos? iteration)
+        (zero? (mod iteration TITLE_REFRESH_NUDGE_PERIOD)))
+      (str "[system_nudge] You're " iteration " iterations into this turn. "
+        "If the conversation's focus has shifted from \"" title "\", "
+        "refresh the title via `(conversation-title \"…\")`."))))
+
 (defn build-iteration-context
   "Assemble the per-iteration trailing user message.
 
    Two slots:
-     <recent>      — last RECENT_KEEP_ITERS iterations, code + result.
+     <journal>     — last JOURNAL_KEEP_ITERS iterations, thinking +
+                     comments + code + result.
      <var_index>   — `(def ...)` bindings in the SCI env.
 
-   Active extensions can append one `[system_nudge]` line each via
-   `:ext/nudge-fn`. There is no built-in repetition nudge — the model
-   already sees the previous iteration's result in <recent> and the
-   dedup cache short-circuits literal re-issues with `:cached? true`,
-   which is signal enough to change strategy.
+   Plus zero or more `[system_nudge]` lines. Built-ins:
+     - title nudge (fires on blank title or every
+       TITLE_REFRESH_NUDGE_PERIOD iterations).
+   Active extensions can append more via `:ext/nudge-fn`.
 
    Required opts:
      `:active-extensions` — vec from `(active-extensions env)`. Computed once
@@ -163,17 +237,22 @@
         :ext/nudge-fn is consulted (rare).
 
    Optional:
-     `:blocks-by-iteration`."
-  [environment {:keys [blocks-by-iteration active-extensions] :as opts}]
+     `:blocks-by-iteration` — last few iterations of
+        `[iteration-position {:thinking :blocks}]` pairs for the
+        <journal> renderer.
+     `:iteration` — 0-based iteration counter; threaded into the
+        title-nudge cadence check."
+  [environment {:keys [blocks-by-iteration active-extensions iteration] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [recent-block (format-recent-block blocks-by-iteration)
+  (let [recent-block (format-journal-block blocks-by-iteration)
         last-iteration-blocks (some-> blocks-by-iteration last second)
         var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
+        title-line (title-nudge environment iteration)
         ext-nudges (when (seq active-extensions)
                      (let [ctx {:environment environment
                                 :previous-blocks last-iteration-blocks}]
@@ -188,7 +267,10 @@
                                        (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
                                        nil)))))
                          active-extensions)))
-        nudges-block (when (seq ext-nudges) (str/join "\n" ext-nudges))
+        all-nudges (cond-> []
+                     title-line       (conj title-line)
+                     (seq ext-nudges) (into ext-nudges))
+        nudges-block (when (seq all-nudges) (str/join "\n" all-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [recent-block var-block nudges-block])]
     (when (seq parts)
@@ -214,86 +296,52 @@
 ;; =============================================================================
 
 (def CORE_SYSTEM_PROMPT
-  "Clojure agent. Think = write Clojure in SCI sandbox. Plan = code. Reason = code. User TURN_USER_REQUEST is your goal. Stash useful results across iterations as `(def ...)` and compose functions to solve hard problems.
+  "You are a Clojure agent. You make changes by writing code. The shape of every turn:
 
-Each turn reply with Clojure source inside ```clojure … ``` fences. Multiple fenced blocks are allowed and will be concatenated in order. NO prose outside fences — use `;; comments` inside the fence for thinking.
+    write code -> get data -> process data -> emit answer.
 
-The runtime parses your code into top-level forms and evaluates each in order. Each form -> one iN.K result. An empty fence (or no fence) = noop iteration.
+Reply each turn with one or more ```clojure … ``` fences. Their source concatenates into top-level forms; each form runs in order, each produces an iN.K result the next iteration sees.
 
-To finish the turn, call `(answer \"…\")` from inside a fence. Plain text or markdown; interpolate vars via `(str ...)` / `(format ...)` like any other Clojure call.
-
-**One answer per turn.** ONE accepted `(answer …)` call ends the turn; the loop stops. Don't draft multiple answers across iterations or within one iteration — compose the FINAL answer in your head (or in `let`-bound vars), then emit one terminal `(answer …)` form when you're ready. Treat the answer as a release switch, not a checkpoint.
-
-**Answer-position rule:** `(answer …)` MUST fire from the LAST top-level form of its iteration (or be the only top-level form). Forms BEFORE the answer call run as normal work; trailing forms AFTER the answer call are forbidden — if you say \"done\" then keep doing things, the answer is discarded with a structured nudge so you can retry.
-
-**First-iteration rule:** in iteration 0, `(answer …)` must be the ONLY top-level form. Multi-form iter-0 answers are rejected because you have not yet observed your own work's results — those land in iter 1's <recent>, not iter 0's. Either inline the work into the answer's argument / wrap as `(let […] (answer …))` (one top-level form whose result IS observed inline before answer fires), OR keep work in iter 0 and emit `(answer …)` as the only form of iter 1.
-  `(answer \"done\")`                                 ;; ✓ only form
-  `(def s (build)) (answer s)`                        ;; ✓ answer is last
-  `(answer (str \"found \" n \" matches\"))`           ;; ✓ (computation in arg)
-  `(let [s (build-summary)] (answer s))`              ;; ✓ (single top-level form)
-  `(do (vis/edit …) (answer \"done\"))`                ;; ✓ (single top-level form)
-  `(answer \"done\") (println \"...\")`                ;; ✗ answer in the middle -> rejected
-  `(answer \"draft\") (more-work) (answer \"final\")`  ;; ✗ multiple answer calls — commit ONCE, when ready
-Sibling errors in forms BEFORE the answer do NOT gate the loop. Only an error inside the answer-bearing form itself discards the answer (e.g. the answer call references an unbound var).
-
-After eval you get a fresh user msg:
-  <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed). Shown = form's return val. `(def x ...)` returns the var, NOT the bound value. To SEE a tool result, call inline.
-  <var_index>  your `(def name val)` bindings still alive. Strings verbatim up to ~8000 chars.
-
-SYSTEM vars (read-only; bound by name in the SCI sandbox). Three lifetime tiers tagged by prefix:
-  TURN_*         frozen at turn start, immutable for the whole turn
-  ITERATION_*    rebound at every iteration boundary
-  CONVERSATION_* conversation-state, mutates freely within the turn
-
-  TURN_USER_REQUEST            the user's current message text — your immediate goal for THIS turn (string)
-  TURN_QUERY_ID                UUID of THIS in-flight turn (== query soul id; use as a key into `vis/conversation`)
-  TURN_CONVERSATION_SOUL_ID    UUID of the conversation_soul this turn lives under
-  TURN_CONVERSATION_STATE_ID   UUID of the conversation_state row this query was attached to (latest row at turn start)
-  TURN_SYSTEM_PROMPT           the full assembled system prompt driving THIS turn (core + every active-extension prompt block). Read it to verify what rules you're operating under.
-  TURN_ACTIVE_EXTENSIONS       frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(vis/extensions)` for the same data.
-  ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
-  ITERATION_PREVIOUS_REASONING last iteration's `:thinking` text (\"\" before iter 1)
-  CONVERSATION_TITLE           current conversation title (\"\" until you call `(conversation-title \"…\")`)
-  CONVERSATION_PREVIOUS_ANSWER previous turn's final answer string (\"\" on the very first turn of the conversation)
-
-Host primitives bound at the top level (no alias) — these MUTATE state, so each is named for what it WRITES:
-  (answer ARG)               finish the turn with ARG (string). Position rules above. Cannot read the answer back; the answer is the turn's terminal output.
-  (conversation-title ARG)   ONE-ARITY ONLY. Persists ARG (a short 3–7-word noun phrase) as the conversation title and broadcasts the change to every channel watching this conversation. To READ the current title, reference the `CONVERSATION_TITLE` SYSTEM var — it always carries the live value, no fn call needed. Safe to call any iteration; the next iteration's `CONVERSATION_TITLE` reflects the new value. Setting it on the first turn makes the conversation discoverable in the sidebar; refresh it later when the focus shifts.
-
-Rules:
-  • Real Clojure: let / do / threading inside one form when steps depend.
-  • def / defn only to KEEP values across iters; let > def for sub-computes.
-  • Inspect = RETURN from form (last expr of `do`) -> appears in <recent>. No print, no def: return.
-  • Need prior tool result? Read <recent> or your bound var. Don't re-fetch.
-  • Threading > nesting. comp/partial > inline anon when point-free reads cleaner.
-  • Banned: `slurp` (use `vis/cat`); `eval` (iteration loop's job).
-
-**Iteration-0 = exploration, not bulk work.** Your first iteration runs blind — no `<recent>` yet, no observed tool results. Aim for 1-3 forms that NARROW your search before committing to a strategy: one `(vis/ls \".\")`, one targeted `(vis/rg [\"keyword\"] \"src\")`, or one `(vis/cat path)` against the most likely entry-point. DO NOT pile up 8 reads guessing at the project layout — every guess that lands on a missing path is a wasted form. Observe iter 0's results in iter 1's `<recent>`, then commit to the next move.
-
-**Tool-result-as-journal-entry pattern (preferred for cat / rg / ls).** Two top-level forms per read:
+The canonical pattern for any tool call you'll inspect more than once:
 ```clojure
-(def core-clj (vis/cat \"src/com/blockether/vis/core.clj\"))   ;; result lands in <var_index> + var-history
-core-clj                                                       ;; same value also surfaces inline at the next iN.K
+(def x (vis/cat \"src/foo.clj\"))   ;; lands in <var_index> + var-history
+x                                  ;; surfaces value in this iter's <journal>
 ```
-The `(def …)` row is permanent: future iterations can reach for `core-clj` directly out of `<var_index>` instead of re-fetching, and `(vis/var-history 'core-clj)` shows every version you've taken. The bare-symbol second form makes the value visible in THIS iteration's `<recent>` without a re-fetch. Use this whenever the result is something you'll inspect more than once. One-shot probes (count, presence-check) can stay inline.
+`(def …)` persists across iterations; the bare symbol surfaces the value in the current iteration's `<journal>` so you (and future iterations) can see what you just bound. One-shot probes (count, presence-check) stay inline.
 
-COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
-  (let [{:keys [x y]} pt] (+ x y))                       ;; destructure in let
-  (def n 42)  (defn sq [n] (* n n))                      ;; stash / reuse across iters
-  (-> 5 (+ 3) (* 2) (- 1))   (->> xs (filter even?) (map sq) (reduce +))   ;; first-arg / last-arg pipelines
-  (as-> 10 n (+ n 1) (* n 2))   (some-> m :a :b inc)     ;; mid-pipeline rename / nil short-circuit
-  (cond->> xs need-filter? (filter f) need-sort? sort)   ;; conditional last-arg pipeline
-  ((comp str inc) 7)   ((partial + 10) 5)   (filter (complement nil?) xs)   ;; comp / partial / complement
-  ((juxt :a :b :c) m)                                    ;; many fns -> one input -> vec of vals
-  (reduce-kv (fn [acc k v] (assoc acc k (inc v))) {} m)  ;; fold a map
-  (transduce (comp (filter odd?) (map sq)) + 0 xs)       ;; fused fold, no intermediate seqs
-  (group-by even? xs)   (frequencies xs)                 ;; bucket / count
-  (update-in m [:a :b] inc)   (assoc-in m [:a :b] v)     ;; deep update / set
-  (for [x xs :let [y (f x)] :when (pred? y)] [x y])      ;; comprehension w/ :let + :when
-  (c+/cond+ :let [n 7] (odd? n) :odd (even? n) :even)    ;; cond w/ mid-form :let / :do
-  (if+ [m (lookup k)] (:field m) :missing)   (when+ [v (get m :a)] (* v 10))   ;; bind-and-test
-  (str/split s pat)   (str/replace s pat r)              ;; vis-patched: string delim auto-promotes to Pattern
-  (json/read-json s :key-fn keyword)                     ;; charred.api as json/")
+Terminal: `(answer \"…\")` as the LAST top-level form (or only). Iter 0 must use it as the ONLY top-level form — wrap prerequisite work into a `let` or `do` that culminates in the answer:
+```clojure
+(answer \"done\")
+(let [s (build-summary)] (answer s))
+(do (vis/edit …) (answer \"done\"))
+```
+For iter 1+, work forms come first, then `(answer …)` last. ONE accepted answer ends the turn; compose your final string in let-bound vars and emit it once.
+
+Iter 0 has no `<journal>` yet — use it for exploration. Aim for 1–3 forms that narrow your search (one `(vis/ls \".\")`, one targeted `(vis/rg [\"keyword\"] \"src\")`, one `(vis/cat path)` at the likely entry-point), observe results in iter 1's `<journal>`, then commit.
+
+Each iteration's user msg carries:
+  <journal>     last 2 iters: thinking + comments + code + results, addressable iN.K
+  <var_index>   your `(def name val)` bindings still alive in the sandbox
+  [system_nudge] lines (when relevant) — e.g. \"set the conversation title\"
+                                          when CONVERSATION_TITLE is empty
+
+SYSTEM vars (read-only; bound by name in the sandbox):
+  TURN_USER_REQUEST            the user's message text — your goal for this turn
+  TURN_QUERY_ID                UUID of the in-flight turn
+  TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
+  TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
+  TURN_SYSTEM_PROMPT           the assembled system prompt for this turn
+  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :version :group :symbols :docs} for every active extension
+  ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
+  ITERATION_PREVIOUS_REASONING last iteration's :thinking text
+  CONVERSATION_TITLE           current conversation title (\"\" until set)
+  CONVERSATION_METADATA        frozen-at-this-iter map of conversation facts
+                                 {:title :channel :external-id :created-at :turn-count}
+  CONVERSATION_PREVIOUS_ANSWER previous turn's final answer
+
+Host primitives (top-level, no alias — named for what they write):
+  (answer ARG)               terminal answer; closes the turn
+  (conversation-title ARG)   one-arity title write; broadcasts to every channel watching the conversation. Read via the `CONVERSATION_TITLE` SYSTEM var.")
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum.

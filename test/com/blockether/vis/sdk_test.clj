@@ -592,7 +592,7 @@
 ;; answer-first-iteration — rule c (\"answer in iter 0 must be the only form\")
 ;;
 ;; In iteration 0 the model has not yet observed its own work's
-;; results (those land in iter 1's <recent>). Multi-form iter-0
+;; results (those land in iter 1's <journal>). Multi-form iter-0
 ;; answers are therefore uninformed; we reject them and nudge the
 ;; model to either inline the work or split into iter 1.
 ;; -----------------------------------------------------------------------------
@@ -627,7 +627,7 @@
       ;; The rationale must appear so the model understands WHY,
       ;; not just that something was rejected.
       (expect (re-find #"not yet observed" msg))
-      (expect (re-find #"<recent>" msg))
+      (expect (re-find #"<journal>" msg))
       ;; Recovery path (a): inline / structural wrapper.
       (expect (re-find #"inline the work" msg))
       (expect (re-find #"\(let " msg))
@@ -1190,8 +1190,10 @@
 ;; End-to-end via execute-code (the private helper) — round-trip through SCI
 ;; -----------------------------------------------------------------------------
 
-(defn- fresh-environment []
-  (sdk/create-sci-context nil))
+;; Helper retained for the `#_`-disabled orphan tests below; ignored
+;; by clj-kondo because it would otherwise read as unused.
+#_(defn- fresh-environment []
+    (sdk/create-sci-context nil))
 
 #_(defn- def-doc [{:keys [sci-ctx]} sym]
     (let [doc-form (str "(:doc (meta (resolve '" sym ")))")]
@@ -1413,65 +1415,6 @@
       (expect (= #{'CONFIG} (sdk/auto-forget-candidates sandbox #{} registry recent))))))
 
 ;; ─── from core_test.clj ───
-
-;; ─── from answer_render_test.clj ───
-
-;; `fresh-environment` already declared above (line 735). Reuse it.
-
-(defn- eval-in [{:keys [sci-ctx]} source]
-  (:val (sci/eval-string+ sci-ctx source
-          {:ns (sci/find-ns sci-ctx 'sandbox)})))
-
-(defn- get-locals [{:keys [sci-ctx initial-ns-keys]}]
-  (let [sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
-    (persistent!
-      (reduce-kv (fn [acc k v]
-                   (if (or (contains? initial-ns-keys k) (keyword? k))
-                     acc
-                     (assoc! acc k (if (instance? clojure.lang.IDeref v) @v v))))
-        (transient {}) sandbox))))
-
-(defn- render [environment raw-answer]
-  (sdk/render raw-answer (get-locals environment)))
-
-(defdescribe answer-render-test
-
-  (it "passes plain prose through unchanged"
-    (let [environment (fresh-environment)]
-      (expect (= "Done. The cache is now warm."
-                (render environment "Done. The cache is now warm.")))))
-
-  (it "passes markdown through unchanged"
-    (let [environment (fresh-environment)
-          markdown    "## Summary\n- Patched 3 files\n- All tests green"]
-      (expect (= markdown (render environment markdown)))))
-
-  (it "interpolates sandbox vars via {{var}}"
-    (let [environment (fresh-environment)]
-      (eval-in environment "(def hits 12)")
-      (eval-in environment "(def files 3)")
-      (expect (= "Found 12 hits across 3 files."
-                (render environment "Found {{hits}} hits across {{files}} files.")))))
-
-  (it "supports computed answers via def + {{var}}"
-    ;; The model defs the computed value in :code, then references
-    ;; it from :answer. No SCI eval at finalize time; just Mustache.
-    (let [environment (fresh-environment)]
-      (eval-in environment "(def summary (clojure.string/join \"\\n\" [\"a\" \"b\" \"c\"]))")
-      (expect (= "a\nb\nc" (render environment "{{summary}}")))))
-
-  (it "iterates collections via Mustache sections"
-    (let [environment (fresh-environment)]
-      (eval-in environment "(def rows [\"r1\" \"r2\" \"r3\"])")
-      (expect (= "r1\nr2\nr3\n"
-                (render environment "{{#rows}}{{.}}\n{{/rows}}")))))
-
-  (it "raises on a missing var so the iteration handler can surface it"
-    (let [environment (fresh-environment)]
-      (expect (try
-                (render environment "Hi {{undefined-var}}")
-                false
-                (catch Exception _ true))))))
 
 ;; ─── from redundancy_metric_test.clj ───
 

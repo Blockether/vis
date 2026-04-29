@@ -708,7 +708,6 @@ All under `packages/vis-runtime/src/com/blockether/vis_runtime/`:
   directly.
 - `config.clj` — config loader, db-path (`~/.vis/vis.mdb`), router builder
 - `loop/core.clj` — environment lifecycle + system-prompt assembly
-- `loop/mustache.clj` — Mustache templating helpers exposed in the SCI sandbox
 - `loop/runtime/conversation/core.clj` — conversation lifecycle
   (`create!`, `by-id`, `by-channel`, `for-telegram-chat!`,
   `set-title!`, `env-for`, `effective-system-prompt`, `send!`,

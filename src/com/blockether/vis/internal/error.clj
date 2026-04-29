@@ -11,9 +11,8 @@
      `error-message`                 — raw text from a Throwable / map / string
      `format-error`                  — prefix \"ERROR: \" idempotently
      `final-answer-code-error-message` — the \"Final-answer code error: ...\" prefix
-                                        used by the iteration loop's mustache
-                                        renderer when the final answer code
-                                        block throws."
+                                        used by the iteration loop when an
+                                        `(answer …)` form's own code throws."
   (:require
    [clojure.string :as str]))
 

@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — `<recent>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) the model can read directly. Active extensions may append one `[system_nudge]` line each via `:ext/nudge-fn`.
+1. **Build Context** — `<journal>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) the model can read directly. Active extensions may append one `[system_nudge]` line each via `:ext/nudge-fn`.
 2. **Ask LLM** — plain-text completion + fenced code-block
    extraction. The call site is
    `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
@@ -68,6 +68,8 @@ When an iteration throws:
 
 ## Final answer
 
+<a id="answer-protocol"></a>
+
 The model finishes a turn by calling `(answer "…")` from inside a
 fenced code block. The runtime binds `answer` as a one-arg SCI fn
 that `reset!`s an environment-scoped atom; after evaluating every
@@ -75,11 +77,15 @@ form in the iteration, the loop reads the atom and — if non-nil and
 no expression in the same iteration errored — commits the captured
 string as the turn's final answer.
 
+The canonical way to build the answer body is the `md/` surface
+(see [Markdown extension](../extensions/common/markdown.md)):
+
 ```clojure
-```clojure
-(let [summary (clojure.string/join "\n" rendered-rows)]
-  (answer (str "# Done\n\n" summary)))
-```
+(answer
+  (md/join
+    (md/h1 "Done")
+    (md/p "Three files touched.")
+    (md/ul (map #(md/file-link % nil) touched-paths))))
 ```
 
 Key properties:
@@ -87,6 +93,9 @@ Key properties:
 - `(answer …)` is a real Clojure call, so `(str …)`, `(format …)`,
   `(pr-str …)`, etc. all interpolate. No Mustache layer, no template
   language. Whatever `(str <arg>)` produces becomes the answer.
+- Use `md/` helpers (`md/h1`, `md/table`, `md/file-link`, …) to
+  assemble the body — they keep formatting consistent across
+  channels and surface clickable links the TUI can follow.
 - Calling `(answer …)` more than once in the same iteration: the LAST
   call wins. The atom is reset to `nil` at the start of every
   iteration.
@@ -109,7 +118,7 @@ automatic termination path apart from finalize / cancel.
 There is no projection layer carrying "plan" or "breadcrumb" data
 between iterations. Continuity is delivered by:
 
-- **`<recent>`** — the previous iteration's code blocks + results,
+- **`<journal>`** — the previous iteration's code blocks + results,
   addressable by `iN.K` ids.
 - **`<var_index>`** — user-defined `(def …)` bindings, type-aware
   rendering (see below).
