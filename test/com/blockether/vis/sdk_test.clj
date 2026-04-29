@@ -505,7 +505,7 @@
 ;; -----------------------------------------------------------------------------
 ;; answer-form-error — Option C scoping helper
 ;;
-;; The iteration loop calls `(answer-form-error expression-results form-idx)`
+;; The iteration loop calls `(answer-form-error block-results form-idx)`
 ;; after evaluating a turn's forms. It returns the error from the
 ;; specific form that invoked `(answer ...)`, or nil if that form
 ;; succeeded. Sibling errors are intentionally NOT surfaced — they
@@ -537,7 +537,7 @@
       (expect (nil? (sdk/answer-form-error results :two)))
       (expect (nil? (sdk/answer-form-error results "2"))))
 
-    (it "empty expression-results never matches"
+    (it "empty block-results never matches"
       (expect (nil? (sdk/answer-form-error [] 0))))))
 
 ;; -----------------------------------------------------------------------------
@@ -917,51 +917,52 @@
       (expect (pos? (count err))))))
 
 (defdescribe comment-glue-test
-  (it "leading `;;` comment glues to the form that follows"
+  (it "leading `;;` lands in :comment, code stays in :expr"
     (let [src ";; this is x\n(def x 1)"
           [forms _] (sdk/split-top-level-forms src)]
       (expect (= 1 (count forms)))
-      ;; The verbatim slice carries the comment AND the form.
-      (expect (str/starts-with? (:expr (first forms)) ";; this is x"))
-      (expect (str/includes? (:expr (first forms)) "(def x 1)"))))
+      (expect (= "(def x 1)"     (:expr    (first forms))))
+      (expect (= ";; this is x"  (:comment (first forms))))))
 
-  (it "comment between two forms glues forward to the second form"
+  (it "comment between two forms glues to the SECOND form's :comment"
     (let [src "(def x 1)\n;; about y\n(def y 2)"
           [forms _] (sdk/split-top-level-forms src)]
       (expect (= 2 (count forms)))
-      ;; Form 1 has no leading comment.
       (expect (= "(def x 1)" (:expr (first forms))))
-      ;; Form 2 picks up the `;; about y` line.
-      (expect (str/starts-with? (:expr (second forms)) ";; about y"))
-      (expect (str/includes? (:expr (second forms)) "(def y 2)"))))
+      (expect (not (contains? (first forms) :comment)))
+      (expect (= "(def y 2)"   (:expr    (second forms))))
+      (expect (= ";; about y"  (:comment (second forms))))))
 
-  (it "multiple consecutive comment lines all glue forward"
+  (it "multiple consecutive comment lines collect in :comment"
     (let [src ";; line 1\n;; line 2\n;; line 3\n(def z 3)"
           [forms _] (sdk/split-top-level-forms src)]
       (expect (= 1 (count forms)))
-      (expect (str/includes? (:expr (first forms)) ";; line 1"))
-      (expect (str/includes? (:expr (first forms)) ";; line 2"))
-      (expect (str/includes? (:expr (first forms)) ";; line 3"))
-      (expect (str/includes? (:expr (first forms)) "(def z 3)"))))
+      (expect (= "(def z 3)" (:expr (first forms))))
+      (let [c (:comment (first forms))]
+        (expect (str/includes? c ";; line 1"))
+        (expect (str/includes? c ";; line 2"))
+        (expect (str/includes? c ";; line 3")))))
 
   (it "comment-only source produces empty forms vec (no error)"
     (let [[forms err] (sdk/split-top-level-forms ";; just a note\n;; nothing else\n")]
       (expect (nil? err))
       (expect (= [] forms))))
 
-  (it "discard reader macro `#_(...)` glues alongside comments"
+  (it "`#_(...)` discard joins the leading-comment block in :comment"
     (let [src ";; what\n#_(legacy-call)\n(def x 1)"
           [forms _] (sdk/split-top-level-forms src)]
       (expect (= 1 (count forms)))
-      (expect (str/includes? (:expr (first forms)) ";; what"))
-      (expect (str/includes? (:expr (first forms)) "#_(legacy-call)"))
-      (expect (str/includes? (:expr (first forms)) "(def x 1)"))))
+      (expect (= "(def x 1)" (:expr (first forms))))
+      (let [c (:comment (first forms))]
+        (expect (str/includes? c ";; what"))
+        (expect (str/includes? c "#_(legacy-call)")))))
 
   (it "comment glue survives a parinfer repair (Case C with leading comment)"
     (let [src ";; missing close\n(def x (let [y 1]\n  y)"
           [forms _] (sdk/split-top-level-forms src)]
       (expect (= 1 (count forms)))
-      (expect (str/includes? (:expr (first forms)) ";; missing close"))
+      (expect (str/starts-with? (:expr (first forms)) "(def x"))
+      (expect (= ";; missing close" (:comment (first forms))))
       (expect (every? :repaired? forms)))))
 
 ;; ─── from vis_runtime/core_test.clj ───
@@ -1104,14 +1105,14 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe system-var-exclusion-test
-  (it "does not render QUERY/ANSWER/REASONING in the live block"
-    (let [out (index {'QUERY     "user query"
-                      'ANSWER    "prior answer"
+  (it "does not render USER_TURN_REQUEST/ASSISTANT_TURN_ANSWER/REASONING in the live block"
+    (let [out (index {'USER_TURN_REQUEST     "user query"
+                      'ASSISTANT_TURN_ANSWER    "prior answer"
                       'REASONING "thinking"
                       'user-var  42})]
       (expect (re-find #"\(def user-var 42\)" out))
-      (expect (not (re-find #"\(def QUERY" out)))
-      (expect (not (re-find #"\(def ANSWER" out)))
+      (expect (not (re-find #"\(def USER_TURN_REQUEST" out)))
+      (expect (not (re-find #"\(def ASSISTANT_TURN_ANSWER" out)))
       (expect (not (re-find #"\(def REASONING" out)))))
 
   (it "does not render initial-ns-keys (tools / helpers)"
@@ -1132,7 +1133,7 @@
     (expect (nil? (index {'read-file (fn [])} #{'read-file}))))
 
   (it "returns nil when sandbox has only SYSTEM vars"
-    (expect (nil? (index {'QUERY "x" 'ANSWER "y" 'REASONING "z"})))))
+    (expect (nil? (index {'USER_TURN_REQUEST "x" 'ASSISTANT_TURN_ANSWER "y" 'REASONING "z"})))))
 
 ;; -----------------------------------------------------------------------------
 ;; Sort order — newest-touched first by recency-of (no DB → all tied at
@@ -1171,7 +1172,7 @@
   (it "extracts var name from (defmacro NAME [args] body)"
     (expect (= 'my-macro (sdk/extract-defining-name "(defmacro my-macro [x] `(inc ~x))"))))
 
-  (it "returns nil for non-def expressions"
+  (it "returns nil for non-def blocks"
     (expect (nil? (sdk/extract-defining-name "(+ 1 2)")))
     (expect (nil? (sdk/extract-defining-name "(println :hi)")))
     (expect (nil? (sdk/extract-defining-name "42"))))
@@ -1353,9 +1354,9 @@
           recent    #{q1}]
       (expect (= #{} (sdk/auto-forget-candidates sandbox initials registry recent)))))
 
-  (it "🎧 SYSTEM vars (QUERY/ANSWER/REASONING) are sacred — never forgotten"
-    (let [sandbox   (make-sandbox [['QUERY "hello"]])
-          registry  (make-registry [['QUERY q1]])
+  (it "🎧 SYSTEM vars (USER_TURN_REQUEST/ASSISTANT_TURN_ANSWER/REASONING) are sacred — never forgotten"
+    (let [sandbox   (make-sandbox [['USER_TURN_REQUEST "hello"]])
+          registry  (make-registry [['USER_TURN_REQUEST q1]])
           recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not in SYSTEM_VAR_NAMES
       (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
@@ -1404,7 +1405,7 @@
 
   (it "⚡ a non-registered uppercase var (e.g. CONFIG) gets forgotten like any mortal var"
     ;; SYSTEM_VAR_NAMES is a fixed set
-    ;; #{QUERY ANSWER REASONING CURRENT_QUERY_ID CURRENT_ITERATION_ID};
+    ;; #{USER_TURN_REQUEST ASSISTANT_TURN_ANSWER REASONING CURRENT_QUERY_ID CURRENT_ITERATION_ID};
     ;; user-defined uppercase names (CONFIG, MAX_FOO, ...) are NOT system
     ;; vars and get the normal stale-sweep treatment.
     (let [sandbox   (make-sandbox [['CONFIG 42]])
@@ -1557,7 +1558,7 @@
         (expect (= 1 total)))))
 
   (it "intra-iteration duplicates count: identical calls in the SAME iteration"
-    ;; The seen-set rolls forward as we walk the iteration's expressions,
+    ;; The seen-set rolls forward as we walk the iteration's blocks,
     ;; so the SECOND occurrence of `(grep \"X\")` within one iteration
     ;; counts as a duplicate. Without this, calls like 'three
     ;; identical greps in one :code array' would report 0
@@ -1573,7 +1574,7 @@
       (expect (= 4 total))
       (expect (= 2 (count @seen)))))                                  ;; only 2 distinct hashes seeded
 
-  (it "handles an empty expressions vec gracefully"
+  (it "handles an empty blocks vec gracefully"
     (let [seen (atom #{})
           [duplicates total] (sdk/count-duplicates seen [])]
       (expect (= 0 duplicates))

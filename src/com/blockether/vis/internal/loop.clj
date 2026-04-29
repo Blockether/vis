@@ -531,7 +531,7 @@
       (str (hash (str expression))))))
 
 (defn count-duplicates
-  "Count how many entries in `expressions` have a canonical hash that
+  "Count how many entries in `blocks` have a canonical hash that
    already lives in `seen-hashes-atom`, INCLUDING intra-iteration
    duplicates. The seen-set is grown incrementally during the walk:
    `(grep \"X\")` followed by another `(grep \"X\")` in the same iteration
@@ -540,7 +540,7 @@
    NOT recorded — retrying after failure is legitimate).
 
    Returns `[duplicates total]`."
-  [seen-hashes-atom expressions]
+  [seen-hashes-atom blocks]
   (let [{:keys [duplicates seen]}
         (reduce (fn [{:keys [duplicates seen]} expression]
                   (let [h      (canonical-expression-hash (or (:code expression) ""))
@@ -550,9 +550,9 @@
                     {:duplicates (if is-dup (inc duplicates) duplicates)
                      :seen (if (and ok? (not is-dup)) (conj seen h) seen)}))
           {:duplicates 0 :seen @seen-hashes-atom}
-          expressions)]
+          blocks)]
     (reset! seen-hashes-atom seen)
-    [duplicates (count expressions)]))
+    [duplicates (count blocks)]))
 
 (defn dedup-cache-lookup
   "Returns a synthetic execution-result map when `expression`'s
@@ -773,10 +773,10 @@
   [expr]
   (contains? noop-exprs (str/trim (str expr))))
 
-(defn- strip-noop-expressions
-  "Remove noop expressions from a vec. Returns nil-safe vec."
-  [expressions]
-  (vec (remove #(noop-expr? (:code %)) (or expressions []))))
+(defn- strip-noop-blocks
+  "Remove noop blocks from a vec. Returns nil-safe vec."
+  [blocks]
+  (vec (remove #(noop-expr? (:code %)) (or blocks []))))
 
 ;; ---------------------------------------------------------------------------
 ;; Answer-scoping helper (Option C)
@@ -790,7 +790,7 @@
 ;; the model repeatedly emitting `(answer ...)` next to a single
 ;; broken `(def ...)`.
 ;;
-;; Returns the error from the form at `form-idx` in `expression-results`
+;; Returns the error from the form at `form-idx` in `block-results`
 ;; or nil when that form's evaluation succeeded. `form-idx` may be
 ;; nil (legacy answer-atom payloads) or out-of-bounds (defensive
 ;; against shape drift) — both yield nil (no discard).
@@ -798,16 +798,16 @@
 
 (defn answer-form-error
   "Return the `:error` produced by the form at `form-idx` in
-   `expression-results`, or nil when the form succeeded or `form-idx`
+   `block-results`, or nil when the form succeeded or `form-idx`
    is missing/out-of-bounds. Pure; no side effects. Public so the
    loop and tests can both reach it without re-implementing the
    bounds check."
-  [expression-results form-idx]
+  [block-results form-idx]
   (when (and form-idx
           (integer? form-idx)
           (not (neg? form-idx))
-          (< form-idx (count expression-results)))
-    (:error (nth expression-results form-idx))))
+          (< form-idx (count block-results)))
+    (:error (nth block-results form-idx))))
 
 ;; ---------------------------------------------------------------------------
 ;; Answer-position contract (rule b' — \"answer is the last form, or the
@@ -835,7 +835,7 @@
   "True when `(answer …)` fired from a form that is NOT the last
    top-level form of the iteration. `form-idx` is the 0-based index
    of the form that set `answer-atom`; `total-forms` is the count of
-   parsed top-level expressions. Pure; public so loop + tests share
+   parsed top-level blocks. Pure; public so loop + tests share
    the rule. Returns false when `form-idx` is nil (no answer fired)."
   [form-idx total-forms]
   (boolean (and form-idx
@@ -885,7 +885,7 @@
   "True when `(answer …)` fired during iteration 0 AND the iteration
    had more than one top-level form. `iteration` is the 0-based
    iteration number; `total-forms` is the count of parsed top-level
-   expressions; `answer-fired?` is whether the answer-atom was set.
+   blocks; `answer-fired?` is whether the answer-atom was set.
    Pure; public so loop + tests share the rule."
   [iteration total-forms answer-fired?]
   (boolean (and answer-fired?
@@ -916,7 +916,7 @@
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
-   Returns map with :thinking :expressions :final-result :api-usage etc.
+   Returns map with :thinking :blocks :final-result :api-usage etc.
 
    Optional `:dedup-cache-atom` is the per-query cache that skips
    re-execution of identical canonical forms. The handler builds
@@ -1051,20 +1051,20 @@
                              {:block expr :result result :form-comment form-comment}))
                      (range) code-entries)
           code-blocks (mapv :block executed)
-          expression-results (mapv :result executed)
-          expression-comments (mapv :form-comment executed)
-          expressions (mapv (fn [idx code result form-comment]
-                              (cond-> {:id idx
-                                       :code code
-                                       :result (:result result)
-                                       :stdout (:stdout result)
-                                       :stderr (:stderr result)
-                                       :error (:error result)
-                                       :execution-time-ms (:execution-time-ms result)
-                                       :timeout? (:timeout? result)
-                                       :repaired? (:repaired? result)}
-                                form-comment (assoc :comment form-comment)))
-                        (range) code-blocks expression-results expression-comments)]
+          block-results (mapv :result executed)
+          block-comments (mapv :form-comment executed)
+          blocks (mapv (fn [idx code result form-comment]
+                         (cond-> {:id idx
+                                  :code code
+                                  :result (:result result)
+                                  :stdout (:stdout result)
+                                  :stderr (:stderr result)
+                                  :error (:error result)
+                                  :execution-time-ms (:execution-time-ms result)
+                                  :timeout? (:timeout? result)
+                                  :repaired? (:repaired? result)}
+                           form-comment (assoc :comment form-comment)))
+                   (range) code-blocks block-results block-comments)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. Three
@@ -1101,7 +1101,7 @@
               position-bad?   (when-not first-iter-bad?
                                 (answer-position-violation? form-idx total-forms))
               own-form-error  (when (and (not first-iter-bad?) (not position-bad?))
-                                (answer-form-error expression-results form-idx))
+                                (answer-form-error block-results form-idx))
               validation-error (cond
                                  first-iter-bad?
                                  (answer-first-iteration-error-message total-forms)
@@ -1112,24 +1112,24 @@
               ;; Surface the validation error on the answer-bearing
               ;; form's row so the model sees \"my (answer …) was
               ;; rejected because…\" right next to its own code.
-              expressions*     (cond-> expressions
-                                 (and validation-error form-idx
-                                   (< form-idx (count expressions))
-                                   (nil? (get-in expressions [form-idx :error])))
-                                 (assoc-in [form-idx :error] validation-error))
+              blocks*     (cond-> blocks
+                            (and validation-error form-idx
+                              (< form-idx (count blocks))
+                              (nil? (get-in blocks [form-idx :error])))
+                            (assoc-in [form-idx :error] validation-error))
               model-name       (some-> (:name resolved-model) str)
               provider         (:provider resolved-model)]
           (if validation-error
             {:thinking thinking
-             :expressions (or (seq expressions*)
-                            [{:id 0 :code "(final-answer-validation)"
-                              :result nil :stdout "" :stderr ""
-                              :error validation-error}])
+             :blocks (or (seq blocks*)
+                       [{:id 0 :code "(final-answer-validation)"
+                         :result nil :stdout "" :stderr ""
+                         :error validation-error}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages :llm-provider provider :llm-model model-name}
             {:thinking thinking
-             :expressions (strip-noop-expressions expressions)
+             :blocks (strip-noop-blocks blocks)
              :final-result {:final?           true
                             :answer           final-answer
                             ;; Index of the form that called
@@ -1145,7 +1145,7 @@
              :llm-messages messages :llm-provider provider :llm-model model-name}))
           ;; Normal path
         {:thinking thinking
-         :expressions (strip-noop-expressions expressions)
+         :blocks (strip-noop-blocks blocks)
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
          :llm-messages messages
@@ -1284,8 +1284,8 @@
 
 (defn extract-def-names
   "Extracts var names from code blocks via EDN parsing of def-like forms."
-  [expressions]
-  (->> expressions
+  [blocks]
+  (->> blocks
     (mapcat (fn [{:keys [code error]}]
               (when-not error
                 (try
@@ -1303,11 +1303,11 @@
 
 (defn restorable-var-snapshots
   "Serializable snapshots of `(def ...)` vars introduced by this iteration."
-  [environment expressions]
+  [environment blocks]
   (let [execution->defs (mapv (fn [{:keys [error] :as execution}]
                                 [execution (when-not error
                                              (set (map symbol (extract-def-names [execution]))))])
-                          expressions)
+                          blocks)
         defined (into #{} (mapcat second) execution->defs)
         symbol->execution (reduce (fn [acc [{:keys [code execution-time-ms]} defs]]
                                     (if (and code (seq defs))
@@ -1329,19 +1329,19 @@
       vec)))
 
 (defn update-system-vars!
-  "Rebind REASONING, ANSWER and TITLE in the SCI sandbox after an
+  "Rebind REASONING, ASSISTANT_TURN_ANSWER and CONVERSATION_TITLE in the SCI sandbox after an
    iteration. See `SYSTEM_VAR_NAMES` for the full SYSTEM-var registry.
 
-   `TITLE` mirrors the env's `:title-atom` so a `(title \"...\")` call
+   `CONVERSATION_TITLE` mirrors the env's `:conversation-title-atom` so a `(conversation-title \"...\")` call
    inside iteration N is observable to the model in iteration N+1
    without a DB round-trip."
   [environment {:keys [thinking final-result final-answer]}]
   (when (seq thinking)
     (env/bind-and-bump! environment 'REASONING thinking))
   (when final-result
-    (env/bind-and-bump! environment 'ANSWER final-answer))
-  (when-let [title-atom (:title-atom environment)]
-    (env/bind-and-bump! environment 'TITLE (or @title-atom ""))))
+    (env/bind-and-bump! environment 'ASSISTANT_TURN_ANSWER final-answer))
+  (when-let [conversation-title-atom (:conversation-title-atom environment)]
+    (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
 (defn update-current-iteration-id!
   "Rebind `CURRENT_ITERATION_ID` in the SCI sandbox to the freshly-
@@ -1356,38 +1356,38 @@
    Names match `SYSTEM_VAR_NAMES`.
 
    `EXTENSIONS` is captured exactly once — on iteration 0, alongside
-   `QUERY` — because the loop binds the snapshot once at turn start
+   `USER_TURN_REQUEST` — because the loop binds the snapshot once at turn start
    and never mutates it within the turn (see `iteration-loop`). Every
    subsequent iteration would persist an identical row, so we skip
    them."
   [vars-snapshot {:keys [iteration query thinking final-result final-answer
                          current-query-id current-iteration-id extensions-snapshot]}]
   (cond-> vars-snapshot
-    (zero? iteration)        (conj {:name "QUERY"     :value query        :code ";; SYSTEM var"})
+    (zero? iteration)        (conj {:name "USER_TURN_REQUEST"     :value query        :code ";; SYSTEM var"})
     (and (zero? iteration)
       current-query-id)   (conj {:name "CURRENT_QUERY_ID" :value current-query-id :code ";; SYSTEM var"})
     (and (zero? iteration)
       (some? extensions-snapshot))
     (conj {:name "EXTENSIONS" :value extensions-snapshot :code ";; SYSTEM var"})
     (seq thinking)           (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
-    final-result             (conj {:name "ANSWER"    :value final-answer :code ";; SYSTEM var"})
+    final-result             (conj {:name "ASSISTANT_TURN_ANSWER"    :value final-answer :code ";; SYSTEM var"})
     current-iteration-id     (conj {:name "CURRENT_ITERATION_ID" :value current-iteration-id :code ";; SYSTEM var"})))
 
 (defn update-title-system-var!
-  "Rebind TITLE in the SCI sandbox to whatever the env's title-atom
+  "Rebind CONVERSATION_TITLE in the SCI sandbox to whatever the env's conversation-title-atom
    currently holds. Called once at iteration 0 so the first iteration
    sees the live title; per-iteration rebinds happen in
-   `update-system-vars!` (alongside REASONING / ANSWER)."
+   `update-system-vars!` (alongside REASONING / ASSISTANT_TURN_ANSWER)."
   [environment]
-  (when-let [title-atom (:title-atom environment)]
-    (env/bind-and-bump! environment 'TITLE (or @title-atom ""))))
+  (when-let [conversation-title-atom (:conversation-title-atom environment)]
+    (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-query! (inlined from former base)
 ;; -----------------------------------------------------------------------------
 
 (def ^:private FRESH_ITER_CARRY
-  {:previous-expressions nil :previous-iteration -1})
+  {:previous-blocks nil :previous-iteration -1})
 
 (def ^:private balanced-reasoning :balanced)
 
@@ -1439,7 +1439,7 @@
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
         call-counts-atom (atom {})
         ;; Phase 2-m measurement: per-query set of canonical hashes
-        ;; for SUCCESSFUL expressions. The iteration handler counts how
+        ;; for SUCCESSFUL blocks. The iteration handler counts how
         ;; many of THIS iteration's blocks were already in the set
         ;; (`:expression-redundancy-fraction` + `:dedup-saves` metadata)
         ;; before adding the new successful ones.
@@ -1477,7 +1477,7 @@
                                                     (cond-> {:namespace (str (:ext/namespace ext))}
                                                       (:ext/version ext) (assoc :version (:ext/version ext))))
                                               active-exts)}))]
-    (env/bind-and-bump! environment 'QUERY query)
+    (env/bind-and-bump! environment 'USER_TURN_REQUEST query)
     (env/bind-and-bump! environment 'CURRENT_QUERY_ID query-id)
     ;; Reset CURRENT_ITERATION_ID to nil at turn start; rebound by
     ;; `update-current-iteration-id!` after each iteration row commits.
@@ -1499,7 +1499,7 @@
                                 :trace [] :consecutive-errors 0 :restarts 0}
                           FRESH_ITER_CARRY)]
         (let [{:keys [iteration messages trace consecutive-errors restarts
-                      previous-expressions previous-iteration]} loop-state]
+                      previous-blocks previous-iteration]} loop-state]
           (when current-iteration-atom (reset! current-iteration-atom iteration))
           (cond
             (when cancel-atom @cancel-atom)
@@ -1535,10 +1535,10 @@
               (let [reasoning-level (when has-reasoning?
                                       (reasoning-level-for-errors base-reasoning-level consecutive-errors))
                     _ (log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
-                    expressions-by-iteration (when (seq previous-expressions)
-                                               [[(or previous-iteration 0) previous-expressions]])
+                    blocks-by-iteration (when (seq previous-blocks)
+                                          [[(or previous-iteration 0) previous-blocks]])
                     iteration-context (prompt/build-iteration-context environment
-                                        {:expressions-by-iteration expressions-by-iteration
+                                        {:blocks-by-iteration blocks-by-iteration
                                          :call-counts-atom         call-counts-atom
                                          :active-extensions        active-exts})
                     base-messages (prompt/trim-to-initial-history messages (count initial-messages))
@@ -1566,7 +1566,7 @@
                   ;; \"iteration-error-data\" as cancellation, not a real failure: skip
                   ;; the trace entry, skip the DB write, skip the on-chunk
                   ;; error chunk (otherwise the bubble paints a phantom
-                  ;; ITERATION N ERROR block right next to FINAL ANSWER:
+                  ;; ITERATION N ERROR block right next to FINAL ASSISTANT_TURN_ANSWER:
                   ;; \"_Cancelled by user._\"). Bail straight to the cancel
                   ;; result that the top-of-loop branch would have produced.
                   (if (and cancel-atom @cancel-atom)
@@ -1585,7 +1585,7 @@
                           empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
                                             (:reasoning (:data iteration-error-data)))
                           err-iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                             {:query-id query-id :vars [] :expressions nil
+                                             {:query-id query-id :vars [] :blocks nil
                                               :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
                                               :llm-messages effective-messages
                                               :llm-provider (:provider resolved-model)
@@ -1607,7 +1607,7 @@
                         "on-chunk (iteration error)")
                       (emit-hook! on-iteration
                         {:iteration iteration :status :error :status-id (status->id :error)
-                         :thinking empty-reasoning :expressions nil :final-result nil
+                         :thinking empty-reasoning :blocks nil :final-result nil
                          :error iteration-error-data :duration-ms 0} "on-iteration (error)")
                       (recur (assoc loop-state
                                :iteration (inc iteration)
@@ -1616,11 +1616,11 @@
                                :consecutive-errors (inc consecutive-errors) :restarts restarts))))
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
-                        {:keys [thinking expressions final-result]} iteration-result
+                        {:keys [thinking blocks final-result]} iteration-result
                         final-answer (when final-result (:answer final-result))
                         _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
-                        vars-snapshot (restorable-var-snapshots environment expressions)
+                        vars-snapshot (restorable-var-snapshots environment blocks)
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
@@ -1634,7 +1634,7 @@
                                                                 (prompt/extensions-snapshot active-exts))})
                         [redundant-count expression-count]
                         (count-duplicates seen-expression-hashes-atom
-                          (or expressions []))
+                          (or blocks []))
                         redundancy-fraction
                         (if (pos? expression-count)
                           (double (/ redundant-count expression-count))
@@ -1644,7 +1644,7 @@
                           {:expression-redundancy-fraction redundancy-fraction
                            :dedup-saves                    redundant-count})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                       {:query-id query-id :expressions expressions :vars vars-snapshot
+                                       {:query-id query-id :blocks blocks :vars vars-snapshot
                                         :thinking thinking
                                         :answer (when final-result (answer-str (:answer final-result)))
                                         :answer-form-idx (when final-result (:answer-form-idx final-result))
@@ -1657,21 +1657,21 @@
                         _ (update-current-iteration-id! environment iteration-id)
                         _ (emit-hook! on-iteration
                             {:iteration iteration
-                             :status (cond final-result :final (empty? expressions) :empty :else :success)
-                             :status-id (status->id (cond final-result :final (empty? expressions) :empty :else :success))
-                             :thinking thinking :expressions expressions :final-result final-result
+                             :status (cond final-result :final (empty? blocks) :empty :else :success)
+                             :status-id (status->id (cond final-result :final (empty? blocks) :empty :else :success))
+                             :thinking thinking :blocks blocks :final-result final-result
                              :error nil :duration-ms (or (:duration-ms iteration-result) 0)}
                             "on-iteration (success)")
                         trace-entry {:iteration iteration :thinking thinking
-                                     :expressions expressions :final? (boolean final-result)}]
+                                     :blocks blocks :final? (boolean final-result)}]
                     (cond
                       final-result
                       (do (log-stage! :final iteration
                             {:answer (truncate (answer-str (:answer final-result)) 200)
                              :iteration-count (inc iteration)})
                         (log-stage! :iteration-end iteration
-                          {:blocks (count expressions) :errors (count (filter :error expressions))
-                           :times (mapv :execution-time-ms expressions)})
+                          {:blocks (count blocks) :errors (count (filter :error blocks))
+                           :times (mapv :execution-time-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
                         ;; Per-form chunks already streamed every iN.K
                         ;; result; this is the trim \"iteration is
@@ -1698,15 +1698,15 @@
                           (finalize-cost)))
 
                       :else
-                      (if (empty? expressions)
+                      (if (empty? blocks)
                         (do (log-stage! :empty iteration {})
                           (log-stage! :iteration-end iteration {:blocks 0 :errors 0 :times []})
                           (recur (merge loop-state
                                    {:iteration (inc iteration) :trace (conj trace trace-entry)})))
 
                         (do (log-stage! :iteration-end iteration
-                              {:blocks (count expressions) :errors (count (filter :error expressions))
-                               :times (mapv :execution-time-ms expressions)})
+                              {:blocks (count blocks) :errors (count (filter :error blocks))
+                               :times (mapv :execution-time-ms blocks)})
                           ;; Non-terminal iteration-final chunk: per-form
                           ;; chunks already streamed; this is the
                           ;; \"iteration done, more iterations coming\"
@@ -1718,13 +1718,13 @@
                                        :thinking  thinking
                                        :final     nil
                                        :done?     false}))
-                          (let [had-success? (some #(nil? (:error %)) expressions)
+                          (let [had-success? (some #(nil? (:error %)) blocks)
                                 next-errors (if had-success? 0 (inc consecutive-errors))
                                 _ (when had-success? (swap! var-index-atom update :current-revision inc))]
                             (recur (merge loop-state
                                      {:iteration (inc iteration) :messages messages
                                       :trace (conj trace trace-entry) :consecutive-errors next-errors
-                                      :previous-expressions expressions :previous-iteration iteration}))))))))))))))))
+                                      :previous-blocks blocks :previous-iteration iteration}))))))))))))))))
 
 (defn- ->prior-outcome
   [result]
@@ -2008,7 +2008,7 @@
       - :trace - Vector of iteration trace entries, each containing:
           {:iteration N
            :response <llm-response-text>
-           :expressions [{:id 0 :code <code-str> :result <value> :stdout <str> :error nil :execution-time-ms 5}
+           :blocks [{:id 0 :code <code-str> :result <value> :stdout <str> :error nil :execution-time-ms 5}
                        ...]}
      - :iteration-count - Number of iterations used.
      - :duration-ms - Query duration in milliseconds.
@@ -2118,7 +2118,7 @@
   "Unmap `names` from the SCI sandbox namespace. Used by the
    deterministic auto-forget at query boundaries.
 
-   HARD GUARD: SYSTEM vars (QUERY, REASONING, ANSWER, ... see `SYSTEM_VAR_NAMES`)
+   HARD GUARD: SYSTEM vars (USER_TURN_REQUEST, REASONING, ASSISTANT_TURN_ANSWER, ... see `SYSTEM_VAR_NAMES`)
    can NEVER be forgotten — they are contract surfaces the iteration
    loop re-binds every turn; dropping them would tear the sandbox
    mid-turn. Filtered out + logged."
@@ -2271,11 +2271,11 @@
         current-form-idx-atom    (atom nil)
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
-        ;; truth; this atom is the fast read path for `(title)` and
-        ;; the source for the `TITLE` SYSTEM var rebind at iteration
+        ;; truth; this atom is the fast read path for  and
+        ;; the source for the `CONVERSATION_TITLE` SYSTEM var rebind at iteration
         ;; boundaries. `set-title!` writes both, in that order, then
         ;; broadcasts to every registered listener.
-        title-atom               (atom (or title ""))
+        conversation-title-atom               (atom (or title ""))
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
@@ -2316,26 +2316,29 @@
                                       :form-idx @current-form-idx-atom})
                                    :vis/answer)
         ;; SCI binding for the conversation title:
-        ;;   `(title \"...\")` — writes the title through to DB,
-        ;;                    syncs the in-memory atom, and broadcasts
-        ;;                    `:title-changed` to every registered
-        ;;                    listener so channels (e.g. the TUI
-        ;;                    header) can refresh without polling.
+        ;;   `(conversation-title \"...\")` — writes the title through
+        ;;                              to DB, syncs the in-memory
+        ;;                              atom, and broadcasts
+        ;;                              `:title-changed` to every
+        ;;                              registered listener so
+        ;;                              channels (e.g. the TUI
+        ;;                              header) can refresh without
+        ;;                              polling.
         ;; ONE-ARITY ONLY. To READ the current title from `:code`,
-        ;; reference the `TITLE` SYSTEM var — there is no zero-arg
-        ;; reader, by design: a `(title)` call would invite the
-        ;; model to round-trip what it can read for free. Calling
-        ;; with the wrong arity raises an `ArityException` from SCI
-        ;; like any other Clojure fn.
-        title-fn                 (fn title [s]
+        ;; reference the `CONVERSATION_TITLE` SYSTEM var — there is
+        ;; no zero-arg reader, by design: a `(conversation-title)`
+        ;; call would invite the model to round-trip what it can
+        ;; read for free. Calling with the wrong arity raises an
+        ;; `ArityException` from SCI like any other Clojure fn.
+        conversation-title-fn    (fn conversation-title [s]
                                    (let [s (str s)]
                                      (set-title-with-broadcast!
                                        db-info conversation-id
-                                       title-atom s)
+                                       conversation-title-atom s)
                                      s))
-        env-bindings             {'var-history var-history-fn
-                                  'answer      answer-fn
-                                  'title       title-fn}
+        env-bindings             {'var-history        var-history-fn
+                                  'answer             answer-fn
+                                  'conversation-title conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -2351,7 +2354,7 @@
              :router          router
              :answer-atom           answer-atom
              :current-form-idx-atom current-form-idx-atom
-             :title-atom            title-atom
+             :conversation-title-atom            conversation-title-atom
              :extensions            (atom [])}]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
@@ -2585,7 +2588,7 @@
 ;; Title listeners + set-title! broadcast
 ;;
 ;; Channels (TUI, Telegram, ...) that want to react to a conversation
-;; title change — typically because the model emitted `(title "...")`
+;; title change — typically because the model emitted `(conversation-title "...")`
 ;; mid-turn — register a listener via `add-title-listener!`. The
 ;; listener fn receives the new title; it MUST be cheap (typically a
 ;; `state/dispatch` into the channel's app-db). Listeners are stored
@@ -2593,7 +2596,7 @@
 ;; woken by a Telegram bot updating conversation B.
 ;;
 ;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
-;; `(title "...")` fn (model-driven) funnel through
+;; `(conversation-title "...")` fn (model-driven) funnel through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
 ;; in lockstep — no path can update one without the others.
@@ -2641,17 +2644,17 @@
   "Single mutation point for conversation titles.
 
    1. Writes the title to the persisted `conversation_state` row.
-   2. Updates the env's in-memory `:title-atom` so the next iteration's
-      `TITLE` SYSTEM var rebind sees the new value AND so a `(title)`
+   2. Updates the env's in-memory `:conversation-title-atom` so the next iteration's
+      `CONVERSATION_TITLE` SYSTEM var rebind sees the new value AND so a
       read from the SCI sandbox returns the fresh string immediately,
       without a DB round-trip.
    3. Broadcasts to every registered listener.
 
-   `title-atom` may be nil (host-driven path with no live env)."
-  [db-info conversation-id title-atom title]
+   `conversation-title-atom` may be nil (host-driven path with no live env)."
+  [db-info conversation-id conversation-title-atom title]
   (let [t (str title)]
     (persistance/db-update-conversation-title! db-info conversation-id t)
-    (when title-atom (reset! title-atom t))
+    (when conversation-title-atom (reset! conversation-title-atom t))
     (broadcast-title-change! conversation-id t)
     nil))
 
@@ -2664,7 +2667,7 @@
   (let [env (env-for id)]
     (set-title-with-broadcast! (or (:db-info env) (db-info))
       id
-      (:title-atom env)
+      (:conversation-title-atom env)
       title))
   nil)
 

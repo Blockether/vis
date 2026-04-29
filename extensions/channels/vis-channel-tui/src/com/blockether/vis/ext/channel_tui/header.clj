@@ -71,7 +71,7 @@
    The band is `HEADER_ROWS` rows tall: top rule, content row, bottom
    rule. Pure draw, safe to call every frame.
 
-   Layout per the namespace doc: empty LEFT, centered TITLE, short
+   Layout per the namespace doc: empty LEFT, centered CONVERSATION_TITLE, short
    conversation-id on the RIGHT. When the title would overlap the
    id, the title is truncated with an ellipsis so the id stays
    readable — the id is the more diagnostic of the two when the

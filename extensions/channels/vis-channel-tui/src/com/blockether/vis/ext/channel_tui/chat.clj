@@ -59,7 +59,7 @@
                         iteration-count (:iteration-count q)
                         duration-ms (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
-                        ;; Rebuild trace from iterations + expressions.
+                        ;; Rebuild trace from iterations + blocks.
                         ;; The answer-bearing form (last expression of
                         ;; the answer iteration, per rule b') is
                         ;; ELIDED from the per-iteration parallel
@@ -73,7 +73,7 @@
                                            (not (str/blank? (str answer))))
                         trace (into []
                                 (map (fn [it]
-                                       (let [all-exprs   (sdk/db-list-iteration-expressions d (:id it))
+                                       (let [all-exprs   (sdk/db-list-iteration-blocks d (:id it))
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))

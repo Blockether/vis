@@ -14,8 +14,8 @@
         Plus one optional [system_nudge] line when the model executes the
         same expression twice.
 
-   The two slots above plus the SYSTEM vars (`QUERY` `ANSWER` `REASONING`
-   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `EXTENSIONS` `TITLE`) bound in SCI
+   The two slots above plus the SYSTEM vars (`USER_TURN_REQUEST` `ASSISTANT_TURN_ANSWER` `REASONING`
+   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `EXTENSIONS` `CONVERSATION_TITLE`) bound in SCI
    cover everything the model needs."
   (:require
    [clojure.string :as str]
@@ -85,10 +85,10 @@
 
 (defn- format-recent-block
   "Render the last RECENT_KEEP_ITERS iterations with iN.K addressable ids.
-   `expressions-by-iteration` is a seq of `[iteration-position [exprs]]`
+   `blocks-by-iteration` is a seq of `[iteration-position [exprs]]`
    pairs, oldest-first."
-  [expressions-by-iteration]
-  (let [kept (take-last RECENT_KEEP_ITERS (or expressions-by-iteration []))]
+  [blocks-by-iteration]
+  (let [kept (take-last RECENT_KEEP_ITERS (or blocks-by-iteration []))]
     (when (seq kept)
       (let [lines (for [[iteration-position exprs] kept
                         [k expr] (map-indexed vector exprs)
@@ -145,15 +145,15 @@
 
 (defn- repetition-warning
   "Emit a single [system_nudge] line when the SAME (code, error?) was seen
-   in the previous iteration's expressions. Threshold of 1 means: one
+   in the previous iteration's blocks. Threshold of 1 means: one
    repeat is enough; the model should change strategy."
-  [call-counts-atom previous-expressions]
-  (when (and call-counts-atom (seq previous-expressions))
+  [call-counts-atom previous-blocks]
+  (when (and call-counts-atom (seq previous-blocks))
     (let [keys* (mapv (fn [{:keys [code error]}]
                         (if error
                           [:error-only (str/trim (str error))]
                           [:code-only (str/trim (str code))]))
-                  previous-expressions)
+                  previous-blocks)
           max-count (swap! call-counts-atom
                       (fn [m]
                         (reduce (fn [acc k] (update acc k (fnil inc 0)))
@@ -181,21 +181,21 @@
         :ext/nudge-fn is consulted (rare).
 
    Optional:
-     `:expressions-by-iteration`, `:call-counts-atom`."
-  [environment {:keys [expressions-by-iteration call-counts-atom active-extensions] :as opts}]
+     `:blocks-by-iteration`, `:call-counts-atom`."
+  [environment {:keys [blocks-by-iteration call-counts-atom active-extensions] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [recent-block (format-recent-block expressions-by-iteration)
-        last-iteration-expressions (some-> expressions-by-iteration last second)
+  (let [recent-block (format-recent-block blocks-by-iteration)
+        last-iteration-blocks (some-> blocks-by-iteration last second)
         var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
-        rep-nudge (repetition-warning call-counts-atom last-iteration-expressions)
+        rep-nudge (repetition-warning call-counts-atom last-iteration-blocks)
         ext-nudges (when (seq active-extensions)
                      (let [ctx {:environment environment
-                                :previous-expressions last-iteration-expressions}]
+                                :previous-blocks last-iteration-blocks}]
                        (into []
                          (keep (fn [ext]
                                  (when-let [nudge-fn (:ext/nudge-fn ext)]
@@ -236,7 +236,7 @@
 ;; =============================================================================
 
 (def CORE_SYSTEM_PROMPT
-  "Clojure agent. Think = write Clojure in SCI sandbox. Plan = code. Reason = code. User QUERY is your goal. Stash useful results across iterations as `(def ...)` and compose functions to solve hard problems.
+  "Clojure agent. Think = write Clojure in SCI sandbox. Plan = code. Reason = code. User USER_TURN_REQUEST is your goal. Stash useful results across iterations as `(def ...)` and compose functions to solve hard problems.
 
 Each turn reply with Clojure source inside ```clojure … ``` fences. Multiple fenced blocks are allowed and will be concatenated in order. NO prose outside fences — use `;; comments` inside the fence for thinking.
 
@@ -260,18 +260,18 @@ After eval you get a fresh user msg:
   <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed). Shown = form's return val. `(def x ...)` returns the var, NOT the bound value. To SEE a tool result, call inline.
   <var_index>  your `(def name val)` bindings still alive. Strings verbatim up to ~8000 chars.
 
-SCI vars bound by name:
-  QUERY                 current request (string)
-  ANSWER                previous turn's answer (string)
-  REASONING             last iter's thinking (string)
-  TITLE                 current conversation title (string; \"\" until set)
-  CURRENT_QUERY_ID      UUID of THIS in-flight turn
-  CURRENT_ITERATION_ID  UUID of last persisted iter (nil at iter 0)
+SYSTEM vars (read-only; bound by name in the SCI sandbox):
+  USER_TURN_REQUEST     the user's current message text — your immediate goal for THIS turn (string)
+  ASSISTANT_TURN_ANSWER previous turn's final answer string (\"\" on the very first turn of the conversation)
+  REASONING             last iteration's `:thinking` text (\"\" before iter 1)
+  CONVERSATION_TITLE    current conversation title (\"\" until you call `(conversation-title \"…\")`)
+  CURRENT_QUERY_ID      UUID of THIS in-flight turn (use as a key into `foundation/conversation`)
+  CURRENT_ITERATION_ID  UUID of the last persisted iteration (nil before iter 1)
   EXTENSIONS            frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(foundation/extensions)` for the same data.
 
-Host primitives bound at the top level (no alias):
-  (answer ARG)     finish the turn with this string (ARG = string). See answer-position rules above.
-  (title ARG)      ONE-ARITY ONLY. Writes the conversation title through to the DB and notifies every channel watching this conversation. To READ the current title, reference the `TITLE` SYSTEM var — it always carries the live value, no fn call needed. ARG = a short noun phrase (3-7 words). Safe to call any iteration; the next iteration's `TITLE` reflects the new value. Setting the title on the first turn is encouraged so the conversation is discoverable in the sidebar; refresh it later when the focus shifts.
+Host primitives bound at the top level (no alias) — these MUTATE state, so each is named for what it WRITES:
+  (answer ARG)               finish the turn with ARG (string). Position rules above. Cannot read the answer back; the answer is the turn's terminal output.
+  (conversation-title ARG)   ONE-ARITY ONLY. Persists ARG (a short 3–7-word noun phrase) as the conversation title and broadcasts the change to every channel watching this conversation. To READ the current title, reference the `CONVERSATION_TITLE` SYSTEM var — it always carries the live value, no fn call needed. Safe to call any iteration; the next iteration's `CONVERSATION_TITLE` reflects the new value. Setting it on the first turn makes the conversation discoverable in the sidebar; refresh it later when the focus shifts.
 
 Rules:
   • Real Clojure: let / do / threading inside one form when steps depend.

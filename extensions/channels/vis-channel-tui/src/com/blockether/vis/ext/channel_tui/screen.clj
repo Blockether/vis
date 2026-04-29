@@ -243,7 +243,7 @@
         ;; one column makes `format-iteration-entry` size labels for
         ;; one bubble-w while `draw-chat-bubble!` paints into a
         ;; different bubble-w — right-aligned labels (`CODE 3`,
-        ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
+        ;; `✓ 3ms`, `FINAL ASSISTANT_TURN_ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
         bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
         progress-extra {:now-ms         now-ms
@@ -398,7 +398,7 @@
     hook))
 
 (defn- subscribe-title-listener!
-  "Wire `(title \"...\")` calls inside this conversation's iteration
+  "Wire `(conversation-title \"...\")` calls inside this conversation's iteration
    loop to the TUI header: every change dispatches `[:set-title]`
    into app-db so the next render frame paints the new title without
    polling. Returns the listener fn so the caller can deregister it.

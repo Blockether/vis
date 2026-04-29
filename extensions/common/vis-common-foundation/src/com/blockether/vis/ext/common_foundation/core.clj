@@ -130,7 +130,7 @@
                            :error        (:error row)
                            :stdout       (:stdout row)
                            :duration-ms  (:duration-ms row)})
-                    (sdk/db-list-iteration-expressions db-info iteration-id))
+                    (sdk/db-list-iteration-blocks db-info iteration-id))
                   (catch Throwable _ []))))
       iterations)))
 
@@ -316,7 +316,7 @@
 
 (defn- expression-failures-for-iteration [db-info iteration]
   (try
-    (->> (sdk/db-list-iteration-expressions db-info (:id iteration))
+    (->> (sdk/db-list-iteration-blocks db-info (:id iteration))
       (keep (fn [row]
               (when-let [error (:error row)]
                 (let [classification (classify-expression-failure (:code row) error)]

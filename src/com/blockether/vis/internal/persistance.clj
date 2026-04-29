@@ -269,7 +269,7 @@
 
 (defdelegate db-list-query-iterations     [db-info query-ref])
 (defdelegate db-list-iteration-vars       [db-info iteration-ref])
-(defdelegate db-list-iteration-expressions [db-info iteration-ref])
+(defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
@@ -284,7 +284,7 @@
 (defdelegate db-list-dependencies  [db-info conversation-state-id])
 
 ;; --- Restore ---
-(defdelegate db-restore-expressions [db-info conversation-id])
+(defdelegate db-restore-blocks [db-info conversation-id])
 
 ;; =============================================================================
 ;; Error translation

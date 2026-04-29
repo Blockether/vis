@@ -620,10 +620,10 @@ strings, log keys, and metric names.
 
 The sandbox-visible system vars carrying the user's current query, the
 model's last reasoning text, and the prior-turn final answer are named
-**`QUERY`, `REASONING`, `ANSWER`** — ALL CAPS, no earmuffs.
+**`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`** — ALL CAPS, no earmuffs.
 
-They are explicitly `(def QUERY nil)` / `(def REASONING nil)` /
-`(def ANSWER nil)` at environment construction so the symbols always
+They are explicitly `(def USER_TURN_REQUEST nil)` / `(def REASONING nil)` /
+`(def ASSISTANT_TURN_ANSWER nil)` at environment construction so the symbols always
 resolve, even before the first turn. They are subsequently rebound
 after each iteration via the iteration loop's bookkeeping.
 
@@ -649,7 +649,7 @@ Why uppercase, not earmuffs:
 (def MAX_ITER 30)                        (def MAX_ITERATIONS 30)
 (let [iter 0 prev-msg ...] ...)          (let [iteration 0 previous-message ...] ...)
 (defn run-iter [...] ...)                (defn run-iteration [...] ...)
-:expr-results                            :expression-results
+:expr-results                            :block-results
 :prev-iteration                          :previous-iteration
 (defn count-cb [cb] ...)                 (defn count-callback [callback] ...)
 ```
@@ -910,7 +910,7 @@ three structured slots, not by a `<prior_thinking>` blob.
 - `<recent_thought>` — last iteration's `:thinking` text only,
   capped at 4000 chars.
 
-SYSTEM vars (`QUERY`, `REASONING`, `ANSWER`) appear inlined in
+SYSTEM vars (`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`) appear inlined in
 `<system_state>` with their current values, NOT in `<var_index>`. The
 previous turn's bounded digest (`{:goal :counts :outcome
 :abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.

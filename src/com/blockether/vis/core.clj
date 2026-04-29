@@ -188,7 +188,7 @@
 (def db-store-iteration!                    persistance/db-store-iteration!)
 (def db-list-query-iterations            persistance/db-list-query-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
-(def db-list-iteration-expressions       persistance/db-list-iteration-expressions)
+(def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
 
 ;; Var registry & history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
@@ -200,7 +200,7 @@
 (def db-list-dependencies                persistance/db-list-dependencies)
 
 ;; Restore
-(def db-restore-expressions              persistance/db-restore-expressions)
+(def db-restore-blocks              persistance/db-restore-blocks)
 
 ;; Process-restart cleanup
 (def db-sweep-orphaned-running-queries!     persistance/db-sweep-orphaned-running-queries!)

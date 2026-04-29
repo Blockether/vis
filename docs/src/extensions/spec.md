@@ -262,9 +262,9 @@ Called internally by `extension`; safe to call standalone.
      :ext/requires      ['com.blockether.vis.ext.common-editing.core]
      :ext/prompt        "Prefer narrow searches before broad scans."
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
-     :ext/nudge-fn      (fn [{:keys [environment iteration previous-expressions]}]
+     :ext/nudge-fn      (fn [{:keys [environment iteration previous-blocks]}]
                           (when (and (> iteration 5)
-                                    (some :error previous-expressions))
+                                    (some :error previous-blocks))
                             "[system_nudge] Document searches are failing."))
      :ext/symbols       [search-sym max-results-sym]
      :ext/classes       {'java.time.LocalDate java.time.LocalDate}

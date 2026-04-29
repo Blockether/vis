@@ -8,12 +8,23 @@
 --          ├─ query_soul (user ask identity, branch-local)
 --          │    └─ query_state (one run/retry)
 --          │         └─ iteration (one LLM round-trip)
---          │              └─ expression_state (durable state versions; stateless uses single v0)
---          └─ expression_soul (branch-local expression identities)
---               └─ expression_dependency (expression graph, soul-level)
+--          │              │
+--          │              ├─ iteration.blocks BLOB
+--          │              │    Nippy-encoded vec of per-block maps
+--          │              │    {:idx :code :comment :result :error
+--          │              │     :stdout :stderr :duration-ms
+--          │              │     :timeout? :repaired?}
+--          │              │
+--          │              └─ expression_state (var versions only)
+--          │
+--          └─ expression_soul (branch-local var identities, kind='var')
+--               └─ expression_dependency (var dependency graph, soul-level)
 --
 -- Flow per turn:
---   user ask -> query_soul/query_state -> iterations -> expression rows emitted
+--   user ask -> query_soul/query_state -> iterations
+--     each iteration writes its full block log inline into
+--     iteration.blocks plus one expression_soul + expression_state
+--     row per `(def …)` it executed
 --   -> query_state done/error -> next turn (or branch/fork to new conversation_state)
 --
 -- Fork flow:
@@ -137,10 +148,43 @@ CREATE TABLE iteration (
                                   ),       -- total duration across all traced attempts
   llm_thinking                    TEXT,
   llm_error                       TEXT,
-  llm_returned_empty_expressions  INTEGER NOT NULL DEFAULT 0
-                                  CHECK (llm_returned_empty_expressions IN (0, 1)),
+  llm_returned_empty_blocks  INTEGER NOT NULL DEFAULT 0
+                                  CHECK (llm_returned_empty_blocks IN (0, 1)),
 
   metadata                        TEXT,    -- JSON-encoded per-iteration context (active extensions, etc.)
+
+  -- Per-iteration code-block log as ONE Nippy-encoded vec of
+  -- block maps:
+  --   [{:idx N
+  --     :code              "(some-code)"
+  --     :comment           ";; leading comment" | absent
+  --     :result            <Nippy-frozen value> | absent
+  --     :error             "ERROR string" | absent
+  --     :stdout            non-blank | absent
+  --     :stderr            non-blank | absent
+  --     :duration-ms       N
+  --     :timeout?          true | absent
+  --     :repaired?         true | absent}
+  --    …]
+  --
+  -- \"Block\" matches the LLM-facing prompt vocabulary (each
+  -- top-level form inside a fenced ```clojure ... ``` block). The
+  -- legacy `expression_soul kind='call'` + `expression_state` per-
+  -- call rows are gone: every reader iterates per-iteration anyway,
+  -- so per-call rows added cost without index value. Var rows stay
+  -- first-class (expression_soul kind='var') because var-history is
+  -- the keystone of the data model — versioned, branched,
+  -- dependency-graphed.
+  blocks                          BLOB,
+
+  -- Index of the form that called `(answer …)` when the iteration
+  -- produced a final answer. Channels render the answer text below;
+  -- this slot lets readers ELIDE that form from the displayed call
+  -- log without re-walking the source. NULL for non-terminal
+  -- iterations.
+  answer_form_idx                 INTEGER
+                                  CHECK (answer_form_idx IS NULL
+                                         OR answer_form_idx >= 0),
 
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,
@@ -155,17 +199,20 @@ CREATE INDEX idx_iteration_query_state_created
   ON iteration(query_state_id, created_at);
 
 -- =============================================================================
--- Expression soul — unified identity for var/call/literal.
--- Branch-local: belongs to conversation_state.
+-- Expression soul — identity for var bindings (and reserved literal
+-- slot). Branch-local: belongs to conversation_state.
 --
 -- kind:
 --   var      - variable identity / binding target (includes function vars)
 --              e.g. (def x 42), (def user-name "Ana"), (defn sum [a b] (+ a b))
---   call     - executable expression/invocation
---              e.g. (sum 1 2), (map inc [1 2 3]), (println "hi")
---                   (if (> x 10) :big :small), (-> data :user :email clojure.string/lower-case)
---   literal  - constant/literal data node (always stateless)
---              e.g. 42, "hello", :ok, [1 2 3], {:a 1}
+--   literal  - constant/literal data node (always stateless). Reserved;
+--              the loop does not write literal rows today, but the
+--              kind enum stays open so a future RLM extension can
+--              pin literals without another schema migration.
+--
+-- The legacy 'call' kind was REMOVED. Per-call data now lives in the
+-- Nippy-encoded `iteration.blocks` BLOB; nothing else queried
+-- call rows by id, so the indirection added cost without value.
 --
 -- state_mode:
 --   stateless | stateful
@@ -176,7 +223,7 @@ CREATE TABLE expression_soul (
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
 
   kind                   TEXT NOT NULL
-                         CHECK (kind IN ('var', 'call', 'literal')),
+                         CHECK (kind IN ('var', 'literal')),
 
   state_mode             TEXT NOT NULL
                          CHECK (state_mode IN ('stateless', 'stateful')),
@@ -292,7 +339,7 @@ CREATE INDEX idx_expression_state_iteration
 
 -- Version constraints for expression_state:
 -- - first row for an expression_soul must start at version = 0
--- - stateless expressions: exactly one row, fixed at version = 0
+-- - stateless blocks: exactly one row, fixed at version = 0
 CREATE TRIGGER trg_expression_state_stateless_ai
 BEFORE INSERT ON expression_state
 BEGIN

@@ -346,9 +346,9 @@
 
 ;; SYSTEM vars are read-only bindings the loop maintains for the
 ;; agent:
-;;   QUERY                 current user query (string)
+;;   USER_TURN_REQUEST                 current user query (string)
 ;;   REASONING             last iteration's thinking (string)
-;;   ANSWER                previous turn's final answer (string)
+;;   ASSISTANT_TURN_ANSWER                previous turn's final answer (string)
 ;;   CURRENT_QUERY_ID      UUID of the in-flight turn (= current query)
 ;;   CURRENT_ITERATION_ID  UUID of the most recently persisted iteration
 ;;                         row (nil before the first iteration commits;
@@ -377,12 +377,22 @@
    var?' check is needed: var-index sort+status, auto-forget guard,
    <system_state> rendering, etc.
 
-   `TITLE` carries the current conversation title (\"\" when not yet
-   set). Loop owns the rebind: read-only from the model's POV. The
-   model writes the title via the host primitive `(title \"...\")`,
-   never by `def`-ing TITLE directly (the SYSTEM-var write guard in
-   `loop.clj` rejects that on principle)."
-  '#{QUERY REASONING ANSWER CURRENT_QUERY_ID CURRENT_ITERATION_ID EXTENSIONS TITLE})
+   Each name is explicit about WHAT it carries so the agent never
+   guesses:
+     USER_TURN_REQUEST     — user's current message text
+     ASSISTANT_TURN_ANSWER — previous turn's final answer string
+     REASONING             — last iteration's :thinking text
+     CONVERSATION_TITLE    — current conversation title (\"\" until set)
+     CURRENT_QUERY_ID      — UUID of the in-flight turn
+     CURRENT_ITERATION_ID  — UUID of the last persisted iteration
+     EXTENSIONS            — frozen vec of active-extension descriptors
+
+   The model writes the conversation title via the host primitive
+   `(conversation-title \"...\")`, never by `def`-ing CONVERSATION_TITLE
+   directly (the SYSTEM-var write guard in `loop.clj` rejects that on
+   principle)."
+  '#{USER_TURN_REQUEST REASONING ASSISTANT_TURN_ANSWER
+     CURRENT_QUERY_ID CURRENT_ITERATION_ID EXTENSIONS CONVERSATION_TITLE})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed
@@ -579,8 +589,8 @@
   "Build the `<var_index>` block from user-defined vars in the SCI sandbox.
 
    Returns nil when no user vars exist; otherwise a multi-line string
-   with one entry per `(def ...)`. SYSTEM vars (QUERY / REASONING /
-   ANSWER) and initial-ns bindings (tools, helpers) are excluded —
+   with one entry per `(def ...)`. SYSTEM vars (USER_TURN_REQUEST / REASONING /
+   ASSISTANT_TURN_ANSWER) and initial-ns bindings (tools, helpers) are excluded —
    the model reads SYSTEM vars by name directly from the sandbox.
 
    Sort order: most-recently-bound first."
@@ -633,14 +643,14 @@
 (defn restore-sandbox!
   "Restore all persisted vars into a SCI sandbox from the DB.
 
-   Reads `db-restore-expressions` (topologically sorted) and for each entry:
+   Reads `db-restore-blocks` (topologically sorted) and for each entry:
    - Data value (nippy-thawed) → bind directly into the sandbox.
    - `{:vis/ref :expr}` → eval the `:expr` source code in the sandbox.
      Dependencies are guaranteed to be bound first (topological order).
 
    Returns a vec of {:name :restored-via (:data | :eval) :success? :error}."
   [sci-ctx db-info conversation-id]
-  (let [entries (persistance/db-restore-expressions db-info conversation-id)]
+  (let [entries (persistance/db-restore-blocks db-info conversation-id)]
     (mapv (fn [{:keys [name expr result]}]
             (let [sym (symbol name)]
               (try
