@@ -1373,16 +1373,18 @@
    Entry shape:
      {:thinking  str-or-nil
       :code      [str ...]        ;; code blocks
-      :results   [str ...]        ;; per-expression result strings
-      :stdouts   [str ...]        ;; per-expression stdout
-      :durations [int ...]        ;; per-expression ms
-      :successes [bool ...]      ;; per-expression success? (nil = unknown / streaming)
+      :comments  [str-or-nil ...] ;; per-block leading `;; … / #_(...)` block, paint
+                                  ;; in italic above the code; nil/blank renders nothing
+      :results   [str ...]        ;; per-block result strings
+      :stdouts   [str ...]        ;; per-block stdout
+      :durations [int ...]        ;; per-block ms
+      :successes [bool ...]       ;; per-block success? (nil = unknown / streaming)
       :error     {:type kw :message str :data {:raw-data str :received-type str}}}
                                   ;; iteration-level error (LLM call/spec failure).
                                   ;; Rendered in red so the user sees the actual
                                   ;; provider response (e.g. an HTTP plain-text
                                   ;; auth rejection) instead of just an empty bubble."
-  [{:keys [thinking code results stdouts durations successes error repeat-count]}
+  [{:keys [thinking code comments results stdouts durations successes error repeat-count]}
    code-width iteration-number & [{:keys [show-header?] :or {show-header? true}}]]
   (let [;; All marker-prefixed lines must have visible content ≤ (dec code-width)
         ;; because wrap-text in draw-chat-bubble! wraps at code-width and the
@@ -1506,6 +1508,19 @@
                                     success?          code-ok-marker
                                     :else             code-err-marker)
                       c-pad       (if is-error? code-err-pad-marker code-pad-marker)
+                      ;; Per-block leading comment(s). Rendered ABOVE
+                      ;; the code in the dim italic `thinking-marker`
+                      ;; style so the model's authored prose reads
+                      ;; naturally as a header for the block. Nil /
+                      ;; blank — no rows emitted.
+                      comment-text (some-> comments (get idx))
+                      comment-lines
+                      (when (and (string? comment-text)
+                              (not (str/blank? comment-text)))
+                        (let [trimmed (str/trim comment-text)
+                              wrapped (mapcat (fn [line] (wrap-text line fill-w))
+                                        (str/split-lines trimmed))]
+                          (mapv #(str thinking-marker %) wrapped)))
                       ;; Code lines: pretty-printed. NO literal left
                       ;; padding — the bubble's `h-pad` already insets
                       ;; the whole zone by 2 cols, matching the
@@ -1522,9 +1537,13 @@
                       r-lines     (when (seq r-wrapped)
                                     (into [(str r-marker (first r-wrapped))]
                                       (map #(str r-marker %) (rest r-wrapped))))
-                      ;; Code block = header + pad-top + code + gap + result + status + pad-bottom
+                      ;; Code block = header + (optional comment block) + pad-top + code + gap + result + status + pad-bottom
                       code-block  (vec (concat
                                          (when show-header? [(str iteration-hdr-marker expr-hdr)])  ;; right-aligned code ₁
+                                         (when (seq comment-lines)
+                                           (concat [(str thinking-marker "")] ;; top breath
+                                             comment-lines
+                                             [(str thinking-marker "")])) ;; bottom breath, separates comment from code
                                          [(str c-pad "")]        ;; pad top
                                          c-lines
                                          (when (seq r-lines) [(str c-pad "")])  ;; gap between code and result

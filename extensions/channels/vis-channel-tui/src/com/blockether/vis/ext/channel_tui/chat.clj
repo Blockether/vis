@@ -88,6 +88,7 @@
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]
                                          {:thinking  (:thinking it)
                                           :code      (mapv :code exprs)
+                                          :comments  (mapv :comment exprs)
                                           :results   result-strs
                                           :stdouts   stdout-strs
                                           :durations durations

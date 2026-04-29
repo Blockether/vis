@@ -15,7 +15,7 @@
         same expression twice.
 
    The two slots above plus the SYSTEM vars (`USER_TURN_REQUEST` `ASSISTANT_TURN_ANSWER` `REASONING`
-   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `EXTENSIONS` `CONVERSATION_TITLE`) bound in SCI
+   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `ACTIVE_EXTENSIONS` `CONVERSATION_TITLE`) bound in SCI
    cover everything the model needs."
   (:require
    [clojure.string :as str]
@@ -267,7 +267,7 @@ SYSTEM vars (read-only; bound by name in the SCI sandbox):
   CONVERSATION_TITLE    current conversation title (\"\" until you call `(conversation-title \"…\")`)
   CURRENT_QUERY_ID      UUID of THIS in-flight turn (use as a key into `foundation/conversation`)
   CURRENT_ITERATION_ID  UUID of the last persisted iteration (nil before iter 1)
-  EXTENSIONS            frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(foundation/extensions)` for the same data.
+  ACTIVE_EXTENSIONS            frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(foundation/extensions)` for the same data.
 
 Host primitives bound at the top level (no alias) — these MUTATE state, so each is named for what it WRITES:
   (answer ARG)               finish the turn with ARG (string). Position rules above. Cannot read the answer back; the answer is the turn's terminal output.
@@ -331,7 +331,7 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
         exts))))
 
 (defn extensions-snapshot
-  "Build the value of the `EXTENSIONS` SYSTEM var from a precomputed
+  "Build the value of the `ACTIVE_EXTENSIONS` SYSTEM var from a precomputed
    active-extensions vec.
 
    Returns a vec of compact, fully-realized data maps — NO functions,
@@ -369,7 +369,7 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
                   ;; we duplicate the lookup here (instead of calling
                   ;; the meta extension) because the loop layer is
                   ;; upstream of every ext, including meta itself —
-                  ;; EXTENSIONS must work even when vis-common-foundation
+                  ;; ACTIVE_EXTENSIONS must work even when vis-common-foundation
                   ;; isn't on the classpath.
                   registry-id (try (or alias (extension/extension-id-of-ns ext-ns))
                                 (catch Throwable _ nil))

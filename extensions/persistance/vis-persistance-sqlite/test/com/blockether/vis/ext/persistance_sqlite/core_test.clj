@@ -1594,7 +1594,7 @@
   (it "SYSTEM_VAR_NAMES contains exactly the documented seven SYSTEM vars"
     (expect (= '#{USER_TURN_REQUEST ASSISTANT_TURN_ANSWER REASONING CONVERSATION_TITLE
                   CURRENT_QUERY_ID CURRENT_ITERATION_ID
-                  EXTENSIONS}
+                  ACTIVE_EXTENSIONS}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
   (it "system-var-sym? is true for registered names, false otherwise"
@@ -1604,7 +1604,7 @@
       (expect (true?  (system-var-sym? 'ASSISTANT_TURN_ANSWER)))
       (expect (true?  (system-var-sym? 'REASONING)))
       (expect (true?  (system-var-sym? 'CONVERSATION_TITLE)))
-      (expect (true?  (system-var-sym? 'EXTENSIONS)))
+      (expect (true?  (system-var-sym? 'ACTIVE_EXTENSIONS)))
       (expect (false? (system-var-sym? 'CONFIG)))
       (expect (false? (system-var-sym? 'foo))))))
 

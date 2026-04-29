@@ -59,6 +59,7 @@
   {:iteration iteration
    :thinking  nil
    :code      []
+   :comments  []
    :results   []
    :stdouts   []
    :stderrs   []
@@ -94,6 +95,7 @@
         need (inc idx)]
     (-> entry
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
+      (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
       (update :results   #(assoc (pad-to % need) idx (format-form-result chunk)))
       (update :stdouts   #(assoc (pad-to % need) idx (or (:stdout chunk) "")))
       (update :stderrs   #(assoc (pad-to % need) idx (or (:stderr chunk) "")))
@@ -120,6 +122,7 @@
   [entry idx]
   (-> entry
     (update :code      drop-slot idx)
+    (update :comments  drop-slot idx)
     (update :results   drop-slot idx)
     (update :stdouts   drop-slot idx)
     (update :stderrs   drop-slot idx)
