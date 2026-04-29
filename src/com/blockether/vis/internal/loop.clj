@@ -1470,69 +1470,104 @@
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-query-id-atom environment)] (reset! a query-id))
     (auto-forget-stale-vars! environment)
-    (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
-      (loop [loop-state (merge {:iteration 0 :messages initial-messages
-                                :trace [] :consecutive-errors 0 :restarts 0}
-                          FRESH_ITER_CARRY)]
-        (let [{:keys [iteration messages trace consecutive-errors restarts
-                      journal-iters]} loop-state]
-          (when current-iteration-atom (reset! current-iteration-atom iteration))
-          (cond
-            (when cancel-atom @cancel-atom)
-            (do (log-stage! :error iteration {:reason :cancelled})
-              (emit-hook! on-cancel {:iteration iteration :status :cancelled
-                                     :status-id (status->id :cancelled)} "on-cancel hook threw")
-              (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
-                      :trace trace :iteration-count iteration} (finalize-cost)))
+    ;; Cross-turn carry: seed `journal-iters` with the last
+    ;; JOURNAL_KEEP_ITERS iterations of the current conversation
+    ;; (across every prior turn) so a follow-up turn opens with the
+    ;; immediate context of the prior work, not an empty journal.
+    ;; Each entry is `[iter-position {:thinking :blocks}]` matching
+    ;; the in-memory shape the renderer expects. Failures degrade
+    ;; silently to an empty seed.
+    (let [seeded-journal-iters
+          (try
+            (when-let [conv-id (:conversation-id environment)]
+              (let [d (:db-info environment)
+                    queries (persistance/db-list-conversation-queries d conv-id)
+                    iters (->> queries
+                            (mapcat (fn [q]
+                                      (try (persistance/db-list-query-iterations d (:id q))
+                                        (catch Throwable _ []))))
+                            (sort-by :created-at)
+                            (take-last prompt/JOURNAL_KEEP_ITERS)
+                            vec)]
+                (mapv (fn [it]
+                        [(or (:position it) 0)
+                         {:thinking (:thinking it)
+                          :blocks   (try (persistance/db-list-iteration-blocks d (:id it))
+                                      (catch Throwable _ []))}])
+                  iters)))
+            (catch Throwable t
+              (tel/log! {:level :warn :id ::cross-turn-journal-seed-failed
+                         :data  {:error (ex-message t)}
+                         :msg   "Cross-turn journal seed failed; iter 0 starts with an empty <journal>"})
+              nil))]
+      (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
+        (loop [loop-state (merge {:iteration 0 :messages initial-messages
+                                  :trace [] :consecutive-errors 0 :restarts 0}
+                            FRESH_ITER_CARRY
+                            (when (seq seeded-journal-iters)
+                              {:journal-iters seeded-journal-iters}))]
+          (let [{:keys [iteration messages trace consecutive-errors restarts
+                        journal-iters]} loop-state]
+            (when current-iteration-atom (reset! current-iteration-atom iteration))
+            (cond
+              (when cancel-atom @cancel-atom)
+              (do (log-stage! :error iteration {:reason :cancelled})
+                (emit-hook! on-cancel {:iteration iteration :status :cancelled
+                                       :status-id (status->id :cancelled)} "on-cancel hook threw")
+                (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
+                        :trace trace :iteration-count iteration} (finalize-cost)))
 
-            :else
-            (if (>= consecutive-errors max-consecutive-errors)
-              (if (< restarts max-restarts)
-                (let [failed (->> trace (filter :error) (take 3)
-                               (map #(str "- " (get-in % [:error :message] (str (:error %)))))
-                               (str/join "\n"))
-                      hint (str "Previous attempts failed with these errors:\n" failed
-                             "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " query)
-                      messages [{:role "system" :content system-prompt} {:role "user" :content hint}]]
-                  (recur (assoc loop-state
-                           :iteration (inc iteration) :messages messages
-                           :trace trace :consecutive-errors 0 :restarts (inc restarts))))
-                (let [errors-block (recent-errors-block trace 3)
-                      fallback     (str "Warning: Too many errors (" consecutive-errors ") across "
-                                     (inc restarts) " restart(s).\n\n"
+              :else
+              (if (>= consecutive-errors max-consecutive-errors)
+                (if (< restarts max-restarts)
+                  (let [failed (->> trace (filter :error) (take 3)
+                                 (map #(str "- " (get-in % [:error :message] (str (:error %)))))
+                                 (str/join "\n"))
+                        hint (str "Previous attempts failed with these errors:\n" failed
+                               "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " query)
+                        messages [{:role "system" :content system-prompt} {:role "user" :content hint}]]
+                    (recur (assoc loop-state
+                             :iteration (inc iteration) :messages messages
+                             :trace trace :consecutive-errors 0 :restarts (inc restarts))))
+                  (let [errors-block (recent-errors-block trace 3)
+                        fallback     (str "Warning: Too many errors (" consecutive-errors ") across "
+                                       (inc restarts) " restart(s).\n\n"
                                      ;; Includes the raw provider payload
                                      ;; (e.g. an HTTP plain-text auth rejection) so
                                      ;; the user can act on it instead of guessing.
-                                     errors-block)]
-                  (merge {:answer fallback
-                          :status :error :status-id (status->id :error)
-                          :trace trace :iteration-count iteration} (finalize-cost))))
+                                       errors-block)]
+                    (merge {:answer fallback
+                            :status :error :status-id (status->id :error)
+                            :trace trace :iteration-count iteration} (finalize-cost))))
 
-              (let [reasoning-level (when has-reasoning?
-                                      (reasoning-level-for-errors base-reasoning-level consecutive-errors))
-                    _ (log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
-                    iteration-context (prompt/build-iteration-context environment
-                                        {:blocks-by-iteration journal-iters
-                                         :active-extensions   active-exts
-                                         :iteration           iteration})
-                    base-messages (prompt/trim-to-initial-history messages (count initial-messages))
-                    effective-messages (cond-> base-messages
-                                         (not (str/blank? iteration-context))
-                                         (conj {:role "user" :content iteration-context}))
-                    resolved-model (resolve-effective-model (:router environment) (or routing {}))
-                    effective-routing (or routing {})
-                    iteration-result (try
-                                       (run-iteration environment effective-messages
-                                         {:iteration iteration :reasoning-level reasoning-level
-                                          :routing effective-routing
-                                          :resolved-model resolved-model
-                                          :on-chunk on-chunk
-                                          :dedup-cache-atom dedup-cache-atom})
-                                       (catch Exception e
-                                         (handle-iteration-exception! e
-                                           {:iteration iteration :messages effective-messages
-                                            :routing effective-routing :reasoning-level reasoning-level})))]
-                (if-let [iteration-error-data (::iteration-error iteration-result)]
+                (let [reasoning-level (when has-reasoning?
+                                        (reasoning-level-for-errors base-reasoning-level consecutive-errors))
+                      _ (log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
+                      pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
+                      iteration-context (prompt/build-iteration-context environment
+                                          {:blocks-by-iteration journal-iters
+                                           :active-extensions   active-exts
+                                           :iteration           iteration
+                                           :model               (some-> pre-resolved-model :name str)
+                                           :system-prompt       system-prompt})
+                      base-messages (prompt/trim-to-initial-history messages (count initial-messages))
+                      effective-messages (cond-> base-messages
+                                           (not (str/blank? iteration-context))
+                                           (conj {:role "user" :content iteration-context}))
+                      resolved-model pre-resolved-model
+                      effective-routing (or routing {})
+                      iteration-result (try
+                                         (run-iteration environment effective-messages
+                                           {:iteration iteration :reasoning-level reasoning-level
+                                            :routing effective-routing
+                                            :resolved-model resolved-model
+                                            :on-chunk on-chunk
+                                            :dedup-cache-atom dedup-cache-atom})
+                                         (catch Exception e
+                                           (handle-iteration-exception! e
+                                             {:iteration iteration :messages effective-messages
+                                              :routing effective-routing :reasoning-level reasoning-level})))]
+                  (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
                   ;; mid-call, `cancel!` flipped the flag BEFORE
                   ;; future-cancel, so by the time we land here the flag is
@@ -1543,137 +1578,137 @@
                   ;; ITERATION N ERROR block right next to FINAL ANSWER:
                   ;; \"_Cancelled by user._\"). Bail straight to the cancel
                   ;; result that the top-of-loop branch would have produced.
-                  (if (and cancel-atom @cancel-atom)
-                    (do (log-stage! :error iteration {:reason :cancelled})
-                      (emit-hook! on-cancel {:iteration iteration :status :cancelled
-                                             :status-id (status->id :cancelled)}
-                        "on-cancel hook threw")
-                      (merge {:answer nil :status :cancelled
-                              :status-id (status->id :cancelled)
-                              :trace trace :iteration-count iteration}
-                        (finalize-cost)))
-                    (let [error-feedback (str "[Iteration " (inc iteration) "]\n"
-                                           "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
-                                           "Adjust your approach or emit :final with what you have.")
-                          trace-entry {:iteration iteration :error iteration-error-data :final? false}
-                          empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
-                                            (:reasoning (:data iteration-error-data)))
-                          err-iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                             {:query-id query-id :vars [] :blocks nil
-                                              :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
-                                              :llm-messages effective-messages
-                                              :llm-provider (:provider resolved-model)
-                                              :llm-model (str (:name resolved-model))
-                                              :metadata (iteration-metadata)})]
-                      (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
-                      (update-iteration-id! environment err-iteration-id)
+                    (if (and cancel-atom @cancel-atom)
+                      (do (log-stage! :error iteration {:reason :cancelled})
+                        (emit-hook! on-cancel {:iteration iteration :status :cancelled
+                                               :status-id (status->id :cancelled)}
+                          "on-cancel hook threw")
+                        (merge {:answer nil :status :cancelled
+                                :status-id (status->id :cancelled)
+                                :trace trace :iteration-count iteration}
+                          (finalize-cost)))
+                      (let [error-feedback (str "[Iteration " (inc iteration) "]\n"
+                                             "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
+                                             "Adjust your approach or emit :final with what you have.")
+                            trace-entry {:iteration iteration :error iteration-error-data :final? false}
+                            empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
+                                              (:reasoning (:data iteration-error-data)))
+                            err-iteration-id (persistance/db-store-iteration! (:db-info environment)
+                                               {:query-id query-id :vars [] :blocks nil
+                                                :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
+                                                :llm-messages effective-messages
+                                                :llm-provider (:provider resolved-model)
+                                                :llm-model (str (:name resolved-model))
+                                                :metadata (iteration-metadata)})]
+                        (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
+                        (update-iteration-id! environment err-iteration-id)
                       ;; Live error chunk — `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
                       ;; this iteration, so the channel sees a clean
                       ;; reasoning -> error transition.
-                      (emit-hook! on-chunk
-                        {:phase     :iteration-error
-                         :iteration iteration
-                         :thinking  empty-reasoning
-                         :error     iteration-error-data
-                         :done?     true}
-                        "on-chunk (iteration error)")
-                      (emit-hook! on-iteration
-                        {:iteration iteration :status :error :status-id (status->id :error)
-                         :thinking empty-reasoning :blocks nil :final-result nil
-                         :error iteration-error-data :duration-ms 0} "on-iteration (error)")
-                      (recur (assoc loop-state
-                               :iteration (inc iteration)
-                               :messages (conj messages {:role "user" :content error-feedback})
-                               :trace (conj trace trace-entry)
-                               :consecutive-errors (inc consecutive-errors) :restarts restarts))))
+                        (emit-hook! on-chunk
+                          {:phase     :iteration-error
+                           :iteration iteration
+                           :thinking  empty-reasoning
+                           :error     iteration-error-data
+                           :done?     true}
+                          "on-chunk (iteration error)")
+                        (emit-hook! on-iteration
+                          {:iteration iteration :status :error :status-id (status->id :error)
+                           :thinking empty-reasoning :blocks nil :final-result nil
+                           :error iteration-error-data :duration-ms 0} "on-iteration (error)")
+                        (recur (assoc loop-state
+                                 :iteration (inc iteration)
+                                 :messages (conj messages {:role "user" :content error-feedback})
+                                 :trace (conj trace trace-entry)
+                                 :consecutive-errors (inc consecutive-errors) :restarts restarts))))
 
-                  (let [_ (accumulate-usage! (:api-usage iteration-result))
-                        {:keys [thinking blocks final-result]} iteration-result
-                        final-answer (when final-result (:answer final-result))
-                        _ (update-system-vars! environment
-                            {:thinking thinking :final-result final-result :final-answer final-answer})
-                        vars-snapshot (restorable-var-snapshots environment blocks)
-                        previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
-                        conversation-row (try
-                                           (persistance/db-get-conversation
-                                             (:db-info environment)
-                                             (:conversation-id environment))
-                                           (catch Throwable _ nil))
-                        conversation-metadata (when conversation-row
-                                                (cond-> {:title       (:title conversation-row)
-                                                         :channel     (:channel conversation-row)
-                                                         :external-id (:external-id conversation-row)
-                                                         :created-at  (:created-at conversation-row)}
-                                                  (:turn-count conversation-row)
-                                                  (assoc :turn-count (:turn-count conversation-row))))
-                        vars-snapshot (inject-system-var-snapshots vars-snapshot
-                                        {:query              query
-                                         :thinking           thinking
-                                         :final-answer       final-answer
-                                         :turn-query-id      query-id
-                                         :iteration-id       previous-iteration-id
-                                         :conversation-soul-id  (:conversation-id environment)
-                                         :conversation-state-id (persistance/db-latest-conversation-state-id
-                                                                  (:db-info environment)
-                                                                  (:conversation-id environment))
-                                         :system-prompt      system-prompt
+                    (let [_ (accumulate-usage! (:api-usage iteration-result))
+                          {:keys [thinking blocks final-result]} iteration-result
+                          final-answer (when final-result (:answer final-result))
+                          _ (update-system-vars! environment
+                              {:thinking thinking :final-result final-result :final-answer final-answer})
+                          vars-snapshot (restorable-var-snapshots environment blocks)
+                          previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
+                          conversation-row (try
+                                             (persistance/db-get-conversation
+                                               (:db-info environment)
+                                               (:conversation-id environment))
+                                             (catch Throwable _ nil))
+                          conversation-metadata (when conversation-row
+                                                  (cond-> {:title       (:title conversation-row)
+                                                           :channel     (:channel conversation-row)
+                                                           :external-id (:external-id conversation-row)
+                                                           :created-at  (:created-at conversation-row)}
+                                                    (:turn-count conversation-row)
+                                                    (assoc :turn-count (:turn-count conversation-row))))
+                          vars-snapshot (inject-system-var-snapshots vars-snapshot
+                                          {:query              query
+                                           :thinking           thinking
+                                           :final-answer       final-answer
+                                           :turn-query-id      query-id
+                                           :iteration-id       previous-iteration-id
+                                           :conversation-soul-id  (:conversation-id environment)
+                                           :conversation-state-id (persistance/db-latest-conversation-state-id
+                                                                    (:db-info environment)
+                                                                    (:conversation-id environment))
+                                           :system-prompt      system-prompt
                                          ;; Same frozen snapshot bound in SCI.
                                          ;; Re-stamped every iteration so
                                          ;; vis/var-history 'TURN_ACTIVE_EXTENSIONS
                                          ;; returns one row per iter, not just iter 0.
-                                         :extensions-snapshot (prompt/extensions-snapshot active-exts)
+                                           :extensions-snapshot (prompt/extensions-snapshot active-exts)
                                          ;; Live conversation title; same value
                                          ;; the SCI sandbox sees as CONVERSATION_TITLE.
-                                         :conversation-title    (some-> (:conversation-title-atom environment)
-                                                                  deref str)
+                                           :conversation-title    (some-> (:conversation-title-atom environment)
+                                                                    deref str)
                                          ;; Frozen-at-this-iter map of conversation
                                          ;; facts (channel, external-id, turn-count,
                                          ;; created-at). Saves the model an iter
                                          ;; round-trip when it just needs one of
                                          ;; those fields.
-                                         :conversation-metadata conversation-metadata})
-                        [redundant-count expression-count]
-                        (count-duplicates seen-expression-hashes-atom
-                          (or blocks []))
-                        redundancy-fraction
-                        (if (pos? expression-count)
-                          (double (/ redundant-count expression-count))
-                          0.0)
-                        iteration-metadata-with-metrics
-                        (merge (or (iteration-metadata) {})
-                          {:expression-redundancy-fraction redundancy-fraction
-                           :dedup-saves                    redundant-count})
-                        iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                       {:query-id query-id :blocks blocks :vars vars-snapshot
-                                        :thinking thinking
-                                        :answer (when final-result (answer-str (:answer final-result)))
-                                        :answer-form-idx (when final-result (:answer-form-idx final-result))
-                                        :duration-ms (or (:duration-ms iteration-result) 0)
-                                        :llm-messages (:llm-messages iteration-result)
-                                        :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
-                                        :llm-model (:llm-model iteration-result)
-                                        :metadata iteration-metadata-with-metrics})
-                        _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
-                        _ (update-iteration-id! environment iteration-id)
-                        _ (emit-hook! on-iteration
-                            {:iteration iteration
-                             :status (cond final-result :final (empty? blocks) :empty :else :success)
-                             :status-id (status->id (cond final-result :final (empty? blocks) :empty :else :success))
-                             :thinking thinking :blocks blocks :final-result final-result
-                             :error nil :duration-ms (or (:duration-ms iteration-result) 0)}
-                            "on-iteration (success)")
-                        trace-entry {:iteration iteration :thinking thinking
-                                     :blocks blocks :final? (boolean final-result)}]
-                    (cond
-                      final-result
-                      (do (log-stage! :final iteration
-                            {:answer (truncate (answer-str (:answer final-result)) 200)
-                             :iteration-count (inc iteration)})
-                        (log-stage! :iteration-end iteration
-                          {:blocks (count blocks) :errors (count (filter :error blocks))
-                           :times (mapv :execution-time-ms blocks)})
+                                           :conversation-metadata conversation-metadata})
+                          [redundant-count expression-count]
+                          (count-duplicates seen-expression-hashes-atom
+                            (or blocks []))
+                          redundancy-fraction
+                          (if (pos? expression-count)
+                            (double (/ redundant-count expression-count))
+                            0.0)
+                          iteration-metadata-with-metrics
+                          (merge (or (iteration-metadata) {})
+                            {:expression-redundancy-fraction redundancy-fraction
+                             :dedup-saves                    redundant-count})
+                          iteration-id (persistance/db-store-iteration! (:db-info environment)
+                                         {:query-id query-id :blocks blocks :vars vars-snapshot
+                                          :thinking thinking
+                                          :answer (when final-result (answer-str (:answer final-result)))
+                                          :answer-form-idx (when final-result (:answer-form-idx final-result))
+                                          :duration-ms (or (:duration-ms iteration-result) 0)
+                                          :llm-messages (:llm-messages iteration-result)
+                                          :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
+                                          :llm-model (:llm-model iteration-result)
+                                          :metadata iteration-metadata-with-metrics})
+                          _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
+                          _ (update-iteration-id! environment iteration-id)
+                          _ (emit-hook! on-iteration
+                              {:iteration iteration
+                               :status (cond final-result :final (empty? blocks) :empty :else :success)
+                               :status-id (status->id (cond final-result :final (empty? blocks) :empty :else :success))
+                               :thinking thinking :blocks blocks :final-result final-result
+                               :error nil :duration-ms (or (:duration-ms iteration-result) 0)}
+                              "on-iteration (success)")
+                          trace-entry {:iteration iteration :thinking thinking
+                                       :blocks blocks :final? (boolean final-result)}]
+                      (cond
+                        final-result
+                        (do (log-stage! :final iteration
+                              {:answer (truncate (answer-str (:answer final-result)) 200)
+                               :iteration-count (inc iteration)})
+                          (log-stage! :iteration-end iteration
+                            {:blocks (count blocks) :errors (count (filter :error blocks))
+                             :times (mapv :execution-time-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
                         ;; Per-form chunks already streamed every iN.K
                         ;; result; this is the trim \"iteration is
@@ -1686,60 +1721,60 @@
                         ;; the progress tracker elides that slot so
                         ;; the renderer doesn't paint the answer
                         ;; call's code above the answer text.
-                        (when on-chunk
-                          (on-chunk {:phase            :iteration-final
-                                     :iteration        iteration
-                                     :thinking         thinking
-                                     :final            {:answer          (:answer final-result)
-                                                        :iteration-count (inc iteration)
-                                                        :status          :success}
-                                     :answer-form-idx  (:answer-form-idx final-result)
-                                     :done?            true}))
-                        (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
-                                :iteration-count (inc iteration)}
-                          (finalize-cost)))
+                          (when on-chunk
+                            (on-chunk {:phase            :iteration-final
+                                       :iteration        iteration
+                                       :thinking         thinking
+                                       :final            {:answer          (:answer final-result)
+                                                          :iteration-count (inc iteration)
+                                                          :status          :success}
+                                       :answer-form-idx  (:answer-form-idx final-result)
+                                       :done?            true}))
+                          (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
+                                  :iteration-count (inc iteration)}
+                            (finalize-cost)))
 
-                      :else
-                      (if (empty? blocks)
-                        (do (log-stage! :empty iteration {})
-                          (log-stage! :iteration-end iteration {:blocks 0 :errors 0 :times []})
-                          (recur (merge loop-state
-                                   {:iteration (inc iteration) :trace (conj trace trace-entry)})))
+                        :else
+                        (if (empty? blocks)
+                          (do (log-stage! :empty iteration {})
+                            (log-stage! :iteration-end iteration {:blocks 0 :errors 0 :times []})
+                            (recur (merge loop-state
+                                     {:iteration (inc iteration) :trace (conj trace trace-entry)})))
 
-                        (do (log-stage! :iteration-end iteration
-                              {:blocks (count blocks) :errors (count (filter :error blocks))
-                               :times (mapv :execution-time-ms blocks)})
+                          (do (log-stage! :iteration-end iteration
+                                {:blocks (count blocks) :errors (count (filter :error blocks))
+                                 :times (mapv :execution-time-ms blocks)})
                           ;; Non-terminal iteration-final chunk: per-form
                           ;; chunks already streamed; this is the
                           ;; \"iteration done, more iterations coming\"
                           ;; marker. `:final` is nil because the
                           ;; turn isn't done yet.
-                          (when on-chunk
-                            (on-chunk {:phase     :iteration-final
-                                       :iteration iteration
-                                       :thinking  thinking
-                                       :final     nil
-                                       :done?     false}))
-                          (let [had-success? (some #(nil? (:error %)) blocks)
-                                next-errors (if had-success? 0 (inc consecutive-errors))
-                                _ (when had-success? (swap! var-index-atom update :current-revision inc))
+                            (when on-chunk
+                              (on-chunk {:phase     :iteration-final
+                                         :iteration iteration
+                                         :thinking  thinking
+                                         :final     nil
+                                         :done?     false}))
+                            (let [had-success? (some #(nil? (:error %)) blocks)
+                                  next-errors (if had-success? 0 (inc consecutive-errors))
+                                  _ (when had-success? (swap! var-index-atom update :current-revision inc))
                                 ;; Carry forward up to JOURNAL_KEEP_ITERS
                                 ;; iterations of `[pos {:thinking :blocks}]`
                                 ;; for the next iteration's `<journal>`.
                                 ;; Drops the oldest entry once the cap
                                 ;; is reached so the projection stays
                                 ;; bounded.
-                                next-recent (->> (conj (or journal-iters [])
-                                                   [iteration {:thinking thinking
-                                                               :blocks   blocks}])
-                                              (take-last prompt/JOURNAL_KEEP_ITERS)
-                                              vec)]
-                            (recur (merge loop-state
-                                     {:iteration          (inc iteration)
-                                      :messages           messages
-                                      :trace              (conj trace trace-entry)
-                                      :consecutive-errors next-errors
-                                      :journal-iters       next-recent}))))))))))))))))
+                                  next-recent (->> (conj (or journal-iters [])
+                                                     [iteration {:thinking thinking
+                                                                 :blocks   blocks}])
+                                                (take-last prompt/JOURNAL_KEEP_ITERS)
+                                                vec)]
+                              (recur (merge loop-state
+                                       {:iteration          (inc iteration)
+                                        :messages           messages
+                                        :trace              (conj trace trace-entry)
+                                        :consecutive-errors next-errors
+                                        :journal-iters       next-recent})))))))))))))))))
 
 (defn- ->prior-outcome
   [result]

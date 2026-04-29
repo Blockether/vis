@@ -15,9 +15,9 @@
      - the right arity from the arglist
      - argument references in the body so `unused-binding` stays quiet
 
-   The body is just `(do arg1 arg2 …)` because we don't care about
-   the actual implementation \u2014 the runtime resolves it dynamically
-   and there's nothing meaningful to lint inside."
+   The body is just `(do arg1 arg2 …)` \u2014 the implementation lives at
+   runtime (resolved dynamically), so the lint pass focuses on the
+   declared shape and skips the body entirely."
   (:require [clj-kondo.hooks-api :as api]))
 
 ;; Attr-map slot for the synthetic `defn`. clj-kondo treats anything
