@@ -269,45 +269,64 @@
                :context (subs original start end)}))
       matches)))
 
+(defn- char-offset-of-line
+  [^String s line]
+  (loop [i 0 idx 0]
+    (cond
+      (>= i (dec line)) idx
+      (>= idx (count s)) idx
+      :else (let [next-nl (.indexOf s "\n" idx)]
+              (if (neg? next-nl) (count s) (recur (inc i) (inc next-nl)))))))
+
 (defn- edit-file
-  "Replace the FIRST occurrence of `search` with `replace` in the file at
-   `path`. Throws when `search` is not found, or when it appears more than
-   once. The ambiguity error embeds the matched line numbers + context so
-   the model can disambiguate without re-reading the file."
-  [path search replace]
-  (let [f (ensure-existing-file! (safe-path path))
-        original (slurp f)
-        s (str search)
-        r (str replace)]
-    (when (str/blank? s)
-      (throw (ex-info "vis/edit :search must be non-blank. Use vis/write to overwrite a whole file."
-               {:type :ext.common-editing/blank-search})))
-    (let [first-idx (.indexOf original s)
-          second-idx (when (>= first-idx 0)
-                       (.indexOf original s (+ first-idx (count s))))]
-      (cond
-        (neg? first-idx)
-        (throw (ex-info (str "vis/edit :search not found in " (rel-path f))
-                 {:type :ext.common-editing/search-not-found
-                  :path (rel-path f)
-                  :search (subs s 0 (min 200 (count s)))}))
-        (>= second-idx 0)
-        (let [hits  (match-context original s 5)]
-          (throw (ex-info (str "vis/edit :search appears " (count hits)
-                            " times in " (rel-path f)
-                            ". Add surrounding lines until the match is unique. Hits: "
-                            (pr-str (mapv (fn [h] (str "L" (:line h) ": " (str/trim (:context h)))) hits)))
-                   {:type :ext.common-editing/search-ambiguous
-                    :path (rel-path f)
-                    :hits hits})))
-        :else
-        (let [updated (str (subs original 0 first-idx)
-                        r
-                        (subs original (+ first-idx (count s))))]
-          (spit f updated)
-          {:path (rel-path f)
-           :bytes-before (count original)
-           :bytes-after  (count updated)})))))
+  "Replace ONE occurrence of `search` with `replace` in `path`.
+
+   3-arg form replaces the FIRST occurrence; throws when ambiguous.
+   4-arg form takes opts — supported keys:
+     :line N  pick the occurrence on or after line N (the same number
+              `vis/cat` printed). No ambiguity check; nearest match wins.
+
+   When ambiguous (no :line given), the error embeds matched line
+   numbers + surrounding context so the model can disambiguate without
+   re-reading the file."
+  ([path search replace] (edit-file path search replace nil))
+  ([path search replace opts]
+   (let [f (ensure-existing-file! (safe-path path))
+         original (slurp f)
+         s (str search)
+         r (str replace)
+         line (:line opts)]
+     (when (str/blank? s)
+       (throw (ex-info "vis/edit :search must be non-blank. Use vis/write to overwrite a whole file."
+                {:type :ext.common-editing/blank-search})))
+     (let [start-from (if line (char-offset-of-line original line) 0)
+           first-idx (.indexOf original s start-from)
+           second-idx (when (and (not line) (>= first-idx 0))
+                        (.indexOf original s (+ first-idx (count s))))]
+       (cond
+         (neg? first-idx)
+         (throw (ex-info (str "vis/edit :search not found in " (rel-path f)
+                           (when line (str " (searching from line " line " onward)")))
+                  {:type :ext.common-editing/search-not-found
+                   :path (rel-path f)
+                   :search (subs s 0 (min 200 (count s)))}))
+         (and second-idx (>= second-idx 0))
+         (let [hits (match-context original s 5)]
+           (throw (ex-info (str "vis/edit :search appears " (count hits)
+                             " times in " (rel-path f)
+                             ". Either add surrounding lines until the match is unique, or pass {:line N} to pick the occurrence on or after that line. Hits: "
+                             (pr-str (mapv (fn [h] (str "L" (:line h) ": " (str/trim (:context h)))) hits)))
+                    {:type :ext.common-editing/search-ambiguous
+                     :path (rel-path f)
+                     :hits hits})))
+         :else
+         (let [updated (str (subs original 0 first-idx)
+                         r
+                         (subs original (+ first-idx (count s))))]
+           (spit f updated)
+           {:path (rel-path f)
+            :bytes-before (count original)
+            :bytes-after  (count updated)}))))))
 
 (defn- zedit-file
   "rewrite-clj structured edit. `zfn` receives a zipper at the file root
@@ -349,9 +368,10 @@
 
 (def edit-symbol
   (sdk/symbol 'edit edit-file
-    {:doc "Replace the FIRST occurrence of `search` with `replace` in `path`. Throws if `search` is missing or non-unique. Pass enough surrounding context to make it unique."
-     :arglists '([path search replace])
-     :examples ["(vis/edit \"src/main.clj\" \"(def OLD 1)\" \"(def NEW 2)\")"]}))
+    {:doc "Replace the FIRST occurrence of `search` with `replace` in `path`. Throws if `search` is missing or non-unique. Pass {:line N} as a 4th arg to pick the occurrence on or after line N when context-anchoring is hard."
+     :arglists '([path search replace] [path search replace opts])
+     :examples ["(vis/edit \"src/main.clj\" \"(def OLD 1)\" \"(def NEW 2)\")"
+                "(vis/edit \"src/main.clj\" \"foo\" \"bar\" {:line 142})"]}))
 
 (def write-symbol
   (sdk/symbol 'write write-file
@@ -374,7 +394,9 @@
   (vis/cat path)              read a file (default cap 6000 chars; pass {:offset :limit :char-limit} for paging)
   (vis/ls path)               list a tree ({:depth :hidden? :respect-gitignore?})
   (vis/rg pattern path)       regex grep (re2j; ReDoS-safe)
-  (vis/edit path s r)         replace FIRST occurrence of `s` with `r`. `s` must be unique \u2014 add surrounding context.
+  (vis/edit path s r)         replace FIRST occurrence of `s` with `r`. `s` must be unique.
+                              Pass {:line N} as 4th arg to disambiguate by line number
+                              when context-anchoring is hard - (vis/edit path s r {:line 1992}).
   (vis/write path content)    overwrite or create a file
   (vis/zedit path zfn)        rewrite-clj structured edit on a Clojure file
 
