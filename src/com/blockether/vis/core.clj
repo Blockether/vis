@@ -317,6 +317,8 @@
 (def by-channel                   lp/by-channel)
 (def for-telegram-chat!           lp/for-telegram-chat!)
 (def set-title!                   lp/set-title!)
+(def add-title-listener!          lp/add-title-listener!)
+(def remove-title-listener!       lp/remove-title-listener!)
 (def env-for                      lp/env-for)
 (def effective-system-prompt-for-query lp/effective-system-prompt-for-query)
 (def effective-system-prompt      lp/effective-system-prompt)

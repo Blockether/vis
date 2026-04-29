@@ -511,29 +511,37 @@
             iteration (first (raw-query s {:select [:query_state_id] :from :iteration}))]
         (expect (= (:id qstate) (:query_state_id iteration))))))
 
-  (it "expression_soul.conversation_state_id points to conversation_state.id"
+  (it "expression_soul.conversation_state_id (var rows) points to conversation_state.id"
+    ;; Only var rows live in expression_soul now. Drive a `(def …)`
+    ;; through the iteration so a var-soul row actually exists.
     (let [s   (h/store)
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
+          _   (sdk/db-store-iteration! s {:query-id qid :expressions []
+                                          :duration-ms 0
+                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [state (first (raw-query s {:select [:id] :from :conversation_state}))
             esoul (first (raw-query s {:select [:conversation_state_id] :from :expression_soul}))]
         (expect (= (:id state) (:conversation_state_id esoul))))))
 
-  (it "expression_state.expression_soul_id points to expression_soul.id"
+  (it "expression_state.expression_soul_id (var rows) points to expression_soul.id"
     (let [s   (h/store)
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
+          _   (sdk/db-store-iteration! s {:query-id qid :expressions []
+                                          :duration-ms 0
+                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [esoul  (first (raw-query s {:select [:id] :from :expression_soul}))
             estate (first (raw-query s {:select [:expression_soul_id] :from :expression_state}))]
         (expect (= (:id esoul) (:expression_soul_id estate))))))
 
-  (it "expression_state.iteration_id points to iteration.id"
+  (it "expression_state.iteration_id (var rows) points to iteration.id"
     (let [s   (h/store)
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
+          _   (sdk/db-store-iteration! s {:query-id qid :expressions []
+                                          :duration-ms 0
+                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [iteration (first (raw-query s {:select [:id] :from :iteration}))
             estate (first (raw-query s {:select [:iteration_id] :from :expression_state}))]
         (expect (= (:id iteration) (:iteration_id estate))))))

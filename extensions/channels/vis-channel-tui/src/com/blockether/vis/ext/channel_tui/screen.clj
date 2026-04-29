@@ -52,6 +52,13 @@
 ;; multi-paragraph prompt, short enough that the input never eats
 ;; more than ~25% of a 1080p terminal's chat area.
 (def ^:private input-min-lines 1)
+
+(def ^:private arrow-scroll-step
+  "Lines moved per Up/Down/PageUp/PageDown press in the messages area.
+   Mouse wheel events stay at 3 (the OS already emits multiple events
+   per wheel notch); arrow keys are explicit and benefit from a
+   bigger jump so long iteration traces don't take 30 presses to walk."
+  5)
 (def ^:private input-max-lines 4)
 ;; Hint strip rules
 ;;
@@ -220,15 +227,15 @@
         text-rows    (input-text-rows input cols)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
         ;; Reserve the bottom-most row for the dedicated footer
-        ;; (model / run-state / ctx-left%) and the top-most row for
-        ;; the dedicated header (conversation title + short id). The
-        ;; input box sits directly above the footer; the messages
-        ;; area fills everything from header-bottom (row 1) down to
-        ;; the input-box top.
-        header-row   0
+        ;; (model / run-state / ctx-left%) and the top-most band for
+        ;; the dedicated header (top rule + title row + bottom rule).
+        ;; The input box sits directly above the footer; the messages
+        ;; area fills everything from `messages-top` down to the
+        ;; input-box top.
+        header-top   0
         footer-row   (dec rows)
         input-top    (- rows input-box-h 1)
-        messages-top    1
+        messages-top    header/HEADER_ROWS
         messages-bottom input-top
         ;; Single source of truth for the gutter math lives in
         ;; `render.clj` (`MESSAGE_SIDE_PAD`). Reference it directly; do
@@ -246,7 +253,7 @@
         inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
         total-h      (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
-    (header/draw-header! g db header-row cols)
+    (header/draw-header! g db header-top cols)
     (render/draw-messages-area! g effective-messages messages-top messages-bottom cols messages-scroll)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
@@ -377,6 +384,35 @@
     (.addShutdownHook (Runtime/getRuntime) hook)
     hook))
 
+(defn- register-shutdown-hook!
+  "Thin wrapper over `Runtime/addShutdownHook` so call-sites read as
+   plain Clojure instead of a `(Thread. ^Runnable (fn [] ...))` casting
+   ritual. `f` is a zero-arg fn; thrown exceptions are swallowed (the
+   hook chain MUST NOT propagate — a single noisy listener can hang
+   the whole shutdown sequence). Returns the registered Thread so
+   tests can deregister it via `.removeShutdownHook` if needed."
+  [^Runnable f]
+  (let [hook (Thread. ^Runnable
+               (fn [] (try (f) (catch Throwable _ nil))))]
+    (.addShutdownHook (Runtime/getRuntime) hook)
+    hook))
+
+(defn- subscribe-title-listener!
+  "Wire `(title \"...\")` calls inside this conversation's iteration
+   loop to the TUI header: every change dispatches `[:set-title]`
+   into app-db so the next render frame paints the new title without
+   polling. Returns the listener fn so the caller can deregister it.
+   Also installs a JVM shutdown hook that drops the listener —
+   long-running TUI sessions should not leak entries in the global
+   `title-listeners` registry across hot reloads."
+  [conversation-id]
+  (let [listener (sdk/add-title-listener! conversation-id
+                   (fn [new-title]
+                     (state/dispatch [:set-title (or new-title "")])))]
+    (register-shutdown-hook!
+      #(sdk/remove-title-listener! conversation-id listener))
+    listener))
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -451,6 +487,7 @@
              (state/dispatch [:init-conversation {:id id} history])
              (when title
                (state/dispatch [:set-title title]))
+             (subscribe-title-listener! id)
              (register-conversation-shutdown-hook! id)))
 
       ;; Spawn the render thread BEFORE the input loop. It will paint
@@ -598,11 +635,11 @@
                          (recur))
 
                        :scroll-up
-                       (do (state/dispatch [:scroll-up 3 total-h inner-h])
+                       (do (state/dispatch [:scroll-up arrow-scroll-step total-h inner-h])
                          (recur))
 
                        :scroll-down
-                       (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                       (do (state/dispatch [:scroll-down arrow-scroll-step total-h inner-h])
                          (recur))
 
                        :continue (recur))))))))
