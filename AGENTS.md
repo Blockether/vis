@@ -260,7 +260,7 @@ Polylith-style monorepo: four host packages + sibling tree of classpath plug-ins
   - `extensions/providers/` — `vis-provider-github-copilot`.
   - `extensions/persistance/` — `vis-persistance-sqlite`.
   - `extensions/common/` — `vis-common-meta`, `vis-common-editing` (filesystem + code-editing tools agent reaches for in nearly every task).
-  - `extensions/languages/` — language-specific tooling. Currently `vis-language-clojure` (`clj/zedit` rewrite-clj wrapper + `z/` zipper API). Add new directory here when shipping tools that only make sense for one source language.
+  - `extensions/languages/` — language-specific tooling. Currently `vis-language-clojure` (`z/zedit` rewrite-clj wrapper + the rewrite-clj.zip API, all under the single `z/` alias). Add new directory here when shipping tools that only make sense for one source language.
   Each ships a `META-INF/vis-extension/vis.edn` and self-registers at namespace load. Every extension's `deps.edn` declares `:local/root "../../../packages/vis-runtime"` (vis-runtime transitively pulls vis-extension + vis-persistance). `vis-runtime` does NOT require any extension by namespace.
 - `benchmarks/` — benchmark harness (4clojure, HumanEval, SWE-bench Verified). NOT a classpath plug-in; pulled via `:bench` alias only. Working dirs (`results/`, `trajectories/`, `swebench-harness/`) created on demand under `benchmarks/`.
 
@@ -278,7 +278,7 @@ Quick mental map (use `packages.md` for details):
 - `extensions/providers/vis-provider-github-copilot` — GitHub Copilot OAuth provider
 - `extensions/channels/vis-channel-tui`, `extensions/channels/vis-channel-telegram` — channel implementations
 - `extensions/common/vis-common-meta`, `extensions/common/vis-common-editing` — SCI sandbox extensions
-- `extensions/languages/clojure` — Clojure structured editing (`clj/zedit` + `z/` zipper API)
+- `extensions/languages/clojure` — Clojure structured editing (`z/zedit` + `z/` zipper API, single alias)
 - `benchmarks/` — benchmark harness (`:bench` alias only; not a classpath plug-in)
 
 ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN map keyed by ext id; `:nses` vec loaded at startup by single loader `com.blockether.vis.core/discover-extensions!`. Each ns self-registers into whichever subsystem registry it targets (extension symbols, channels, CLI commands, providers, persistence backends) via matching `register-global!` / `register-backend!` call. Drop a jar shipping `META-INF/vis-extension/vis.edn` on classpath -> `vis-runtime` picks up at next process boot. NO per-subsystem resource files anymore; old `META-INF/vis/{extensions,channels,commandline,providers,persistance-backends}.edn` paths collapsed into unified `META-INF/vis-extension/vis.edn` and removed without backwards-compat aliases.

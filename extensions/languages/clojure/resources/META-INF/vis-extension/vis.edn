@@ -4,29 +4,27 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "Clojure structured editing for SCI sandbox. Two aliases. `clj/`: `(clj/zedit path zfn)` — rewrite-clj zipper rewrite that survives whitespace/comment/format drift. `z/`: every public of `rewrite-clj.zip` (find-value edit replace right sexpr ...) so zfn navigates/mutates the AST. Replaces old `vis/zedit` shorthand — split out so Clojure dep doesn't ride on generic editing surface."
+    "Clojure structured editing for SCI sandbox under the single `z/` alias. `(z/zedit path zfn)` runs zfn on a `rewrite-clj.zip` zipper at file root and writes the result back; every public of `rewrite-clj.zip` (find-value edit replace right sexpr ...) is bound under `z/` so zfn can navigate/mutate without inventing symbols. Earlier revision split this into `clj/zedit` + `z/<navigation>` — collapsed into one alias because two-namespace toggling produced the `unresolved-symbol` failure class."
     :content
     "# Clojure language extension
 
 Pkg: `com.blockether/vis-language-clojure`. Src: `extensions/languages/clojure/`.
 
-Two aliases:
-  clj/  entry           (zedit)
-  z/    rewrite-clj.zip (find-value edit replace right left up down next prev sexpr node value tag root-string ...)
+Single alias: `z/` — entry (`z/zedit`) + the full `rewrite-clj.zip` API.
 
-## Why separate
+## Why structured edits
 
-Plain text edits (`vis/edit`) lose to whitespace drift / nested forms. Structured edits via `rewrite-clj.zip` preserve formatting/comments and reason about source as a tree. Clojure-only -> lives here, not on generic editing.
+Plain text edits (`vis/edit`) lose to whitespace drift / nested forms. Structured edits via `rewrite-clj.zip` preserve formatting/comments and reason about source as a tree. Clojure-only -> lives here, not on the generic editing surface.
 
-## clj/zedit
+## z/zedit
 
-`(clj/zedit path zfn)` runs zfn on a `rewrite-clj.zip` zipper at file root, writes `(z/root-string result)` back. zfn MUST return a zipper; nil throws.
+`(z/zedit path zfn)` runs zfn on a `rewrite-clj.zip` zipper at file root, writes `(z/root-string result)` back. zfn MUST return a zipper; nil throws.
 
 Path safety: `path` resolved against `(fs/cwd)`. `..` traversal escaping cwd is rejected before any I/O.
 
-## z/ alias
+## z/ navigation + edit ops
 
-Every public var of `rewrite-clj.zip` exposed under `z/`. Most useful:
+Most useful publics (full set bound at extension load — any future rewrite-clj release auto-lights new symbols):
 
   (z/sexpr zloc)              s-expr at node
   (z/node zloc)               raw node
@@ -51,16 +49,16 @@ Every public var of `rewrite-clj.zip` exposed under `z/`. Most useful:
 
   (z/root-string zloc)        render whole tree
 
-If `(meta/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/. Full publics bound at extension load -> future rewrite-clj releases auto-light new symbols.
+If `(meta/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/.
 
 ## Examples
 
 Swap a const:
 
 ```clojure
-(clj/zedit \"src/foo.clj\"
-  (fn [z]
-    (-> z
+(z/zedit \"src/foo.clj\"
+  (fn [zl]
+    (-> zl
         (z/find-value z/next 'RECENT_KEEP_ITERS)
         z/right
         (z/replace 4))))
@@ -69,9 +67,9 @@ Swap a const:
 Add `:require`:
 
 ```clojure
-(clj/zedit \"src/foo.clj\"
-  (fn [z]
-    (-> z
+(z/zedit \"src/foo.clj\"
+  (fn [zl]
+    (-> zl
         (z/find-value z/next :require)
         z/up
         (z/append-child '[clojure.string :as str]))))
@@ -80,12 +78,12 @@ Add `:require`:
 Rename every occurrence:
 
 ```clojure
-(clj/zedit \"src/foo.clj\"
-  (fn [z]
-    (loop [zloc z]
-      (if-let [hit (z/find-value zloc z/next 'old-name)]
+(z/zedit \"src/foo.clj\"
+  (fn [zl]
+    (loop [z zl]
+      (if-let [hit (z/find-value z z/next 'old-name)]
         (recur (z/replace hit 'new-name))
-        zloc))))
+        z))))
 ```
 
 ## Use when
@@ -103,7 +101,7 @@ Rename every occurrence:
     [{:to-id vis :to-doc "README.md"
       :context "Generic editing — vis/cat, vis/edit, vis/write, vis/rg"}
      {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/zedit.clj"
-      :context "Source: clj/zedit"}
+      :context "Source: z/zedit"}
      {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/core.clj"
       :context "Aggregator publishing rewrite-clj.zip publics under z/"}
      {:url "https://cljdoc.org/d/rewrite-clj/rewrite-clj/"

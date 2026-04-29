@@ -6,7 +6,7 @@
      fs   (cwd, exists?, glob, parent, components, file-name,
            extension, expand-home, list-dir, relativize)
 
-   Clojure-specific structured editing (clj/zedit + the rewrite-clj
+   Clojure-specific structured editing (z/zedit + the rewrite-clj
    zipper bound under z/) lives in vis-language-clojure under
    extensions/languages/clojure/."
   (:require

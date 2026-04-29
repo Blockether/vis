@@ -131,21 +131,26 @@ First non-`nil` rewrite different from `code` wins. Hooks that throw
 are logged and skipped — a buggy rescue can never break query
 execution.
 
-Example (from `vis-common-editing`):
+Sketch (hypothetical — no production extension currently ships parse-error
+rescue; the `vis/rg` API was deliberately narrowed to a vector of literal
+substrings precisely so this class of bug becomes unrepresentable on the
+input side):
 
 ```clojure
-(ext/symbol 'rg grep-files
-  {:doc      "Search files with RE2/J."
+(ext/symbol 'frob frob-fn
+  {:doc      "Hypothetical tool that takes a regex string."
    :arglists '([pattern] [pattern path])
-   :on-error-fn       rescue-grep-args        ;; runtime decorator: bad regex
-   :on-parse-error-fn rescue-parse-error})    ;; parse rescue: bare `\|`
+   :on-error-fn       rescue-frob-args        ;; runtime decorator: bad arg
+   :on-parse-error-fn rescue-frob-parse})     ;; parse rescue: rewrite source
 ```
 
-When the LLM emits `(vis/rg "foo\|bar")` (raw `\|` instead of
-`\\|`), edamame fails. The loop notices `vis/rg` in the broken
-form and calls `rescue-parse-error`, which doubles the backslash so
-the re-parse succeeds and the tool fn runs with the LLM's intended
-string.
+If the LLM emitted `(frob "foo\|bar")` (an invalid Clojure escape),
+edamame would fail. The loop would notice `frob` in the broken form and
+call `rescue-frob-parse`, which could double the backslash so the
+re-parse succeeds and the tool fn runs with the LLM's intended string.
+In practice we prefer to design the API so the bad shape is unreachable
+(`vis/rg` patterns vector + auto-quoted literals) rather than rescue it
+at runtime — cheaper to maintain, easier to reason about.
 
 ## A note on naming
 

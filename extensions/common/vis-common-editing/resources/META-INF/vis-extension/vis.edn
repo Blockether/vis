@@ -4,7 +4,7 @@
   {"README.md"
    {:created-at #inst "2026-04-28T08:00:00.000-00:00"
     :description
-    "FS + editing primitives for SCI sandbox. Two aliases. `vis/`: cat ls rg edit write. `fs/`: cwd exists? glob parent components file-name extension expand-home list-dir relativize. Read once, `(def x ...)` if reused, edit via search/replace. No patch DSL. Clojure structured edit (`clj/zedit` + `z/` zipper) lives in sibling vis-language-clojure ext."
+    "FS + editing primitives for SCI sandbox. Two aliases. `vis/`: cat ls rg edit write. `fs/`: cwd exists? glob parent components file-name extension expand-home list-dir relativize. `vis/rg` takes a non-empty vector of LITERAL substrings (OR'd internally) — no regex DSL on the input side; for true regex use (re-seq #\"...\" (slurp f)). Read once, `(def x ...)` if reused, edit via search/replace. No patch DSL. Clojure structured edit (`clj/zedit` + `z/` zipper) lives in sibling vis-language-clojure ext."
     :content
     "# Common editing extension
 
@@ -26,7 +26,7 @@ Clojure structured editing (`clj/zedit`, `z/` zipper) lives in sibling `vis-lang
 
 ## Search
 
-`(vis/rg pattern path)` -> regex grep via RE2/J (ReDoS-safe). Pattern = string or `#\"...\"`. Opts `{:limit :hidden? :respect-gitignore?}`.
+`(vis/rg patterns path)` -> OR-of-literals grep. `patterns` = non-empty vector of literal strings; each element is matched LITERALLY (PCRE metacharacters auto-escaped) and the elements are OR'd. Examples: `(vis/rg [\"defn render\"] \"src\")`, `(vis/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})`. NO regex DSL on the input — string patterns and `#\"...\"` literals are rejected with a typed error. For genuine regex needs drop to `(re-seq #\"...\" (slurp f))` in the sandbox. Opts `{:limit :hidden? :respect-gitignore?}`.
 
 ## Edit
 
