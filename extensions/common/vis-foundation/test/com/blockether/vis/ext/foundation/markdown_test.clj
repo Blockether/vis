@@ -5,7 +5,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.markdown :as md]
-   [lazytest.core :refer [defdescribe it expect]]))
+   [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe headings-test
   (it "h1..h6 prefix the right number of `#`"
@@ -155,8 +155,37 @@
   (it "join drops nils"
     (expect (= "a\n\nb" (md/join "a" nil "b" nil))))
 
+  (it "join splices a single sequential arg"
+    (expect (= "a\n\nb\n\nc" (md/join (mapv name [:a :b :c])))))
+
+  (it "join splices a lazy seq from map without LazySeq toString leak"
+    (let [out (md/join (md/h1 "Top") (map identity ["x" "y"]))]
+      (expect (= "# Top\n\nx\n\ny" out))
+      (expect (not (re-find #"LazySeq@" out)))))
+
+  (it "join splices output of map-indexed (regression: conv 8ea17da9 LazySeq leak)"
+    (let [render (fn [i x] (str (inc i) ". " x))
+          out    (md/join
+                   (md/h1 "Conversation")
+                   md/hr
+                   (map-indexed render ["first" "second"]))]
+      (expect (= "# Conversation\n\n---\n\n1. first\n\n2. second" out))))
+
+  (it "join drops nils inside a spliced sequential"
+    (expect (= "a\n\nb" (md/join ["a" nil "b"]))))
+
+  (it "->str refuses bare lazy seq inside a builder slot"
+    ;; e.g. `(md/p (map render xs))` — builder fn expects a string,
+    ;; collection input fails loudly so the iteration loop surfaces
+    ;; the error to the LLM instead of shipping `clojure.lang.LazySeq@<hex>`.
+    (expect (throws? clojure.lang.ExceptionInfo
+              #(md/p (map identity ["a" "b"])))))
+
   (it "lines uses single newlines"
     (expect (= "a\nb\nc" (md/lines "a" "b" "c"))))
+
+  (it "lines splices a sequential arg"
+    (expect (= "a\nb\nc" (md/lines (map str ["a" "b" "c"])))))
 
   (it "section emits heading + body"
     (expect (= "## Summary\n\nbody" (md/section "Summary" "body")))

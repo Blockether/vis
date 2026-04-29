@@ -45,11 +45,29 @@
 ;; =============================================================================
 
 (defn- ->str
-  "Coerce `x` to a String. nil -> empty string. No `pr-str` — markdown
-   builders are about display text, not data inspection. The caller
-   handles their own pretty-printing if they want it."
+  "Coerce `x` to a String. nil -> empty string. Strings pass through
+   verbatim. Other scalars route through `(str x)`.
+
+   Sequential collections (lists, lazy seqs, vectors of blocks) are
+   refused with a clear ex-info — silently calling `(str lazy-seq)`
+   produces `clojure.lang.LazySeq@<hex>` text that bakes into the
+   final answer and the iteration loop has no way to detect it.
+   Callers must splice collections via `(md/join …)` / `(md/lines …)`
+   or eagerly stringify rows themselves (e.g. `mapv md/p xs`).
+
+   Markdown builders display text — pretty-printing data is the
+   caller's job."
   ^String [x]
-  (if (nil? x) "" (str x)))
+  (cond
+    (nil? x)        ""
+    (string? x)     x
+    (sequential? x) (throw (ex-info
+                             (str "md helper got a sequential collection where a string was expected. "
+                               "Splice with (md/join …) / (md/lines …), or build the row eagerly: "
+                               "(mapv md/p xs), (into [] (map render) xs), (str/join \"\\n\" xs).")
+                             {:value-class (.getName (class x))
+                              :sample      (->> x (take 3) (mapv #(if (string? %) % (pr-str %))))}))
+    :else           (str x)))
 
 ;; =============================================================================
 ;; Headings
@@ -281,22 +299,42 @@
 ;; Composing
 ;; =============================================================================
 
+(defn- expand-parts
+  "Flatten ONE level of sequential collections so callers can mix
+   variadic block args with seq-producing forms — `(map …)`,
+   `(for …)`, `(map-indexed …)`, `(keep …)` — without sneaking a
+   `LazySeq` toString into the final markdown. Nested collections
+   beyond one level remain the caller's responsibility (intentional —
+   `(md/join nested-tree)` should still surface as an error rather
+   than silently dropping structure)."
+  [parts]
+  (persistent!
+    (reduce
+      (fn [acc p]
+        (cond
+          (nil? p)        acc
+          (sequential? p) (reduce conj! acc (remove nil? p))
+          :else           (conj! acc p)))
+      (transient [])
+      parts)))
+
 (defn join
   "Stitch block-level pieces with one BLANK line between them
-   (i.e. `\\n\\n`). nil entries are dropped."
+   (i.e. `\\n\\n`). nil entries are dropped. Sequential args are
+   spliced one level deep, so `(md/join (mapv render xs))` and
+   `(md/join (md/h1 \"…\") (map render xs))` Just Work."
   ^String [& parts]
-  (->> parts
-    (remove nil?)
-    (map ->str)
+  (->> (expand-parts parts)
+    (mapv ->str)
     (str/join "\n\n")))
 
 (defn lines
   "Stitch `parts` with a single newline between them. nil entries
-   are dropped."
+   are dropped. Sequential args are spliced one level deep — same
+   rules as `join`."
   ^String [& parts]
-  (->> parts
-    (remove nil?)
-    (map ->str)
+  (->> (expand-parts parts)
+    (mapv ->str)
     (str/join "\n")))
 
 (defn section
