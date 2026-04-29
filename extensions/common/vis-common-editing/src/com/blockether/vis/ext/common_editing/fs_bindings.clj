@@ -1,11 +1,11 @@
 (ns com.blockether.vis.ext.common-editing.fs-bindings
   "Bindings for babashka.fs under the `fs/` alias.
 
-   Picks a small, useful subset \u2014 the surface a Clojure programmer
+   Picks a small, useful subset — the surface a Clojure programmer
    reaches for in path math: cwd, exists?, glob, parent, components,
    file-name, extension, expand-home, list-dir, relativize.
 
-   No I/O conveniences here \u2014 reading file contents lives under the
+   No I/O conveniences here — reading file contents lives under the
    `vis/` alias (vis/cat, vis/ls, vis/rg). The fs/ alias is just plumbing."
   (:require
    [babashka.fs :as fs]
@@ -66,6 +66,6 @@
       :examples ["(fs/relativize \"/a\" \"/a/b/c\")"]})])
 
 (def fs-prompt
-  "FS PATH MATH. babashka.fs primitives under the `fs/` alias \u2014
+  "FS PATH MATH. babashka.fs primitives under the `fs/` alias —
 ergonomic path operations that don't read or mutate files. Use the
 `vis/` alias for cat / ls / rg / edit / write / zedit.")
