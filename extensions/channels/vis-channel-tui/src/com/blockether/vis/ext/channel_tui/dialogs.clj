@@ -455,9 +455,6 @@
                  {:key :show-iterations
                   :label "Show full execution trace"
                   :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
-                 {:key :collapse-old-traces
-                  :label "Collapse old traces (keep latest expanded)"
-                  :description "Older assistant turns render as just the answer; only the most recent turn shows its full trace"}
                  {:key :show-timestamps
                   :label "Show per-message timestamps"
                   :description "Date+time next to every 'You' / 'Vis' label"}]

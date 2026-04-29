@@ -17,8 +17,8 @@
 (def editing-extension
   (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-editing.core
-     :ext/doc       "Editing tools: cat, ls, rg, edit, write."
-     :ext/version   "0.5.0"
+     :ext/doc       "Editing tools: cat, ls, rg, edit, write. Every return value is a Clojure map; no prose embedded in tool output."
+     :ext/version   "0.6.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}

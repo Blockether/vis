@@ -14,14 +14,13 @@
         Plus one optional [system_nudge] line when the model executes the
         same expression twice.
 
-   Everything else — plan, breadcrumbs, attempts ledger, recent_thought,
-   PRIOR_TURN digest, vars_archive, plan-validation nudges — was deleted.
-   The two slots above plus the SYSTEM vars (`QUERY` `ANSWER` `REASONING`)
-   bound in SCI cover the same ground without the projection drift that
-   produced the previous read-loop pathology."
+   The two slots above plus the SYSTEM vars (`QUERY` `ANSWER` `REASONING`
+   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `EXTENSIONS`) bound in SCI
+   cover everything the model needs."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -243,7 +242,19 @@ Each turn reply with Clojure source inside ```clojure … ``` fences. Multiple f
 
 The runtime parses your code into top-level forms and evaluates each in order. Each form -> one iN.K result. An empty fence (or no fence) = noop iteration.
 
-To finish the turn, call `(answer \"…\")` from inside a fence. Plain text or markdown; interpolate vars via `(str ...)` / `(format ...)` like any other Clojure call. Calling `(answer ...)` records the final answer; if any form in the same iteration errors, the answer is discarded and the loop retries.
+To finish the turn, call `(answer \"…\")` from inside a fence. Plain text or markdown; interpolate vars via `(str ...)` / `(format ...)` like any other Clojure call.
+
+**Answer-position rule:** `(answer …)` MUST fire from the LAST top-level form of its iteration (or be the only top-level form). Forms BEFORE the answer call run as normal work; trailing forms AFTER the answer call are forbidden — if you say \"done\" then keep doing things, the answer is discarded with a structured nudge so you can retry.
+
+**First-iteration rule:** in iteration 0, `(answer …)` must be the ONLY top-level form. Multi-form iter-0 answers are rejected because you have not yet observed your own work's results — those land in iter 1's <recent>, not iter 0's. Either inline the work into the answer's argument / wrap as `(let […] (answer …))` (one top-level form whose result IS observed inline before answer fires), OR keep work in iter 0 and emit `(answer …)` as the only form of iter 1.
+  `(answer \"done\")`                                 ;; ✓ only form
+  `(def s (build)) (answer s)`                        ;; ✓ answer is last
+  `(answer (str \"found \" n \" matches\"))`           ;; ✓ (computation in arg)
+  `(let [s (build-summary)] (answer s))`              ;; ✓ (single top-level form)
+  `(do (vis/edit …) (answer \"done\"))`                ;; ✓ (single top-level form)
+  `(answer \"done\") (println \"...\")`                ;; ✗ answer in the middle -> rejected
+  `(answer \"draft\") (more-work) (answer \"final\")`  ;; ✓ last `answer` wins; preceding answer-call still legal because it's not last
+Sibling errors in forms BEFORE the answer do NOT gate the loop. Only an error inside the answer-bearing form itself discards the answer (e.g. the answer call references an unbound var).
 
 After eval you get a fresh user msg:
   <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed). Shown = form's return val. `(def x ...)` returns the var, NOT the bound value. To SEE a tool result, call inline.
@@ -255,6 +266,7 @@ SCI vars bound by name:
   REASONING             last iter's thinking (string)
   CURRENT_QUERY_ID      UUID of THIS in-flight turn
   CURRENT_ITERATION_ID  UUID of last persisted iter (nil at iter 0)
+  EXTENSIONS            frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(foundation/extensions)` for the same data.
 
 Rules:
   • Real Clojure: let / do / threading inside one form when steps depend.
@@ -312,6 +324,59 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
                       (str "Extension '" (:ext/namespace ext) "' activation-fn threw"))
                     false)))
         exts))))
+
+(defn extensions-snapshot
+  "Build the value of the `EXTENSIONS` SYSTEM var from a precomputed
+   active-extensions vec.
+
+   Returns a vec of compact, fully-realized data maps — NO functions,
+   NO atoms, NO opaque runtime objects. The model walks this with
+   `filter` / `keep` / `some` exactly like any other Clojure data
+   structure; never has to reach into `(foundation/extensions)` just to
+   discover what's loaded.
+
+   Per element:
+     :alias     — short symbol the model calls under (`'foundation`, `'vis`,
+                  `'git`, ...). nil when the extension didn't declare
+                  an `:ext/ns-alias`.
+     :namespace — fully-qualified ns symbol of the extension.
+     :doc       — one-line LLM description from `:ext/doc` (when set).
+     :version   — semver string (when set).
+     :group     — prompt-rendering group name (when set).
+     :symbols   — vec of bare symbol names the extension intern'd into
+                  the sandbox (just the names; signatures + doc come
+                  from `(foundation/extension-doc ...)` if the model wants
+                  them).
+     :docs      — vec of doc-name strings (e.g. `\"README.md\"`) the
+                  extension ships in its `vis.edn` registry. Reachable
+                  via `(foundation/extension-doc 'id name)`.
+
+   The vec is bound ONCE at turn start (see `iteration-loop`) and
+   stays frozen for the rest of the turn — every iteration sees the
+   same value."
+  [active-extensions]
+  (->> (or active-extensions [])
+    (mapv (fn [ext]
+            (let [ext-ns   (:ext/namespace ext)
+                  alias    (get-in ext [:ext/ns-alias :alias])
+                  ;; Resolve doc names through the global extension
+                  ;; registry. Same mapping `(foundation/extensions)` uses;
+                  ;; we duplicate the lookup here (instead of calling
+                  ;; the meta extension) because the loop layer is
+                  ;; upstream of every ext, including meta itself —
+                  ;; EXTENSIONS must work even when vis-common-foundation
+                  ;; isn't on the classpath.
+                  registry-id (try (or alias (extension/extension-id-of-ns ext-ns))
+                                (catch Throwable _ nil))
+                  doc-names   (try (extension/extension-doc-names registry-id)
+                                (catch Throwable _ []))]
+              (cond-> {:namespace ext-ns
+                       :symbols   (mapv :ext.symbol/sym (:ext/symbols ext))
+                       :docs      (vec doc-names)}
+                alias                (assoc :alias   alias)
+                (:ext/group ext)     (assoc :group   (:ext/group ext))
+                (:ext/version ext)   (assoc :version (:ext/version ext))
+                (:ext/doc ext)       (assoc :doc     (:ext/doc ext))))))))
 
 (defn- render-extension-prompt-block
   "Render one extension's contribution to the system prompt. Honors

@@ -354,6 +354,21 @@
 ;;                         row (nil before the first iteration commits;
 ;;                         iteration N's :code sees iteration N-1's id
 ;;                         because the row for N is written AFTER eval)
+;;   EXTENSIONS            vec of compact maps describing every extension
+;;                         that passed activation for THIS turn. Frozen at
+;;                         turn start; iteration-loop binds it once and
+;;                         never mutates again within the turn so the
+;;                         model can rely on a stable view
+;;                         (`(filter ...) EXTENSIONS`) without
+;;                         round-tripping through `(foundation/extensions)`.
+;;                         Shape per element:
+;;                           {:alias    'foundation
+;;                            :namespace 'com.blockether.vis.ext.common-foundation.core
+;;                            :doc      "..."
+;;                            :version  "..."            ;; when present
+;;                            :group    "..."            ;; when present
+;;                            :symbols  [sym1 sym2 ...]
+;;                            :docs     ["README.md" ...]}
 ;; UPPERCASE marks them as constants. The set is a fixed registry;
 ;; adding to it is a deliberate API change. See AGENTS.md → "SYSTEM
 ;; vars are UPPERCASE and explicitly defined".
@@ -361,7 +376,7 @@
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
    var?' check is needed: var-index sort+status, auto-forget guard,
    <system_state> rendering, etc."
-  '#{QUERY REASONING ANSWER CURRENT_QUERY_ID CURRENT_ITERATION_ID})
+  '#{QUERY REASONING ANSWER CURRENT_QUERY_ID CURRENT_ITERATION_ID EXTENSIONS})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed

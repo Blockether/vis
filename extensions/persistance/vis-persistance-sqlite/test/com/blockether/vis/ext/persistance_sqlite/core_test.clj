@@ -68,6 +68,102 @@
       (expect (= "New" (:title (sdk/db-get-conversation s id)))))))
 
 ;; =============================================================================
+;; List conversation states (fork tree introspection)
+;; =============================================================================
+
+(defdescribe db-list-conversation-states-test
+  (it "returns one row for the trunk before any fork happens"
+    (let [s   (h/store)
+          cid (sdk/db-store-conversation! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
+          rows (sdk/db-list-conversation-states s cid)]
+      (expect (vector? rows))
+      (expect (= 1 (count rows)))
+      (expect (= 0 (:version (first rows))))
+      (expect (nil? (:parent-state-id (first rows))))
+      (expect (= "v0" (:system-prompt (first rows))))
+      (expect (= "gpt-4o" (:model (first rows))))
+      (expect (= 0 (:query-count (first rows))))))
+
+  (it "surfaces every fork in version order with parent links"
+    (let [s   (h/store)
+          cid (sdk/db-store-conversation! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})]
+      (sdk/db-fork-conversation! s cid {:title "Branch A" :system-prompt "vA"})
+      (sdk/db-fork-conversation! s cid {:title "Branch B" :system-prompt "vB"})
+      (let [rows (sdk/db-list-conversation-states s cid)]
+        (expect (= 3 (count rows)))
+        (expect (= [0 1 2] (mapv :version rows)))
+        (expect (nil? (:parent-state-id (nth rows 0))))
+        ;; Each later fork's parent points at the immediately previous
+        ;; state (latest-state-for picks the highest-version row).
+        (expect (= (:state-id (nth rows 0)) (:parent-state-id (nth rows 1))))
+        (expect (= (:state-id (nth rows 1)) (:parent-state-id (nth rows 2))))
+        (expect (= ["vA" "vB"] (mapv :system-prompt (drop 1 rows)))))))
+
+  (it "reports :query-count per state — queries belong to one specific branch"
+    (let [s   (h/store)
+          cid (sdk/db-store-conversation! s {:channel :tui})]
+      (sdk/db-store-query! s {:parent-conversation-id cid :query "trunk Q1" :status :done})
+      (sdk/db-store-query! s {:parent-conversation-id cid :query "trunk Q2" :status :done})
+      (sdk/db-fork-conversation! s cid {:title "Branch"})
+      (sdk/db-store-query! s {:parent-conversation-id cid :query "branch Q1" :status :done})
+      (let [rows (sdk/db-list-conversation-states s cid)]
+        (expect (= [2 1] (mapv :query-count rows))))))
+
+  (it "returns [] (vector, never nil) for an unknown conversation-id"
+    (let [s    (h/store)
+          rows (sdk/db-list-conversation-states s (random-uuid))]
+      (expect (vector? rows))
+      (expect (= [] rows))))
+
+  (it "returns [] (vector, never nil) when conversation-id is nil"
+    (let [s (h/store)]
+      (expect (= [] (sdk/db-list-conversation-states s nil))))))
+
+;; =============================================================================
+;; List query states (retry history introspection)
+;; =============================================================================
+
+(defdescribe db-list-query-states-test
+  (it "returns one row for the original run before any retry"
+    (let [s   (h/store)
+          cid (sdk/db-store-conversation! s {:channel :tui})
+          qid (sdk/db-store-query! s {:parent-conversation-id cid
+                                      :query "do the thing" :status :running})
+          rows (sdk/db-list-query-states s qid)]
+      (expect (vector? rows))
+      (expect (= 1 (count rows)))
+      (expect (= 0 (:version (first rows))))
+      (expect (nil? (:forked-from-query-state-id (first rows))))
+      (expect (= :running (:status (first rows))))
+      (expect (= 0 (:iteration-count (first rows))))))
+
+  (it "surfaces every retry in version order with forked-from links"
+    (let [s   (h/store)
+          cid (sdk/db-store-conversation! s {:channel :tui})
+          qid (sdk/db-store-query! s {:parent-conversation-id cid
+                                      :query "flaky" :status :error})]
+      (sdk/db-retry-query! s qid {:status :running :model "claude-4" :provider :anthropic})
+      (sdk/db-retry-query! s qid {:status :done    :model "gpt-4o"   :provider :openai})
+      (let [rows (sdk/db-list-query-states s qid)]
+        (expect (= 3 (count rows)))
+        (expect (= [0 1 2] (mapv :version rows)))
+        (expect (nil? (:forked-from-query-state-id (nth rows 0))))
+        (expect (= (:state-id (nth rows 0)) (:forked-from-query-state-id (nth rows 1))))
+        (expect (= (:state-id (nth rows 1)) (:forked-from-query-state-id (nth rows 2))))
+        (expect (= ["claude-4" "gpt-4o"] (mapv :model (drop 1 rows))))
+        (expect (= [:anthropic :openai]   (mapv :provider (drop 1 rows)))))))
+
+  (it "returns [] (vector, never nil) for an unknown query-id"
+    (let [s    (h/store)
+          rows (sdk/db-list-query-states s (random-uuid))]
+      (expect (vector? rows))
+      (expect (= [] rows))))
+
+  (it "returns [] (vector, never nil) when query-id is nil"
+    (let [s (h/store)]
+      (expect (= [] (sdk/db-list-query-states s nil))))))
+
+;; =============================================================================
 ;; Fork
 ;; =============================================================================
 
@@ -1455,90 +1551,29 @@
       (expect (contains? (sandbox-syms sci-ctx) 'REASONING))
       (expect (= 0 (:current-revision @via))))))
 
-;; ─── from plan_slot_test.clj ───
-
-(h/use-mem-store!)
-
-;; =============================================================================
-;; Helpers — synthesize a query + N iterations directly via db-store-iteration!,
-;; then read back through the public DB facade. No LLM involvement.
-;; =============================================================================
-
-(defn- bootstrap-conversation+query!
-  "Returns {:store … :conversation-id … :query-id …}."
-  [store]
-  (let [conversation-id (sdk/db-store-conversation! store {:channel :tui :title "test"})
-        query-id        (sdk/db-store-query! store
-                          {:parent-conversation-id conversation-id
-                           :query "test query"
-                           :status :running})]
-    {:store store :conversation-id conversation-id :query-id query-id}))
-
-(defn- db-store-iteration!
-  "Store a synthetic iteration row with explicit plan/breadcrumb fields."
-  [store query-id {:keys [plan-state breadcrumb plan-diff thinking expressions]
-                   :or {expressions []}}]
-  (sdk/db-store-iteration! store
-    (cond-> {:query-id    query-id
-             :expressions expressions
-             :duration-ms 100
-             :llm-model   "test-model"
-             :metadata    {}}
-      plan-state (assoc :plan-state plan-state)
-      breadcrumb (assoc :breadcrumb breadcrumb)
-      plan-diff  (assoc :plan-diff plan-diff)
-      thinking   (assoc :thinking thinking))))
-
-;; =============================================================================
-;; Persistence round-trip
-;; =============================================================================
-
-(defdescribe persistence-round-trip-test
-  (it "stores plan_state, breadcrumb, plan_diff and reads them back"
-    (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))
-          plan {:goal  "do the thing"
-                :items [{:id 1 :content "first" :status :in-progress}
-                        {:id 2 :content "second" :status :pending}]
-                :open  ["q1?"]
-                :decided ["rejected approach X"]}]
-      (db-store-iteration! store query-id
-        {:plan-state plan
-         :breadcrumb "i0  decomposed task; starting [1]"
-         :plan-diff  {:added [1 2] :removed [] :status-changed [] :goal-changed? true}})
-      (let [iterations (sdk/db-list-query-iterations store query-id)]
-        (expect (= 1 (count iterations)))
-        (expect (= plan (:plan-state (first iterations))))
-        (expect (= "i0  decomposed task; starting [1]" (:breadcrumb (first iterations))))
-        (expect (= [1 2] (:added (:plan-diff (first iterations))))))))
-
-  (it "leaves columns nil when caller omits plan keys"
-    (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))]
-      (db-store-iteration! store query-id {:thinking "tactical step"})
-      (let [it (first (sdk/db-list-query-iterations store query-id))]
-        (expect (nil? (:plan-state it)))
-        (expect (nil? (:breadcrumb it)))
-        (expect (nil? (:plan-diff it)))))))
-;; =============================================================================
-;; (Removed) sticky-plan-test, plan-diff-test, plan-validation-test,
-;; format-loop-nudge-test
+;; ─── (Removed) plan_slot_test.clj content
 ;;
-;; These tests targeted prompt/load-effective-plan,
+;; The plan_state / breadcrumb / plan_diff iteration columns and every
+;; helper that fed them (prompt/load-effective-plan,
 ;; prompt/load-breadcrumb-chain, prompt/format-loop-nudge,
-;; spec/compute-plan-diff, spec/plan-edit-distance, and
-;; spec/validate-plan-state -- all of which were deleted in the
-;; "Drastically simplify the agent" cull (commit cad5f7d). The
-;; storage round-trip for plan_state / breadcrumb / plan_diff
-;; columns is still covered by persistence-round-trip-test above;
-;; the rest had nothing live to assert against and were orphaned.
-;; =============================================================================
+;; spec/compute-plan-diff, spec/plan-edit-distance,
+;; spec/validate-plan-state) were deleted in the
+;; "Drastically simplify the agent" cull (commit cad5f7d) and the
+;; columns were dropped from V1__schema.sql in the follow-up sweep.
+;; The agent now relies on <recent> + <var_index> only; no projection
+;; layer carries plan/breadcrumb data. Tests that targeted any of the
+;; above had nothing live to assert against and were orphaned.
+;; ───
 
 ;; =============================================================================
 ;; SYSTEM_VAR_NAMES — fixed registry of UPPERCASE constants
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly QUERY, ANSWER, REASONING, CURRENT_QUERY_ID, CURRENT_ITERATION_ID"
-    (expect (= '#{QUERY ANSWER REASONING CURRENT_QUERY_ID CURRENT_ITERATION_ID}
+  (it "SYSTEM_VAR_NAMES contains exactly the documented six SYSTEM vars"
+    (expect (= '#{QUERY ANSWER REASONING
+                  CURRENT_QUERY_ID CURRENT_ITERATION_ID
+                  EXTENSIONS}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
   (it "system-var-sym? is true for registered names, false otherwise"
@@ -1547,6 +1582,7 @@
       (expect (true?  (system-var-sym? 'QUERY)))
       (expect (true?  (system-var-sym? 'ANSWER)))
       (expect (true?  (system-var-sym? 'REASONING)))
+      (expect (true?  (system-var-sym? 'EXTENSIONS)))
       (expect (false? (system-var-sym? 'CONFIG)))
       (expect (false? (system-var-sym? 'foo))))))
 

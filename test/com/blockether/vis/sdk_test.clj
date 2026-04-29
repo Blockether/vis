@@ -502,6 +502,468 @@
         (expect (re-find #"code execution failed" message))
         (expect (re-find #"div by zero" message)))))
 
+;; -----------------------------------------------------------------------------
+;; answer-form-error — Option C scoping helper
+;;
+;; The iteration loop calls `(answer-form-error expression-results form-idx)`
+;; after evaluating a turn's forms. It returns the error from the
+;; specific form that invoked `(answer ...)`, or nil if that form
+;; succeeded. Sibling errors are intentionally NOT surfaced — they
+;; do not gate termination. This test pins down the contract.
+;; -----------------------------------------------------------------------------
+
+(defdescribe answer-form-error-scoping-test
+  (let [results [{:result 1 :error nil}                  ;; idx 0 ok
+                 {:result nil :error "sibling boom"}     ;; idx 1 errored
+                 {:result nil :error nil}                ;; idx 2 ok (called answer here)
+                 {:result nil :error "trailing boom"}]]  ;; idx 3 errored
+    (it "returns nil when the answer-form itself ran cleanly (sibling errors don't gate)"
+      (expect (nil? (sdk/answer-form-error results 2))))
+
+    (it "returns the answer-form's own error when that form errored"
+      (expect (= "sibling boom" (sdk/answer-form-error results 1))))
+
+    (it "returns the trailing form's error when answer was the last block"
+      (expect (= "trailing boom" (sdk/answer-form-error results 3))))
+
+    (it "returns nil when form-idx is missing (legacy / pre-Option-C payload)"
+      (expect (nil? (sdk/answer-form-error results nil))))
+
+    (it "returns nil for out-of-bounds form-idx (defensive against shape drift)"
+      (expect (nil? (sdk/answer-form-error results 99)))
+      (expect (nil? (sdk/answer-form-error results -1))))
+
+    (it "rejects non-integer form-idx as nil"
+      (expect (nil? (sdk/answer-form-error results :two)))
+      (expect (nil? (sdk/answer-form-error results "2"))))
+
+    (it "empty expression-results never matches"
+      (expect (nil? (sdk/answer-form-error [] 0))))))
+
+;; -----------------------------------------------------------------------------
+;; answer-position — rule b' (\"answer is the last form, or the only form\")
+;;
+;; `(answer …)` must fire from the LAST top-level form of its
+;; iteration (or the only one — single-form is the special case where
+;; first == last). Mid-iteration answer calls trigger a position
+;; violation: the answer is discarded and the model gets a structured
+;; nudge to either (a) move the answer to the end OR (b) emit it as
+;; its own next iteration.
+;; -----------------------------------------------------------------------------
+
+(defdescribe answer-position-rule-test
+  (it "single top-level form, answer in form 0 — NOT a violation (form 0 == last)"
+    (expect (false? (sdk/answer-position-violation? 0 1))))
+
+  (it "two forms, answer in last (form 1) — NOT a violation"
+    (expect (false? (sdk/answer-position-violation? 1 2))))
+
+  (it "five forms, answer in last (form 4) — NOT a violation"
+    (expect (false? (sdk/answer-position-violation? 4 5))))
+
+  (it "two forms, answer in first (form 0) — violation (trailing work after answer)"
+    (expect (true? (sdk/answer-position-violation? 0 2))))
+
+  (it "five forms, answer in middle (form 2) — violation"
+    (expect (true? (sdk/answer-position-violation? 2 5))))
+
+  (it "nil form-idx (no answer fired) — never a violation"
+    (expect (false? (sdk/answer-position-violation? nil 3)))
+    (expect (false? (sdk/answer-position-violation? nil 0))))
+
+  (it "non-integer form-idx — not a violation (defensive against shape drift)"
+    (expect (false? (sdk/answer-position-violation? :one 3)))
+    (expect (false? (sdk/answer-position-violation? "1" 3))))
+
+  (it "position error message names the actual + required form numbers (1-based)"
+    (let [msg (sdk/answer-position-error-message 0 3)]
+      (expect (string? msg))
+      ;; 0-based form-idx 0, 1-based 1, total 3, last 3.
+      (expect (re-find #"3 top-level forms" msg))
+      (expect (re-find #"answer fired from form 1" msg))
+      (expect (re-find #"must fire from form 3" msg))
+      (expect (re-find #"ONLY top-level form" msg))
+      (expect (re-find #"LAST\s+top-level form" msg))
+      ;; Both escape hatches: move-to-end OR split-iteration.
+      (expect (re-find #"move the answer call to the end" msg))
+      (expect (re-find #"separate next\s+iteration" msg)))))
+
+;; -----------------------------------------------------------------------------
+;; answer-first-iteration — rule c (\"answer in iter 0 must be the only form\")
+;;
+;; In iteration 0 the model has not yet observed its own work's
+;; results (those land in iter 1's <recent>). Multi-form iter-0
+;; answers are therefore uninformed; we reject them and nudge the
+;; model to either inline the work or split into iter 1.
+;; -----------------------------------------------------------------------------
+
+(defdescribe answer-first-iteration-rule-test
+  (it "iter 0 + single form + answer fired — NOT a violation"
+    (expect (false? (sdk/answer-first-iteration-violation? 0 1 true))))
+
+  (it "iter 0 + multi form + answer fired — violation"
+    (expect (true? (sdk/answer-first-iteration-violation? 0 2 true)))
+    (expect (true? (sdk/answer-first-iteration-violation? 0 5 true))))
+
+  (it "iter 1+ + multi form + answer fired — NOT a violation (rule b' applies)"
+    (expect (false? (sdk/answer-first-iteration-violation? 1 5 true)))
+    (expect (false? (sdk/answer-first-iteration-violation? 7 3 true))))
+
+  (it "iter 0 + multi form but answer NOT fired — not a violation"
+    (expect (false? (sdk/answer-first-iteration-violation? 0 5 false))))
+
+  (it "iter 0 + single form but answer NOT fired — not a violation"
+    (expect (false? (sdk/answer-first-iteration-violation? 0 1 false))))
+
+  (it "non-integer / nil iteration — defensively returns false"
+    (expect (false? (sdk/answer-first-iteration-violation? nil 5 true)))
+    (expect (false? (sdk/answer-first-iteration-violation? :zero 5 true))))
+
+  (it "first-iter error message names the form count, the WHY, and BOTH recovery paths"
+    (let [msg (sdk/answer-first-iteration-error-message 3)]
+      (expect (string? msg))
+      (expect (re-find #"3 top-level forms" msg))
+      (expect (re-find #"iteration 0" msg))
+      ;; The rationale must appear so the model understands WHY,
+      ;; not just that something was rejected.
+      (expect (re-find #"not yet observed" msg))
+      (expect (re-find #"<recent>" msg))
+      ;; Recovery path (a): inline / structural wrapper.
+      (expect (re-find #"inline the work" msg))
+      (expect (re-find #"\(let " msg))
+      ;; Recovery path (b): split into iter 1.
+      (expect (re-find #"only.*form of iteration 1" msg)))))
+
+;; -----------------------------------------------------------------------------
+;; make-progress-tracker — phased chunk accumulation
+;;
+;; The tracker consumes phased chunks from the iteration loop and
+;; builds a per-iteration timeline that channels render. Key
+;; behaviors:
+;;   - :reasoning    appends/replaces the iteration's :thinking
+;;   - :form-result  fills parallel vectors at :form-idx
+;;   - :iteration-final WITH :final + :answer-form-idx ELIDES the
+;;     answer-bearing form's slot from every parallel vector (so
+;;     the channel renders the answer text below, never the
+;;     `(answer …)` call as code above it)
+;;   - :iteration-error sets :error on the entry
+;; -----------------------------------------------------------------------------
+
+(defdescribe progress-tracker-test
+  (it ":form-result chunks fill parallel vectors at :form-idx"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(def x 1)" :result 1 :stdout "" :stderr ""
+                 :execution-time-ms 5 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
+                 :code "(def y 2)" :result 2 :stdout "hello" :stderr ""
+                 :execution-time-ms 7 :error nil})
+      (let [tl (get-timeline)]
+        (expect (= 1 (count tl)))
+        (let [entry (first tl)]
+          (expect (= ["(def x 1)" "(def y 2)"] (:code entry)))
+          (expect (= ["" "hello"] (:stdouts entry)))
+          (expect (= [5 7] (:durations entry)))
+          (expect (= [true true] (:successes entry)))))))
+
+  (it "out-of-order :form-result chunks pad with nil"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      ;; Form 2 arrives before form 0 / 1 — tracker pads.
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 2
+                 :code "(def z 3)" :result 3 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (let [{:keys [code]} (first (get-timeline))]
+        (expect (= 3 (count code)))
+        (expect (nil? (nth code 0)))
+        (expect (nil? (nth code 1)))
+        (expect (= "(def z 3)" (nth code 2))))))
+
+  (it ":reasoning chunks update :thinking"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking…"})
+      (expect (= "thinking…" (:thinking (first (get-timeline)))))))
+
+  (it ":form-result with :error formats the error string into :results"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(boom)" :result nil :stdout "" :stderr ""
+                 :execution-time-ms 0 :error "divide by zero"})
+      (let [entry (first (get-timeline))]
+        (expect (= [false] (:successes entry)))
+        (expect (re-find #"ERROR:" (first (:results entry)))))))
+
+  (it ":iteration-final with :final + :answer-form-idx ELIDES that slot"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(def hits 12)" :result 12 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
+                 :code "(def files 3)" :result 3 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 2
+                 :code "(answer (str hits \" hits across \" files \" files\"))"
+                 :result :vis/answer :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :iteration-final :iteration 0
+                 :final {:answer "12 hits across 3 files"
+                         :iteration-count 1 :status :success}
+                 :answer-form-idx 2 :done? true})
+      (let [entry (first (get-timeline))]
+        ;; Answer-form (idx 2) is gone; only the two work forms remain.
+        (expect (= ["(def hits 12)" "(def files 3)"] (:code entry)))
+        (expect (= [true true] (:successes entry)))
+        (expect (= 2 (count (:durations entry))))
+        (expect (= "12 hits across 3 files" (-> entry :final :answer))))))
+
+  (it ":iteration-final without :final keeps every slot (non-terminal iter)"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(vis/cat \"x\")" :result {:lines []} :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :iteration-final :iteration 0
+                 :final nil :done? false})
+      (let [entry (first (get-timeline))]
+        (expect (= 1 (count (:code entry))))
+        (expect (nil? (:final entry))))))
+
+  (it ":iteration-error sets :error and :done? true"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :iteration-error :iteration 0
+                 :thinking "about to call LLM…"
+                 :error {:type :provider/timeout :message "timed out"}
+                 :done? true})
+      (let [entry (first (get-timeline))]
+        (expect (= :provider/timeout (-> entry :error :type)))
+        (expect (true? (:done? entry)))
+        (expect (= "about to call LLM…" (:thinking entry))))))
+
+  (it "unknown :phase passes through unchanged (forward-compat)"
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(+ 1 1)" :result 2 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :brand-new-future-phase :iteration 0 :payload "data"})
+      (let [entry (first (get-timeline))]
+        (expect (= ["(+ 1 1)"] (:code entry))))))
+
+  (it "on-update fires per chunk with the latest timeline"
+    (let [updates (atom [])
+          {:keys [on-chunk]} (sdk/make-progress-tracker
+                               {:on-update (fn [tl _chunk]
+                                             (swap! updates conj (count tl)))})]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "a" :result 1 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 1 :form-idx 0
+                 :code "b" :result 2 :execution-time-ms 1 :error nil})
+      (expect (= [1 2] @updates)))))
+
+;; -----------------------------------------------------------------------------
+;; Multi-extension shared-alias merge
+;;
+;; Two extensions can declare the same `:ext/ns-alias` and have their
+;; symbols COEXIST in the shared SCI namespace. The earlier ext's
+;; bindings are preserved when a later ext registers under the same
+;; alias; only same-name collisions get last-write-wins (with a
+;; warning log).
+;; -----------------------------------------------------------------------------
+
+(defn- bare-env-for-install-test
+  "Stand up just enough environment to drive `install-extension!`
+   without booting the full router / DB / channel stack: an
+   `:extensions` atom + a fresh SCI context."
+  []
+  (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (sdk/create-sci-context nil)]
+    {:sci-ctx         sci-ctx
+     :sandbox-ns      sandbox-ns
+     :initial-ns-keys initial-ns-keys
+     :extensions      (atom [])}))
+
+(defn- ns-keys-in-sci
+  "Return the set of symbol names bound under `ns-sym` in the SCI
+   sandbox's `:namespaces` map."
+  [sci-ctx ns-sym]
+  (set (keys (get-in @(:env sci-ctx) [:namespaces ns-sym]))))
+
+(defdescribe shared-alias-merge-test
+  (it "two exts under the same alias coexist; bindings merge"
+    (let [env (bare-env-for-install-test)
+          ext-a (sdk/extension
+                  {:ext/namespace 'test.merge.a
+                   :ext/doc       "Test ext A"
+                   :ext/version   "0.0.1"
+                   :ext/group     "shared-test"
+                   :ext/ns-alias  {:ns 'test.shared.ns :alias 'shared}
+                   :ext/symbols   [(sdk/symbol 'a-fn (constantly :from-a)
+                                     {:doc "A" :arglists '([])})
+                                   (sdk/symbol 'shared-fn (constantly :a-version)
+                                     {:doc "shared" :arglists '([])})]})
+          ext-b (sdk/extension
+                  {:ext/namespace 'test.merge.b
+                   :ext/doc       "Test ext B"
+                   :ext/version   "0.0.1"
+                   :ext/group     "shared-test"
+                   :ext/ns-alias  {:ns 'test.shared.ns :alias 'shared}
+                   :ext/symbols   [(sdk/symbol 'b-fn (constantly :from-b)
+                                     {:doc "B" :arglists '([])})
+                                   ;; Collides with ext-a's shared-fn
+                                   ;; — last-write-wins.
+                                   (sdk/symbol 'shared-fn (constantly :b-version)
+                                     {:doc "shared" :arglists '([])})]})]
+      (sdk/install-extension! env ext-a)
+      (sdk/install-extension! env ext-b)
+      (let [bound (ns-keys-in-sci (:sci-ctx env) 'test.shared.ns)]
+        ;; Both extensions' unique symbols live under the same ns.
+        (expect (contains? bound 'a-fn))
+        (expect (contains? bound 'b-fn))
+        ;; Collision still resolves — to ext-B's value (last write wins).
+        (expect (contains? bound 'shared-fn)))
+      ;; Both extensions show up in the env's :extensions atom.
+      (let [registered (set (map :ext/namespace @(:extensions env)))]
+        (expect (= #{'test.merge.a 'test.merge.b} registered)))))
+
+  (it "installing the SAME extension twice replaces it (no duplication)"
+    ;; Pre-existing contract — pin it so the merge change doesn't
+    ;; accidentally break re-install hot-swap semantics.
+    (let [env (bare-env-for-install-test)
+          ext-v1 (sdk/extension
+                   {:ext/namespace 'test.replace.x
+                    :ext/doc       "v1"
+                    :ext/version   "0.0.1"
+                    :ext/group     "replace-test"
+                    :ext/ns-alias  {:ns 'test.replace.ns :alias 'replace-test}
+                    :ext/symbols   [(sdk/symbol 'reg (constantly :v1)
+                                      {:doc "reg" :arglists '([])})]})
+          ext-v2 (sdk/extension
+                   {:ext/namespace 'test.replace.x  ;; same namespace
+                    :ext/doc       "v2"
+                    :ext/version   "0.0.2"
+                    :ext/group     "replace-test"
+                    :ext/ns-alias  {:ns 'test.replace.ns :alias 'replace-test}
+                    :ext/symbols   [(sdk/symbol 'reg (constantly :v2)
+                                      {:doc "reg" :arglists '([])})]})]
+      (sdk/install-extension! env ext-v1)
+      (sdk/install-extension! env ext-v2)
+      ;; Only ONE entry in :extensions atom for that namespace.
+      (expect (= 1 (count (filter #(= 'test.replace.x (:ext/namespace %))
+                            @(:extensions env))))))))
+
+;; -----------------------------------------------------------------------------
+;; Parse repair pipeline — edamame → parinfer → edamame → extension hooks
+;;
+;; Three real-world failure cases extracted verbatim from
+;; conversation 3931a3ec-e137-4932-9d9e-3144568bed69 (DB rows under
+;; expression_state). Pin behavior so the pipeline never silently
+;; regresses, and so the comment-glue contract
+;; (`;; comment\n(form)` lands as ONE :expr) survives churn.
+;; -----------------------------------------------------------------------------
+
+(defdescribe parinfer-rebalance-test
+  (it "returns nil for source that already parses (no repair needed)"
+    (expect (nil? (sdk/parinfer-rebalance "(def x 1)")))
+    (expect (nil? (sdk/parinfer-rebalance "(def x 1)\n(def y 2)"))))
+
+  (it "Case A: extra `)` matching `{` — parinfer drops the stray close"
+    (let [src "(def m {:a 1\n         :b 2)})"
+          fixed (sdk/parinfer-rebalance src)]
+      (expect (string? fixed))
+      (expect (not= src fixed))))
+
+  (it "Case B: `]` typed instead of `)` — parinfer rebalances by indent"
+    ;; Parinfer doesn't change paren TYPES but it does close+open
+    ;; based on indentation, which produces a parseable program.
+    ;; (Semantics may shift slightly from what the model meant; the
+    ;; goal is \"parses cleanly\" not \"reads model's mind\".)
+    (let [src "(def x (let [y 1]\n  (str y])"
+          fixed (sdk/parinfer-rebalance src)]
+      (expect (string? fixed))))
+
+  (it "Case C: missing `)` (EOF) — parinfer auto-closes by indent stack"
+    (let [src "(def x (let [y 1]\n  y)"
+          fixed (sdk/parinfer-rebalance src)]
+      (expect (string? fixed))
+      (expect (not= src fixed))))
+
+  (it "returns nil when parinfer's output still doesn't parse"
+    ;; Rare but possible: source so broken that even parinfer's
+    ;; rebalance produces something edamame rejects. Pin that we
+    ;; return nil rather than a bogus \"repaired\" string.
+    (let [src "(do \"unterminated"]
+      (expect (nil? (sdk/parinfer-rebalance src))))))
+
+(defdescribe split-top-level-forms-repair-test
+  (it "raw clean source: forms NOT marked :repaired?"
+    (let [[forms err] (sdk/split-top-level-forms "(def x 1) (def y 2)")]
+      (expect (nil? err))
+      (expect (= 2 (count forms)))
+      (expect (every? #(not (:repaired? %)) forms))))
+
+  (it "Case A repair: extra `)` matching `{` — parinfer fixes, forms tagged :repaired?"
+    (let [src "(def m {:a 1\n         :b 2)})"
+          [forms err] (sdk/split-top-level-forms src)]
+      (expect (nil? err))
+      (expect (every? :repaired? forms))))
+
+  (it "Case C repair: missing `)` — parinfer fixes, forms tagged :repaired?"
+    (let [src "(def x (let [y 1]\n  y)"
+          [forms err] (sdk/split-top-level-forms src)]
+      (expect (nil? err))
+      (expect (every? :repaired? forms))))
+
+  (it "unrepairable garbage — returns [nil parse-error] for the rescue chain"
+    (let [[forms err] (sdk/split-top-level-forms "(do \"unterminated")]
+      (expect (nil? forms))
+      (expect (string? err))
+      ;; Must surface SOMETHING actionable; exact message is edamame's.
+      (expect (pos? (count err))))))
+
+(defdescribe comment-glue-test
+  (it "leading `;;` comment glues to the form that follows"
+    (let [src ";; this is x\n(def x 1)"
+          [forms _] (sdk/split-top-level-forms src)]
+      (expect (= 1 (count forms)))
+      ;; The verbatim slice carries the comment AND the form.
+      (expect (str/starts-with? (:expr (first forms)) ";; this is x"))
+      (expect (str/includes? (:expr (first forms)) "(def x 1)"))))
+
+  (it "comment between two forms glues forward to the second form"
+    (let [src "(def x 1)\n;; about y\n(def y 2)"
+          [forms _] (sdk/split-top-level-forms src)]
+      (expect (= 2 (count forms)))
+      ;; Form 1 has no leading comment.
+      (expect (= "(def x 1)" (:expr (first forms))))
+      ;; Form 2 picks up the `;; about y` line.
+      (expect (str/starts-with? (:expr (second forms)) ";; about y"))
+      (expect (str/includes? (:expr (second forms)) "(def y 2)"))))
+
+  (it "multiple consecutive comment lines all glue forward"
+    (let [src ";; line 1\n;; line 2\n;; line 3\n(def z 3)"
+          [forms _] (sdk/split-top-level-forms src)]
+      (expect (= 1 (count forms)))
+      (expect (str/includes? (:expr (first forms)) ";; line 1"))
+      (expect (str/includes? (:expr (first forms)) ";; line 2"))
+      (expect (str/includes? (:expr (first forms)) ";; line 3"))
+      (expect (str/includes? (:expr (first forms)) "(def z 3)"))))
+
+  (it "comment-only source produces empty forms vec (no error)"
+    (let [[forms err] (sdk/split-top-level-forms ";; just a note\n;; nothing else\n")]
+      (expect (nil? err))
+      (expect (= [] forms))))
+
+  (it "discard reader macro `#_(...)` glues alongside comments"
+    (let [src ";; what\n#_(legacy-call)\n(def x 1)"
+          [forms _] (sdk/split-top-level-forms src)]
+      (expect (= 1 (count forms)))
+      (expect (str/includes? (:expr (first forms)) ";; what"))
+      (expect (str/includes? (:expr (first forms)) "#_(legacy-call)"))
+      (expect (str/includes? (:expr (first forms)) "(def x 1)"))))
+
+  (it "comment glue survives a parinfer repair (Case C with leading comment)"
+    (let [src ";; missing close\n(def x (let [y 1]\n  y)"
+          [forms _] (sdk/split-top-level-forms src)]
+      (expect (= 1 (count forms)))
+      (expect (str/includes? (:expr (first forms)) ";; missing close"))
+      (expect (every? :repaired? forms)))))
+
 ;; ─── from vis_runtime/core_test.clj ───
 
 ;; ─── from core_test.clj ───

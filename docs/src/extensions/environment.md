@@ -14,7 +14,7 @@ These keys exist on every environment for its entire lifetime:
 | Key | Type | Description |
 |-----|------|-------------|
 | `:environment-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
-| `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every query/iteration/var is parented under this. |
+| `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every turn / iteration / persisted var is parented under this. |
 | `:db-info` | `map` | Database connection handle (`{:datasource ds …}`). Pass to `persistance.core` functions for reads. **Do not close it.** |
 | `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only from extensions, but the runtime itself **reseats** this key when provider config changes mid-conversation — see [Router Lifecycle](../architecture/state.md#router-lifecycle). Always read it fresh from the env handed to your callback; never cache `(:router env)` across iterations. |
 | `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Do not mutate directly** — use `bind-and-bump!`. |
@@ -23,13 +23,16 @@ These keys exist on every environment for its entire lifetime:
 | `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. The rendered string is compact pseudo-source (`(def ^{:v 3 :s :l :t :map :n 12} foo ...)`, `(defn ^{:v 2 :s :l} f [x] ...)`). Bump via `bump-var-index!` after mutating sandbox bindings. |
 | `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for nudges. |
 | `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :environment <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
-| `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level queries. |
+| `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level turns. |
 
-### Query-scoped keys
+### Turn-scoped keys
 
-These keys are `assoc`'d onto the environment map when a query starts
-(`query/core.clj :: prepare-query-context`). They do **not** exist on
-the base environment returned by `create-environment`.
+These keys are `assoc`'d onto the environment map when a turn starts
+(internally a `query!` invocation — `internal/loop.clj ::
+prepare-query-context`). They do **not** exist on the base
+environment returned by `create-environment`. Naming follows the
+ubiquitous-language rule: *turn* is the product concept, *query* is
+the runtime function / DB row that backs it.
 
 | Key | Type | Description |
 |-----|------|-------------|

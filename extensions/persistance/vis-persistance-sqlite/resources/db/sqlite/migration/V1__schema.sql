@@ -142,20 +142,6 @@ CREATE TABLE iteration (
 
   metadata                        TEXT,    -- JSON-encoded per-iteration context (active extensions, etc.)
 
-  -- Plan-as-first-class-slot (PLAN.md §5.2). Every column is nullable;
-  -- pre-plan-slot rows have NULL and the projection layer renders them
-  -- as "no plan emitted yet".
-  --
-  -- plan_state and plan_diff are Nippy BLOBs (not JSON) because they
-  -- carry keyword values (e.g. {:status :done}) and JSON round-trips
-  -- those lossily. Same encoding family as expression_state.result/.error.
-  -- Inspect via REPL with (nippy/thaw <bytes>) or the public
-  -- db-list-query-iterations facade which thaws on read.
-  -- breadcrumb is a plain TEXT one-liner — no encoding wrapper needed.
-  plan_state                      BLOB,    -- Nippy-encoded :plan_state map
-  breadcrumb                      TEXT,    -- ≤120c past-tense one-liner
-  plan_diff                       BLOB,    -- Nippy-encoded; populated only when plan changed vs the prior iteration
-
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,
 

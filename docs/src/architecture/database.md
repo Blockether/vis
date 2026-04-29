@@ -109,9 +109,6 @@ Table: `iteration`. One LLM round-trip inside a `query_state`.
 | `llm_error` | TEXT | |
 | `llm_returned_empty_expressions` | INTEGER | 0/1, default 0 |
 | `metadata` | TEXT | JSON — active extensions, etc. |
-| `plan_state` | BLOB | nullable; **Nippy-encoded** `:plan_state` map (carries keyword values, so JSON would round-trip lossily). The latest non-null plan is the live `<plan>` block. |
-| `breadcrumb` | TEXT | nullable; ≤120c past-tense one-liner authored by the model in `:breadcrumb`. Joined into `<breadcrumbs>` (last K=20). |
-| `plan_diff` | BLOB | nullable; **Nippy-encoded**. Populated only when this iteration's plan changed vs the prior iteration. |
 | `created_at` | INTEGER | |
 | `finished_at` | INTEGER | nullable |
 

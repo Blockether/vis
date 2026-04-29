@@ -13,7 +13,7 @@
      - the system-prompt block rendered from `:ext/symbols`
      - the per-iteration nudge composers
      - the parse-error rescue chain
-     - the `(meta/extensions)` / `(meta/extension-doc id name)`
+     - the `(foundation/extensions)` / `(foundation/extension-doc id name)`
        catalog the agent reads to discover its own surface
 
    Channel and provider registries live in `internal.registry` (the

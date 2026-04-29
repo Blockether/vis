@@ -245,6 +245,7 @@
 (defdelegate db-update-conversation-title!    [db-info ref title])
 (defdelegate db-delete-conversation-tree!        [db-info id])
 (defdelegate db-fork-conversation!               [db-info conversation-id opts])
+(defdelegate db-list-conversation-states         [db-info conversation-id])
 
 ;; --- Query lifecycle ---
 (defdelegate db-store-query!                  [db-info opts])
@@ -252,6 +253,7 @@
 (defdelegate db-list-queries-by-status     [db-info status])
 (defdelegate db-list-conversation-queries  [db-info conversation-ref])
 (defdelegate db-retry-query!                  [db-info query-soul-id opts])
+(defdelegate db-list-query-states             [db-info query-id])
 
 ;; --- Iteration lifecycle ---
 (defn db-store-iteration!

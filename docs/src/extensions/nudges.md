@@ -3,7 +3,7 @@
 Nudges are short `[system_nudge]` strings injected into the iteration
 prompt to steer the LLM's behavior. They come from two sources:
 
-1. **Built-in nudges** — `iteration/core.clj` (var-index overflow,
+1. **Built-in nudges** — `internal/loop.clj` (var-index overflow,
    repetition detection)
 2. **Extension nudges** — any extension's `:ext/nudge-fn`
 
@@ -34,9 +34,6 @@ current environment, `:ext/nudge-fn` is not called at all.
                                 ;;     :execution-time-ms int
                                 ;;     :timeout? bool :repaired? bool} …]
                                 ;;   nil on iteration 0 or after error recovery
- :plan-state             map?   ;; the most-recent persisted :plan-state map
-                                ;;   ({:goal :items :open :decided}), or nil
-                                ;;   when the model has not emitted a plan yet
  :user-var-count         int}   ;; user-defined vars in the sandbox
 ```
 
@@ -54,7 +51,7 @@ Key names spell out the full word (`:previous-expressions`, not
 ### Example
 
 ```clojure
-(ext/extension
+(sdk/extension
   {:ext/namespace 'my-tool
    :ext/doc       "My custom tool"
    :ext/group     "tools"
@@ -71,12 +68,12 @@ Key names spell out the full word (`:previous-expressions`, not
 Inside `build-iteration-context` (called every iteration):
 
 ```
-1. Compute built-in nudges (budget, var-overflow, repetition)
-2. Call collect-extension-nudges (iteration/core.clj)
-   → for each registered extension with :ext/nudge-fn:
-     a. Check :ext/activation-fn against environment
-     b. If active, call :ext/nudge-fn with context
-     c. Collect non-nil string results
-3. Join all nudges with newline
-4. Append to iteration context (after <var_index>)
+1. Compute built-in nudges (budget, var-overflow, repetition).
+2. Call collect-extension-nudges (internal/loop.clj):
+   for each registered extension with `:ext/nudge-fn`:
+     a. Check `:ext/activation-fn` against environment.
+     b. If active, call `:ext/nudge-fn` with context.
+     c. Collect non-nil string results.
+3. Join all nudges with newline.
+4. Append to iteration context (after `<var_index>`).
 ```

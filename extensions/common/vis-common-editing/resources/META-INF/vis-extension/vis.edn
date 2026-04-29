@@ -46,5 +46,5 @@ AST-aware Clojure edits (rename def, add require, swap const while preserving fo
       :context "Source: fs/ alias bindings"}
      {:to-id clj :to-doc "README.md"
       :context "Sibling ext for Clojure structured editing (clj/zedit, z/...)"}
-     {:to-id meta :to-doc "README.md"
-      :context "Companion introspection extension; pair vis/cat reads with (meta/diagnose) when triaging stalled turns."}]}}}}
+     {:to-id foundation :to-doc "README.md"
+      :context "Companion introspection extension; pair vis/cat reads with (foundation/diagnose) when triaging stalled turns."}]}}}}
