@@ -7,7 +7,7 @@
      (vis/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
      (vis/ls path)             ; non-recursive directory listing
      (vis/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
-     (vis/rg pattern path)     ; ripgrep over a tree (re2j; ReDoS-safe)
+     (vis/rg patterns path)    ; OR-of-literals grep over a tree; patterns = non-empty vec of literal strings
      (vis/edit path search replace)   ; exact-match search/replace; :search must be unique
      (vis/write path content)         ; overwrite or create the file
 
@@ -17,7 +17,7 @@
    higher-level vis/ symbol when you also need to read or mutate the
    file's contents.
 
-   Clojure-specific structured editing (`clj/zedit` plus the `z/`
+   Clojure-specific structured editing (`z/zedit` plus the `z/`
    rewrite-clj zipper API) lives in the `vis-language-clojure`
    extension under `extensions/languages/clojure/`.
 
@@ -33,7 +33,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as sdk])
   (:import
-   (com.google.re2j Pattern PatternSyntaxException)
+   (com.google.re2j Pattern)
    (java.io File)
    (org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult)))
 
@@ -49,10 +49,10 @@
 ;; Path safety
 ;; =============================================================================
 
-(defn- ^File safe-path
-  "Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
-   the working directory."
-  [p]
+(defn- safe-path
+  ^File [p]
+  ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
+  ;; the working directory.
   (let [cwd (fs/cwd)
         resolved (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
@@ -80,7 +80,7 @@
 ;; .gitignore (cheap, lazy)
 ;; =============================================================================
 
-(defn- ^IgnoreNode load-ignore-node [^File root]
+(defn- load-ignore-node ^IgnoreNode [^File root]
   (let [gi (io/file root ".gitignore")]
     (when (.exists gi)
       (let [n (IgnoreNode.)]
@@ -185,14 +185,46 @@
 ;; rg
 ;; =============================================================================
 
-(defn- compile-pattern [p]
+(defn- compile-pattern
+  "vis/rg accepts ONLY a non-empty vector of literal substrings. Each
+   element is matched LITERALLY (PCRE metacharacters are escaped via
+   `Pattern/quote`); the elements are OR'd together internally. This
+   removes every regex-DSL footgun (`\\|`, `\\.`, `\\d`, ...) by making
+   regex syntax unrepresentable on the input side. For genuine regex
+   needs, drop to `(re-seq #\"...\" (slurp f))` in the SCI sandbox."
+  [p]
   (cond
-    (instance? java.util.regex.Pattern p) (Pattern/compile (str p))
-    (string? p) (try (Pattern/compile p)
-                  (catch PatternSyntaxException e
-                    (throw (ex-info (str "Invalid regex: " (ex-message e))
-                             {:type :ext.common-editing/invalid-pattern}))))
-    :else (throw (ex-info "rg pattern must be a string or regex" {:got (type p)}))))
+    (and (vector? p) (seq p) (every? string? p))
+    (Pattern/compile (str/join "|" (map #(Pattern/quote %) p)))
+
+    (and (vector? p) (empty? p))
+    (throw (ex-info "vis/rg patterns vector must be non-empty."
+             {:type :ext.common-editing/empty-patterns}))
+
+    (vector? p)
+    (throw (ex-info "vis/rg patterns vector must contain only strings."
+             {:type :ext.common-editing/non-string-in-patterns
+              :got  (mapv type p)}))
+
+    (string? p)
+    (throw (ex-info
+             (str "vis/rg pattern must be a vector of literal strings, "
+               "not a string. Wrap in a vector: [\"" p "\"]. For multiple "
+               "alternatives use [\"a\" \"b\" \"c\"]. No regex DSL.")
+             {:type :ext.common-editing/string-pattern-rejected
+              :got  p}))
+
+    (instance? java.util.regex.Pattern p)
+    (throw (ex-info
+             (str "vis/rg pattern must be a vector of literal strings, "
+               "not a regex literal. For #\"foo|bar\" use [\"foo\" \"bar\"]. "
+               "For genuine regex needs use (re-seq #\"...\" (slurp f)).")
+             {:type :ext.common-editing/regex-pattern-rejected}))
+
+    :else
+    (throw (ex-info "vis/rg pattern must be a non-empty vector of strings."
+             {:type :ext.common-editing/invalid-pattern-type
+              :got  (type p)}))))
 
 (defn- grep-files
   ([pattern path] (grep-files pattern path nil))
@@ -350,10 +382,10 @@
 
 (def rg-symbol
   (sdk/symbol 'rg grep-files
-    {:doc "Search files with a regex (re2j). pattern is a string or #\"...\"; path is the search root. opts {:limit :hidden? :respect-gitignore?}."
-     :arglists '([pattern path] [pattern path opts])
-     :examples ["(vis/rg \"defn render\" \"src\")"
-                "(vis/rg #\"foo|bar\" \"src\" {:limit 50})"]}))
+    {:doc "Search files for any of N literal substrings (OR'd). `patterns` is a non-empty vector of strings; each element is matched LITERALLY (no regex). `path` is the search root. opts {:limit :hidden? :respect-gitignore?}. For genuine regex needs use (re-seq #\"...\" (slurp f))."
+     :arglists '([patterns path] [patterns path opts])
+     :examples ["(vis/rg [\"defn render\"] \"src\")"
+                "(vis/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
 
 (def edit-symbol
   (sdk/symbol 'edit edit-file
@@ -372,16 +404,13 @@
   [cat-symbol ls-symbol rg-symbol edit-symbol write-symbol])
 
 (def editing-prompt
-  "EDITING. `vis/` alias, 5 tools:
+  "`vis/` = file I/O (5 tools, positional args):
   (vis/cat path)            read file (cap 6000 chars; opts {:offset :limit :char-limit})
   (vis/ls path)             tree list (opts {:depth :hidden? :respect-gitignore?})
-  (vis/rg pattern path)     regex grep (re2j, ReDoS-safe)
-  (vis/edit path s r)       replace FIRST `s` -> `r`. `s` must be unique.
-                            4th arg {:line N} disambiguates by line.
+  (vis/rg [\"a\" \"b\"] path) OR-of-LITERALS grep. patterns = non-empty vec of literal strings (no regex DSL). For real regex use (re-seq #\"...\" (slurp f)).
+  (vis/edit path s r)       replace FIRST `s` -> `r`. `s` must be unique. 4th arg {:line N} disambiguates by line.
   (vis/write path content)  overwrite/create file.
 
-`fs/` = babashka.fs path math: cwd exists? glob parent file-name extension components expand-home list-dir relativize.
-
-Structured Clojure edits -> `(clj/zedit path zfn)` (vis-language-clojure ext; aliases `clj/` `z/`).
+For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).
 
 Read once, reuse. Cross-iter? `(def x (vis/cat ...))`. Identical repeat = deduped. Non-identical re-read of same region = wasted turn.")

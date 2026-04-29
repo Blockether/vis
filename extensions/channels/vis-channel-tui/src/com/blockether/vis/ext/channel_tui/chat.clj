@@ -7,7 +7,6 @@
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as sdk]
-            [com.blockether.vis.core :as lp]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -47,7 +46,7 @@
    Assistant messages include the code execution trace from all iterations."
   [conversation-id]
   (try
-    (let [d       (lp/db-info)
+    (let [d       (sdk/db-info)
           queries (sdk/db-list-conversation-queries d conversation-id)]
       (into []
         (mapcat (fn [q]
@@ -108,7 +107,7 @@
 (defn make-conversation
   "Create a fresh `:tui` conversation. Returns `{:id conversation-id :history []}`."
   [_provider-config]
-  (let [{:keys [id]} (lp/create! :tui)]
+  (let [{:keys [id]} (sdk/create! :tui)]
     {:id id :history []}))
 
 (defn- resolve-resume-id
@@ -117,8 +116,8 @@
   [conversation-id]
   (let [cid (some-> conversation-id str str/trim)]
     (when (seq cid)
-      (or (some-> (lp/by-id cid) :id str)
-        (let [matches (->> (lp/by-channel :tui)
+      (or (some-> (sdk/by-id cid) :id str)
+        (let [matches (->> (sdk/by-channel :tui)
                         (map :id)
                         (filter #(str/starts-with? (str %) cid))
                         vec)]
@@ -131,7 +130,7 @@
    Returns `{:id conversation-id :history [...]}` with persisted messages."
   [conversation-id]
   (when-let [resolved-id (resolve-resume-id conversation-id)]
-    (when-let [conversation (lp/by-id resolved-id)]
+    (when-let [conversation (sdk/by-id resolved-id)]
       {:id (str (:id conversation)) :history (rebuild-history (str (:id conversation)))})))
 
 (defn query!
@@ -152,7 +151,7 @@
      (let [send-opts (cond-> {}
                        on-chunk    (assoc :hooks {:on-chunk on-chunk})
                        cancel-atom (assoc :cancel-atom cancel-atom))
-           result (lp/send! id text send-opts)
+           result (sdk/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; Plain text — the bubble renderer dims it via the
            ;; `:status :cancelled` field we propagate below, NOT via
@@ -200,4 +199,4 @@
    `~/.vis/vis.mdb` so other consumers of the `:tui` channel
    (e.g. `vis conversations tui`, future inspectors) still see it."
   [{:keys [id]}]
-  (when id (lp/close! id)))
+  (when id (sdk/close! id)))

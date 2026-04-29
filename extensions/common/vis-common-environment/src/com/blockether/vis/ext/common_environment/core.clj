@@ -29,9 +29,7 @@
    [com.blockether.vis.ext.common-environment.languages :as languages]
    [com.blockether.vis.ext.common-environment.monorepo :as monorepo]
    [com.blockether.vis.ext.common-environment.render :as render]
-   [taoensso.telemere :as tel])
-  (:import
-   (java.io File)))
+   [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
 
@@ -149,12 +147,23 @@
   [snapshot-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol])
 
+(def ^:private FN_INDEX
+  "One-line surface listing for the `environment/` alias. Authored
+   here (not auto-rendered from `:ext/symbols`) because the runtime no
+   longer auto-canonicalizes symbols into prompt text — see
+   `com.blockether.vis.internal.prompt/render-extension-prompt-block`
+   for the rationale."
+  (str "`environment/` fns: (environment/snapshot) (environment/git) "
+    "(environment/languages) (environment/monorepo) (environment/render) "
+    "(environment/refresh!)"))
+
 (defn- prompt-fragment
-  "Renders the live `<environment>` block. Called by the system-
+  "Renders the live `<environment>` block + a one-line surface listing
+   so the model knows the alias has callable fns. Called by the system-
    prompt assembler each time the prompt is built."
   [_environment]
   (try
-    (render/render (snapshot))
+    (str (render/render (snapshot)) "\n\n" FN_INDEX)
     (catch Throwable t
       (tel/log! {:level :error :id ::prompt-render-failed
                  :data  {:error (ex-message t)}})

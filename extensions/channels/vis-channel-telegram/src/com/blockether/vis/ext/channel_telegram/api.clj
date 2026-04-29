@@ -85,20 +85,21 @@
 
    Only processes formatting outside fenced code blocks."
   [^String text]
-  (let [len (.length text)]
-    (loop [i   (int 0)
-           sb  (StringBuilder. (* 2 len))]
+  (let [len (long (.length text))]
+    (loop [i  (long 0)
+           sb (StringBuilder. (* 2 len))]
       (if (>= i len)
         (.toString sb)
         (cond
           ;; Fenced code block: ```lang\n...\n```
           (.startsWith text "```" i)
-          (let [after-fence (+ i 3)
-                lang-end    (advance-to-line-end text after-fence)
+          (let [after-fence (long (+ i 3))
+                lang-end    (long (advance-to-line-end text after-fence))
                 code-start  (if (< lang-end len) (inc lang-end) lang-end)
                 close-idx   (str/index-of text "```" code-start)]
             (if close-idx
-              (let [code (subs text code-start close-idx)]
+              (let [close-idx (long close-idx)
+                    code (subs text code-start close-idx)]
                 (.append sb "```\n")
                 (.append sb (escape-markdown-v2-code code))
                 (.append sb "\n```")
@@ -111,9 +112,10 @@
 
           ;; Inline code: `...`
           (= (.charAt text i) \`)
-          (let [close (str/index-of text \` (long (inc i)))]
+          (let [close (str/index-of text \` (inc i))]
             (if close
-              (let [inner (subs text (inc i) close)]
+              (let [close (long close)
+                    inner (subs text (inc i) close)]
                 (.append sb "`")
                 (.append sb (escape-markdown-v2-code inner))
                 (.append sb "`")
@@ -123,9 +125,10 @@
 
           ;; Strikethrough: ~~...~~
           (.startsWith text "~~" i)
-          (let [close (str/index-of text "~~" (long (+ i 2)))]
+          (let [close (str/index-of text "~~" (+ i 2))]
             (if (and close (not= close (+ i 2)))
-              (let [inner (subs text (+ i 2) close)]
+              (let [close (long close)
+                    inner (subs text (+ i 2) close)]
                 (.append sb "~~")
                 (.append sb (escape-markdown-v2 inner))
                 (.append sb "~~")
@@ -135,9 +138,10 @@
 
           ;; Bold: **...**
           (.startsWith text "**" i)
-          (let [close (str/index-of text "**" (long (+ i 2)))]
+          (let [close (str/index-of text "**" (+ i 2))]
             (if (and close (not= close (+ i 2)))
-              (let [inner (subs text (+ i 2) close)]
+              (let [close (long close)
+                    inner (subs text (+ i 2) close)]
                 (.append sb "**")
                 (.append sb (escape-markdown-v2 inner))
                 (.append sb "**")
@@ -147,9 +151,10 @@
 
           ;; Italic: *...* (single star, not double)
           (= (.charAt text i) \*)
-          (let [close (str/index-of text \* (long (inc i)))]
-            (if (and close (> close (inc i)))
-              (let [inner (subs text (inc i) close)]
+          (let [close (str/index-of text \* (inc i))]
+            (if (and close (> (long close) (inc i)))
+              (let [close (long close)
+                    inner (subs text (inc i) close)]
                 (.append sb "*")
                 (.append sb (escape-markdown-v2 inner))
                 (.append sb "*")
@@ -159,9 +164,10 @@
 
           ;; Italic: _..._ (single underscore)
           (= (.charAt text i) \_)
-          (let [close (some-> (str/index-of text \_ (long (inc i))))]
-            (if (and close (> close (inc i)))
-              (let [inner (subs text (inc i) close)]
+          (let [close (str/index-of text \_ (inc i))]
+            (if (and close (> (long close) (inc i)))
+              (let [close (long close)
+                    inner (subs text (inc i) close)]
                 (.append sb "_")
                 (.append sb (escape-markdown-v2 inner))
                 (.append sb "_")
@@ -172,8 +178,8 @@
           ;; Blockquote line: > ...
           (and (= (.charAt text i) \>)
             (or (zero? i) (= (.charAt text (dec i)) \newline)))
-          (let [line-end (advance-to-line-end text i)
-                prefix-len (if (.startsWith text "> " i) 2 1)
+          (let [line-end   (long (advance-to-line-end text i))
+                prefix-len (long (if (.startsWith text "> " i) 2 1))
                 quote-text (subs text (+ i prefix-len) line-end)]
             (.append sb "> ")
             (.append sb (escape-markdown-v2 quote-text))

@@ -19,6 +19,7 @@
        string-delim auto-promotion patch).
      * Aliases drift (`str/`, `json/`, `c+/` no longer resolving)."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.env :as env]
    [lazytest.core :refer [defdescribe expect it throws?]]
    [sci.core :as sci]))
@@ -290,5 +291,5 @@
     (require 'com.blockether.vis.internal.prompt)
     (let [prompt (deref (resolve 'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT))]
       (doseq [tok prompt-required-tokens]
-        (expect (boolean (clojure.string/includes? prompt tok))
+        (expect (boolean (str/includes? prompt tok))
           (str "prompt missing token: " tok))))))

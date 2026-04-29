@@ -20,7 +20,7 @@
    This namespace has zero side effects at load time and depends only
    on Java interop — channels and the runtime can require it
    directly without pulling in the rest of the SDK."
-  (:refer-clojure :exclude [cancel!]))
+  (:refer-clojure))
 
 (defn cancellation-token
   "Construct a fresh cancellation token. The token wraps a cooperative

@@ -4,6 +4,7 @@
    synthetic conversation + query + iteration rows in an in-memory
    SQLite DB, then invokes the impl fns directly with a fake env map."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
@@ -147,11 +148,11 @@
   (it "arg form fetches any conversation by id"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/db-store-conversation! s {:channel :telegram :title "other"})]
-      (let [conversation ((private-fn "meta-conversation") (env s conversation-id) other)]
-        (expect (= other (:id conversation)))
-        (expect (= :telegram (:channel conversation)))
-        (expect (= 0 (:turn-count conversation))))))
+          other (sdk/db-store-conversation! s {:channel :telegram :title "other"})
+          conversation ((private-fn "meta-conversation") (env s conversation-id) other)]
+      (expect (= other (:id conversation)))
+      (expect (= :telegram (:channel conversation)))
+      (expect (= 0 (:turn-count conversation)))))
 
   (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
@@ -419,7 +420,7 @@
       (expect (= "README.md" (:name doc)))
       (expect (string? (:description doc)))
       (expect (string? (:content doc)))
-      (expect (clojure.string/includes? (:content doc) "# Meta extension"))
+      (expect (str/includes? (:content doc) "# Meta extension"))
       (expect (vector? (:links doc)))
       (expect (pos? (count (:links doc))))
       (expect (vector? (:reflinks doc)))))

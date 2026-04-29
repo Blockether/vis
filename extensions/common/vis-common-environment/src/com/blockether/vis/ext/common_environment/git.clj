@@ -29,7 +29,7 @@
    fields rather than blocking the LLM turn."
   2000)
 
-(defn- ^Repository open-repository [^File start]
+(defn- open-repository ^Repository [^File start]
   (try
     (let [^FileRepositoryBuilder builder (FileRepositoryBuilder.)]
       (.. builder

@@ -27,7 +27,6 @@
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.config :as config]
