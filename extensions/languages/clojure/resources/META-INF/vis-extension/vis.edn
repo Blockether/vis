@@ -49,7 +49,7 @@ Most useful publics (full set bound at extension load — any future rewrite-clj
 
   (z/root-string zloc)        render whole tree
 
-If `(foundation/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/.
+If `(vis/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/.
 
 ## Examples
 

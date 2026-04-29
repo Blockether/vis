@@ -14,7 +14,7 @@ guarantees) is inlined as the extension's canonical README. Read
 it from inside the agent with:
 
 ```clojure
-(foundation/extension-readme 'environment)
+(vis/extension-readme 'environment)
 ```
 
 Or load it from disk at

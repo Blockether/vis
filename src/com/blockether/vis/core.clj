@@ -175,6 +175,7 @@
 (def db-delete-conversation-tree!           persistance/db-delete-conversation-tree!)
 (def db-fork-conversation!                  persistance/db-fork-conversation!)
 (def db-list-conversation-states            persistance/db-list-conversation-states)
+(def db-latest-conversation-state-id        persistance/db-latest-conversation-state-id)
 
 ;; Query lifecycle
 (def db-store-query!                        persistance/db-store-query!)

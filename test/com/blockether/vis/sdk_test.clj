@@ -1105,15 +1105,15 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe system-var-exclusion-test
-  (it "does not render USER_TURN_REQUEST/ASSISTANT_TURN_ANSWER/REASONING in the live block"
-    (let [out (index {'USER_TURN_REQUEST     "user query"
-                      'ASSISTANT_TURN_ANSWER    "prior answer"
-                      'REASONING "thinking"
+  (it "does not render TURN_USER_REQUEST/CONVERSATION_PREVIOUS_ANSWER/ITERATION_PREVIOUS_REASONING in the live block"
+    (let [out (index {'TURN_USER_REQUEST            "user query"
+                      'CONVERSATION_PREVIOUS_ANSWER "prior answer"
+                      'ITERATION_PREVIOUS_REASONING "thinking"
                       'user-var  42})]
       (expect (re-find #"\(def user-var 42\)" out))
-      (expect (not (re-find #"\(def USER_TURN_REQUEST" out)))
-      (expect (not (re-find #"\(def ASSISTANT_TURN_ANSWER" out)))
-      (expect (not (re-find #"\(def REASONING" out)))))
+      (expect (not (re-find #"\(def TURN_USER_REQUEST" out)))
+      (expect (not (re-find #"\(def CONVERSATION_PREVIOUS_ANSWER" out)))
+      (expect (not (re-find #"\(def ITERATION_PREVIOUS_REASONING" out)))))
 
   (it "does not render initial-ns-keys (tools / helpers)"
     (let [out (index {'read-file (fn []) 'user-var 42}
@@ -1133,7 +1133,7 @@
     (expect (nil? (index {'read-file (fn [])} #{'read-file}))))
 
   (it "returns nil when sandbox has only SYSTEM vars"
-    (expect (nil? (index {'USER_TURN_REQUEST "x" 'ASSISTANT_TURN_ANSWER "y" 'REASONING "z"})))))
+    (expect (nil? (index {'TURN_USER_REQUEST "x" 'CONVERSATION_PREVIOUS_ANSWER "y" 'ITERATION_PREVIOUS_REASONING "z"})))))
 
 ;; -----------------------------------------------------------------------------
 ;; Sort order — newest-touched first by recency-of (no DB → all tied at
@@ -1354,9 +1354,9 @@
           recent    #{q1}]
       (expect (= #{} (sdk/auto-forget-candidates sandbox initials registry recent)))))
 
-  (it "🎧 SYSTEM vars (USER_TURN_REQUEST/ASSISTANT_TURN_ANSWER/REASONING) are sacred — never forgotten"
-    (let [sandbox   (make-sandbox [['USER_TURN_REQUEST "hello"]])
-          registry  (make-registry [['USER_TURN_REQUEST q1]])
+  (it "🎧 SYSTEM vars (TURN_USER_REQUEST/CONVERSATION_PREVIOUS_ANSWER/ITERATION_PREVIOUS_REASONING) are sacred — never forgotten"
+    (let [sandbox   (make-sandbox [['TURN_USER_REQUEST "hello"]])
+          registry  (make-registry [['TURN_USER_REQUEST q1]])
           recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not in SYSTEM_VAR_NAMES
       (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
@@ -1384,14 +1384,14 @@
                                    ['stale-b 2]
                                    ['documented 3 "keep me"]
                                    ['recent-var 4]
-                                   ['REASONING 5]            ;; SYSTEM_VAR_NAMES — protected
+                                   ['ITERATION_PREVIOUS_REASONING 5]   ;; SYSTEM_VAR_NAMES — protected
                                    ['builtin 6]])
           initials  #{'builtin}
           registry  (make-registry [['stale-a q1]
                                     ['stale-b q1]
                                     ['documented q1]
                                     ['recent-var q3]
-                                    ['REASONING q1]
+                                    ['ITERATION_PREVIOUS_REASONING q1]
                                     ['builtin q1]])
           recent    #{q3 q4}]
       (expect (= #{'stale-a 'stale-b}
@@ -1404,10 +1404,9 @@
       (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "⚡ a non-registered uppercase var (e.g. CONFIG) gets forgotten like any mortal var"
-    ;; SYSTEM_VAR_NAMES is a fixed set
-    ;; #{USER_TURN_REQUEST ASSISTANT_TURN_ANSWER REASONING CURRENT_QUERY_ID CURRENT_ITERATION_ID};
-    ;; user-defined uppercase names (CONFIG, MAX_FOO, ...) are NOT system
-    ;; vars and get the normal stale-sweep treatment.
+    ;; SYSTEM_VAR_NAMES is a fixed 10-name registry (TURN_*, ITERATION_*,
+    ;; CONVERSATION_*); user-defined uppercase names (CONFIG, MAX_FOO, ...)
+    ;; are NOT system vars and get the normal stale-sweep treatment.
     (let [sandbox   (make-sandbox [['CONFIG 42]])
           registry  (make-registry [['CONFIG q1]])
           recent    #{q2}]
@@ -2021,11 +2020,11 @@
                                   "Conversations:"])))))
 
 (defdescribe vis-extensions
-  (it "lists the `vis-foundation` filesystem extension as discovered"
+  (it "lists the `vis-foundation` extension as discovered"
     (let [{:keys [exit out]} (run-vis "extensions" "list")]
       (expect (zero? exit))
       (expect (contains-all? out ["Extensions"
-                                  "filesystem"
+                                  "foundation"
                                   "extension(s)"]))))
   (it "parent help mentions the `list` subcommand"
     (let [{:keys [exit out]} (run-vis "extensions")]

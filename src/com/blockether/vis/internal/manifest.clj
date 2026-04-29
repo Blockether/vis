@@ -25,7 +25,7 @@
 
    The docs-registry merge (which inverts authored `:links` into
    `:reflinks` on target descriptors and exposes
-   `(foundation/extension-doc id name)` etc.) lives one layer up in
+   `(vis/extension-doc id name)` etc.) lives one layer up in
    `com.blockether.vis.internal.extension`. This namespace knows
    nothing about reflinks; it just produces parsed-and-normalized
    manifests."
@@ -176,7 +176,7 @@
    on first success; subsequent calls return the cache.
 
    Callers that want the docs-registry side effect (reflinks
-   computation + the `(foundation/extension-doc ...)` index) should call
+   computation + the `(vis/extension-doc ...)` index) should call
    `com.blockether.vis.internal.extension/discover-extensions!`
    instead — which wraps this primitive with the docs merge.
 

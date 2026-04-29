@@ -14,9 +14,13 @@
         Plus one optional [system_nudge] line when the model executes the
         same expression twice.
 
-   The two slots above plus the SYSTEM vars (`USER_TURN_REQUEST` `ASSISTANT_TURN_ANSWER` `REASONING`
-   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `ACTIVE_EXTENSIONS` `CONVERSATION_TITLE`) bound in SCI
-   cover everything the model needs."
+   The two slots above plus the SYSTEM vars (every name in
+   `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`,
+   `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`,
+   `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`,
+   `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`,
+   `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI cover everything the
+   model needs."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.env :as env]
@@ -236,7 +240,7 @@
 ;; =============================================================================
 
 (def CORE_SYSTEM_PROMPT
-  "Clojure agent. Think = write Clojure in SCI sandbox. Plan = code. Reason = code. User USER_TURN_REQUEST is your goal. Stash useful results across iterations as `(def ...)` and compose functions to solve hard problems.
+  "Clojure agent. Think = write Clojure in SCI sandbox. Plan = code. Reason = code. User TURN_USER_REQUEST is your goal. Stash useful results across iterations as `(def ...)` and compose functions to solve hard problems.
 
 Each turn reply with Clojure source inside ```clojure … ``` fences. Multiple fenced blocks are allowed and will be concatenated in order. NO prose outside fences — use `;; comments` inside the fence for thinking.
 
@@ -260,14 +264,21 @@ After eval you get a fresh user msg:
   <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed). Shown = form's return val. `(def x ...)` returns the var, NOT the bound value. To SEE a tool result, call inline.
   <var_index>  your `(def name val)` bindings still alive. Strings verbatim up to ~8000 chars.
 
-SYSTEM vars (read-only; bound by name in the SCI sandbox):
-  USER_TURN_REQUEST     the user's current message text — your immediate goal for THIS turn (string)
-  ASSISTANT_TURN_ANSWER previous turn's final answer string (\"\" on the very first turn of the conversation)
-  REASONING             last iteration's `:thinking` text (\"\" before iter 1)
-  CONVERSATION_TITLE    current conversation title (\"\" until you call `(conversation-title \"…\")`)
-  CURRENT_QUERY_ID      UUID of THIS in-flight turn (use as a key into `foundation/conversation`)
-  CURRENT_ITERATION_ID  UUID of the last persisted iteration (nil before iter 1)
-  ACTIVE_EXTENSIONS            frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(foundation/extensions)` for the same data.
+SYSTEM vars (read-only; bound by name in the SCI sandbox). Three lifetime tiers tagged by prefix:
+  TURN_*         frozen at turn start, immutable for the whole turn
+  ITERATION_*    rebound at every iteration boundary
+  CONVERSATION_* conversation-state, mutates freely within the turn
+
+  TURN_USER_REQUEST            the user's current message text — your immediate goal for THIS turn (string)
+  TURN_QUERY_ID                UUID of THIS in-flight turn (== query soul id; use as a key into `vis/conversation`)
+  TURN_CONVERSATION_SOUL_ID    UUID of the conversation_soul this turn lives under
+  TURN_CONVERSATION_STATE_ID   UUID of the conversation_state row this query was attached to (latest row at turn start)
+  TURN_SYSTEM_PROMPT           the full assembled system prompt driving THIS turn (core + every active-extension prompt block). Read it to verify what rules you're operating under.
+  TURN_ACTIVE_EXTENSIONS       frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(vis/extensions)` for the same data.
+  ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
+  ITERATION_PREVIOUS_REASONING last iteration's `:thinking` text (\"\" before iter 1)
+  CONVERSATION_TITLE           current conversation title (\"\" until you call `(conversation-title \"…\")`)
+  CONVERSATION_PREVIOUS_ANSWER previous turn's final answer string (\"\" on the very first turn of the conversation)
 
 Host primitives bound at the top level (no alias) — these MUTATE state, so each is named for what it WRITES:
   (answer ARG)               finish the turn with ARG (string). Position rules above. Cannot read the answer back; the answer is the turn's terminal output.
@@ -331,17 +342,17 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
         exts))))
 
 (defn extensions-snapshot
-  "Build the value of the `ACTIVE_EXTENSIONS` SYSTEM var from a precomputed
+  "Build the value of the `TURN_ACTIVE_EXTENSIONS` SYSTEM var from a precomputed
    active-extensions vec.
 
    Returns a vec of compact, fully-realized data maps — NO functions,
    NO atoms, NO opaque runtime objects. The model walks this with
    `filter` / `keep` / `some` exactly like any other Clojure data
-   structure; never has to reach into `(foundation/extensions)` just to
+   structure; never has to reach into `(vis/extensions)` just to
    discover what's loaded.
 
    Per element:
-     :alias     — short symbol the model calls under (`'foundation`, `'vis`,
+     :alias     — short symbol the model calls under (`'vis`, `'vis`,
                   `'git`, ...). nil when the extension didn't declare
                   an `:ext/ns-alias`.
      :namespace — fully-qualified ns symbol of the extension.
@@ -350,11 +361,11 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
      :group     — prompt-rendering group name (when set).
      :symbols   — vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
-                  from `(foundation/extension-doc ...)` if the model wants
+                  from `(vis/extension-doc ...)` if the model wants
                   them).
      :docs      — vec of doc-name strings (e.g. `\"README.md\"`) the
                   extension ships in its `vis.edn` registry. Reachable
-                  via `(foundation/extension-doc 'id name)`.
+                  via `(vis/extension-doc 'id name)`.
 
    The vec is bound ONCE at turn start (see `iteration-loop`) and
    stays frozen for the rest of the turn — every iteration sees the
@@ -365,11 +376,11 @@ COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
             (let [ext-ns   (:ext/namespace ext)
                   alias    (get-in ext [:ext/ns-alias :alias])
                   ;; Resolve doc names through the global extension
-                  ;; registry. Same mapping `(foundation/extensions)` uses;
+                  ;; registry. Same mapping `(vis/extensions)` uses;
                   ;; we duplicate the lookup here (instead of calling
                   ;; the meta extension) because the loop layer is
                   ;; upstream of every ext, including meta itself —
-                  ;; ACTIVE_EXTENSIONS must work even when vis-foundation
+                  ;; TURN_ACTIVE_EXTENSIONS must work even when vis-foundation
                   ;; isn't on the classpath.
                   registry-id (try (or alias (extension/extension-id-of-ns ext-ns))
                                 (catch Throwable _ nil))

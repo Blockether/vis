@@ -14,7 +14,7 @@
 (require '[com.blockether.vis.ext.foundation.introspection])
 
 ;; Populate the classpath docs registry once for the whole namespace.
-;; The (foundation/extensions ...) / (foundation/extension-docs ...) / etc. tests
+;; The (vis/extensions ...) / (vis/extension-docs ...) / etc. tests
 ;; read from the registry that `discover-extensions!` produces by
 ;; merging every `META-INF/vis-extension/vis.edn` on the classpath.
 ;; Idempotent across runs (memoized inside the loader).
@@ -58,7 +58,7 @@
   (deref (resolve (symbol "com.blockether.vis.ext.foundation.introspection" name))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/turn) — single rich snapshot of the current turn
+;; (vis/turn) — single rich snapshot of the current turn
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-turn-test
@@ -94,7 +94,7 @@
 
   (it "surfaces the redundancy summary aggregated across iteration metadata"
     ;; The Phase 2-m metric lands in iteration.metadata as :dedup-saves
-    ;; per iteration; (foundation/turn).:redundancy aggregates across iterations.
+    ;; per iteration; (vis/turn).:redundancy aggregates across iterations.
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (sdk/db-store-iteration! s
@@ -119,7 +119,7 @@
         (expect (< (Math/abs (- (/ 1.0 3.0) (:fraction redundancy))) 1e-9))))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/conversation [id]) — current or specific conversation
+;; (vis/conversation [id]) — current or specific conversation
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversation-test
@@ -153,7 +153,7 @@
         (expect (= "42" (:answer turn)))
         (expect (= :complete (:outcome turn))))))
 
-  (it "auto-excludes the in-flight turn (= CURRENT_QUERY_ID) from the current conversation"
+  (it "auto-excludes the in-flight turn (= TURN_QUERY_ID) from the current conversation"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
           env-with-in-flight (assoc (env s conversation-id)
@@ -183,7 +183,7 @@
       (expect (nil? (:in-flight-turn-id conversation))))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/conversations [channel]) — list across one or all channels
+;; (vis/conversations [channel]) — list across one or all channels
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversations-test
@@ -214,7 +214,7 @@
       (expect (= 1 (:turn-count this))))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/var-history sym [conversation-id])
+;; (vis/var-history sym [conversation-id])
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-var-history-test
@@ -235,7 +235,7 @@
       (expect (= [] ((private-fn "foundation-var-history") (env s conversation-id) 'foo other))))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/conversation-forks [conversation-id]) — fork tree introspection.
+;; (vis/conversation-forks [conversation-id]) — fork tree introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversation-forks-test
@@ -276,7 +276,7 @@
       (expect (= [] rows)))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/query-retries query-id) — retry history introspection.
+;; (vis/query-retries query-id) — retry history introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-query-retries-test
@@ -313,7 +313,7 @@
       (expect (= [] ((private-fn "meta-query-retries") (env s conversation-id) nil))))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/find-attempts pattern [conversation-id])
+;; (vis/find-attempts pattern [conversation-id])
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-find-attempts-test
@@ -373,7 +373,7 @@
       (expect (= [] hits)))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/find-attempts-everywhere pattern) — cross-conversation regex search.
+;; (vis/find-attempts-everywhere pattern) — cross-conversation regex search.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-find-attempts-everywhere-test
@@ -416,7 +416,7 @@
       (expect (= [] hits)))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/failures) and (foundation/diagnose) — no raw SQLite needed for triage
+;; (vis/failures) and (vis/diagnose) — no raw SQLite needed for triage
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-failure-diagnostics-test
@@ -523,7 +523,7 @@
         (expect (= [] failures))))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/failures-everywhere) — cross-conversation failure scan.
+;; (vis/failures-everywhere) — cross-conversation failure scan.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-failures-everywhere-test
@@ -566,25 +566,26 @@
       (expect (= [] failures)))))
 
 ;; -----------------------------------------------------------------------------
-;; (foundation/extensions), (foundation/extension-docs ...), (foundation/extension-doc ...),
-;; and (foundation/extension-readme ...) — catalog + abstracts + bodies.
+;; (vis/extensions), (vis/extension-docs ...), (vis/extension-doc ...),
+;; and (vis/extension-readme ...) — catalog + abstracts + bodies.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-extensions-catalog-test
-  (it "includes the meta extension itself with its declared docs and abstracts"
+  (it "includes the unified `vis-foundation` extension itself with its declared docs and abstracts"
     (let [extensions ((private-fn "foundation-extensions") {})
-          this       (some #(when (= 'com.blockether.vis.ext.foundation.introspection (:namespace %)) %)
+          this       (some #(when (= 'com.blockether.vis.ext.foundation.core (:namespace %)) %)
                        extensions)]
       (expect (some? this))
-      (expect (= 'foundation (:alias this)))
+      (expect (= 'vis (:alias this)))
       (expect (vector? (:symbols this)))
+      ;; Unified vis ext bundles introspection + editing + environment
+      ;; under one alias. Spot-check one symbol from each area.
       (expect (contains? (set (:symbols this)) 'extensions))
-      (expect (contains? (set (:symbols this)) 'extension-docs))
-      (expect (contains? (set (:symbols this)) 'extension-doc))
-      (expect (contains? (set (:symbols this)) 'extension-readme))
+      (expect (contains? (set (:symbols this)) 'cat))
+      (expect (contains? (set (:symbols this)) 'environment-snapshot))
       ;; :docs is a vector of summary maps. Each summary carries the
       ;; structured descriptor fields except :content; :content lives
-      ;; on the full descriptor returned by (foundation/extension-doc ...).
+      ;; on the full descriptor returned by (vis/extension-doc ...).
       (let [docs (:docs this)
             readme (some #(when (= "README.md" (:name %)) %) docs)]
         (expect (vector? docs))
@@ -604,7 +605,7 @@
 
 (defdescribe foundation-extension-docs-test
   (it "single-arg form returns summaries for a registered extension"
-    (let [docs ((private-fn "foundation-extension-docs") {} 'foundation)]
+    (let [docs ((private-fn "foundation-extension-docs") {} 'vis)]
       (expect (vector? docs))
       (expect (= #{"README.md"} (set (map :name docs))))
       (expect (every? #(string? (:description %)) docs))
@@ -612,70 +613,71 @@
       (expect (every? #(vector? (:reflinks %)) docs))))
 
   (it "summaries do NOT include :content (catalog stays small)"
-    (let [docs ((private-fn "foundation-extension-docs") {} 'foundation)]
+    (let [docs ((private-fn "foundation-extension-docs") {} 'vis)]
       (expect (every? #(not (contains? % :content)) docs))))
 
-  (it "reflinks reflect cross-extension authored links"
-    ;; vis-foundation links to vis (companion) and vis-foundation
-    ;; links back to meta -- so each gets one inbound reflink.
-    (let [meta-readme (first ((private-fn "foundation-extension-docs") {} 'foundation))
-          vis-readme  (first ((private-fn "foundation-extension-docs") {} 'vis))]
-      (expect (some #(= 'vis  (:from-id %)) (:reflinks meta-readme)))
-      (expect (some #(= 'foundation (:from-id %)) (:reflinks vis-readme)))))
+  (it "reflinks vec is present (potentially empty in the unified-vis world)"
+    ;; Pre-merge `vis-common-foundation` had cross-ext links to
+    ;; `vis-common-editing`'s README and vice-versa. After the merge
+    ;; everything lives under one ext id (`vis`), so cross-ext
+    ;; reflinks for THIS package are empty by construction. The
+    ;; field still has to be a vec, never nil.
+    (let [readme (first ((private-fn "foundation-extension-docs") {} 'vis))]
+      (expect (vector? (:reflinks readme)))))
 
   (it "no-arg form returns the full registry keyed by id symbol"
     (let [registry ((private-fn "foundation-extension-docs") {})]
       (expect (map? registry))
-      (expect (contains? registry 'foundation))))
+      (expect (contains? registry 'vis))))
 
   (it "unknown reference returns nil"
     (expect (nil? ((private-fn "foundation-extension-docs") {} 'no.such.extension)))))
 
 (defdescribe foundation-extension-doc-test
   (it "returns the full descriptor map for a declared doc"
-    (let [doc ((private-fn "foundation-extension-doc") {} 'foundation "README.md")]
+    (let [doc ((private-fn "foundation-extension-doc") {} 'vis "README.md")]
       (expect (map? doc))
       (expect (= "README.md" (:name doc)))
       (expect (string? (:description doc)))
       (expect (string? (:content doc)))
-      (expect (str/includes? (:content doc) "# Meta extension"))
+      (expect (str/includes? (:content doc) "# vis-foundation"))
       (expect (vector? (:links doc)))
       (expect (pos? (count (:links doc))))
       (expect (vector? (:reflinks doc)))))
 
   (it "links carry author-declared targets and contexts"
-    (let [doc   ((private-fn "foundation-extension-doc") {} 'foundation "README.md")
+    (let [doc   ((private-fn "foundation-extension-doc") {} 'vis "README.md")
           links (:links doc)]
-      ;; meta links to vis README (cross-ext doc), the RLM paper
-      ;; (URL), and the loader source file (file).
-      (expect (some #(= ['vis "README.md"] [(:to-id %) (:to-doc %)]) links))
+      ;; The unified vis-foundation README links to the RLM paper
+      ;; (URL) and the prompt-assembler source file (file). No
+      ;; cross-ext doc links anymore (everything is one ext now).
       (expect (some #(some? (:url %)) links))
       (expect (some #(some? (:file %)) links))))
 
   (it "returns nil for an unknown doc name"
-    (expect (nil? ((private-fn "foundation-extension-doc") {} 'foundation "NOPE.md"))))
+    (expect (nil? ((private-fn "foundation-extension-doc") {} 'vis "NOPE.md"))))
 
   (it "returns nil for an unknown extension reference"
     (expect (nil? ((private-fn "foundation-extension-doc") {} 'no.such.ext "README.md")))))
 
 (defdescribe foundation-extension-readme-test
   (it "resolves by id symbol"
-    (let [text ((private-fn "foundation-extension-readme") {} 'foundation)]
+    (let [text ((private-fn "foundation-extension-readme") {} 'vis)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "foundation/extensions"))))
+      (expect (clojure.string/includes? text "vis/extensions"))))
 
   (it "resolves by id keyword"
-    (let [text ((private-fn "foundation-extension-readme") {} :foundation)]
+    (let [text ((private-fn "foundation-extension-readme") {} :vis)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "foundation/extension-readme"))))
+      (expect (clojure.string/includes? text "vis/extension-readme"))))
 
   (it "resolves by full extension namespace"
-    (let [text ((private-fn "foundation-extension-readme") {} 'com.blockether.vis.ext.foundation.introspection)]
+    (let [text ((private-fn "foundation-extension-readme") {} 'com.blockether.vis.ext.foundation.core)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "# Meta extension"))))
+      (expect (clojure.string/includes? text "# vis-foundation"))))
 
   (it "resolves by alias-ns symbol"
-    (let [text ((private-fn "foundation-extension-readme") {} 'vis.ext.foundation)]
+    (let [text ((private-fn "foundation-extension-readme") {} 'vis.ext.vis)]
       (expect (string? text))))
 
   (it "returns nil for an unknown extension reference"

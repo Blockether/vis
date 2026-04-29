@@ -65,7 +65,7 @@
   (describe "Answer background is now visually identical to terminal-bg (no zone bg)"
     (it "answer-bg RGB matches terminal-bg exactly"
       ;; Per user request: the answer zone no longer paints a coloured
-      ;; block. The answer is distinguished by the FINAL ASSISTANT_TURN_ANSWER header
+      ;; block. The answer is distinguished by the FINAL ANSWER header
       ;; + heading colours, nothing else. Pinning the equality keeps
       ;; the renderer honest — if anyone re-introduces a tint, this
       ;; test fails immediately.

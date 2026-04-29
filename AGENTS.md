@@ -138,13 +138,13 @@ Mandatory contents:
 
 Rules:
 
-- `vis.edn` = **single source of truth** for that extension (purpose, surface, when to use, when not). End users read via the book; LLM reads via `(foundation/extension-doc '<id> "<doc-name>")` and `(foundation/extension-readme '<id>)` from `:code`.
+- `vis.edn` = **single source of truth** for that extension (purpose, surface, when to use, when not). End users read via the book; LLM reads via `(vis/extension-doc '<id> "<doc-name>")` and `(vis/extension-readme '<id>)` from `:code`.
 - Do NOT add a second copy of any doc anywhere in the extension tree (no `extensions/<category>/<name>/README.md`, no `docs/src/extensions/<id>.md` containing inlined content, no in-tree sibling `README.md`). `vis.edn` is canonical.
-- `:content` = Markdown with sentence-case headings + real UTF-8 (same rules as the book — see docs-style rule below). End-user-facing ext -> surface from `docs/src/SUMMARY.md` with a short manual page pointing readers at `(foundation/extension-readme '<id>)` (book may briefly summarize, MUST NOT inline full body).
+- `:content` = Markdown with sentence-case headings + real UTF-8 (same rules as the book — see docs-style rule below). End-user-facing ext -> surface from `docs/src/SUMMARY.md` with a short manual page pointing readers at `(vis/extension-readme '<id>)` (book may briefly summarize, MUST NOT inline full body).
 - The id (top-level key in `vis.edn`) MUST equal registered ext's `:ext/ns-alias :alias`. Loader doesn't enforce strictly, but reviewers MUST reject mismatches — LLM types `(meta/...)`, on-disk id is `foundation`.
 - Multiple jars MAY contribute under same id; their `:nses` deduped, `:docs` merged (last write wins per name). `:reflinks` recomputed across entire registry after every merge -> a later jar's links can target an earlier jar's docs.
 - Editing tip: `:content` = multi-line EDN string. Supported authoring loop: keep Markdown body in sibling `.md` file in source tree, re-inline into `vis.edn` with a small `pprint`-based generator. Do NOT keep two on-disk copies of same content under version control.
-- `vis-foundation` exposes the LLM-facing surface: `(foundation/extensions)` lists every loaded ext + docs catalog; `(foundation/extension-docs ext-ref)` returns `[{:name :created-at :description :links :reflinks} …]` summaries for one ext; `(foundation/extension-doc ext-ref name)` returns full descriptor including `:content`; `(foundation/extension-readme ext-ref)` is the README `:content` convenience.
+- `vis-foundation` exposes the LLM-facing surface: `(vis/extensions)` lists every loaded ext + docs catalog; `(vis/extension-docs ext-ref)` returns `[{:name :created-at :description :links :reflinks} …]` summaries for one ext; `(vis/extension-doc ext-ref name)` returns full descriptor including `:content`; `(vis/extension-readme ext-ref)` is the README `:content` convenience.
 
 Why: agents that need to verify what an ext actually does — before reaching for one of its tools — must read the ext's own description as data, not guess from symbol names. Inlining docs in `vis.edn` = single classpath read at boot, eliminates path-vs-call ambiguity an external doc tree introduced (`vis/<id>` reads as a sandbox call), makes the description index trivially queryable.
 
@@ -187,10 +187,10 @@ Three rules. Non-negotiable. Every prior violation shipped to readers as broken 
 
 2. **Headings = short, descriptive, sentence-case prose. NO code identifiers in title.** Heading is a navigation aid for humans, not an API index entry.
 
-   - Bad: `## \`:before-fn\` — entry decorator`, `### \`(foundation/turn)\``, `### 1) \`conversation_soul\``, `### Embedded \`:cmd/subcommands\` vector`, `### Render caches (\`ext/channel_tui/render.clj :: fmt-cache\`)`, `## How Vis Works` (Title Case).
+   - Bad: `## \`:before-fn\` — entry decorator`, `### \`(vis/turn)\``, `### 1) \`conversation_soul\``, `### Embedded \`:cmd/subcommands\` vector`, `### Render caches (\`ext/channel_tui/render.clj :: fmt-cache\`)`, `## How Vis Works` (Title Case).
    - Good: `## Entry decorator`, `### Current turn snapshot`, `### Conversation soul`, `### Embedded subcommand vector`, `### Render caches`, `## How Vis works`.
 
-   Keyword / function name / table name / file path the section documents goes in the **first line of body** as a short "Slot key: \`:before-fn\`" / "Call: \`(foundation/turn)\`" / "Table: \`conversation_soul\`" / "Lives in: \`ext/channel_tui/render.clj\`" lead. Reader still gets the identifier; just isn't load-bearing on the heading.
+   Keyword / function name / table name / file path the section documents goes in the **first line of body** as a short "Slot key: \`:before-fn\`" / "Call: \`(vis/turn)\`" / "Table: \`conversation_soul\`" / "Lives in: \`ext/channel_tui/render.clj\`" lead. Reader still gets the identifier; just isn't load-bearing on the heading.
 
 3. **Internal links use slugified anchors of the live heading.** Renaming a heading invalidates every `#anchor` link to it. After any heading rename, grep for old anchor across `docs/src/` and repoint or delete every reference. Example: renaming `## Auto-discovery resource` to `## Auto-discovery` changes anchor from `#auto-discovery-resource` to `#auto-discovery`; doc that linked to old anchor breaks silently — mdbook does not warn.
 
@@ -200,15 +200,15 @@ Three rules. Non-negotiable. Every prior violation shipped to readers as broken 
 
 ```bash
 bin/vis run --json "Use the meta extension to analyze conversation \
-  <conversation-uuid>. Call (foundation/conversation #uuid \"<conversation-uuid>\"), \
-  (foundation/diagnose #uuid \"<conversation-uuid>\"), and \
-  (foundation/failures #uuid \"<conversation-uuid>\"). Summarize how many turns, \
+  <conversation-uuid>. Call (vis/conversation #uuid \"<conversation-uuid>\"), \
+  (vis/diagnose #uuid \"<conversation-uuid>\"), and \
+  (vis/failures #uuid \"<conversation-uuid>\"). Summarize how many turns, \
   what the user asked, what failed (with classifications), and the root cause."
 ```
 
 Returns structured JSON envelope with agent's answer, iteration trace, token usage, cost. Agent does failure classification, redundancy detection, cost rollup, plain-language summary — you read the `answer` field. Two iterations is the norm for a single-conversation post-mortem.
 
-Full meta API (`(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`, `(foundation/diagnose)`, `(foundation/failures)`, `(foundation/find-attempts pattern)`, `(foundation/var-history 'sym)`) documented inline in the extension manifest. Read via `(foundation/extension-readme 'foundation)` from `:code`; do not guess from symbol names.
+Full meta API (`(vis/turn)`, `(vis/conversation)`, `(vis/conversations)`, `(vis/diagnose)`, `(vis/failures)`, `(vis/find-attempts pattern)`, `(vis/var-history 'sym)`) documented inline in the extension manifest. Read via `(vis/extension-readme 'vis)` from `:code`; do not guess from symbol names.
 
 Question genuinely can't be expressed through meta (schema or migration debugging — debugging the persistence layer itself, not a conversation)? Extend `vis-foundation` with the call you wish you had instead of dropping to ad-hoc shell tools. The ext is the API; missing projection = bug in the ext, not a license to bypass it.
 
@@ -294,7 +294,7 @@ vis/
 │   ├── persistance/
 │   │   └── vis-persistance-sqlite/  ← SQLite + Flyway backend
 │   ├── common/
-│   │   ├── vis-foundation/         ← (foundation/turn), (foundation/conversation), (foundation/diagnose), …
+│   │   ├── vis-foundation/         ← (vis/turn), (vis/conversation), (vis/diagnose), …
 │   │   ├── vis-foundation/  ← cwd / OS / git-facts SCI helpers
 │   │   └── vis-foundation/      ← filesystem + code-editing tools (vis/cat, vis/edit, vis/rg)
 │   └── languages/
@@ -358,9 +358,27 @@ Do NOT abbreviate domain terms in identifiers. Spell things out. Cost of a few e
 
 ### SYSTEM vars are UPPERCASE and explicitly defined
 
-Sandbox-visible system vars are **`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`, `CONVERSATION_TITLE`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS`** — ALL CAPS, no earmuffs. The fixed registry lives at `com.blockether.vis.core/SYSTEM_VAR_NAMES`; predicate is `system-var-sym?`.
+Sandbox-visible system vars are split across three lifetime tiers, each prefix-tagged:
 
-Bound at environment construction so symbols always resolve, even before first turn. Subsequently rebound after each iteration via the loop's bookkeeping. `CONVERSATION_TITLE` mirrors the env's `:conversation-title-atom`, which is the in-memory cache for the conversation title (the persisted truth lives in `conversation_state.title`); the model writes through `(conversation-title "...")`, never by `def`-ing CONVERSATION_TITLE — the SYSTEM-var write guard rejects that on principle.
+- **`TURN_*`** — frozen at turn start, immutable for the whole turn:
+  - `TURN_USER_REQUEST` — user's current message text.
+  - `TURN_QUERY_ID` — UUID of THIS in-flight turn (== query soul id).
+  - `TURN_CONVERSATION_SOUL_ID` — UUID of the `conversation_soul` row.
+  - `TURN_CONVERSATION_STATE_ID` — UUID of the latest `conversation_state` row at turn start (the row this query attached to).
+  - `TURN_SYSTEM_PROMPT` — the full assembled system prompt driving THIS turn (core + every active-extension prompt block). Lets the model verify what rules it is operating under without an extension call.
+  - `TURN_ACTIVE_EXTENSIONS` — frozen vec of compact extension descriptors (`:alias :namespace :doc :version :group :symbols :docs`).
+- **`ITERATION_*`** — rebound at every iteration boundary:
+  - `ITERATION_ID` — UUID of the most recently persisted iteration row (nil before iter 1).
+  - `ITERATION_PREVIOUS_REASONING` — last iteration's `:thinking` text.
+- **`CONVERSATION_*`** — conversation-state, mutates freely within the turn:
+  - `CONVERSATION_TITLE` — current conversation title ("" until set).
+  - `CONVERSATION_PREVIOUS_ANSWER` — previous turn's final answer string ("" on the very first turn).
+
+ALL CAPS, no earmuffs. The fixed registry lives at `com.blockether.vis.core/SYSTEM_VAR_NAMES`; predicate is `system-var-sym?`.
+
+Bound at turn start (`TURN_*`, `ITERATION_*` reset to nil) and rebound at iteration boundaries (`ITERATION_*`, `CONVERSATION_*`) by `iteration-loop` in `internal/loop.clj`. `CONVERSATION_TITLE` mirrors the env's `:conversation-title-atom`, which is the in-memory cache for the conversation title (the persisted truth lives in `conversation_state.title`); the model writes through `(conversation-title "...")`, never by `def`-ing `CONVERSATION_TITLE` — the SYSTEM-var write guard rejects that on principle. `TURN_CONVERSATION_STATE_ID` snapshots the state-id at turn start; an explicit fork inside the turn does NOT update it (forks bump the state id, but the binding stays pointing at the row this query was attached to).
+
+`TURN_SYSTEM_PROMPT` carries the full assembled system prompt as a multi-KB string. SYSTEM vars are excluded from `<var_index>` (see `env/build-var-index`), so binding it costs zero per-iteration tokens; it only enters context when the model evaluates the symbol explicitly.
 
 Do NOT introduce earmuffed names (`*query*`, `*foo*`) for new system vars. Adding to `SYSTEM_VAR_NAMES` = deliberate API change, not free-form pattern.
 
@@ -456,7 +474,7 @@ vis run --system-prompt "You are a code reviewer" "Review auth.clj"
 vis run --no-persist "sensitive prompt that must not hit ~/.vis/vis.mdb"
 ```
 
-`vis run` creates a fresh conversation in the `:cli` channel, runs the query, prints the answer (or JSON envelope when `--json` is set). Persistent runs are browsable via `vis conversations cli` or `(foundation/conversations :cli)`.
+`vis run` creates a fresh conversation in the `:cli` channel, runs the query, prints the answer (or JSON envelope when `--json` is set). Persistent runs are browsable via `vis conversations cli` or `(vis/conversations :cli)`.
 
 `--no-persist` spins up an ephemeral env on a `:memory` SQLite DB; nothing touches `~/.vis/vis.mdb` and the env is disposed at the end.
 
@@ -594,10 +612,10 @@ NO JSON iteration spec, NO schema validation around iteration responses, NO sche
 
 - `<recent>` — previous iteration's executed code blocks + results, addressable as `iN.K`.
 - `<var_index>` — type-aware snapshot of user-defined `(def …)` bindings.
-- SCI-bound SYSTEM vars the model can read directly (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS`).
+- SCI-bound SYSTEM vars the model can read directly — every name in `SYSTEM_VAR_NAMES`. Three lifetime tiers, each prefix-tagged: `TURN_*` (`TURN_USER_REQUEST`, `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`), `ITERATION_*` (`ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`), `CONVERSATION_*` (`CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`).
 - One optional `[system_nudge]` line when the model executes the same expression twice.
 
-Plus an opt-in `vis-foundation` extension exposing `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`, `(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`, `(foundation/failures)`, `(foundation/diagnose)`, `(foundation/extensions)`, `(foundation/extension-doc …)`, `(foundation/extension-readme …)` for the model to self-introspect.
+Plus an opt-in `vis-foundation` extension exposing `(vis/turn)`, `(vis/conversation)`, `(vis/conversations)`, `(vis/var-history 'sym)`, `(vis/find-attempts pattern)`, `(vis/failures)`, `(vis/diagnose)`, `(vis/extensions)`, `(vis/extension-doc …)`, `(vis/extension-readme …)` for the model to self-introspect.
 
 **Do NOT reintroduce** any of: `<plan>` / `<breadcrumbs>` / `<recent_thought>` / `<system_state>` / `<vars_archive>` / `<prior_thinking>` slots, an iteration JSON spec, `ITERATION_SPEC_*` envelopes, plan-state validation, plan-edit-distance metrics, sticky-plan loaders, breadcrumb projection, `HANDOVER_KEEP_LAST` cross-query special cases, or per-iteration TODO list machinery. Every one of those was deleted on purpose ("Drastically simplify the agent" cull). The two slots above plus the SYSTEM vars cover the same ground without the projection drift the previous read-loop pathology produced.
 

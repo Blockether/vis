@@ -626,7 +626,7 @@
         ;; message column. Applies to plain text AND to every
         ;; styled-marker zone (code blocks, stdout, answer, iteration
         ;; headers) so right-aligned labels like "ITERATION 1" /
-        ;; "FINAL ASSISTANT_TURN_ANSWER" sit nicely inset from the right edge
+        ;; "FINAL ANSWER" sit nicely inset from the right edge
         ;; instead of mashed against it.
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
@@ -732,14 +732,14 @@
       ;; The \"answer zone\" starts at the first line carrying ANY
       ;; structural answer-* marker. Every line AFTER that index
       ;; renders on `answer-bg`. We used to anchor strictly on
-      ;; `answer-hdr-marker` (the right-aligned \"FINAL ASSISTANT_TURN_ANSWER\"
+      ;; `answer-hdr-marker` (the right-aligned \"FINAL ANSWER\"
       ;; superscript), but that marker became opt-in via
       ;; `:show-final-answer-header` — when off, the answer body lost
       ;; its blue zone and rendered on white terminal bg. Now we
       ;; accept any of the three structural markers
       ;; `format-answer-with-thinking*` always emits:
       ;;   answer-sep-marker  bold rule between trace and answer
-      ;;   answer-hdr-marker  optional \"FINAL ASSISTANT_TURN_ANSWER\" superscript
+      ;;   answer-hdr-marker  optional \"FINAL ANSWER\" superscript
       ;;   answer-pad-marker  blank padding above/below the answer
       ;; Whichever appears first wins.
       (let [iteration-bg t/iteration-header-bg
@@ -2109,12 +2109,12 @@
                                     {:show-header? show-iteration-headers?})))
                         (collapse-repeated-error-runs trace)))
         answer-str  (or answer "")
-        ;; Right-aligned "FINAL ASSISTANT_TURN_ANSWER" header with confidence —
+        ;; Right-aligned "FINAL ANSWER" header with confidence —
         ;; opt-in chrome. The blue answer-bg + bold horizontal rule
         ;; (`ans-sep`) above the answer body already shout \"this is
         ;; the answer\"; the superscript is redundant unless the
         ;; user explicitly turns it back on. Cancelled bubbles never
-        ;; get the FINAL ASSISTANT_TURN_ANSWER chrome — there is no final answer.
+        ;; get the FINAL ANSWER chrome — there is no final answer.
         fa-label    (label-text "final answer")
         conf-str    (when confidence (str " · " (name confidence)))
         full-label  (str fa-label (or conf-str ""))
@@ -2201,7 +2201,7 @@
 ;; PUBLIC because `screen.clj` must compute bubble width with the same
 ;; gutter math the painter uses; if the two layers disagree by even one
 ;; column, `format-iteration-entry` sizes labels (`CODE 3`, `✓ 3ms`,
-;; `FINAL ASSISTANT_TURN_ANSWER`) for one bubble-w while `draw-chat-bubble!` paints
+;; `FINAL ANSWER`) for one bubble-w while `draw-chat-bubble!` paints
 ;; into a different bubble-w and the right-aligned labels wrap onto
 ;; two lines.
 ;;
