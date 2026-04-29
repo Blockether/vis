@@ -54,7 +54,7 @@ automatically installed in dependency order.
 (sdk/register-extension!
   (sdk/extension
     {:ext/namespace 'com.acme.ext.git
-     :ext/requires  ['com.blockether.vis.ext.common-editing.core]
+     :ext/requires  ['com.blockether.vis.ext.foundation.editing.core]
      :ext/doc       "Git integration"
      ...}))
 ```
@@ -173,7 +173,7 @@ the alias prefix.
 
 ```clojure
 (ext/extension
-  {:ext/namespace 'com.blockether.vis.ext.common-editing.core
+  {:ext/namespace 'com.blockether.vis.ext.foundation.editing.core
    :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
    ...})
 ```
@@ -277,12 +277,12 @@ Real in-tree examples — every package below ships exactly one
 
 ### Sandbox tools
 
-`extensions/common/vis-common-editing/.../core.clj` — read / list / grep / patch:
+`extensions/common/vis-foundation/.../core.clj` — read / list / grep / patch:
 
 ```clojure
 (sdk/register-extension!
   (sdk/extension
-    {:ext/namespace 'com.blockether.vis.ext.common-editing.core
+    {:ext/namespace 'com.blockether.vis.ext.foundation.editing.core
      :ext/doc       "Common Vis operations: cat, ls, rg, patch."
      :ext/version   "0.4.0"
      :ext/group     "filesystem"

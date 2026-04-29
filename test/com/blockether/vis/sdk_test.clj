@@ -1831,7 +1831,7 @@
     "Test fixture hook: doubles exactly one unsupported regex escape.
    The loop driver must call it repeatedly when a source string has
    multiple bad sites. This intentionally lives in core tests so core
-   does not depend on the common-editing extension test classpath."
+   does not depend on the vis-foundation extension test classpath."
     [{:keys [code error]}]
     (when (and (string? code) (str/includes? (str error) "Unsupported escape character"))
       (let [targets #{\| \. \( \) \$ \* \+ \? \[ \] \{ \}}
@@ -2021,7 +2021,7 @@
                                   "Conversations:"])))))
 
 (defdescribe vis-extensions
-  (it "lists the `vis-common-editing` filesystem extension as discovered"
+  (it "lists the `vis-foundation` filesystem extension as discovered"
     (let [{:keys [exit out]} (run-vis "extensions" "list")]
       (expect (zero? exit))
       (expect (contains-all? out ["Extensions"

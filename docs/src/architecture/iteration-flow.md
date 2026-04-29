@@ -47,7 +47,7 @@ the system message content. Both iteration loop paths and the TUI
 2. **Extension prompts** — each active extension’s canonical
    symbol-derived prompt block, prefixed with `[namespace: alias → ns]`,
    plus any optional extra `:ext/prompt` tail (cwd / OS / git facts
-   come from the `vis-common-environment` extension, not from the
+   come from the `vis-foundation` extension, not from the
    runtime).
 
 No iteration spec schema is appended anymore. svar’s `ask-code!`
@@ -117,11 +117,11 @@ between iterations. Continuity is delivered by:
   `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS`) the model
   can read directly from inside a fenced code block.
 
-For deeper introspection, the opt-in `vis-common-foundation` extension
+For deeper introspection, the opt-in `vis-foundation` extension
 exposes `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`,
 `(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`,
 `(foundation/failures)`, and `(foundation/diagnose)`. See
-[Meta extension](../extensions/common/vis-common-foundation.md).
+[Meta extension](../extensions/common/vis-foundation.md).
 
 ## SYSTEM vars
 
@@ -171,4 +171,4 @@ There is no `<vars_archive>` block. Vars that get auto-forgotten
 (see `auto-forget-stale-vars!` in `internal/loop.clj`) drop out of
 the sandbox and are no longer rendered. The DB still carries their
 full history; the agent recovers prior versions on demand via
-`(foundation/var-history 'sym)` (from `vis-common-foundation`).
+`(foundation/var-history 'sym)` (from `vis-foundation`).

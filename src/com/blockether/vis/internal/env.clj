@@ -375,7 +375,7 @@
 ;;                         round-tripping through `(foundation/extensions)`.
 ;;                         Shape per element:
 ;;                           {:alias    'foundation
-;;                            :namespace 'com.blockether.vis.ext.common-foundation.core
+;;                            :namespace 'com.blockether.vis.ext.foundation.introspection
 ;;                            :doc      "..."
 ;;                            :version  "..."            ;; when present
 ;;                            :group    "..."            ;; when present

@@ -21,6 +21,5 @@
 - [Symbol Decorators](extensions/hooks.md)
 - [Environment Map](extensions/environment.md)
 - [Nudge System](extensions/nudges.md)
-- [Environment extension](extensions/common/vis-common-environment.md)
-- [Meta extension](extensions/common/vis-common-foundation.md)
+- [vis-foundation extension](extensions/common/vis-foundation.md)
 

@@ -162,7 +162,7 @@ same token the LLM uses as the SCI sandbox alias — e.g. `foundation`,
 
 ```edn
 {meta
- {:nses [com.blockether.vis.ext.common-foundation.core]
+ {:nses [com.blockether.vis.ext.foundation.introspection]
   :docs {"README.md"
          {:created-at #inst "2026-04-28"
           :description   "One-paragraph LLM-facing summary..."
@@ -253,7 +253,7 @@ Rules:
   `dev/inline-doc.clj`-style helpers, or write your own — the
   contract is just "produce a valid EDN map"). Do NOT keep two
   on-disk copies of the same content under version control.
-- The vis-common-foundation extension exposes the LLM-facing surface for this:
+- The vis-foundation extension exposes the LLM-facing surface for this:
   `(foundation/extensions)` lists every loaded extension with its docs
   catalog; `(foundation/extension-docs ext-ref)` returns the
   `[{:name :created-at :description :links :reflinks} …]` summaries
@@ -299,7 +299,7 @@ Doc files (all under the repo-root `docs/` tree, NOT inside any package):
 - `docs/src/architecture/` — overview, packages, iteration flow,
   state ownership, database schema, channels.
 - `docs/src/extensions/` — overview, extension spec, symbol
-  decorators (hooks), environment map, nudge system, vis-common-foundation.
+  decorators (hooks), environment map, nudge system, vis-foundation.
 
 `docs/src/SUMMARY.md` is the mdBook table of contents — keep it in
 sync when adding/removing pages. There is intentionally no
@@ -501,7 +501,7 @@ packages plus a sibling tree of classpath plug-ins:
   - `extensions/channels/` — `vis-channel-tui`, `vis-channel-telegram`.
   - `extensions/providers/` — `vis-provider-github-copilot`.
   - `extensions/persistance/` — `vis-persistance-sqlite`.
-  - `extensions/common/` — `vis-common-foundation`, `vis-common-editing` (filesystem +
+  - `extensions/common/` — `vis-foundation`, `vis-foundation` (filesystem +
     code-editing tools the agent reaches for in nearly every task).
   Each ships a `META-INF/vis-extension/vis.edn` and self-registers
   at namespace load. Every extension's `deps.edn` declares
@@ -536,7 +536,7 @@ Quick mental map (use `packages.md` for details):
 - `extensions/persistance/vis-persistance-sqlite` — SQLite persistence backend
 - `extensions/providers/vis-provider-github-copilot` — GitHub Copilot OAuth provider
 - `extensions/channels/vis-channel-tui`, `extensions/channels/vis-channel-telegram` — channel implementations
-- `extensions/common/vis-common-foundation`, `extensions/common/vis-common-editing` — SCI sandbox extensions
+- `extensions/common/vis-foundation`, `extensions/common/vis-foundation` — SCI sandbox extensions
 - `benchmarks/` — benchmark harness (`:bench` alias only; not a classpath plug-in)
 
 ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN
@@ -916,7 +916,7 @@ previous turn's bounded digest (`{:goal :counts :outcome
 :abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.
 
 When the agent genuinely needs older reasonings, the (opt-in)
-`vis-common-foundation` extension exposes `(foundation/diagnose)`, `(foundation/failures)`,
+`vis-foundation` extension exposes `(foundation/diagnose)`, `(foundation/failures)`,
 `(foundation/turn)`, `(foundation/conversation)`, `(foundation/find-attempts pattern)`,
 and `(foundation/var-history 'sym)`.
 The deprecated built-in `var-history` still works for backwards

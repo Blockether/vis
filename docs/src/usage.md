@@ -153,7 +153,7 @@ vis extensions list                  # list everything that registered
 vis extensions <cmd> [args…]         # run an extension's exported CLI command
 ```
 
-The bundled `extensions/common/vis-common-editing` package adds `vis/cat`,
+The bundled `extensions/common/vis-foundation` package adds `vis/cat`,
 `vis/ls`, `vis/rg`, `vis/edit`, and `vis/sh` (filesystem + shell tools
 namespaced under the `vis/` alias). It is already wired into the root
 `deps.edn`; add the same `:local/root` entry to a downstream consumer's
@@ -161,8 +161,8 @@ namespaced under the `vis/` alias). It is already wired into the root
 
 ```clojure
 ;; deps.edn
-{:deps {com.blockether/vis-common-editing
-        {:local/root "extensions/common/vis-common-editing"}}}
+{:deps {com.blockether/vis-foundation
+        {:local/root "extensions/common/vis-foundation"}}}
 ```
 
 To author your own extension, see [Extension System](extensions/overview.md).

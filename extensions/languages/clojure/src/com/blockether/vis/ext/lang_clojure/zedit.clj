@@ -26,7 +26,7 @@
    (java.io File)))
 
 ;; =============================================================================
-;; Path safety (mirrors vis-common-editing; kept local so this extension
+;; Path safety (mirrors vis-foundation; kept local so this extension
 ;; has no implicit dependency on the editing extension's internals).
 ;; =============================================================================
 

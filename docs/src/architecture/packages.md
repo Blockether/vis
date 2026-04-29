@@ -61,9 +61,9 @@ Every plug-in ships exactly one classpath manifest at
 | `vis-provider-zai` | `extensions/providers/vis-provider-zai/` | Z.ai (ZhipuAI) static-API-key provider — covers both the coding-plan and pay-as-you-go endpoints in one extension. Internal namespace: `com.blockether.vis.ext.provider-zai`. | — | Surfaces under `vis auth <plan>` per registered plan. |
 | `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat. Internal namespace: `com.blockether.vis.ext.channel-tui.*` (state / dialogs / screen / chat / render / input / footer / theme / primitives / provider). | `:tui` | `:channel/owns-tty? true`. Conversations are stored under the same `:tui` keyword used for CLI dispatch. |
 | `vis-channel-telegram` | `extensions/channels/vis-channel-telegram/` | Telegram Bot API long-poll loop wired into `for-telegram-chat!`. Internal namespace: `com.blockether.vis.ext.channel-telegram.*`. | `:telegram` | Optional channel; omitting the jar leaves the rest of vis usable. |
-| `vis-common-foundation` | `extensions/common/vis-common-foundation/` | SCI sandbox introspection extension (`(foundation/turn)`, `(foundation/diagnose)`, `(foundation/conversation)`, `(foundation/find-attempts)`, `(foundation/var-history)`, `(foundation/extensions)`, `(foundation/extension-readme)` …). Internal namespace: `com.blockether.vis.ext.common-foundation.core`. | — | Pure `:ext/symbols` contribution. See [vis-common-foundation](../extensions/common/vis-common-foundation.md). |
-| `vis-common-environment` | `extensions/common/vis-common-environment/` | cwd / OS / git-facts SCI helpers. Internal namespace: `com.blockether.vis.ext.common-environment.core`. | — | Pure `:ext/symbols` contribution. |
-| `vis-common-editing` | `extensions/common/vis-common-editing/` | Filesystem / shell / search / patch tools (`vis/cat`, `vis/ls`, `vis/rg`, `vis/edit`, `vis/sh`, …). Internal namespace: `com.blockether.vis.ext.common-editing.core`. | — | Pure `:ext/symbols` contribution. |
+| `vis-foundation` | `extensions/common/vis-foundation/` | SCI sandbox introspection extension (`(foundation/turn)`, `(foundation/diagnose)`, `(foundation/conversation)`, `(foundation/find-attempts)`, `(foundation/var-history)`, `(foundation/extensions)`, `(foundation/extension-readme)` …). Internal namespace: `com.blockether.vis.ext.foundation.introspection`. | — | Pure `:ext/symbols` contribution. See [vis-foundation](../extensions/common/vis-foundation.md). |
+| `vis-foundation` | `extensions/common/vis-foundation/` | cwd / OS / git-facts SCI helpers. Internal namespace: `com.blockether.vis.ext.foundation.environment.core`. | — | Pure `:ext/symbols` contribution. |
+| `vis-foundation` | `extensions/common/vis-foundation/` | Filesystem / shell / search / patch tools (`vis/cat`, `vis/ls`, `vis/rg`, `vis/edit`, `vis/sh`, …). Internal namespace: `com.blockether.vis.ext.foundation.editing.core`. | — | Pure `:ext/symbols` contribution. |
 | `vis-language-clojure` | `extensions/languages/clojure/` | Clojure structured-editing wrapper (`(z/zedit …)` and the rewrite-clj zipper API, all under the single `z/` alias). Internal namespace: `com.blockether.vis.ext.lang-clojure.core`. | — | Add new `extensions/languages/<lang>/` directories when shipping tools that only make sense for one source language. |
 
 ## Dev / research
@@ -143,9 +143,9 @@ extensions/channels/vis-channel-telegram             ─┤
 extensions/persistance/vis-persistance-sqlite        ─┤
 extensions/providers/vis-provider-github-copilot     ─┤
 extensions/providers/vis-provider-zai                ─┤  → com.blockether/vis (root)
-extensions/common/vis-common-foundation                    ─┤
-extensions/common/vis-common-environment             ─┤
-extensions/common/vis-common-editing                 ─┤
+extensions/common/vis-foundation                    ─┤
+extensions/common/vis-foundation             ─┤
+extensions/common/vis-foundation                 ─┤
 extensions/languages/clojure                         ─┤
 benchmarks/                                          ─┘
 ```
@@ -165,9 +165,9 @@ convention. Examples:
 - `com.blockether.vis.ext.channel-tui.screen`
 - `com.blockether.vis.ext.channel-telegram.bot`
 - `com.blockether.vis.ext.persistance-sqlite.core`
-- `com.blockether.vis.ext.common-foundation.core`
-- `com.blockether.vis.ext.common-environment.core`
-- `com.blockether.vis.ext.common-editing.core`
+- `com.blockether.vis.ext.foundation.introspection`
+- `com.blockether.vis.ext.foundation.environment.core`
+- `com.blockether.vis.ext.foundation.editing.core`
 - `com.blockether.vis.ext.lang-clojure.core`
 - `com.blockether.vis.ext.provider-github-copilot`
 - `com.blockether.vis.ext.provider-zai`

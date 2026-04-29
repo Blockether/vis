@@ -1,7 +1,0 @@
-{:paths ["src" "resources"]
- :deps  {com.blockether/vis                {:local/root "../../.."}
-         ;; JGit — repository discovery, branch/HEAD inspection, and
-         ;; bounded `git status` for the environment block. Same
-         ;; coordinate as vis-common-editing so both extensions share
-         ;; one resolved version on the classpath.
-         org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}}
