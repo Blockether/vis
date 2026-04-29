@@ -103,7 +103,7 @@
       (.toLowerCase (subs filename (inc dot)))
       :else nil)))
 
-(defn- ^FileVisitResult dir-decision [^Path dir]
+(defn- dir-decision ^FileVisitResult [^Path dir]
   (let [name (str (.getFileName dir))]
     (if (contains? skip-directories name)
       FileVisitResult/SKIP_SUBTREE

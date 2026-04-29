@@ -3,7 +3,6 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as sdk]
-            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]))
@@ -193,8 +192,8 @@
       ;; keep the snapshot they were created with. Reseat them too,
       ;; otherwise the next query runs against the previous model
       ;; even though the status bar already shows the new one.
-      (let [r (lp/rebuild-router! config)]
-        (lp/refresh-cached-routers! r)))
+      (let [r (sdk/rebuild-router! config)]
+        (sdk/refresh-cached-routers! r)))
     (assoc db :config config)))
 
 (reg-event-db :set-dialog-open

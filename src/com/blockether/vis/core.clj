@@ -54,7 +54,7 @@
                          restore-sandbox!, system-var-sym?, SYSTEM_VAR_NAMES
 
      Binary entry        -main  (invoked by `clojure -M:vis`)"
-  (:refer-clojure :exclude [agent run! symbol])
+  (:refer-clojure :exclude [symbol])
   (:require
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.commandline  :as commandline]

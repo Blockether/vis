@@ -1,7 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as sdk]
-            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -374,7 +373,7 @@
    listing the most recent :tui conversations so the user has
    something to copy-paste."
   [cid]
-  (let [available (try (vec (take 10 (lp/by-channel :tui)))
+  (let [available (try (vec (take 10 (sdk/by-channel :tui)))
                     (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
@@ -454,13 +453,13 @@
                    resumed-from-flag
                    (if (:resume opts)
                   ;; --resume: pick up the latest :tui conversation
-                     (if-let [latest (first (lp/by-channel :tui))]
+                     (if-let [latest (first (sdk/by-channel :tui))]
                        (or (chat/resume-conversation (:id latest))
                          (chat/make-conversation config))
                        (chat/make-conversation config))
                      (chat/make-conversation config)))
               ;; Set title from DB if present; do not synthesize from messages.
-                 conversation-info (when-let [c (lp/by-id id)] c)
+                 conversation-info (when-let [c (sdk/by-id id)] c)
                  title     (when-let [t (some-> conversation-info :title)]
                              (when-not (str/blank? t) t))]
              (state/dispatch [:init-conversation {:id id} history])
@@ -506,7 +505,7 @@
                              (with-dialog-lock
                                #(let [conversation-id (get-in @state/app-db [:conversation :id])
                                       prompt  (if conversation-id
-                                                (or (lp/effective-system-prompt conversation-id)
+                                                (or (sdk/effective-system-prompt conversation-id)
                                                   "(no system prompt)")
                                                 "(no conversation)")]
                                   (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))

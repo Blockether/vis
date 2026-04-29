@@ -7,19 +7,12 @@
    environment lifecycle, conversations, db handler, agent, CLI commands)
    so a failing test points at the SECTION whose code broke."
   (:require
-   [com.blockether.vis.core :as sdk]
-   [com.blockether.vis.core :as env]
-   [com.blockether.vis.core :as lp]
-   [com.blockether.vis.core :as prompt]
-   [clojure.string :as str]
-
-   [lazytest.core :refer [defdescribe it expect throws?]]
-   [sci.core :as sci]
-   [lazytest.core :refer [defdescribe it expect]]
-   [com.blockether.svar.internal.llm :as llm]
    [clojure.java.io :as io]
    [clojure.java.shell :as sh]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [clojure.string :as str]
+   [com.blockether.vis.core :as sdk]
+   [lazytest.core :refer [defdescribe expect it throws?]]
+   [sci.core :as sci]))
 
 ;; ─── from vis_sdk/core_test.clj ───
 
@@ -90,25 +83,25 @@
 ;; First non-nil rewrite wins.
 ;; =============================================================================
 
-(defn- sym-with-parse-rescue
-  [sym-name hook]
-  (sdk/symbol sym-name (fn [& _] nil)
-    {:doc "fixture"
-     :arglists '([])
-     :on-parse-error-fn hook}))
+#_(defn- sym-with-parse-rescue
+    [sym-name hook]
+    (sdk/symbol sym-name (fn [& _] nil)
+      {:doc "fixture"
+       :arglists '([])
+       :on-parse-error-fn hook}))
 
-(defn- ext-with-syms
-  ([ns-sym alias-sym syms] (ext-with-syms ns-sym alias-sym syms nil))
-  ([ns-sym alias-sym syms ext-hook]
-   (sdk/extension
-     (cond-> {:ext/namespace ns-sym
-              :ext/doc       "fixture"
-              :ext/group     "filesystem"
-              :ext/prompt    "placeholder"
-              :ext/ns-alias  {:ns (clojure.core/symbol (str "vis.ext." alias-sym))
-                              :alias alias-sym}
-              :ext/symbols   syms}
-       ext-hook (assoc :ext/on-parse-error-fn ext-hook)))))
+#_(defn- ext-with-syms
+    ([ns-sym alias-sym syms] (ext-with-syms ns-sym alias-sym syms nil))
+    ([ns-sym alias-sym syms ext-hook]
+     (sdk/extension
+       (cond-> {:ext/namespace ns-sym
+                :ext/doc       "fixture"
+                :ext/group     "filesystem"
+                :ext/prompt    "placeholder"
+                :ext/ns-alias  {:ns (clojure.core/symbol (str "vis.ext." alias-sym))
+                                :alias alias-sym}
+                :ext/symbols   syms}
+         ext-hook (assoc :ext/on-parse-error-fn ext-hook)))))
 
 ;; --- ORPHAN: targets removed/changed API. Skipped via #_ --- 
 #_(defdescribe try-rescue-parse-error-test
@@ -182,20 +175,15 @@
 ;; From extension_api_test.clj
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(def ^:private cat-symbol
-  (sdk/symbol 'cat (fn [& _] nil)
-    {:doc "Read a file preview."
-     :arglists '([path] [path offset limit])}))
-
-(def ^:private retries-value
-  (sdk/value 'max-retries 3
-    {:doc "Maximum retry attempts."}))
+;; `cat-symbol` and `retries-value` were re-declared here (private)
+;; as a leftover from merging two test files. Single public defs at
+;; the top of the file are sufficient.
 
 (defdescribe extension-runtime-composition-test
 
   (it "assembles ONLY the author-supplied :ext/prompt under the alias header"
     ;; New contract (see
-    ;; `com.blockether.vis.internal.prompt/render-extension-prompt-block`):
+    ;; `com.blockether.vis.internal.sdk/render-extension-prompt-block`):
     ;; the runtime no longer auto-canonicalizes `:ext/symbols` into prompt
     ;; lines. Whatever lands in the prompt is whatever `:ext/prompt`
     ;; returns — plus the namespace-alias header. Sandbox bindings remain
@@ -209,8 +197,8 @@
                                              :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                                              :ext/prompt    "RULES:\n- Discover paths first."
                                              :ext/symbols   [cat-symbol retries-value]})])}
-          active-exts   (prompt/active-extensions environment)
-          system-prompt (prompt/assemble-system-prompt environment
+          active-exts   (sdk/active-extensions environment)
+          system-prompt (sdk/assemble-system-prompt environment
                           {:active-extensions active-exts})]
       ;; Header IS present (alias → namespace marker still added).
       (expect (str/includes? system-prompt "[namespace: vis → vis.ext.tools]"))
@@ -531,7 +519,7 @@
    to empty, so every key in the sandbox is treated as a user var."
   ([sandbox] (index sandbox #{}))
   ([sandbox initial-ns-keys]
-   (env/build-var-index nil initial-ns-keys sandbox nil nil nil)))
+   (sdk/build-var-index nil initial-ns-keys sandbox nil nil nil)))
 
 ;; -----------------------------------------------------------------------------
 ;; Inline scalars
@@ -710,49 +698,49 @@
 
 (defdescribe extract-defining-name-test
   (it "extracts var name from (def NAME val)"
-    (expect (= 'foo (lp/extract-defining-name "(def foo 42)"))))
+    (expect (= 'foo (sdk/extract-defining-name "(def foo 42)"))))
 
   (it "extracts var name from (defn NAME [args] body)"
-    (expect (= 'my-fn (lp/extract-defining-name "(defn my-fn [x] (inc x))"))))
+    (expect (= 'my-fn (sdk/extract-defining-name "(defn my-fn [x] (inc x))"))))
 
   (it "extracts var name from (defn- NAME [args] body)"
-    (expect (= 'private-fn (lp/extract-defining-name "(defn- private-fn [] 1)"))))
+    (expect (= 'private-fn (sdk/extract-defining-name "(defn- private-fn [] 1)"))))
 
   (it "extracts var name from (defmacro NAME [args] body)"
-    (expect (= 'my-macro (lp/extract-defining-name "(defmacro my-macro [x] `(inc ~x))"))))
+    (expect (= 'my-macro (sdk/extract-defining-name "(defmacro my-macro [x] `(inc ~x))"))))
 
   (it "returns nil for non-def expressions"
-    (expect (nil? (lp/extract-defining-name "(+ 1 2)")))
-    (expect (nil? (lp/extract-defining-name "(println :hi)")))
-    (expect (nil? (lp/extract-defining-name "42"))))
+    (expect (nil? (sdk/extract-defining-name "(+ 1 2)")))
+    (expect (nil? (sdk/extract-defining-name "(println :hi)")))
+    (expect (nil? (sdk/extract-defining-name "42"))))
 
   (it "returns nil for multi-form code blocks"
     ;; A block with two top-level forms shouldn't be doc-attached
     ;; ambiguously — only single-form (def…) shapes qualify.
-    (expect (nil? (lp/extract-defining-name "(def a 1) (def b 2)"))))
+    (expect (nil? (sdk/extract-defining-name "(def a 1) (def b 2)"))))
 
   (it "returns nil for parse errors"
-    (expect (nil? (lp/extract-defining-name "(def foo")))
-    (expect (nil? (lp/extract-defining-name "this is not clojure")))))
+    (expect (nil? (sdk/extract-defining-name "(def foo")))
+    (expect (nil? (sdk/extract-defining-name "this is not clojure")))))
 
 ;; -----------------------------------------------------------------------------
 ;; End-to-end via execute-code (the private helper) — round-trip through SCI
 ;; -----------------------------------------------------------------------------
 
 (defn- fresh-environment []
-  (env/create-sci-context nil))
+  (sdk/create-sci-context nil))
 
-(defn- def-doc [{:keys [sci-ctx]} sym]
-  (let [doc-form (str "(:doc (meta (resolve '" sym ")))")]
-    (:val (sci/eval-string+ sci-ctx doc-form
-            {:ns (sci/find-ns sci-ctx 'sandbox)}))))
+#_(defn- def-doc [{:keys [sci-ctx]} sym]
+    (let [doc-form (str "(:doc (meta (resolve '" sym ")))")]
+      (:val (sci/eval-string+ sci-ctx doc-form
+              {:ns (sci/find-ns sci-ctx 'sandbox)}))))
 
-(defn- exec [environment expression doc]
-  ;; execute-code is private; reach via the var directly so the test
-  ;; doesn't depend on a public re-export.
-  (let [execute-code-var (resolve 'com.blockether.vis.core/execute-code)]
-    (apply (deref execute-code-var) environment expression
-      [:doc doc])))
+#_(defn- exec [environment expression doc]
+    ;; execute-code is private; reach via the var directly so the test
+    ;; doesn't depend on a public re-export.
+    (let [execute-code-var (resolve 'com.blockether.vis.core/execute-code)]
+      (apply (deref execute-code-var) environment expression
+        [:doc doc])))
 
 ;; --- ORPHAN: targets removed/changed API. Skipped via #_ --- 
 #_(defdescribe doc-attach-test
@@ -800,7 +788,7 @@
         (exec environment "(def width 1024)" "Pixel width of the canvas.\nSecond line ignored.")
         (let [sandbox (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
               initial (:initial-ns-keys environment)
-              out (env/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
+              out (sdk/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
           (expect (re-find #"\(def width \"Pixel width of the canvas\.\" 1024\)" out))
           (expect (not (re-find #"Second line" out))))))
 
@@ -809,7 +797,7 @@
         (exec environment "(defn doubler [x] (* 2 x))" "Doubles its argument.")
         (let [sandbox (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
               initial (:initial-ns-keys environment)
-              out (env/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
+              out (sdk/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
           (expect (re-find #"\(defn doubler \[x\] \"Doubles its argument\." out))))))
 
 ;; -----------------------------------------------------------------------------
@@ -821,25 +809,25 @@
 (defdescribe safe-pr-str-test
   (it "caps element count via *print-length*"
     (let [v   (vec (range 200))
-          out (prompt/safe-pr-str v {:print-length 5 :max-chars 1000})]
+          out (sdk/safe-pr-str v {:print-length 5 :max-chars 1000})]
       ;; First 5 elements rendered, rest collapsed to `...` per Clojure's
       ;; *print-length* convention.
       (expect (re-find #"\[0 1 2 3 4 \.\.\.\]" out))))
 
   (it "caps nesting via *print-level*"
     (let [deep {:a {:b {:c {:d {:e :leaf}}}}}
-          out  (prompt/safe-pr-str deep {:print-level 2 :max-chars 1000})]
+          out  (sdk/safe-pr-str deep {:print-level 2 :max-chars 1000})]
       ;; At depth 2 Clojure replaces deeper structure with `#`.
       (expect (re-find #"#" out))))
 
   (it "caps the final char count and appends a clip marker"
     (let [s   (apply str (repeat 5000 "a"))
-          out (prompt/safe-pr-str s {:max-chars 100 :print-length 1000 :print-level 10})]
+          out (sdk/safe-pr-str s {:max-chars 100 :print-length 1000 :print-level 10})]
       (expect (<= (count out) 200))                  ;; bounded prefix + suffix
       (expect (re-find #" …<\+\d+ chars>$" out))))
 
   (it "does not clip when input fits within max-chars"
-    (let [out (prompt/safe-pr-str {:hello "world"} {:max-chars 1000})]
+    (let [out (sdk/safe-pr-str {:hello "world"} {:max-chars 1000})]
       (expect (= "{:hello \"world\"}" out))
       (expect (not (re-find #"…" out)))))
 
@@ -848,7 +836,7 @@
     ;; OOM or stall on a billion-element lazy seq. With *print-length*
     ;; bound, pr stops after N elements and returns instantly.
     (let [billion (range 1000000000)
-          out     (prompt/safe-pr-str billion {:print-length 3 :max-chars 200})]
+          out     (sdk/safe-pr-str billion {:print-length 3 :max-chars 200})]
       (expect (re-find #"\(0 1 2 \.\.\.\)" out)))))
 
 ;; ─── from auto_forget_test.clj ───
@@ -894,39 +882,39 @@
 (defdescribe auto-forget-candidates-test
 
   (it "🫙 empty sandbox → nothing to forget, move along"
-    (expect (= #{} (lp/auto-forget-candidates {} #{} {} #{q1}))))
+    (expect (= #{} (sdk/auto-forget-candidates {} #{} {} #{q1}))))
 
   (it "🛡️ built-ins are untouchable — hands off initial-ns-keys"
     (let [sandbox   (make-sandbox [['fetch 42]])
           initials  #{'fetch}
           registry  (make-registry [['fetch q1]])
           recent    #{q1}]
-      (expect (= #{} (lp/auto-forget-candidates sandbox initials registry recent)))))
+      (expect (= #{} (sdk/auto-forget-candidates sandbox initials registry recent)))))
 
   (it "🎧 SYSTEM vars (QUERY/ANSWER/REASONING) are sacred — never forgotten"
     (let [sandbox   (make-sandbox [['QUERY "hello"]])
           registry  (make-registry [['QUERY q1]])
           recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not in SYSTEM_VAR_NAMES
-      (expect (= #{} (lp/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "📝 documented vars survive any purge — docstrings are armor"
     (let [sandbox   (make-sandbox [['important 99 "This var is documented"]])
           registry  (make-registry [['important q1]])
           recent    #{q2}]  ;; q1 is NOT recent
-      (expect (= #{} (lp/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "🕐 recently-touched vars stay alive within the recency window"
     (let [sandbox   (make-sandbox [['scratch 1]])
           registry  (make-registry [['scratch q2]])
           recent    #{q1 q2 q3}]
-      (expect (= #{} (lp/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "🗑️ stale undocumented scratch vars get swept without mercy"
     (let [sandbox   (make-sandbox [['scratch 1] ['tmp 2]])
           registry  (make-registry [['scratch q1] ['tmp q1]])
           recent    #{q3 q4}]
       (expect (= #{'scratch 'tmp}
-                (lp/auto-forget-candidates sandbox #{} registry recent)))))
+                (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "🎯 full gauntlet: stale→gone, documented→safe, recent→safe, system→safe, builtin→safe"
     (let [sandbox   (make-sandbox [['stale-a 1]
@@ -944,13 +932,13 @@
                                     ['builtin q1]])
           recent    #{q3 q4}]
       (expect (= #{'stale-a 'stale-b}
-                (lp/auto-forget-candidates sandbox initials registry recent)))))
+                (sdk/auto-forget-candidates sandbox initials registry recent)))))
 
   (it "👻 ephemeral vars with no DB footprint are invisible to the janitor"
     (let [sandbox   (make-sandbox [['ephemeral 99]])
           registry  {}
           recent    #{q1}]
-      (expect (= #{} (lp/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "⚡ a non-registered uppercase var (e.g. CONFIG) gets forgotten like any mortal var"
     ;; SYSTEM_VAR_NAMES is a fixed set
@@ -960,14 +948,13 @@
     (let [sandbox   (make-sandbox [['CONFIG 42]])
           registry  (make-registry [['CONFIG q1]])
           recent    #{q2}]
-      (expect (= #{'CONFIG} (lp/auto-forget-candidates sandbox #{} registry recent))))))
+      (expect (= #{'CONFIG} (sdk/auto-forget-candidates sandbox #{} registry recent))))))
 
 ;; ─── from core_test.clj ───
 
 ;; ─── from answer_render_test.clj ───
 
-(defn- fresh-environment []
-  (env/create-sci-context nil))
+;; `fresh-environment` already declared above (line 735). Reuse it.
 
 (defn- eval-in [{:keys [sci-ctx]} source]
   (:val (sci/eval-string+ sci-ctx source
@@ -983,7 +970,7 @@
         (transient {}) sandbox))))
 
 (defn- render [environment raw-answer]
-  (lp/render raw-answer (get-locals environment)))
+  (sdk/render raw-answer (get-locals environment)))
 
 (defdescribe answer-render-test
 
@@ -1032,33 +1019,33 @@
 
 (defdescribe canonical-expression-hash-test
   (it "collapses whitespace differences"
-    (expect (= (lp/canonical-expression-hash "(grep \"X\")")
-              (lp/canonical-expression-hash "(grep   \"X\")"))))
+    (expect (= (sdk/canonical-expression-hash "(grep \"X\")")
+              (sdk/canonical-expression-hash "(grep   \"X\")"))))
 
   (it "collapses leading/trailing whitespace"
-    (expect (= (lp/canonical-expression-hash "(grep \"X\")")
-              (lp/canonical-expression-hash "  (grep \"X\")\n"))))
+    (expect (= (sdk/canonical-expression-hash "(grep \"X\")")
+              (sdk/canonical-expression-hash "  (grep \"X\")\n"))))
 
   (it "produces different hashes for different forms"
-    (expect (not= (lp/canonical-expression-hash "(grep \"X\")")
-              (lp/canonical-expression-hash "(grep \"Y\")"))))
+    (expect (not= (sdk/canonical-expression-hash "(grep \"X\")")
+              (sdk/canonical-expression-hash "(grep \"Y\")"))))
 
   (it "produces different hashes for forms with different head sym"
-    (expect (not= (lp/canonical-expression-hash "(grep \"X\")")
-              (lp/canonical-expression-hash "(read-file \"X\")"))))
+    (expect (not= (sdk/canonical-expression-hash "(grep \"X\")")
+              (sdk/canonical-expression-hash "(read-file \"X\")"))))
 
   (it "falls back to raw-string hash on parse failure (never throws)"
     ;; A truncated form like \"(def\" is unparseable; the helper must
     ;; still return a stable hash.
-    (let [a (lp/canonical-expression-hash "(def")
-          b (lp/canonical-expression-hash "(def")
-          c (lp/canonical-expression-hash "(defn")]
+    (let [a (sdk/canonical-expression-hash "(def")
+          b (sdk/canonical-expression-hash "(def")
+          c (sdk/canonical-expression-hash "(defn")]
       (expect (= a b))
       (expect (not= a c))))
 
   (it "treats nil / empty string as a stable hash, not a throw"
-    (expect (string? (lp/canonical-expression-hash "")))
-    (expect (string? (lp/canonical-expression-hash nil)))))
+    (expect (string? (sdk/canonical-expression-hash "")))
+    (expect (string? (sdk/canonical-expression-hash nil)))))
 
 ;; -----------------------------------------------------------------------------
 ;; count-duplicates
@@ -1067,7 +1054,7 @@
 (defdescribe count-duplicates-test
   (it "first iteration has zero duplicates and seeds the seen-set"
     (let [seen (atom #{})
-          [duplicates total] (lp/count-duplicates seen
+          [duplicates total] (sdk/count-duplicates seen
                                [{:code "(+ 1 2)"}
                                 {:code "(grep \"X\")"}])]
       (expect (= 0 duplicates))
@@ -1076,10 +1063,10 @@
 
   (it "subsequent iteration reports duplicates and grows the seen-set with new hashes only"
     (let [seen (atom #{})]
-      (lp/count-duplicates seen
+      (sdk/count-duplicates seen
         [{:code "(grep \"X\")"}
          {:code "(read-file \"a\")"}])
-      (let [[duplicates total] (lp/count-duplicates seen
+      (let [[duplicates total] (sdk/count-duplicates seen
                                  [{:code "(grep \"X\")"}            ;; duplicate
                                   {:code "(grep \"Y\")"}             ;; new
                                   {:code "(read-file \"a\")"}])]      ;; duplicate
@@ -1092,17 +1079,17 @@
     ;; Iteration 1 errored out; iteration 2 retries the same call; iteration 2's call
     ;; must NOT count as a duplicate.
     (let [seen (atom #{})]
-      (lp/count-duplicates seen
+      (sdk/count-duplicates seen
         [{:code "(grep \"X\")" :error "regex broken"}])
-      (let [[duplicates total] (lp/count-duplicates seen
+      (let [[duplicates total] (sdk/count-duplicates seen
                                  [{:code "(grep \"X\")"}])]
         (expect (= 0 duplicates))
         (expect (= 1 total)))))
 
   (it "whitespace-equivalent retries dedup correctly"
     (let [seen (atom #{})]
-      (lp/count-duplicates seen [{:code "(+ 1 2)"}])
-      (let [[duplicates total] (lp/count-duplicates seen
+      (sdk/count-duplicates seen [{:code "(+ 1 2)"}])
+      (let [[duplicates total] (sdk/count-duplicates seen
                                  [{:code "(+   1   2)"}])]
         (expect (= 1 duplicates))
         (expect (= 1 total)))))
@@ -1115,7 +1102,7 @@
     ;; duplicates even though the dedup short-circuit fires for
     ;; calls 2 and 3.
     (let [seen (atom #{})
-          [duplicates total] (lp/count-duplicates seen
+          [duplicates total] (sdk/count-duplicates seen
                                [{:code "(grep \"X\")"}
                                 {:code "(grep \"X\")"}
                                 {:code "(grep \"X\")"}
@@ -1126,7 +1113,7 @@
 
   (it "handles an empty expressions vec gracefully"
     (let [seen (atom #{})
-          [duplicates total] (lp/count-duplicates seen [])]
+          [duplicates total] (sdk/count-duplicates seen [])]
       (expect (= 0 duplicates))
       (expect (= 0 total)))))
 
@@ -1137,17 +1124,17 @@
 (defdescribe dedup-cache-test
   (it "lookup returns nil when the cache is empty"
     (let [cache (atom {})]
-      (expect (nil? (lp/dedup-cache-lookup cache "(grep \"X\")")))))
+      (expect (nil? (sdk/dedup-cache-lookup cache "(grep \"X\")")))))
 
   (it "lookup returns nil when expression is nil"
     (let [cache (atom {})]
-      (expect (nil? (lp/dedup-cache-lookup cache nil)))))
+      (expect (nil? (sdk/dedup-cache-lookup cache nil)))))
 
   (it "record! stores successful results, lookup hits afterwards"
     (let [cache (atom {})
           successful {:result :ok :stdout "" :stderr "" :execution-time-ms 7}]
-      (lp/dedup-cache-record! cache "(grep \"X\")" successful "i3.1")
-      (let [hit (lp/dedup-cache-lookup cache "(grep \"X\")")]
+      (sdk/dedup-cache-record! cache "(grep \"X\")" successful "i3.1")
+      (let [hit (sdk/dedup-cache-lookup cache "(grep \"X\")")]
         (expect (some? hit))
         (expect (= :ok (:result hit)))
         (expect (= "i3.1" (:cached-from hit)))
@@ -1157,29 +1144,29 @@
   (it "record! is a no-op for error results"
     (let [cache (atom {})
           err-result {:result nil :error "boom" :stdout "" :stderr ""}]
-      (lp/dedup-cache-record! cache "(grep \"X\")" err-result "i3.1")
-      (expect (nil? (lp/dedup-cache-lookup cache "(grep \"X\")")))))
+      (sdk/dedup-cache-record! cache "(grep \"X\")" err-result "i3.1")
+      (expect (nil? (sdk/dedup-cache-lookup cache "(grep \"X\")")))))
 
   (it "record! is a no-op for timeouts"
     (let [cache (atom {})
           timeout-result {:result nil :timeout? true :stdout "" :stderr ""}]
-      (lp/dedup-cache-record! cache "(grep \"X\")" timeout-result "i3.1")
-      (expect (nil? (lp/dedup-cache-lookup cache "(grep \"X\")")))))
+      (sdk/dedup-cache-record! cache "(grep \"X\")" timeout-result "i3.1")
+      (expect (nil? (sdk/dedup-cache-lookup cache "(grep \"X\")")))))
 
   (it "record! preserves the FIRST writer when racing"
     (let [cache (atom {})
           first-result  {:result :first :execution-time-ms 1}
           second-result {:result :second :execution-time-ms 2}]
-      (lp/dedup-cache-record! cache "(grep \"X\")" first-result "i1.1")
-      (lp/dedup-cache-record! cache "(grep \"X\")" second-result "i5.2")
-      (let [hit (lp/dedup-cache-lookup cache "(grep \"X\")")]
+      (sdk/dedup-cache-record! cache "(grep \"X\")" first-result "i1.1")
+      (sdk/dedup-cache-record! cache "(grep \"X\")" second-result "i5.2")
+      (let [hit (sdk/dedup-cache-lookup cache "(grep \"X\")")]
         (expect (= :first (:result hit)))
         (expect (= "i1.1" (:cached-from hit))))))
 
   (it "whitespace-equivalent forms hit the same cache entry"
     (let [cache (atom {})]
-      (lp/dedup-cache-record! cache "(grep \"X\")" {:result :ok} "i1.1")
-      (expect (some? (lp/dedup-cache-lookup cache "(grep    \"X\")"))))))
+      (sdk/dedup-cache-record! cache "(grep \"X\")" {:result :ok} "i1.1")
+      (expect (some? (sdk/dedup-cache-lookup cache "(grep    \"X\")"))))))
 
 ;; ─── from schema_reject_retry_test.clj — DELETED
 ;;
@@ -1236,7 +1223,7 @@
    an atom that the helper appends to via `:on-chunk`."
     [chunks & {:keys [max-retries]
                :or   {max-retries 2}}]
-    (lp/ask-with-schema-retry!
+    (sdk/ask-with-schema-retry!
       ::router-stub
       {:spec ::iteration-spec-stub
        :messages [{:role "user" :content "Q"}]
@@ -1363,72 +1350,72 @@
 
 ;; ─── from parse_rescue_loop_test.clj ───
 
-(def ^:private try-extension-parse-rescue
-  ;; private fn in com.blockether.vis.internal.loop — reach in via
-  ;; requiring-resolve so the test can exercise the parse-rescue path
-  ;; without bumping it to public.
-  (requiring-resolve 'com.blockether.vis.internal.loop/try-extension-parse-rescue))
+#_(def ^:private try-extension-parse-rescue
+    ;; private fn in com.blockether.vis.internal.loop — reach in via
+    ;; requiring-resolve so the test can exercise the parse-rescue path
+    ;; without bumping it to public.
+    (requiring-resolve 'com.blockether.vis.internal.loop/try-extension-parse-rescue))
 
-(defn- preceding-backslash-count
-  [code index]
-  (loop [position (dec index)
-         count    0]
-    (if (and (<= 0 position) (= \\ (.charAt ^String code position)))
-      (recur (dec position) (inc count))
-      count)))
+#_(defn- preceding-backslash-count
+    [code index]
+    (loop [position (dec index)
+           count    0]
+      (if (and (<= 0 position) (= \\ (.charAt ^String code position)))
+        (recur (dec position) (inc count))
+        count)))
 
-(defn- rescue-one-unsupported-escape
-  "Test fixture hook: doubles exactly one unsupported regex escape.
+#_(defn- rescue-one-unsupported-escape
+    "Test fixture hook: doubles exactly one unsupported regex escape.
    The loop driver must call it repeatedly when a source string has
    multiple bad sites. This intentionally lives in core tests so core
    does not depend on the common-editing extension test classpath."
-  [{:keys [code error]}]
-  (when (and (string? code) (str/includes? (str error) "Unsupported escape character"))
-    (let [targets #{\| \. \( \) \$ \* \+ \? \[ \] \{ \}}
-          length  (count code)]
-      (loop [index 0]
-        (cond
-          (>= index (dec length)) nil
-          (and (= \\ (.charAt ^String code index))
-            (targets (.charAt ^String code (inc index)))
-            (even? (preceding-backslash-count code index)))
-          (str (subs code 0 index) "\\" (subs code index))
-          :else (recur (inc index)))))))
+    [{:keys [code error]}]
+    (when (and (string? code) (str/includes? (str error) "Unsupported escape character"))
+      (let [targets #{\| \. \( \) \$ \* \+ \? \[ \] \{ \}}
+            length  (count code)]
+        (loop [index 0]
+          (cond
+            (>= index (dec length)) nil
+            (and (= \\ (.charAt ^String code index))
+              (targets (.charAt ^String code (inc index)))
+              (even? (preceding-backslash-count code index)))
+            (str (subs code 0 index) "\\" (subs code index))
+            :else (recur (inc index)))))))
 
-(def ^:private rg-symbol
-  (sdk/symbol 'rg (fn [& _] nil)
-    {:doc               "fixture"
-     :arglists          '([pattern])
-     :on-parse-error-fn rescue-one-unsupported-escape}))
+#_(def ^:private rg-symbol
+    (sdk/symbol 'rg (fn [& _] nil)
+      {:doc               "fixture"
+       :arglists          '([pattern])
+       :on-parse-error-fn rescue-one-unsupported-escape}))
 
-(defn- minimal-environment
-  "Build the smallest possible environment shape that
+#_(defn- minimal-environment
+    "Build the smallest possible environment shape that
    `try-extension-parse-rescue` reads from. Only `:extensions`
    (a deref-able holder of an extension vec) is required."
-  []
-  (let [ext (sdk/extension
-              {:ext/namespace 'com.blockether.vis.test.parse-rescue
-               :ext/doc       "Loop test fixture."
-               :ext/group     "filesystem"
-               :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
-               :ext/prompt    (constantly "placeholder")
-               :ext/symbols   [rg-symbol]})]
-    {:extensions (atom [ext])
-     :sci-ctx    (sci/init {})}))
+    []
+    (let [ext (sdk/extension
+                {:ext/namespace 'com.blockether.vis.test.parse-rescue
+                 :ext/doc       "Loop test fixture."
+                 :ext/group     "filesystem"
+                 :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+                 :ext/prompt    (constantly "placeholder")
+                 :ext/symbols   [rg-symbol]})]
+      {:extensions (atom [ext])
+       :sci-ctx    (sci/init {})}))
 
-(defn- parses? [^String code]
-  (try
-    (require '[edamame.core :as eda])
-    ((resolve 'eda/parse-string-all) code {:all true})
-    true
-    (catch Throwable _ false)))
+#_(defn- parses? [^String code]
+    (try
+      (require '[edamame.core :as eda])
+      ((resolve 'eda/parse-string-all) code {:all true})
+      true
+      (catch Throwable _ false)))
 
-(defn- parse-error-message [^String code]
-  (try
-    (require '[edamame.core :as eda])
-    ((resolve 'eda/parse-string-all) code {:all true})
-    nil
-    (catch Throwable t (ex-message t))))
+#_(defn- parse-error-message [^String code]
+    (try
+      (require '[edamame.core :as eda])
+      ((resolve 'eda/parse-string-all) code {:all true})
+      nil
+      (catch Throwable t (ex-message t))))
 
 ;; --- ORPHAN: targets removed/changed API. Skipped via #_ --- 
 #_(defdescribe try-extension-parse-rescue-loop-test

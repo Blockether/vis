@@ -27,7 +27,7 @@
    `com.blockether.vis.internal.persistance`; configuration + active
    provider state in `com.blockether.vis.internal.config`; the
    extension subsystem in `com.blockether.vis.internal.extension`."
-  (:refer-clojure :exclude [agent run!])
+  (:refer-clojure)
   (:require
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
@@ -243,9 +243,6 @@
 
 (defn- truncate [s n]
   (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
-
-(defn- strip-sandbox-ns [s]
-  (-> (str s) (str/replace "sandbox/" "")))
 
 (defn- realize-value [v]
   (cond
@@ -735,7 +732,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn get-locals
-  "Returns {sym → val} of user-defined vars in SCI sandbox."
+  "Returns {sym → val} of user-defined vars in the SCI sandbox
+   (excludes built-ins / kw-keyed entries). Direct atom read — zero
+   eval overhead."
   [{:keys [sci-ctx initial-ns-keys]}]
   (try
     (let [sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
@@ -877,31 +876,31 @@
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. The atom holds the stringified arg. Surface any
           ;; expression error as a validation error so the loop retries.
+          ;; `resolved-model` is a MAP — `{:name str :provider kw
+          ;; :reasoning? bool}` — not a string. Persisting `(str
+          ;; resolved-model)` would land a stringified map in
+          ;; `iteration.llm_model`; surface `:name` and `:provider`
+          ;; separately so both columns get clean values.
         (let [final-answer (str raw-final-answer)
               validation-error (when expression-errors
-                                 (error/final-answer-code-error-message (:error (first expression-errors))))]
-            ;; `resolved-model` is a MAP — `{:name str :provider kw
-            ;; :reasoning? bool}` — not a string. Persisting `(str
-            ;; resolved-model)` would land a stringified map in
-            ;; `iteration.llm_model`; surface `:name` and `:provider`
-            ;; separately so both columns get clean values.
-          (let [model-name (some-> (:name resolved-model) str)
-                provider   (:provider resolved-model)]
-            (if validation-error
-              {:thinking thinking
-               :expressions (or (seq expressions)
-                              [{:id 0 :code "(final-answer-validation)"
-                                :result nil :stdout "" :stderr ""
-                                :error validation-error}])
-               :final-result nil :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :llm-messages messages :llm-provider provider :llm-model model-name}
-              {:thinking thinking
-               :expressions (strip-noop-expressions expressions)
-               :final-result {:final? true :answer final-answer}
-               :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :llm-messages messages :llm-provider provider :llm-model model-name})))
+                                 (error/final-answer-code-error-message (:error (first expression-errors))))
+              model-name       (some-> (:name resolved-model) str)
+              provider         (:provider resolved-model)]
+          (if validation-error
+            {:thinking thinking
+             :expressions (or (seq expressions)
+                            [{:id 0 :code "(final-answer-validation)"
+                              :result nil :stdout "" :stderr ""
+                              :error validation-error}])
+             :final-result nil :api-usage api-usage
+             :duration-ms (or (:duration-ms ask-result) 0)
+             :llm-messages messages :llm-provider provider :llm-model model-name}
+            {:thinking thinking
+             :expressions (strip-noop-expressions expressions)
+             :final-result {:final? true :answer final-answer}
+             :api-usage api-usage
+             :duration-ms (or (:duration-ms ask-result) 0)
+             :llm-messages messages :llm-provider provider :llm-model model-name}))
           ;; Normal path
         {:thinking thinking
          :expressions (strip-noop-expressions expressions)
@@ -918,9 +917,6 @@
 ;; -----------------------------------------------------------------------------
 ;; Core helpers
 ;; -----------------------------------------------------------------------------
-
-(defn- truncate [s n]
-  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
 (defn- format-iteration-error
   "Render one trace `:error` map as a Markdown bullet for the user.
@@ -952,19 +948,6 @@
       (str "**Recent provider errors:**\n\n"
         (str/join "\n" (map format-iteration-error errs))
         "\n\n"))))
-
-(defn- realize-value [v]
-  (cond
-    (instance? clojure.lang.IDeref v) @v
-    (map? v) (into {} (map (fn [[k vv]] [k (realize-value vv)])) v)
-    (vector? v) (mapv realize-value v)
-    (set? v) (set (map realize-value v))
-    (sequential? v) (doall (map realize-value v))
-    :else v))
-
-(defn- format-exception-short [^Throwable t]
-  {:class (.getName (class t))
-   :message (or (ex-message t) (str t))})
 
 ;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (query single-file API)
@@ -1178,7 +1161,6 @@
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
                             :history-messages history-messages})
-        db-info (:db-info environment)
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
         accumulate-usage! (fn [api-usage]
                             (when api-usage
@@ -1804,36 +1786,15 @@
 ;; Helpers
 ;; =============================================================================
 
-(defn- format-exception-short [^Throwable t]
-  {:class (.getName (class t)) :message (or (ex-message t) (str t))})
-
-(defn get-locals
-  "Returns {sym → val} of user-defined vars in the SCI sandbox
-   (excludes built-ins / kw-keyed entries). Direct atom read — zero
-   eval overhead."
-  [{:keys [sci-ctx initial-ns-keys]}]
-  (try
-    (let [sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
-      (persistent!
-        (reduce-kv (fn [acc k v]
-                     (if (or (contains? initial-ns-keys k) (keyword? k))
-                       acc
-                       (assoc! acc k (if (instance? clojure.lang.IDeref v) @v v))))
-          (transient {}) sandbox)))
-    (catch Exception e
-      (tel/log! {:level :warn :id ::get-locals-fallback
-                 :data {:error (ex-message e)}
-                 :msg "Failed to read sandbox locals, returning empty map"})
-      {})))
-
 ;; =============================================================================
 ;; Public env accessors
 ;; =============================================================================
 
-(defn db-info
-  "Current db-info map for env. Nil-safe."
-  [env]
-  (:db-info env))
+;; `db-info` (the env accessor) was a thin wrapper over `(:db-info env)`
+;; that no caller actually invoked — every consumer either destructured
+;; `:db-info` directly or used the no-arg `(db-info)` defined further
+;; down (which returns the process-wide shared connection). The defn was
+;; deleted to keep ONE canonical `db-info` symbol on this namespace.
 
 (defn custom-bindings
   "Current custom SCI bindings {sym -> value}."

@@ -3,11 +3,10 @@
    message to the shared conversations API and ships the answer back.
 
    Each Telegram chat maps to a `:telegram` conversation via
-   `lp/for-telegram-chat!` (find-or-create on chat-id). One process can
+   `sdk/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.core`."
   (:require [com.blockether.vis.core :as sdk]
-            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [taoensso.telemere :as tel]))
 
@@ -40,8 +39,8 @@
         (future
           (try
             (tg/send-chat-action! token chat-id "typing")
-            (let [{:keys [id]} (lp/for-telegram-chat! chat-id)
-                  result       (lp/send! id text
+            (let [{:keys [id]} (sdk/for-telegram-chat! chat-id)
+                  result       (sdk/send! id text
                                  {:max-context-tokens 2200})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))]
               (tg/send-message! token chat-id
@@ -95,7 +94,7 @@
     (when-let [t @poll-thread]
       (.interrupt ^Thread t)
       (reset! poll-thread nil))
-    (lp/close-all!)
+    (sdk/close-all!)
     (tel/log! {:level :info :id ::stopped}
       "Telegram bot stopped")))
 
