@@ -55,16 +55,28 @@
     (let [s (str uuid-or-string)]
       (subs s 0 (min SHORT_ID_CHARS (count s))))))
 
+(defn- comma-int
+  "Group-3 thousands separator for integers, US locale-style. Used by
+   the token line so a 12,345-prompt-token export reads naturally.
+   Returns nil for nil / non-numeric input so the caller can skip it."
+  [n]
+  (when (number? n)
+    (String/format java.util.Locale/US "%,d" (object-array [(long n)]))))
+
 (defn- format-tokens-line
   "Compact token summary like `1,234 in / 567 out` if either side is
-   present, else nil. Mirrors what the TUI footer surfaces so the two
-   channels can't disagree on the wording."
+   present, else nil. Each non-positive / nil component is skipped so
+   the line never reads `0 think /  cached` for turns that didn't
+   exercise reasoning or cache."
   [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]}]
-  (let [bits (cond-> []
-               input-tokens     (conj (str (fmt/format-tokens input-tokens) " in"))
-               output-tokens    (conj (str (fmt/format-tokens output-tokens) " out"))
-               reasoning-tokens (conj (str (fmt/format-tokens reasoning-tokens) " think"))
-               cached-tokens    (conj (str (fmt/format-tokens cached-tokens) " cached")))]
+  (let [emit  (fn [n suffix]
+                (when (and (number? n) (pos? (long n)))
+                  (str (comma-int n) " " suffix)))
+        bits  (keep identity
+                [(emit input-tokens     "in")
+                 (emit output-tokens    "out")
+                 (emit reasoning-tokens "think")
+                 (emit cached-tokens    "cached")])]
     (when (seq bits)
       (str/join " / " bits))))
 
@@ -76,8 +88,8 @@
                 (:provider turn)        (conj (name (:provider turn)))
                 (:model turn)           (conj (:model turn))
                 (:iteration-count turn) (conj (str (:iteration-count turn)
-                                               " iter"
-                                               (when (> (long (:iteration-count turn)) 1) "s")))
+                                                " iter"
+                                                (when (> (long (:iteration-count turn)) 1) "s")))
                 (:duration-ms turn)     (conj (fmt/format-duration (:duration-ms turn)))
                 (:total-cost turn)      (conj (fmt/format-cost (:total-cost turn))))
         tokens (format-tokens-line turn)

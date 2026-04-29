@@ -50,7 +50,7 @@ Key names spell out the full word (`:previous-blocks`, not
 2. **Prefix with `[system_nudge]`** so the LLM recognises it as system guidance.
 3. **Keep it short.** One line. Nudges >200 chars dilute signal.
 4. **Never throw.** A throwing nudge-fn is caught, logged at `:warn`, and skipped.
-5. **Do not mutate environment state.** Nudge-fns are observers, not actors.
+5. **Stay read-only.** Nudge-fns are observers, not actors — every mutation belongs in a hook or symbol invocation.
 
 ### Example
 

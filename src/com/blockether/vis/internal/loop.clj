@@ -2568,7 +2568,7 @@
   "Return the process-wide shared DB connection bound to
    `(config/resolve-db-spec)`. Thin wrapper over
    `persistance.core/db-shared-connection!` that fills in the default db-spec
-   so frontend callers don't have to know about config resolution."
+   so frontend callers stay clear of config resolution."
   []
   (persistance/db-shared-connection! (config/resolve-db-spec)))
 

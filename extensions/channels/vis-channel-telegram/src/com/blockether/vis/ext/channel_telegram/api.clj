@@ -190,8 +190,8 @@
             (recur (inc i) sb)))))))
 
 (defn- chunk-text
-  "Split text into <=4000-char pieces along paragraph/line boundaries so we
-   don't break HTML tags mid-element. Telegram's hard limit is 4096."
+  "Split text into <=4000-char pieces along paragraph/line boundaries so
+   HTML tags stay intact across chunks. Telegram's hard limit is 4096."
   [text]
   (if (<= (count text) 4000)
     [text]

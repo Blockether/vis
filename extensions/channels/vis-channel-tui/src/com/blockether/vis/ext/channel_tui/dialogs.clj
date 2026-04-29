@@ -550,10 +550,19 @@
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}.
-   Quit is intentionally NOT here — use Ctrl+C to quit."
+   Quit is intentionally NOT here — use Ctrl+C to quit.
+
+   `:copy` is the per-message picker (Space toggles, Enter copies
+   selected as plain `role: text`). `:copy-as-markdown` is the
+   one-shot “give me the whole conversation as a Markdown document
+   I can paste into a GitHub issue” action; it routes through the
+   shared host helper `com.blockether.vis.core/conversation->markdown`
+   so the CLI agent and Telegram channel can ship the same affordance
+   without re-implementing the projection."
   [{:id :configure-provider :label "Configure Provider"}
    {:id :toggles            :label "Toggles"}
    {:id :copy               :label "Copy Messages"}
+   {:id :copy-as-markdown   :label "Copy Conversation as Markdown"}
    {:id :system-prompt      :label "Inspect Latest System Prompt"}])
 
 (defn command-palette!

@@ -134,7 +134,7 @@
     "- For function answers: use (fn [...] ...) — NOT partial application like (into ()) or (reduce f init).\n"
     "- Prefer (fn [...] ...) over #(). Nested #() is ILLEGAL.\n"
     "- Quote list literals: '(1 2 3) not (1 2 3)\n"
-    "- % args only work inside #(). Don't use them standalone."))
+    "- % args only work inside #(). Keep them inside the reader macro."))
 
 ;; =============================================================================
 ;; Agent eval functions

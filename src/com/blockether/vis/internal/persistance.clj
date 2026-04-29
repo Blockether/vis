@@ -126,8 +126,8 @@
 ;; namespaces listed inside. Any namespace that calls
 ;; `(register-backend! ...)` lands in this registry as a side
 ;; effect. The facade triggers a scan on the first
-;; `db-create-connection!` so callers don't have to wire it up
-;; themselves.
+;; `db-create-connection!` so callers reach the registered backend
+;; without wiring discovery themselves.
 ;; ----------------------------------------------------------------------------
 
 (defn- pick-backend-id

@@ -4,16 +4,16 @@
 
 ### Run `./verify.sh` before every commit
 
-`./verify.sh` (repo root) = single pre-commit gate. 8 checks, stops at first failure. **No PR / commit / agent-authored change ships without a green run.** Overrides convenience, scope creep, "just a one-line fix."
+`./verify.sh` (repo root) = single pre-commit gate. 8 checks, stops at first failure. **Every PR / commit / agent-authored change ships only on a green run.** Overrides convenience, scope creep, "just a one-line fix."
 
 Gates:
 
 1. **Format** — `cljfmt check` over `src/`, `extensions/`, `build.clj`. Recursive globs cover the host package + every category subdir under `extensions/`. Fix: `cljfmt fix src/ extensions/ build.clj`.
 2. **Lint** — `clj-kondo` across every src tree (host + every extension). Errors + warnings fatal; info advisory.
-3. **GraalVM safety** — walks every production source tree (`src/` + `extensions/*/*/src/`), loads each `.clj` with `*warn-on-reflection*` + `*unchecked-math* :warn-on-boxed`, counts warnings on project source paths only. **Ratchet**: fails if count grows beyond `.verification-baseline/graal-warnings.count` (tracked file). Improvements ratchet down via `./verify.sh --update-baseline`. `benchmarks/` excluded — dev/research, not on default classpath, not shipped as runtime jar.
+3. **GraalVM safety** — walks every production source tree (`src/` + `extensions/*/*/src/`), loads each `.clj` with `*warn-on-reflection*` + `*unchecked-math* :warn-on-boxed`, counts warnings on project source paths only. **Ratchet**: fails when count grows beyond `.verification-baseline/graal-warnings.count` (tracked file). Improvements ratchet down via `./verify.sh --update-baseline`. `benchmarks/` excluded — dev/research, off the default classpath, off the runtime jar.
 4. **Tests** — `clojure -M:test` (lazytest, aggregate suite — host `test/` + every extension's `test/` directory).
-5. **Docs build** — `cd docs && mdbook build`. The "update `docs/` when touching architecture or public API" rule below is meaningless if docs don't compile.
-6. **Smoke** — `bin/vis` prints help banner. Doesn't touch user DB.
+5. **Docs build** — `cd docs && mdbook build`. The "update `docs/` when touching architecture or public API" rule below depends on docs that compile.
+6. **Smoke** — `bin/vis` prints help banner. Leaves user DB untouched.
 7. **Git hygiene** — `git diff --check HEAD` (trailing whitespace, conflict markers).
 8. **Secret scan** — diff against `origin/main` for `sk_*`, `lin_api_*`, `nvapi-*`, `AIzaSy*`, `ghp_*`, hardcoded `password = "..."`.
 
@@ -27,17 +27,17 @@ Modes:
 
 Logs: `.verification/<step>.log` + `.verification/summary.log` (gitignored).
 
-Baseline = **ratchet, not ceiling** — only moves down. Any PR adding reflection / boxed-math warnings without justification = bug.
+Baseline = **ratchet, not ceiling** — moves down only. Any PR that adds reflection / boxed-math warnings without justification = bug.
 
-### Never bind Ctrl+Y in the TUI
+### Ctrl+Y stays unbound in the TUI
 
-`Ctrl+Y` sends `SIGTSTP` (or `DSUSP` on macOS) -> **suspends entire process**, drops user to stopped-job shell prompt. Lanterna can't intercept before kernel acts. Do NOT bind `Ctrl+Y` to anything — clipboard, yank, anything else. Will never work. Reject any PR that re-introduces a `Ctrl+Y` binding in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`.
+`Ctrl+Y` sends `SIGTSTP` (or `DSUSP` on macOS) -> **suspends entire process**, drops the user to a stopped-job shell prompt. The kernel acts before Lanterna can intercept. **Leave `Ctrl+Y` unbound everywhere** — clipboard, yank, anything else. Reject any PR that introduces a `Ctrl+Y` binding in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`.
 
-Use copy dialog (`Ctrl+K` → Copy) instead.
+Use the copy dialog (`Ctrl+K` → Copy) for clipboard ops.
 
-### Always use HoneySQL for SQL — no raw strings, no next.jdbc.sql
+### HoneySQL is the only SQL surface
 
-Every SQL query MUST use `honey.sql` data maps. Do NOT use `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) — produces namespaced column keys that break with SQLite. Do NOT write raw SQL strings in app code (`["SELECT * FROM ..."]`).
+Every SQL query MUST use `honey.sql` data maps. `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) is forbidden — it produces namespaced column keys that break with SQLite. Raw SQL strings in app code (`["SELECT * FROM ..."]`) are forbidden too.
 
 The ONE pattern:
 ```clojure
@@ -53,40 +53,40 @@ The ONE pattern:
   jdbc-opts)
 ```
 
-Raw `jdbc/execute!` with string SQL allowed ONLY inside `extensions/persistance/vis-persistance-sqlite/src/.../core.clj` for migration DDL + FTS queries HoneySQL can't express. Everywhere else: HoneySQL or bust.
+Raw `jdbc/execute!` with string SQL is allowed in ONE place: `extensions/persistance/vis-persistance-sqlite/src/.../core.clj`, for migration DDL + FTS queries HoneySQL can't express. Everywhere else: HoneySQL or bust.
 
-### Always reply in English
+### Reply in English
 
-Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — written in English. User may write in Polish (or anything else); agent still replies English. No mixed-language responses, no apology paragraphs in user's language. Overrides any implicit language mirroring.
+Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. Single-language responses, no apology paragraphs in the user's language. Overrides any implicit language mirroring.
 
-### Trust svar spec guarantees — do NOT defensively re-validate
+### Trust svar spec guarantees — destructure directly
 
-svar's spec engine is provider-enforced. Field declared `{::spec/name :foo ::spec/type :spec.type/string ::spec/required true}` -> svar guarantees parsed result has `:foo` as non-null string. Writing `(when (map? block) (when-not (str/blank? foo) ...))` and `(throw (ex-info "Code block missing :foo"))` after spec-validated response = **pure noise** — duplicates what svar already enforced, hides real intent, makes downstream edits riskier.
+svar's spec engine is provider-enforced. A field declared `{::spec/name :foo ::spec/type :spec.type/string ::spec/required true}` -> svar guarantees the parsed result has `:foo` as a non-null string. A consumer that re-runs `(when (map? block) (when-not (str/blank? foo) ...))` and `(throw (ex-info "Code block missing :foo"))` after a spec-validated response = **pure noise** — duplicates what svar already enforced, hides real intent, makes downstream edits riskier.
 
 Rule:
 
-- Required field -> destructure directly. No `(when-not (str/blank? …))`. No throw "missing :foo". Dead code.
-- Optional field -> plain `(when (:field x) …)` or `(or (:field x) default)` — NOT a full validator.
-- Need to check shape after spec? Spec is WRONG. Fix the spec, not the consumer.
+- Required field -> destructure directly. Skip the `(when-not (str/blank? …))`. Skip the throw "missing :foo". Dead code.
+- Optional field -> plain `(when (:field x) …)` or `(or (:field x) default)` — full validators belong in the spec.
+- Need to check shape after spec? The spec is WRONG. Fix the spec; the consumer stays clean.
 
 Applies to every spec the runtime hands to svar. svar loaded it -> shape correct by construction.
 
-> Note: the iteration loop itself does NOT use a spec anymore — it goes through `(svar/ask-code! …)` which returns plain Clojure source extracted from fenced code blocks. Caller-supplied `:spec` (e.g. `vis run --spec …`) still flows to `svar/ask!` and the rule above applies there.
+> Note: the iteration loop itself runs without a spec — it goes through `(svar/ask-code! …)` which returns plain Clojure source extracted from fenced code blocks. **Every Vis call into svar uses `svar/ask-code!`** (`svar/ask!` was retired with the JSON-spec iteration path). Caller-supplied `:spec` (e.g. `vis run --spec …`) still flows to `svar/ask!` *inside svar*, but Vis owns only the `ask-code!` surface, and the rule above applies to whatever spec the caller hands in.
 
 ### Repo-root `README.md` is a stub: rationale + book link only
 
-Repo-root `README.md` intentionally tiny. Carries:
+Repo-root `README.md` stays tiny. Carries:
 
 - one rationale paragraph (what Vis is, why RLM/SCI in one breath),
-- pointer to book under `docs/src/` (mdBook),
+- pointer to the book under `docs/src/` (mdBook),
 - nothing else.
 
-Does NOT carry: architecture diagrams, mermaid sequence charts, getting-started instructions, install/auth steps, extension docs, schema tables, channel adapter notes, FAQ, comparison tables, long-form prose. Every one of those belongs in the book (`docs/src/...`), reachable from `docs/src/SUMMARY.md`.
+Excludes: architecture diagrams, mermaid sequence charts, getting-started instructions, install/auth steps, extension docs, schema tables, channel adapter notes, FAQ, comparison tables, long-form prose. Every one of those belongs in the book (`docs/src/...`), reachable from `docs/src/SUMMARY.md`.
 
 
 ---
 
-## 🔴 HARD RULE: Every Clojure Namespace MUST Have a Corresponding Test File
+## 🔴 HARD RULE: Every Clojure Namespace Has a Corresponding Test File
 
 **NO EXCEPTIONS. NO EXCUSES.**
 
@@ -100,12 +100,12 @@ Specifically:
 
 ### Requirements
 
-1. **When you create a new Clojure namespace**, you MUST create its test file **in the same commit/iteration**.
-2. **When you modify an existing Clojure namespace** that has no test file, you MUST create the missing test file before or alongside your changes.
-3. **The test file MUST** contain at minimum a `deftest` that exercises the namespace's public API — even a basic smoke test. An empty test namespace with zero tests is **not acceptable**.
-4. **The test namespace MUST** require the namespace it tests.
-5. **Never** leave a namespace without a test file and move on. If you do, you have failed this rule.
+1. **New Clojure namespace** -> create its test file **in the same commit/iteration**.
+2. **Modify a namespace that currently has no test file** -> create the test file before or alongside your changes.
+3. **The test file** contains at minimum a `deftest` exercising the namespace's public API — even a basic smoke test. An empty test namespace with zero tests fails this rule.
+4. **The test namespace** requires the namespace it tests.
+5. Every namespace ships with a test file. Anything else fails this rule.
 
 ### Violation
 
-If at any point a Clojure namespace exists without a corresponding test file, the work is **incomplete** and must be rectified immediately before proceeding with any other changes.
+A namespace without a corresponding test file = work **incomplete**, rectified immediately before any other change.

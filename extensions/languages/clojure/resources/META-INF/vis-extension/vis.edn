@@ -92,7 +92,7 @@ Rename every occurrence:
 - `vis/edit` would need fragile whitespace/quote anchoring.
 - Adding require / refactoring let-binding / renaming def at structural granularity.
 
-## Don't use when
+## Use other tools when
 
 - Not Clojure source -> `vis/edit` or `vis/write`.
 - Single locally-unique line -> `vis/edit` faster.

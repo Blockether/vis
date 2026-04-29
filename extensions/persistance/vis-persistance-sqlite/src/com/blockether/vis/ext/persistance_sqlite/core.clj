@@ -147,8 +147,9 @@
                             on SQLite is small, but eliminating it
                             removes one source of `[SQLITE_CANTOPEN]`
                             jitter on the very first request.
-     idleTimeout     = 0  — SQLite handles are cheap to keep; don't
-                            evict, don't churn WAL state.
+     idleTimeout     = 0  — SQLite handles are cheap to keep; the
+                            pool keeps them alive and the WAL state
+                            stays warm.
      maxLifetime     = 0  — no network drop concern; recycling adds
                             zero value and creates spurious opens.
      leakDetectionThreshold = 60s — surface checked-out-but-never-
@@ -226,8 +227,8 @@
 
 (defn db-close!
   "Idempotent dispose. Closes the Hikari pool when we own it; for
-   `:external` mode (caller-supplied DataSource) it's a no-op so we
-   don't yank the rug out from under whoever passed us the handle."
+   `:external` mode (caller-supplied DataSource) it's a no-op — the
+   caller still owns the handle they passed in."
   [store]
   (when (and store (:owned? store))
     (let [^Object ds (:datasource store)]
@@ -656,7 +657,8 @@
      (nil? v)               nil
      (zero? depth)          {:vis/ref :depth-exceeded}
      (runtime-object? v)    {:vis/ref :expr}
-     ;; Lazy seq — not yet realized. Don't realize it, just ref.
+     ;; Lazy seq — not yet realized. Keep it unrealized and emit a
+     ;; ref instead so freezing stays side-effect-free.
      (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
      ;; Realized collections — walk recursively
      (map? v)    (persistent! (reduce-kv (fn [m k val] (assoc! m k (freeze-safe val (dec depth)))) (transient {}) v))

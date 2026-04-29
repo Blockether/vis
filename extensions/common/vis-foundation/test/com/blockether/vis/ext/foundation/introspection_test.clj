@@ -53,7 +53,7 @@
    :current-iteration-atom (atom 2)})
 
 ;; The impl fns are private — reach via the var registry so tests
-;; don't depend on a public re-export.
+;; stay decoupled from any public re-export.
 (defn- private-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.foundation.introspection" name))))
 
@@ -81,7 +81,7 @@
       (expect (not (contains? turn :plan)))
       (expect (not (contains? turn :breadcrumbs)))))
 
-  (it "splits attempts and errors so callers don't have to filter twice"
+  (it "splits attempts and errors so callers consume each list directly (no second filter pass)"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id

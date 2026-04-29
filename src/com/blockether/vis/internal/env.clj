@@ -329,9 +329,9 @@
                                                ;; `write-file` is the audited path that renders diffs.
                                                ;;
                                                ;; `require`, `import`, `find-ns` are NOT denied either
-                                               ;; (real Clojure reach for namespace discovery), but we
-                                               ;; deliberately don't advertise them in tool docs so the
-                                               ;; LLM's canonical playbook stays narrow.
+                                               ;; (real Clojure reach for namespace discovery); the tool
+                                               ;; docs deliberately leave them unadvertised so the LLM's
+                                               ;; canonical playbook stays narrow.
                                        ;; `*out*` / `*err*` are NOT denied so model
                                        ;; code can reach for them directly:
                                        ;;   `(binding [*out* writer] …)`,

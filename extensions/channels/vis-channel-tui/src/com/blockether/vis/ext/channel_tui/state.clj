@@ -200,8 +200,8 @@
     ;; every format-answer cache key, so toggling them already
     ;; invalidates cache entries naturally. But the OLD entries
     ;; linger until the cache fills — which on a quiet conversation
-    ;; never happens. Drop them so we don't leak memory across many
-    ;; toggles.
+    ;; never happens. Drop them now so memory stays bounded across
+    ;; many toggles.
     (render/invalidate-cache!)
     (let [merged (merge (:settings db) new-settings)]
       (persist-settings! merged)

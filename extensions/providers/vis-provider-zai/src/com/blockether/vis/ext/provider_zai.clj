@@ -23,8 +23,7 @@
           :pass   {:api-key str :saved-at long}}`.
      2. Subsequent runs read the persisted key. Env vars
         (`ZAI_CODING_API_KEY`, `ZAI_API_KEY`) override the file when
-        present so CI / scripted setups don't have to write to the
-        home directory.
+        present so CI / scripted setups stay home-directory-free.
      3. `vis auth zai-coding --status` reports the source
         (file / env) without exposing the full key.
      4. `vis auth zai-coding --logout` clears the persisted key for
@@ -48,8 +47,8 @@
   "Per-plan metadata. The map key is the LOCAL plan tag used inside
    the persisted auth file (`:coding` / `:pass`); `:provider-id` is
    the svar/vis catalog id surfaced to the rest of the system. Keep
-   the local tag stable so future schema upgrades don't have to
-   migrate file keys.
+   the local tag stable so future schema upgrades skip a file-key
+   migration.
 
    `:env-keys` mirrors svar's catalog ordering: `ZAI_CODING_API_KEY`
    takes precedence for the coding plan, with `ZAI_API_KEY` as the
@@ -69,8 +68,7 @@
 
 (defn- load-auth-file
   "Load `~/.vis/zai-auth.json` or nil. Returns the WHOLE map (both
-   plans) so callers don't have to re-read the file when querying a
-   sibling plan."
+   plans) so a single read serves callers querying any sibling plan."
   []
   (let [f (io/file AUTH_FILE)]
     (when (.exists f)
@@ -212,8 +210,8 @@
           :already-authenticated)
 
         ;; Env var is set but not persisted → write it through to
-        ;; the file so subsequent runs don't depend on the env var
-        ;; in the user's shell.
+        ;; the file so subsequent runs read the persisted key
+        ;; directly, independent of the user's shell env.
         (and existing (= :env-var (:source existing)))
         (do
           (update-plan! plan-tag {:api-key   (:api-key existing)

@@ -61,4 +61,4 @@ docs/
    extension spec, iteration flow, or public API MUST be accompanied by an
    update to the relevant page under `docs/src/`.**
 2. If docs and code diverge, code wins — fix the docs immediately.
-3. In-source READMEs are pointers to these docs. Do not duplicate content.
+3. In-source READMEs are pointers to these docs — each README links into the book and the book carries the content.

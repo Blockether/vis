@@ -96,8 +96,9 @@ error types.
 There is **one** decorator of each kind per symbol. Vis does not stack
 multiple `:before-fn`s on the same symbol — if an extension needs to
 compose behavior, the extension author composes the fns themselves
-when building the symbol map. This is deliberate: stacked invisible
-decorators are exactly the debuggability hole we don't want.
+when building the symbol map. This is deliberate: a single visible
+decorator per slot keeps the call chain debuggable; stacked
+invisible decorators would hide it.
 
 ## Parse-error rescue
 

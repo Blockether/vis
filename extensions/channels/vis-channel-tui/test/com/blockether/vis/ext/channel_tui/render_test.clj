@@ -301,7 +301,7 @@
     (it "Lone asterisk in middle: a*b is just literal"
       ;; Single `*` followed by content followed by NO close → literal.
       (expect (= "a*b" (markdown->inline "a*b"))))
-    (it "Adjacent spans don't bleed: **a****b** → BOLD a, BOLD b"
+    (it "Adjacent spans stay isolated: **a****b** → BOLD a, BOLD b"
       ;; The middle `**` closes the first bold and opens the second.
       (expect (= (str B "a" B' B "b" B')
                 (markdown->inline "**a****b**")))))
@@ -477,8 +477,8 @@
 (def ^:private dummy-markers
   "render-table prepends a marker char per line so the bubble renderer
    knows whether each line is a top border, header, separator, or row.
-   For width-math tests we don't care about the marker identity, just
-   strip it before measuring."
+   For width-math tests the marker identity is irrelevant — strip it
+   before measuring."
   {:thead "H" :tsep "S" :trow "R"})
 
 (defn- strip-marker

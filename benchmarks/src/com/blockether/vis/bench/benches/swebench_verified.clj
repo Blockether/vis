@@ -84,7 +84,7 @@
       (when-not (str/blank? hints) (str "HINTS FROM MAINTAINERS:\n" hints "\n\n")))
     "Your task: produce a unified diff patch that fixes the issue.\n"
     "The patch must be in standard git diff format starting with 'diff --git'.\n"
-    "DO NOT write any files to disk. DO NOT modify files directly. "
+    "PATCH-ONLY OUTPUT. Skip filesystem writes entirely — leave files on disk untouched and emit your changes as a unified diff. "
     "Return ONLY the unified diff as your final answer.\n"))
 
 ;; =============================================================================
