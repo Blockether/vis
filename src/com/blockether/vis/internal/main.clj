@@ -746,24 +746,19 @@
 
 ;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────
 ;;
-;; `extensions list` IS extensions-namespaced -- introspecting the
-;; extension registry is naturally part of `vis extensions <cmd>`.
-;; So it goes through `:ext/cli`, where the extension facade
-;; auto-mounts every entry under `[\"extensions\"]`. vis-runtime thus
-;; participates in the unified extension contract for this entry, the
-;; same way every other extension does.
+;; `extensions list` introspects the extension registry, so it
+;; naturally lives under the `vis extensions <cmd>` parent. But it is
+;; a HOST-owned built-in, NOT a third-party contribution -- vis core
+;; is the host, never an extension. So it registers directly via
+;; `registry/register-cmd!` with `:cmd/parent ["extensions"]`, the
+;; same plumbing the four top-level built-ins above use.
 
-(extension/register-extension!
-  (extension/extension
-    {:ext/namespace 'com.blockether.vis.core
-     :ext/doc       "vis-runtime's contribution to the `vis extensions` subtree."
-     :ext/version   "0.3.0"
-     :ext/author    "Blockether"
-     :ext/license   "Apache-2.0"
-     :ext/cli       [{:cmd/name   "list"
-                      :cmd/doc    "List every registered extension with metadata."
-                      :cmd/usage  "vis extensions list"
-                      :cmd/run-fn cli-extensions!}]}))
+(registry/register-cmd!
+  {:cmd/name   "list"
+   :cmd/parent ["extensions"]
+   :cmd/doc    "List every registered extension with metadata."
+   :cmd/usage  "vis extensions list"
+   :cmd/run-fn cli-extensions!})
 
 ;; =============================================================================
 ;; Dispatcher entry point (-main)

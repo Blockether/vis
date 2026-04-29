@@ -634,8 +634,12 @@
         bubble-h  (count lines)
         bx        left
         ;; No bg fill on plain assistant text — we sit on terminal-bg.
-        ;; `:warning`, user, and `:cancelled` messages each get a
-        ;; tinted block so they're impossible to miss in the timeline.
+        ;; `:warning` and user messages each get a tinted block so
+        ;; they're impossible to miss in the timeline. Cancelled turns
+        ;; intentionally render on bare terminal-bg — the muted italic
+        ;; fg + status footer carry the "aborted" signal without a
+        ;; bubble-wide fill that competed visually with adjacent
+        ;; assistant messages.
         bg-color  (cond
                     warning?   t/warning-bg
                     ;; User messages fill their content rows with a
@@ -643,11 +647,6 @@
                     ;; reads as its own zone, distinct from the white
                     ;; assistant area.
                     user?      t/user-bubble-bg
-                    ;; Cancelled turns paint a soft gray block so the
-                    ;; "this turn was aborted" status reads as a
-                    ;; distinct, deactivated zone instead of bare
-                    ;; terminal text.
-                    cancelled? t/cancelled-bg
                     :else      t/terminal-bg)
         fg-color  (cond
                     cancelled? t/cancelled-fg
@@ -714,13 +713,9 @@
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
       ;;
-      ;; Cancelled: fill content rows + the would-be meta-row below
-      ;; (cancelled turns skip the meta line, so that row is empty
-      ;; bubble bg by default — painting it gray gives the
-      ;; placeholder a visible foot, same trick as the user bubble).
-      (when cancelled?
-        (p/set-bg! g bg-color)
-        (p/fill-rect! g bx btop bubble-w (+ (max 1 bubble-h) 1)))
+      ;; Cancelled: NO bubble-wide fill. The muted italic fg
+      ;; (`cancelled-fg`) + dimmed role label + plain status footer
+      ;; carry the "aborted" signal on bare terminal-bg.
       ;;
       ;; User messages: fill the breathing row above content + the
       ;; content rows + the would-be meta-row below (always empty
@@ -1125,9 +1120,14 @@
               ;; terminal bg (no fill) so the line reads as a system
               ;; note, not as something the model said.
               :else
-              (let [line-bg (if in-answer? t/answer-bg bg-color)
-                    line-fg (if in-answer? t/answer-fg fg-color)]
-                (when in-answer?
+              ;; Cancelled bubbles never enter the answer zone — the
+              ;; status footer ("Cancelled by user.") renders flat on
+              ;; terminal-bg, no answer-bg fill underneath, even if a
+              ;; structural answer marker sits earlier in the trailer.
+              (let [in-answer-zone? (and in-answer? (not cancelled?))
+                    line-bg (if in-answer-zone? t/answer-bg bg-color)
+                    line-fg (if in-answer-zone? t/answer-fg fg-color)]
+                (when in-answer-zone?
                   (p/set-bg! g line-bg)
                   (p/fill-rect! g fbx y iw 1))
                 (p/set-colors! g line-fg line-bg)
@@ -1587,32 +1587,17 @@
       (when (and (string? bare) (not (str/blank? bare)))
         (str/replace bare "-" " ")))))
 
-(defn- slow-suffix
-  "Escalating suffix that tells the user the provider is unusually
-   quiet. We show nothing for the first 30s (every LLM call takes a
-   few seconds), bump up at 30s, sharpen at 60s, and turn it into a
-   call-to-action at 120s. The thresholds match what humans actually
-   feel: <30s is \"normal\", 60s is \"this is slow\", 2 min is
-   \"something is wrong, you can bail\". Without this the spinner
-   said `sending request to provider…` for 143 seconds straight
-   while glm-5.1 hung — zero feedback that anything was off."
-  [^Long elapsed-ms]
-  (cond
-    (or (nil? elapsed-ms) (< (long elapsed-ms) 30000)) ""
-    (< (long elapsed-ms) 60000)  " — still waiting"
-    (< (long elapsed-ms) 120000) " — provider slow"
-    :else                         " — provider unresponsive, Esc to cancel"))
-
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
-   the spinner row text so the user can tell whether we're waiting on
-   the provider, thinking, executing, or recovering.
+   the spinner row text so the user can tell whether Vis is calling
+   the provider, thinking, executing, retrying, or cancelling.
 
-   `elapsed-ms` is the wall-clock since query-start. When a single
-   iteration drags on — typically iteration 0 hanging on `(llm/ask!…)` —
-   the phase escalates via `slow-suffix` so the user knows the issue
-   is upstream, not a UI freeze."
-  [iterations cancelling? elapsed-ms]
+   Anthropomorphic `Vis is …` phrasing matches what other agent CLIs
+   (pi, Claude Code, Codex) converged on; reads as a status sentence
+   instead of a system log line. No elapsed-time-driven escalation —
+   wall-clock is already shown right next to this string in the
+   spinner row, the user can read the seconds themselves."
+  [iterations cancelling?]
   (let [n              (count iterations)
         last-iteration (last iterations)
         err            (:error last-iteration)
@@ -1620,18 +1605,17 @@
         thinking?      (and (not errored?)
                          (some? (:thinking last-iteration))
                          (not (str/blank? (:thinking last-iteration))))
-        executing?     (and (not errored?) last-iteration (seq (:code last-iteration)))
-        suffix     (slow-suffix elapsed-ms)]
+        executing?     (and (not errored?) last-iteration (seq (:code last-iteration)))]
     (cond
-      cancelling? "cancelling"
+      cancelling? "Vis is cancelling"
       errored?    (let [label (prettify-error-type err)]
-                    (str "iter " n
-                      (when label (str " — " label))
-                      " — retrying"))
-      (zero? n)   (str "sending request to provider" suffix)
-      thinking?   (str "thinking (iter " n ")" suffix)
-      executing?  (str "executing code (iter " n ")" suffix)
-      :else       (str "working (iter " n ")" suffix))))
+                    (str "Vis is retrying"
+                      (when label (str " after " label))
+                      " (iter " n ")"))
+      (zero? n)   "Vis is calling the provider"
+      thinking?   (str "Vis is thinking (iter " n ")")
+      executing?  (str "Vis is running code (iter " n ")")
+      :else       (str "Vis is working (iter " n ")"))))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble.
@@ -1674,7 +1658,7 @@
                             (max 0 (- now-ms (long query-start-ms))))
          elapsed-str      (or (sdk/format-duration elapsed-ms) "0ms")
          spinner-line     (str (spinner-frame now-ms) "  "
-                            (progress-phase iterations cancelling? elapsed-ms) "…  "
+                            (progress-phase iterations cancelling?) "…  "
                             elapsed-str "  ·  Esc to cancel")
          trace-lines      (when (and show-iterations? (seq iterations))
                             (into []
@@ -2088,9 +2072,8 @@
   "Uncached implementation. See `format-answer-with-thinking`.
    `cancelled?` switches the trailer from a real answer block to a
    plain status footer (\"Cancelled by user.\") rendered without
-   answer-pad markers, so the bubble's cancelled-bg fill shows
-   through and the footer reads as a system note rather than a
-   half-baked answer in the answer zone."
+   answer-pad markers, so the footer reads as a system note on bare
+   terminal-bg rather than a half-baked answer in the answer zone."
   [answer trace bubble-w settings confidence cancelled?]
   (let [content-w (max 10 (- bubble-w 4))
         fill-w    (max 1 (dec content-w))
@@ -2133,8 +2116,8 @@
         ans-pad     (str answer-pad-marker "")
         ans-sep     (str answer-sep-marker "")
         ;; Cancelled trailer: plain lines (no answer-pad markers)
-        ;; so the bubble's cancelled-bg fill is what shows under
-        ;; the status text. The wrapped status string \"Cancelled by
+        ;; so the status text renders flat on terminal-bg with no
+        ;; answer-zone fill. The wrapped status string \"Cancelled by
         ;; user.\" is short enough to fit on one row at any sane
         ;; bubble width, but we wrap-text defensively in case the
         ;; column gets squeezed below ~20 chars.

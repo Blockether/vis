@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Bump a Maven dependency across every packages/*/deps.edn (and the
-# root deps.edn) in lockstep.
+# Bump a Maven dependency across the root deps.edn + every
+# extensions/*/*/deps.edn + benchmarks/deps.edn in lockstep.
 #
-# Why this exists: vis is a polylith monorepo. Each package declares
-# the exact deps it needs in its own deps.edn — that's the polylith
-# pattern, and we are NOT collapsing them into a god-bag "vis-common"
-# package. But that means a single upstream bump (e.g. svar 0.3.11 →
-# 0.3.12) touches N files. This script eats that toil.
+# Why this exists: vis is a single-package monorepo (root deps.edn
+# carries the runtime) plus a sibling tree of classpath plug-ins
+# (extensions/*/*/deps.edn) and a benchmarks harness. A single
+# upstream bump (e.g. svar 0.3.11 → 0.3.12) touches N files. This
+# script eats that toil.
 #
 # Usage:
 #   bin/bump-dependency <group/artifact> <new-version>
@@ -20,7 +20,8 @@
 #   -h | --help   Show this banner.
 #
 # Behaviour:
-#   1. Scans deps.edn + packages/*/deps.edn for the coordinate.
+#   1. Scans deps.edn + extensions/*/*/deps.edn + benchmarks/deps.edn
+#      for the coordinate.
 #   2. Rewrites every `{:mvn/version "<old>"}` immediately following
 #      the coordinate to the new version. :local/root entries are left
 #      alone (they have no version).
@@ -97,7 +98,10 @@ deps_files=()
 [[ -f deps.edn ]] && deps_files+=("deps.edn")
 while IFS= read -r f; do
   deps_files+=("$f")
-done < <(find packages -mindepth 2 -maxdepth 2 -name 'deps.edn' | sort)
+done < <({
+  [[ -d extensions ]] && find extensions -mindepth 3 -maxdepth 3 -name 'deps.edn'
+  [[ -f benchmarks/deps.edn ]] && echo benchmarks/deps.edn
+} | sort)
 
 # ---- rewrite ---------------------------------------------------------
 

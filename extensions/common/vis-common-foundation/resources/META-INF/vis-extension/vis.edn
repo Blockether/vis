@@ -1,32 +1,30 @@
-{meta
- {:nses [com.blockether.vis.ext.common-meta.core],
+{foundation
+ {:nses [com.blockether.vis.ext.common-foundation.core],
   :docs
   {"README.md"
    {:created-at #inst "2026-04-28T08:00:00.000-00:00",
     :description
-    "Read-only introspection ext for SCI sandbox. Lets agent inspect own current turn, conversation history, persisted vars, prior attempts, and provider/code failure diagnostics from `:code`. Plus discover surface + canonical README of every loaded extension. Returns plain Clojure maps/vecs for structural manipulation. `(meta/diagnose)` + `(meta/failures)` = bounded triage. `(meta/extensions)` + `(meta/extension-readme)` = no symbol-name guessing.",
+    "Read-only introspection ext for SCI sandbox. Lets agent inspect own current turn, conversation history, persisted vars, prior attempts, and provider/code failure diagnostics from `:code`. Plus discover surface + canonical README of every loaded extension. Returns plain Clojure maps/vecs for structural manipulation. `(foundation/diagnose)` + `(foundation/failures)` = bounded triage. `(foundation/extensions)` + `(foundation/extension-readme)` = no symbol-name guessing.",
     :content
     "# Meta extension
 
-Pkg: `com.blockether/vis-common-meta`. Src: `extensions/common/vis-common-meta/`.
-Canonical: inlined under `[meta :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(meta/extension-readme 'meta)`.
+Pkg: `com.blockether/vis-common-foundation`. Src: `extensions/common/vis-common-foundation/`.
+Canonical: inlined under `[meta :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(foundation/extension-readme 'foundation)`.
 
-Opt-in. Lets agent introspect own state, conversation history, failure diagnostics, surface of every loaded ext — all from `:code`. Functions bind under `meta` alias. Return plain maps/vecs.
+Opt-in. Lets agent introspect own state, conversation history, failure diagnostics, surface of every loaded ext — all from `:code`. Functions bind under `foundation` alias. Return plain maps/vecs.
 
 Pure reads off persistence data. Never throw — errors -> `nil`/`[]`. Use these for triaging stalled turns.
 
-Add jar to classpath, or `com.blockether/vis-common-meta` to `deps.edn`, to enable.
+Add jar to classpath, or `com.blockether/vis-common-foundation` to `deps.edn`, to enable.
 
 ## Current turn snapshot
 
-Call: `(meta/turn)`. One map:
+Call: `(foundation/turn)`. One map:
 
 ```clojure
 {:id          \"uuid\"
- :goal        \"user query text\"
+ :goal        \"the user's request text for this turn\"
  :status      :running
- :plan        {:goal \"...\" :items [...] :open [...] :decided [...]}
- :breadcrumbs [{:position 0 :breadcrumb \"...\"}]
  :attempts    [{:iteration-id :iteration :code :result :error
                 :stdout :stderr :duration-ms}]
  :errors      [...]
@@ -38,11 +36,11 @@ Call: `(meta/turn)`. One map:
  :elapsed-ms  N}
 ```
 
-Use for programmatic turn-level manipulation. Plain reads of plan/breadcrumbs/iter pointer = use projection (`<plan>`, `<breadcrumbs>`, `<system_state>`) already in prompt.
+Use for programmatic turn-level manipulation. Plain reads of the iteration pointer = use the `<recent>` block already in the prompt.
 
 ## Failure list
 
-Call: `(meta/failures)` or `(meta/failures conversation-id)`. Provider/schema + code/tool failures, normalized:
+Call: `(foundation/failures)` or `(foundation/failures conversation-id)`. Provider/schema + code/tool failures, normalized:
 
 ```clojure
 [{:source :provider
@@ -73,7 +71,7 @@ Classifications:
 
 ## Turn diagnosis
 
-Call: `(meta/diagnose)` or `(meta/diagnose conversation-id)`. Compact summary, first stop for stalled-agent triage:
+Call: `(foundation/diagnose)` or `(foundation/diagnose conversation-id)`. Compact summary, first stop for stalled-agent triage:
 
 ```clojure
 {:turn-id \"uuid\"
@@ -98,7 +96,7 @@ Provider previews, parse/tool error messages, classifications, next actions — 
 
 ## Single conversation snapshot
 
-Call: `(meta/conversation)` or `(meta/conversation conversation-id)`:
+Call: `(foundation/conversation)` or `(foundation/conversation conversation-id)`:
 
 ```clojure
 {:id                \"uuid\"
@@ -126,7 +124,7 @@ perspective.
 
 ## Conversation list
 
-Call: `(meta/conversations)` or `(meta/conversations channel)`. Newest-first vec:
+Call: `(foundation/conversations)` or `(foundation/conversations channel)`. Newest-first vec:
 
 ```clojure
 [{:id \"...\" :channel :tui :title \"...\" :created-at #inst \"...\"
@@ -137,7 +135,7 @@ No-arg scans every registered channel plus `:cli`. Channel kw = filter.
 
 ## Var history
 
-Call: `(meta/var-history sym)` or `(meta/var-history sym conversation-id)`. Version timeline:
+Call: `(foundation/var-history sym)` or `(foundation/var-history sym conversation-id)`. Version timeline:
 
 ```clojure
 [{:value :code :version 0}
@@ -148,7 +146,7 @@ Default = current conversation. UUID = another. `sym` = symbol or string.
 
 ## Search past attempts
 
-Call: `(meta/find-attempts pattern)` or `(meta/find-attempts pattern conversation-id)`. Regex over executed `:code`:
+Call: `(foundation/find-attempts pattern)` or `(foundation/find-attempts pattern conversation-id)`. Regex over executed `:code`:
 
 ```clojure
 [{:turn-id :iteration-id :iteration :code :result :error}]
@@ -158,11 +156,11 @@ Call: `(meta/find-attempts pattern)` or `(meta/find-attempts pattern conversatio
 
 ## Extension catalog
 
-Call: `(meta/extensions)`. Vec of every loaded ext + metadata + summary descriptor per declared doc:
+Call: `(foundation/extensions)`. Vec of every loaded ext + metadata + summary descriptor per declared doc:
 
 ```clojure
-[{:namespace 'com.blockether.vis.ext.common-meta.core
-  :alias     'meta
+[{:namespace 'com.blockether.vis.ext.common-foundation.core
+  :alias     'foundation
   :group     \"meta\"
   :version   \"0.5.0\"
   :doc       \"Meta introspection...\"
@@ -178,14 +176,14 @@ Call: `(meta/extensions)`. Vec of every loaded ext + metadata + summary descript
  ...]
 ```
 
-First stop to discover surfaces before reaching for a tool. Summaries omit `:content` to keep catalog small. Pull full descriptor with `(meta/extension-doc ...)` only when needed.
+First stop to discover surfaces before reaching for a tool. Summaries omit `:content` to keep catalog small. Pull full descriptor with `(foundation/extension-doc ...)` only when needed.
 
 ## Extension docs catalog
 
-Call: `(meta/extension-docs)` or `(meta/extension-docs ext-ref)`. No-arg = map keyed by ext id symbol; 1-arg = summary list for one ext. Each entry has all structured fields except `:content`:
+Call: `(foundation/extension-docs)` or `(foundation/extension-docs ext-ref)`. No-arg = map keyed by ext id symbol; 1-arg = summary list for one ext. Each entry has all structured fields except `:content`:
 
 ```clojure
-(meta/extension-docs 'meta)
+(foundation/extension-docs 'foundation)
 ;; => [{:name       \"README.md\"
 ;;      :created-at #inst \"2026-04-28\"
 ;;      :description   \"Read-only introspection extension...\"
@@ -198,10 +196,10 @@ Index. Scan descriptions + `:links` to pick which full doc is worth pulling.
 
 ## Extension doc body
 
-Call: `(meta/extension-doc ext-ref doc-name)`. Full descriptor map for one declared doc, inlined in ext's `META-INF/vis-extension/vis.edn` under `[<id> :docs <doc-name>]`:
+Call: `(foundation/extension-doc ext-ref doc-name)`. Full descriptor map for one declared doc, inlined in ext's `META-INF/vis-extension/vis.edn` under `[<id> :docs <doc-name>]`:
 
 ```clojure
-(meta/extension-doc 'meta \"README.md\")
+(foundation/extension-doc 'foundation \"README.md\")
 ;; => {:name       \"README.md\"
 ;;     :created-at #inst \"2026-04-28\"
 ;;     :description   \"Read-only introspection extension...\"
@@ -212,10 +210,10 @@ Call: `(meta/extension-doc ext-ref doc-name)`. Full descriptor map for one decla
 
 `ext-ref` accepts:
 
-- id symbol (`'meta`),
-- id as kw or string (`:meta`, `\"meta\"`),
-- alias-ns symbol (`'vis.ext.meta`),
-- full ext namespace symbol (`'com.blockether.vis.ext.common-meta.core`).
+- id symbol (`'foundation`),
+- id as kw or string (`:foundation`, `\"meta\"`),
+- alias-ns symbol (`'vis.ext.foundation`),
+- full ext namespace symbol (`'com.blockether.vis.ext.common-foundation.core`).
 
 `nil` when ext not registered or doc-name missing.
 
@@ -232,35 +230,35 @@ Call: `(meta/extension-doc ext-ref doc-name)`. Full descriptor map for one decla
 
 ## Extension README
 
-Call: `(meta/extension-readme ext-ref)`. Wrapper for `(meta/extension-doc ext-ref \"README.md\")`. Every ext ships a README, so always works for registered ext.
+Call: `(foundation/extension-readme ext-ref)`. Wrapper for `(foundation/extension-doc ext-ref \"README.md\")`. Every ext ships a README, so always works for registered ext.
 
 ```clojure
-(meta/extension-readme 'meta)
-(meta/extension-readme 'com.blockether.vis.ext.common-meta.core)
-(meta/extension-readme :vis)             ;; vis-common-editing
-(println (meta/extension-readme 'meta))  ;; pretty-print full doc
+(foundation/extension-readme 'foundation)
+(foundation/extension-readme 'com.blockether.vis.ext.common-foundation.core)
+(foundation/extension-readme :vis)             ;; vis-common-editing
+(println (foundation/extension-readme 'foundation))  ;; pretty-print full doc
 ```
 
 ## Use when
 
-- Failure triage without leaving sandbox: `(meta/diagnose)` / `(meta/failures)`.
-- Verify what an ext does: `(meta/extension-readme 'some-ext)` — no guessing from symbol names.
-- Programmatic state manipulation: `(filter :error (:attempts (meta/turn)))`.
+- Failure triage without leaving sandbox: `(foundation/diagnose)` / `(foundation/failures)`.
+- Verify what an ext does: `(foundation/extension-readme 'some-ext)` — no guessing from symbol names.
+- Programmatic state manipulation: `(filter :error (:attempts (foundation/turn)))`.
 - Inspect a different conversation than current.
 - Regex search over historical attempts.
 - Token / cost visibility.
 
 ## Don't use when
 
-- State already in projection (`<plan>` `<breadcrumbs>` `<system_state>` `<var_index>`). Projection = free; `meta/*` costs an iter round-trip.
+- State already in projection (`<recent>` `<var_index>`). Projection = free; `meta/*` costs an iter round-trip.
 - As substitute for `:doc` on code blocks. Use the spec field for purpose, not introspection.
 
 ## Implementation notes
 
-- **Environment-aware via `:before-fn` injection.** Each impl fn takes env map as 1st param. Shared `inject-environment` hook prepends env to args vec, so model still calls `(meta/turn)` with 0 args.
+- **Environment-aware via `:before-fn` injection.** Each impl fn takes env map as 1st param. Shared `inject-environment` hook prepends env to args vec, so model still calls `(foundation/turn)` with 0 args.
 - **No side effects, never throws.** Pure reads. Misconfigured context -> `nil`/`[]`. Iteration unaffected.
-- **No schema change.** Reads existing conversation/query/iteration/expression rows via persistence facade.
-- **README discovery.** Every ext declares canonical README inline in `META-INF/vis-extension/vis.edn` under `[<id> :docs \"README.md\"]` (see `AGENTS.md` ▸ \"Every extension declares itself in vis.edn with an inline README\"). Each doc descriptor MUST carry `:description` (one-paragraph summary) + `:content` (full Markdown body) as plain EDN strings — NOT YAML frontmatter parsed from Markdown. `(meta/extensions)`, `(meta/extension-docs ...)`, `(meta/extension-doc ...)`, `(meta/extension-readme ...)` all read from this structured registry.
+- **No schema change.** Reads existing `conversation_state` / `query_state` / `iteration` / `expression_state` rows via the persistence facade. Internal table names stay `query_*` (the runtime-internal vocabulary); user-facing projections expose them as `:turn` / `:turns` / `:turn-id` / `:turn-count` so the agent never has to know which is which.
+- **README discovery.** Every ext declares canonical README inline in `META-INF/vis-extension/vis.edn` under `[<id> :docs \"README.md\"]` (see `AGENTS.md` ▸ \"Every extension declares itself in vis.edn with an inline README\"). Each doc descriptor MUST carry `:description` (one-paragraph summary) + `:content` (full Markdown body) as plain EDN strings — NOT YAML frontmatter parsed from Markdown. `(foundation/extensions)`, `(foundation/extension-docs ...)`, `(foundation/extension-doc ...)`, `(foundation/extension-readme ...)` all read from this structured registry.
 ",
     :links
     [{:to-id vis,
@@ -271,4 +269,4 @@ Call: `(meta/extension-readme ext-ref)`. Wrapper for `(meta/extension-doc ext-re
       "Recursive Language Models paper (Zhang, Kraska & Khattab, 2025) -- design Vis is built on"}
      {:file "packages/vis-extension/src/com/blockether/vis_extension/extension.clj",
       :context
-      "Extension loader and inline-docs registry powering (meta/extensions ...)"}]}}}}
+      "Extension loader and inline-docs registry powering (foundation/extensions ...)"}]}}}}

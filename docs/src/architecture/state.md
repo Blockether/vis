@@ -4,17 +4,17 @@
 
 | State | Location | Lifetime |
 |-------|----------|----------|
-| LLM Router (singleton) | `query/core.clj :: router-atom` | Process |
+| LLM Router (singleton) | `internal/loop.clj :: router-atom` | Process |
 | LLM Router (snapshot) | `environment :router` | Conversation |
-| Conversation cache | `conversation/core.clj :: cache` | Process |
+| Conversation cache | `internal/loop.clj :: cache` | Process |
 | SCI sandbox | `environment :sci-ctx` | Conversation |
 | Extensions | `environment :extensions` | Conversation |
 | Var-index cache | `environment :var-index-atom` | Conversation |
 | Recursion depth | `environment :depth-atom` | Conversation |
 | Current iteration counter | `environment :current-iteration-atom` (query-scoped, int counter starting at 0) | Query |
 | Current iteration row id | `environment :current-iteration-id-atom` (query-scoped, UUID of the latest `db-store-iteration!` row, or nil) | Query |
-| Token usage | `usage-atom` (local in iteration-loop) | Query |
-| Repetition counts | `call-counts-atom` (local in iteration-loop) | Query |
+| Token usage | `usage-atom` (local in iteration loop) | Query |
+| Repetition counts | `call-counts-atom` (local in iteration loop) | Query |
 
 ## Environment map
 
@@ -24,7 +24,7 @@ type, and what you can/cannot do with it from extension code.
 
 ## Conversation cache
 
-`conversation/core.clj` maintains a process-level `(defonce cache (atom {}))`
+`internal/loop.clj` maintains a process-level `(defonce cache (atom {}))`
 mapping conversation ID strings to `{:environment env :lock Object}`.
 
 - `ensure-env!` — find-or-create in cache
@@ -41,16 +41,16 @@ The router lives in **two places** on purpose, and the relationship
 between them is non-obvious enough to have caused a real bug — read
 this section before changing provider/model-switching code.
 
-1. **Global singleton** — `query/core.clj :: router-atom`. Refreshed
-   by `query-core/rebuild-router! config`, which `(reset! router-atom
-   (llm/make-router (:providers config)))`. Read by anything that
-   needs to know the *currently configured* model: TUI status bar
-   (`screen.clj :: chosen-model-info`), new env construction in
-   `open-env!`, etc.
+1. **Global singleton** — `internal/loop.clj :: router-atom`. Refreshed
+   by `lp/rebuild-router! config`, which
+   `(reset! router-atom (llm/make-router (:providers config)))`. Read
+   by anything that needs to know the *currently configured* model:
+   TUI status bar (`screen.clj :: chosen-model-info`), new env
+   construction in `open-env!`, etc.
 2. **Per-environment snapshot** — `(:router env)`, captured in
-   `loop-core/create-environment` at env-creation time. Read by the
-   iteration loop's actual LLM call site
-   (`iteration/core.clj :: (svar/ask-code! (:router environment) …)`).
+   `lp/create-environment` at env-creation time. Read by the iteration
+   loop's actual LLM call site
+   (`internal/loop.clj :: (svar/ask-code! (:router environment) …)`).
    The env is the unit of routing for in-flight queries — sub-RLM
    forks, extensions, and the iteration engine all use the env's
    router, never the global.
@@ -61,13 +61,14 @@ to whatever provider was primary when it was created. Symptom: the
 status bar shows the new model, but `query_state.llm_root_model` and
 the assistant bubble's footer keep showing the old one.
 
-**Resolution:** `conversations/refresh-cached-routers! router` walks
-the conversation cache and reseats `:router` on every cached env
-while preserving env identity (locks, `:state-atom`, `:db-info`,
-`:sci-ctx`, etc. all stay the same object). Every code path that
-rebuilds the global router MUST also call this:
+**Resolution:** `lp/refresh-cached-routers! router` walks the
+conversation cache and reseats `:router` on every cached env while
+preserving env identity (locks, `:state-atom`, `:db-info`, `:sci-ctx`,
+etc. all stay the same object). Every code path that rebuilds the
+global router MUST also call this:
 
-- `channels/core.clj :: set-provider!` — SDK / programmatic flow.
+- `lp/set-provider!` — SDK / programmatic flow (re-exported from
+  `com.blockether.vis.core`).
 - `ext/channel_tui/state.clj :: :set-config` event — TUI provider dialog.
 - Any future channel that exposes "switch model" UX must do the same.
 

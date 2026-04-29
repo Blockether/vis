@@ -157,12 +157,12 @@ resources/META-INF/vis-extension/vis.edn
 ```
 
 The manifest is an EDN map keyed by extension **id** (a short symbol;
-same token the LLM uses as the SCI sandbox alias — e.g. `meta`,
+same token the LLM uses as the SCI sandbox alias — e.g. `foundation`,
 `vis`, `git`):
 
 ```edn
 {meta
- {:nses [com.blockether.vis.ext.common-meta.core]
+ {:nses [com.blockether.vis.ext.common-foundation.core]
   :docs {"README.md"
          {:created-at #inst "2026-04-28"
           :description   "One-paragraph LLM-facing summary..."
@@ -225,8 +225,8 @@ Rules:
 - `vis.edn` is the **single source of truth** for that extension
   (purpose, surface, when to use it, when not to). End users read
   the docs via the book; the LLM reads them via
-  `(meta/extension-doc '<id> "<doc-name>")` and
-  `(meta/extension-readme '<id>)` from inside `:code`.
+  `(foundation/extension-doc '<id> "<doc-name>")` and
+  `(foundation/extension-readme '<id>)` from inside `:code`.
 - Do NOT add a second copy of any doc anywhere in the extension tree
   (no `extensions/<name>/README.md`, no
   `docs/src/extensions/<id>.md` containing inlined content,
@@ -236,12 +236,12 @@ Rules:
   characters — same rules as the book (see the docs-style rule
   above). When the extension is end-user-facing, surface it from
   `docs/src/SUMMARY.md` with a short manual page that points
-  readers at `(meta/extension-readme '<id>)` (the book is allowed to
+  readers at `(foundation/extension-readme '<id>)` (the book is allowed to
   briefly summarize, but MUST NOT inline the full body).
 - The id (top-level key in `vis.edn`) MUST equal the registered
   extension's `:ext/ns-alias :alias`. The loader does not enforce
   this strictly, but every reviewer should reject mismatches — if
-  the LLM types `(meta/...)`, the on-disk id is `meta`.
+  the LLM types `(meta/...)`, the on-disk id is `foundation`.
 - Multiple jars MAY contribute under the same id; their `:nses` are
   deduped and their `:docs` are merged (last write wins per name).
   `:reflinks` are recomputed across the entire registry after every
@@ -253,12 +253,12 @@ Rules:
   `dev/inline-doc.clj`-style helpers, or write your own — the
   contract is just "produce a valid EDN map"). Do NOT keep two
   on-disk copies of the same content under version control.
-- The vis-common-meta extension exposes the LLM-facing surface for this:
-  `(meta/extensions)` lists every loaded extension with its docs
-  catalog; `(meta/extension-docs ext-ref)` returns the
+- The vis-common-foundation extension exposes the LLM-facing surface for this:
+  `(foundation/extensions)` lists every loaded extension with its docs
+  catalog; `(foundation/extension-docs ext-ref)` returns the
   `[{:name :created-at :description :links :reflinks} …]` summaries
-  for one extension; `(meta/extension-doc ext-ref name)` returns the
-  full descriptor including `:content`; `(meta/extension-readme
+  for one extension; `(foundation/extension-doc ext-ref name)` returns the
+  full descriptor including `:content`; `(foundation/extension-readme
   ext-ref)` is the README `:content` convenience.
 
 Why: agents that need to verify what an extension actually does —
@@ -299,7 +299,7 @@ Doc files (all under the repo-root `docs/` tree, NOT inside any package):
 - `docs/src/architecture/` — overview, packages, iteration flow,
   state ownership, database schema, channels.
 - `docs/src/extensions/` — overview, extension spec, symbol
-  decorators (hooks), environment map, nudge system, vis-common-meta.
+  decorators (hooks), environment map, nudge system, vis-common-foundation.
 
 `docs/src/SUMMARY.md` is the mdBook table of contents — keep it in
 sync when adding/removing pages. There is intentionally no
@@ -334,7 +334,7 @@ shipped to readers as broken rendering or unreadable noise.
    humans, not an API index entry.
 
    - Bad: `## \`:before-fn\` — entry decorator`,
-     `### \`(meta/turn)\``,
+     `### \`(foundation/turn)\``,
      `### 1) \`conversation_soul\``,
      `### Embedded \`:cmd/subcommands\` vector`,
      `### Render caches (\`ext/channel_tui/render.clj :: fmt-cache\`)`,
@@ -345,7 +345,7 @@ shipped to readers as broken rendering or unreadable noise.
 
    The keyword / function name / table name / file path that the
    section documents goes in the **first line of the body** as a
-   short "Slot key: \`:before-fn\`" / "Call: \`(meta/turn)\`" /
+   short "Slot key: \`:before-fn\`" / "Call: \`(foundation/turn)\`" /
    "Table: \`conversation_soul\`" / "Lives in:
    \`ext/channel_tui/render.clj\`" lead. The reader still gets the
    identifier; it just isn't load-bearing on the heading.
@@ -501,7 +501,7 @@ packages plus a sibling tree of classpath plug-ins:
   - `extensions/channels/` — `vis-channel-tui`, `vis-channel-telegram`.
   - `extensions/providers/` — `vis-provider-github-copilot`.
   - `extensions/persistance/` — `vis-persistance-sqlite`.
-  - `extensions/common/` — `vis-common-meta`, `vis-common-editing` (filesystem +
+  - `extensions/common/` — `vis-common-foundation`, `vis-common-editing` (filesystem +
     code-editing tools the agent reaches for in nearly every task).
   Each ships a `META-INF/vis-extension/vis.edn` and self-registers
   at namespace load. Every extension's `deps.edn` declares
@@ -536,7 +536,7 @@ Quick mental map (use `packages.md` for details):
 - `extensions/persistance/vis-persistance-sqlite` — SQLite persistence backend
 - `extensions/providers/vis-provider-github-copilot` — GitHub Copilot OAuth provider
 - `extensions/channels/vis-channel-tui`, `extensions/channels/vis-channel-telegram` — channel implementations
-- `extensions/common/vis-common-meta`, `extensions/common/vis-common-editing` — SCI sandbox extensions
+- `extensions/common/vis-common-foundation`, `extensions/common/vis-common-editing` — SCI sandbox extensions
 - `benchmarks/` — benchmark harness (`:bench` alias only; not a classpath plug-in)
 
 ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN
@@ -916,9 +916,9 @@ previous turn's bounded digest (`{:goal :counts :outcome
 :abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.
 
 When the agent genuinely needs older reasonings, the (opt-in)
-`vis-common-meta` extension exposes `(meta/diagnose)`, `(meta/failures)`,
-`(meta/turn)`, `(meta/conversation)`, `(meta/find-attempts pattern)`,
-and `(meta/var-history 'sym)`.
+`vis-common-foundation` extension exposes `(foundation/diagnose)`, `(foundation/failures)`,
+`(foundation/turn)`, `(foundation/conversation)`, `(foundation/find-attempts pattern)`,
+and `(foundation/var-history 'sym)`.
 The deprecated built-in `var-history` still works for backwards
 compatibility.
 

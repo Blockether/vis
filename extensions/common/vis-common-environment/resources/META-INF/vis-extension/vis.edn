@@ -9,7 +9,7 @@
     :content
     "# Environment extension
 
-Pkg: `com.blockether/vis-common-environment`. Src: `extensions/common/vis-common-environment/`. Canonical: inlined under `[environment :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(meta/extension-readme 'environment)`.
+Pkg: `com.blockether/vis-common-environment`. Src: `extensions/common/vis-common-environment/`. Canonical: inlined under `[environment :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(foundation/extension-readme 'environment)`.
 
 Owns the `<environment>` block in the system prompt. Replaces the old hard-coded six-line block in `com.blockether.vis.internal.prompt/environment-block`. Adds three things the old block lacked:
 
@@ -103,8 +103,8 @@ Conveniences over `(get (environment/snapshot) :…)`.
 - **No SCI-side I/O concentration.** `:ext/prompt` fragment reads same cache as sandbox accessors -> exactly one tree walk per `(refresh!)` boundary."
 
     :links
-    [{:to-id meta :to-doc "README.md"
-      :context "Companion introspection ext; (meta/extensions) shows this ext's surface, (meta/extension-readme 'environment) shows this doc."}
+    [{:to-id foundation :to-doc "README.md"
+      :context "Companion introspection ext; (foundation/extensions) shows this ext's surface, (foundation/extension-readme 'environment) shows this doc."}
      {:to-id vis :to-doc "README.md"
       :context "Filesystem + code-editing toolbelt — agent typically pairs `environment` reads with `vis/cat` / `vis/rg` calls."}
      {:url "https://eclipse.dev/jgit/"

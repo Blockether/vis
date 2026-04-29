@@ -1,130 +1,133 @@
 # Packages
 
-Vis is a polylith-style monorepo split into four host packages plus a
-sibling tree of classpath plug-ins:
+Vis is a **single-package monorepo** plus a sibling tree of classpath
+plug-ins.
 
-- `packages/` — the host. Four packages that every binary needs:
-  - `packages/vis-persistance/` — backend-agnostic storage facade and
-    Flyway-driven migration runner. Leaf package.
-  - `packages/vis-extension/` — extension/channel/provider/CLI-command
-    contracts plus the unified classpath discovery loader.
-  - `packages/vis-runtime/` — the iteration loop, the SCI sandbox, the
-    conversation lifecycle, the cross-channel state, and the public
-    API facade.
-  - `packages/vis-main/` — the `vis` binary's CLI surface: dispatcher,
-    built-in commands (`run`, `auth`, `doctor`, `conversations`,
-    `extensions list`), the one-shot agent helper, and the
-    persistence-backed Telemere `:db` handler.
-- `extensions/` — every classpath plug-in, grouped by surface
-  category. Each category is a directory under `extensions/`; each
-  package lives at `extensions/<category>/<pkg>/`.
-  - `extensions/channels/` — channel front-ends (`vis-channel-tui`,
-    `vis-channel-telegram`).
-  - `extensions/providers/` — LLM provider integrations
-    (`vis-provider-github-copilot`).
-  - `extensions/persistance/` — persistence backends
-    (`vis-persistance-sqlite`).
-  - `extensions/common/` — SCI sandbox surface contributions used by
-    the agent (`vis-common-meta` for self-introspection,
-    `vis-common-editing` for filesystem and code-editing tools).
-  Each package ships a `META-INF/vis-extension/vis.edn` and
-  self-registers via `com.blockether.vis.core/register-global!`
-  at namespace load. Every extension's `deps.edn` declares
-  `:local/root "../../../packages/vis-runtime"`; vis-runtime transitively
-  pulls vis-extension and vis-persistance. vis-runtime does not require
-  any extension by namespace.
-- `benchmarks/` — the benchmark harness (4clojure, HumanEval,
-  SWE-bench Verified). NOT a classpath plug-in; pulled in via the
-  `:bench` alias only.
+- The host runtime ships as **one jar, one namespace
+  (`com.blockether.vis.core`)**. Source lives at the repo root under
+  `src/`. The previous three-package split (vis-sdk + vis-runtime +
+  vis-main) collapsed because the "library / runtime / binary"
+  boundary was not buying anything: there is only ever one runtime,
+  and the binary, library, and SDK ship in the same classpath
+  together for every consumer.
+- Every classpath plug-in lives under `extensions/<category>/<name>/`
+  and is genuinely optional (drop the jar, drop the feature). Each
+  plug-in declares its own `deps.edn` with
+  `com.blockether/vis {:local/root "../../.."}`.
+- The benchmark harness lives under `benchmarks/` and is pulled via
+  the `:bench` alias only — not a classpath plug-in.
 
-The repo-root `deps.edn` is a thin aggregator: its top-level `:deps`
-points at `vis-cli` (which transitively pulls every host package);
-its `:vis` alias adds every classpath plug-in so a single
+The repo-root `deps.edn` declares the host runtime's dependencies
+plus every classpath plug-in as a `:local/root` entry, so a single
 `clojure -M:vis` (or `bin/vis` once on `PATH`) has the whole product
-on the classpath. Downstream consumers depend on whichever individual
-package they need.
+on the classpath. Downstream embedders depend on `com.blockether/vis`
+plus whichever extension jars they want.
 
 This page is the **single source of truth** for the package layout.
 Every other doc that mentions a package links here instead of
 re-listing it.
 
-## Package map
+## Host runtime
 
-### Host packages
+| Path | Purpose |
+| ---- | ------- |
+| `src/com/blockether/vis/core.clj` | Public API facade. Re-exports every supported symbol from `internal/*`. **The names in `core.clj` are the contract**; the `internal/` tree is free to be split, merged, and renamed as the architecture evolves. |
+| `src/com/blockether/vis/internal/cancellation.clj` | In-flight query cancellation tokens. |
+| `src/com/blockether/vis/internal/commandline.clj` | Argument parser, command tree renderer, dispatcher. |
+| `src/com/blockether/vis/internal/config.clj` | Config loader, db-path (`~/.vis/vis.mdb`), router builder, provider presets. |
+| `src/com/blockether/vis/internal/env.clj` | SCI sandbox, var-index, `SYSTEM_VAR_NAMES`, `system-var-sym?`. |
+| `src/com/blockether/vis/internal/error.clj` | Shared exception → user message formatter. |
+| `src/com/blockether/vis/internal/extension.clj` | Extension spec, slot dispatch (`:ext/symbols`, `:ext/cli`, `:ext/channels`, `:ext/providers`, `:ext/persistance`), `register-extension!`, `discover-extensions!`. |
+| `src/com/blockether/vis/internal/format.clj` | `format-clojure`, `format-tokens`, `format-cost`, `format-iterations`. |
+| `src/com/blockether/vis/internal/loop.clj` | Iteration loop, query engine, conversation lifecycle, environment lifecycle, router management. |
+| `src/com/blockether/vis/internal/main.clj` | `vis` binary surface: `-main`, dispatcher wiring, persistence-backed Telemere `:db` handler, built-in commands (`run` / `auth` / `doctor` / `conversations` / `extensions list`), one-shot `agent` + `run!` helpers. |
+| `src/com/blockether/vis/internal/manifest.clj` | `META-INF/vis-extension/vis.edn` classpath scanner. |
+| `src/com/blockether/vis/internal/persistance.clj` | Storage facade: `db-create-connection!`, every `db-store-*` / `db-list-*` / `db-update-*`, backend self-registration (`register-backend!`). |
+| `src/com/blockether/vis/internal/progress.clj` | Streaming progress tracker. |
+| `src/com/blockether/vis/internal/prompt.clj` | `assemble-system-prompt` (single source of truth), `build-iteration-context`, `CORE_SYSTEM_PROMPT`. |
+| `src/com/blockether/vis/internal/registry.clj` | Channel + CLI command + provider registries. |
 
-| Package | Path | Purpose | Notes |
-| ------- | ---- | ------- | ----- |
-| `vis-persistance` | `packages/vis-persistance/` | Backend-agnostic persistence facade and Flyway-driven migration runner. Defines `com.blockether.vis-persistance.{base,core,migration}` — the storage API every backend implements via `register-backend!`. | Leaf package: depends only on Clojure + `flyway-core`. No internal vis dependencies. Concrete backends live in `extensions/persistance/`. |
-| `vis-extension` | `packages/vis-extension/` | Extension/channel/provider/CLI-command contracts plus the unified classpath discovery loader (`com.blockether.vis.core/discover-extensions!`). Owns `com.blockether.vis-extension.{extension,channel,provider,error,commandline.base}`. | Depends on `vis-persistance` because `register-global!` dispatches the `:ext/persistance` slot to `com.blockether.vis.core/register-backend!`. |
-| `vis-runtime` | `packages/vis-runtime/` | The iteration loop, the SCI sandbox, the conversation lifecycle, the cross-channel state, and the public API facade. Public surface: `com.blockether.vis.core` (`create-environment`, `query!`, `register-extension!`, `assemble-system-prompt`, `dispose-environment!`). | Depends on `vis-extension` and `vis-persistance`. Every classpath plug-in depends on this package directly (and transitively pulls `vis-extension` + `vis-persistance`). The `META-INF/vis/VERSION` resource is stamped into this jar by `build.clj`. |
-| `vis-cli` | `packages/vis-main/` | The `vis` binary. Owns the dispatcher (`commandline.main`), the built-in commands `run`/`auth`/`doctor`/`conversations`/`extensions list` (`channels.cli`), the one-shot agent helper (`channels.cli.agent`), and the persistence-backed Telemere `:db` handler (`logging`). Conversations-channel keyword: `:cli` (used by `vis run` agent runs; not a `channel/register-global!` registration). | Depends on `vis-runtime` (and transitively on `vis-extension` + `vis-persistance`). Ships its own `META-INF/vis-extension/vis.edn` so the dispatcher discovers itself and its built-in commands at boot. |
+## Classpath plug-ins
 
-### Classpath plug-ins
+Every plug-in ships exactly one classpath manifest at
+`resources/META-INF/vis-extension/vis.edn` and self-registers via
+`(sdk/register-extension! …)` (where `sdk` is
+`com.blockether.vis.core`) at namespace load.
 
 | Package | Path | Purpose | Channel id | Notes |
 | ------- | ---- | ------- | ---------- | ----- |
-| `vis-persistance-sqlite` | `extensions/persistance/vis-persistance-sqlite/` | SQLite backend for the persistence facade. Owns the SQLite schema resources and JDBC stack: sqlite-jdbc, next.jdbc, HoneySQL, HikariCP, nippy, and the SQLite Flyway driver. Internal namespace: `com.blockether.vis.ext.persistance-sqlite.core`. | — | Depends on `vis-runtime`. Loading the namespace auto-registers the `:sqlite` backend with the persistence facade. The canonical SQLite schema resource ships from this package at `db/sqlite/migration/V1__schema.sql`. |
-| `vis-provider-github-copilot` | `extensions/providers/vis-provider-github-copilot/` | GitHub Copilot OAuth device-flow provider. Internal namespace: `com.blockether.vis.ext.provider-github-copilot`. | — | Depends on `vis-runtime`. Ships a `META-INF/vis-extension/vis.edn` entry that registers the provider on startup. |
-| `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat UI. Internal namespace: `com.blockether.vis.ext.channel-tui.*`. | `:tui` | `:channel/owns-tty? true`. Conversations are stored under `:tui` (the same id used for CLI dispatch). |
-| `vis-channel-telegram` | `extensions/channels/vis-channel-telegram/` | Telegram Bot API long-poll loop wired into `conversations/for-telegram-chat!`. Internal namespace: `com.blockether.vis.ext.channel-telegram.*`. | `:telegram` | Optional. Resolves into vis-runtime lazily via `requiring-resolve` — omitting the jar leaves the rest of vis usable. |
-| `vis-common-meta` | `extensions/common/vis-common-meta/` | SCI sandbox introspection extension (`(meta/turn)`, `(meta/diagnose)`, etc.). Internal namespace: `com.blockether.vis.ext.common-meta.*`. | — | Pure `:ext/symbols` contribution. See [vis-common-meta](../extensions/common/vis-common-meta.md). |
-| `vis-common-editing` | `extensions/common/vis-common-editing/` | Filesystem / shell / search tools exposed to the agent (`vis/rg`, `vis/patch`, etc.). Internal namespace: `com.blockether.vis.ext.common-editing.*`. | — | Pure `:ext/symbols` contribution. |
+| `vis-persistance-sqlite` | `extensions/persistance/vis-persistance-sqlite/` | SQLite backend for the persistence facade. Owns the SQLite schema and JDBC stack: sqlite-jdbc, next.jdbc, HoneySQL, HikariCP, nippy, the SQLite Flyway driver. Internal namespace: `com.blockether.vis.ext.persistance-sqlite.core`. | — | Ships the canonical SQLite schema at `resources/db/sqlite/migration/V1__schema.sql`. Loading the namespace auto-registers the `:sqlite` backend with the persistence facade. |
+| `vis-provider-github-copilot` | `extensions/providers/vis-provider-github-copilot/` | GitHub Copilot OAuth device-flow provider. Internal namespace: `com.blockether.vis.ext.provider-github-copilot`. | — | Registers a provider in the global registry; surfaces under `vis auth github-copilot`. |
+| `vis-provider-zai` | `extensions/providers/vis-provider-zai/` | Z.ai (ZhipuAI) static-API-key provider — covers both the coding-plan and pay-as-you-go endpoints in one extension. Internal namespace: `com.blockether.vis.ext.provider-zai`. | — | Surfaces under `vis auth <plan>` per registered plan. |
+| `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat. Internal namespace: `com.blockether.vis.ext.channel-tui.*` (state / dialogs / screen / chat / render / input / footer / theme / primitives / provider). | `:tui` | `:channel/owns-tty? true`. Conversations are stored under the same `:tui` keyword used for CLI dispatch. |
+| `vis-channel-telegram` | `extensions/channels/vis-channel-telegram/` | Telegram Bot API long-poll loop wired into `for-telegram-chat!`. Internal namespace: `com.blockether.vis.ext.channel-telegram.*`. | `:telegram` | Optional channel; omitting the jar leaves the rest of vis usable. |
+| `vis-common-foundation` | `extensions/common/vis-common-foundation/` | SCI sandbox introspection extension (`(foundation/turn)`, `(foundation/diagnose)`, `(foundation/conversation)`, `(foundation/find-attempts)`, `(foundation/var-history)`, `(foundation/extensions)`, `(foundation/extension-readme)` …). Internal namespace: `com.blockether.vis.ext.common-foundation.core`. | — | Pure `:ext/symbols` contribution. See [vis-common-foundation](../extensions/common/vis-common-foundation.md). |
+| `vis-common-environment` | `extensions/common/vis-common-environment/` | cwd / OS / git-facts SCI helpers. Internal namespace: `com.blockether.vis.ext.common-environment.core`. | — | Pure `:ext/symbols` contribution. |
+| `vis-common-editing` | `extensions/common/vis-common-editing/` | Filesystem / shell / search / patch tools (`vis/cat`, `vis/ls`, `vis/rg`, `vis/edit`, `vis/sh`, …). Internal namespace: `com.blockether.vis.ext.common-editing.core`. | — | Pure `:ext/symbols` contribution. |
+| `vis-language-clojure` | `extensions/languages/clojure/` | Clojure structured-editing wrapper (`(z/zedit …)` and the rewrite-clj zipper API, all under the single `z/` alias). Internal namespace: `com.blockether.vis.ext.lang-clojure.core`. | — | Add new `extensions/languages/<lang>/` directories when shipping tools that only make sense for one source language. |
 
-### Dev/research
+## Dev / research
 
 | Package | Path | Purpose | Notes |
 | ------- | ---- | ------- | ----- |
-| `vis-benchmark` | `benchmarks/` | Benchmark harness (4clojure, HumanEval, SWE-bench Verified). Working dirs under `benchmarks/data/`. | NOT loaded by the default product distribution. Pulled in via the repo-root `:bench` alias only. NOT a classpath plug-in (no `META-INF/vis-extension/vis.edn`). |
+| `vis-benchmark` | `benchmarks/` | Benchmark harness (4clojure, HumanEval, SWE-bench Verified). Working directories created on demand under `benchmarks/`. | NOT a classpath plug-in (no `META-INF/vis-extension/vis.edn`). Pulled in via the repo-root `:bench` alias only. |
 
 > **Two senses of "channel".** A *registered channel* (`:tui`,
-> `:telegram`) is a CLI front-end registered through
-> `com.blockether.vis.core/register-global!` and exposed under
-> `vis channels <name>`. A *conversations channel* is the keyword
-> stored in `conversation_soul.metadata.channel` — the namespace
-> conversations are grouped under. Registered channels use the same
-> keyword for both senses (`:tui`, `:telegram`). The CLI agent (in
-> vis-main) is the lone exception: it doesn't register a channel
-> descriptor (the `vis` dispatcher itself is its surface), but it
-> writes its conversations under `:cli`.
+> `:telegram`) is a CLI front-end registered through the `:ext/channels`
+> slot of an extension and exposed under `vis channels <name>`. A
+> *conversations channel* is the keyword stored in
+> `conversation_soul.metadata.channel` — the namespace conversations
+> are grouped under. Registered channels use the same keyword for both
+> senses. The CLI agent (`vis run`) is the lone exception: it does not
+> register a channel descriptor — the `vis` dispatcher itself is its
+> surface — but it writes its conversations under `:cli`.
 
 ## Auto-discovery
 
 ONE classpath-scan mechanism, ONE resource per jar
 (`META-INF/vis-extension/vis.edn`), ONE entry point on the **author**
-side (`com.blockether.vis.core/register-global!`), ONE
-loader on the **runtime** side
-(`com.blockether.vis.core/discover-extensions!`). The
-resource is a flat EDN vector of namespace symbols; the loader
-`require`s every namespace exactly once, and each `register-global!`
+side (`(sdk/register-extension! …)`), ONE loader on the **runtime**
+side (`com.blockether.vis.core/discover-extensions!`).
+
+The resource is an EDN map keyed by extension id symbol, holding a
+`:nses` vec (namespaces the loader `require`s) and a `:docs` map
+(structured Markdown descriptors). The loader walks every URL on the
+classpath, parses each map, validates the doc descriptors, `require`s
+every namespace listed under `:nses` exactly once, and merges the
+result into a process-level registry. Each `(sdk/register-extension! …)`
 call at namespace-load time lands the extension in the global
 registry.
 
-An extension is a single map; everything it contributes lives in a
-slot keyed under `:ext/<surface>`. `register-global!` dispatches each
-slot to the matching sub-registry as a side effect:
+Authors declare everything an extension contributes — sandbox
+symbols, channels, CLI commands, providers, persistance backends,
+and inline docs — in a single map; the registrar dispatches each
+populated `:ext/<slot>` to its matching sub-registry as a side
+effect:
 
-| Slot | Per-entry shape | Internal sub-registry |
-| ---- | --------------- | --------------------- |
-| `:ext/symbols` | `(ext/symbol …)` / `(ext/value …)` entries (SCI sandbox bindings) | Bound into the env's SCI namespace at `register-extension!` time |
-| `:ext/cli` | `cmd/command` maps (`:cmd/name`, `:cmd/run-fn`, `:cmd/parent`, …) | `com.blockether.vis.core/register-global!` |
-| `:ext/channels` | `channel/channel` maps (`:channel/id`, `:channel/cmd`, `:channel/main-fn`, …) | `com.blockether.vis.core/register-global!` |
-| `:ext/providers` | `provider/provider` maps (`:provider/id`, `:provider/auth-fn`, …) | `com.blockether.vis.core/register-global!` |
-| `:ext/persistance` | `{:persistance/id <kw> :persistance/ns <sym>}` entries | `com.blockether.vis.core/register-backend!` |
+| Slot | Per-entry shape | What happens at registration |
+| ---- | --------------- | ---------------------------- |
+| `:ext/symbols` | `(sdk/symbol …)` / `(sdk/value …)` entries | Bound into the dedicated SCI namespace declared via `:ext/ns-alias`. |
+| `:ext/cli` | `:cmd/*` maps (`:cmd/name`, `:cmd/run-fn`, `:cmd/parent`, …) | `registry/register-cmd!`. Auto-mounted under `["extensions"]` unless `:cmd/parent` overrides it (and only `["extensions" …]` parents are accepted from the slot). |
+| `:ext/channels` | `:channel/*` maps (`:channel/id`, `:channel/cmd`, `:channel/main-fn`, …) | `registry/register-channel!`. Surfaces under `vis channels <cmd>`. |
+| `:ext/providers` | `:provider/*` maps (`:provider/id`, `:provider/auth-fn`, …) | `registry/register-provider!`. Surfaces under `vis auth <id>`. |
+| `:ext/persistance` | `{:persistance/id <kw> :persistance/ns <sym>}` entries | `persistance/register-backend!`. Picked up by `db-create-connection!`. |
 
-**Authors only call `ext/register-global!`.** They can require the
-sub-registry namespaces directly for embedded / programmatic use, but
-normal extension code treats those namespaces as implementation
-details inside `vis-extension` and `vis-persistance`.
+**Authors only call `(sdk/register-extension! …)`.** The lower-level
+`register-cmd!` / `register-channel!` / `register-provider!` /
+`register-backend!` calls still exist on `com.blockether.vis.core`
+for embedded / programmatic use, but normal extension code treats
+them as implementation details. `register-extension!` is the contract.
 
 The loader is **type-agnostic**: it does not care which slots an
 extension populates. New surfaces (themes, skills, anything future)
 require zero loader changes — add a slot key to the extension spec,
-ship a jar with a `META-INF/vis-extension/vis.edn`, populate the slot, done.
+ship a jar with a `META-INF/vis-extension/vis.edn`, populate the
+slot, done.
 
 Drop a jar on the classpath that ships a
 `META-INF/vis-extension/vis.edn` and every namespace inside is
-auto-discovered at the next process boot — no edits to vis-runtime, no
-`:require`s in user code. The CLI dispatcher calls
+auto-discovered at the next process boot — no edits to the host
+runtime, no `:require`s in user code. The CLI dispatcher calls
 `discover-extensions!` once at `-main` startup; SDK callers that
 bypass the CLI also get a lazy safety-net call from
 `com.blockether.vis.core/create-environment` and from
@@ -132,60 +135,48 @@ bypass the CLI also get a lazy safety-net call from
 
 ## Dependency direction
 
-Layered from leaf to binary:
-
 ```
-packages/vis-persistance        (leaf — clojure + flyway-core only)
-        ↑
-packages/vis-extension          (depends on vis-persistance)
-        ↑
-packages/vis-runtime               (depends on vis-extension + vis-persistance)
-        ↑
-packages/vis-main                (depends on vis-runtime)
-```
-
-Every classpath plug-in (and the benchmark harness) depends on
-vis-runtime and through it transitively pulls vis-extension and
-vis-persistance:
-
-```
-extensions/channels/vis-channel-tui                     ─┐
-extensions/channels/vis-channel-telegram                ─┤
-extensions/persistance/vis-persistance-sqlite   ─┤
-extensions/providers/vis-provider-github-copilot─┼─→ packages/vis-runtime
-extensions/common/vis-common-meta                      ─┤
-extensions/common/vis-common-editing                   ─┤
-benchmarks/                                     ─┘
+src/                                 (host runtime — ONE jar, ONE namespace)
+  ↑
+extensions/channels/vis-channel-tui                  ─┐
+extensions/channels/vis-channel-telegram             ─┤
+extensions/persistance/vis-persistance-sqlite        ─┤
+extensions/providers/vis-provider-github-copilot     ─┤
+extensions/providers/vis-provider-zai                ─┤  → com.blockether/vis (root)
+extensions/common/vis-common-foundation                    ─┤
+extensions/common/vis-common-environment             ─┤
+extensions/common/vis-common-editing                 ─┤
+extensions/languages/clojure                         ─┤
+benchmarks/                                          ─┘
 ```
 
-vis-runtime does not require any extension by namespace; channel
-adapters that vis-runtime refers to in passing (e.g. the TUI screen
-namespace) are resolved via `requiring-resolve` at runtime so the
-hard dep stays one-way.
+The host runtime does not require any extension namespace. Channel
+adapters and other plug-ins that the runtime refers to in passing
+are resolved via `requiring-resolve` at call sites, so the hard
+dependency stays one-way.
 
-## Per-package source path
+## Per-extension source path
 
-Host packages live at `packages/<pkg>/src/com/blockether/<pkg-with-underscores>/…`:
+Every extension lives under
+`extensions/<category>/<name>/src/com/blockether/vis/ext/<id>/…`
+and follows the `com.blockether.vis.ext.<id>.<module>` namespace
+convention. Examples:
 
-- `packages/vis-persistance/src/com/blockether/vis_persistance/{base,core,migration}.clj`
-- `packages/vis-extension/src/com/blockether/vis_extension/{extension,channel,provider,error}.clj`
-  plus `commandline/base.clj`
-- `packages/vis-runtime/src/com/blockether/vis_runtime/…`  (`core`, `config`,
-  `channels/{core,cancellation}`, and the entire `loop/…` subtree
-  carrying the iteration runtime)
-- `packages/vis-main/src/com/blockether/vis_main/{commandline/main,channels/cli,channels/cli/agent,logging}.clj`
+- `com.blockether.vis.ext.channel-tui.screen`
+- `com.blockether.vis.ext.channel-telegram.bot`
+- `com.blockether.vis.ext.persistance-sqlite.core`
+- `com.blockether.vis.ext.common-foundation.core`
+- `com.blockether.vis.ext.common-environment.core`
+- `com.blockether.vis.ext.common-editing.core`
+- `com.blockether.vis.ext.lang-clojure.core`
+- `com.blockether.vis.ext.provider-github-copilot`
+- `com.blockether.vis.ext.provider-zai`
 
-Classpath plug-ins live under
-`extensions/<category>/<pkg>/src/com/blockether/vis/…` and retain the
-`com.blockether.vis.<surface>.<pkg>` ns convention (e.g.
-`com.blockether.vis.ext.channel-tui.screen`,
-`com.blockether.vis.ext.persistance-sqlite.core`,
-`com.blockether.vis.ext.common-meta.core`). The benchmark harness lives
-under `benchmarks/src/…`.
+The benchmark harness lives under `benchmarks/src/…`.
 
 The full Clojure source is intentionally not enumerated here — use
-`find packages extensions benchmarks -name '*.clj'` instead. The
-architecture pages call out the namespaces that matter for each
-subsystem (see [Iteration flow](iteration-flow.md),
-[State ownership](state.md), [Channels](channels.md), and
-[Database schema](database.md)).
+`find src extensions benchmarks -name '*.clj'`. The architecture
+pages call out the namespaces that matter for each subsystem (see
+[Iteration flow](iteration-flow.md),
+[State ownership](state.md), [Channels](channels.md),
+and [Database schema](database.md)).

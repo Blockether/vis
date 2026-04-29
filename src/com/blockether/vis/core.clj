@@ -174,6 +174,7 @@
 (def db-update-conversation-title!       persistance/db-update-conversation-title!)
 (def db-delete-conversation-tree!           persistance/db-delete-conversation-tree!)
 (def db-fork-conversation!                  persistance/db-fork-conversation!)
+(def db-list-conversation-states            persistance/db-list-conversation-states)
 
 ;; Query lifecycle
 (def db-store-query!                        persistance/db-store-query!)
@@ -181,6 +182,7 @@
 (def db-list-queries-by-status           persistance/db-list-queries-by-status)
 (def db-list-conversation-queries        persistance/db-list-conversation-queries)
 (def db-retry-query!                        persistance/db-retry-query!)
+(def db-list-query-states                   persistance/db-list-query-states)
 
 ;; Iteration lifecycle
 (def db-store-iteration!                    persistance/db-store-iteration!)
@@ -287,6 +289,13 @@
 (def dedup-cache-lookup           lp/dedup-cache-lookup)
 (def dedup-cache-record!          lp/dedup-cache-record!)
 (def extract-defining-name        lp/extract-defining-name)
+(def answer-form-error              lp/answer-form-error)
+(def answer-position-violation?              lp/answer-position-violation?)
+(def answer-position-error-message           lp/answer-position-error-message)
+(def answer-first-iteration-violation?       lp/answer-first-iteration-violation?)
+(def answer-first-iteration-error-message    lp/answer-first-iteration-error-message)
+(def parinfer-rebalance             lp/parinfer-rebalance)
+(def split-top-level-forms          lp/split-top-level-forms)
 
 ;; Environment lifecycle
 (def create-environment           lp/create-environment)

@@ -6,8 +6,8 @@ What happens when the user sends a message, end to end.
 
 ```
 user message
-  → conversation/core.clj :: send!         acquire per-conversation lock; build history
-  → query/core.clj       :: query!         validate; store query; enter loop
+  → internal/loop.clj :: send!         acquire per-conversation lock; build history
+  → internal/loop.clj :: query!        validate; store query; enter loop
       loop:
         1. Build Context
         2. Ask LLM
@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's `:thinking`), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `PRIOR_TURN`), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension + loop-injected)
+1. **Build Context** — `<recent>` (last iteration's expressions with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (`QUERY`, `ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`) the model can read directly. Optional `[system_nudge]` line when the model executes the same expression twice.
 2. **Ask LLM** — plain-text completion + fenced code-block
    extraction. The call site is
    `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
@@ -62,7 +62,7 @@ When an iteration throws:
 
 1. If the error is **infrastructure** (router down, DB closed, JVM): re-throw — the turn aborts.
 2. Otherwise: normalize the error and append it as the next user message; continue the loop.
-3. A `[system_nudge]` fires at `CONSECUTIVE_ERROR_NUDGE_AT` (=2) consecutive errors so the model gets one warning to re-emit `:plan` with a different strategy.
+3. A `[system_nudge]` fires at `CONSECUTIVE_ERROR_NUDGE_AT` (=2) consecutive errors so the model gets one warning to change strategy.
 4. If consecutive errors reach `max-consecutive-errors` (default **3**, overridable via `:max-consecutive-errors`), the loop attempts a **strategy restart** — fresh prompt assembly + reset counters — up to `max-restarts` (default **3**, overridable via `:max-restarts`).
 5. After the final restart still fails, the turn ends with `:status :error`.
 
@@ -104,52 +104,38 @@ The consecutive-error budget (`max-consecutive-errors`, default 3,
 with `max-restarts` strategy resets, default 3) is the only
 automatic termination path apart from finalize / cancel.
 
-## Plan, breadcrumbs, recent thought
+## Reasoning continuity
 
-Reasoning continuity is delivered by **three structured slots**, not by
-a lossy summarization chain:
+There is no projection layer carrying "plan" or "breadcrumb" data
+between iterations. Continuity is delivered by:
 
-- **`<plan>`** — sticky `:plan_state` map. The model emits it at iter 0
-  (or whenever the approach changes); the loop carries the most-recent
-  persisted plan forward verbatim until the model re-emits one.
-  Schema: `:goal` / `:items [{:id :content :status :evidence}]` /
-  `:open` / `:decided`. Max 20 items, exactly one `:in-progress`.
-- **`<breadcrumbs>`** — cumulative one-liner per iteration, authored by
-  the model in `:breadcrumb`. Bounded at last K=20 entries, oldest-first.
-  Tactical "what I just did" rendered as `i3  [3] grep yielded 12 hits`.
-- **`<recent_thought>`** — the most recent iteration's free-form
-  `:thinking` text, capped at 4000 chars. For nuance the breadcrumb
-  couldn't carry.
+- **`<recent>`** — the previous iteration's code blocks + results,
+  addressable by `iN.K` ids.
+- **`<var_index>`** — user-defined `(def …)` bindings, type-aware
+  rendering (see below).
+- **SCI bindings** — the SYSTEM vars (`QUERY`, `ANSWER`, `REASONING`,
+  `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `EXTENSIONS`) the model
+  can read directly from inside a fenced code block.
 
-For deeper introspection, the opt-in `vis-common-meta` extension exposes
-`(meta/turn)`, `(meta/conversation)`, `(meta/conversations)`,
-`(meta/var-history 'sym)`, `(meta/find-attempts pattern)`,
-`(meta/failures)`, and `(meta/diagnose)`. See
-[Meta extension](../extensions/common/vis-common-meta.md).
+For deeper introspection, the opt-in `vis-common-foundation` extension
+exposes `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`,
+`(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`,
+`(foundation/failures)`, and `(foundation/diagnose)`. See
+[Meta extension](../extensions/common/vis-common-foundation.md).
 
 ## SYSTEM vars
 
-`QUERY`, `REASONING`, `ANSWER` are read-only sandbox bindings
-carrying the current user request, the model's last reasoning text,
-and the prior turn's final answer. UPPERCASE marks them as constants;
-the registry `SYSTEM_VAR_NAMES = #{QUERY ANSWER REASONING}` is fixed.
-See `loop.runtime.conversation.environment.core/system-var-sym?` for
-the predicate. SYSTEM vars are excluded from `<var_index>` (their
-current values appear inlined in `<system_state>` instead) and are
-not subject to auto-forget.
-
-## Cross-turn handover digest
-
-At iteration 0 of turn N, `<system_state>.PRIOR_TURN` carries a
-**bounded digest** of the previous turn: `{:goal :counts :outcome
-:abandon-reason}`. Only this digest — not the full plan body, not raw
-reasoning, not the transcript. Multi-turn conversations cannot
-accumulate stale plan context here. The next turn's plan is fresh.
+`QUERY`, `REASONING`, `ANSWER`, `CURRENT_QUERY_ID`,
+`CURRENT_ITERATION_ID`, `EXTENSIONS` are read-only sandbox bindings.
+UPPERCASE marks them as constants; the registry `SYSTEM_VAR_NAMES`
+is fixed. See `com.blockether.vis.core/system-var-sym?` for the
+predicate. SYSTEM vars are excluded from `<var_index>` and are not
+subject to auto-forget — the model reads them as plain SCI symbols.
 
 ## Var index
 
 `<var_index>` is the latest namespace snapshot of *user-defined* vars
-only. SYSTEM vars do NOT appear here — they live in `<system_state>`.
+only.
 
 Rendering is **type-aware**: cheap values get their actual content
 inlined so the model never has to round-trip via `(var-history 'sym)`
@@ -181,13 +167,8 @@ Rules:
 - `:fn` → arglists + first docstring line.
 - `:nil|:bool|:int|:float|:keyword|:symbol` → inline literal.
 
-Forgotten / persisted-only vars (not currently live in the sandbox
-but present in the DB var registry) are routed to a separate
-`<vars_archive>` subblock with name + version count only —
-`(var-history 'sym)` recovers the full history on demand.
-
-```
-<vars_archive>
-  archived-var  ;; v=3 (call (var-history 'archived-var) to inspect)
-</vars_archive>
-```
+There is no `<vars_archive>` block. Vars that get auto-forgotten
+(see `auto-forget-stale-vars!` in `internal/loop.clj`) drop out of
+the sandbox and are no longer rendered. The DB still carries their
+full history; the agent recovers prior versions on demand via
+`(foundation/var-history 'sym)` (from `vis-common-foundation`).

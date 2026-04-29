@@ -54,7 +54,7 @@ present, DB writable, providers reachable).
 ### One-shot CLI agent
 
 Best for scripts, CI, and quick one-liners. `vis run` creates a fresh
-conversation in the `:cli` channel namespace, runs a single query,
+conversation in the `:cli` channel namespace, runs a single turn,
 prints the answer, exits.
 
 ```bash
@@ -149,38 +149,42 @@ classpath — it self-registers via the unified `META-INF/vis-extension/vis.edn`
 at startup.
 
 ```bash
-vis extensions                       # list everything that registered
-vis ext <cmd> [args…]                # run an extension's exported CLI command
+vis extensions list                  # list everything that registered
+vis extensions <cmd> [args…]         # run an extension's exported CLI command
 ```
 
-The bundled `extensions/common/vis-common-editing` package adds `read`,
-`list`, `grep`, and `patch` (filesystem tools, namespaced under the
-`fs/` alias). Add it to your run alias:
+The bundled `extensions/common/vis-common-editing` package adds `vis/cat`,
+`vis/ls`, `vis/rg`, `vis/edit`, and `vis/sh` (filesystem + shell tools
+namespaced under the `vis/` alias). It is already wired into the root
+`deps.edn`; add the same `:local/root` entry to a downstream consumer's
+`deps.edn` to enable it:
 
 ```clojure
 ;; deps.edn
-:dev {:extra-deps {com.blockether/vis-common-editing {:local/root "extensions/common/vis-common-editing"}}}
+{:deps {com.blockether/vis-common-editing
+        {:local/root "extensions/common/vis-common-editing"}}}
 ```
 
 To author your own extension, see [Extension System](extensions/overview.md).
 
 ## All top-level sub-commands
 
-| Command                    | Purpose                                                           |
-| -------------------------- | ----------------------------------------------------------------- |
-| `vis run "prompt"`         | One-shot agent query (CLI agent).                                 |
-| `vis channels tui […]`     | Lanterna TUI chat.                                                |
-| `vis channels telegram`    | Telegram long-poll bot.                                           |
-| `vis auth <provider>`      | Provider OAuth flow.                                              |
-| `vis conversations [ch]`   | List conversations, optionally filtered by channel.               |
-| `vis doctor`               | Environment diagnostics.                                          |
-| `vis extensions`           | List registered extensions.                                       |
-| `vis ext <cmd> […]`        | Run an extension-provided CLI command.                            |
-| `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                |
-| `vis help`                 | Print the help tree (same as no args).                            |
+| Command                    | Purpose                                                                  |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `vis run "prompt"`         | One-shot agent turn (CLI agent).                                         |
+| `vis channels tui […]`     | Lanterna TUI chat.                                                       |
+| `vis channels telegram`    | Telegram long-poll bot.                                                  |
+| `vis auth <provider>`      | Provider OAuth flow.                                                     |
+| `vis conversations [ch]`   | List conversations, optionally filtered by channel.                      |
+| `vis doctor`               | Environment diagnostics.                                                 |
+| `vis extensions list`      | List registered extensions.                                              |
+| `vis extensions <cmd> […]` | Run an extension-provided CLI command.                                   |
+| `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                       |
+| `vis help`                 | Print the help tree (same as no args).                                   |
 
-`vis "free-form prompt"` (no leading sub-command) falls back to
-`vis run "free-form prompt"` for ergonomic one-liners.
+The dispatcher is a pure command tree. There is no magical fallback
+to `vis run` for free-form prompts — unrecognized commands print
+the help tree and exit non-zero. Use `vis run "…"` explicitly.
 
 ## Where to next
 

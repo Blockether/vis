@@ -18,15 +18,14 @@
    `create!` / `create-environment`; the binary reaches it through
    `main.clj`.
 
-   Spec / prompt / env / persistance / config / extension / error are
-   all required directly. The SCI sandbox machinery lives in
-   `com.blockether.vis.internal.env`; the iteration spec + plan
-   validation in `com.blockether.vis.internal.spec`; system-prompt
-   assembly + per-iteration context blocks in
-   `com.blockether.vis.internal.prompt`; the storage facade in
-   `com.blockether.vis.internal.persistance`; configuration + active
-   provider state in `com.blockether.vis.internal.config`; the
-   extension subsystem in `com.blockether.vis.internal.extension`."
+   Prompt / env / persistance / config / extension / error are all
+   required directly. The SCI sandbox machinery lives in
+   `com.blockether.vis.internal.env`; system-prompt assembly +
+   per-iteration context blocks in `com.blockether.vis.internal.prompt`;
+   the storage facade in `com.blockether.vis.internal.persistance`;
+   configuration + active provider state in
+   `com.blockether.vis.internal.config`; the extension subsystem in
+   `com.blockether.vis.internal.extension`."
   (:refer-clojure)
   (:require
    [clojure.string :as str]
@@ -45,6 +44,7 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel])
   (:import
+   [com.oakmac.parinfer Parinfer ParinferResult]
    [com.samskivert.mustache Mustache Mustache$Collector Mustache$Compiler
     Mustache$Formatter Mustache$VariableFetcher]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
@@ -305,42 +305,108 @@
     (catch Throwable e
       (ex-message e))))
 
+(defn parinfer-rebalance
+  "First-line repair for malformed Clojure source. Calls parinfer's
+   indent-mode auto-balancer (a battle-tested 1100-line algo from
+   the parinfer.kt port) and returns the rebalanced source iff:
+
+     1. Parinfer reports `success`, AND
+     2. The result is actually different from the input, AND
+     3. The rebalanced source NOW parses cleanly via edamame
+        (parinfer's `success` flag means \"the algorithm finished\";
+        we still need edamame to confirm the result is a valid
+        program).
+
+   Returns `nil` when parinfer can't help. Pure; no side effects.
+   Public so tests can pin behavior on the three observed real-world
+   failure cases (extra-close, delim-type-swap, missing-close)."
+  ^String [^String source]
+  (try
+    (let [^ParinferResult r (Parinfer/indentMode source nil nil nil false)]
+      (when (.success r)
+        (let [rebalanced (.text r)]
+          (when (and rebalanced
+                  (not= rebalanced source)
+                  ;; Re-feed to edamame; only accept the repair if
+                  ;; it actually produces a valid program. Parinfer
+                  ;; is permissive about what counts as \"success\";
+                  ;; edamame is the authoritative arbiter.
+                  (try (edamame/parse-string-all rebalanced edamame-opts) true
+                    (catch Throwable _ false)))
+            rebalanced))))
+    (catch Throwable _ nil)))
+
 (defn split-top-level-forms
   "Parse `code` (a Clojure source string) into top-level forms. Returns a
-   vector of `{:expr str}` maps, one per form. `:expr` is the verbatim
-   source slice for that form when edamame supplies row/col metadata,
-   else `pr-str` of the parsed form as a fallback.
+   vector of `{:expr str :repaired? bool}` maps, one per form, where
+   `:expr` is the verbatim source slice for that form INCLUDING any
+   leading `;; comments` and `#_` discards on prior lines (so the
+   model's natural `;; what this does\n(def ...)` paragraphing
+   survives into `<recent>` instead of getting silently stripped).
 
-   Returns nil and the parse error string when `code` does not parse.
-   Empty / whitespace-only / comment-only input returns `[]`."
+   Repair pipeline when the raw source fails edamame:
+     1. parinfer indent-mode rebalance → re-parse via edamame;
+        on success every form gets `:repaired? true` so the channel
+        + dedup layers can see the repair happened.
+     2. on second failure return `[nil parse-error]` and let the
+        caller (`execute-code`) dispatch to the extension rescue
+        chain (`try-extension-parse-rescue`).
+
+   Empty / whitespace-only / comment-only input returns `[[] nil]`."
   [code]
-  (try
-    (let [code-str (or code "")
-          forms (edamame/parse-string-all code-str edamame-opts)
-          ;; Compute char offset of the start of each line (1-indexed lines).
-          line-starts (let [lines (str/split code-str #"\n" -1)]
-                        (->> lines
-                          (reductions (fn [acc l] (+ acc (count l) 1)) 0)
-                          vec))
-          slice (fn [{:keys [row col end-row end-col]}]
-                  (when (and row col end-row end-col)
-                    (let [n (count line-starts)
-                          start-line (max 0 (dec row))
-                          end-line   (max 0 (dec end-row))]
-                      (when (and (< start-line n) (< end-line n))
-                        (let [start (+ (nth line-starts start-line) (max 0 (dec col)))
-                              end   (+ (nth line-starts end-line)   (max 0 (dec end-col)))]
-                          (when (and (>= start 0) (<= end (count code-str)) (<= start end))
-                            (subs code-str start end)))))))]
-      [(mapv (fn [form]
-               (let [m   (when (instance? clojure.lang.IObj form) (meta form))
-                     src (or (when m (slice m))
-                           (binding [*print-meta* false] (pr-str form)))]
-                 {:expr (str/trim (str src))}))
-         forms)
-       nil])
-    (catch Throwable e
-      [nil (ex-message e)])))
+  (let [code-str (or code "")]
+    (letfn
+      [(parse-and-slice [src repaired?]
+         (let [forms (edamame/parse-string-all src edamame-opts)
+               line-starts (let [lines (str/split src #"\n" -1)]
+                             (->> lines
+                               (reductions (fn [acc l] (+ acc (count l) 1)) 0)
+                               vec))
+               n (count line-starts)
+               offset-of (fn [row col]
+                           (when (and row col)
+                             (let [line (max 0 (dec row))]
+                               (when (< line n)
+                                 (+ (nth line-starts line) (max 0 (dec col)))))))
+               form-bounds (mapv (fn [f]
+                                   (when-let [m (and (instance? clojure.lang.IObj f) (meta f))]
+                                     (let [s (offset-of (:row m) (:col m))
+                                           e (offset-of (:end-row m) (:end-col m))]
+                                       (when (and s e (>= s 0) (<= e (count src)) (<= s e))
+                                         [s e]))))
+                             forms)
+               ;; For form K, slice from end-of-form-(K-1) (or 0)
+               ;; through end-of-form-K. Captures any `;; comments` /
+               ;; `#_(...)` discards / blank lines that sat between
+               ;; the previous form and this one as part of THIS
+               ;; form's source. Trimming on the way out drops the
+               ;; leading whitespace but keeps the comment lines
+               ;; verbatim, so `<recent>` shows what the model wrote.
+               slice (fn [idx]
+                       (when-let [[_ end] (nth form-bounds idx nil)]
+                         (let [start (or (some-> (nth form-bounds (dec idx) nil) (nth 1)) 0)]
+                           (subs src start end))))]
+           (mapv (fn [idx form]
+                   (let [src-slice (or (slice idx)
+                                     (binding [*print-meta* false] (pr-str form)))]
+                     (cond-> {:expr (str/trim (str src-slice))}
+                       repaired? (assoc :repaired? true))))
+             (range) forms)))]
+      (try
+        ;; Attempt 1: edamame on raw source.
+        [(parse-and-slice code-str false) nil]
+        (catch Throwable raw-err
+          ;; Attempt 2: parinfer rebalance, then edamame on rebalanced.
+          (if-let [rebalanced (parinfer-rebalance code-str)]
+            (try
+              [(parse-and-slice rebalanced true) nil]
+              (catch Throwable _
+                ;; Defensive: rebalance was \"clean\" per edamame in
+                ;; the inner check, but slicing failed. Fall back to
+                ;; the raw error so the caller can try the
+                ;; extension chain on the original source.
+                [nil (ex-message raw-err)]))
+            [nil (ex-message raw-err)]))))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 
@@ -614,69 +680,6 @@
 ;; when a tighter or looser bound is required.
 
 ;; ---------------------------------------------------------------------------
-;; <attempts> ledger — deduped log of executed code blocks across the
-;; entire turn so far, addressable by `iN.K` ids. Replaces the
-;; old strategy of "the model has to remember every call it made"
-;; with explicit projection-time visibility. The PEV gate's
-;; `:evidence iN.K` references resolve into this block.
-;; ---------------------------------------------------------------------------
-
-;; -- Plan-as-first-class-slot helpers --------------------------
-;;
-;; Two complementary projections of the agent's reasoning state:
-;;
-;;   <plan>          sticky structured TODO list, carried verbatim from
-;;                   the most-recent iteration row that emitted a :plan. The
-;;                   model only re-emits it when reality forces a real
-;;                   change; otherwise the loop carries it forward.
-;;
-;;   <breadcrumbs>   bounded one-liner chain (last K=20). Built from
-;;                   the :breadcrumb column of recent iteration rows, ordered
-;;                   oldest-first, prefixed by "iN ".
-;;
-;; The plan never gets re-summarized through tactical iterations, and
-;; the breadcrumbs preserve the strategic frame at one line per iteration.
-
-;; -- Cross-field plan validation -----------------------------------------
-;;
-;; svar's spec engine validates structural shape; the cross-field
-;; rules (≤20 items, exactly-one :in-progress, monotonic ids) are
-;; checked here in Clojure and surfaced as a structured error map
-;; that the iteration loop renders into a `[system_nudge]` line via
-;; `prompt/format-loop-nudge`.
-
-;; ---------------------------------------------------------------------------
-;; Loop nudge formatter — the user-facing string the model sees on the
-;; NEXT iteration when the loop rejects the prior iteration's output
-;; (PEV gate, plan validation, etc.). Mirrors `format-iteration-error`
-;; for trace `:error` entries: takes a structured violation map and
-;; produces the `[system_nudge]`-prefixed directive line.
-;; ---------------------------------------------------------------------------
-
-;; ---------------------------------------------------------------------------
-;; Plan diff — powers the spec/plan-edit-distance metric and the
-;; <breadcrumbs> annotation when a plan changes between iterations.
-;; ---------------------------------------------------------------------------
-
-;; -- Sticky-plan loader ---------------------------------------
-;;
-;; The plan slot is sticky: the model writes it once and the loop carries
-;; the most-recent persisted plan forward across iterations until the model
-;; re-emits one. This loader returns the latest non-nil plan-state from the
-;; current query's iteration rows; nil when no plan has ever been emitted.
-
-;; ---------------------------------------------------------------------------
-;; Nudges — per-iteration system hints injected into the iteration context
-;; ---------------------------------------------------------------------------
-
-;; A single repeat is enough signal: with <attempts> in the projection,
-;; a single repeat is enough signal that the model should change strategy.
-
-;; ---------------------------------------------------------------------------
-;; Iteration context builder
-;; ---------------------------------------------------------------------------
-
-;; ---------------------------------------------------------------------------
 ;; Error normalization
 ;; ---------------------------------------------------------------------------
 
@@ -770,6 +773,138 @@
   (vec (remove #(noop-expr? (:code %)) (or expressions []))))
 
 ;; ---------------------------------------------------------------------------
+;; Answer-scoping helper (Option C)
+;;
+;; The iteration loop discards a `(answer ...)` call iff the form
+;; that ITSELF invoked it errored. Sibling errors (a typo in some
+;; OTHER form, a bad vis/edit elsewhere) do NOT gate termination —
+;; the model's intent to finalize is honored as long as the answer-
+;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
+;; sibling error, which is how a turn could rack up 148 retries with
+;; the model repeatedly emitting `(answer ...)` next to a single
+;; broken `(def ...)`.
+;;
+;; Returns the error from the form at `form-idx` in `expression-results`
+;; or nil when that form's evaluation succeeded. `form-idx` may be
+;; nil (legacy answer-atom payloads) or out-of-bounds (defensive
+;; against shape drift) — both yield nil (no discard).
+;; ---------------------------------------------------------------------------
+
+(defn answer-form-error
+  "Return the `:error` produced by the form at `form-idx` in
+   `expression-results`, or nil when the form succeeded or `form-idx`
+   is missing/out-of-bounds. Pure; no side effects. Public so the
+   loop and tests can both reach it without re-implementing the
+   bounds check."
+  [expression-results form-idx]
+  (when (and form-idx
+          (integer? form-idx)
+          (not (neg? form-idx))
+          (< form-idx (count expression-results)))
+    (:error (nth expression-results form-idx))))
+
+;; ---------------------------------------------------------------------------
+;; Answer-position contract (rule b' — \"answer is the last form, or the
+;; only form\")
+;;
+;; An iteration that calls `(answer …)` MUST emit it from EITHER:
+;;   (i)  the only top-level form, OR
+;;   (ii) the last top-level form.
+;;
+;; In other words: every form preceding the answer call ran first; no
+;; form runs AFTER it. Mid-iteration answers are rejected because
+;; trailing work would silently discard the answer's intent (\"I said
+;; we're done, then I did more stuff\" — incoherent).
+;;
+;; The check collapses to one comparison: `form-idx` (which top-level
+;; form invoked `(answer …)`) must equal `(dec total-forms)`. That
+;; naturally subsumes the single-form case (form-idx 0 == count 1 - 1).
+;;
+;; Structural wrappers — `(let […] (answer …))`, `(do … (answer …))`,
+;; `(answer (build))` — stay legal because they are still ONE
+;; top-level form (the wrapper) which itself is the last/only form.
+;; ---------------------------------------------------------------------------
+
+(defn answer-position-violation?
+  "True when `(answer …)` fired from a form that is NOT the last
+   top-level form of the iteration. `form-idx` is the 0-based index
+   of the form that set `answer-atom`; `total-forms` is the count of
+   parsed top-level expressions. Pure; public so loop + tests share
+   the rule. Returns false when `form-idx` is nil (no answer fired)."
+  [form-idx total-forms]
+  (boolean (and form-idx
+             (integer? form-idx)
+             (not (neg? form-idx))
+             (pos? total-forms)
+             (not= form-idx (dec total-forms)))))
+
+(defn answer-position-error-message
+  "Validation-error string surfaced when `answer-position-violation?`
+   fires. Tells the model exactly what's wrong (which form's index
+   vs. the required last index, both 1-based for human readability)
+   and offers two recovery paths."
+  [form-idx total-forms]
+  (let [actual-1 (inc (or form-idx 0))]
+    (str "(answer …) must be either the ONLY top-level form OR the LAST "
+      "top-level form in its iteration. This iteration had " total-forms
+      " top-level forms but answer fired from form " actual-1
+      "; it must fire from form " total-forms
+      ". Either: (a) move the answer call to the end of this iteration, "
+      "OR (b) drop trailing forms and emit them as a separate next "
+      "iteration before the answer.")))
+
+;; ---------------------------------------------------------------------------
+;; Rule c — \"answer in iter 0 must be the ONLY form\"
+;;
+;; Rule b' allows answer as the last of N top-level forms, but in
+;; iteration 0 the model has no prior `<recent>` context. If it
+;; emits work-forms followed by `(answer …)` in iter 0, the answer
+;; was formed WITHOUT observing the work's results — those land in
+;; iter 1's prompt, not iter 0's. The answer is therefore
+;; uninformed regardless of whether the work succeeded.
+;;
+;; Recovery: model can either (a) inline the work into the answer's
+;; argument or wrap it in a structural `(let […] (answer …))` so
+;; results ARE observed inline before the answer fires (still ONE
+;; top-level form, allowed), OR (b) split the work into iter 0 and
+;; emit `(answer …)` as the only form of iter 1 once the work's
+;; results are visible in `<recent>`.
+;;
+;; Iter 1+ is unaffected — by then the model has seen at least one
+;; feedback round, so multi-form answer iterations carry real
+;; information.
+;; ---------------------------------------------------------------------------
+
+(defn answer-first-iteration-violation?
+  "True when `(answer …)` fired during iteration 0 AND the iteration
+   had more than one top-level form. `iteration` is the 0-based
+   iteration number; `total-forms` is the count of parsed top-level
+   expressions; `answer-fired?` is whether the answer-atom was set.
+   Pure; public so loop + tests share the rule."
+  [iteration total-forms answer-fired?]
+  (boolean (and answer-fired?
+             (integer? iteration)
+             (zero? iteration)
+             (integer? total-forms)
+             (> total-forms 1))))
+
+(defn answer-first-iteration-error-message
+  "Validation-error string surfaced when
+   `answer-first-iteration-violation?` fires. Spells out WHY this is
+   wrong (the model didn't observe its own work's results before
+   answering) and offers both recovery paths."
+  [total-forms]
+  (str "(answer …) cannot fire in iteration 0 alongside other top-level "
+    "work forms. This iteration had " total-forms " top-level forms; the "
+    "answer was discarded. The model has not yet observed the results "
+    "of its own work in iteration 0 — those land in iteration 1's <recent>, "
+    "not iteration 0's. Either: (a) inline the work into the answer's "
+    "argument or wrap it as `(let […] (answer …))` so the iteration has "
+    "ONE top-level form whose result IS observed before answer fires, OR "
+    "(b) keep the work in iteration 0 and emit (answer …) as the only "
+    "form of iteration 1 once the work's results are visible in <recent>."))
+
+;; ---------------------------------------------------------------------------
 ;; run-iteration
 ;; ---------------------------------------------------------------------------
 
@@ -797,13 +932,28 @@
                         (throw (ex-info "environment missing :answer-atom"
                                  {:type :vis/missing-answer-atom})))
           _ (reset! answer-atom nil)
-          ;; Stream reasoning chunks to the TUI while the LLM is thinking
+          ;; Form-index pointer the executed-mapv reset!s before each
+          ;; expression's eval so `answer-fn` can stamp `:form-idx` on
+          ;; the answer-atom payload. Pairs with the discard check
+          ;; below: an answer is gated only by the form that emitted
+          ;; it, not by sibling forms.
+          current-form-idx-atom (or (:current-form-idx-atom environment)
+                                  (throw (ex-info "environment missing :current-form-idx-atom"
+                                           {:type :vis/missing-current-form-idx-atom})))
+          _ (reset! current-form-idx-atom nil)
+          ;; Stream reasoning chunks to the TUI while the LLM is
+          ;; thinking. Every chunk carries `:phase` — consumers
+          ;; dispatch on it. Phases:
+          ;;   :reasoning      — LLM streaming reasoning text
+          ;;   :form-result    — one form finished evaluating (per-form)
+          ;;   :iteration-final — iteration complete (final-result
+          ;;                      or normal end-of-iteration marker)
           streaming-fn (when on-chunk
                          (fn [{:keys [reasoning done?]}]
                            (when (or (some? reasoning) done?)
-                             (on-chunk {:iteration iteration
+                             (on-chunk {:phase     :reasoning
+                                        :iteration iteration
                                         :thinking  (some-> reasoning str)
-                                        :code      nil
                                         :done?     (boolean done?)}))))
           ask-result (binding [svar-llm/*log-context* {:query-id (:environment-id environment) :iteration iteration}]
                        (svar/ask-code! (:router environment)
@@ -837,30 +987,64 @@
                          [{:expr (str raw-code) :parse-error parse-error}]
                          (vec (filter #(not (str/blank? (:expr %))) (or forms []))))
           total-blocks (count code-entries)
-          executed (mapv (fn [idx {:keys [expr parse-error]}]
+          executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired?}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
+                           ;; Stamp form-idx BEFORE eval so any
+                           ;; `(answer ...)` call inside this form
+                           ;; captures the right index on the
+                           ;; answer-atom payload.
+                           (reset! current-form-idx-atom idx)
                            (let [iteration-id (str "i" iteration "." (inc idx))
-                                 result (cond
-                                          parse-error
-                                          {:result nil :error (str "Parse error: " parse-error)
-                                           :stdout "" :stderr "" :execution-time-ms 0}
-                                          :else
-                                          (if-let [err (literal-code-block-error expr)]
-                                            {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
-                                            (let [r (execute-code environment expr
-                                                      :dedup-cache-atom dedup-cache-atom
-                                                      :iteration-id iteration-id)]
-                                              (log-stage! :code-result iteration
-                                                {:idx (inc idx) :total total-blocks
-                                                 :execution-time-ms (:execution-time-ms r)
-                                                 :error (:error r) :timeout? (:timeout? r) :result (:result r)})
-                                              r)))]
+                                 raw-result (cond
+                                              parse-error
+                                              {:result nil :error (str "Parse error: " parse-error)
+                                               :stdout "" :stderr "" :execution-time-ms 0}
+                                              :else
+                                              (if-let [err (literal-code-block-error expr)]
+                                                {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
+                                                (let [r (execute-code environment expr
+                                                          :dedup-cache-atom dedup-cache-atom
+                                                          :iteration-id iteration-id)]
+                                                  (log-stage! :code-result iteration
+                                                    {:idx (inc idx) :total total-blocks
+                                                     :execution-time-ms (:execution-time-ms r)
+                                                     :error (:error r) :timeout? (:timeout? r) :result (:result r)})
+                                                  r)))
+                                 ;; Carry parinfer's whole-source
+                                 ;; rebalance flag into the per-form
+                                 ;; result. `execute-code` may also
+                                 ;; set `:repaired?` (extension hook
+                                 ;; rescue); both paths converge on
+                                 ;; the same flag for the channel.
+                                 result (cond-> raw-result
+                                          form-repaired? (assoc :repaired? true))]
+                             ;; Per-form streaming chunk (:phase
+                             ;; :form-result). Fires the moment a
+                             ;; form lands so the channel can render
+                             ;; iN.K results incrementally instead
+                             ;; of waiting for the whole batch. Same
+                             ;; envelope on success and error —
+                             ;; consumers branch on `:error nil?`,
+                             ;; not on shape.
+                             (when on-chunk
+                               (on-chunk {:phase             :form-result
+                                          :iteration         iteration
+                                          :form-idx          idx
+                                          :form-of           total-blocks
+                                          :iteration-id      iteration-id
+                                          :code              expr
+                                          :result            (:result result)
+                                          :error             (:error result)
+                                          :stdout            (:stdout result)
+                                          :stderr            (:stderr result)
+                                          :execution-time-ms (:execution-time-ms result)
+                                          :timeout?          (boolean (:timeout? result))
+                                          :repaired?         (boolean (:repaired? result))}))
                              {:block expr :result result}))
                      (range) code-entries)
           code-blocks (mapv :block executed)
           expression-results (mapv :result executed)
-          expression-errors (seq (clojure.core/filter :error expression-results))
           expressions (mapv (fn [idx code result]
                               {:id idx
                                :code code
@@ -872,23 +1056,63 @@
                                :timeout? (:timeout? result)
                                :repaired? (:repaired? result)})
                         (range) code-blocks expression-results)]
-      (if-let [raw-final-answer @answer-atom]
+      (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
-          ;; iteration. The atom holds the stringified arg. Surface any
-          ;; expression error as a validation error so the loop retries.
+          ;; iteration. Atom payload is `{:value :form-idx}`. Three
+          ;; gates fire in order:
+          ;;
+          ;;   1. Rule c (first-iter informedness): in iteration 0,
+          ;;      `(answer …)` must be the ONLY top-level form.
+          ;;      Multi-form iter-0 answers are rejected because the
+          ;;      model has no prior `<recent>` to draw on — the
+          ;;      answer was formed WITHOUT observing the iteration's
+          ;;      own work, which only lands in iter 1's prompt.
+          ;;
+          ;;   2. Rule b' (answer position): `(answer …)` must fire
+          ;;      from the last (or only) top-level form. Mid-
+          ;;      iteration answers are rejected; trailing work
+          ;;      after an answer is incoherent.
+          ;;
+          ;;   3. Option C (form-scoped error gate): if the answer-
+          ;;      bearing form's own evaluation errored anyway
+          ;;      (e.g. `(do (vis/edit …throws…) (answer "x"))` —
+          ;;      the form had inner work that crashed), the answer
+          ;;      is discarded with the form's own error. Sibling
+          ;;      forms BEFORE the answer-form may error freely; that
+          ;;      doesn't gate termination.
+          ;;
           ;; `resolved-model` is a MAP — `{:name str :provider kw
           ;; :reasoning? bool}` — not a string. Persisting `(str
           ;; resolved-model)` would land a stringified map in
           ;; `iteration.llm_model`; surface `:name` and `:provider`
           ;; separately so both columns get clean values.
-        (let [final-answer (str raw-final-answer)
-              validation-error (when expression-errors
-                                 (error/final-answer-code-error-message (:error (first expression-errors))))
+        (let [final-answer    (str value)
+              total-forms     (count code-entries)
+              first-iter-bad? (answer-first-iteration-violation? iteration total-forms true)
+              position-bad?   (when-not first-iter-bad?
+                                (answer-position-violation? form-idx total-forms))
+              own-form-error  (when (and (not first-iter-bad?) (not position-bad?))
+                                (answer-form-error expression-results form-idx))
+              validation-error (cond
+                                 first-iter-bad?
+                                 (answer-first-iteration-error-message total-forms)
+                                 position-bad?
+                                 (answer-position-error-message form-idx total-forms)
+                                 own-form-error
+                                 (error/final-answer-code-error-message own-form-error))
+              ;; Surface the validation error on the answer-bearing
+              ;; form's row so the model sees \"my (answer …) was
+              ;; rejected because…\" right next to its own code.
+              expressions*     (cond-> expressions
+                                 (and validation-error form-idx
+                                   (< form-idx (count expressions))
+                                   (nil? (get-in expressions [form-idx :error])))
+                                 (assoc-in [form-idx :error] validation-error))
               model-name       (some-> (:name resolved-model) str)
               provider         (:provider resolved-model)]
           (if validation-error
             {:thinking thinking
-             :expressions (or (seq expressions)
+             :expressions (or (seq expressions*)
                             [{:id 0 :code "(final-answer-validation)"
                               :result nil :stdout "" :stderr ""
                               :error validation-error}])
@@ -897,7 +1121,16 @@
              :llm-messages messages :llm-provider provider :llm-model model-name}
             {:thinking thinking
              :expressions (strip-noop-expressions expressions)
-             :final-result {:final? true :answer final-answer}
+             :final-result {:final?           true
+                            :answer           final-answer
+                            ;; Index of the form that called
+                            ;; `(answer …)`. Channels use this to
+                            ;; ELIDE the answer-bearing form from the
+                            ;; per-iteration code trace (the channel
+                            ;; renders the answer text below; showing
+                            ;; `(answer "...")` above it is
+                            ;; redundant prose-as-code).
+                            :answer-form-idx  form-idx}
              :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages :llm-provider provider :llm-model model-name}))
@@ -1105,13 +1338,22 @@
 
 (defn inject-system-var-snapshots
   "Append SYSTEM-var entries to a vars-snapshot vec for persistence.
-   Names match `SYSTEM_VAR_NAMES`."
+   Names match `SYSTEM_VAR_NAMES`.
+
+   `EXTENSIONS` is captured exactly once — on iteration 0, alongside
+   `QUERY` — because the loop binds the snapshot once at turn start
+   and never mutates it within the turn (see `iteration-loop`). Every
+   subsequent iteration would persist an identical row, so we skip
+   them."
   [vars-snapshot {:keys [iteration query thinking final-result final-answer
-                         current-query-id current-iteration-id]}]
+                         current-query-id current-iteration-id extensions-snapshot]}]
   (cond-> vars-snapshot
     (zero? iteration)        (conj {:name "QUERY"     :value query        :code ";; SYSTEM var"})
     (and (zero? iteration)
       current-query-id)   (conj {:name "CURRENT_QUERY_ID" :value current-query-id :code ";; SYSTEM var"})
+    (and (zero? iteration)
+      (some? extensions-snapshot))
+    (conj {:name "EXTENSIONS" :value extensions-snapshot :code ";; SYSTEM var"})
     (seq thinking)           (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
     final-result             (conj {:name "ANSWER"    :value final-answer :code ";; SYSTEM var"})
     current-iteration-id     (conj {:name "CURRENT_ITERATION_ID" :value current-iteration-id :code ";; SYSTEM var"})))
@@ -1216,6 +1458,14 @@
     ;; Reset CURRENT_ITERATION_ID to nil at turn start; rebound by
     ;; `update-current-iteration-id!` after each iteration row commits.
     (env/bind-and-bump! environment 'CURRENT_ITERATION_ID nil)
+    ;; EXTENSIONS = frozen, fully-realized vec describing every
+    ;; extension that activated for THIS turn. Bound once here and
+    ;; never mutated within the loop — the model gets a stable view
+    ;; for the entire turn. Built off the same `active-exts` we hand
+    ;; to the prompt assembler / nudge collector, so the agent's
+    ;; <var_index> picture matches the actually-loaded surface.
+    (env/bind-and-bump! environment 'EXTENSIONS
+      (prompt/extensions-snapshot active-exts))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-query-id-atom environment)] (reset! a query-id))
     (auto-forget-stale-vars! environment)
@@ -1318,14 +1568,17 @@
                                               :metadata (iteration-metadata)})]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                       (update-current-iteration-id! environment err-iteration-id)
-                      ;; Live error chunk — lets the TUI / web bubble show
-                      ;; \"iteration N failed: <message>\" the moment it happens, instead
-                      ;; of waiting for the whole loop to give up. The chunk
-                      ;; carries the same shape on-iteration sees so any UI
-                      ;; that already reads :error gets it for free.
+                      ;; Live error chunk — `:phase :iteration-error`
+                      ;; signals the iteration aborted before any
+                      ;; forms could run. No per-form chunks fired
+                      ;; this iteration, so the channel sees a clean
+                      ;; reasoning -> error transition.
                       (emit-hook! on-chunk
-                        {:iteration iteration :thinking empty-reasoning :code nil
-                         :error iteration-error-data :done? true}
+                        {:phase     :iteration-error
+                         :iteration iteration
+                         :thinking  empty-reasoning
+                         :error     iteration-error-data
+                         :done?     true}
                         "on-chunk (iteration error)")
                       (emit-hook! on-iteration
                         {:iteration iteration :status :error :status-id (status->id :error)
@@ -1348,7 +1601,12 @@
                                         {:iteration iteration :query query :thinking thinking
                                          :final-result final-result :final-answer final-answer
                                          :current-query-id query-id
-                                         :current-iteration-id previous-iteration-id})
+                                         :current-iteration-id previous-iteration-id
+                                         ;; Persist the same frozen snapshot that's
+                                         ;; bound in SCI. Captured on iteration 0
+                                         ;; only — see `inject-system-var-snapshots`.
+                                         :extensions-snapshot (when (zero? iteration)
+                                                                (prompt/extensions-snapshot active-exts))})
                         [redundant-count expression-count]
                         (count-duplicates seen-expression-hashes-atom
                           (or expressions []))
@@ -1388,16 +1646,27 @@
                         (log-stage! :iteration-end iteration
                           {:blocks (count expressions) :errors (count (filter :error expressions))
                            :times (mapv :execution-time-ms expressions)})
+                        ;; Iteration-final chunk (`:phase :iteration-final`).
+                        ;; Per-form chunks already streamed every iN.K
+                        ;; result; this is the trim \"iteration is
+                        ;; complete, here is the terminal answer\"
+                        ;; signal. Consumers attach `:final` to
+                        ;; whatever's already on screen.
+                        ;;
+                        ;; `:answer-form-idx` tells the channel which
+                        ;; per-form slot was the `(answer …)` call;
+                        ;; the progress tracker elides that slot so
+                        ;; the renderer doesn't paint the answer
+                        ;; call's code above the answer text.
                         (when on-chunk
-                          (on-chunk {:iteration iteration :thinking thinking
-                                     :code (mapv :code expressions)
-                                     :results (mapv #(if (:error %) (error/format-error (:error %)) (prompt/safe-pr-str (:result %))) expressions)
-                                     :stdouts (mapv #(or (:stdout %) "") expressions)
-                                     :durations (mapv #(or (:execution-time-ms %) 0) expressions)
-                                     :successes (mapv #(nil? (:error %)) expressions)
-                                     :final {:answer (:answer final-result)
-                                             :iteration-count (inc iteration) :status :success}
-                                     :done? true}))
+                          (on-chunk {:phase            :iteration-final
+                                     :iteration        iteration
+                                     :thinking         thinking
+                                     :final            {:answer          (:answer final-result)
+                                                        :iteration-count (inc iteration)
+                                                        :status          :success}
+                                     :answer-form-idx  (:answer-form-idx final-result)
+                                     :done?            true}))
                         (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                 :iteration-count (inc iteration)}
                           (finalize-cost)))
@@ -1412,14 +1681,17 @@
                         (do (log-stage! :iteration-end iteration
                               {:blocks (count expressions) :errors (count (filter :error expressions))
                                :times (mapv :execution-time-ms expressions)})
+                          ;; Non-terminal iteration-final chunk: per-form
+                          ;; chunks already streamed; this is the
+                          ;; \"iteration done, more iterations coming\"
+                          ;; marker. `:final` is nil because the
+                          ;; turn isn't done yet.
                           (when on-chunk
-                            (on-chunk {:iteration iteration :thinking thinking
-                                       :code (mapv :code expressions)
-                                       :results (mapv #(if (:error %) (error/format-error (:error %)) (prompt/safe-pr-str (:result %))) expressions)
-                                       :stdouts (mapv #(or (:stdout %) "") expressions)
-                                       :durations (mapv #(or (:execution-time-ms %) 0) expressions)
-                                       :successes (mapv #(nil? (:error %)) expressions)
-                                       :done? false}))
+                            (on-chunk {:phase     :iteration-final
+                                       :iteration iteration
+                                       :thinking  thinking
+                                       :final     nil
+                                       :done?     false}))
                           (let [had-success? (some #(nil? (:error %)) expressions)
                                 next-errors (if had-success? 0 (inc consecutive-errors))
                                 _ (when had-success? (swap! var-index-atom update :current-revision inc))]
@@ -1960,10 +2232,17 @@
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
         ;; Iteration-final-answer signal. The SCI sandbox's `(answer
-        ;; "…")` fn `reset!`s this atom; the iteration loop reads it
-        ;; back after evaluating each iteration's forms. Reset to nil
-        ;; before every iteration runs.
+        ;; "…")` fn `reset!`s this atom with `{:value :form-idx}`;
+        ;; the iteration loop reads it back after evaluating each
+        ;; iteration's forms and discards iff the form at `:form-idx`
+        ;; itself errored (Option C scoping — sibling errors do NOT
+        ;; gate the answer). Reset to nil before every iteration runs.
         answer-atom              (atom nil)
+        ;; Form-index pointer the iteration loop reset!s before each
+        ;; expression's `execute-code` call so `answer-fn` knows which
+        ;; form's evaluation invoked it. Pairs with `answer-atom` to
+        ;; implement Option C (scoped) discard semantics.
+        current-form-idx-atom    (atom nil)
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
@@ -1993,11 +2272,15 @@
                                        (string? sym) (clojure.core/symbol sym)
                                        :else (clojure.core/symbol (str sym)))))
         ;; SCI binding for `(answer "…")` — the canonical turn-
-        ;; termination call. Closes over `answer-atom` so the iteration
-        ;; loop can read what the model emitted. Returns the marker
-        ;; keyword so the iN.K result row makes intent visible.
+        ;; termination call. Closes over `answer-atom` AND
+        ;; `current-form-idx-atom` so the iteration loop can scope
+        ;; the discard check to the form that actually called this.
+        ;; Returns the marker keyword so the iN.K result row makes
+        ;; intent visible.
         answer-fn                (fn answer [s]
-                                   (reset! answer-atom (str s))
+                                   (reset! answer-atom
+                                     {:value    (str s)
+                                      :form-idx @current-form-idx-atom})
                                    :vis/answer)
         env-bindings             {'var-history var-history-fn
                                   'answer      answer-fn}
@@ -2014,8 +2297,9 @@
              :sandbox-ns      sandbox-ns
              :initial-ns-keys initial-ns-keys
              :router          router
-             :answer-atom    answer-atom
-             :extensions      (atom [])}]
+             :answer-atom           answer-atom
+             :current-form-idx-atom current-form-idx-atom
+             :extensions            (atom [])}]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
     ;; Restore persisted vars when resuming an existing conversation.
@@ -2084,14 +2368,36 @@
   ;; Bind extension symbols ONLY into the aliased namespace — never
   ;; into sandbox. The LLM must always use the alias form
   ;; `(alias/symbol ...)`, not `(sdk/symbol ...)`.
+  ;;
+  ;; Multi-extension MERGE: two extensions can share an `:ext/ns-alias`
+  ;; (e.g. one ext registers `vis/cat`/`vis/ls`, another adds
+  ;; `vis/diff` under the same `vis` alias). The bindings are MERGED
+  ;; into the existing namespace map; same-name symbols get last-write-
+  ;; wins (matching how `install-extension!` already replaces an
+  ;; extension with the same `:ext/namespace`). A telemere warn line
+  ;; fires on collisions so reviewers see which extension shadowed
+  ;; whose symbol.
   (let [wrapped (extension/wrap-extension ext environment)
         sci-ctx (:sci-ctx environment)]
     (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
       (let [ext-ns      (sci/create-ns ns-sym)
             ns-bindings (into {} (map (fn [[sym val]]
                                         [sym (sci/new-var sym val {:ns ext-ns})]))
-                          wrapped)]
-        (swap! (:env sci-ctx) update :namespaces assoc ns-sym ns-bindings)
+                          wrapped)
+            existing    (get-in @(:env sci-ctx) [:namespaces ns-sym])
+            collisions  (when (seq existing)
+                          (vec (filter #(contains? existing %) (keys ns-bindings))))]
+        (when (seq collisions)
+          (tel/log! {:level :warn :id ::ext-symbol-collision
+                     :data  {:ext       (:ext/namespace ext)
+                             :ns        ns-sym
+                             :alias     alias-sym
+                             :symbols   collisions}
+                     :msg   (str "Extension '" (:ext/namespace ext)
+                              "' shadowed " (count collisions)
+                              " existing symbol(s) under alias '" alias-sym
+                              "': " (str/join ", " collisions))}))
+        (swap! (:env sci-ctx) update-in [:namespaces ns-sym] merge ns-bindings)
         (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))
       ;; Auto-require the alias in sandbox so the LLM never has to call
       ;; `(require ...)` manually.

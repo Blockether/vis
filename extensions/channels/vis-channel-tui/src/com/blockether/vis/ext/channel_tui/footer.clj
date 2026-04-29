@@ -20,8 +20,8 @@
    phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
    block. Putting it in the footer too was a duplicate — same
    `\u280b 11.2s` showing twice on screen. The footer keeps slow-changing
-   identity + budget bits; the bubble keeps the live activity story,
-   including escalating slow-warnings when the provider hangs.
+   identity + budget bits; the bubble keeps the live activity story
+   («Vis is thinking (iter 3)… 4.1s · Esc to cancel»).
 
    Every numeric format uses `Locale/ROOT` so a Polish JVM doesn't
    produce mixed `5,8k` next to English `k`. The previous footer
@@ -167,12 +167,10 @@
 
       ;; Spinner / iter-counter / elapsed: deliberately NOT here.
       ;; The bubble's `progress->text` already carries that, with
-      ;; phase ("sending request to provider" / "thinking (iter 3)")
-      ;; AND an elapsed-aware slow-warning escalator that turns into
-      ;; "provider unresponsive, Esc to cancel" past 2 minutes.
-      ;; Duplicating it in the footer is what the user complained
-      ;; about — same `⠋ 11.2s` shown twice. `cancelling…` stays
-      ;; because it's a whole-conversation status, not just
+      ;; phase ("Vis is calling the provider" / "Vis is thinking
+      ;; (iter 3)"). Duplicating it in the footer is what the user
+      ;; complained about — same `⠋ 11.2s` shown twice. `cancelling…`
+      ;; stays because it's a whole-conversation status, not just
       ;; current-iteration.
 
       ;; ── RIGHT ─────────────────────────────────────────────────────────────

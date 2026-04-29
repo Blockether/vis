@@ -396,6 +396,90 @@
 ;; Fork — branch a conversation at a point
 ;; =============================================================================
 
+(defn db-list-conversation-states
+  "List every `conversation_state` row for the soul behind `conversation-id`,
+   oldest version first. Each row maps to
+   `{:state-id :version :parent-state-id :title :system-prompt :provider :model
+     :created-at :query-count}` — the raw fork tree of one conversation soul.
+
+   The trunk is `:version 0` with `:parent-state-id nil`. A fork is any row
+   whose `:parent-state-id` points at another `:state-id` in the same vector;
+   group-by `:parent-state-id` to walk the tree.
+
+   `:query-count` is the number of `query_soul` rows hanging off that specific
+   state — cheap to compute, useful when triaging which branch is active.
+
+   Returns `[]` (never nil) when the conversation is unknown or the env has no
+   datasource."
+  [db-info conversation-id]
+  (if (and (ds db-info) conversation-id)
+    (let [soul-id-s (->ref conversation-id)
+          rows (query! db-info
+                 {:select [:cs.id :cs.version :cs.parent_state_id :cs.title
+                           :cs.metadata :cs.created_at
+                           [{:select [[[:count :*]]]
+                             :from   :query_soul
+                             :where  [:= :query_soul.conversation_state_id :cs.id]}
+                            :query_count]]
+                  :from   [[:conversation_state :cs]]
+                  :where  [:= :cs.conversation_soul_id soul-id-s]
+                  :order-by [[:cs.version :asc]]})]
+      (mapv (fn [row]
+              (let [state-meta (<-json (:metadata row))]
+                (cond-> {:state-id        (->uuid (:id row))
+                         :version         (:version row)
+                         :parent-state-id (some-> (:parent_state_id row) ->uuid)
+                         :title           (:title row)
+                         :created-at      (->date (:created_at row))
+                         :query-count     (or (:query_count row) 0)}
+                  (:system-prompt state-meta) (assoc :system-prompt (:system-prompt state-meta))
+                  (:provider state-meta)      (assoc :provider (->kw-back (:provider state-meta)))
+                  (:model state-meta)         (assoc :model (:model state-meta)))))
+        rows))
+    []))
+
+(defn db-list-query-states
+  "List every `query_state` row (i.e. every retry version) for the soul behind
+   `query-id`, oldest version first. Each row maps to
+   `{:state-id :version :forked-from-query-state-id :status :prior-outcome
+     :provider :model :created-at :iteration-count}`.
+
+   Version 0 with `:forked-from-query-state-id nil` is the original run; any
+   higher version is a retry, with `:forked-from-query-state-id` pointing at
+   the previous `:state-id`. `:iteration-count` is the number of `iteration`
+   rows attached to that specific state — retries get their own iteration
+   trace.
+
+   Returns `[]` (never nil) when the query is unknown or the env has no
+   datasource."
+  [db-info query-id]
+  (if (and (ds db-info) query-id)
+    (let [soul-id-s (->ref query-id)
+          rows (query! db-info
+                 {:select [:qst.id :qst.version :qst.forked_from_query_state_id
+                           :qst.status :qst.prior_outcome
+                           :qst.llm_root_provider :qst.llm_root_model
+                           :qst.created_at
+                           [{:select [[[:count :*]]]
+                             :from   :iteration
+                             :where  [:= :iteration.query_state_id :qst.id]}
+                            :iteration_count]]
+                  :from   [[:query_state :qst]]
+                  :where  [:= :qst.query_soul_id soul-id-s]
+                  :order-by [[:qst.version :asc]]})]
+      (mapv (fn [row]
+              (cond-> {:state-id                    (->uuid (:id row))
+                       :version                     (:version row)
+                       :forked-from-query-state-id  (some-> (:forked_from_query_state_id row) ->uuid)
+                       :status                      (->kw-back (:status row))
+                       :created-at                  (->date (:created_at row))
+                       :iteration-count             (or (:iteration_count row) 0)}
+                (:prior_outcome row)     (assoc :prior-outcome (->kw-back (:prior_outcome row)))
+                (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
+                (:llm_root_model row)    (assoc :model (:llm_root_model row))))
+        rows))
+    []))
+
 (defn db-fork-conversation!
   "Fork a conversation. Creates a new conversation_state with
    parent_state_id pointing to the current latest state.
@@ -577,14 +661,9 @@
 
 (defn db-store-iteration!
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
-   Returns the iteration UUID.
-
-   Persists the structured `:plan-state`, `:breadcrumb`, `:plan-diff`
-   columns when the caller supplies them; otherwise the columns
-   remain NULL."
+   Returns the iteration UUID."
   [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
-                   llm-messages llm-provider llm-model
-                   plan-state breadcrumb plan-diff]}]
+                   llm-messages llm-provider llm-model]}]
   (when (ds db-info)
     (let [iteration-id   (UUID/randomUUID)
           iteration-id-s (str iteration-id)
@@ -635,15 +714,6 @@
                    :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                    :llm_returned_empty_expressions (if (empty? expressions) 1 0)
                    :metadata             (when metadata (->json metadata))
-                   ;; Nippy BLOBs preserve :status keyword values that
-                   ;; JSON would flatten to strings. freeze-safe walks the
-                   ;; map first so any unexpected SCI/runtime objects get
-                   ;; replaced by `{:vis/ref :expr}` markers instead of
-                   ;; throwing during nippy/freeze.
-                   :plan_state           (when plan-state (->blob (freeze-safe plan-state)))
-                   :breadcrumb           (when (and breadcrumb (not (str/blank? breadcrumb)))
-                                           breadcrumb)
-                   :plan_diff            (when plan-diff (->blob (freeze-safe plan-diff)))
                    :created_at           now
                    :finished_at          now}]})
       ;; 2. Executions → expression_soul (kind=call, stateless) + expression_state
@@ -808,17 +878,9 @@
     (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
     (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
     (some? (:llm_model row))            (assoc :model (:llm_model row))
-    ;; surface plan slot fields when populated. NULL columns stay
-    ;; absent so the returned map keeps a tight shape.
-    ;; Nippy round-trips keywords/sets/etc. losslessly — no shim needed.
-    (some? (:plan_state row))           (assoc :plan-state (<-blob (:plan_state row)))
-    (some? (:breadcrumb row))           (assoc :breadcrumb (:breadcrumb row))
-    (some? (:plan_diff row))            (assoc :plan-diff  (<-blob (:plan_diff row)))
     ;; Iteration metadata (JSON) carries the per-iteration metrics:
-    ;; :plan-edit-distance, :plan-changed?,
     ;; :var-history-recall-count, :expression-redundancy-fraction,
-    ;; :dedup-saves, :plan-validation-error, plus per-iteration extension
-    ;; info.
+    ;; :dedup-saves, plus per-iteration extension info.
     (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))
 
 (defn db-list-query-iterations [db-info query-id]

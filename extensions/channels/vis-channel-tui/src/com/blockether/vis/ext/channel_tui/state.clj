@@ -126,13 +126,7 @@
    the same boundaries without the labels)."
   {:show-thinking             true
    :show-iterations           true
-   :show-timestamps           false
-   ;; `collapse-old-traces`: every assistant turn except the most
-   ;; recent one renders as just the final answer (the meta line
-   ;; below already shows iteration count, duration, tokens, cost).
-   ;; Default ON so the conversation reads as a clean transcript;
-   ;; toggle off to expand every historical trace at once.
-   :collapse-old-traces       true})
+   :show-timestamps           false})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over
@@ -368,12 +362,12 @@
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
           ;; Cancelled turns get a `:status :cancelled` flag on the
-          ;; message so the bubble renderer dims the content with the
-          ;; cancelled-bg zone. We KEEP the iteration trace on cancelled
-          ;; messages so the user can see how far the agent got before
-          ;; the abort — the renderer sews the trace together with a
-          ;; plain status footer (\"Cancelled by user.\") rendered on
-          ;; the gray cancelled bg, so partial work stays visible.
+          ;; message so the bubble renderer dims the content (muted
+          ;; italic fg) on bare terminal-bg. We KEEP the iteration
+          ;; trace on cancelled messages so the user can see how far
+          ;; the agent got before the abort — the renderer sews the
+          ;; trace together with a plain status footer (\"Cancelled
+          ;; by user.\") so partial work stays visible.
           response (-> (chat/assistant-message (or answer ""))
                      (cond-> query-id                (assoc :query-id query-id)
                        (seq trace)

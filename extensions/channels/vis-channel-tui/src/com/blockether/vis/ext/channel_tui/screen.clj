@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as sdk]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
+            [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.render :as render]
@@ -133,11 +134,11 @@
    `progress-extra` carries the wall-clock start, cancelling flag, and
    `:now-ms` so `progress->text` can render the spinner frame.
 
-   When `:collapse-old-traces` is on (default), every assistant turn
-   except the most recent one with a trace renders as just the final
-   answer — the meta-line below already summarises iteration count,
-   tokens, cost, duration. Toggle the setting off to expand every
-   historical trace at once."
+   Every assistant turn that carries a `:trace` renders fully: code
+   blocks, results, thinking, all of it. The persisted trace is
+   already in app-db (rebuilt from the DB on resume), so older turns
+   render the same way the most recent one does. There is no
+   collapse mode; if you want a quieter transcript, scroll."
   [messages progress loading? bubble-w settings progress-extra]
   (let [;; The `:show-timestamps` toggle drops the per-message
         ;; date/time stamp from the role-label row. We do this here
@@ -148,44 +149,11 @@
         ;; behavior, fewer arg-threading scars.
         show-timestamps? (get settings :show-timestamps false)
         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
-        ;; Index of the latest assistant message that carries a trace.
-        ;; That one stays expanded; every earlier assistant trace is
-        ;; collapsed to the plain answer when `:collapse-old-traces`
-        ;; is on. Live (loading?) placeholder is the very last message
-        ;; and has no `:trace` yet — the spinner path replaces its
-        ;; text after this projection pass, so the \"latest trace\"
-        ;; index correctly points at the most recent FINISHED turn.
-        collapse-old?    (get settings :collapse-old-traces true)
-        last-trace-idx   (when collapse-old?
-                           (->> messages
-                             (map-indexed vector)
-                             (filter (fn [[_ m]]
-                                       (and (= :assistant (:role m))
-                                         (:trace m))))
-                             last
-                             first))
         ;; Apply trace→text projection and markdown to assistant messages.
         projected (vec
                     (map-indexed
-                      (fn [idx message]
+                      (fn [_idx message]
                         (cond
-                          ;; Old assistant turn with trace, collapse-old
-                          ;; setting is on — strip the trace so this
-                          ;; bubble renders as the plain answer alone.
-                          ;; The persisted trace is still in app-db; a
-                          ;; future per-message expand toggle can pull
-                          ;; it back in without re-querying the DB.
-                          (and collapse-old?
-                            last-trace-idx
-                            (= :assistant (:role message))
-                            (:trace message)
-                            (< idx last-trace-idx))
-                          (-> message
-                            (assoc :text
-                              (render/format-answer-markdown
-                                (or (:raw-answer message) (:text message) "")
-                                bubble-w))
-                            strip-ts)
                           ;; Has trace: full iteration + answer rendering.
                           ;; Cancelled bubbles flow through here too —
                           ;; format-answer-with-thinking emits a plain
@@ -252,12 +220,15 @@
         text-rows    (input-text-rows input cols)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
         ;; Reserve the bottom-most row for the dedicated footer
-        ;; (model / run-state / ctx-left%). The input box sits
-        ;; directly above it; the messages area fills everything
-        ;; from the top down to the input-box top.
+        ;; (model / run-state / ctx-left%) and the top-most row for
+        ;; the dedicated header (conversation title + short id). The
+        ;; input box sits directly above the footer; the messages
+        ;; area fills everything from header-bottom (row 1) down to
+        ;; the input-box top.
+        header-row   0
         footer-row   (dec rows)
         input-top    (- rows input-box-h 1)
-        messages-top    0
+        messages-top    1
         messages-bottom input-top
         ;; Single source of truth for the gutter math lives in
         ;; `render.clj` (`MESSAGE_SIDE_PAD`). Reference it directly; do
@@ -275,13 +246,15 @@
         inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
         total-h      (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
+    (header/draw-header! g db header-row cols)
     (render/draw-messages-area! g effective-messages messages-top messages-bottom cols messages-scroll)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (.refresh screen Screen$RefreshType/DELTA)
-    {:cols cols :rows rows :total-h total-h :inner-h inner-h}))
+    {:cols cols :rows rows :total-h total-h :inner-h inner-h
+     :messages-top messages-top}))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
@@ -499,10 +472,11 @@
            ;; Pure poll — no rendering on this thread anymore. The
            ;; render thread handles all screen output.
              (let [db      @state/app-db
-                   {:keys [cols total-h inner-h]} (:layout db)
+                   {:keys [cols total-h inner-h messages-top]} (:layout db)
                    cols    (or cols 0)
                    total-h (or total-h 0)
                    inner-h (or inner-h 0)
+                   messages-top (or messages-top 0)
                    key     (.pollInput screen)]
                (cond
                  (nil? key) (do (Thread/sleep 16) (recur))
@@ -517,7 +491,7 @@
                        pos   (.getPosition ma)
                        mx    (.getColumn pos)
                        my    (.getRow pos)
-                       bar-top    render/MESSAGE_MARGIN_TOP
+                       bar-top    (+ messages-top render/MESSAGE_MARGIN_TOP)
                        track-h    inner-h
                        bar-min-col (- cols render/MESSAGE_MARGIN_RIGHT)
                        in-track? (and (>= my bar-top)

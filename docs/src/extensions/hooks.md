@@ -128,7 +128,7 @@ Resolution order, walking every active extension:
    cross-cutting rewrites.
 
 First non-`nil` rewrite different from `code` wins. Hooks that throw
-are logged and skipped — a buggy rescue can never break query
+are logged and skipped — a buggy rescue can never break turn
 execution.
 
 Sketch (hypothetical — no production extension currently ships parse-error
@@ -137,7 +137,7 @@ substrings precisely so this class of bug becomes unrepresentable on the
 input side):
 
 ```clojure
-(ext/symbol 'frob frob-fn
+(sdk/symbol 'frob frob-fn
   {:doc      "Hypothetical tool that takes a regex string."
    :arglists '([pattern] [pattern path])
    :on-error-fn       rescue-frob-args        ;; runtime decorator: bad arg

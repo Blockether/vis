@@ -1,15 +1,16 @@
 (ns com.blockether.vis.ext.common-editing.editing
   "Editing tools exposed under the `vis/` alias in the SCI sandbox.
 
-   Surface (intentionally small):
+   Surface (intentionally small) — every tool returns pure
+   structured data, no English prose smuggled into return values:
 
-     (vis/cat path)            ; whole file as a string
+     (vis/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines}
      (vis/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
-     (vis/ls path)             ; non-recursive directory listing
+     (vis/ls path)             ; -> nested {:name :path :type :size :children} tree
      (vis/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
-     (vis/rg patterns path)    ; OR-of-literals grep over a tree; patterns = non-empty vec of literal strings
-     (vis/edit path search replace)   ; exact-match search/replace; :search must be unique
-     (vis/write path content)         ; overwrite or create the file
+     (vis/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
+     (vis/edit path search replace)   ; -> {:path :bytes-before :bytes-after}
+     (vis/write path content)         ; -> {:path :bytes}
 
    Plus the babashka.fs surface bound under `fs/` (cwd, exists?, glob,
    parent, components, file-name, extension, expand-home, list-dir,
@@ -100,42 +101,100 @@
 ;; =============================================================================
 
 (defn- coerce-cat-opts [opts]
-  (cond
-    (nil? opts) {:offset nil :limit nil :char-limit default-read-char-limit}
-    (map? opts) {:offset     (:offset opts)
-                 :limit      (:limit opts)
-                 :char-limit (or (:char-limit opts) default-read-char-limit)}
-    (integer? opts) {:offset opts :limit nil :char-limit default-read-char-limit}
-    :else (throw (ex-info (str "Invalid (vis/cat) opts: " (pr-str opts))
-                   {:type :ext.common-editing/invalid-cat-opts :opts opts}))))
+  (let [validate-positive (fn [k v]
+                            (when (and (some? v)
+                                    (or (not (integer? v)) (not (pos? v))))
+                              (throw (ex-info (str "vis/cat " k " must be a positive integer")
+                                       {:type :ext.common-editing/invalid-cat-opts
+                                        :opt  k :got v}))))]
+    (cond
+      (nil? opts) {:offset nil :limit nil :char-limit default-read-char-limit}
+
+      (map? opts)
+      (let [m {:offset     (:offset opts)
+               :limit      (:limit opts)
+               :char-limit (or (:char-limit opts) default-read-char-limit)}]
+        (validate-positive :offset (:offset m))
+        (validate-positive :limit  (:limit m))
+        (validate-positive :char-limit (:char-limit m))
+        m)
+
+      (integer? opts)
+      (do (validate-positive :offset opts)
+        {:offset opts :limit nil :char-limit default-read-char-limit})
+
+      :else (throw (ex-info (str "Invalid (vis/cat) opts: " (pr-str opts))
+                     {:type :ext.common-editing/invalid-cat-opts :opts opts})))))
+
+(defn- take-lines-under-char-cap
+  "Return `[selected truncated-by]` where `selected` is the prefix of
+   `candidates` whose joined-with-newline length stays within
+   `char-cap`, and `truncated-by` is one of:
+     :char-limit   — char cap kicked in before consuming everything
+     :line-limit   — we hit the requested `limit-arg` before EOF
+     :end-of-file  — the slice exhausted the file (or limit met EOF)
+   `total-lines` and `offset-zero` are the file size and the 0-based
+   start of `candidates` so we can decide between :line-limit and
+   :end-of-file when the limit happens to land exactly at EOF."
+  [candidates char-cap limit-arg total-lines offset-zero]
+  (let [;; +1 per line for the joining newline; matches str/join "\n".
+        budget (long char-cap)]
+    (loop [remaining candidates
+           taken     []
+           used      0]
+      (if-not (seq remaining)
+        ;; Exhausted candidates without hitting the char cap.
+        (let [taken-count   (count taken)
+              ;; Did we run out because limit-arg said so, or EOF?
+              consumed-end? (>= (+ offset-zero taken-count) total-lines)]
+          [taken (cond
+                   consumed-end?               :end-of-file
+                   (and limit-arg
+                     (= taken-count limit-arg)) :line-limit
+                   :else                       :end-of-file)])
+        (let [line     (first remaining)
+              new-used (+ used (count line) (if (zero? (count taken)) 0 1))]
+          (if (> new-used budget)
+            [taken :char-limit]
+            (recur (rest remaining) (conj taken line) new-used)))))))
 
 (defn- read-file
+  "Read a file slice as pure structured data:
+
+     {:path \"src/foo.clj\"
+      :offset 1               ;; 1-based line number of (:lines 0)
+      :total-lines 487
+      :truncated-by :end-of-file | :line-limit | :char-limit
+      :lines [\"line 1 text\" \"line 2 text\" ...]}
+
+   No prose footer, no line-number prefix on each string. The model
+   composes display text itself when it wants to:
+     (str/join \"\\n\" (:lines result))                          ;; raw text
+     (map-indexed (fn [i s] (str (+ i (:offset r)) \" \" s)) ...) ;; numbered
+
+   Pagination is the model's iteration code, not a hint embedded in
+   the result — `:offset`, `:total-lines` and `:truncated-by` carry
+   everything needed to decide the next call."
   ([path] (read-file path nil))
   ([path opts]
    (let [{:keys [offset limit char-limit]} (coerce-cat-opts opts)
-         f (ensure-existing-file! (safe-path path))
-         lines (str/split-lines (slurp f))
-         total (count lines)
-         off   (max 0 (dec (or offset 1)))
-         lim   (or limit total)
-         selected (take lim (drop off lines))
-         numbered (map-indexed (fn [i line]
-                                 (str (format "%4d" (+ off i 1)) "  " line))
-                    selected)
-         raw      (str/join "\n" numbered)
-         capped?  (and char-limit (> (count raw) char-limit))
-         content  (if capped? (subs raw 0 char-limit) raw)
-         showing  (count selected)]
-     (str content
-       (when (or capped? (< (+ off showing) total))
-         (str "\n\n["
-           (cond
-             capped? (str "preview capped at " char-limit
-                       " chars. Use offset=" (+ off 1)
-                       " limit=" (max 50 lim) " to continue")
-             :else (str (- total off showing) " more lines. Use offset="
-                     (+ off showing 1) " to continue"))
-           "]"))))))
+         f          (ensure-existing-file! (safe-path path))
+         all-lines  (str/split-lines (slurp f))
+         total      (count all-lines)
+         offset-1   (max 1 (or offset 1))
+         offset-0   (dec offset-1)
+         past-eof?  (>= offset-0 total)
+         candidates (if past-eof? () (drop offset-0 all-lines))
+         capped     (if limit (take limit candidates) candidates)
+         [selected truncated-by]
+         (cond
+           past-eof? [[] :end-of-file]
+           :else     (take-lines-under-char-cap capped char-limit limit total offset-0))]
+     {:path         (rel-path f)
+      :offset       offset-1
+      :total-lines  total
+      :truncated-by truncated-by
+      :lines        (vec selected)})))
 
 ;; =============================================================================
 ;; ls
@@ -227,6 +286,15 @@
               :got  (type p)}))))
 
 (defn- grep-files
+  "Walk `path`, OR-grep against the literal-substring vector
+   `pattern`, return pure structured data:
+
+     {:hits [{:path \"src/x.clj\" :line 42 :text \"...\"} ...]
+      :truncated-by :end-of-results | :limit}
+
+   No heterogeneous capped-sentinel inside `:hits`. Model decides
+   what to do with `:truncated-by :limit` (re-issue with bigger
+   `:limit`, narrow `:patterns`, etc.) from the keyword alone."
   ([pattern path] (grep-files pattern path nil))
   ([pattern path opts]
    (let [{:keys [limit hidden? respect-gitignore?]
@@ -262,9 +330,8 @@
                (when-not @capped?
                  (recur (inc line-no) (rest lines)))))))
        (catch Throwable _ nil))
-     (cond-> (vec @hits)
-       @capped? (conj {:capped? true :limit limit
-                       :note (str "result truncated at " limit " matches")})))))
+     {:hits         (vec @hits)
+      :truncated-by (if @capped? :limit :end-of-results)})))
 
 ;; =============================================================================
 ;; edit / write
@@ -368,10 +435,18 @@
 
 (def cat-symbol
   (sdk/symbol 'cat read-file
-    {:doc "Read a file. Returns line-numbered content. Default cap 6000 chars; opts {:offset :limit :char-limit}."
+    {:doc (str "Read a file slice as pure structured data: "
+            "{:path :offset :total-lines :truncated-by :lines}. "
+            ":lines is a vec of raw line strings (no line-number "
+            "prefix). :offset is the 1-based line number of (:lines 0). "
+            ":truncated-by is :end-of-file | :line-limit | :char-limit. "
+            "Default char-limit 6000; opts {:offset N :limit M :char-limit C}. "
+            "Compose display text yourself: (str/join \"\\n\" (:lines r)).")
      :arglists '([path] [path opts])
      :examples ["(vis/cat \"src/main.clj\")"
-                "(vis/cat \"big.log\" {:offset 5000 :limit 200})"]}))
+                "(:lines (vis/cat \"src/main.clj\"))"
+                "(vis/cat \"big.log\" {:offset 5000 :limit 200})"
+                "(str/join \"\\n\" (:lines (vis/cat \"src/main.clj\")))"]}))
 
 (def ls-symbol
   (sdk/symbol 'ls list-files
@@ -382,9 +457,15 @@
 
 (def rg-symbol
   (sdk/symbol 'rg grep-files
-    {:doc "Search files for any of N literal substrings (OR'd). `patterns` is a non-empty vector of strings; each element is matched LITERALLY (no regex). `path` is the search root. opts {:limit :hidden? :respect-gitignore?}. For genuine regex needs use (re-seq #\"...\" (slurp f))."
+    {:doc (str "Search files for any of N literal substrings (OR'd). "
+            "`patterns` is a non-empty vector of strings; each element "
+            "is matched LITERALLY (no regex). `path` is the search root. "
+            "Returns {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}. "
+            "opts {:limit :hidden? :respect-gitignore?}. "
+            "For genuine regex needs use (re-seq #\"...\" (some file-text-source)).")
      :arglists '([patterns path] [patterns path opts])
      :examples ["(vis/rg [\"defn render\"] \"src\")"
+                "(:hits (vis/rg [\"defn render\"] \"src\"))"
                 "(vis/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
 
 (def edit-symbol
@@ -404,12 +485,12 @@
   [cat-symbol ls-symbol rg-symbol edit-symbol write-symbol])
 
 (def editing-prompt
-  "`vis/` = file I/O (5 tools, positional args):
-  (vis/cat path)            read file (cap 6000 chars; opts {:offset :limit :char-limit})
-  (vis/ls path)             tree list (opts {:depth :hidden? :respect-gitignore?})
-  (vis/rg [\"a\" \"b\"] path) OR-of-LITERALS grep. patterns = non-empty vec of literal strings (no regex DSL). For real regex use (re-seq #\"...\" (slurp f)).
-  (vis/edit path s r)       replace FIRST `s` -> `r`. `s` must be unique. 4th arg {:line N} disambiguates by line.
-  (vis/write path content)  overwrite/create file.
+  "`vis/` = file I/O (5 tools). EVERY tool returns pure structured data — maps with explicit keys, never English-prose strings. Compose display text yourself when you need it.
+  (vis/cat path)             -> {:path :offset :total-lines :truncated-by :lines}. :lines = vec of raw line strings. Default char-limit 6000; opts {:offset :limit :char-limit}. Pagination: `(vis/cat p {:offset (+ (:offset r) (count (:lines r)))})`.
+  (vis/ls path)              -> nested {:name :path :type :size :children} tree. opts {:depth :hidden? :respect-gitignore?}.
+  (vis/rg [\"a\" \"b\"] path)  -> {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}. patterns = non-empty vec of literal strings (no regex DSL). For real regex: (re-seq #\"...\" (str/join \"\\n\" (:lines (vis/cat path)))).
+  (vis/edit path s r)        -> {:path :bytes-before :bytes-after}. Replace FIRST `s`->`r`. `s` must be unique. 4th arg {:line N} disambiguates by line.
+  (vis/write path content)   -> {:path :bytes}. Overwrite/create.
 
 For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).
 

@@ -59,18 +59,33 @@
                         iteration-count (:iteration-count q)
                         duration-ms (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
-                        ;; Rebuild trace from iterations + expressions
+                        ;; Rebuild trace from iterations + expressions.
+                        ;; The answer-bearing form (last expression of
+                        ;; the answer iteration, per rule b') is
+                        ;; ELIDED from the per-iteration parallel
+                        ;; vectors so resumed conversations render the
+                        ;; same way live ones do — just the answer
+                        ;; text below the iteration trace, never the
+                        ;; `(answer "…")` call as code above it.
                         query-iterations (sdk/db-list-query-iterations d (:id q))
+                        last-iteration-id (some-> (last query-iterations) :id)
+                        produced-answer? (and (some? answer)
+                                           (not (str/blank? (str answer))))
                         trace (into []
                                 (map (fn [it]
-                                       (let [exprs (sdk/db-list-iteration-expressions d (:id it))
+                                       (let [all-exprs   (sdk/db-list-iteration-expressions d (:id it))
+                                             answer-here? (and produced-answer?
+                                                            (= (:id it) last-iteration-id)
+                                                            (seq all-exprs))
+                                             exprs       (cond-> all-exprs
+                                                           answer-here? butlast)
                                              result-strs (mapv (fn [{:keys [result error]}]
                                                                  (if error
                                                                    (sdk/format-error error)
                                                                    (pr-str result)))
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
-                                             durations (mapv #(or (:duration-ms %) 0) exprs)]
+                                             durations   (mapv #(or (:duration-ms %) 0) exprs)]
                                          {:thinking  (:thinking it)
                                           :code      (mapv :code exprs)
                                           :results   result-strs
@@ -83,9 +98,9 @@
                         ;; sweep + cancel paths both write that value).
                         ;; Surface it as `:status :cancelled` on the
                         ;; assistant message so the bubble renderer
-                        ;; paints the gray cancelled-bg zone and the
-                        ;; trace + status footer the same way live
-                        ;; cancellations render.
+                        ;; emits the trace + dim italic status footer
+                        ;; the same way live cancellations render —
+                        ;; on bare terminal-bg, no bubble-wide fill.
                         cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message (or answer "") (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :query-id (:id q))
@@ -138,7 +153,11 @@
    Returns `{:answer str}` or `{:error str}`.
 
    `opts` may contain:
-     :on-chunk    — fn receiving `{:iteration :thinking :code :final :done?}`
+     :on-chunk    — fn receiving phased chunks `{:phase :iteration ...}`. Phases:
+                    `:reasoning` (LLM streaming), `:form-result` (one form done),
+                    `:iteration-final` (iteration complete), `:iteration-error`
+                    (iteration aborted). See `progress/make-progress-tracker`
+                    for accumulating chunks into a timeline.
                     on every streaming chunk from the RLM. The TUI uses this
                     to project a live per-iteration progress timeline into
                     the assistant placeholder bubble.

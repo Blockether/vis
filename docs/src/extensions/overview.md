@@ -1,17 +1,11 @@
 # Extension system
 
-> **Library:** `com.blockether/vis-runtime`. Extension authoring lives in
-> the namespace `com.blockether.vis.core`.
->
-> **Why a dedicated namespace:** the extension contract is not re-exported
-> through `com.blockether.vis.core`. Authoring code must require
-> `com.blockether.vis.core` directly.
->
-> **What stays on the public facade:** the runtime composition helpers
-> that need a live environment (`active-extensions`,
-> `assemble-system-prompt`, `register-extension!` for ad-hoc per-env
-> registration). Those live on `com.blockether.vis.core` because they
-> need the runtime they compose against.
+> **Library:** `com.blockether/vis`. Authoring code requires the
+> public facade `com.blockether.vis.core` directly. Every helper an
+> extension needs (`extension`, `symbol`, `value`,
+> `register-extension!`, `install-extension!`, `render-prompt`,
+> `discover-extensions!`, `active-extensions`, `assemble-system-prompt`)
+> is re-exported from there.
 
 Extensions are the **only** way to add symbols, classes, and documentation
 to the SCI sandbox. An extension is a namespace-like bundle that groups
@@ -20,8 +14,8 @@ a single validated unit.
 
 ## What an extension can do
 
-An extension is a single `(ext/extension {…})` data map declaring
-zero or more of FIVE surfaces. The same `(ext/register-global! …)`
+An extension is a single `(sdk/extension {…})` data map declaring
+zero or more of FIVE surfaces. A single `(sdk/register-extension! …)`
 call handles all of them; the registrar dispatches each populated
 slot to its matching sub-registry as a side effect.
 
@@ -31,7 +25,7 @@ slot to its matching sub-registry as a side effect.
 | `:ext/cli`         | CLI subcommands the extension contributes. **Always auto-mount under `vis extensions <cmd>`**; deeper nests like `vis extensions git status` are allowed via `:cmd/parent ["extensions" "git"]`. | `vis extensions <name>`. |
 | `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
 | `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis auth <id>`. |
-| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `persistance.core/db-create-connection!`. |
+| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `db-create-connection!`. |
 
 Alongside those surfaces, every extension may also:
 
@@ -49,16 +43,16 @@ Two ways to register extensions:
 
 ### Global registry (recommended)
 
-Call `register-global!` at namespace load time. When any environment
-is created, all global extensions are automatically installed in
-dependency order.
+Call `(sdk/register-extension! …)` at namespace load time. When any
+environment is created, all globally registered extensions are
+automatically installed in dependency order.
 
 ```clojure
 (ns my.company.ext.git
-  (:require [....extension :as ext]))
+  (:require [com.blockether.vis.core :as sdk]))
 
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.acme.ext.git
      :ext/requires  ['com.blockether.vis.ext.common-editing.core]
      :ext/doc       "Git integration"
@@ -70,51 +64,60 @@ self-registers → every new environment gets it.
 
 ### Classpath auto-discovery
 
-Extensions can be discovered **automatically** without any manual
-`require`. Place a single `META-INF/vis-extension/vis.edn` file in your extension's
-`resources/` directory listing every namespace whose load should
-trigger registration:
+Extensions are discovered **automatically** without any manual
+`require`. Place a single `META-INF/vis-extension/vis.edn` file in
+your extension's `resources/` directory:
 
 ```edn
-[com.acme.ext.git
- com.acme.ext.search]
+{my-tool
+ {:nses [com.acme.ext.my-tool]
+  :docs {"README.md"
+         {:created-at  #inst "2026-04-29"
+          :description "One-paragraph LLM-facing summary."
+          :content     "# my-tool\n..."}}}}
 ```
 
 When `create-environment` runs (or the CLI dispatcher boots), it
 calls `com.blockether.vis.core/discover-extensions!` which:
 
-1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` files
-   (via `ClassLoader.getResources`)
-2. Reads each file as a vector of namespace symbols
-3. `require`s each namespace (triggering its `register-global!` call)
-4. De-duplicates so a namespace listed in two jars is required only once
-5. Logs every success at `:info` and every failure at `:error`
+1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` resources
+   (via `ClassLoader.getResources`).
+2. Parses each as the EDN map shape above (`{<id> {:nses […] :docs {…}}}`).
+3. `require`s every namespace listed under `:nses` exactly once across
+   all URLs, triggering each ns's `(sdk/register-extension! …)` call as
+   a side effect.
+4. Validates declared docs (rejecting entries without `:description`
+   or `:content`), and inverts authored `:links` into `:reflinks` on
+   target descriptors.
+5. Logs every success at `:info` and every failure at `:error`.
 
-The loader is **type-agnostic**: the same `META-INF/vis-extension/vis.edn` resource
-holds the namespaces for every surface (SCI sandbox symbols,
-channels, CLI commands, providers, persistance entries). The author
-declares everything in one `(ext/extension {…})` map and calls
-`(ext/register-global! …)` once; the registrar dispatches each
-populated `:ext/<slot>` (`:ext/symbols`, `:ext/cli`, `:ext/channels`,
-`:ext/providers`, `:ext/persistance`) to its matching sub-registry as
-a side effect. The lower-level `register-global!` calls
-(`channel/register-global!`, `cmd/register-global!`,
-`provider/register-global!`, `persistance.core/register-backend!`)
-remain available for embedded / programmatic use, and are still what
-`ext/register-global!` ultimately invokes.
+The loader is **type-agnostic**: the same
+`META-INF/vis-extension/vis.edn` resource holds the namespaces for
+every surface (SCI sandbox symbols, channels, CLI commands,
+providers, persistance entries). The author declares everything in
+one `(sdk/extension {…})` map and calls `(sdk/register-extension! …)`
+once; the registrar dispatches each populated `:ext/<slot>` to its
+matching sub-registry as a side effect. The lower-level
+`register-cmd!` / `register-channel!` / `register-provider!` /
+`register-backend!` calls (also re-exported from
+`com.blockether.vis.core`) remain available for embedded /
+programmatic use and are what `register-extension!` ultimately
+invokes.
 
-This means: add the extension jar/local-root to your deps.edn aliases,
-ensure it has a `META-INF/vis-extension/vis.edn` in its resources, and it will be
-loaded automatically. No imports, no requires, no wiring.
+This means: add the extension jar/local-root to your `deps.edn`,
+ensure it has a `META-INF/vis-extension/vis.edn` in its resources,
+and it will be loaded automatically. No imports, no requires, no
+wiring.
 
 **Directory layout for an extension:**
 
 ```
-extensions/my-ext/
-├── deps.edn                  ;; {:paths ["src" "resources"] ...}
+extensions/<category>/<name>/
+├── deps.edn                              ;; {:paths ["src" "resources"] ...}
 ├── resources/
-│   └── META-INF/vis-extension/vis.edn      ;; [com.acme.ext.my-tool]
-└── src/com/acme/ext/my_tool.clj  ;; calls register-global! at load time
+│   └── META-INF/vis-extension/vis.edn     ;; {<id> {:nses [...] :docs {...}}}
+└── src/com/blockether/vis/ext/<id>/core.clj
+                                          ;; calls (sdk/register-extension! ...) at load
 ```
 
 **deps.edn alias:**
@@ -128,32 +131,33 @@ extensions/my-ext/
 An extension can load other extensions at runtime:
 
 ```clojure
-(ext/load-extension! 'my.company.ext.git)
-;; => requires the ns, triggers register-global!, returns the ext
+(sdk/load-extension! 'my.company.ext.git)
+;; => requires the ns, triggers register-extension!, returns the ext
 ```
 
-This is how meta-extensions (extension packs) work - one extension
+This is how foundation-extensions (extension packs) work - one extension
 `require`s others dynamically.
 
 ### Per-environment (ad-hoc)
 
 ```clojure
-(register-extension! environment my-ext)
+(sdk/install-extension! environment my-ext)
 ```
 
-For extensions that shouldn't be global.
+For extensions that shouldn't be global. `install-extension!` is the
+per-env companion to the global `register-extension!`.
 
 ## Lifecycle
 
 From classpath jar to live tool call:
 
 0. **discover-extensions!** — scan `META-INF/vis-extension/vis.edn` on the classpath
-1. **ext/extension** — build and validate the extension spec
-2. **register-global!** — add to the process-level registry
+1. **sdk/extension** — build and validate the extension spec
+2. **sdk/register-extension!** — add to the process-level registry; slot dispatcher fans every populated `:ext/<slot>` out to its sub-registry
 3. **Topo-sort** — order by `:ext/requires` dependencies (throws `missing-dependencies` if a required extension is absent)
 4. **Install** — bind symbols into the aliased SCI namespace; auto-require the alias in `sandbox`
 5. **Prompt** — auto-render canonical symbol docs, prepend `[namespace: alias → ns]`, then append the optional `:ext/prompt` tail
-6. **Activation (per query)** — `:ext/activation-fn` check; when falsy, symbols stay unbound and `nudge-fn` is skipped for the whole turn
+6. **Activation (per turn)** — `:ext/activation-fn` check; when falsy, symbols stay unbound and `nudge-fn` is skipped for the whole turn
 7. **Nudge (per iteration)** — active extensions' `:ext/nudge-fn` is invoked
 8. **Hooks (per call)** — `:before-fn` → `:fn` → `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
@@ -199,7 +203,7 @@ exposes `java.time.LocalDate`.
 ## Prompt injection
 
 Every active extension contributes a prompt block to the **system
-prompt** at the start of each query. This is how the LLM knows which
+prompt** at the start of each turn. This is how the LLM knows which
 tools are available in the sandbox.
 
 The canonical tool section is rendered automatically inside the loop
@@ -221,33 +225,30 @@ builds the complete system message. It:
    when present
 3. Joins all active prompt blocks with `\n\n` and appends to the core prompt
 
-Both iteration loop paths (`loop/core.clj` and `query/core.clj`) and
-the TUI `[?]` inspector (`conversation/core.clj :: effective-system-prompt`)
-call this same function — zero duplication, zero drift.
+Both iteration loop paths and the TUI `[?]` inspector
+(`com.blockether.vis.core/effective-system-prompt`) call this same
+function — zero duplication, zero drift.
 
 If an extension's `activation-fn` or `prompt` fn throws, the error is
 logged at `:error` level and that extension's prompt is skipped —
-the query still runs.
+the turn still runs.
 
 ## Quick example
 
 ```clojure
 (ns com.acme.ext.search
-  ;; Require the slim contract directly. The full vis runtime is NOT
-  ;; needed (and not on the classpath) when this jar is consumed by
-  ;; another extension or a sandbox host.
-  (:require [com.blockether.vis.core :as ext]))
+  (:require [com.blockether.vis.core :as sdk]))
 
 (defn- search-fn [query] ...)
 
 (def find-symbol
-  (ext/symbol 'find search-fn
+  (sdk/symbol 'find search-fn
     {:doc      "Full-text search."
      :arglists '([query])
      :examples ["(search/find \"neural\")"]}))
 
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.acme.ext.search
      :ext/doc       "Document search"
      :ext/group     "knowledge"
@@ -271,15 +272,16 @@ And calls `(search/find "neural")` from `:code` blocks. Bare
 ## One example per surface
 
 Real in-tree examples — every package below ships exactly one
-`META-INF/vis-extension/vis.edn` and exactly one `(ext/register-global! …)` call.
+`META-INF/vis-extension/vis.edn` and exactly one
+`(sdk/register-extension! …)` call.
 
 ### Sandbox tools
 
-`extensions/common/vis-common-editing/.../core.clj` — read/list/grep/patch:
+`extensions/common/vis-common-editing/.../core.clj` — read / list / grep / patch:
 
 ```clojure
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-editing.core
      :ext/doc       "Common Vis operations: cat, ls, rg, patch."
      :ext/version   "0.4.0"
@@ -291,14 +293,14 @@ Real in-tree examples — every package below ships exactly one
 
 ### CLI commands
 
-`packages/vis-main/src/com/blockether/vis_main/channels/cli.clj` ships the `vis extensions list`
-subcommand:
+`src/com/blockether/vis/internal/main.clj` ships the `vis extensions list`
+subcommand as a first-party extension contribution:
 
 ```clojure
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.core
-     :ext/doc       "vis-runtime's contribution to the `vis extensions` subtree."
+     :ext/doc       "vis runtime's contribution to the `vis extensions` subtree."
      :ext/cli       [{:cmd/name   "list"
                       :cmd/doc    "List every registered extension."
                       :cmd/usage  "vis extensions list"
@@ -315,7 +317,8 @@ defaults `:cmd/parent` for entries that omit it. Three forms work:
 Any `:cmd/parent` that doesn't start with `"extensions"` is rejected
 at registration time with `:type :ext/cli-bad-parent`. Top-level
 binary commands (`vis run`, `vis auth`, …) are NOT extension
-commands; they use `cmd/register-global!` directly inside vis-runtime.
+commands; they call `registry/register-cmd!` directly inside the
+host runtime (see `src/com/blockether/vis/internal/main.clj`).
 
 See [Extension Spec — CLI command slot](spec.md#cli-command-slot) for
 full examples of each form.
@@ -325,8 +328,8 @@ full examples of each form.
 `extensions/channels/vis-channel-tui/.../channel_tui/screen.clj`:
 
 ```clojure
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
      :ext/doc       "Lanterna-based terminal UI channel."
      :ext/version   "0.3.0"
@@ -343,8 +346,8 @@ full examples of each form.
 `extensions/providers/vis-provider-github-copilot/.../provider_github_copilot.clj`:
 
 ```clojure
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.provider-github-copilot
      :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
      :ext/version   "0.3.0"
@@ -362,8 +365,8 @@ full examples of each form.
 `extensions/persistance/vis-persistance-sqlite/.../persistance_sqlite/core.clj`:
 
 ```clojure
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace   'com.blockether.vis.ext.persistance-sqlite.core
      :ext/doc         "SQLite + Flyway persistence backend."
      :ext/version     "0.3.0"
@@ -377,8 +380,8 @@ Nothing prevents an extension from filling many slots at once —
 an extension that ships SCI tools, a CLI command, AND a channel:
 
 ```clojure
-(ext/register-global!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.acme.ext.git
      :ext/doc       "Git integration: SCI tools + CLI + a web-hook channel."
      :ext/group     "vcs"
