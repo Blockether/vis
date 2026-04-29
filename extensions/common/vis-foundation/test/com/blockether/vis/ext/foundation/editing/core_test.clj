@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.foundation.editing.tools-test
+(ns com.blockether.vis.ext.foundation.editing.core-test
   "Tests for the editing extension.
 
    Smoke-checks the loaded extension surface (symbol vector, doc
@@ -17,11 +17,11 @@
   (:require
    [babashka.fs :as fs]
    [clojure.string :as string]
-   [com.blockether.vis.ext.foundation.editing.tools :as editing]
+   [com.blockether.vis.ext.foundation.editing.core :as editing]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- private-fn [name]
-  (deref (resolve (symbol "com.blockether.vis.ext.foundation.editing.tools" name))))
+  (deref (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" name))))
 
 (defn- temp-root
   "Cwd-relative path string for the shared temp root, idempotently

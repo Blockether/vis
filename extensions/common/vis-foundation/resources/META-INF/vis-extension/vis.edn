@@ -61,12 +61,12 @@ For structured Clojure edits use the sibling `vis-language-clojure` extension (a
 Bounded host + git + language + monorepo snapshot, computed lazily and cached per cwd.
 
 ```clojure
-(vis/environment-snapshot)        ; full snapshot {:host :git :languages :monorepo}
-(vis/environment-git)             ; git submap or nil
-(vis/environment-languages)       ; bounded language scan
-(vis/environment-monorepo)        ; monorepo shape detection
-(vis/environment-render)          ; same render as the system prompt's `<environment>` block
-(vis/environment-refresh!)        ; drop cache, recompute; useful after substantial working-tree changes
+(vis/snapshot)        ; full snapshot {:host :git :languages :monorepo}
+(vis/git)             ; git submap or nil
+(vis/languages)       ; bounded language scan
+(vis/monorepo)        ; monorepo shape detection
+(vis/render)          ; same render as the system prompt's `<environment>` block
+(vis/refresh!)        ; drop cache, recompute; useful after substantial working-tree changes
 ```
 
 The `<environment>` block in the system prompt (cwd / user / platform / shell / locale / jvm / git / languages / monorepo) is rendered from the same snapshot. Drop this jar -> drop the block.

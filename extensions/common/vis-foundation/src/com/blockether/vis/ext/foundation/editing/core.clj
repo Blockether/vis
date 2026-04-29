@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.foundation.editing.tools
+(ns com.blockether.vis.ext.foundation.editing.core
   "Editing tools exposed under the `vis/` alias in the SCI sandbox.
 
    Surface (intentionally small) — every tool returns pure

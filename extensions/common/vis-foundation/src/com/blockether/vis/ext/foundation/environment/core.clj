@@ -14,10 +14,10 @@
 
    Surface inside `:code`:
 
-     (vis/environment-snapshot)   ;; full structured map
-     (vis/environment-git)        ;; git submap or nil
-     (vis/environment-languages)  ;; language stats
-     (vis/environment-refresh!)   ;; invalidate the cache (call after cd, etc.)
+     (vis/snapshot)   ;; full structured map
+     (vis/git)        ;; git submap or nil
+     (vis/languages)  ;; language stats
+     (vis/refresh!)   ;; invalidate the cache (call after cd, etc.)
 
    The snapshot is computed lazily on first access and cached per
    working-directory. The cache is invalidated automatically when
@@ -104,44 +104,44 @@
 ;; ---------------------------------------------------------------------------
 
 (def snapshot-symbol
-  (sdk/symbol 'environment-snapshot snapshot
+  (sdk/symbol 'snapshot snapshot
     {:doc      "Full environment snapshot as a map: {:host :git :languages :monorepo}. Cached per cwd."
      :arglists '([])
-     :examples ["(vis/environment-snapshot)"
-                "(get-in (vis/environment-snapshot) [:git :branch])"]}))
+     :examples ["(vis/snapshot)"
+                "(get-in (vis/snapshot) [:git :branch])"]}))
 
 (def git-symbol
-  (sdk/symbol 'environment-git #(:git (snapshot))
+  (sdk/symbol 'git #(:git (snapshot))
     {:doc      "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts."
      :arglists '([])
-     :examples ["(vis/environment-git)"
-                "(:branch (vis/environment-git))"]}))
+     :examples ["(vis/git)"
+                "(:branch (vis/git))"]}))
 
 (def languages-symbol
-  (sdk/symbol 'environment-languages #(:languages (snapshot))
+  (sdk/symbol 'languages #(:languages (snapshot))
     {:doc      "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc."
      :arglists '([])
-     :examples ["(vis/environment-languages)"
-                "(:primary (vis/environment-languages))"]}))
+     :examples ["(vis/languages)"
+                "(:primary (vis/languages))"]}))
 
 (def monorepo-symbol
-  (sdk/symbol 'environment-monorepo #(:monorepo (snapshot))
+  (sdk/symbol 'monorepo #(:monorepo (snapshot))
     {:doc      "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos."
      :arglists '([])
-     :examples ["(vis/environment-monorepo)"
-                "(:shape (vis/environment-monorepo))"]}))
+     :examples ["(vis/monorepo)"
+                "(:shape (vis/monorepo))"]}))
 
 (def refresh!-symbol
-  (sdk/symbol 'environment-refresh! refresh!
+  (sdk/symbol 'refresh! refresh!
     {:doc      "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.)."
      :arglists '([])
-     :examples ["(vis/environment-refresh!)"]}))
+     :examples ["(vis/refresh!)"]}))
 
 (def render-symbol
-  (sdk/symbol 'environment-render #(render/render (snapshot))
+  (sdk/symbol 'render #(render/render (snapshot))
     {:doc      "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
      :arglists '([])
-     :examples ["(println (vis/environment-render))"]}))
+     :examples ["(println (vis/render))"]}))
 
 (def environment-symbols
   [snapshot-symbol git-symbol languages-symbol monorepo-symbol
@@ -154,9 +154,8 @@
    prompt text — see
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
-  (str "`vis/` environment fns: (vis/environment-snapshot) (vis/environment-git) "
-    "(vis/environment-languages) (vis/environment-monorepo) "
-    "(vis/environment-render) (vis/environment-refresh!)"))
+  (str "`vis/` environment fns: (vis/snapshot) (vis/git) (vis/languages) "
+    "(vis/monorepo) (vis/render) (vis/refresh!)"))
 
 (defn environment-prompt
   "Renders the live `<environment>` block + a one-line surface listing
