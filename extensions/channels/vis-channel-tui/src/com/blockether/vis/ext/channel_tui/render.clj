@@ -612,7 +612,7 @@
    answer-bg, stdout, etc.).
 
    Returns the number of screen rows consumed (including spacing)."
-  [^TextGraphics g {:keys [role text timestamp duration-ms iterations tokens cost status]} start-row left max-w]
+  [^TextGraphics g {:keys [role text timestamp duration-ms iteration-count tokens cost status]} start-row left max-w]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
         ;; Cancelled turns are status messages, not real answers —
@@ -672,7 +672,7 @@
         ;; a "Cancelled" placeholder.
         meta-str   (when (and (not user?) (not cancelled?))
                      (let [line (sdk/format-meta-line
-                                  {:iterations iterations
+                                  {:iteration-count iteration-count
                                    :duration-ms duration-ms
                                    :tokens tokens
                                    :cost cost})]
@@ -1453,16 +1453,16 @@
                 err-message      (or (:message error) (str (:type error)) "unknown error")
                 raw              (some-> (get-in error [:data :raw-data]) str str/trim)
                 recv             (get-in error [:data :received-type])
-                err-message-wrapped (wrap-text (sdk/format-error err-message) (max 1 (- fill-w 2)))
-                err-message-rows    (mapv #(str err-result-marker "  " %) err-message-wrapped)
+                err-message-wrapped (wrap-text (sdk/format-error err-message) fill-w)
+                err-message-rows    (mapv #(str err-result-marker %) err-message-wrapped)
                 raw-rows     (when (and raw (not (str/blank? raw)))
                                (let [hdr (str "provider returned"
                                            (when recv (str " (" recv ")"))
                                            ":")
                                      raw-trim (if (> (count raw) 600) (str (subs raw 0 600) "…") raw)
-                                     body-lines (mapv #(str err-result-marker "  " %)
-                                                  (wrap-text raw-trim (max 1 (- fill-w 2))))]
-                                 (into [(str err-result-marker "  " hdr)] body-lines)))]
+                                     body-lines (mapv #(str err-result-marker %)
+                                                  (wrap-text raw-trim fill-w))]
+                                 (into [(str err-result-marker hdr)] body-lines)))]
             (vec (concat
                    ;; Top margin so the ERROR sub-header doesn't sit
                    ;; flush against the ITERATION header. Two padding
@@ -1506,20 +1506,22 @@
                                     success?          code-ok-marker
                                     :else             code-err-marker)
                       c-pad       (if is-error? code-err-pad-marker code-pad-marker)
-                      ;; Code lines: pretty-printed, indented
+                      ;; Code lines: pretty-printed. NO literal left
+                      ;; padding — the bubble's `h-pad` already insets
+                      ;; the whole zone by 2 cols, matching the
+                      ;; user-question and final-answer text columns.
                       code-text   (str/trim (or form ""))
-                      formatted   (sdk/format-clojure code-text (max 1 (- fill-w 2)))
+                      formatted   (sdk/format-clojure code-text fill-w)
                       code-lines  (str/split-lines formatted)
-                      c-lines     (mapv #(str c-marker "  " %) code-lines)
+                      c-lines     (mapv #(str c-marker %) code-lines)
                       ;; Result
                       result-str  (when results (get results idx))
                       r-marker    (if is-error? err-result-marker result-marker)
                       r-wrapped   (when (and result-str (not (str/blank? (str result-str))))
-                                    (wrap-text (str/trim (str result-str))
-                                      (max 1 (- fill-w 2))))
+                                    (wrap-text (str/trim (str result-str)) fill-w))
                       r-lines     (when (seq r-wrapped)
-                                    (into [(str r-marker "  " (first r-wrapped))]
-                                      (map #(str r-marker "  " %) (rest r-wrapped))))
+                                    (into [(str r-marker (first r-wrapped))]
+                                      (map #(str r-marker %) (rest r-wrapped))))
                       ;; Code block = header + pad-top + code + gap + result + status + pad-bottom
                       code-block  (vec (concat
                                          (when show-header? [(str iteration-hdr-marker expr-hdr)])  ;; right-aligned code ₁
@@ -1537,9 +1539,9 @@
                                            slabel-ln  (str iteration-hdr-marker
                                                         (repeat-str \space slabel-pad)
                                                         slabel " ")
-                                           text-lines (mapv #(str stdout-marker "  " %)
+                                           text-lines (mapv #(str stdout-marker %)
                                                         (wrap-text (str/trim (str stdout-str))
-                                                          (max 1 (- fill-w 2))))]
+                                                          fill-w))]
                                        (vec (concat
                                               (when show-header? [slabel-ln])               ;; right-aligned ˢᵗᵈᵒᵘᵗ
                                               [(str stdout-pad-marker "")] ;; pad top
@@ -1967,10 +1969,15 @@
                (recur rst (not in-code?) (conj acc (str (:code m) "")))
 
                ;; Inside fenced code block — preserve verbatim, no md.
+               ;; No literal left-padding inside the code line: the
+               ;; bubble's `h-pad` (2 cols) is the ONLY left inset and
+               ;; must match the user/answer text columns. Adding a
+               ;; second `"  "` here used to push fenced code 2 cols
+               ;; further in than the surrounding answer prose.
                in-code?
                (recur rst true
-                 (into acc (mapv #(str (:code m) "  " %)
-                             (wrap-text line (max 1 (- max-w 2))))))
+                 (into acc (mapv #(str (:code m) %)
+                             (wrap-text line max-w))))
 
                ;; GFM pipe table: header + |---| + rows
                (and (table-row? line)

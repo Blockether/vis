@@ -377,8 +377,12 @@
 
 (defn- conversation-snapshot
   "Map for a single conversation: identity + every turn rolled up to a
-   compact `{:id :goal :outcome :answer :iterations :status}` shape.
-   Used by `(meta/conversation [id])`."
+   compact `{:id :goal :outcome :answer :iteration-count :status}`
+   shape. Used by `(meta/conversation [id])`.
+
+   `:iteration-count` is the integer number of LLM rounds the turn
+   consumed. Spelled out so it never gets confused with the vector
+   shape that the runtime trace uses for per-iteration entries."
   [db-info conversation-id]
   (when (and db-info conversation-id)
     (try
@@ -388,10 +392,10 @@
                             (cond-> {:id (:id query)
                                      :outcome (or (:prior-outcome query)
                                                 (:status query))}
-                              (:text query)       (assoc :goal       (:text query))
-                              (:answer query)     (assoc :answer     (:answer query))
-                              (:iterations query) (assoc :iterations (:iterations query))
-                              (:total-cost query) (assoc :total-cost (:total-cost query))))
+                              (:text query)            (assoc :goal            (:text query))
+                              (:answer query)          (assoc :answer          (:answer query))
+                              (:iteration-count query) (assoc :iteration-count (:iteration-count query))
+                              (:total-cost query)      (assoc :total-cost      (:total-cost query))))
                       queries)]
           (cond-> {:id          conversation-id
                    :channel     (:channel conversation)
@@ -418,7 +422,7 @@
 
 (defn- meta-conversation
   "Snapshot for a conversation. The in-flight turn (= current `CURRENT_QUERY_ID`)
-   is automatically excluded from `:turns` because its `:iterations` /
+   is automatically excluded from `:turns` because its `:iteration-count` /
    `:total-cost` haven't been finalized yet — listing it would render
    as `null | $null` and confuse downstream summaries. The excluded id
    is surfaced as `:in-flight-turn-id` so callers can opt into seeing
@@ -546,10 +550,67 @@
     (map (fn [[classification total]] [classification total]))
     (frequencies (map :classification failures))))
 
-(defn- next-actions [failures]
+(def ^:private REPETITION_THRESHOLD
+  "Minimum number of failures sharing the same normalized signature
+   before the turn is flagged as locked in a same-error loop. Empirical
+   floor: agents that miss a path 2-3× and pivot stay below; agents
+   that emit 5+ identical-root-cause errors are stuck and not learning.
+   Anchored to the worst-case in the self-analyze report for
+   conversation 89ea9c98-21d4-4483-a962-f8ccb1d8232d (148 'src/tui not
+   found' failures in one turn — the failure mode this catches)."
+  5)
+
+(defn- repetition-signature
+  "Project a failure to a lossy 'same root cause' signature so 148
+   varying filename attempts under the same missing directory hash to
+   the same bucket. Strategy: keep `:source` + `:classification` and
+   collapse the message to the leading phrase before the first `:`
+   (e.g. `Path not found: /…/foo.clj` and `File not found: /…/bar.clj`
+   become `\"Path not found\"` and `\"File not found\"`). Drops the
+   varying tail that would otherwise scatter identical-cause errors
+   across distinct buckets."
+  [failure]
+  (let [message (or (:message failure) "")
+        head    (or (some-> (re-find #"^([^:\n]{1,80}):" message) second str/trim)
+                  (let [trimmed (str/trim message)]
+                    (subs trimmed 0 (min 60 (count trimmed)))))]
+    [(:source failure) (:classification failure) head]))
+
+(defn- repetition-clusters
+  "Buckets of failures sharing a `repetition-signature`. Returns a vec
+   of `{:signature .. :count .. :sample failure}` for clusters whose
+   size meets `REPETITION_THRESHOLD`, sorted largest-first. Empty vec
+   when nothing is repeating — caller treats `(seq …)` as the
+   `:repetition-loop?` flag. Surfacing this gives the agent a single
+   number to read instead of having to derive it from `:failures`."
+  [failures]
+  (->> (group-by repetition-signature failures)
+    (keep (fn [[signature group]]
+            (when (>= (count group) REPETITION_THRESHOLD)
+              {:signature signature
+               :count     (count group)
+               :sample    (first group)})))
+    (sort-by :count >)
+    vec))
+
+(defn- next-actions [failures clusters]
   (let [classes (set (map :classification failures))]
     (vec
       (cond-> []
+        ;; Repetition loop is the loudest signal and goes first so
+        ;; the agent reads it before any classification-specific tip.
+        ;; Sample message is truncated; full failure stays in :failures.
+        (seq clusters)
+        (into
+          (mapv (fn [{:keys [count sample]}]
+                  (str "Same error repeated " count "× this turn (e.g. "
+                    (preview (:message sample) 80)
+                    "). STOP varying inputs to the failing call. "
+                    "Switch strategy: list a parent directory, broaden "
+                    "the search, or pivot — repeating the same shape "
+                    "will not converge."))
+            clusters))
+
         (contains? classes :provider-schema-rejected)
         (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from meta/failures and retry/switch model only if it repeats.")
 
@@ -569,26 +630,38 @@
 
 (defn- meta-diagnose
   "Compact current-turn diagnosis built from meta/failures. Returns a
-   map with counts and next actions so the agent can stop burning
-   iterations on DB spelunking. Pass a conversation id to diagnose all
-   turns in that conversation."
+   map with counts, repetition-loop detection, and next actions so the
+   agent can stop burning iterations on DB spelunking. Pass a
+   conversation id to diagnose all turns in that conversation.
+
+   `:repetition-loop?` is `true` when any error signature repeats at
+   least `REPETITION_THRESHOLD` times in the failure list — the
+   single-glance flag for the 'agent retried the same broken call N
+   times' pathology. `:repetition-clusters` carries the supporting
+   data (signature, count, sample failure)."
   ([env]
    (let [turn     (turn-snapshot env)
-         failures (vec (:failures turn))]
-     {:turn-id (:id turn)
-      :goal (:goal turn)
-      :status (:status turn)
-      :failure-count (count failures)
-      :by-classification (classification-counts failures)
-      :failures failures
-      :next-actions (next-actions failures)}))
+         failures (vec (:failures turn))
+         clusters (repetition-clusters failures)]
+     {:turn-id             (:id turn)
+      :goal                (:goal turn)
+      :status              (:status turn)
+      :failure-count       (count failures)
+      :by-classification   (classification-counts failures)
+      :repetition-loop?    (boolean (seq clusters))
+      :repetition-clusters clusters
+      :failures            failures
+      :next-actions        (next-actions failures clusters)}))
   ([env conversation-id]
-   (let [failures (vec (meta-failures env conversation-id))]
-     {:conversation-id conversation-id
-      :failure-count (count failures)
-      :by-classification (classification-counts failures)
-      :failures failures
-      :next-actions (next-actions failures)})))
+   (let [failures (vec (meta-failures env conversation-id))
+         clusters (repetition-clusters failures)]
+     {:conversation-id     conversation-id
+      :failure-count       (count failures)
+      :by-classification   (classification-counts failures)
+      :repetition-loop?    (boolean (seq clusters))
+      :repetition-clusters clusters
+      :failures            failures
+      :next-actions        (next-actions failures clusters)})))
 
 ;; ---------------------------------------------------------------------------
 ;; Extension catalog + README / doc access
@@ -747,7 +820,7 @@
                   "are kept as separate canonical keys. Default = current "
                   "conversation; pass an id to inspect any other. "
                   "The in-flight turn (= `CURRENT_QUERY_ID`) is auto-excluded "
-                  "from `:turns` because its `:iterations` / `:total-cost` are "
+                  "from `:turns` because its `:iteration-count` / `:total-cost` are "
                   "not finalized yet; the excluded id is returned as "
                   "`:in-flight-turn-id` so callers can opt into seeing it.")
      :arglists  '([] [conversation-id])
@@ -806,13 +879,21 @@
 
 (def diagnose-symbol
   (sdk/symbol 'diagnose meta-diagnose
-    {:doc       (str "Summarize current-turn failures into counts and next "
-                  "actions: {:failure-count :by-classification :failures "
-                  ":next-actions}. Pass a conversation id to diagnose all "
-                  "turns. This is the first stop for stalled-agent triage, "
-                  "not raw SQLite checks.")
+    {:doc       (str "Summarize current-turn failures into counts, "
+                  "repetition-loop detection, and next actions: "
+                  "{:failure-count :by-classification :repetition-loop? "
+                  ":repetition-clusters :failures :next-actions}. "
+                  ":repetition-loop? = true when the same root-cause "
+                  "error has fired "
+                  (str REPETITION_THRESHOLD)
+                  "+ times this turn — read it before retrying. "
+                  "Pass a conversation id to diagnose all turns. "
+                  "First stop for stalled-agent triage, not raw "
+                  "SQLite checks.")
      :arglists  '([] [conversation-id])
      :examples  ["(meta/diagnose)"
+                 "(:repetition-loop? (meta/diagnose))"
+                 "(:repetition-clusters (meta/diagnose))"
                  "(:next-actions (meta/diagnose))"
                  "(meta/diagnose \"3a7b2c…\")"]
      :before-fn inject-environment}))
@@ -902,7 +983,7 @@
   (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-meta.core
      :ext/doc       "Meta introspection: read your own turn, conversation, var history, attempts, failure diagnostics, and the canonical README + declared docs (with descriptions) of every loaded extension from inside :code. Returns plain maps and vectors for structural manipulation."
-     :ext/version   "0.5.0"
+     :ext/version   "0.6.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.meta :alias 'meta}
@@ -915,7 +996,7 @@
        "  (meta/var-history 'sym)           prior versions of a SCI def\n"
        "  (meta/find-attempts pat cid?)     grep prior :code attempts\n"
        "  (meta/failures cid?)              classify failed iterations\n"
-       "  (meta/diagnose cid?)              {:stall? :loops? ...} diagnostic summary\n"
+       "  (meta/diagnose cid?)              {:repetition-loop? :repetition-clusters :by-classification :next-actions ...}\n"
        "  (meta/extensions)                 loaded ext catalog\n"
        "  (meta/extension-docs ext-ref)     declared doc summaries (no content)\n"
        "  (meta/extension-doc ext-ref name) full doc descriptor incl. :content\n"

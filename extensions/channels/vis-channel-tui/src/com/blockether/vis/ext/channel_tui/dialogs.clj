@@ -39,12 +39,13 @@
 (def ^:const DEFAULT_DIALOG_MAX_WIDTH 100)
 
 (def ^:const DEFAULT_DIALOG_MIN_HEIGHT
-  "Minimum dialog box height in rows. Floor so a 1-line confirm or
-   blank palette still renders with breathing room. 10 rows = title
-   bar (1) + separator (1) + body (~5) + separator (1) + hint (1) +
-   borders (2). Below this the chrome eats the body and things look
-   broken."
-  10)
+  "Minimum dialog box height in rows. Floor so a 1-line confirm, the
+   API-key text input, and the router/model picker all render at the
+   same deliberate-feeling size. 12 rows = title bar (1) + separator
+   (1) + body (~7) + separator (1) + hint (1) + borders (2). Below
+   this the chrome eats the body and small dialogs look squashed next
+   to each other."
+  12)
 
 (def ^:const DIALOG_CHROME_W 4)  ;; border(1) + pad(1) each side
 (def ^:const DIALOG_CHROME_H 6)  ;; top + title + sep + body + sep + hint + bot
@@ -459,13 +460,7 @@
                   :description "Older assistant turns render as just the answer; only the most recent turn shows its full trace"}
                  {:key :show-timestamps
                   :label "Show per-message timestamps"
-                  :description "Date+time next to every 'You' / 'Vis' label"}
-                 {:key :show-iteration-headers
-                  :label "Show iteration / code / stdout headers"
-                  :description "Right-aligned ITERATION N, CODE N, STDOUT, ERROR superscripts above each block"}
-                 {:key :show-final-answer-header
-                  :label "Show 'FINAL ANSWER' header"
-                  :description "Right-aligned superscript above the final answer body"}]
+                  :description "Date+time next to every 'You' / 'Vis' label"}]
         n        (count options)
         selected (atom 0)
         values   (atom (or settings {}))

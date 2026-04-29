@@ -56,7 +56,7 @@
                         tokens    (cond-> {}
                                     (:input-tokens q)  (assoc :input (:input-tokens q))
                                     (:output-tokens q) (assoc :output (:output-tokens q)))
-                        iterations (:iterations q)
+                        iteration-count (:iteration-count q)
                         duration-ms (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
                         ;; Rebuild trace from iterations + expressions
@@ -91,7 +91,7 @@
                                             true       (assoc :query-id (:id q))
                                             (seq trace) (assoc :trace trace :raw-answer (or answer ""))
                                             model  (assoc :model model)
-                                            iterations  (assoc :iterations iterations)
+                                            iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)
                                             cost   (assoc :cost cost)
                                             (seq tokens) (assoc :tokens tokens)
@@ -165,10 +165,10 @@
            tokens (:tokens result)
            cost   (:cost result)
            confidence (:confidence result)]
-       (cond-> {:answer      (if (string? answer) answer (pr-str answer))
-                :iterations  (or (:iterations result) 1)
-                :duration-ms (:duration-ms result)
-                :query-id    (:query-id result)}
+       (cond-> {:answer          (if (string? answer) answer (pr-str answer))
+                :iteration-count (or (:iteration-count result) 1)
+                :duration-ms     (:duration-ms result)
+                :query-id        (:query-id result)}
          model      (assoc :model model)
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)
@@ -182,7 +182,7 @@
      (catch Exception e
        (if (sdk/cancellation? e)
          (do (.interrupt (Thread/currentThread))
-           {:answer "Cancelled by user." :iterations 0 :status :cancelled})
+           {:answer "Cancelled by user." :iteration-count 0 :status :cancelled})
          (do
            ;; Log EVERYTHING. Stripping a stack trace at the channel
            ;; boundary is how a `[SQLITE_CANTOPEN]` ends up untriagable

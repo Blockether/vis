@@ -140,7 +140,7 @@
                                    :msg "Agent produced no valid patch"}))
                     {:model-patch (:model-patch result patch)
                      :answer      raw-answer
-                     :iterations  (:iterations result)
+                     :iteration-count (:iteration-count result)
                      :tokens      (:tokens result)
                      :cost        (:cost result)
                      :duration-ms duration
@@ -164,7 +164,7 @@
 
 (defn- collect-predictions!
   "Runs all tasks in parallel and returns a vector of prediction maps.
-   Each map: {:instance-id :model-patch :answer :iterations :tokens :cost :duration-ms}"
+   Each map: {:instance-id :model-patch :answer :iteration-count :tokens :cost :duration-ms}"
   [agent-name tasks router model run-ts]
   (let [total-q (count tasks)
         pi-model (str "blockether/" model)
@@ -198,7 +198,7 @@
                              :repo        (:repo task)
                              :model-patch (or (:model-patch pred) "")
                              :answer      (:answer pred)
-                             :iterations  (:iterations pred)
+                             :iteration-count (:iteration-count pred)
                              :tokens      (:tokens pred)
                              :cost        (:cost pred)
                              :duration-ms (or (:duration-ms pred) 0)
@@ -213,7 +213,7 @@
                 (-> s
                   (update :done inc)
                   (update :total-duration-ms + (or (:duration-ms pred) 0))
-                  (update :total-iterations + (or (:iterations pred) 0))
+                  (update :total-iterations + (or (:iteration-count pred) 0))
                   (update :results conj pred))))))
 
         (let [s    @state
@@ -356,7 +356,7 @@
      :harness-status harness-status
      :model-patch    (:model-patch prediction)
      :answer         (:answer prediction)
-     :iterations     (:iterations prediction)
+     :iteration-count (:iteration-count prediction)
      :tokens         (:tokens prediction)
      :cost           (:cost prediction)
      :duration-ms    (:duration-ms prediction)
@@ -464,9 +464,9 @@
         avg-duration    (if (pos? total-q) (/ (double total-duration) total-q) 0.0)
         total-cost (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
         avg-iterations (when (= agent-name :vis)
-                         (let [iterations (keep :iterations predictions)]
-                           (when (seq iterations)
-                             (/ (double (reduce + 0 iterations)) (count iterations)))))]
+                         (let [counts (keep :iteration-count predictions)]
+                           (when (seq counts)
+                             (/ (double (reduce + 0 counts)) (count counts)))))]
 
     ;; Phase 6: Print summary
     (print-swebench-summary agent-name model total-q predictions results report-map)

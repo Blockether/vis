@@ -304,7 +304,7 @@
    Returns map with:
    - :conversation-id — Conversation ID (UUID string)
    - :answer       — The agent's response
-   - :iterations   — Number of iterations executed
+   - :iteration-count — Number of iterations executed
    - :duration-ms  — Total wall-clock time
    - :tokens       — {:input N :output N :reasoning N :cached N :total N}
    - :cost         — {:input-cost N :output-cost N :total-cost N :model str}
@@ -314,22 +314,29 @@
    - :error  — Error message (only on failure).
 
    Options:
-   - :spec     — Output spec for structured responses
-   - :model    — Override model
-   - :on-chunk — Streaming callback fn
-   - :debug?   — Enable debug logging (default false)
-   - :config   — Provider config override (skips ~/.vis/config.edn)
+   - :spec        — Output spec for structured responses
+   - :model       — Override model
+   - :on-chunk    — Streaming callback fn
+   - :debug?      — Enable debug logging (default false)
+   - :config      — Provider config override (skips ~/.vis/config.edn)
+   - :no-persist? — Run without writing anything to disk. Spins up an
+                    ephemeral environment backed by an in-memory SQLite
+                    DB (`:db :memory`), runs the query, disposes the
+                    env (which vaporizes the DB). Result has
+                    `:conversation-id nil`. Useful for CI, scripting,
+                    sensitive prompts.
 
-   Each call creates a fresh conversation in the `:cli` channel.
-   Past runs are browsable via `(conversations/by-channel :cli)`."
+   Each persistent call creates a fresh conversation in the `:cli`
+   channel. Past runs are browsable via
+   `(conversations/by-channel :cli)`. Ephemeral (`:no-persist?`) calls
+   leave no trace."
   [agent-def prompt & [{:keys [spec model on-chunk
-                               debug? config]
+                               debug? config no-persist?]
                         :as _opts}]]
   (let [_cfg      (config/resolve-config config)
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
         title     (let [t (str/trim prompt-s)]
                     (if (> (count t) 100) (str (subs t 0 97) "…") t))
-        {conversation-id :id} (lp/create! :cli {:title title})
         mdl       (or model (:model agent-def))
         tracker   (when on-chunk
                     (progress/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
@@ -340,22 +347,54 @@
                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})
                     debug?    (assoc :debug? true))
         messages  (if (string? prompt) [(svar/user prompt)] prompt)]
-    (try
-      (let [result (lp/send! conversation-id messages q-opts)]
-        (cond-> {:conversation-id conversation-id
-                 :answer          (:answer result)
-                 :iterations      (:iterations result)
-                 :duration-ms     (:duration-ms result)
-                 :tokens          (:tokens result)
-                 :cost            (:cost result)
-                 :trace           (:trace result)}
-          (:status result)     (assoc :status (:status result))
-          (:confidence result) (assoc :confidence (:confidence result))))
-      (catch Exception e
-        {:conversation-id conversation-id
-         :error           (persistance/db-error->user-message e)
-         :type            (str (type e))
-         :exception       e}))))
+    (if no-persist?
+      ;; Ephemeral path: build a fresh env on a `:memory` SQLite DB so
+      ;; nothing touches `~/.vis/vis.mdb`. Disposing the env tears the
+      ;; in-memory DB down with it. Bypasses `lp/create!`/`lp/send!`
+      ;; (both go through the shared conversations cache + the on-disk
+      ;; SQLite handle) on purpose. We use `:memory` instead of nil
+      ;; because the iteration loop requires a non-nil `:db-info` (it
+      ;; persists turns + iterations + expression history; nil would
+      ;; reject in `prepare-query-context`).
+      (let [env (lp/create-environment (lp/get-router) {:db :memory})]
+        (try
+          (let [result (lp/query! env messages q-opts)]
+            (cond-> {:conversation-id nil
+                     :answer          (:answer result)
+                     :iteration-count (:iteration-count result)
+                     :duration-ms     (:duration-ms result)
+                     :tokens          (:tokens result)
+                     :cost            (:cost result)
+                     :trace           (:trace result)}
+              (:status result)     (assoc :status (:status result))
+              (:confidence result) (assoc :confidence (:confidence result))))
+          (catch Exception e
+            {:conversation-id nil
+             :error           (persistance/db-error->user-message e)
+             :type            (str (type e))
+             :exception       e})
+          (finally
+            (try (lp/dispose-environment! env) (catch Exception _ nil)))))
+      ;; Persistent path: route through the shared conversation cache
+      ;; so the run shows up in `(conversations/by-channel :cli)` and
+      ;; survives process restarts.
+      (let [{conversation-id :id} (lp/create! :cli {:title title})]
+        (try
+          (let [result (lp/send! conversation-id messages q-opts)]
+            (cond-> {:conversation-id conversation-id
+                     :answer          (:answer result)
+                     :iteration-count (:iteration-count result)
+                     :duration-ms     (:duration-ms result)
+                     :tokens          (:tokens result)
+                     :cost            (:cost result)
+                     :trace           (:trace result)}
+              (:status result)     (assoc :status (:status result))
+              (:confidence result) (assoc :confidence (:confidence result))))
+          (catch Exception e
+            {:conversation-id conversation-id
+             :error           (persistance/db-error->user-message e)
+             :type            (str (type e))
+             :exception       e}))))))
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
 
@@ -427,14 +466,28 @@
           "--model"          (recur (next more) (assoc opts :model (first more)) prompt-parts)
           "--name"           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
           "--db"             (recur (next more) (assoc opts :db (first more)) prompt-parts)
+          "--no-persist"     (recur more (assoc opts :no-persist? true) prompt-parts)
           (recur more opts (conj prompt-parts arg)))))))
 
 (defn- print-run-usage! []
   (stdout! "Usage: vis run [FLAGS] \"prompt\"")
   (stdout! "")
+  (stdout! "Flags:")
+  (stdout! "  --json            Print result as a single JSON envelope.")
+  (stdout! "  --edn             Print result as EDN.")
+  (stdout! "  --trace           Log the full iteration trace via Telemere.")
+  (stdout! "  --debug           Enable verbose debug logging.")
+  (stdout! "  --model NAME      Override the configured model.")
+  (stdout! "  --name NAME       Set the agent name (default: cli).")
+  (stdout! "  --db PATH|:memory Override the SQLite path (or :memory).")
+  (stdout! "  --no-persist      Don't write anything to ~/.vis/vis.mdb.")
+  (stdout! "                    Runs in an ephemeral env; no row in the")
+  (stdout! "                    `:cli` channel, no resume, no trace on disk.")
+  (stdout! "")
   (stdout! "Examples:")
   (stdout! "  vis run \"What is 2+2?\"")
-  (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\""))
+  (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\"")
+  (stdout! "  vis run --no-persist \"Throwaway one-shot probe\""))
 
 (defn- cli-run!
   "`vis run` handler. `_parsed` is unused — we re-parse the residual
@@ -459,7 +512,7 @@
 
         trace?
         (do (tel/log! {:level :info :id ::cli-trace
-                       :data  (select-keys result [:answer :trace :iterations
+                       :data  (select-keys result [:answer :trace :iteration-count
                                                    :duration-ms :tokens :cost
                                                    :error :type])}
               "CLI trace result")
@@ -657,15 +710,17 @@
         [{:cmd/name  "run"
           :cmd/doc   "Run a one-shot agent query and print the answer."
           :cmd/usage "vis run [FLAGS] \"prompt\""
-          :cmd/args  [{:name "json"   :kind :flag :type :boolean :doc "Output result as JSON."}
-                      {:name "edn"    :kind :flag :type :boolean :doc "Output result as EDN."}
-                      {:name "trace"  :kind :flag :type :boolean :doc "Show full execution trace."}
-                      {:name "debug"  :kind :flag :type :boolean :doc "Enable svar debug logging."}
-                      {:name "model"  :kind :flag :type :string  :doc "Override the LLM model."}
-                      {:name "name"   :kind :flag :type :string  :doc "Agent name."}
-                      {:name "db"     :kind :flag :type :string  :doc "DB target: PATH or :memory."}]
+          :cmd/args  [{:name "json"       :kind :flag :type :boolean :doc "Output result as JSON."}
+                      {:name "edn"        :kind :flag :type :boolean :doc "Output result as EDN."}
+                      {:name "trace"      :kind :flag :type :boolean :doc "Show full execution trace."}
+                      {:name "debug"      :kind :flag :type :boolean :doc "Enable svar debug logging."}
+                      {:name "model"      :kind :flag :type :string  :doc "Override the LLM model."}
+                      {:name "name"       :kind :flag :type :string  :doc "Agent name."}
+                      {:name "db"         :kind :flag :type :string  :doc "DB target: PATH or :memory."}
+                      {:name "no-persist" :kind :flag :type :boolean :doc "Run ephemerally; never write to ~/.vis/vis.mdb."}]
           :cmd/examples ["vis run \"What is 2+2?\""
-                         "vis run --json --model gpt-4o \"Explain the auth flow\""]
+                         "vis run --json --model gpt-4o \"Explain the auth flow\""
+                         "vis run --no-persist \"Throwaway one-shot probe\""]
           :cmd/run-fn cli-run!}
 
          {:cmd/name  "auth"

@@ -9,7 +9,9 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg])
   (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
+           [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
            [java.nio.charset Charset]
            [java.util.concurrent TimeUnit]
@@ -427,6 +429,17 @@
 
      (let [terminal (UnixTerminal. @sdk/tty-in @sdk/tty-out (Charset/defaultCharset))
            _        (input/register-custom-patterns! terminal)
+           ;; Enable mouse capture so the user can grab the messages
+           ;; scrollbar with the mouse and drag it. CLICK_RELEASE_DRAG
+           ;; gives us press + release + drag events but NOT bare
+           ;; mouse-move (those would spam render-version on every
+           ;; cursor twitch and serve no UX purpose). Wheel scroll
+           ;; comes through as `MouseActionType/SCROLL_UP/_DOWN`
+           ;; either way. If the host terminal doesn't honour the
+           ;; mode-set escape we silently fall back to keyboard-only
+           ;; scrolling.
+           _        (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG)
+                      (catch Throwable _ nil))
            screen   (TerminalScreen. terminal)
         ;; Render thread handle is held in a volatile so the `finally`
         ;; clause can join it. (Locals from the `try` body aren't in
@@ -471,97 +484,154 @@
       ;; the first frame as soon as `:render-version` is non-zero (every
       ;; init dispatch above bumps it).
          (vreset! render-thread (start-render-thread! screen))
-         (loop []
+         ;; Local UI state that lives only in the input thread:
+         ;; while the user holds the mouse button after grabbing the
+         ;; scrollbar, every subsequent DRAG event re-positions the
+         ;; thumb regardless of where the cursor is — even if it
+         ;; wanders outside the right gutter — until the button is
+         ;; released. Standard scrollbar behaviour; matches what
+         ;; users expect from any GUI scroll thumb.
+         (let [scrollbar-dragging? (volatile! false)]
+           (loop []
            ;; Layout fields are populated by the render thread after
            ;; the first paint. Until then, scroll handlers fall back
            ;; to safe defaults and act as a no-op.
            ;; Pure poll — no rendering on this thread anymore. The
            ;; render thread handles all screen output.
-           (let [db      @state/app-db
-                 {:keys [total-h inner-h]} (:layout db)
-                 total-h (or total-h 0)
-                 inner-h (or inner-h 0)
-                 key     (.pollInput screen)]
-             (if (nil? key)
-               (do (Thread/sleep 16) (recur))
-               (let [{:keys [action state]} (input/handle-key key (:input db))]
-                 (state/dispatch [:update-input state])
-                 (let [run-command!
-                       (fn [cmd]
-                         (when-not (:dialog-open? @state/app-db)
-                           (case cmd
-                             :configure-provider
-                             (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                               (state/dispatch [:set-config c]))
+             (let [db      @state/app-db
+                   {:keys [cols total-h inner-h]} (:layout db)
+                   cols    (or cols 0)
+                   total-h (or total-h 0)
+                   inner-h (or inner-h 0)
+                   key     (.pollInput screen)]
+               (cond
+                 (nil? key) (do (Thread/sleep 16) (recur))
 
-                             :copy
-                             (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
+               ;; Mouse events: scrollbar grab/drag + wheel scroll.
+               ;; Bypass `input/handle-key` entirely — those events
+               ;; need access to the layout published by the render
+               ;; thread, which `handle-key` doesn't see.
+                 (instance? MouseAction key)
+                 (let [^MouseAction ma key
+                       atype (.getActionType ma)
+                       pos   (.getPosition ma)
+                       mx    (.getColumn pos)
+                       my    (.getRow pos)
+                       bar-top    render/MESSAGE_MARGIN_TOP
+                       track-h    inner-h
+                       bar-min-col (- cols render/MESSAGE_MARGIN_RIGHT)
+                       in-track? (and (>= my bar-top)
+                                   (< my (+ bar-top track-h)))
+                       in-bar?   (and in-track? (>= mx bar-min-col))]
+                   (cond
+                     (= atype MouseActionType/SCROLL_UP)
+                     (do (state/dispatch [:scroll-up 3 total-h inner-h])
+                       (recur))
 
-                             :toggles
-                             (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
-                               (state/dispatch [:update-settings s]))
+                     (= atype MouseActionType/SCROLL_DOWN)
+                     (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                       (recur))
 
-                             :system-prompt
-                             (with-dialog-lock
-                               #(let [conversation-id (get-in @state/app-db [:conversation :id])
-                                      prompt  (if conversation-id
-                                                (or (sdk/effective-system-prompt conversation-id)
-                                                  "(no system prompt)")
-                                                "(no conversation)")]
-                                  (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
+                     (and (= atype MouseActionType/CLICK_DOWN) in-bar?)
+                     (do (vreset! scrollbar-dragging? true)
+                       (state/dispatch [:scroll-to-y my bar-top track-h total-h inner-h])
+                       (recur))
+
+                   ;; Drag continues to track the cursor's Y as long
+                   ;; as the user is holding the button after a
+                   ;; scrollbar grab — we deliberately ignore the X
+                   ;; position once dragging starts so the thumb
+                   ;; doesn't pop loose if the cursor strays out of
+                   ;; the right gutter.
+                     (and (= atype MouseActionType/DRAG) @scrollbar-dragging?)
+                     (do (state/dispatch [:scroll-to-y my bar-top track-h total-h inner-h])
+                       (recur))
+
+                     (= atype MouseActionType/CLICK_RELEASE)
+                     (do (vreset! scrollbar-dragging? false)
+                       (recur))
+
+                     :else (recur)))
+
+                 :else
+                 (let [{:keys [action state]} (input/handle-key key (:input db))]
+                   (state/dispatch [:update-input state])
+                   (let [run-command!
+                         (fn [cmd]
+                           (when-not (:dialog-open? @state/app-db)
+                             (case cmd
+                               :configure-provider
+                               (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                                 (state/dispatch [:set-config c]))
+
+                               :copy
+                               (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
+
+                               :toggles
+                               (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
+                                 (state/dispatch [:update-settings s]))
+
+                               :system-prompt
+                               (with-dialog-lock
+                                 #(let [conversation-id (get-in @state/app-db [:conversation :id])
+                                        prompt  (if conversation-id
+                                                  (or (sdk/effective-system-prompt conversation-id)
+                                                    "(no system prompt)")
+                                                  "(no conversation)")]
+                                    (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
-                             nil)))]
-                   (case action
-                     :quit nil
+                               nil)))]
+                     (case action
+                       :quit nil
 
-                     :show-palette
+                       :show-palette
                      ;; Modal stack: each command runs nested inside the
                      ;; palette's open state, so ESC from a sub-dialog
                      ;; (Settings, Copy, etc.) reopens the palette
                      ;; instead of dropping the user back to the chat.
                      ;; Only ESC pressed *inside* the palette itself
                      ;; closes the whole stack.
-                     (do
-                       (when-not (:dialog-open? @state/app-db)
-                         (loop []
-                           (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
-                             (run-command! cmd)
-                             (recur))))
-                       (recur))
+                       (do
+                         (when-not (:dialog-open? @state/app-db)
+                           (loop []
+                             (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
+                               (run-command! cmd)
+                               (recur))))
+                         (recur))
 
-                     :history-up
-                     (do (state/dispatch [:history-up])
-                       (recur))
+                       :history-up
+                       (do (state/dispatch [:history-up])
+                         (recur))
 
-                     :history-down
-                     (do (state/dispatch [:history-down])
-                       (recur))
+                       :history-down
+                       (do (state/dispatch [:history-down])
+                         (recur))
 
-                     :send
-                     (let [text (input/input->text state)]
-                       (state/dispatch [:reset-input])
-                       (when (and (seq (str/trim text))
-                               (:conversation @state/app-db)
-                               (not (:loading? @state/app-db)))
-                         (state/dispatch [:send-message text]))
-                       (recur))
+                       :send
+                       (let [text (input/input->text state)]
+                         (state/dispatch [:reset-input])
+                         (when (and (seq (str/trim text))
+                                 (:conversation @state/app-db)
+                                 (not (:loading? @state/app-db)))
+                           (state/dispatch [:send-message text]))
+                         (recur))
 
-                     :cancel
-                     (do (when (:loading? @state/app-db)
-                           (state/dispatch [:cancel-query]))
-                       (recur))
+                       :cancel
+                       (do (when (:loading? @state/app-db)
+                             (state/dispatch [:cancel-query]))
+                         (recur))
 
-                     :scroll-up
-                     (do (state/dispatch [:scroll-up 3 total-h inner-h])
-                       (recur))
+                       :scroll-up
+                       (do (state/dispatch [:scroll-up 3 total-h inner-h])
+                         (recur))
 
-                     :scroll-down
-                     (do (state/dispatch [:scroll-down 3 total-h inner-h])
-                       (recur))
+                       :scroll-down
+                       (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                         (recur))
 
-                     :continue (recur)))))))
+                       :continue (recur))))))))
          (finally
         ;; Tell the render thread to exit and wake it so the wait
         ;; doesn't sit out its full timeout. Daemon thread, so we don't

@@ -162,7 +162,7 @@
                      :passed      (:passed score)
                      :total-tests (:total score)
                      :failures    (:failures score)
-                     :iterations  (:iterations result)
+                     :iteration-count (:iteration-count result)
                      :tokens      (:tokens result)
                      :cost        (:cost result)
                      :duration-ms duration
@@ -205,7 +205,7 @@
    :tokens      (:tokens eval-result)
    :cost        (:cost eval-result)
    :duration-ms (:duration-ms eval-result)
-   :iterations  (:iterations eval-result)
+   :iteration-count (:iteration-count eval-result)
    :trace       (:trace eval-result)})
 
 ;; =============================================================================

@@ -157,7 +157,7 @@
    persists them). Pass `:model` in `opts` to override the rendered
    slot directly; pass `:model false` to suppress.
 
-   `result` is the iteration runtime's result map: `{:iterations
+   `result` is the iteration runtime's result map: `{:iteration-count
    :duration-ms :tokens {:input :output} :cost {:total-cost :provider
    :model}}`. `opts` accepts
    `{:model <string|false> :prefix [...] :suffix [...]}` —
@@ -165,7 +165,7 @@
    appended to the line (rare; mostly for channels with non-result
    chrome)."
   ([result] (format-meta-line result nil))
-  ([{:keys [iterations duration-ms tokens cost] :as result}
+  ([{:keys [iteration-count duration-ms tokens cost] :as result}
     {:keys [model prefix suffix]}]
    (let [model* (cond
                   (false? model) nil
@@ -174,7 +174,7 @@
          parts  (concat
                   (vec prefix)
                   [model*
-                   (format-iterations iterations)
+                   (format-iterations iteration-count)
                    (format-tokens tokens)
                    (format-cost cost)
                    (format-duration duration-ms)]

@@ -376,7 +376,7 @@
           h   (sdk/db-query-history s cid)]
       (expect (= 1 (count h)))
       (expect (= "What?" (:query (first h))))
-      (expect (= 2 (:iterations (first h)))))))
+      (expect (= 2 (:iteration-count (first h)))))))
 
 ;; =============================================================================
 ;; Soul/state FK integrity
@@ -614,7 +614,7 @@
         (expect (= :running (:status q)))
         (expect (nil? (:answer q))))
       ;; After update — answer present
-      (sdk/db-update-query! s qid {:answer "4" :status :success :iterations 1 :duration-ms 500})
+      (sdk/db-update-query! s qid {:answer "4" :status :success :iteration-count 1 :duration-ms 500})
       (let [q   (first (sdk/db-list-conversation-queries s cid))
             raw (first (raw-query s {:select [:metadata] :from :query_state}))]
         (expect (= :done (:status q)))
@@ -630,19 +630,19 @@
           _   (sdk/db-store-iteration! s {:query-id q1 :expressions [{:code "(+ 2 2)" :result 4}]
                                           :duration-ms 100 :answer "4"
                                           :vars [{:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
-          _   (sdk/db-update-query! s q1 {:answer "4" :status :success :iterations 1})
+          _   (sdk/db-update-query! s q1 {:answer "4" :status :success :iteration-count 1})
           ;; Turn 2: answer changes to 6
           q2  (sdk/db-store-query! s {:parent-conversation-id cid :query "3+3?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q2 :expressions [{:code "(+ 3 3)" :result 6}]
                                           :duration-ms 80 :answer "6"
                                           :vars [{:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
-          _   (sdk/db-update-query! s q2 {:answer "6" :status :success :iterations 1})
+          _   (sdk/db-update-query! s q2 {:answer "6" :status :success :iteration-count 1})
           ;; Turn 3: answer changes to 10
           q3  (sdk/db-store-query! s {:parent-conversation-id cid :query "5+5?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q3 :expressions [{:code "(+ 5 5)" :result 10}]
                                           :duration-ms 60 :answer "10"
                                           :vars [{:name "ANSWER" :value "10" :code ";; SYSTEM"}]})
-          _   (sdk/db-update-query! s q3 {:answer "10" :status :success :iterations 1})]
+          _   (sdk/db-update-query! s q3 {:answer "10" :status :success :iteration-count 1})]
       ;; Latest registry shows final answer
       (let [reg (sdk/db-latest-var-registry s cid)]
         (expect (= "10" (:value (get reg 'ANSWER))))
