@@ -1,16 +1,16 @@
 (ns com.blockether.vis.ext.lang-clojure.core
-  "Aggregator for the `vis-language-clojure` extension. Registers two
-   extensions from one classpath manifest:
+  "Aggregator for the `vis-language-clojure` extension.
 
-     clj  (zedit)
-     z    (every public fn of rewrite-clj.zip)
+   Single extension under the `z/` alias, carrying:
+     - `z/zedit` (the structured-edit entry point), AND
+     - every public var of `rewrite-clj.zip` (so `zfn` callbacks can
+       call `z/find-value`, `z/replace`, `z/right`, `z/sexpr`, ...).
 
-   The `z/` alias exists specifically so the agent can navigate and
-   edit zippers from inside a `(clj/zedit ...)` callback without
-   inventing non-existent symbols. Every entry in `z/` is a real
-   `rewrite-clj.zip` public var; the loader builds the binding list
-   from `ns-publics` at extension-load time so any future rewrite-clj
-   release lights up automatically."
+   Earlier revision split this into two registrations (`clj/zedit`
+   plus `z/<rewrite-clj publics>`), which forced the model to mentally
+   toggle between two namespaces for one editing flow and produced the
+   `unresolved-symbol` failure class we kept seeing in post-mortems.
+   ONE alias, ONE surface."
   (:require
    [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.lang-clojure.zedit :as zedit]
@@ -45,9 +45,10 @@
       :else
       (sdk/value sym target {:doc doc}))))
 
-(def ^:private z-namespace-symbols
+(def ^:private rewrite-clj-zip-symbols
   "Every public var of `rewrite-clj.zip`, exposed under the `z/` alias
-   inside the SCI sandbox. Built once at extension-load time."
+   inside the SCI sandbox. Built once at extension-load time so any
+   future rewrite-clj release lights up automatically."
   (->> (ns-publics 'rewrite-clj.zip)
     (sort-by key)
     (keep (fn [[sym v]] (var->symbol-entry sym v)))
@@ -56,25 +57,13 @@
 (def clojure-extension
   (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
-     :ext/doc       "Clojure structured editing: clj/zedit + the rewrite-clj zipper bound under z/."
-     :ext/version   "0.5.0"
+     :ext/doc       "Clojure structured editing under the `z/` alias: z/zedit entry + the full rewrite-clj.zip API."
+     :ext/version   "0.6.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
-     :ext/ns-alias  {:ns 'vis.ext.clj :alias 'clj}
+     :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/group     "languages"
-     :ext/prompt    zedit/clojure-prompt
-     :ext/symbols   zedit/clojure-symbols}))
-
-(def zip-extension
-  (sdk/extension
-    {:ext/namespace 'com.blockether.vis.ext.lang-clojure.zip-bindings
-     :ext/doc       "rewrite-clj.zip published under the `z/` alias for use inside (clj/zedit) callbacks."
-     :ext/version   "0.5.0"
-     :ext/author    "Blockether"
-     :ext/license   "Apache-2.0"
-     :ext/ns-alias  {:ns 'vis.ext.clj.z :alias 'z}
-     :ext/group     "languages"
-     :ext/symbols   z-namespace-symbols}))
+     :ext/prompt    zedit/z-prompt
+     :ext/symbols   (into [zedit/zedit-symbol] rewrite-clj-zip-symbols)}))
 
 (sdk/register-extension! clojure-extension)
-(sdk/register-extension! zip-extension)

@@ -64,8 +64,8 @@ Call: `(meta/failures)` or `(meta/failures conversation-id)`. Provider/schema + 
 Classifications:
 
 - `:provider-schema-rejected` — provider returned prose/string, not iteration map.
-- `:regex-unsupported-escape` — usually `\\|` in Clojure string.
-- `:regex-unescaped-quote` — inner quote split a regex string.
+- `:regex-unsupported-escape` — model wrote `\\|` (or other invalid Clojure escape) inside a string literal that used to be a regex pattern. After the vis/rg API change, regex strings are no longer accepted at all — advice now points at vector-of-literals.
+- `:regex-unescaped-quote` — inner quote split a regex string. Same context: vis/rg only accepts vectors of literal strings now.
 - `:patch-unbalanced-string` — malformed `vis/patch` EDN payload.
 - `:patch-no-match` — `vis/patch` SEARCH block didn't match exactly.
 

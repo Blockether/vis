@@ -554,7 +554,9 @@
         (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from meta/failures and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
-        (conj "For vis/rg, replace \\| with bare | or use a #\"…\" regex literal before retrying.")
+        (conj (str "vis/rg now takes a non-empty vector of LITERAL substrings, not a regex string. "
+                "Replace \"foo\\\\|bar\" with [\"foo\" \"bar\"]; PCRE metacharacters are auto-escaped. "
+                "For genuine regex needs drop to (re-seq #\"…\" (slurp f))."))
 
         (contains? classes :regex-unescaped-quote)
         (conj "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
@@ -905,11 +907,21 @@
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.meta :alias 'meta}
      :ext/group     "meta"
-     :ext/prompt    (str "`meta/` = READ-ONLY introspection. Returns maps/vecs. Never throws (errors -> nil/[]).\n"
-                      "- Stall / malformed provider schema / vis/rg parse fail / vis/patch SEARCH miss -> (meta/diagnose) or (meta/failures).\n"
-                      "- Discover surface: (meta/extensions). Scan descriptions: (meta/extension-docs). Full body: (meta/extension-doc) / (meta/extension-readme). Read before guessing from symbol names.\n"
-                      "- Plan / breadcrumbs already in prompt (<plan>, <breadcrumbs>, <system_state>) — use those, don't fetch.\n"
-                      "- (meta/conversation) AUTO-EXCLUDES the in-flight turn (= CURRENT_QUERY_ID) because its iterations/cost aren't finalized; excluded id is returned as :in-flight-turn-id. Don't render the in-flight row — you'd emit literal `null | $null`.")
+     :ext/prompt
+     (str "`meta/` = READ-ONLY introspection. Returns maps/vecs. Never throws (errors -> nil/[]).\n"
+       "  (meta/turn)                       in-flight turn snapshot {:id :goal :plan :breadcrumbs :attempts :errors :iteration :cost :elapsed-ms}\n"
+       "  (meta/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= CURRENT_QUERY_ID).\n"
+       "  (meta/conversations channel?)     list conversations\n"
+       "  (meta/var-history 'sym)           prior versions of a SCI def\n"
+       "  (meta/find-attempts pat cid?)     grep prior :code attempts\n"
+       "  (meta/failures cid?)              classify failed iterations\n"
+       "  (meta/diagnose cid?)              {:stall? :loops? ...} diagnostic summary\n"
+       "  (meta/extensions)                 loaded ext catalog\n"
+       "  (meta/extension-docs ext-ref)     declared doc summaries (no content)\n"
+       "  (meta/extension-doc ext-ref name) full doc descriptor incl. :content\n"
+       "  (meta/extension-readme ext-ref)   README :content shortcut\n"
+       "\n"
+       "Use when: stalled, malformed provider schema, vis/rg parse fail, vis/edit SEARCH miss, repeat fail, before guessing symbol names. Plan/breadcrumbs already in <plan>/<breadcrumbs>/<system_state> — use those, don't fetch.")
      :ext/symbols   all-symbols}))
 
 (sdk/register-extension! extension)

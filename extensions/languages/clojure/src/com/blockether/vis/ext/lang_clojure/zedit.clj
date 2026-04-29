@@ -1,18 +1,18 @@
 (ns com.blockether.vis.ext.lang-clojure.zedit
-  "Structured Clojure-source editing under the `clj/` alias in the SCI
-   sandbox.
+  "Structured Clojure-source editing.
 
    Surface (intentionally small):
 
-     (clj/zedit path zfn)        ; rewrite-clj structured edit on a Clojure file
+     (z/zedit path zfn)        ; rewrite-clj structured edit on a Clojure file
 
    `zfn` receives a `rewrite-clj.zip` zipper located at the file root
    and must return a zipper. The result is serialized back via
    `z/root-string` and written to disk.
 
-   The full `rewrite-clj.zip` namespace is published into the sandbox
-   under the `z/` alias so the model can write `z/find-value`, `z/edit`,
-   `z/replace`, `z/right`, `z/sexpr`, etc. without inventing symbols.
+   `z/zedit` lives under the same `z/` alias as the rewrite-clj zipper
+   API itself (`z/find-value`, `z/replace`, `z/right`, `z/sexpr`, ...)
+   so the model has ONE namespace for Clojure structured editing
+   instead of toggling between `clj/` (entry) and `z/` (navigation).
    That alias is the recovery path for the `unresolved-symbol` failure
    class we kept seeing in turn post-mortems.
 
@@ -34,7 +34,6 @@
   ^File [p]
   ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
   ;; the working directory.
-
   (let [cwd        (fs/cwd)
         resolved   (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
@@ -70,7 +69,7 @@
         zloc (z/of-file f {:track-position? true})
         zout (zfn zloc)]
     (when (nil? zout)
-      (throw (ex-info "clj/zedit zfn must return a zipper, got nil"
+      (throw (ex-info "z/zedit zfn must return a zipper, got nil"
                {:type :ext.lang-clojure/zedit-nil-result})))
     (spit f (z/root-string zout))
     {:path (rel-path f)}))
@@ -81,44 +80,31 @@
 
 (def zedit-symbol
   (sdk/symbol 'zedit zedit-file
-    {:doc      "Structured edit of a Clojure file using rewrite-clj. zfn receives a zipper at the file root and must return a zipper. Use the `z/` alias (rewrite-clj.zip) for navigation/edit ops: z/find-value, z/edit, z/replace, z/right, z/sexpr, etc."
+    {:doc      "Structured edit of a Clojure file. zfn gets a rewrite-clj zipper at file root and MUST return a zipper. Sibling z/ ops navigate/edit: z/find-value, z/replace, z/right, z/sexpr, ..."
      :arglists '([path zfn])
-     :examples ["(clj/zedit \"src/x.clj\" (fn [z] (z/edit z str/upper-case)))"
-                "(clj/zedit \"src/x.clj\" (fn [zloc] (-> zloc (z/find-value z/next 'OLD) (z/replace 'NEW))))"]}))
+     :examples ["(z/zedit \"src/x.clj\" (fn [zl] (z/edit zl str/upper-case)))"
+                "(z/zedit \"src/x.clj\" (fn [zl] (-> zl (z/find-value z/next 'OLD) (z/replace 'NEW))))"]}))
 
-(def clojure-symbols
-  [zedit-symbol])
+(def z-prompt
+  "`z/` = Clojure structured editing (rewrite-clj.zip + zedit entry). Survives whitespace / comment / format drift. Inside zfn: nav z/right z/left z/down z/up z/next z/prev. Find z/find-value z/find. Inspect z/sexpr z/node z/value z/tag. Edit z/replace z/edit z/insert-right z/insert-left z/append-child z/remove. Serialize z/root-string.
 
-(def clojure-prompt
-  "CLOJURE STRUCTURED EDITING. `clj/` alias:
-  (clj/zedit path zfn)   rewrite-clj edit. zfn gets zipper at file root, MUST return zipper.
+  (z/zedit path zfn)   open .clj file, zfn gets zipper at root, MUST return zipper, written back.
 
-Full `rewrite-clj.zip` bound under `z/`:
-  (z/of-string s)                  zipper from string (rare; zedit gives one)
-  (z/sexpr zloc)                   s-expr at node
-  (z/node zloc) (z/value zloc)     raw node / leaf value
-  (z/tag zloc)                     :list :vector :map :token ...
+Patterns:
+  ;; swap a const
+  (z/zedit \"src/foo.clj\"
+    (fn [zl] (-> zl (z/find-value z/next 'NAME) z/right (z/replace 4))))
 
-  (z/find zloc move pred)          walk till pred truthy
-  (z/find-value zloc move v)       walk till value = v
-  (z/find-value zloc v)            default move = z/next
-  (z/find-next-value zloc move v)  step then find-value
-  (z/right) (z/left) (z/down) (z/up) (z/next) (z/prev)   nav
+  ;; add :require
+  (z/zedit \"src/foo.clj\"
+    (fn [zl] (-> zl (z/find-value z/next :require) z/up
+                    (z/append-child '[clojure.string :as str]))))
 
-  (z/replace zloc x)               replace node
-  (z/edit zloc f & args)           apply f, replace
-  (z/insert-right/-left zloc x)    insert sibling
-  (z/append-child zloc x)          append into list/vector/map
-  (z/remove zloc)                  drop node
-  (z/root-string zloc)             render full tree
+  ;; rename every occurrence
+  (z/zedit \"src/foo.clj\"
+    (fn [zl] (loop [z zl]
+               (if-let [hit (z/find-value z z/next 'OLD)]
+                 (recur (z/replace hit 'NEW))
+                 z))))
 
-Pattern - swap a const:
-  (clj/zedit \"src/foo.clj\"
-    (fn [z] (-> z (z/find-value z/next 'NAME) z/right (z/replace 4))))
-
-Pattern - add require:
-  (clj/zedit \"src/foo.clj\"
-    (fn [z] (-> z (z/find-value z/next :require) z/up
-                  (z/append-child '[clojure.string :as str]))))
-
-`z/` = host `rewrite-clj.zip`. Don't prefix `rewrite-clj.zip/`. Don't invent symbols. Missing fn? See https://cljdoc.org/d/rewrite-clj/rewrite-clj/.")
+Full rewrite-clj.zip API bound under z/. Don't invent symbols. Missing fn? `(meta/extension-readme 'clj)` for full reference, or https://cljdoc.org/d/rewrite-clj/rewrite-clj/.")

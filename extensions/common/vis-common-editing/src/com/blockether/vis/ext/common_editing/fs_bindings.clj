@@ -6,7 +6,8 @@
    file-name, extension, expand-home, list-dir, relativize.
 
    No I/O conveniences here — reading file contents lives under the
-   `vis/` alias (vis/cat, vis/ls, vis/rg). The fs/ alias is just plumbing."
+   `vis/` alias (vis/cat, vis/ls, vis/rg — vector of literal substrings).
+   The fs/ alias is just plumbing."
   (:require
    [babashka.fs :as fs]
    [com.blockether.vis.core :as sdk]))
@@ -66,4 +67,16 @@
       :examples ["(fs/relativize \"/a\" \"/a/b/c\")"]})])
 
 (def fs-prompt
-  "`fs/` = babashka.fs path math. No I/O, no mutation. Use `vis/` for cat/ls/rg/edit/write, `clj/zedit` for structured Clojure edits.")
+  "`fs/` = babashka.fs PATH MATH (no I/O, no mutation):
+  (fs/cwd)              working dir
+  (fs/exists? p)        does p exist?
+  (fs/parent p)         parent dir or nil
+  (fs/file-name p)      basename
+  (fs/extension p)      ext or nil
+  (fs/components p)     vec of path segments
+  (fs/expand-home p)    resolve ~/
+  (fs/glob root pat)    seq of matching paths
+  (fs/list-dir dir)     non-recursive listing
+  (fs/relativize from to)
+
+For I/O use `vis/` (cat/ls/rg/edit/write). For structured Clojure edits use `(z/zedit ...)`.")
