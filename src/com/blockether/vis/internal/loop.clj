@@ -29,13 +29,11 @@
    extension subsystem in `com.blockether.vis.internal.extension`."
   (:refer-clojure :exclude [agent run!])
   (:require
-   [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
-   [com.blockether.svar.internal.spec :as svar-spec]
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
@@ -43,7 +41,6 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
-   [com.blockether.vis.internal.spec :as spec]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.telemere :as tel])
@@ -734,120 +731,6 @@
         {::iteration-error iteration-error-data}))))
 
 ;; ---------------------------------------------------------------------------
-;; Schema-rejection retry (sdk/provider hiccup, not an iteration failure)
-;;
-;; Some providers (notably GLM-5.1 under :deep reasoning) occasionally
-;; return a bare JSON-string in `content` instead of the structured
-;; iteration envelope svar's spec demands. svar throws
-;; `:svar.spec/schema-rejected`; without a retry layer that exception
-;; ends up advancing the iteration counter, billing the consecutive-
-;; error budget, and writing a useless DB row — none of which describes
-;; an actual failure of the model's reasoning. Retry the SAME ask!
-;; call up to MAX_SCHEMA_REJECT_RETRIES times with a one-shot
-;; structural reminder appended to the message list. The retries
-;; cost provider tokens but do NOT cost an iteration step.
-;;
-;; Limit deliberately tight (2): if the provider can't produce a map
-;; in three tries (1 + 2 retries) the model itself is wedged and the
-;; outer loop's normal error path should kick in.
-;; ---------------------------------------------------------------------------
-
-(def ^:private MAX_SCHEMA_REJECT_RETRIES
-  "Maximum number of times to retry the SAME `llm/ask!` invocation
-   when the provider returns content that fails the iteration spec.
-   Each retry appends one extra reminder to messages. The iteration
-   counter is NOT advanced across retries — they are invisible to the
-   outer loop."
-  2)
-
-(defn- schema-rejected?
-  "True when `e` is svar's spec rejection (sdk/provider returned a non-map
-   top-level value)."
-  [^Throwable e]
-  (= :svar.spec/schema-rejected (:type (ex-data e))))
-
-(defn- schema-reject-reminder
-  "Single-message structural reminder appended to messages on retry.
-   Includes the literal raw-data preview so the model sees what it
-   sent verbatim — not just an abstract complaint."
-  [^Throwable e attempt max-attempts]
-  (let [d       (ex-data e)
-        preview (some-> (:raw-data-preview d) str)
-        recv    (some-> (:received-type d) str)]
-    {:role "user"
-     :content
-     (str "[svar/schema-reject " attempt "/" max-attempts "] Your last "
-       "response did not match the iteration spec. The top-level "
-       "value MUST be a JSON/EDN map with at least `:code` (vec). "
-       "NO prose outside the structure."
-       (when recv (str " You returned a " recv "."))
-       (when (and preview (not (str/blank? preview)))
-         (str " Preview of what you sent: " preview
-           "\n\nRe-emit the COMPLETE iteration object now.")))}))
-
-(defn ask-with-schema-retry!
-  "Wrap `llm/ask!` with bounded retries when the provider returns a
-   spec-rejected response. Returns the same shape `llm/ask!` returns;
-   re-throws any non-schema-rejection exception unchanged.
-
-   Implementation note: each retry calls `llm/ask!` with messages =
-   (original messages) ++ (one extra reminder for THIS retry). We do
-   NOT accumulate reminders across retries — each retry gets exactly
-   one reminder, replacing the previous one, so the prompt stays
-   bounded.
-
-   Telemetry: emits a `:schema-reject-retry` log stage and a soft
-   on-chunk event (`:schema-reject-retry attempt`) so the TUI can
-   surface \"provider hiccup, retrying\" instead of going silent.
-   `iteration` is the OUTER loop's iteration index, used purely for
-   logging — the iteration counter is intentionally not mutated."
-  [router base-opts {:keys [iteration on-chunk max-retries]
-                     :or   {max-retries MAX_SCHEMA_REJECT_RETRIES}}]
-  (let [base-messages (vec (:messages base-opts))]
-    ;; `reminder` is the ONE reminder to apply on this attempt (nil on
-    ;; the first call). It is replaced — never accumulated — on each
-    ;; retry, so the prompt grows by exactly one user message per
-    ;; provider-side hiccup, not by N over N retries.
-    (loop [attempt  0
-           reminder nil]
-      (let [opts (if reminder
-                   (assoc base-opts :messages (conj base-messages reminder))
-                   base-opts)
-            outcome
-            (try
-              {:ok (svar/ask! router opts)}
-              (catch clojure.lang.ExceptionInfo e
-                (if (and (schema-rejected? e) (< attempt max-retries))
-                  {:retry e}
-                  {:throw e})))]
-        (cond
-          (contains? outcome :ok)
-          (:ok outcome)
-
-          (contains? outcome :throw)
-          (throw (:throw outcome))
-
-          (contains? outcome :retry)
-          (let [e             (:retry outcome)
-                next-attempt  (inc attempt)
-                next-reminder (schema-reject-reminder e next-attempt max-retries)]
-            (log-stage! :schema-reject-retry iteration
-              {:attempt          next-attempt
-               :max-retries      max-retries
-               :received-type    (:received-type (ex-data e))
-               :raw-data-preview (:raw-data-preview (ex-data e))})
-            (when on-chunk
-              (try
-                (on-chunk {:iteration            iteration
-                           :thinking             nil
-                           :code                 nil
-                           :schema-reject-retry  next-attempt
-                           :schema-reject-max    max-retries
-                           :done?                false})
-                (catch Throwable _ nil)))
-            (recur next-attempt next-reminder)))))))
-
-;; ---------------------------------------------------------------------------
 ;; get-locals (read sandbox vars)
 ;; ---------------------------------------------------------------------------
 
@@ -900,15 +783,21 @@
    `iteration-id`s as `iN.K` (1-based) and threads them into each
    `execute-code` call so cache hits carry a stable `:cached-from`
    reference."
-  [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk
-                                   dedup-cache-atom]
-                            :or {iteration-spec spec/ITERATION_SPEC_NON_REASONING}}]]
+  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk
+                                   dedup-cache-atom]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
                                            {:type :vis/invalid-reasoning-level
                                             :got reasoning-level}))))
+          ;; Reset the per-environment answer-atom before this iteration.
+          ;; The SCI sandbox's `(answer "...")` fn `reset!`s it during
+          ;; code evaluation; we read it back after all forms run.
+          answer-atom (or (:answer-atom environment)
+                        (throw (ex-info "environment missing :answer-atom"
+                                 {:type :vis/missing-answer-atom})))
+          _ (reset! answer-atom nil)
           ;; Stream reasoning chunks to the TUI while the LLM is thinking
           streaming-fn (when on-chunk
                          (fn [{:keys [reasoning done?]}]
@@ -918,123 +807,109 @@
                                         :code      nil
                                         :done?     (boolean done?)}))))
           ask-result (binding [svar-llm/*log-context* {:query-id (:environment-id environment) :iteration iteration}]
-                       (ask-with-schema-retry! (:router environment)
-                         (cond-> {:spec iteration-spec
+                       (svar/ask-code! (:router environment)
+                         (cond-> {:lang     "clojure"
                                   :messages messages
-                                  :routing (or routing {})
+                                  :routing  (or routing {})
                                   :check-context? false}
                            effective-reasoning (assoc :reasoning effective-reasoning)
-                           streaming-fn       (assoc :on-chunk streaming-fn))
-                         {:iteration   iteration
-                          :on-chunk    on-chunk
-                          :max-retries MAX_SCHEMA_REJECT_RETRIES}))
-          parsed (:result ask-result)
+                           streaming-fn        (assoc :on-chunk streaming-fn))))
           model-reasoning (:reasoning ask-result)
-          thinking (or model-reasoning (:thinking parsed))
+          thinking model-reasoning
           _ (log-stage! :llm-response iteration
               {:has-reasoning (some? model-reasoning)
-               :has-final (some? (:final parsed))
-               :code-count (count (:code parsed))
-               :duration-ms (:duration-ms ask-result)
-               :tokens (:tokens ask-result)
-               :thinking thinking})
+               :raw-length    (count (or (:raw ask-result) ""))
+               :block-count   (count (or (:blocks ask-result) []))
+               :duration-ms   (:duration-ms ask-result)
+               :tokens        (:tokens ask-result)
+               :thinking      thinking})
           api-usage {:prompt_tokens (get-in ask-result [:tokens :input] 0)
                      :completion_tokens (get-in ask-result [:tokens :output] 0)
                      :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
-                     :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}]
-      ;; The model emits :code as ONE Clojure source string. Parse it into
-      ;; top-level forms; each form becomes its own expression_state row.
-      (let [raw-code (or (:code parsed) "")
-            [forms parse-error] (split-top-level-forms raw-code)
-            code-entries (if parse-error
+                     :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}
+          ;; svar/ask-code! returns the concatenated source string in :result.
+          ;; Parse it into top-level forms; each form becomes one
+          ;; expression_state row.
+          raw-code (or (:result ask-result) "")
+          [forms parse-error] (split-top-level-forms raw-code)
+          code-entries (if parse-error
                            ;; Whole blob fails to parse — surface as one
                            ;; failed expression with the raw blob as :code.
-                           [{:expr (str raw-code) :parse-error parse-error}]
-                           (vec (filter #(not (str/blank? (:expr %))) (or forms []))))
-            total-blocks (count code-entries)
-            executed (mapv (fn [idx {:keys [expr parse-error]}]
-                             (log-stage! :code-exec iteration
-                               {:idx (inc idx) :total total-blocks :code expr})
-                             (let [iteration-id (str "i" iteration "." (inc idx))
-                                   result (cond
-                                            parse-error
-                                            {:result nil :error (str "Parse error: " parse-error)
-                                             :stdout "" :stderr "" :execution-time-ms 0}
-                                            :else
-                                            (if-let [err (literal-code-block-error expr)]
-                                              {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
-                                              (let [r (execute-code environment expr
-                                                        :dedup-cache-atom dedup-cache-atom
-                                                        :iteration-id iteration-id)]
-                                                (log-stage! :code-result iteration
-                                                  {:idx (inc idx) :total total-blocks
-                                                   :execution-time-ms (:execution-time-ms r)
-                                                   :error (:error r) :timeout? (:timeout? r) :result (:result r)})
-                                                r)))]
-                               {:block expr :result result}))
-                       (range) code-entries)
-            code-blocks (mapv :block executed)
-            expression-results (mapv :result executed)
-            expression-errors (seq (clojure.core/filter :error expression-results))
-            expressions (mapv (fn [idx code result]
-                                {:id idx
-                                 :code code
-                                 :result (:result result)
-                                 :stdout (:stdout result)
-                                 :stderr (:stderr result)
-                                 :error (:error result)
-                                 :execution-time-ms (:execution-time-ms result)
-                                 :timeout? (:timeout? result)
-                                 :repaired? (:repaired? result)})
-                          (range) code-blocks expression-results)]
-        (if-let [raw-final-answer (:answer parsed)]
-          ;; FINAL path: model emitted :answer. Render as Mustache against
-          ;; the sandbox locals, surfacing any compile/template error as
-          ;; an iteration error so the loop retries.
-          (let [raw-answer (str raw-final-answer)
-                locals (try (get-locals environment) (catch Throwable _ {}))
-                mustache-result (when-not expression-errors
-                                  (try
-                                    {:answer (render raw-answer locals)}
-                                    (catch Exception e
-                                      {:error (str "Mustache error: " (.getMessage e)
-                                                ". Define all referenced vars in :code first.")})))
-                mustache-answer  (:answer mustache-result)
-                mustache-missing (:error mustache-result)
-                final-answer (or mustache-answer raw-answer)
-                validation-error (or (when expression-errors
-                                       (error/final-answer-code-error-message (:error (first expression-errors))))
-                                   mustache-missing)]
+                         [{:expr (str raw-code) :parse-error parse-error}]
+                         (vec (filter #(not (str/blank? (:expr %))) (or forms []))))
+          total-blocks (count code-entries)
+          executed (mapv (fn [idx {:keys [expr parse-error]}]
+                           (log-stage! :code-exec iteration
+                             {:idx (inc idx) :total total-blocks :code expr})
+                           (let [iteration-id (str "i" iteration "." (inc idx))
+                                 result (cond
+                                          parse-error
+                                          {:result nil :error (str "Parse error: " parse-error)
+                                           :stdout "" :stderr "" :execution-time-ms 0}
+                                          :else
+                                          (if-let [err (literal-code-block-error expr)]
+                                            {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
+                                            (let [r (execute-code environment expr
+                                                      :dedup-cache-atom dedup-cache-atom
+                                                      :iteration-id iteration-id)]
+                                              (log-stage! :code-result iteration
+                                                {:idx (inc idx) :total total-blocks
+                                                 :execution-time-ms (:execution-time-ms r)
+                                                 :error (:error r) :timeout? (:timeout? r) :result (:result r)})
+                                              r)))]
+                             {:block expr :result result}))
+                     (range) code-entries)
+          code-blocks (mapv :block executed)
+          expression-results (mapv :result executed)
+          expression-errors (seq (clojure.core/filter :error expression-results))
+          expressions (mapv (fn [idx code result]
+                              {:id idx
+                               :code code
+                               :result (:result result)
+                               :stdout (:stdout result)
+                               :stderr (:stderr result)
+                               :error (:error result)
+                               :execution-time-ms (:execution-time-ms result)
+                               :timeout? (:timeout? result)
+                               :repaired? (:repaired? result)})
+                        (range) code-blocks expression-results)]
+      (if-let [raw-final-answer @answer-atom]
+          ;; FINAL path: model called `(answer "...")` during this
+          ;; iteration. The atom holds the stringified arg. Surface any
+          ;; expression error as a validation error so the loop retries.
+        (let [final-answer (str raw-final-answer)
+              validation-error (when expression-errors
+                                 (error/final-answer-code-error-message (:error (first expression-errors))))]
             ;; `resolved-model` is a MAP — `{:name str :provider kw
             ;; :reasoning? bool}` — not a string. Persisting `(str
             ;; resolved-model)` would land a stringified map in
             ;; `iteration.llm_model`; surface `:name` and `:provider`
             ;; separately so both columns get clean values.
-            (let [model-name (some-> (:name resolved-model) str)
-                  provider   (:provider resolved-model)]
-              (if validation-error
-                {:thinking thinking
-                 :expressions (or (seq expressions)
-                                [{:id 0 :code "(final-answer-validation)"
-                                  :result nil :stdout "" :stderr ""
-                                  :error validation-error}])
-                 :final-result nil :api-usage api-usage
-                 :duration-ms (or (:duration-ms ask-result) 0)
-                 :llm-messages messages :llm-provider provider :llm-model model-name}
-                {:thinking thinking
-                 :expressions (strip-noop-expressions expressions)
-                 :final-result {:final? true :answer final-answer}
-                 :api-usage api-usage
-                 :duration-ms (or (:duration-ms ask-result) 0)
-                 :llm-messages messages :llm-provider provider :llm-model model-name})))
+          (let [model-name (some-> (:name resolved-model) str)
+                provider   (:provider resolved-model)]
+            (if validation-error
+              {:thinking thinking
+               :expressions (or (seq expressions)
+                              [{:id 0 :code "(final-answer-validation)"
+                                :result nil :stdout "" :stderr ""
+                                :error validation-error}])
+               :final-result nil :api-usage api-usage
+               :duration-ms (or (:duration-ms ask-result) 0)
+               :llm-messages messages :llm-provider provider :llm-model model-name}
+              {:thinking thinking
+               :expressions (strip-noop-expressions expressions)
+               :final-result {:final? true :answer final-answer}
+               :api-usage api-usage
+               :duration-ms (or (:duration-ms ask-result) 0)
+               :llm-messages messages :llm-provider provider :llm-model model-name})))
           ;; Normal path
-          {:thinking thinking
-           :expressions (strip-noop-expressions expressions)
-           :final-result nil :api-usage api-usage
-           :duration-ms (or (:duration-ms ask-result) 0)
-           :llm-messages messages
-           :llm-provider (:provider resolved-model)
-           :llm-model    (some-> (:name resolved-model) str)})))))
+        {:thinking thinking
+         :expressions (strip-noop-expressions expressions)
+         :final-result nil :api-usage api-usage
+         :duration-ms (or (:duration-ms ask-result) 0)
+         :llm-messages messages
+         :llm-provider (:provider resolved-model)
+         :llm-model    (some-> (:name resolved-model) str)}))))
 
 ;; =============================================================================
 ;; Multi-iteration query engine
@@ -1417,8 +1292,7 @@
                     effective-routing (or routing {})
                     iteration-result (try
                                        (run-iteration environment effective-messages
-                                         {:iteration-spec (if has-reasoning? spec/ITERATION_SPEC_REASONING spec/ITERATION_SPEC_NON_REASONING)
-                                          :iteration iteration :reasoning-level reasoning-level
+                                         {:iteration iteration :reasoning-level reasoning-level
                                           :routing effective-routing
                                           :resolved-model resolved-model
                                           :on-chunk on-chunk
@@ -2124,6 +1998,11 @@
                                         :conversation-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
+        ;; Iteration-final-answer signal. The SCI sandbox's `(answer
+        ;; "…")` fn `reset!`s this atom; the iteration loop reads it
+        ;; back after evaluating each iteration's forms. Reset to nil
+        ;; before every iteration runs.
+        answer-atom              (atom nil)
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
@@ -2152,7 +2031,15 @@
                                        (symbol? sym) sym
                                        (string? sym) (clojure.core/symbol sym)
                                        :else (clojure.core/symbol (str sym)))))
-        env-bindings             {'var-history var-history-fn}
+        ;; SCI binding for `(answer "…")` — the canonical turn-
+        ;; termination call. Closes over `answer-atom` so the iteration
+        ;; loop can read what the model emitted. Returns the marker
+        ;; keyword so the iN.K result row makes intent visible.
+        answer-fn                (fn answer [s]
+                                   (reset! answer-atom (str s))
+                                   :vis/answer)
+        env-bindings             {'var-history var-history-fn
+                                  'answer      answer-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -2166,6 +2053,7 @@
              :sandbox-ns      sandbox-ns
              :initial-ns-keys initial-ns-keys
              :router          router
+             :answer-atom    answer-atom
              :extensions      (atom [])}]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
@@ -2399,12 +2287,12 @@
           query-text    (or (:query query-row) "<the user's message appears here>")
           iteration-context-block (prompt/build-iteration-context env
                                     {:call-counts-atom  (atom {})
-                                     :active-extensions active-exts})
-          has-reasoning? (provider-has-reasoning? (:router env))
-          iteration-spec (if has-reasoning?
-                           spec/ITERATION_SPEC_REASONING
-                           spec/ITERATION_SPEC_NON_REASONING)
-          spec-prompt    (svar-spec/spec->prompt iteration-spec)]
+                                     :active-extensions active-exts})]
+      ;; Iterations now go through `svar/ask-code!` — a plain-text
+      ;; completion path with no JSON spec. svar appends one short
+      ;; code-format reminder (`:code-tail-pointer? true`) as the last
+      ;; text block of the last user message. We render that hint here
+      ;; so the inspector matches the wire shape the model actually sees.
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
         system-prompt
         "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
@@ -2412,8 +2300,10 @@
         (when iteration-context-block
           (str "\n\n═══ MESSAGE 3: Iteration context (role: user, appended per iteration) ═══\n"
             iteration-context-block))
-        "\n\n═══ MESSAGE 4: Spec schema (role: user, appended by svar) ═══\n"
-        spec-prompt))))
+        "\n\n═══ MESSAGE 4: Code-format reminder (role: user, appended by svar/ask-code!) ═══\n"
+        "Reply with clojure source inside ```clojure … ``` fences. "
+        "Multiple fenced blocks are allowed and will be concatenated in order. "
+        "No prose outside fences. No commentary, no explanation."))))
 
 (defn effective-system-prompt
   "Return the reconstructed prompt snapshot for the latest query in a conversation."

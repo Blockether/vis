@@ -193,7 +193,15 @@
 
 (defdescribe extension-runtime-composition-test
 
-  (it "assembles canonical extension prompt inside the loop and appends extra notes"
+  (it "assembles ONLY the author-supplied :ext/prompt under the alias header"
+    ;; New contract (see
+    ;; `com.blockether.vis.internal.prompt/render-extension-prompt-block`):
+    ;; the runtime no longer auto-canonicalizes `:ext/symbols` into prompt
+    ;; lines. Whatever lands in the prompt is whatever `:ext/prompt`
+    ;; returns — plus the namespace-alias header. Sandbox bindings remain
+    ;; callable from `:code` whether advertised or not. Authors who want
+    ;; the old auto-render behavior call `sdk/render-prompt` from inside
+    ;; their own `:ext/prompt` fn (covered by `render-prompt-test`).
     (let [environment {:extensions (atom [(sdk/extension
                                             {:ext/namespace 'com.acme.ext.fs
                                              :ext/doc       "Filesystem tools"
@@ -201,16 +209,20 @@
                                              :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                                              :ext/prompt    "RULES:\n- Discover paths first."
                                              :ext/symbols   [cat-symbol retries-value]})])}
-          ;; assemble-system-prompt requires :active-extensions — compute
-          ;; ONCE per call site (here, once per snapshot) and pass in.
           active-exts   (prompt/active-extensions environment)
           system-prompt (prompt/assemble-system-prompt environment
                           {:active-extensions active-exts})]
+      ;; Header IS present (alias → namespace marker still added).
       (expect (str/includes? system-prompt "[namespace: vis → vis.ext.tools]"))
-      (expect (str/includes? system-prompt "Filesystem tools (use vis/ prefix)"))
-      (expect (str/includes? system-prompt "- (vis/cat path) or (vis/cat path offset limit) — Read a file preview."))
-      (expect (str/includes? system-prompt "- vis/max-retries — Maximum retry attempts."))
-      (expect (str/includes? system-prompt "RULES:\n- Discover paths first.")))))
+      ;; Author-supplied :ext/prompt content IS present verbatim.
+      (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))
+      ;; Auto-canonical render is GONE — no symbol lines, no `:ext/doc`
+      ;; heading-as-prompt-text. Author can still emit those by calling
+      ;; `sdk/render-prompt` from inside `:ext/prompt`, but the runtime
+      ;; doesn't do it for them anymore.
+      (expect (not (str/includes? system-prompt "Filesystem tools (use vis/ prefix)")))
+      (expect (not (str/includes? system-prompt "- (vis/cat path)")))
+      (expect (not (str/includes? system-prompt "- vis/max-retries"))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; From commandline_test.clj
@@ -1169,64 +1181,70 @@
       (lp/dedup-cache-record! cache "(grep \"X\")" {:result :ok} "i1.1")
       (expect (some? (lp/dedup-cache-lookup cache "(grep    \"X\")"))))))
 
-;; ─── from schema_reject_retry_test.clj ───
-
-(defn- schema-reject-ex
-  "Build the same exception svar's `internal.spec/str->data-with-spec`
+;; ─── from schema_reject_retry_test.clj — DELETED
+;;
+;; The schema-reject retry layer was removed when the iteration loop
+;; switched from `svar/ask!` (JSON spec) to `svar/ask-code!` (plain-
+;; text + fenced code-block extraction). There is no JSON spec for the
+;; provider to reject; reader errors on extracted source flow as
+;; ordinary iteration errors instead. The historical helpers + tests
+;; below are kept commented for archeology only.
+#_(defn- schema-reject-ex
+    "Build the same exception svar's `internal.spec/str->data-with-spec`
    throws when the provider returns a bare JSON-string."
-  [preview]
-  (ex-info
-    (str "Your response did not match the JSON schema contract. "
-      "PRODUCE valid JSON/EDN matching the schema fields. NO prose "
-      "outside the structure.")
-    {:type :svar.spec/schema-rejected
-     :reason :not-a-map
-     :received-type "String"
-     :raw-data preview
-     :raw-data-preview (pr-str preview)}))
+    [preview]
+    (ex-info
+      (str "Your response did not match the JSON schema contract. "
+        "PRODUCE valid JSON/EDN matching the schema fields. NO prose "
+        "outside the structure.")
+      {:type :svar.spec/schema-rejected
+       :reason :not-a-map
+       :received-type "String"
+       :raw-data preview
+       :raw-data-preview (pr-str preview)}))
 
-(defn- ok-result
-  "Minimal shape of what `llm/ask!` returns when parsing succeeds."
-  []
-  {:result      {:thinking "ok" :code []}
-   :tokens      {:input 10 :output 5 :reasoning 0 :total 15}
-   :duration-ms 1.0})
+#_(defn- ok-result
+    "Minimal shape of what `llm/ask!` returns when parsing succeeds."
+    []
+    {:result      {:thinking "ok" :code []}
+     :tokens      {:input 10 :output 5 :reasoning 0 :total 15}
+     :duration-ms 1.0})
 
-(defn- with-stubbed-ask!
-  "Run `f` with `llm/ask!` replaced by a stub that pops one outcome per
+#_(defn- with-stubbed-ask!
+    "Run `f` with `llm/ask!` replaced by a stub that pops one outcome per
    call from `outcomes` and either returns it (`:ok`) or throws it
    (instance of Throwable). Returns
      {:result <f result OR :threw> :calls <vec of :messages> :exception <or nil>}."
-  [outcomes f]
-  (let [calls (atom [])
-        remaining (atom (vec outcomes))
-        stub (fn [_router opts]
-               (swap! calls conj (:messages opts))
-               (let [next-out (first @remaining)]
-                 (swap! remaining subvec 1)
-                 (if (instance? Throwable next-out)
-                   (throw next-out)
-                   next-out)))]
-    (with-redefs [llm/ask! stub]
-      (try
-        {:result    (f) :calls @calls :exception nil}
-        (catch Throwable t
-          {:result    :threw :calls @calls :exception t})))))
+    [outcomes f]
+    (let [calls (atom [])
+          remaining (atom (vec outcomes))
+          stub (fn [_router opts]
+                 (swap! calls conj (:messages opts))
+                 (let [next-out (first @remaining)]
+                   (swap! remaining subvec 1)
+                   (if (instance? Throwable next-out)
+                     (throw next-out)
+                     next-out)))]
+      (with-redefs [llm/ask! stub]
+        (try
+          {:result    (f) :calls @calls :exception nil}
+          (catch Throwable t
+            {:result    :threw :calls @calls :exception t})))))
 
-(defn- run-helper
-  "Invoke `ask-with-schema-retry!` with sensible defaults. `chunks` is
+#_(defn- run-helper
+    "Invoke `ask-with-schema-retry!` with sensible defaults. `chunks` is
    an atom that the helper appends to via `:on-chunk`."
-  [chunks & {:keys [max-retries]
-             :or   {max-retries 2}}]
-  (lp/ask-with-schema-retry!
-    ::router-stub
-    {:spec ::iteration-spec-stub
-     :messages [{:role "user" :content "Q"}]
-     :routing {}
-     :check-context? false}
-    {:iteration   3
-     :on-chunk    (fn [chunk] (swap! chunks conj chunk))
-     :max-retries max-retries}))
+    [chunks & {:keys [max-retries]
+               :or   {max-retries 2}}]
+    (lp/ask-with-schema-retry!
+      ::router-stub
+      {:spec ::iteration-spec-stub
+       :messages [{:role "user" :content "Q"}]
+       :routing {}
+       :check-context? false}
+      {:iteration   3
+       :on-chunk    (fn [chunk] (swap! chunks conj chunk))
+       :max-retries max-retries}))
 
 ;; --- ORPHAN: targets removed/changed API. Skipped via #_ --- 
 #_(defdescribe ask-with-schema-retry-test
@@ -1338,6 +1356,10 @@
         (expect (= :threw result))
         (expect (= :svar.spec/schema-rejected (:type (ex-data exception))))
         (expect (empty? (filter :schema-reject-retry @chunks))))))
+
+;; The whole legacy block above is wrapped in `#_` reader-discard so
+;; nothing in this section compiles. Kept inline as a record of the
+;; retry-shape we used to expose at the public API.
 
 ;; ─── from parse_rescue_loop_test.clj ───
 

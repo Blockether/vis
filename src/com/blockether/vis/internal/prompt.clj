@@ -22,7 +22,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.env :as env]
-   [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -238,86 +237,50 @@
 ;; =============================================================================
 
 (def CORE_SYSTEM_PROMPT
-  "Clojure agent. Think = write Clojure in SCI sandbox, operate on symbols, use clojure functions, and programatically 
-   solve problems. User query is your goal, plan = code, reason = code, save the results of the functions worth remembering in defs, create functions and apply functional composition to solve complex problems.
-   
-   This sandboxed environment 
+  "Clojure agent. Think = write Clojure in SCI sandbox. Plan = code. Reason = code. User QUERY is your goal. Stash useful results across iterations as `(def ...)` and compose functions to solve hard problems.
 
-Each turn emit JSON:
-  :code    ONE source string. Multiple top-level forms OK; runtime evals each in order.
-           Each form -> one iN.K result. `\"\"` = noop.
-  :answer  optional. Emit when done -> turn ends.
+Each turn reply with Clojure source inside ```clojure … ``` fences. Multiple fenced blocks are allowed and will be concatenated in order. NO prose outside fences — use `;; comments` inside the fence for thinking.
 
-After eval you get fresh user msg:
-  <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed).
-               Shown = form's return val. `(def x ...)` returns the var, NOT the bound value.
-               To SEE a tool result, call inline. Don't wrap reads in `def` unless crossing iters.
+The runtime parses your code into top-level forms and evaluates each in order. Each form -> one iN.K result. An empty fence (or no fence) = noop iteration.
+
+To finish the turn, call `(answer \"…\")` from inside a fence. Plain text or markdown; interpolate vars via `(str ...)` / `(format ...)` like any other Clojure call. Calling `(answer ...)` records the final answer; if any form in the same iteration errors, the answer is discarded and the loop retries.
+
+After eval you get a fresh user msg:
+  <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed). Shown = form's return val. `(def x ...)` returns the var, NOT the bound value. To SEE a tool result, call inline.
   <var_index>  your `(def name val)` bindings still alive. Strings verbatim up to ~8000 chars.
 
 SCI vars bound by name:
-  `QUERY`                 current request (string)
-  `ANSWER`                previous turn's answer (string)
-  `REASONING`             last iter's thinking (string)
-  `CURRENT_QUERY_ID`      UUID of THIS in-flight turn
-  `CURRENT_ITERATION_ID`  UUID of last persisted iter (nil at iter 0;
-                          iter N's :code sees iter N-1's id since N's
-                          row is written AFTER eval)
+  QUERY                 current request (string)
+  ANSWER                previous turn's answer (string)
+  REASONING             last iter's thinking (string)
+  CURRENT_QUERY_ID      UUID of THIS in-flight turn
+  CURRENT_ITERATION_ID  UUID of last persisted iter (nil at iter 0)
 
 Rules:
-  • Real Clojure. `let` / `do` / threading inside one form when steps depend.
-  • `def` / `defn` only to KEEP values across iters.
+  • Real Clojure: let / do / threading inside one form when steps depend.
+  • def / defn only to KEEP values across iters; let > def for sub-computes.
   • Inspect = RETURN from form (last expr of `do`) -> appears in <recent>. No print, no def: return.
   • Need prior tool result? Read <recent> or your bound var. Don't re-fetch.
+  • Threading > nesting. comp/partial > inline anon when point-free reads cleaner.
+  • Banned: `slurp` (use `vis/cat`); `eval` (iteration loop's job).
 
-COMPOSE. Each line below is asserted by `sandbox-compose-test`; if you see one
-break in production, the test broke first. Result on the right.
-
-  (let [a 2 b (* a a)] (- b a))                          ;; => 2   scope sub-compute, no var index pollution
-  (let [{:keys [x y]} pt] (+ x y))                       ;; map destructure inside let
-  (def n 42)                                             ;; stash across iters; redef = new version
-  (defn sq [n] (* n n))                                  ;; reusable fn; multi-arity: (defn f ([] ...) ([x] ...))
-  (defn pt [{:keys [x y]}] [x y])                        ;; destructure args, no helper let
-
-  (-> 5 (+ 3) (* 2) (- 1))                               ;; => 15  first-arg pipeline
-  (->> xs (filter even?) (map sq) (reduce +))            ;; last-arg pipeline over a seq
-  (as-> 10 n (+ n 1) (* n 2) (str (char 61) n))          ;; mid-pipeline rename; result is the string =22
-  (some-> m :a :b inc)                                   ;; nil short-circuits the chain
-  (cond->> xs need-filter? (filter f) need-sort? sort)   ;; conditional pipeline (last-arg)
-
-  ((comp str inc inc) 7)                                 ;; => the string 9 (right-to-left compose)
-  ((partial + 10) 5)                                     ;; => 15  capture leading args
-  (map #(* 2 %) xs)                                      ;; #() reader-literal anon fn
-  (filter (complement nil?) xs)                          ;; flip a predicate
-  ((juxt :a :b :c) m)                                    ;; many fns -> one input -> [vals]
-
-  (reduce + 0 (range 11))                                ;; => 55
-  (reduce-kv (fn [acc k v] (assoc acc k (inc v))) {} m)  ;; fold a map keyed
+COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
+  (let [{:keys [x y]} pt] (+ x y))                       ;; destructure in let
+  (def n 42)  (defn sq [n] (* n n))                      ;; stash / reuse across iters
+  (-> 5 (+ 3) (* 2) (- 1))   (->> xs (filter even?) (map sq) (reduce +))   ;; first-arg / last-arg pipelines
+  (as-> 10 n (+ n 1) (* n 2))   (some-> m :a :b inc)     ;; mid-pipeline rename / nil short-circuit
+  (cond->> xs need-filter? (filter f) need-sort? sort)   ;; conditional last-arg pipeline
+  ((comp str inc) 7)   ((partial + 10) 5)   (filter (complement nil?) xs)   ;; comp / partial / complement
+  ((juxt :a :b :c) m)                                    ;; many fns -> one input -> vec of vals
+  (reduce-kv (fn [acc k v] (assoc acc k (inc v))) {} m)  ;; fold a map
   (transduce (comp (filter odd?) (map sq)) + 0 xs)       ;; fused fold, no intermediate seqs
-
-  (group-by even? xs)                                    ;; => {true [...] false [...]}
-  (frequencies xs)                                       ;; => {item count}
-  (update m :n inc)                                      ;; (update-in m [:a :b] inc) for deep
-  (assoc-in m [:a :b] v)                                 ;; deep set
-
+  (group-by even? xs)   (frequencies xs)                 ;; bucket / count
+  (update-in m [:a :b] inc)   (assoc-in m [:a :b] v)     ;; deep update / set
   (for [x xs :let [y (f x)] :when (pred? y)] [x y])      ;; comprehension w/ :let + :when
-
-  (c+/cond+ :let [n 7] (odd? n) :odd (even? n) :even)    ;; cond w/ mid-form :let / :do (alias c+/)
-  (if+ [m (lookup k)] (:field m) :missing)               ;; bind-and-test in one form
-  (when+ [v (get m :a)] (* v 10))                        ;; same shape, no else branch
-
-  (str/split csv-str comma-str)                          ;; string delim auto-promotes to Pattern (vis-patched)
-  (str/replace s dot-pat under-str)                      ;; regex on the str/ alias
-  (json/read-json s :key-fn keyword)                     ;; charred.api aliased as json/
-  (-> v json/write-json-str (json/read-json :key-fn keyword)) ;; round-trip via threading
-
-Defaults:
-  let > def         (def only when value crosses iter)
-  defn > anon       (anon only when truly one-shot or as a transducer xform)
-  return > print    (last expr of `do` shows up in <recent>; println is for the human, not for state)
-  threading > nesting (`(->> xs (map f) (filter g))` over `(filter g (map f xs))`)
-  comp/partial > inline (when point-free reads cleaner; otherwise `let` + named call)
-
-Banned: `slurp` (use `vis/cat`). `eval` is the iteration loop's job, not yours.")
+  (c+/cond+ :let [n 7] (odd? n) :odd (even? n) :even)    ;; cond w/ mid-form :let / :do
+  (if+ [m (lookup k)] (:field m) :missing)   (when+ [v (get m :a)] (* v 10))   ;; bind-and-test
+  (str/split s pat)   (str/replace s pat r)              ;; vis-patched: string delim auto-promotes to Pattern
+  (json/read-json s :key-fn keyword)                     ;; charred.api as json/")
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum.
@@ -351,18 +314,28 @@ Banned: `slurp` (use `vis/cat`). `eval` is the iteration loop's job, not yours."
         exts))))
 
 (defn- render-extension-prompt-block
+  "Render one extension's contribution to the system prompt. Honors
+   ONLY `:ext/prompt`. The previous implementation also auto-rendered
+   every `:ext/symbols` entry as a `- (alias/sym args) — docstring`
+   line, which silently ballooned the prompt for any extension whose
+   `:ext/symbols` was a thin wrapper around an upstream library: e.g.
+   `vis-language-clojure`'s `z/` extension dumped 104 rewrite-clj.zip
+   publics with full upstream docstrings (~7000 tokens), every
+   iteration, of every conversation — even when the user just typed
+   a one-word greeting. Authors who want their tools advertised in
+   the prompt write `:ext/prompt` (string or `(fn [env] string)`);
+   sandbox bindings are independently callable from `:code` whether
+   advertised or not. Extensions that legitimately want auto-rendered
+   symbol lines may call `extension/render-prompt` from inside their
+   own `:ext/prompt` fn — explicit beats clever."
   [environment ext]
   (try
-    (let [canonical (extension/render-prompt ext)
-          extra-fn  (:ext/prompt ext)
-          extra     (when extra-fn (extra-fn environment))
-          body      (->> [canonical extra]
-                      (filter #(and (string? %) (not (str/blank? %))))
-                      (str/join "\n"))]
-      (when-not (str/blank? body)
-        (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-          (str "[namespace: " alias-sym " → " ns-sym "]\n" body)
-          body)))
+    (when-let [extra-fn (:ext/prompt ext)]
+      (let [body (extra-fn environment)]
+        (when (and (string? body) (not (str/blank? body)))
+          (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+            (str "[namespace: " alias-sym " → " ns-sym "]\n" body)
+            body))))
     (catch Throwable t
       (tel/log! {:level :error :id ::ext-prompt-error
                  :data {:ext (:ext/namespace ext) :error (ex-message t)}}

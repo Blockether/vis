@@ -13,18 +13,23 @@ user message
         2. Ask LLM
         3. Execute Code
         4. Persist + Decide
-             — has :code, no :final  → back to step 1
-             — :final present        → return answer + metadata
-             — error                 → feed error as user msg, back to step 1
+             — forms ran, no `(answer …)` call  → back to step 1
+             — `(answer …)` was called           → return answer + metadata
+             — error                              → feed error as user msg, back to step 1
 ```
 
 **Step details:**
 
 1. **Build Context** — `<plan>` (sticky structured TODO list), `<breadcrumbs>` (last K=20 one-liners), `<recent>` (last iteration's expressions with `iN.K` ids), `<recent_thought>` (last iteration's `:thinking`), `<system_state>` (`QUERY` / `ANSWER` / `REASONING` / `PRIOR_TURN`), `<var_index>` (user-defined vars only — SYSTEM vars now live in `<system_state>`), nudges (built-in + extension + loop-injected)
-2. **Ask LLM** — svar structured JSON output: code blocks + optional
-   `:final`. The call site is `(llm/ask! (:router environment) …)`,
-   i.e. the env's snapshot router — NOT the global
-   `query-core/router-atom`. See
+2. **Ask LLM** — plain-text completion + fenced code-block
+   extraction. The call site is
+   `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
+   svar sends `:messages` verbatim, parses the assistant response,
+   filters Clojure-tagged + untagged fences, returns the concatenated
+   source. NO JSON spec, NO schema validation, NO schema-reject
+   retry layer; reader errors on the extracted source flow as
+   ordinary iteration errors instead. The router is the env's
+   snapshot router — NOT the global `query-core/router-atom`. See
    [Router Lifecycle](state.md#router-lifecycle) for why this matters
    when provider/model is switched mid-session.
 3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
@@ -32,22 +37,24 @@ user message
 
 ## System prompt assembly
 
-`loop-core/assemble-system-prompt` is the **single source of truth** for
+`prompt/assemble-system-prompt` is the **single source of truth** for
 the system message content. Both iteration loop paths and the TUI
 `[?]` inspector call it. It composes:
 
-1. **Core instructions** (`CORE_SYSTEM_PROMPT`) — iteration steps
-   (READ/COMPUTE/PERSIST/FINALIZE), Mustache docs, grounding rule,
-   query primacy, perf hints, tool discipline, CLJ rules, output voice
-2. **Date + environment block** — CWD, home, user, platform, shell
-3. **Extension prompts** — each active extension’s canonical
+1. **Core instructions** (`CORE_SYSTEM_PROMPT`) — the agent contract:
+   reply with Clojure source inside ```clojure … ``` fences, use
+   `;; comments` for thinking, call `(answer …)` to finish.
+2. **Extension prompts** — each active extension’s canonical
    symbol-derived prompt block, prefixed with `[namespace: alias → ns]`,
-   plus any optional extra `:ext/prompt` tail
+   plus any optional extra `:ext/prompt` tail (cwd / OS / git facts
+   come from the `vis-common-environment` extension, not from the
+   runtime).
 
-The iteration spec schema lives with the iteration engine in
-`com.blockether.vis.core`.
-svar’s `spec->prompt` appends that schema separately as a final user
-message — it is NOT part of the system message.
+No iteration spec schema is appended anymore. svar’s `ask-code!`
+appends one short `code-tail-pointer` reminder as the LAST text
+block of the LAST user message (`Reply with clojure source inside
+ ` ` ` clojure …  ` ` ` fences …`); that lives outside the system
+message and is NOT cached.
 
 ## Error recovery
 
@@ -59,45 +66,39 @@ When an iteration throws:
 4. If consecutive errors reach `max-consecutive-errors` (default **3**, overridable via `:max-consecutive-errors`), the loop attempts a **strategy restart** — fresh prompt assembly + reset counters — up to `max-restarts` (default **3**, overridable via `:max-restarts`).
 5. After the final restart still fails, the turn ends with `:status :error`.
 
-## Finalize gates
+## Final answer
 
-Before accepting a `:final` answer, the loop applies two gates:
+The model finishes a turn by calling `(answer "…")` from inside a
+fenced code block. The runtime binds `answer` as a one-arg SCI fn
+that `reset!`s an environment-scoped atom; after evaluating every
+form in the iteration, the loop reads the atom and — if non-nil and
+no expression in the same iteration errored — commits the captured
+string as the turn's final answer.
 
-- **Open-plan gate (PEV):** if any plan item is still `:pending` or
-  `:in-progress`, `:answer` is rejected unless `:abandon-reason` is set.
-- **Confidence gate:** if `:confidence` is `:low`, `:answer` is rejected
-  unless `:abandon-reason` explains what would raise confidence.
+```clojure
+```clojure
+(let [summary (clojure.string/join "\n" rendered-rows)]
+  (answer (str "# Done\n\n" summary)))
+```
+```
 
-Rejected finals are turned into `[system_nudge]` messages for the next
-iteration and retried with the same bounded gate retry budget.
+Key properties:
 
-## Final answer rendering
-
-One mode: every `:answer` is rendered as a **Mustache template against
-sandbox vars** (markdown content allowed). There is no `:answer-type`
-field, no auto-detect, no separate "SCI expression" mode.
-
-- Plain text / markdown without `{{…}}` tags renders verbatim, so
-  prose answers pass through unchanged.
-- `{{var}}`, `{{#list}}…{{/list}}`, `{{^val}}…{{/val}}`, `{{.}}`,
-  `{{list.size}}` interpolate sandbox vars. Missing referenced vars
-  surface as a re-prompted validation error.
-- To inject a **computed** value, define it in `:code` and reference
-  the var in `:answer`:
-
-  ```clojure
-  ;; :code
-  (def summary (clojure.string/join "\n" rendered-rows))
-  ;; :answer
-  "{{summary}}"
-  ```
+- `(answer …)` is a real Clojure call, so `(str …)`, `(format …)`,
+  `(pr-str …)`, etc. all interpolate. No Mustache layer, no template
+  language. Whatever `(str <arg>)` produces becomes the answer.
+- Calling `(answer …)` more than once in the same iteration: the LAST
+  call wins. The atom is reset to `nil` at the start of every
+  iteration.
+- If any form in the same iteration errors, the captured answer is
+  discarded and the loop retries.
 
 ## Loop termination
 
-The loop runs **until the model emits `:answer`**, the user cancels,
-or the consecutive-error budget is exhausted. The model decides when
-it's done by finalizing; the user decides when to bail by
-cancelling.
+The loop runs **until the model calls `(answer …)`**, the user
+cancels, or the consecutive-error budget is exhausted. The model
+decides when it's done by finalizing; the user decides when to bail
+by cancelling.
 
 The consecutive-error budget (`max-consecutive-errors`, default 3,
 with `max-restarts` strategy resets, default 3) is the only
