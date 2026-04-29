@@ -188,7 +188,7 @@
         ;; Patch clojure.string/split so string delimiters auto-promote to
         ;; Patterns. The original raises a late ClassCastException when an
         ;; LLM passes a string, usually after the cast hides inside a lazy
-        ;; seq that only realizes during answer/mustache rendering.
+        ;; seq that only realizes during answer assembly.
         str-ns-copied (assoc (sci/copy-ns clojure.string str-ns)
                         'split (sci/new-var 'split safe-split {:ns str-ns}))
 
@@ -426,6 +426,7 @@
      ITERATION_ID
      ITERATION_PREVIOUS_REASONING
      CONVERSATION_TITLE
+     CONVERSATION_METADATA
      CONVERSATION_PREVIOUS_ANSWER})
 
 (defn system-var-sym?

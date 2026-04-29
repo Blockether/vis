@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `restore-var` references (never existed as callable tool)
 - Scattered .md files (consolidated into `resources/docs/`)
 - Built-in repetition `[system_nudge]` ("You repeated the same expression …").
-  `<recent>` + the dedup cache (`:cached? true`) already give the model
+  `<journal>` + the dedup cache (`:cached? true`) already give the model
   enough signal to change strategy; the nudge was noise. Drops
   `repetition-warning`, `REPETITION_THRESHOLD`, the `call-counts-atom`
   plumbing, and the `:call-counts-atom` arg to `prompt/build-iteration-context`.

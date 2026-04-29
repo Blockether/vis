@@ -5,7 +5,7 @@
    matching `_test.clj`. The richer end-to-end coverage of the system
    prompt sits in `sandbox_compose_test`; this file pins down the
    small pure helpers in `prompt.clj` so refactors that quietly break
-   `<recent>`/`<var_index>` rendering or nudge plumbing get caught
+   `<journal>`/`<var_index>` rendering or nudge plumbing get caught
    here instead of in a model trace.
 
    In particular, after the `repetition-warning` cull we want a
@@ -58,61 +58,123 @@
                         (:type (ex-data e)))))]
       (expect (true? thrown?))))
 
-  (it "returns nil when there is nothing to render"
+  (it "returns nil when there is nothing to render and no nudges fire"
+    ;; Pre-bind a non-blank title so the always-on title nudge stays
+    ;; quiet, and skip a journal seed: nothing to render -> nil.
     (expect (nil? (prompt/build-iteration-context
-                    {} {:active-extensions NO_EXTENSIONS}))))
+                    {:conversation-title-atom (atom "set")}
+                    {:active-extensions NO_EXTENSIONS
+                     :iteration         0}))))
 
-  (it "renders <recent> for prior iteration blocks"
+  (it "renders <journal> for prior iteration blocks"
     (let [out (prompt/build-iteration-context
-                {}
+                {:conversation-title-atom (atom "set")}
                 {:active-extensions   NO_EXTENSIONS
-                 :blocks-by-iteration [[0 [{:code "(+ 1 2)" :result 3}]]]})]
+                 :blocks-by-iteration [[0 {:thinking nil
+                                           :blocks   [{:code "(+ 1 2)" :result 3}]}]]
+                 :iteration           0})]
       (expect (string? out))
-      (expect (str/includes? out "<recent>"))
+      (expect (str/includes? out "<journal>"))
       (expect (str/includes? out "(+ 1 2)"))
       (expect (str/includes? out "i0.1"))))
 
-  (it "never injects a built-in repetition nudge, even on identical reruns"
-    ;; Regression: the built-in `repetition-warning` was removed.
-    ;; Repeating the same expression must NOT produce a
-    ;; `[system_nudge]` line from the runtime itself.
-    (let [blocks [{:code "(grep \"X\")" :result []}]
-          out-1  (prompt/build-iteration-context
-                   {} {:active-extensions   NO_EXTENSIONS
-                       :blocks-by-iteration [[0 blocks]]})
-          out-2  (prompt/build-iteration-context
-                   {} {:active-extensions   NO_EXTENSIONS
-                       :blocks-by-iteration [[1 blocks]]})]
-      (expect (not (str/includes? (or out-1 "") "[system_nudge]")))
-      (expect (not (str/includes? (or out-2 "") "[system_nudge]")))))
+  ;; Helpers ------------------------------------------------------------------
+  ;;
+  ;; New `:blocks-by-iteration` shape is `[[pos {:thinking :blocks}]]`
+  ;; (the renderer was upgraded to surface per-iter thinking + per-form
+  ;; comments). Old `[[pos blocks]]` shape would be silently treated
+  ;; as `:thinking nil :blocks <vec-of-pairs>` — wrap explicitly.
+  ;;
+  ;; The title-nudge built-in always fires on a bare `{}` env (no
+  ;; `:conversation-title-atom`, so the title is treated as blank).
+  ;; Tests that probe nudges from OTHER paths use a `with-title`
+  ;; helper that pre-binds a non-blank title.
+  (letfn [(env-with-title []
+            {:conversation-title-atom (atom "already set")})
+          (->iter [pos blocks]
+            [pos {:thinking nil :blocks blocks}])]
 
-  (it "rejects the legacy :call-counts-atom arg silently (it is ignored, not required)"
-    ;; Defensive: callers that still pass `:call-counts-atom` must
-    ;; not blow up; the key is simply ignored.
-    (let [out (prompt/build-iteration-context
-                {}
-                {:active-extensions   NO_EXTENSIONS
-                 :call-counts-atom    (atom {})
-                 :blocks-by-iteration [[0 [{:code "(+ 1 2)" :result 3}]]]})]
-      (expect (string? out))
-      (expect (not (str/includes? out "[system_nudge]")))))
+    (it "never injects a built-in repetition nudge, even on identical reruns"
+      ;; Regression: the built-in `repetition-warning` was removed.
+      ;; Repeating the same expression must NOT produce a
+      ;; `[system_nudge]` line from the repetition path. Title-nudge
+      ;; suppressed by pre-binding a non-blank title; we check for the
+      ;; absence of any [system_nudge] line.
+      (let [env    (env-with-title)
+            blocks [{:code "(grep \"X\")" :result []}]
+            out-1  (prompt/build-iteration-context
+                     env {:active-extensions   NO_EXTENSIONS
+                          :blocks-by-iteration [(->iter 0 blocks)]
+                          :iteration           0})
+            out-2  (prompt/build-iteration-context
+                     env {:active-extensions   NO_EXTENSIONS
+                          :blocks-by-iteration [(->iter 1 blocks)]
+                          :iteration           1})]
+        (expect (not (str/includes? (or out-1 "") "[system_nudge]")))
+        (expect (not (str/includes? (or out-2 "") "[system_nudge]")))))
 
-  (it "appends extension nudges when :ext/nudge-fn returns a non-blank string"
-    (let [ext     {:ext/namespace 'fake.nudger
-                   :ext/nudge-fn  (fn [_ctx] "[system_nudge] hi from fake.nudger")}
-          out     (prompt/build-iteration-context
-                    {} {:active-extensions   [ext]
-                        :blocks-by-iteration [[0 [{:code "1" :result 1}]]]})]
-      (expect (str/includes? out "[system_nudge] hi from fake.nudger"))))
+    (it "rejects the legacy :call-counts-atom arg silently (it is ignored, not required)"
+      ;; Defensive: callers that still pass `:call-counts-atom` must
+      ;; not blow up; the key is simply ignored.
+      (let [out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   NO_EXTENSIONS
+                   :call-counts-atom    (atom {})
+                   :blocks-by-iteration [(->iter 0 [{:code "(+ 1 2)" :result 3}])]
+                   :iteration           0})]
+        (expect (string? out))
+        (expect (not (str/includes? out "[system_nudge]")))))
 
-  (it "swallows extension nudge-fn exceptions instead of bubbling"
-    (let [ext {:ext/namespace 'fake.thrower
-               :ext/nudge-fn  (fn [_ctx] (throw (ex-info "boom" {})))}
-          out (prompt/build-iteration-context
-                {} {:active-extensions   [ext]
-                    :blocks-by-iteration [[0 [{:code "1" :result 1}]]]})]
-      (expect (string? out))
-      (expect (not (str/includes? out "[system_nudge]"))))))
+    (it "appends extension nudges when :ext/nudge-fn returns a non-blank string"
+      (let [ext (identity
+                  {:ext/namespace 'fake.nudger
+                   :ext/nudge-fn  (fn [_ctx] "[system_nudge] hi from fake.nudger")})
+            ;; Always-on title nudge keeps the line count >= 1 already;
+            ;; we just check the model's nudge gets concatenated.
+            ext-only-ext {:ext/namespace 'fake.nudger
+                          :ext/nudge-fn  (fn [_ctx] "[system_nudge] hi from fake.nudger")}
+            out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   [ext-only-ext]
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           0})]
+        (expect (str/includes? out "[system_nudge] hi from fake.nudger"))
+        ;; Silence the unused alias warning -- present for future tests.
+        (when (some? ext) :ok)))
+
+    (it "swallows extension nudge-fn exceptions instead of bubbling"
+      (let [ext {:ext/namespace 'fake.thrower
+                 :ext/nudge-fn  (fn [_ctx] (throw (ex-info "boom" {})))}
+            out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   [ext]
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           0})]
+        (expect (string? out))
+        ;; Both built-in and extension nudges suppressed: title is
+        ;; non-blank, iteration not on the refresh cadence,
+        ;; extension nudge threw and was swallowed.
+        (expect (not (str/includes? out "[system_nudge]")))))
+
+    (it "fires the title-nudge when CONVERSATION_TITLE is blank"
+      (let [env-blank-title {:conversation-title-atom (atom "")}
+            out (prompt/build-iteration-context
+                  env-blank-title
+                  {:active-extensions   NO_EXTENSIONS
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           0})]
+        (expect (str/includes? out "[system_nudge]"))
+        (expect (str/includes? out "CONVERSATION_TITLE is currently empty"))))
+
+    (it "fires the title-refresh nudge every TITLE_REFRESH_NUDGE_PERIOD iterations"
+      (let [period @(requiring-resolve 'com.blockether.vis.internal.prompt/TITLE_REFRESH_NUDGE_PERIOD)
+            out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   NO_EXTENSIONS
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           period})]
+        (expect (str/includes? out "[system_nudge]"))
+        (expect (str/includes? out (str "You're " period " iterations")))))))
 
 (defdescribe assemble-initial-messages-test
   (it "places system, history, and trailing user content in order"

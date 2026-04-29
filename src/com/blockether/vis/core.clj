@@ -37,7 +37,7 @@
                          create-environment, dispose-environment!,
                          get-router, rebuild-router!, refresh-cached-routers!,
                          resolve-effective-model,
-                         render, db-info, auto-forget-stale-vars!,
+                         db-info, auto-forget-stale-vars!,
                          dedup-cache-lookup, dedup-cache-record!,
                          count-duplicates, canonical-expression-hash,
                          extract-defining-name
@@ -275,7 +275,6 @@
 ;; =============================================================================
 (def query!                       lp/query!)
 (def ask!                         lp/ask!)
-(def render                       lp/render)
 (def get-router                   lp/get-router)
 (def reset-router!                lp/reset-router!)
 (def rebuild-router!              lp/rebuild-router!)

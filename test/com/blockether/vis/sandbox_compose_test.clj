@@ -256,35 +256,22 @@
 ;; -----------------------------------------------------------------------------
 
 (def ^:private prompt-required-tokens
-  "Tokens that must appear in CORE_SYSTEM_PROMPT for the cases above
-   to be a meaningful contract. If someone deletes a section from the
-   prompt, this assertion fires."
-  ["COMPOSE"
-   "(let "
-   "(def n 42)"
-   "(defn sq"
-   "(-> 5"
-   "(->> xs"
-   "as->"
-   "some->"
-   "cond->>"
-   "(comp "
-   "(partial "
-   "complement"
-   "juxt"
-   "reduce-kv"
-   "transduce"
-   "group-by"
-   "frequencies"
-   "assoc-in"
-   "update-in"
-   "for [x xs"
-   "c+/cond+"
-   "if+"
-   "when+"
-   "str/split"
-   "json/read-json"
-   "Banned: `slurp`"])
+  "Tokens that must appear in CORE_SYSTEM_PROMPT for the prompt to be
+   a meaningful contract. The original list also enumerated every
+   COMPOSE-primer Clojure idiom; that primer was removed when we
+   compressed the prompt to its essence (`code -> data -> answer`,
+   the `(def x …) x` journal pattern, answer rules, SYSTEM vars).
+   The compose-test cases below still verify those idioms work in
+   the live SCI sandbox — they just no longer need to be
+   simultaneously enumerated in the prompt as a contract."
+  ["write code -> get data -> process data -> emit answer"
+   "(def x (vis/cat"
+   "<journal>"
+   "<var_index>"
+   "TURN_USER_REQUEST"
+   "CONVERSATION_TITLE"
+   "(answer ARG)"
+   "(conversation-title ARG)"])
 
 (defdescribe prompt-contract-test
   (it "every pattern this test asserts is also surfaced in CORE_SYSTEM_PROMPT"

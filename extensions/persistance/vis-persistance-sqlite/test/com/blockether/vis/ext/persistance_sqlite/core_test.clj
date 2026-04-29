@@ -1581,7 +1581,7 @@
 ;; spec/validate-plan-state) were deleted in the
 ;; "Drastically simplify the agent" cull (commit cad5f7d) and the
 ;; columns were dropped from V1__schema.sql in the follow-up sweep.
-;; The agent now relies on <recent> + <var_index> only; no projection
+;; The agent now relies on <journal> + <var_index> only; no projection
 ;; layer carries plan/breadcrumb data. Tests that targeted any of the
 ;; above had nothing live to assert against and were orphaned.
 ;; ───
@@ -1591,7 +1591,7 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented ten SYSTEM vars"
+  (it "SYSTEM_VAR_NAMES contains exactly the documented eleven SYSTEM vars"
     (expect (= '#{TURN_USER_REQUEST
                   TURN_QUERY_ID
                   TURN_CONVERSATION_SOUL_ID
@@ -1601,6 +1601,7 @@
                   ITERATION_ID
                   ITERATION_PREVIOUS_REASONING
                   CONVERSATION_TITLE
+                  CONVERSATION_METADATA
                   CONVERSATION_PREVIOUS_ANSWER}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
@@ -1627,6 +1628,6 @@
 ;; (:plan-state, :breadcrumbs, :recent-thought, :system-vars,
 ;;  :prior-turn, :loop-nudges) that were removed in the same
 ;; simplification cull. The current build-iteration-context only
-;; emits <recent> + <var_index> and is exercised end-to-end by
+;; emits <journal> + <var_index> and is exercised end-to-end by
 ;; the agent loop tests; an isolated unit test was not preserved.
 ;; =============================================================================

@@ -8,7 +8,7 @@ prompt to steer the LLM's behavior. They come from two sources:
 2. **Extension nudges** — any extension's `:ext/nudge-fn`
 
 There is no built-in repetition / duplication nudge. The model
-already sees the previous iteration's result in `<recent>`, and the
+already sees the previous iteration's result in `<journal>`, and the
 dedup cache short-circuits literal re-issues with `:cached? true`,
 which is signal enough to change strategy.
 
