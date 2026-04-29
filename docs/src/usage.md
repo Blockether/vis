@@ -110,11 +110,11 @@ vis conversations telegram
 ### Programmatic embedding
 
 For embedding Vis in your own Clojure program, require
-`com.blockether.vis-runtime.core`:
+`com.blockether.vis.core`:
 
 ```clojure
-(require '[com.blockether.vis-runtime.core :as vis]
-         '[com.blockether.vis-runtime.config :as cfg]
+(require '[com.blockether.vis.core :as vis]
+         '[com.blockether.vis.core :as cfg]
          '[com.blockether.svar.internal.llm :as llm])
 
 (def env (vis/create-environment (cfg/make-router) {:db :memory}))

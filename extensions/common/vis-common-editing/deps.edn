@@ -1,9 +1,15 @@
 {:paths ["src" "resources"]
- ;; The extension contract now lives in vis-runtime.
- :deps {com.blockether/vis-sdk {:local/root "../../../packages/vis-sdk"}
+ :deps {com.blockether/vis {:local/root "../../.."}
+        ;; Babashka filesystem helpers — bound directly in the SCI sandbox
+        ;; under the `fs/` alias so the agent has the same path / glob /
+        ;; existence primitives a Clojure programmer reaches for.
+        babashka/fs                       {:mvn/version "0.5.20"}
+        ;; rewrite-clj — structured Clojure source editing. Used by
+        ;; `vis/zedit` for AST-aware patches.
+        rewrite-clj/rewrite-clj           {:mvn/version "1.1.49"}
         ;; RE2/J — linear-time regex (ReDoS-safe). Used by the grep tool so
         ;; agent-supplied patterns can never burn the box with catastrophic
-        ;; backtracking. No native deps, pure Java, license Go-BSD.
-        com.google.re2j/re2j         {:mvn/version "1.8"}
+        ;; backtracking.
+        com.google.re2j/re2j              {:mvn/version "1.8"}
         ;; .gitignore parsing for `(vis/ls)` and `(vis/rg)`.
         org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}}

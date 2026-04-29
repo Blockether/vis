@@ -1,22 +1,20 @@
 (ns build
-  "One build script, every package.
+  "Build script for vis: ONE jar at `com.blockether/vis`, plus separate
+   jars for every classpath plug-in under `extensions/`.
 
-   Every package lives under `packages/`; every classpath plug-in under
-   `extensions/`. Each is published as its own `com.blockether/<name>`
-   jar. Sibling `:local/root` deps are rewritten to `:mvn/version`
-   coords pointing at the SAME shared version (read from the repo-root
-   `VERSION` file) so the published POMs reference each other through
-   Clojars instead of dangling at relative paths.
+   Earlier this monorepo published three host packages (vis-sdk, vis-runtime,
+   vis-main). They've been merged into a single namespace at
+   `src/com/blockether/vis/core.clj` shipped as `com.blockether/vis`.
 
    Tasks
    =====
 
-     clojure -T:build jar              # build every package's jar
+     clojure -T:build jar              # build every jar
      clojure -T:build install          # build + install all into ~/.m2
      clojure -T:build deploy           # build + deploy all to Clojars
      clojure -T:build clean            # delete target/
 
-     clojure -T:build jar     :package vis-channel-tui   # one package only
+     clojure -T:build jar     :package vis-channel-tui    # one only
      clojure -T:build install :package vis-channel-tui
      clojure -T:build deploy  :package vis-channel-tui
 
@@ -43,30 +41,14 @@
 ;; =============================================================================
 
 (def packages
-  "Every publishable package in the monorepo, in dependency-friendly
-   order (deeper deps first so a sequential install fills `~/.m2`
-   before any later package needs them)."
-  ;; Order matters: each package must be installed locally before any
-  ;; package that depends on it can resolve its basis. The dep DAG is
-  ;;
-  ;;   vis-sdk    (leaf — contracts + cross-channel runtime helpers)
-  ;;     ← vis-runtime          (iteration loop logic ONLY; svar lives here)
-  ;;       ← vis-main         (the `vis` binary)
-  ;;
-  ;; Every classpath plug-in under `extensions/<category>/<pkg>/`
-  ;; depends on vis-sdk only (NOT vis-runtime). They reach the iteration
-  ;; loop through vis-sdk's conversation facade at runtime via
-  ;; `requiring-resolve`. The unified loader treats them all
-  ;; identically via `META-INF/vis-extension/vis.edn`; the directory
-  ;; layout exists to separate "the runtime" from "things the runtime
-  ;; discovers" and to group plug-ins by surface.
-  [{:lib 'com.blockether/vis-sdk                     :dir "packages/vis-sdk"}
-   {:lib 'com.blockether/vis-runtime                    :dir "packages/vis-runtime"}
-   {:lib 'com.blockether/vis-main                    :dir "packages/vis-main"}
-   {:lib 'com.blockether/vis-persistance-sqlite      :dir "extensions/persistance/vis-persistance-sqlite"}
+  "Every publishable jar in the monorepo, in dependency-friendly order.
+   The repo-root `vis` package goes first; every classpath plug-in
+   depends on `com.blockether/vis` and ships in its own jar."
+  [{:lib 'com.blockether/vis                        :dir "."}
+   {:lib 'com.blockether/vis-persistance-sqlite     :dir "extensions/persistance/vis-persistance-sqlite"}
    {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/providers/vis-provider-github-copilot"}
-   {:lib 'com.blockether/vis-channel-telegram        :dir "extensions/channels/vis-channel-telegram"}
-   {:lib 'com.blockether/vis-channel-tui             :dir "extensions/channels/vis-channel-tui"}])
+   {:lib 'com.blockether/vis-channel-telegram       :dir "extensions/channels/vis-channel-telegram"}
+   {:lib 'com.blockether/vis-channel-tui            :dir "extensions/channels/vis-channel-tui"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed
@@ -76,8 +58,8 @@
   (into {} (map (fn [{:keys [lib]}] [lib {:mvn/version version}])) packages))
 
 (defn- pkg-by-name
-  "Resolve a `:package` selector (short name, e.g. `\"vis-channel-tui\"`) to a
-   package descriptor. Throws with the available list when missing."
+  "Resolve a `:package` selector (short name) to a package descriptor.
+   Throws with the available list when missing."
   [pkg-name]
   (or (some (fn [{:keys [lib] :as p}]
               (when (= pkg-name (name lib)) p))
@@ -88,8 +70,7 @@
 
 (defn- target-paths
   "All build artifacts for a single package live under
-   `target/<short-name>/` so cleaning, jarring, and deploying don't
-   collide between packages."
+   `target/<short-name>/`."
   [{:keys [lib]}]
   (let [short    (name lib)
         cls-dir  (str "target/" short "/classes")
@@ -101,8 +82,7 @@
 ;; =============================================================================
 
 (def ^:private base-pom-data
-  "Fields shared by every published POM. Per-package `:description` is
-   merged in by `build-pom-data`."
+  "Fields shared by every published POM."
   [[:url "https://github.com/Blockether/vis"]
    [:licenses
     [:license
@@ -114,21 +94,16 @@
     [:developerConnection "scm:git:ssh://git@github.com/Blockether/vis.git"]]])
 
 (def ^:private package-descriptions
-  "Per-package one-line descriptions used in the published POM."
-  {'com.blockether/vis-sdk
-   "vis SDK — storage facade, extension/channel/provider/CLI-command contracts, conversation API surface, and the unified classpath discovery loader."
-   'com.blockether/vis-runtime
-   "vis iteration loop — the recursive language model runtime, the SCI sandbox, the query engine. The only package that depends on svar."
-   'com.blockether/vis-main
-   "vis CLI — the `vis` binary's dispatcher plus the built-in `run`, `auth`, `doctor`, and `conversations` commands."
+  {'com.blockether/vis
+   "vis — single-namespace SDK + iteration runtime + binary entry point."
    'com.blockether/vis-persistance-sqlite
-   "SQLite backend for the vis persistence facade — JDBC plumbing only, migrator-agnostic."
+   "SQLite backend for the vis persistence facade."
    'com.blockether/vis-provider-github-copilot
-   "GitHub Copilot OAuth device-flow provider for the vis-provider registry."
+   "GitHub Copilot OAuth device-flow provider."
    'com.blockether/vis-channel-tui
-   "Lanterna-based TUI channel — registers as `vis channel tui`."
+   "Lanterna-based TUI channel."
    'com.blockether/vis-channel-telegram
-   "Telegram bot channel — registers as `vis channel telegram`."})
+   "Telegram bot channel."})
 
 (defn- build-pom-data [lib]
   (into [[:description (or (get package-descriptions lib)
@@ -141,12 +116,7 @@
 
 (defn- override-siblings
   "Walk one `:deps` (or `:extra-deps`) map and replace every sibling
-   `:local/root` coord with the matching `:mvn/version` coord. Non-
-   sibling entries pass through untouched. We pre-process instead of
-   relying on `:override-deps` because tools.deps tries to validate
-   `:local/root` paths BEFORE applying overrides, and our package
-   dirs sit one level deep — so the resolver looks for siblings up at
-   the repo root and barfs."
+   `:local/root` coord with the matching `:mvn/version` coord."
   [deps]
   (into {}
     (map (fn [[lib coord]]
@@ -158,11 +128,6 @@
     deps))
 
 (defn- read-package-deps
-  "Read `<dir>/deps.edn` and rewrite every sibling `:local/root` dep
-   (top-level `:deps` AND aliases' `:extra-deps`) to a Maven coord at
-   the shared version. The result is fed straight to `b/create-basis`
-   as `:project`, so the generated POM lists Clojars-installable
-   dependencies."
   [dir]
   (let [edn (-> (str dir "/deps.edn") slurp read-string)]
     (cond-> edn
@@ -175,50 +140,24 @@
                                (:extra-deps a) (update :extra-deps override-siblings)))))))))
 
 (defn- package-basis
-  "Build the basis for one package. The standard `:root` (which carries
-   Maven Central + Clojars repos + the bundled clojure version) and
-   `:user` sources stay in place; only the `:project` slot is replaced
-   with the package's pre-rewritten deps map so `b/create-basis`
-   resolves dependencies exactly the way a Clojars consumer would."
   [pkg]
   (b/create-basis
     {:project (read-package-deps (:dir pkg))}))
 
 (defn- src-dirs
-  "Source roots to copy into the jar. `resources/` is included only when
-   the package actually ships one."
   [{:keys [dir]}]
   (let [src (str dir "/src")
         res (str dir "/resources")]
     (cond-> [src]
       (.exists (io/file res)) (conj res))))
 
-(defn- write-version-resource!
-  "vis-runtime embeds the resolved version into its jar as
-   `META-INF/vis/VERSION` so `com.blockether.vis-runtime.config/version` can
-   `(io/resource ...)` it at runtime."
-  [class-dir]
-  (let [target (io/file class-dir "META-INF/vis/VERSION")]
-    (io/make-parents target)
-    (spit target version)))
-
 (defn- install-local!
-  "Install one already-built package into `~/.m2` so subsequent
-   `package-basis` calls in the same chain can resolve it as a Maven
-   coord. This is what makes the monorepo `jar` / `deploy` chain work
-   without round-tripping through Clojars: each package is published
-   to the local Maven repo as soon as its jar is on disk, and the
-   next package's basis resolution finds it there."
   [{:keys [lib class-dir jar-file]}]
   (dd/deploy {:installer :local
               :artifact  jar-file
               :pom-file  (b/pom-path {:lib lib :class-dir class-dir})}))
 
 (defn- build-one!
-  "Build a single package: clean → POM → copy sources → jar → install
-   to `~/.m2`. The local install is REQUIRED so the next package in
-   the dependency-friendly order can find this one when its basis
-   resolves. Returns `{:lib :class-dir :jar-file}`."
   [{:keys [lib dir] :as pkg}]
   (let [{:keys [class-dir jar-file]} (target-paths pkg)
         basis (package-basis pkg)
@@ -231,8 +170,6 @@
                   :src-dirs  [(str dir "/src")]
                   :pom-data  (build-pom-data lib)})
     (b/copy-dir {:src-dirs srcs :target-dir class-dir})
-    (when (= lib 'com.blockether/vis-runtime)
-      (write-version-resource! class-dir))
     (b/jar {:class-dir class-dir :jar-file jar-file})
     (let [result {:lib lib :class-dir class-dir :jar-file jar-file}]
       (install-local! result)
@@ -240,8 +177,6 @@
       result)))
 
 (defn- selected-packages
-  "Pick the package subset to operate on based on a `:package` selector;
-   nil means all packages."
   [{:keys [package]}]
   (if package
     [(pkg-by-name package)]
@@ -258,8 +193,7 @@
   (println "Cleaned target/"))
 
 (defn jar
-  "Build a jar for every package (or just `:package` if given).
-   Output: `target/<short-name>/<short-name>-<version>.jar`."
+  "Build a jar for every package (or just `:package` if given)."
   [opts]
   (println "Building" (count (selected-packages opts)) "package(s) at version" version)
   (doseq [pkg (selected-packages opts)]
@@ -267,23 +201,11 @@
     (build-one! pkg)))
 
 (defn install
-  "Build + install every package into the local Maven repo (`~/.m2`).
-   Identical to `jar` (which already installs as a side-effect of the
-   monorepo build chain) — kept as a separate task so the intent reads
-   correctly in scripts and CI."
+  "Build + install every package into the local Maven repo (`~/.m2`)."
   [opts] (jar opts))
 
 (defn deploy
-  "Build, install locally, then deploy every package to Clojars under
-   its own coordinate.
-
-   Requires the env vars `CLOJARS_USERNAME` and `CLOJARS_PASSWORD`
-   (deps-deploy reads them automatically). Packages are deployed in
-   dependency-friendly order so the Clojars-side dep graph is sane
-   if a consumer pulls them mid-deploy. A failure stops the chain;
-   partial deploys are safe because each package is idempotent on
-   its own coordinate (re-deploying the same version is a no-op on
-   Clojars)."
+  "Build, install locally, then deploy every package to Clojars."
   [opts]
   (doseq [pkg (selected-packages opts)]
     (println "[" (name (:lib pkg)) "] deploy")

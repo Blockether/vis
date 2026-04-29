@@ -2,12 +2,11 @@
   "Re-frame-like state management for the TUI.
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
-            [com.blockether.vis-sdk.core :as cancellation]
+            [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
-            [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query-core]))
+            [com.blockether.vis.ext.channel-tui.render :as render]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -136,7 +135,7 @@
    keys are dropped so a forward-compatible future we add new
    toggles into a previously-saved config doesn't blow up here."
   []
-  (let [raw (try (cancellation/load-config-raw) (catch Throwable _ nil))
+  (let [raw (try (sdk/load-config-raw) (catch Throwable _ nil))
         saved (when (map? raw) (:tui-settings raw))]
     (merge default-settings (when (map? saved)
                               (select-keys saved (keys default-settings))))))
@@ -148,8 +147,8 @@
    that's already otherwise healthy."
   [settings]
   (try
-    (let [raw (or (cancellation/load-config-raw) {})]
-      (cancellation/save-config! (assoc raw :tui-settings settings)))
+    (let [raw (or (sdk/load-config-raw) {})]
+      (sdk/save-config! (assoc raw :tui-settings settings)))
     (catch Throwable _ nil)))
 
 (defn init!
@@ -182,14 +181,14 @@
 
 (reg-event-db :set-config
   (fn [db [_ config]]
-    (cancellation/reload-config!)
+    (sdk/reload-config!)
     (when (seq (:providers config))
       ;; rebuild-router! only swaps the global singleton; cached envs
       ;; keep the snapshot they were created with. Reseat them too,
       ;; otherwise the next query runs against the previous model
       ;; even though the status bar already shows the new one.
-      (let [r (query-core/rebuild-router! config)]
-        (conversations/refresh-cached-routers! r)))
+      (let [r (lp/rebuild-router! config)]
+        (lp/refresh-cached-routers! r)))
     (assoc db :config config)))
 
 (reg-event-db :set-dialog-open
@@ -307,7 +306,7 @@
 
 (reg-event-fx :send-message
   (fn [db [_ text]]
-    (let [token (cancellation/cancellation-token)]
+    (let [token (sdk/cancellation-token)]
       {:db (-> db
              (update :messages conj (chat/user-msg text))
              (update :messages conj (chat/assistant-msg "Sending request to provider…"))
@@ -331,7 +330,7 @@
         ;; Both the cooperative flag and the hard interrupt are fired
         ;; through one channel-agnostic call. See
         ;; channels.cancellation/cancel! for the contract.
-        (cancellation/cancel! (:cancel-token db))
+        (sdk/cancel! (:cancel-token db))
         {:db (assoc db :cancelling? true)}))))
 
 (reg-event-db :set-progress-iterations
@@ -376,15 +375,15 @@
     (let [fut (future
                 (try
                   (let [{:keys [on-chunk]}
-                        (cancellation/make-progress-tracker
+                        (sdk/make-progress-tracker
                           {:on-update (fn [timeline _chunk]
                                         (try (dispatch [:set-progress-iterations timeline])
                                           (catch Throwable _ nil)))})
                         result (chat/query! conv text
                                  {:on-chunk    on-chunk
-                                  :cancel-atom (cancellation/cancellation-atom token)})]
+                                  :cancel-atom (sdk/cancellation-atom token)})]
                     (if (:error result)
-                      (dispatch [:message-received (cancellation/format-error (:error result))])
+                      (dispatch [:message-received (sdk/format-error (:error result))])
                       (dispatch [:message-received (:answer result)
                                  (select-keys result
                                    [:model :iterations :duration-ms :tokens
@@ -396,8 +395,8 @@
                     ;; channel-shaped logic in one place. The bubble
                     ;; renderer dims the result based on `:status
                     ;; :cancelled`, so we attach it explicitly here.
-                    (if (cancellation/cancellation? t)
+                    (if (sdk/cancellation? t)
                       (dispatch [:message-received "Cancelled by user."
                                  {:status :cancelled}])
-                      (dispatch [:message-received (cancellation/format-error (or (ex-message t) (str t)))])))))]
-      (cancellation/cancellation-set-future! token fut))))
+                      (dispatch [:message-received (sdk/format-error (or (ex-message t) (str t)))])))))]
+      (sdk/cancellation-set-future! token fut))))

@@ -365,7 +365,7 @@ that happened in every conversation — queries, iterations, final
 answers, persisted SCI vars, timings, costs. Before hypothesizing
 about a user-reported bug that references a specific `conversation-id`
 or `query-id`, **open the DB**. The conversation API
-(`com.blockether.vis-runtime.loop.runtime.conversation.core`) covers the
+(`com.blockether.vis.core`) covers the
 common high-level reads (list by channel, env-for, send!, delete!)
 and should be your first stop. Drop to raw SQL for schema/migration
 checks, cross-conversation aggregates, or low-level execution-row
@@ -490,7 +490,7 @@ packages plus a sibling tree of classpath plug-ins:
     `:ext/persistance` slot to the persistence facade).
   - `packages/vis-runtime/` — the iteration loop, the SCI sandbox, the
     conversation lifecycle, the cross-channel state, and the public
-    API facade (`com.blockether.vis-runtime.core`). Depends on
+    API facade (`com.blockether.vis.core`). Depends on
     `vis-extension` and `vis-persistance`.
   - `packages/vis-main/` — the `vis` binary's CLI surface: the
     dispatcher (`commandline.main`), the built-in commands
@@ -541,7 +541,7 @@ Quick mental map (use `packages.md` for details):
 
 ONE classpath-scan auto-discovery resource: `META-INF/vis-extension/vis.edn`. EDN
 vector of namespace symbols loaded at startup by the single loader
-`com.blockether.vis-sdk.core/discover-extensions!`. Each namespace
+`com.blockether.vis.core/discover-extensions!`. Each namespace
 self-registers into whichever subsystem registry it targets
 (extension symbols, channels, CLI commands, providers, persistence
 backends) via the matching `register-global!` / `register-backend!`
@@ -681,7 +681,7 @@ above.
 - `packages/vis-main/src/com/blockether/vis_main/channels/cli/agent.clj` — one-shot agent helper used by `vis run`
 
 Third-party channels register themselves at namespace load via
-`com.blockether.vis-sdk.core/register-global!` and ship a
+`com.blockether.vis.core/register-global!` and ship a
 unified `META-INF/vis-extension/vis.edn` resource. The CLI dispatcher
 discovers them; nothing in vis-runtime references a concrete channel
 namespace. See `docs/src/architecture/channels.md`.
@@ -695,7 +695,7 @@ All under `packages/vis-runtime/src/com/blockether/vis_runtime/`:
   `assemble-system-prompt`, `query!`, `MAX_ITERATIONS`). Does NOT own
   `-main` (that's vis-cli). Extension authoring helpers (`extension`,
   `symbol`, `value`, `register-global!`, `render-prompt`) are NOT
-  re-exported — require `com.blockether.vis-sdk.core`
+  re-exported — require `com.blockether.vis.core`
   directly.
 - `config.clj` — config loader, db-path (`~/.vis/vis.mdb`), router builder
 - `loop/core.clj` — environment lifecycle + system-prompt assembly
@@ -757,7 +757,7 @@ CLI-oriented one-shot execution layer (`channels/cli/agent.clj`).
 
 **Programmatic usage:**
 ```clojure
-(require '[com.blockether.vis-main.channels.cli.agent :as ag])
+(require '[com.blockether.vis.core :as ag])
 
 (def reviewer
   (ag/agent {:name "reviewer"
@@ -819,14 +819,14 @@ All application state lives in `ext/channel_tui/state.clj` using a re-frame disp
  :dialog-open? false}         ;; dialog singleton guard
 ```
 
-### Conversations (`com.blockether.vis-runtime.loop.runtime.conversation.core`)
+### Conversations (`com.blockether.vis.core`)
 
 **One module owns env lifecycle for every frontend.** TUI uses the
 `:vis` channel, the CLI agent uses `:cli`, Telegram uses `:telegram`.
 Conversation IDs are plain UUIDs. No name prefixes, no string lookups.
 
 ```clojure
-(require '[com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations])
+(require '[com.blockether.vis.core :as conversations])
 
 ;; Create / lookup
 (conversations/create! :vis)                    ;; new TUI conversation
@@ -866,8 +866,8 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
 
 **Investigating DB state:**
 ```clojure
-(require '[com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
-         '[com.blockether.vis-sdk.core :as db])
+(require '[com.blockether.vis.core :as conversations]
+         '[com.blockether.vis.core :as db])
 
 ;; List conversations
 (conversations/by-channel :vis)
@@ -882,7 +882,7 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
   )
 ```
 
-**Public API (`com.blockether.vis-runtime.core` / `com.blockether.vis-runtime.loop.core`):**
+**Public API (`com.blockether.vis.core` / `com.blockether.vis.core`):**
 - `create-environment router {:db path :conversation selector}` — selector is `nil` | `:latest` | uuid | `[:id uuid]`. Nil creates a fresh conversation; an id-ref resumes an existing one.
 - `register-extension!` — register a validated extension into the environment (tools, nudges, prompt context).
 - `active-extensions environment` — vec of currently-active extensions; call ONCE per query and thread the vec through `assemble-system-prompt` + per-iteration nudge collectors.
@@ -890,11 +890,11 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
 - `query! environment [(llm/user "...")] opts` — messages must be a vector of message maps. See `conversations/send!` docstring for every opt forwarded to `query!`.
 - `dispose-environment!` — releases the environment handle; the shared SQLite DataSource stays open for sibling envs.
 
-Extension authoring API lives on `com.blockether.vis-sdk.core` —
+Extension authoring API lives on `com.blockether.vis.core` —
 `extension`, `symbol`, `value`, `register-global!`, `render-prompt`,
 `load-extension!`, `discover-extensions!`. Channel authoring API
-lives on `com.blockether.vis-sdk.core`. Neither is re-exported from
-`com.blockether.vis-runtime.core` anymore.
+lives on `com.blockether.vis.core`. Neither is re-exported from
+`com.blockether.vis.core` anymore.
 
 **Iteration lifecycle:** The LLM does **not** call `(FINAL ...)` as a SCI fn. svar sends a spec-validated JSON response per provider capability: `ITERATION_SPEC_NON_REASONING` (includes `:thinking`) or `ITERATION_SPEC_REASONING` (no `:thinking`). Shared fields come from `ITERATION_SPEC_BASE` (`:code` vec + optional `:final {:answer :confidence :language :sources}` + `:next-optimize`). When `:final` is set, iteration stops and the answer is the RLM result. Observability: pass `{:hooks {:on-chunk (fn [{:iteration :thinking :code :final :done?}])}}` to `conversations/send!`.
 

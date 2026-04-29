@@ -7,7 +7,8 @@
    fns are required directly. (The previous `dynaload` indirection has
    been removed: explicit beats clever.)"
   (:require [clojure.string :as str]
-            [com.blockether.vis-sdk.core :as sdk]
+            [com.blockether.svar.core :as svar]
+            [com.blockether.vis.core :as sdk]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -47,7 +48,7 @@
                     builder)
           request (.build builder)
           resp    (.send ^HttpClient http-client request (HttpResponse$BodyHandlers/ofString))
-          parsed  (sdk/parse-llm-response (.body resp))
+          parsed  (try (svar/str->data (.body resp)) (catch Throwable _ nil))
           body    (or (:value parsed) parsed)
           models  (or (:data body) [])]
       (->> models

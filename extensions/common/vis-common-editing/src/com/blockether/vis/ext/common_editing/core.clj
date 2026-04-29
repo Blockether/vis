@@ -1,53 +1,38 @@
 (ns com.blockether.vis.ext.common-editing.core
-  "Aggregator for the `vis-common-editing` extension.
+  "Aggregator for the `vis-common-editing` extension. Registers two
+   extensions from one classpath manifest:
 
-   This namespace is the single classpath-discovery entry point: the
-   unified `META-INF/vis-extension/vis.edn` resource lists THIS namespace, the
-   extension loader `require`s it, and the `register-global!` call
-   below wires every module (currently just `editing`) into the
-   global registry as one extension named
-   `com.blockether.vis.ext.common-editing.core`.
-
-   To add a new module (e.g. `shell`, `text`):
-     1. Create `com.blockether.vis.ext.common-editing.<module>`
-        exposing a `*-symbols` vector and an optional `*-prompt`
-        string. Do NOT call `register-global!` from the module.
-     2. Require it here, conj its symbols onto `all-symbols` and
-        merge its prompt into `combined-prompt`.
-
-   Depends on `com.blockether/vis-runtime` and uses the extension-author
-   facade `com.blockether.vis-sdk.core`."
+     vis  (cat, ls, rg, edit, write, zedit)
+     fs   (cwd, exists?, glob, parent, components, file-name,
+           extension, expand-home, list-dir, relativize)"
   (:require
-   [clojure.string :as str]
-   [com.blockether.vis-sdk.core :as ext]
-   [com.blockether.vis.ext.common-editing.editing :as editing]))
+   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.ext.common-editing.editing :as editing]
+   [com.blockether.vis.ext.common-editing.fs-bindings :as fs-bindings]))
 
-(def all-symbols
-  "Concatenation of every module's symbol vector. Order matters only
-   for human-readability in `<var_index>`; the SCI sandbox indexes by
-   name."
-  (vec editing/editing-symbols))
-
-(def combined-prompt
-  "Module prompt fragments joined with a blank line so the LLM sees one
-   coherent block per extension instead of N tiny disjointed snippets."
-  (str/join "\n\n" [editing/editing-prompt]))
-
-;; Parse-error rescue lives at the SYMBOL level (see
-;; `rg-symbol` in editing.clj) so the iteration loop only
-;; fires it when the broken source actually mentions the symbol it
-;; repairs. No extension-wide hook is needed here.
-
-(def extension
-  (ext/extension
+(def editing-extension
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-editing.core
-     :ext/doc       "Common Vis operations: cat, ls, rg, patch."
-     :ext/version   "0.4.0"
+     :ext/doc       "Editing tools: cat, ls, rg, edit, write, zedit."
+     :ext/version   "0.5.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
      :ext/group     "filesystem"
-     :ext/prompt    combined-prompt
-     :ext/symbols   all-symbols}))
+     :ext/prompt    editing/editing-prompt
+     :ext/symbols   editing/editing-symbols}))
 
-(ext/register-extension! extension)
+(def fs-extension
+  (sdk/extension
+    {:ext/namespace 'com.blockether.vis.ext.common-editing.fs-bindings
+     :ext/doc       "babashka.fs path primitives bound under the fs/ alias."
+     :ext/version   "0.5.0"
+     :ext/author    "Blockether"
+     :ext/license   "Apache-2.0"
+     :ext/ns-alias  {:ns 'vis.ext.fs :alias 'fs}
+     :ext/group     "filesystem"
+     :ext/prompt    fs-bindings/fs-prompt
+     :ext/symbols   fs-bindings/fs-symbols}))
+
+(sdk/register-extension! editing-extension)
+(sdk/register-extension! fs-extension)

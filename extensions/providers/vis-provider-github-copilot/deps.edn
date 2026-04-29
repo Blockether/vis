@@ -1,12 +1,12 @@
 {:paths ["src" "resources"]
  ;; GitHub Copilot OAuth provider — device-flow authentication +
- ;; token lifecycle. Self-registers with `com.blockether.vis-sdk.provider`
+ ;; token lifecycle. Self-registers with `com.blockether.vis.core`
  ;; at namespace load via the unified `META-INF/vis-extension/vis.edn`.
  :deps
  {org.clojure/clojure       {:mvn/version "1.12.4"}
   ;; vis-sdk owns the extension and provider registries; vis-runtime
   ;; transitively pulls it via the dep below.
-  com.blockether/vis-sdk    {:local/root "../../../packages/vis-sdk"}
+  com.blockether/vis    {:local/root "../../.."}
   ;; HTTP client for the device-flow + token-exchange calls.
   org.babashka/http-client  {:mvn/version "0.4.23"}
   ;; JSON parsing for the OAuth + token-exchange responses.

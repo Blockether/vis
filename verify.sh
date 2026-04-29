@@ -119,10 +119,10 @@ _format() {
     echo "cljfmt not found — install with: brew install cljfmt"
     return 1
   fi
-  cljfmt check packages/ extensions/ build.clj || {
+  cljfmt check src/ test/ extensions/ build.clj || {
     echo ""
     echo "FAILED: cljfmt found formatting issues."
-    echo "Fix with:  cljfmt fix packages/ extensions/ build.clj"
+    echo "Fix with:  cljfmt fix src/ test/ extensions/ build.clj"
     return 1
   }
   echo "cljfmt: clean"
@@ -135,10 +135,9 @@ _lint() {
     echo "clj-kondo not found — install with: brew install borkdude/brew/clj-kondo"
     return 1
   fi
-  local lint_paths=()
-  # `packages/<pkg>/src` is one level deep; `extensions/<category>/<pkg>/src`
-  # is two levels deep. Both globs land here.
-  for d in packages/*/src extensions/*/src extensions/*/*/src; do
+  local lint_paths=(src test)
+  # `extensions/<category>/<pkg>/src` is two levels deep.
+  for d in extensions/*/*/src extensions/*/*/test; do
     [ -d "$d" ] && lint_paths+=("$d")
   done
   local output code=0
@@ -158,10 +157,10 @@ _lint() {
   return 0
 }
 
-# --- GraalVM safety: walks vis-runtime (root `src/`) and every extension
-#     src tree, loads each .clj with *warn-on-reflection* +
-#     *unchecked-math* :warn-on-boxed, and counts warnings emitted
-#     from project source paths.
+# --- GraalVM safety: walks `src/` and every extension src tree, loads
+#     each .clj with *warn-on-reflection* + *unchecked-math*
+#     :warn-on-boxed, and counts warnings emitted from project source
+#     paths.
 #
 # `benchmark/` is excluded — dev/research code, not on the default
 # classpath, not shipped as a runtime jar.
@@ -177,35 +176,25 @@ _graal_safety() {
   err=$(mktemp)
 
   # Run the compiler walk. We use plain `clojure -M -e` (no :vis alias)
-  # to keep :main-opts out of the way. Root `deps.edn` carries
-  # vis-runtime's library deps; every classpath plug-in lives in an
-  # alias (`:vis`, `:test`, `:dev`). Inject all of them via `-Sdeps`
-  # so the walker's classpath matches the production runtime
-  # (`bin/vis`) and `load-file` can resolve every `:require`.
+  # to keep :main-opts out of the way. Root `deps.edn` carries the merged
+  # library deps; every classpath plug-in lives in an alias (`:vis`,
+  # `:test`, `:dev`). Inject all of them via `-Sdeps` so the walker's
+  # classpath matches the production runtime (`bin/vis`) and
+  # `load-file` can resolve every `:require`.
   clojure \
-    -Sdeps '{:deps {com.blockether/vis-main                     {:local/root "packages/vis-main"}
-                    com.blockether/vis-common-meta                    {:local/root "extensions/common/vis-common-meta"}
-                    com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}
+    -Sdeps '{:deps {com.blockether/vis-common-meta             {:local/root "extensions/common/vis-common-meta"}
+                    com.blockether/vis-common-editing          {:local/root "extensions/common/vis-common-editing"}
                     com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                     com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}
-                    com.blockether/vis-channel-telegram                {:local/root "extensions/channels/vis-channel-telegram"}
-                    com.blockether/vis-channel-tui                     {:local/root "extensions/channels/vis-channel-tui"}}}' \
+                    com.blockether/vis-channel-telegram        {:local/root "extensions/channels/vis-channel-telegram"}
+                    com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}}}' \
     -M -e '
     (set! *warn-on-reflection* true)
     (set! *unchecked-math* :warn-on-boxed)
-    (let [;; Root `src/` is vis-runtime. Carved-out packages
-          ;; (`vis-extension`, `vis-persistance`, `vis-cli`) each
-          ;; live at `packages/<pkg>/src/` (one level). Classpath
-          ;; plug-ins live at `extensions/<category>/<pkg>/src/`
-          ;; (two levels). The benchmark harness (`benchmarks/`) is
-          ;; intentionally NOT walked.
+    (let [;; Root `src/` carries the merged library; classpath plug-ins
+          ;; live at `extensions/<category>/<pkg>/src/`. The benchmark
+          ;; harness (`benchmarks/`) is intentionally NOT walked.
           root-src (clojure.java.io/file "src")
-          ;; packages/<pkg>/src — one level under `packages/`.
-          package-srcs (->> (.listFiles (clojure.java.io/file "packages"))
-                         (filter (fn [^java.io.File d]
-                                   (and (some? d) (.isDirectory d))))
-                         (map (fn [^java.io.File d] (clojure.java.io/file d "src"))))
-          ;; extensions/<category>/<pkg>/src — two levels under `extensions/`.
           ext-srcs (->> (.listFiles (clojure.java.io/file "extensions"))
                      (filter (fn [^java.io.File d]
                                (and (some? d) (.isDirectory d))))
@@ -214,7 +203,7 @@ _graal_safety() {
                      (filter (fn [^java.io.File d]
                                (and (some? d) (.isDirectory d))))
                      (map (fn [^java.io.File d] (clojure.java.io/file d "src"))))
-          pkg-srcs (->> (concat [root-src] package-srcs ext-srcs)
+          pkg-srcs (->> (concat [root-src] ext-srcs)
                      (filter (fn [^java.io.File f] (.exists f))))
           clj-files (mapcat (fn [^java.io.File r]
                               (filter (fn [^java.io.File f]
@@ -240,7 +229,7 @@ _graal_safety() {
   #   /Users/.../vis/packages/<pkg>/src/...                  (carved-out core packages)
   #   /Users/.../vis/extensions/<category>/<pkg>/src/...     (every classpath plug-in)
   filtered=$(grep -E "Reflection warning|Boxed math warning" "$err" \
-    | grep -E "/vis/(src|packages/[^/]+/src|extensions/[^/]+/[^/]+/src)/" \
+    | grep -E "/vis/(src|extensions/[^/]+/[^/]+/src)/" \
     | sort -u)
   # Load errors are emitted with a leading `LOAD-ERROR ` token; preserve
   # them in $err for the dump above. Track them too so we can flag them.

@@ -1,10 +1,9 @@
-;; Project-level clj-kondo config. Per-package config (per-import
-;; settings, library-shipped hooks) lives in `imports/`.
+;; Project-level clj-kondo config.
 {:hooks
  {:analyze-call
   {;; Macro that wraps a runtime backend lookup behind a defn.
    ;; Without this hook every `defdelegate` call shows up as an
    ;; unresolved-symbol error because clj-kondo can't expand the
    ;; runtime resolution. See the hook for details.
-   com.blockether.vis-sdk.core/defdelegate
-   hooks.com.blockether.vis-sdk.defdelegate/defdelegate}}}
+   com.blockether.vis.internal.sdk/defdelegate
+   hooks.com.blockether.vis.defdelegate/defdelegate}}}

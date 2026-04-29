@@ -15,7 +15,7 @@ Read the canonical doc one of three ways:
 - From a Clojure REPL with vis-runtime on the classpath:
 
   ```clojure
-  (require '[com.blockether.vis-sdk.core :as ext])
+  (require '[com.blockether.vis.core :as ext])
   (println (ext/extension-doc 'meta "README.md"))
   ```
 

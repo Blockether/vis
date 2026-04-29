@@ -1,5 +1,0 @@
-;; vis-main's classpath registrations: built-in CLI commands (run,
-;; auth, doctor, conversations, extensions). Non-LLM-facing, so no
-;; :docs map -- the id is purely organizational.
-{vis-main
- {:nses [com.blockether.vis-main.core]}}

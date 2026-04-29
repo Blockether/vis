@@ -28,7 +28,7 @@ sibling tree of classpath plug-ins:
     the agent (`vis-common-meta` for self-introspection,
     `vis-common-editing` for filesystem and code-editing tools).
   Each package ships a `META-INF/vis-extension/vis.edn` and
-  self-registers via `com.blockether.vis-sdk.core/register-global!`
+  self-registers via `com.blockether.vis.core/register-global!`
   at namespace load. Every extension's `deps.edn` declares
   `:local/root "../../../packages/vis-runtime"`; vis-runtime transitively
   pulls vis-extension and vis-persistance. vis-runtime does not require
@@ -55,8 +55,8 @@ re-listing it.
 | Package | Path | Purpose | Notes |
 | ------- | ---- | ------- | ----- |
 | `vis-persistance` | `packages/vis-persistance/` | Backend-agnostic persistence facade and Flyway-driven migration runner. Defines `com.blockether.vis-persistance.{base,core,migration}` — the storage API every backend implements via `register-backend!`. | Leaf package: depends only on Clojure + `flyway-core`. No internal vis dependencies. Concrete backends live in `extensions/persistance/`. |
-| `vis-extension` | `packages/vis-extension/` | Extension/channel/provider/CLI-command contracts plus the unified classpath discovery loader (`com.blockether.vis-sdk.core/discover-extensions!`). Owns `com.blockether.vis-extension.{extension,channel,provider,error,commandline.base}`. | Depends on `vis-persistance` because `register-global!` dispatches the `:ext/persistance` slot to `com.blockether.vis-sdk.core/register-backend!`. |
-| `vis-runtime` | `packages/vis-runtime/` | The iteration loop, the SCI sandbox, the conversation lifecycle, the cross-channel state, and the public API facade. Public surface: `com.blockether.vis-runtime.core` (`create-environment`, `query!`, `register-extension!`, `assemble-system-prompt`, `dispose-environment!`). | Depends on `vis-extension` and `vis-persistance`. Every classpath plug-in depends on this package directly (and transitively pulls `vis-extension` + `vis-persistance`). The `META-INF/vis/VERSION` resource is stamped into this jar by `build.clj`. |
+| `vis-extension` | `packages/vis-extension/` | Extension/channel/provider/CLI-command contracts plus the unified classpath discovery loader (`com.blockether.vis.core/discover-extensions!`). Owns `com.blockether.vis-extension.{extension,channel,provider,error,commandline.base}`. | Depends on `vis-persistance` because `register-global!` dispatches the `:ext/persistance` slot to `com.blockether.vis.core/register-backend!`. |
+| `vis-runtime` | `packages/vis-runtime/` | The iteration loop, the SCI sandbox, the conversation lifecycle, the cross-channel state, and the public API facade. Public surface: `com.blockether.vis.core` (`create-environment`, `query!`, `register-extension!`, `assemble-system-prompt`, `dispose-environment!`). | Depends on `vis-extension` and `vis-persistance`. Every classpath plug-in depends on this package directly (and transitively pulls `vis-extension` + `vis-persistance`). The `META-INF/vis/VERSION` resource is stamped into this jar by `build.clj`. |
 | `vis-cli` | `packages/vis-main/` | The `vis` binary. Owns the dispatcher (`commandline.main`), the built-in commands `run`/`auth`/`doctor`/`conversations`/`extensions list` (`channels.cli`), the one-shot agent helper (`channels.cli.agent`), and the persistence-backed Telemere `:db` handler (`logging`). Conversations-channel keyword: `:cli` (used by `vis run` agent runs; not a `channel/register-global!` registration). | Depends on `vis-runtime` (and transitively on `vis-extension` + `vis-persistance`). Ships its own `META-INF/vis-extension/vis.edn` so the dispatcher discovers itself and its built-in commands at boot. |
 
 ### Classpath plug-ins
@@ -78,7 +78,7 @@ re-listing it.
 
 > **Two senses of "channel".** A *registered channel* (`:tui`,
 > `:telegram`) is a CLI front-end registered through
-> `com.blockether.vis-sdk.core/register-global!` and exposed
+> `com.blockether.vis.core/register-global!` and exposed
 > under `vis channels <name>`. A *conversations channel* is the
 > keyword stored in `conversation_soul.metadata.channel` — the
 > namespace conversations are grouped under (`:vis`, `:telegram`,
@@ -90,9 +90,9 @@ re-listing it.
 
 ONE classpath-scan mechanism, ONE resource per jar
 (`META-INF/vis-extension/vis.edn`), ONE entry point on the **author**
-side (`com.blockether.vis-sdk.core/register-global!`), ONE
+side (`com.blockether.vis.core/register-global!`), ONE
 loader on the **runtime** side
-(`com.blockether.vis-sdk.core/discover-extensions!`). The
+(`com.blockether.vis.core/discover-extensions!`). The
 resource is a flat EDN vector of namespace symbols; the loader
 `require`s every namespace exactly once, and each `register-global!`
 call at namespace-load time lands the extension in the global
@@ -105,10 +105,10 @@ slot to the matching sub-registry as a side effect:
 | Slot | Per-entry shape | Internal sub-registry |
 | ---- | --------------- | --------------------- |
 | `:ext/symbols` | `(ext/symbol …)` / `(ext/value …)` entries (SCI sandbox bindings) | Bound into the env's SCI namespace at `register-extension!` time |
-| `:ext/cli` | `cmd/command` maps (`:cmd/name`, `:cmd/run-fn`, `:cmd/parent`, …) | `com.blockether.vis-sdk.core/register-global!` |
-| `:ext/channels` | `channel/channel` maps (`:channel/id`, `:channel/cmd`, `:channel/main-fn`, …) | `com.blockether.vis-sdk.core/register-global!` |
-| `:ext/providers` | `provider/provider` maps (`:provider/id`, `:provider/auth-fn`, …) | `com.blockether.vis-sdk.core/register-global!` |
-| `:ext/persistance` | `{:persistance/id <kw> :persistance/ns <sym>}` entries | `com.blockether.vis-sdk.core/register-backend!` |
+| `:ext/cli` | `cmd/command` maps (`:cmd/name`, `:cmd/run-fn`, `:cmd/parent`, …) | `com.blockether.vis.core/register-global!` |
+| `:ext/channels` | `channel/channel` maps (`:channel/id`, `:channel/cmd`, `:channel/main-fn`, …) | `com.blockether.vis.core/register-global!` |
+| `:ext/providers` | `provider/provider` maps (`:provider/id`, `:provider/auth-fn`, …) | `com.blockether.vis.core/register-global!` |
+| `:ext/persistance` | `{:persistance/id <kw> :persistance/ns <sym>}` entries | `com.blockether.vis.core/register-backend!` |
 
 **Authors only call `ext/register-global!`.** They can require the
 sub-registry namespaces directly for embedded / programmatic use, but
@@ -126,8 +126,8 @@ auto-discovered at the next process boot — no edits to vis-runtime, no
 `:require`s in user code. The CLI dispatcher calls
 `discover-extensions!` once at `-main` startup; SDK callers that
 bypass the CLI also get a lazy safety-net call from
-`com.blockether.vis-runtime.loop.core/create-environment` and from
-`com.blockether.vis-sdk.core/create-store-connection`.
+`com.blockether.vis.core/create-environment` and from
+`com.blockether.vis.core/create-store-connection`.
 
 ## Dependency direction
 

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
-            [com.blockether.vis-sdk.core :as format]
+            [com.blockether.vis.core :as sdk]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
@@ -575,8 +575,8 @@
                     cancelled? t/dialog-hint
                     user?      t/user-role-fg
                     :else      t/ai-role-fg)
-        time-str  (format/format-date timestamp)
-        dur-str   (format/format-duration duration-ms)
+        time-str  (sdk/format-date timestamp)
+        dur-str   (sdk/format-duration duration-ms)
         tok-in    (when-let [n (:input tokens)] (str "↑" n))
         tok-out   (when-let [n (:output tokens)] (str "↓" n))
         iter-str  (when (and (not user?) iterations (pos? iterations)) (str iterations (if (= 1 iterations) " iter" " iters")))
@@ -1350,7 +1350,7 @@
                 msg          (or (:message error) (str (:type error)) "unknown error")
                 raw          (some-> (get-in error [:data :raw-data]) str str/trim)
                 recv         (get-in error [:data :received-type])
-                msg-wrapped  (wrap-text (format/format-error msg) (max 1 (- fill-w 2)))
+                msg-wrapped  (wrap-text (sdk/format-error msg) (max 1 (- fill-w 2)))
                 msg-rows     (mapv #(str err-result-marker "  " %) msg-wrapped)
                 raw-rows     (when (and raw (not (str/blank? raw)))
                                (let [hdr (str "provider returned"
@@ -1384,7 +1384,7 @@
                       has-status? (some? success?)
                       is-error?   (and has-status? (not success?))
                       dur-ms      (when durations (get durations idx))
-                      dur-str     (format/format-duration dur-ms)
+                      dur-str     (sdk/format-duration dur-ms)
                       ;; Right-aligned superscript code label with right padding
                       expr-label  (label-text "code" (inc idx))
                       expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]
@@ -1405,7 +1405,7 @@
                       c-pad       (if is-error? code-err-pad-marker code-pad-marker)
                       ;; Code lines: pretty-printed, indented
                       code-text   (str/trim (or form ""))
-                      formatted   (format/format-clojure code-text (max 1 (- fill-w 2)))
+                      formatted   (sdk/format-clojure code-text (max 1 (- fill-w 2)))
                       code-lines  (str/split-lines formatted)
                       c-lines     (mapv #(str c-marker "  " %) code-lines)
                       ;; Result
@@ -1567,7 +1567,7 @@
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          elapsed-ms       (when query-start-ms
                             (max 0 (- now-ms (long query-start-ms))))
-         elapsed-str      (or (format/format-duration elapsed-ms) "0ms")
+         elapsed-str      (or (sdk/format-duration elapsed-ms) "0ms")
          spinner-line     (str (spinner-frame now-ms) "  "
                             (progress-phase iterations cancelling? elapsed-ms) "…  "
                             elapsed-str "  ·  Esc to cancel")

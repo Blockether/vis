@@ -3,9 +3,12 @@
  ;;
  ;; Owns:
  ;;   - sqlite-jdbc, next.jdbc, honeysql, nippy (the JDBC plumbing)
- ;;   - flyway-database-nc-sqlite (the dialect-specific Flyway driver
- ;;     SQLite needs at runtime; flyway-core itself is shipped by
- ;;     `vis-runtime`; this package ships the SQLite SQL resources)
+ ;;   - flyway-core + flyway-database-nc-sqlite (the migration runner
+ ;;     and the dialect-specific Flyway driver). Both used to ride
+ ;;     along the root vis package; they moved here because this is
+ ;;     the only consumer of either, and `migrate!` itself is a
+ ;;     dialect concern, not core runtime.
+ ;;   - the SQLite SQL migration resources (resources/db/sqlite/migration/)
  ;;
  ;; Loading `com.blockether.vis.ext.persistance-sqlite.core` auto-registers
  ;; the `:sqlite` backend with the facade. `open-store` invokes
@@ -17,7 +20,7 @@
   ;; vis-sdk owns the extension-registration contract;
   ;; vis-sdk owns the storage facade. vis-sdk transitively
   ;; pulls both via the dep below.
-  com.blockether/vis-sdk                   {:local/root "../../../packages/vis-sdk"}
+  com.blockether/vis                   {:local/root "../../.."}
   ;; Binary serialization for expression_state.result/error blobs
   com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}
   ;; JSON (used inside the SQLite query layer for blob round-trips)
@@ -37,6 +40,14 @@
   ;; thrash and giving us a single dispose hook that actually
   ;; releases handles.
   com.zaxxer/HikariCP                       {:mvn/version "6.2.1"}
+  ;; Flyway core — owns schema migration. The previous arrangement
+  ;; declared flyway-core in the root vis package and shipped a
+  ;; generic `migrate!` helper from `com.blockether.vis.sdk`. That
+  ;; helper had exactly one caller — this extension — so the dep and
+  ;; the helper now live together here. Other backends (none yet)
+  ;; ship their own migration entry point, which is the right shape
+  ;; for a per-backend concern.
+  org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
   ;; — without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
   org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}}

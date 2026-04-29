@@ -1,83 +1,90 @@
-;; Monorepo root.
+;; vis — single-package monorepo.
 ;;
-;; Pure aggregator: this file pulls every package via `:local/root`
-;; so a single `clojure -M:vis` (or `bin/vis`) from the repo root
-;; has the whole product on the classpath. Nothing's source lives at
-;; the root anymore — every package owns its own `deps.edn`:
+;; ONE jar, ONE namespace (`com.blockether.vis.core`), ONE source file
+;; (`src/com/blockether/vis/core.clj`). The previous three-package layout
+;; (vis-sdk + vis-runtime + vis-main) collapsed into this one because the
+;; "library / runtime / binary" split was not buying us anything: there is
+;; only ever one runtime, and the binary, library, and SDK ship in the same
+;; classpath together for every consumer.
 ;;
-;;   packages/vis-sdk/           contracts package (storage facade + extension/channel/provider/CLI specs +
-;;                                config + providers + progress + format + conversation API surface)
-;;   packages/vis-runtime/          iteration loop logic ONLY (svar lives here, nowhere else)
-;;   packages/vis-main/          the `vis` binary (dispatcher + run/auth/doctor/conversations/extensions)
-;;   extensions/<category>/<pkg>/   classpath plug-ins (channels, providers, persistance backends, common SCI tools)
-;;   benchmarks/                 4clojure / HumanEval / SWE-bench harness
+;; What stayed split: the classpath plug-ins under `extensions/`. Those are
+;; genuinely optional (drop the jar, drop the feature) and each has its own
+;; deps.edn declaring `com.blockether/vis {:local/root "../../.."}` against
+;; this repo root.
 ;;
-;; Dependency direction:
-;;   vis-sdk ← vis-runtime ← vis-main
-;;   every extension depends on vis-sdk only (NOT vis-runtime)
-;;
-;; The repo-root `bin/vis` wrapper just `exec`s `clojure -M:vis "$@"`,
-;; so daily use is `vis <subcommand>` once `bin/` is on PATH.
-{:paths []
+;; Daily use: `bin/vis <subcommand>` once `bin/` is on PATH.
+{:paths ["src" "resources"]
 
  :deps
- {com.blockether/vis-main {:local/root "packages/vis-main"}}
+ {;; Classpath plug-ins. Drop the jar, drop the feature.
+  com.blockether/vis-persistance-sqlite       {:local/root "extensions/persistance/vis-persistance-sqlite"}
+  com.blockether/vis-provider-github-copilot  {:local/root "extensions/providers/vis-provider-github-copilot"}
+  com.blockether/vis-channel-telegram         {:local/root "extensions/channels/vis-channel-telegram"}
+  com.blockether/vis-channel-tui              {:local/root "extensions/channels/vis-channel-tui"}
+  com.blockether/vis-common-editing           {:local/root "extensions/common/vis-common-editing"}
+  com.blockether/vis-common-meta              {:local/root "extensions/common/vis-common-meta"}
+
+  ;; Core runtime deps. Each one supports a specific surface in this
+  ;; package; nothing here is shared with extensions through some
+  ;; transitive accident.
+  ;;
+  ;;   svar         — LLM router used by the iteration loop
+  ;;                  (`com.blockether.vis.loop`).
+  ;;   anomaly      — `incorrect!` / `unsupported!` ex-info builders
+  ;;                  used at every public-API guard.
+  ;;   telemere     — logging used everywhere.
+  ;;   clojure-plus — cond+/walk patches used by env.clj sandbox.
+  ;;   jmustache    — answer template renderer (loop.clj).
+  ;;   sci          — sandbox engine (env.clj).
+  ;;   edamame      — Clojure parser used by parse-rescue (loop.clj).
+  ;;   lazytest     — sandbox-exposed assertion fns (env.clj).
+  ;;   zprint       — sandbox pretty-printer + format-clojure (sdk.clj).
+  ;;   fast-edn     — sandbox-exposed EDN reader (env.clj).
+  ;;   charred      — fast JSON for spec/router payloads + sandbox.
+  ;;
+  ;; Extension-specific deps live in each extension's deps.edn:
+  ;;   flyway-core              → vis-persistance-sqlite (migration runner)
+  ;;   sqlite-jdbc / HikariCP   → vis-persistance-sqlite
+  ;;   honeysql / next.jdbc    → vis-persistance-sqlite
+  ;;   nippy                    → vis-persistance-sqlite
+  ;;   org.babashka/http-client → vis-channel-telegram + vis-provider-github-copilot
+  ;;   re2j / jgit              → vis-common-editing
+  ;;   lanterna                 → vis-channel-tui
+  com.blockether/svar              {:mvn/version "0.3.11"}
+  com.blockether/anomaly           {:mvn/version "1.0.1"}
+  org.clojure/clojure              {:mvn/version "1.12.4"}
+  com.taoensso/telemere            {:mvn/version "1.2.1"}
+  io.github.tonsky/clojure-plus    {:mvn/version "1.7.2"}
+  com.samskivert/jmustache         {:mvn/version "1.16"}
+  org.babashka/sci                 {:mvn/version "0.12.51"}
+  borkdude/edamame                 {:mvn/version "1.5.39"}
+  io.github.noahtheduke/lazytest   {:mvn/version "2.0.0"}
+  zprint/zprint                    {:mvn/version "1.3.0"}
+  io.github.tonsky/fast-edn        {:mvn/version "1.1.3"}
+  com.cnuernber/charred            {:mvn/version "1.038"}}
 
  :aliases
- {;; Dev REPL helpers + vis-common-editing for nREPL-driven exploration.
-  :dev   {:extra-deps {cider/cider-nrepl                          {:mvn/version "0.59.0"}
-                       io.github.tonsky/clj-reload                {:mvn/version "1.0.0"}
-                       com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}}}
-
-  ;; Primary alias — the `vis` CLI. vis-main (the `:deps` above)
-  ;; transitively pulls vis-runtime and vis-sdk.
-  ;; Every classpath plug-in is added here so the unified discovery
-  ;; loader (`META-INF/vis-extension/vis.edn`) wires them in at boot.
+ {  ;; Primary alias — the `vis` CLI.
   :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI
           ;; (Lanterna) is not corrupted by JVM-emitted warnings.
-          ;;   --enable-native-access=ALL-UNNAMED
-          ;;       Silences JEP 472 "restricted method" warnings from
-          ;;       JNI/native libs (e.g. SQLite native, jline).
-          ;;   --sun-misc-unsafe-memory-access=allow
-          ;;       Silences JEP 498 "terminally deprecated method in
-          ;;       sun.misc.Unsafe has been called" warnings emitted
-          ;;       by io.airlift.aircompressor (LZ4, pulled in via
-          ;;       com.taoensso/nippy → vis-persistance-sqlite).
-          ;;   -XX:+IgnoreUnrecognizedVMOptions
-          ;;       Lets older JDKs that don't know the two flags above
-          ;;       boot anyway instead of refusing to start.
           :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
                        "--enable-native-access=ALL-UNNAMED"
                        "--sun-misc-unsafe-memory-access=allow"]
-          :extra-deps {com.blockether/vis-persistance-sqlite       {:local/root "extensions/persistance/vis-persistance-sqlite"}
-                       com.blockether/vis-provider-github-copilot  {:local/root "extensions/providers/vis-provider-github-copilot"}
-                       com.blockether/vis-channel-telegram                 {:local/root "extensions/channels/vis-channel-telegram"}
-                       com.blockether/vis-channel-tui                      {:local/root "extensions/channels/vis-channel-tui"}
-                       com.blockether/vis-common-editing                  {:local/root "extensions/common/vis-common-editing"}
-                       com.blockether/vis-common-meta                     {:local/root "extensions/common/vis-common-meta"}}
-          :main-opts  ["-m" "com.blockether.vis-main.core"]}
+          :main-opts  ["-m" "com.blockether.vis.core"]}
 
-  ;; Aggregate test runner. Every package that ships tests is listed
-  ;; below so a single `clojure -M:test` exercises the whole product
-  ;; on one classpath. Add a new `--dir` entry only when a package
-  ;; grows its first test — lazytest errors on "no namespaces to run"
-  ;; if a listed dir is empty.
-  :test  {:extra-paths ["packages/vis-sdk/test"
-                        "packages/vis-runtime/test"
-                        "packages/vis-main/test"
+  ;; Aggregate test runner.
+  :test  {:extra-paths ["test"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-common-editing/test"
                         "extensions/common/vis-common-meta/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                         com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
-                        com.blockether/vis-channel-tui                     {:local/root "extensions/channels/vis-channel-tui"}
-                        com.blockether/vis-common-editing                 {:local/root "extensions/common/vis-common-editing"}
-                        com.blockether/vis-common-meta                    {:local/root "extensions/common/vis-common-meta"}}
+                        com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
+                        com.blockether/vis-common-editing          {:local/root "extensions/common/vis-common-editing"}
+                        com.blockether/vis-common-meta             {:local/root "extensions/common/vis-common-meta"}}
           :main-opts   ["-m" "lazytest.main"
-                        "--dir" "packages/vis-sdk/test"
-                        "--dir" "packages/vis-runtime/test"
-                        "--dir" "packages/vis-main/test"
+                        "--dir" "test"
                         "--dir" "extensions/persistance/vis-persistance-sqlite/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/common/vis-common-editing/test"

@@ -4,7 +4,7 @@
    synthetic conversation + query + iteration rows in an in-memory
    SQLite DB, then invokes the impl fns directly with a fake env map."
   (:require
-   [com.blockether.vis-sdk.core :as db]
+   [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
 
@@ -19,9 +19,9 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- bootstrap [store]
-  (let [conversation-id (db/store-conversation! store
+  (let [conversation-id (sdk/store-conversation! store
                           {:channel :vis :title "meta test"})
-        query-id (db/store-query! store
+        query-id (sdk/store-query! store
                    {:parent-conversation-id conversation-id
                     :query "what's the plan?"
                     :status :running})]
@@ -30,7 +30,7 @@
 (defn- store-iteration!
   [store query-id {:keys [plan-state breadcrumb expressions thinking error]
                    :or {expressions []}}]
-  (db/store-iteration! store
+  (sdk/store-iteration! store
     (cond-> {:query-id    query-id
              :expressions expressions
              :duration-ms 100
@@ -102,7 +102,7 @@
     ;; per iteration; (meta/turn).:redundancy aggregates across iterations.
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (db/store-iteration! s
+      (sdk/store-iteration! s
         {:query-id    query-id
          :expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
                        {:id 1 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
@@ -110,7 +110,7 @@
          :llm-model   "test-model"
          :metadata    {:dedup-saves 0
                        :expression-redundancy-fraction 0.0}})
-      (db/store-iteration! s
+      (sdk/store-iteration! s
         {:query-id    query-id
          :expressions [{:id 0 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
          :duration-ms 100
@@ -140,7 +140,7 @@
   (it "arg form fetches any conversation by id"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (db/store-conversation! s {:channel :telegram :title "other"})]
+          other (sdk/store-conversation! s {:channel :telegram :title "other"})]
       (let [conversation ((private-fn "meta-conversation") (env s conversation-id) other)]
         (expect (= other (:id conversation)))
         (expect (= :telegram (:channel conversation)))
@@ -149,7 +149,7 @@
   (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (db/update-query! s query-id
+      (sdk/update-query! s query-id
         {:answer "42" :iterations 1 :duration-ms 50 :status :done
          :prior-outcome :complete})
       (let [conversation ((private-fn "meta-conversation") (env s conversation-id))
@@ -165,8 +165,8 @@
 (defdescribe meta-conversations-test
   (it "no-arg form scans every known channel"
     (let [s (h/store)
-          a (db/store-conversation! s {:channel :vis :title "vis-a"})
-          b (db/store-conversation! s {:channel :telegram :title "tg-b"})
+          a (sdk/store-conversation! s {:channel :vis :title "vis-a"})
+          b (sdk/store-conversation! s {:channel :telegram :title "tg-b"})
           all ((private-fn "meta-conversations") (env s a))
           ids (set (map :id all))]
       (expect (contains? ids a))
@@ -174,8 +174,8 @@
 
   (it "channel-arg form filters to one channel"
     (let [s (h/store)
-          a (db/store-conversation! s {:channel :vis :title "vis-a"})
-          _ (db/store-conversation! s {:channel :telegram :title "tg-b"})
+          a (sdk/store-conversation! s {:channel :vis :title "vis-a"})
+          _ (sdk/store-conversation! s {:channel :telegram :title "tg-b"})
           tui-list ((private-fn "meta-conversations") (env s a) :telegram)]
       (expect (= 1 (count tui-list)))
       (expect (= :telegram (:channel (first tui-list))))))
@@ -207,7 +207,7 @@
   (it "explicit conversation-id form queries a different conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (db/store-conversation! s {:channel :vis :title "other"})]
+          other (sdk/store-conversation! s {:channel :vis :title "other"})]
       (expect (= [] ((private-fn "meta-var-history") (env s conversation-id) 'foo other))))))
 
 ;; -----------------------------------------------------------------------------
@@ -241,7 +241,7 @@
   (it "two-arg form scans every turn of the given conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          q2 (db/store-query! s
+          q2 (sdk/store-query! s
                {:parent-conversation-id conversation-id
                 :query "second turn" :status :running})]
       ;; Leave q1 empty; fill q2.
@@ -293,7 +293,7 @@
   (it "conversation-id form scans every turn"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          second-query-id (db/store-query! s
+          second-query-id (sdk/store-query! s
                             {:parent-conversation-id conversation-id
                              :query "second turn"
                              :status :running})]

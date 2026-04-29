@@ -8,9 +8,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.svar.internal.llm :as llm]
-   [com.blockether.vis-runtime.core :as rlm]
-   [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query]
-   [com.blockether.vis-sdk.core :as db]
+   [com.blockether.vis.core :as rlm]
    [taoensso.telemere :as tel])
   (:import
    (java.nio.file Files)
@@ -62,11 +60,11 @@
   [env edn-path]
   (when-let [db-info (:db-info env)]
     (let [conv-id (:conversation-id env)
-          conv    (when conv-id (db/db-get-conversation db-info conv-id))
-          queries (when conv-id (db/db-list-conversation-queries db-info conv-id))]
+          conv    (when conv-id (rlm/db-get-conversation db-info conv-id))
+          queries (when conv-id (rlm/db-list-conversation-queries db-info conv-id))]
       (when (seq queries)
         (let [enriched (mapv (fn [q]
-                               (let [iters (vec (db/db-list-query-iterations db-info (:id q)))]
+                               (let [iters (vec (rlm/db-list-query-iterations db-info (:id q)))]
                                  (assoc q :conversation conv :iterations iters)))
                          queries)]
           (spit edn-path (pr-str enriched))
@@ -82,7 +80,7 @@
   {:debug? true})
 
 (defn run-vis-task!
-  "High-level wrapper that runs a single task through query/query! with full
+  "High-level wrapper that runs a single task through rlm/query! with full
    trajectory plumbing: temp SQLite DB per task, trajectory persisted as EDN,
    DB cleaned up afterwards. Removes the boilerplate from every benchmark.
 
@@ -110,7 +108,7 @@
         env      (rlm/create-environment router {:db db-path})
         start    (System/currentTimeMillis)]
     (try
-      (let [result   (query/query! env [(llm/user (prompt-fn task))]
+      (let [result   (rlm/query! env [(llm/user (prompt-fn task))]
                        (merge DEFAULT_QUERY_ENV_OPTS {:model model} query-opts))
             duration (- (System/currentTimeMillis) start)]
         (persist-trajectory! env edn-path)

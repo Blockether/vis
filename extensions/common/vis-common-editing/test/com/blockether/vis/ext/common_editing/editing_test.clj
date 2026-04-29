@@ -25,7 +25,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis-sdk.core :as ext]
+   [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.common-editing.editing :as editing]
    [lazytest.core :refer [defdescribe it expect]])
   (:import [com.google.re2j Pattern]))
@@ -226,7 +226,7 @@
    succeeds and returns :ok. Lets us verify the rescue retries via
    :fn / :args without touching the real filesystem."
   [calls bad-char]
-  (ext/symbol 'grep-files
+  (sdk/symbol 'grep-files
     (fn [pattern]
       (swap! calls conj pattern)
       (if (str/includes? pattern "\\")
@@ -244,13 +244,13 @@
   "Build the smallest possible valid extension around one symbol so we
    can call invoke-symbol-wrapper without dragging in the registry."
   [sym]
-  (ext/extension
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-editing.test-fake
      :ext/doc       "Fake editing extension for tests."
      :ext/group     "filesystem"
      :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
      ;; The spec demands :ext/prompt be a fn (env→string); the
-     ;; non-fn shorthand is normalized by `ext/extension` itself, but
+     ;; non-fn shorthand is normalized by `sdk/extension` itself, but
      ;; passing a fn directly avoids relying on that normalization in
      ;; tests.
      :ext/prompt    (constantly "placeholder")
@@ -262,7 +262,7 @@
     (let [calls  (atom [])
           sym    (fake-grep-symbol calls "(")
           ext    (wrap-extension sym)
-          result (ext/invoke-symbol-wrapper ext sym ["foo\\(bar"] {})]
+          result (sdk/invoke-symbol-wrapper ext sym ["foo\\(bar"] {})]
       (expect (= :ok result))
       ;; First call: original (with backslash). Second: rescued.
       (expect (= ["foo\\(bar" "foo(bar"] @calls))))
@@ -271,7 +271,7 @@
     (let [calls  (atom [])
           sym    (fake-grep-symbol calls "q")
           ext    (wrap-extension sym)
-          thrown (try (ext/invoke-symbol-wrapper ext sym ["foo\\q"] {})
+          thrown (try (sdk/invoke-symbol-wrapper ext sym ["foo\\q"] {})
                    (catch Throwable t t))]
       (expect (some? thrown))
       ;; Only one underlying call — rescue refused to retry on `\q`.
@@ -519,7 +519,7 @@
       (expect (nil? (:ext/on-parse-error-fn registered)))
       ;; But try-rescue-parse-error finds the symbol hook by name.
       (expect (= "(vis/rg \"a\\\\|b\")"
-                (ext/try-rescue-parse-error [registered] code err {}))))))
+                (sdk/try-rescue-parse-error [registered] code err {}))))))
 
 ;; =============================================================================
 ;; patch :patch-no-match diagnostics — Bug 2.C.1

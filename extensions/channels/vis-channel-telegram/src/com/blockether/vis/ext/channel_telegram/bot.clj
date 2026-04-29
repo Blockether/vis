@@ -3,12 +3,11 @@
    message to the shared conversations API and ships the answer back.
 
    Each Telegram chat maps to a `:telegram` conversation via
-   `conversations/for-telegram-chat!` (find-or-create on chat-id). One process can
+   `lp/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
-   conversation's lock in `com.blockether.vis-runtime.loop.runtime.conversation.core`."
-  (:require [com.blockether.vis-sdk.core :as config]
-            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations]
-            [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query-core]
+   conversation's lock in `com.blockether.vis.core`."
+  (:require [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [taoensso.telemere :as tel]))
 
@@ -52,12 +51,12 @@
         (future
           (try
             (tg/send-chat-action! token chat-id "typing")
-            (let [{:keys [id]} (conversations/for-telegram-chat! chat-id)
-                  result       (conversations/send! id text
+            (let [{:keys [id]} (lp/for-telegram-chat! chat-id)
+                  result       (lp/send! id text
                                  {:max-context-tokens 2200})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
-                  env          (conversations/env-for id)
-                  model-name   (:name (query-core/resolve-effective-model (:router env)))]
+                  env          (lp/env-for id)
+                  model-name   (:name (lp/resolve-effective-model (:router env)))]
               (tg/send-message! token chat-id
                 (str answer (format-footer result model-name))))
             (catch Exception e
@@ -65,7 +64,7 @@
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}
                          :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (config/format-error (config/error->user-message e)))
+                     (sdk/format-error (sdk/error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]
@@ -109,7 +108,7 @@
     (when-let [t @poll-thread]
       (.interrupt ^Thread t)
       (reset! poll-thread nil))
-    (conversations/close-all!)
+    (lp/close-all!)
     (tel/log! {:level :info :id ::stopped}
       "Telegram bot stopped")))
 
@@ -129,11 +128,11 @@
   "Channel entry point. Boots the CLI runtime config, then starts the
    long-poll loop and blocks forever (until SIGTERM → shutdown hook)."
   [_args]
-  (config/init-cli!)
+  (sdk/init-cli!)
   (-main))
 
-(config/register-extension!
-  (config/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
      :ext/doc       "Telegram bot channel — long-poll loop wired into conversations."
      :ext/version   "0.3.0"

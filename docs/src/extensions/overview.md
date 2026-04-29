@@ -1,16 +1,16 @@
 # Extension system
 
 > **Library:** `com.blockether/vis-runtime`. Extension authoring lives in
-> the namespace `com.blockether.vis-sdk.core`.
+> the namespace `com.blockether.vis.core`.
 >
 > **Why a dedicated namespace:** the extension contract is not re-exported
-> through `com.blockether.vis-runtime.core`. Authoring code must require
-> `com.blockether.vis-sdk.core` directly.
+> through `com.blockether.vis.core`. Authoring code must require
+> `com.blockether.vis.core` directly.
 >
 > **What stays on the public facade:** the runtime composition helpers
 > that need a live environment (`active-extensions`,
 > `assemble-system-prompt`, `register-extension!` for ad-hoc per-env
-> registration). Those live on `com.blockether.vis-runtime.core` because they
+> registration). Those live on `com.blockether.vis.core` because they
 > need the runtime they compose against.
 
 Extensions are the **only** way to add symbols, classes, and documentation
@@ -81,7 +81,7 @@ trigger registration:
 ```
 
 When `create-environment` runs (or the CLI dispatcher boots), it
-calls `com.blockether.vis-sdk.core/discover-extensions!` which:
+calls `com.blockether.vis.core/discover-extensions!` which:
 
 1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` files
    (via `ClassLoader.getResources`)
@@ -236,7 +236,7 @@ the query still runs.
   ;; Require the slim contract directly. The full vis runtime is NOT
   ;; needed (and not on the classpath) when this jar is consumed by
   ;; another extension or a sandbox host.
-  (:require [com.blockether.vis-sdk.core :as ext]))
+  (:require [com.blockether.vis.core :as ext]))
 
 (defn- search-fn [query] ...)
 
@@ -297,7 +297,7 @@ subcommand:
 ```clojure
 (ext/register-global!
   (ext/extension
-    {:ext/namespace 'com.blockether.vis-main.channels.cli
+    {:ext/namespace 'com.blockether.vis.core
      :ext/doc       "vis-runtime's contribution to the `vis extensions` subtree."
      :ext/cli       [{:cmd/name   "list"
                       :cmd/doc    "List every registered extension."
