@@ -138,5 +138,6 @@ over every assistant bubble's trace, `wrap-text` over every line,
 twice per frame. With a long conversation that pegged a CPU core
 and made keystrokes feel laggy. The dirty-version + dedicated
 render thread + memoization combo is what makes typing snappy
-again. If you ever feel tempted to call `render-frame!` directly
-from the input thread again — don't.
+again. Keep `render-frame!` confined to the render thread; the
+input thread signals via `:render-version` and lets the render
+thread paint.

@@ -508,7 +508,7 @@
     "  Tables     (md/table headers rows) (md/table headers rows {:align [:left :center :right]})\n"
     "  Compose    (md/join …blocks) (md/lines …lines) (md/section title body) (md/escape s)\n"
     "Block fns return text WITHOUT trailing newline. Compose with (md/join …) and feed to (answer …).\n"
-    "Cite source files with (md/file-link path line) so the TUI can jump to the line; use (md/link …) for URLs and (md/image alt url) for diagrams. Don't hand-roll `[…](…)` strings."))
+    "Cite source files with (md/file-link path line) so the TUI can jump to the line; use (md/link …) for URLs and (md/image alt url) for diagrams. Hand-rolled `[…](…)` strings drift from channel link conventions — the helpers stay aligned."))
 
 (def markdown-extension
   (sdk/extension

@@ -895,8 +895,8 @@
               ;; payload may contain INLINE_*_ON/OFF sentinels for
               ;; nested bold/italic/code spans. Painting via
               ;; `paint-styled-line!` (instead of raw `put-str!`)
-              ;; ensures the sentinels CONSUME and don't leak into
-              ;; the terminal as PUA glyphs. Heading colour + BOLD
+              ;; consumes the sentinels in-place — they stay out of
+              ;; the terminal output (no PUA glyphs). Heading colour + BOLD
               ;; remain the BASE style; inline spans STACK on top
               ;; (e.g. `## **plain** *and italic*` keeps the gold +
               ;; bold base, plus italic on the second word).
@@ -1226,7 +1226,7 @@
 
 (defn- find-inline-close
   "Scan `s` from index `from` for the next occurrence of `closer`,
-   stepping over nested constructs that we don't want to break:
+   stepping over nested constructs that stay atomic:
 
    - Code spans (`` `...` ``) are atomic; their content can include any
      character (including the closer we're hunting for) without our
@@ -1483,8 +1483,8 @@
         ;;
         ;; `:repeat-count` (set by collapse-repeated-error-runs) marks
         ;; how many consecutive iterations produced this exact error.
-        ;; When >1 the sub-header gets a \"× N\" badge so we don't repeat
-        ;; the same multi-line block over and over.
+        ;; When >1 the sub-header gets a \"× N\" badge — one block,
+        ;; one count, no repeated multi-line spam.
         error-lines
         (when (map? error)
           (let [repeat-count (max 1 (long (or repeat-count 1)))
@@ -2191,9 +2191,9 @@
         trailer       (if cancelled? cancel-block answer-block)]
     (if (seq trace-lines)
       (str/join "\n" (concat trace-lines trailer))
-      ;; No trace — don't emit the trace/trailer separator at the top
-      ;; of an otherwise-empty bubble; jump straight to the trailer
-      ;; body (drop the leading separator marker).
+      ;; No trace — skip the trace/trailer separator at the top of an
+      ;; otherwise-empty bubble; jump straight to the trailer body
+      ;; (drop the leading separator marker).
       (str/join "\n" (rest trailer)))))
 
 (defn format-answer-with-thinking

@@ -509,7 +509,7 @@
 ;; after evaluating a turn's forms. It returns the error from the
 ;; specific form that invoked `(answer ...)`, or nil if that form
 ;; succeeded. Sibling errors are intentionally NOT surfaced — they
-;; do not gate termination. This test pins down the contract.
+;; stay out of the termination gate. This test pins down the contract.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe answer-form-error-scoping-test
@@ -517,7 +517,7 @@
                  {:result nil :error "sibling boom"}     ;; idx 1 errored
                  {:result nil :error nil}                ;; idx 2 ok (called answer here)
                  {:result nil :error "trailing boom"}]]  ;; idx 3 errored
-    (it "returns nil when the answer-form itself ran cleanly (sibling errors don't gate)"
+    (it "returns nil when the answer-form itself ran cleanly (sibling errors stay outside the gate)"
       (expect (nil? (sdk/answer-form-error results 2))))
 
     (it "returns the answer-form's own error when that form errored"
@@ -1030,7 +1030,7 @@
     (let [m   {:a 1 :b 2 :c 3}
           out (index {'m m})]
       (expect (re-find #"\{:keys \[" out))
-      ;; clojure maps don't guarantee order, so just verify membership.
+      ;; clojure maps make no order guarantee — verify membership only.
       (doseq [k [:a :b :c]]
         (expect (re-find (re-pattern (str ":" (name k))) out)))))
 

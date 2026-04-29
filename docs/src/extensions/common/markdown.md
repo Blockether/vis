@@ -22,7 +22,7 @@ Why a programmatic surface instead of a templating layer:
 - **Channel-aware citations.** `md/link`, `md/image`, `md/file-link`,
   `md/anchor` produce hyperlinks the TUI / web / Telegram channels
   can render as clickable jumps. Hand-rolled `[…](…)` strings drift
-  out of sync with channel conventions; the helpers don't.
+  out of sync with channel conventions; the helpers stay aligned.
 
 ## Usage
 

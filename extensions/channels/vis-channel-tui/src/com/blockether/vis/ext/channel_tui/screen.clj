@@ -57,7 +57,7 @@
   "Lines moved per Up/Down/PageUp/PageDown press in the messages area.
    Mouse wheel events stay at 3 (the OS already emits multiple events
    per wheel notch); arrow keys are explicit and benefit from a
-   bigger jump so long iteration traces don't take 30 presses to walk."
+   bigger jump so long iteration traces clear in a few presses."
   5)
 (def ^:private input-max-lines 4)
 ;; Hint strip rules
@@ -69,7 +69,7 @@
 ;;                       for multi-line composition right where the
 ;;                       eye lands.
 ;; Idle, input NON-EMPTY → just menu. \"Enter send\" is monkey-obvious; once
-;;                        someone has typed they don't need that hint,
+;;                        someone has typed the hint is redundant,
 ;;                        and history-cycle would clobber the buffer.
 ;; Loading              → cancel + quit. Same as before.
 ;; Cancelling            → progress message + quit.
@@ -462,8 +462,9 @@
              (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                (state/dispatch [:set-config c]))))
 
-      ;; Sweep orphaned running queries from previous crashes so they
-      ;; don't show raw query text in the rebuilt history.
+      ;; Sweep orphaned running queries from previous crashes so the
+      ;; rebuilt history shows resolved rows only — no raw query text
+      ;; from a half-completed turn.
          (try (sdk/db-sweep-orphaned-running-queries!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
@@ -480,7 +481,9 @@
                          (chat/make-conversation config))
                        (chat/make-conversation config))
                      (chat/make-conversation config)))
-              ;; Set title from DB if present; do not synthesize from messages.
+              ;; Set title from DB when present — the DB row is the source of truth.
+              ;; Synthesizing from messages stays out of the TUI; auto-title runs
+              ;; from the runtime loop after the first turn completes.
                  conversation-info (when-let [c (sdk/by-id id)] c)
                  title     (when-let [t (some-> conversation-info :title)]
                              (when-not (str/blank? t) t))]
@@ -510,12 +513,12 @@
          ;; what made the previous implementation "jump" the moment
          ;; the user started moving.
          ;;
-         ;; Clicks that DON'T land on the thumb itself (anywhere on
-         ;; the messages area, including the track above/below the
-         ;; thumb and the right gutter columns) are deliberately
-         ;; ignored — no jump-to-position. Wheel scroll, keyboard
-         ;; PageUp/PageDown and arrows remain the supported ways to
-         ;; move the viewport without grabbing the thumb.
+         ;; Clicks anywhere outside the thumb itself — the messages
+         ;; area, the track above/below the thumb, the right gutter
+         ;; columns — are deliberately ignored (no jump-to-position).
+         ;; Wheel scroll, keyboard PageUp/PageDown and arrows remain
+         ;; the supported ways to move the viewport without grabbing
+         ;; the thumb.
          (let [scrollbar-drag-offset (volatile! nil)]
            (loop []
            ;; Layout fields are populated by the render thread after
@@ -625,6 +628,44 @@
                                :copy
                                (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
 
+                               :copy-as-markdown
+                               ;; One-shot "give me the whole
+                               ;; conversation as Markdown on the
+                               ;; clipboard". Goes through the host
+                               ;; helper `sdk/conversation->markdown`
+                               ;; so every channel renders the same
+                               ;; projection. We surface a viewer
+                               ;; dialog with the result so the user
+                               ;; can confirm what was copied (and
+                               ;; re-copy via the system shortcut if
+                               ;; the AWT clipboard write was a no-op
+                               ;; on a remote / SSH session).
+                               (with-dialog-lock
+                                 #(let [conversation-id (get-in @state/app-db [:conversation :id])
+                                        env             (when conversation-id (sdk/env-for conversation-id))
+                                        markdown        (when (and env conversation-id)
+                                                          (try
+                                                            (sdk/conversation->markdown
+                                                              (:db-info env) conversation-id)
+                                                            (catch Throwable t
+                                                              (str "Markdown export failed: "
+                                                                (or (.getMessage t) (.getName (class t)))))))]
+                                    (cond
+                                      (nil? conversation-id)
+                                      (dlg/text-viewer-dialog! screen "Copy Conversation as Markdown"
+                                        "(no conversation)")
+
+                                      (nil? markdown)
+                                      (dlg/text-viewer-dialog! screen "Copy Conversation as Markdown"
+                                        "(conversation has no persisted turns yet)")
+
+                                      :else
+                                      (do (input/clipboard-copy! markdown)
+                                        (dlg/text-viewer-dialog!
+                                          screen
+                                          "Copied conversation as Markdown (clipboard)"
+                                          markdown)))))
+
                                :toggles
                                (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
                                  (state/dispatch [:update-settings s]))
@@ -692,10 +733,10 @@
                        :continue (recur))))))))
          (finally
         ;; Tell the render thread to exit and wake it so the wait
-        ;; doesn't sit out its full timeout. Daemon thread, so we don't
-        ;; strictly have to join — but doing so ensures the final paint
-        ;; (or no paint, if shutdown? was already true) finishes before
-        ;; we tear down the screen.
+        ;; finishes immediately. Daemon thread, so the join is
+        ;; optional — doing it anyway lets the final paint (or the
+        ;; no-op when shutdown? was already true) finish before we
+        ;; tear down the screen.
            (state/dispatch [:shutdown])
            (when-let [t @render-thread]
              (try (.join ^Thread t 500) (catch Throwable _ nil)))

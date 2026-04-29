@@ -67,7 +67,7 @@ call.
 `:channel/owns-tty?` tells the launcher this channel takes over the
 terminal (TUI, REPL-style channels). When set, the dispatcher
 redirects stderr to `~/.vis/vis.log` **before** further class loading
-so JVM warnings don't bleed into the alt-screen.
+so JVM warnings stay in the log and the alt-screen stays clean.
 
 There is no `:channel/default?` flag and no implicit "default channel"
 fallback. The dispatcher is a pure command tree: when the user runs

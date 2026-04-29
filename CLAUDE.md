@@ -5,8 +5,8 @@
 ### Run `./verify.sh` before every commit
 
 `./verify.sh` (at the repo root) is the single pre-commit gate. It runs
-eight checks in order and stops at the first failure. **No PR, commit,
-or agent-authored change ships without a green run.** This rule
+eight checks in order and stops at the first failure. **Every PR, commit,
+or agent-authored change ships only on a green run.** This rule
 overrides convenience, scope creep, and "it's just a one-line fix."
 
 Gates:
@@ -27,9 +27,9 @@ Gates:
    the default classpath, not shipped as a runtime jar.
 4. **Tests** — `clojure -M:test` (lazytest, aggregate suite).
 5. **Docs build** — `cd docs && mdbook build`. The "update `docs/`
-   when touching architecture or public API" rule below is meaningless
-   if the docs don't compile.
-6. **Smoke** — `bin/vis` prints the help banner. Doesn't touch the user DB.
+   when touching architecture or public API" rule below depends on docs
+   that compile.
+6. **Smoke** — `bin/vis` prints the help banner. Leaves the user DB untouched.
 7. **Git hygiene** — `git diff --check HEAD` (trailing whitespace,
    conflict markers).
 8. **Secret scan** — scans the diff against `origin/main` for common
@@ -56,23 +56,24 @@ The baseline is intentionally a **ratchet, not a ceiling** — it only
 moves down. Any PR that adds reflection or boxed-math warnings without
 a justification is a bug, even if the rest of the diff looks fine.
 
-### Never bind Ctrl+Y in the TUI
+### Ctrl+Y stays unbound in the TUI
 
 `Ctrl+Y` sends `SIGTSTP` (or the `DSUSP` character on macOS) which
 **suspends the entire process** and drops the user to a stopped-job
-shell prompt. Lanterna cannot intercept it before the kernel acts on it.
-Do NOT bind `Ctrl+Y` to any action — clipboard copy, yank, or anything
-else. It will never work. Any PR that re-introduces a `Ctrl+Y` binding
-in `input.clj`, `dialogs.clj`, or `screen.clj` must be rejected.
+shell prompt. The kernel acts before Lanterna can intercept it.
+**Leave `Ctrl+Y` unbound everywhere** — clipboard copy, yank, anything
+else. The signal wins. Reject any PR that introduces a `Ctrl+Y` binding
+in `input.clj`, `dialogs.clj`, or `screen.clj`.
 
-Use the copy dialog (`Ctrl+K` → Copy) for clipboard operations instead.
+Use the copy dialog (`Ctrl+K` → Copy) for clipboard ops.
 
-### Always use HoneySQL for SQL — no raw strings, no next.jdbc.sql
+### HoneySQL is the only SQL surface
 
 Every SQL query in the codebase MUST use `honey.sql` data maps.
-Do NOT use `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) —
+`next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) is forbidden —
 it produces namespaced column keys that break with SQLite.
-Do NOT write raw SQL strings in application code (`["SELECT * FROM ..."]`).
+Raw SQL strings in application code (`["SELECT * FROM ..."]`) are
+forbidden too.
 
 The ONE pattern:
 ```clojure
@@ -92,11 +93,11 @@ Raw `jdbc/execute!` with string SQL is allowed ONLY inside
 `persistance/sqlite/*.clj` for migration DDL and FTS queries that
 HoneySQL cannot express. Everywhere else: HoneySQL or bust.
 
-### Always reply in English
+### Reply in English
 
-Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. No exceptions, no mixed-language responses, no apology paragraphs in the user's language. This rule overrides any implicit language mirroring behavior.
+Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. Single-language responses, no apology paragraphs in the user's language. This rule overrides any implicit language-mirroring behavior.
 
-### Trust svar spec guarantees — do NOT defensively re-validate
+### Trust svar spec guarantees — destructure directly
 
 svar's iteration spec is provider-enforced. When a field is declared as
 `{::spec/name :expr ::spec/type :spec.type/string ::spec/required true}`,
@@ -110,17 +111,24 @@ the real control flow.
 
 Rule:
 
-- If a field is **required** in the iteration-spec, destructure it
-  directly. Don't `(when-not (str/blank? …))`. Don't throw "missing
+- **Required field** in the iteration-spec -> destructure it directly.
+  Skip the `(when-not (str/blank? …))`. Skip the throw "missing
   :time-ms". That branch is dead code.
-- If a field is **optional**, use plain `(when (:field x) …)` or
-  `(or (:field x) default)` — NOT a full validator.
-- If you ever need to check shape after spec, the spec is WRONG.
-  Fix the spec, not the consumer.
+- **Optional field** -> plain `(when (:field x) …)` or
+  `(or (:field x) default)`. Full validators belong in the spec.
+- Need to check shape after spec? The spec is WRONG. Fix the spec; the
+  consumer stays clean.
 
-This applies to EVERY spec, not just iteration spec:
-code_block, next_turn, all of them. If svar loaded it, the shape is
-correct by construction.
+Applies to EVERY spec, not just iteration spec — `code_block`,
+`next_turn`, all of them. svar loaded it -> shape correct by
+construction.
+
+> Note: every Vis call into svar uses `svar/ask-code!` (plain-text +
+> fenced code-block extraction). The legacy `svar/ask!` JSON-spec
+> path was retired with the spec-bound iteration loop. Caller-supplied
+> `:spec` (e.g. `vis run --spec …`) still flows to `svar/ask!` *inside
+> svar*; from Vis's side the surface is `ask-code!`-only, and the rule
+> above applies to whatever spec the caller hands in.
 
 ### Repo-root `README.md` is a stub: rationale + book link only
 
@@ -138,11 +146,11 @@ long-form prose. Every one of those belongs in the book
 
 Why: the book is the single source of truth (see the rule below).
 Duplicating it into `README.md` produces two versions that drift, and
-the `README.md` always loses. We have already paid for that mistake
-once — do not repeat it. If you find yourself adding a new section to
-`README.md`, that section belongs in the book; add it under
-`docs/src/...`, link it from `SUMMARY.md`, and at most add one bullet
-in the README's documentation list pointing at it.
+the `README.md` always loses. We already paid for that mistake once;
+that is the entire reason this rule exists. If you find yourself adding
+a new section to `README.md`, that section belongs in the book; add it
+under `docs/src/...`, link it from `SUMMARY.md`, and at most add one
+bullet in the README's documentation list pointing at it.
 
 Any PR that grows `README.md` past a screenful (rationale paragraph +
 short “Documentation” list pointing into `docs/src/`) must be rejected.
@@ -227,11 +235,11 @@ Rules:
   the docs via the book; the LLM reads them via
   `(vis/extension-doc '<id> "<doc-name>")` and
   `(vis/extension-readme '<id>)` from inside `:code`.
-- Do NOT add a second copy of any doc anywhere in the extension tree
-  (no `extensions/<name>/README.md`, no
-  `docs/src/extensions/<id>.md` containing inlined content,
-  no `extensions/<name>/src/.../README.md`). `vis.edn` is the
-  canonical location.
+- Keep ONE copy of every doc — inside `vis.edn`, nowhere else. The
+  extension tree carries no sibling `extensions/<name>/README.md`, no
+  `docs/src/extensions/<id>.md` with inlined content, no
+  `extensions/<name>/src/.../README.md`. `vis.edn` is the canonical
+  location.
 - `:content` is Markdown with sentence-case headings and real UTF-8
   characters — same rules as the book (see the docs-style rule
   above). When the extension is end-user-facing, surface it from
@@ -251,8 +259,8 @@ Rules:
   file in your source tree and re-inline it into `vis.edn` with a
   small `pprint`-based generator script (see
   `dev/inline-doc.clj`-style helpers, or write your own — the
-  contract is just "produce a valid EDN map"). Do NOT keep two
-  on-disk copies of the same content under version control.
+  contract is just "produce a valid EDN map"). Keep ONE on-disk copy
+  under version control — the inlined `vis.edn` entry.
 - The vis-foundation extension exposes the LLM-facing surface for this:
   `(vis/extensions)` lists every loaded extension with its docs
   catalog; `(vis/extension-docs ext-ref)` returns the
@@ -293,7 +301,8 @@ followed by an update to the relevant doc if the change affects:
 Doc files (all under the repo-root `docs/` tree, NOT inside any package):
 - `docs/src/README.md` — introduction (why RLM, why SCI, the problem,
   how Vis works, security model, prior art). Merged from the old
-  `rationale.md`; do NOT recreate `rationale.md`.
+  `rationale.md`; the merged page replaces it (recreating
+  `rationale.md` re-introduces the duplication this merge fixed).
 - `docs/src/usage.md` — getting started (install, auth, the four
   ways to talk to the agent, browsing past conversations).
 - `docs/src/architecture/` — overview, packages, iteration flow,
@@ -323,7 +332,7 @@ shipped to readers as broken rendering or unreadable noise.
    the page looks like an editor crash dump. Type the actual
    characters: `—` (em dash, U+2014), `…` (ellipsis, U+2026), `├`
    `─` `└` (box-drawing, U+2500 family). If your editor escapes
-   them on save, fix the editor; do not commit the escapes. CI grep:
+   them on save, fix the editor; commit the real glyphs. CI grep:
 
    ```bash
    grep -rn '\\u[0-9a-f]\{4\}' docs/src/ && exit 1
@@ -422,7 +431,7 @@ sqlite3 -header $DB "
   ORDER BY es.created_at;"
 ```
 
-Cross-reference with `~/.vis/vis.log` to recover the full pre-truncation `thinking`, raw LLM reasoning, input/output tokens, and `rlm-stage` transitions. Logs complement the DB; they don't replace it.
+Cross-reference with `~/.vis/vis.log` to recover the full pre-truncation `thinking`, raw LLM reasoning, input/output tokens, and `rlm-stage` transitions. Logs complement the DB and stand alongside it as a second view of the same events.
 
 Only AFTER the DB has been inspected may you form a hypothesis, propose a fix, or blame the model, the UI, or the runtime loop. This rule exists because repeated incidents wasted a turn on plausible-sounding code-only explanations when the DB would have pinpointed the bug in one query.
 
@@ -463,9 +472,9 @@ It scans root `deps.edn` + every `packages/*/deps.edn`, rewrites
 only `{:mvn/version "..."}` entries that follow the exact
 coordinate (leaves `:local/root` deps alone), runs
 `./verify.sh --quick`, and `git add`s the modified files. Idempotent
-— re-running with the same version is a no-op. Do NOT hand-edit N
-deps.edn files for a shared bump; the script is the single supported
-path.
+— re-running with the same version is a no-op. The script is the
+single supported path for a shared bump; hand-editing N deps.edn
+files falls outside the contract.
 
 Full svar release flow (cross-repo):
 
@@ -524,8 +533,8 @@ the whole product on the classpath.
 **Canonical package list:** `docs/src/architecture/packages.md` —
 the single source of truth for what each package does, where it
 lives, the dependency direction, and the auto-discovery resources.
-Update that page when adding/removing/renaming a package; do not
-maintain a divergent list here.
+Update that page when adding/removing/renaming a package; this file
+links to the canonical list rather than duplicating it.
 
 Quick mental map (use `packages.md` for details):
 
@@ -556,15 +565,16 @@ Docs build: `cd docs && mdbook-mermaid install . && mdbook serve --open`
 (mdBook source lives at the repo root under `docs/`, not inside any
 package).
 
-**DO NOT create or maintain a directory-structure file.** The codebase
-changes faster than any static tree can track. Use `find`, `ls`, `grep`
-to explore. If an agent writes a directory-structure doc, delete it.
+**Skip directory-structure docs entirely.** The codebase changes faster
+than any static tree can track, so the tree is always stale by the
+time it is read. Use `find`, `ls`, `grep` to explore. Any
+directory-structure doc that lands in-tree gets deleted on sight.
 
 ## Ubiquitous Language (MANDATORY)
 
 - Use `conversation`, never `session`, for the product concept across TUI, Telegram, and CLI.
 - Use `turn` for the product-level ask+answer. `query` and `iteration` remain runtime internals.
-- Use `tool` and `skill`. Do not use `capability` as a catch-all for agent features.
+- Use `tool` and `skill` for agent features. `capability` survives only inside provider/router APIs that already require that word — never as our own catch-all.
 - Keep `capability` / `capabilities` only where an external provider/router API already requires that word.
 - Use `channel` for `:tui`, `:vis`, `:telegram`, and `:cli`. The `:vis`
   channel is the TUI's conversation namespace (TUI calls
@@ -572,18 +582,18 @@ to explore. If an agent writes a directory-structure doc, delete it.
   id used by `vis-channel-tui`'s `channel/register-global!` for CLI dispatch.
 - Use `environment` in public API. `env` is allowed in internal local bindings only.
 
-### No abbreviated identifiers in source code
+### Spell domain terms out in source code
 
-Do NOT abbreviate domain terms in identifiers. Spell things out. The cost
-of a few extra characters is dwarfed by the readability win and by the
-risk of an LLM-or-human reader misreading a half-formed shorthand. The
-rule applies to: function names, fn parameters, `let`-bindings,
-`def`/`defn` names, `:keys` destructuring, map keys we author, doc
-strings, log keys, and metric names.
+Spell domain terms out in identifiers. The cost of a few extra characters
+is dwarfed by the readability win and by the risk of an LLM-or-human
+reader misreading a half-formed shorthand. The rule applies to: function
+names, fn parameters, `let`-bindings, `def`/`defn` names, `:keys`
+destructuring, map keys we author, doc strings, log keys, and metric
+names.
 
 **Banned abbreviations — use the full word:**
 
-| Don't write | Write           |
+| Replace     | Write           |
 | ----------- | --------------- |
 | `iter`      | `iteration`     |
 | `expr`      | `expression`    |
@@ -606,7 +616,7 @@ strings, log keys, and metric names.
 | `dur`       | `duration`      |
 | `info`      | `information` (only at the end of a name; `db-info` stays — it's a domain noun) |
 
-**Idioms that stay** (Clojure-native; do not change):
+**Idioms that stay** (Clojure-native; keep as-is):
 
 - `var`, `vars`, `defn`, `def`, `let`, `fn`, `ns`, `sym`, `ctx`, `opts`,
   `args`, `id`, `db`, `str` (only as `clojure.string` alias or in
@@ -636,9 +646,9 @@ They are bound via `bind-and-bump!` in `iteration-loop` (turn-start
 for `TURN_*`, iteration boundaries for `ITERATION_*` /
 `CONVERSATION_*`) so the symbols always resolve in the sandbox.
 
-Do NOT introduce earmuffed names (`*query*`, `*foo*`) for new system
-vars. The system-var registry (`SYSTEM_VAR_NAMES`) is a fixed set;
-adding to it is a deliberate API change, not a free-form pattern.
+Keep new system vars in the UPPERCASE form (`FOO_BAR`, no earmuffs).
+The system-var registry (`SYSTEM_VAR_NAMES`) is a fixed set; adding
+to it is a deliberate API change, not a free-form pattern.
 
 Why uppercase, not earmuffs:
 
@@ -744,14 +754,14 @@ Use `find`/`grep` to explore the tree — no static directory doc exists.
 
 ### Refactor Rules
 
-- Do not introduce new `session` names in code, routes, vars, logs, or UI copy.
-- Do not introduce new catch-all `capability` names when the real concept is `tool` or `skill`.
+- New names land as `conversation` (never `session`) in code, routes, vars, logs, and UI copy.
+- New names land as `tool` or `skill` (never a catch-all `capability`) when the real concept is one of those two.
 - If `routes` or `presenter` code needs raw `conversations/env-for` or DB access, the boundary is wrong.
 - Prefer in-place renames for vocabulary fixes; split files only when a namespace owns multiple contexts.
 - Prefer functional ownership over historical placement: shared vs core vs persistence vs presentation vs channels, inside the correct bounded context.
 - Put reusable functions in `*.shared`, orchestration in `*.core`, storage in `*.persistence*`, rendering in `*.presentation*`, and external surfaces in `channels.*`.
 - Use `core.clj` as the default application/use-case namespace in each bounded context.
-- Do not turn `loop.core` into a dumping ground for unrelated behavior.
+- Keep `loop.core` focused on iteration orchestration; unrelated behavior lands in its own bounded context.
 - Treat conversations as an RLM subcontext, not as a top-level bounded context separate from RLM.
 - Treat `agent.clj` as CLI-owned helper code, not as a separate adapter. It lives at `packages/vis-main/src/com/blockether/vis_main/channels/cli/agent.clj` alongside `channels/cli.clj` in the same package.
 
@@ -930,10 +940,10 @@ and `(vis/var-history 'sym)`.
 The deprecated built-in `var-history` still works for backwards
 compatibility.
 
-Do NOT reintroduce a `<prior_thinking>` blob, the lossy summarization
-chain it produced, or the `HANDOVER_KEEP_LAST=2` cross-query special
-case — those were deleted on purpose. The plan slot replaces all of
-them with a bounded, structured, sticky projection.
+The `<prior_thinking>` blob, the lossy summarization chain it produced,
+and the `HANDOVER_KEEP_LAST=2` cross-query special case were deleted
+on purpose. The plan slot replaces all of them with a bounded,
+structured, sticky projection — keep the new path.
 
 **Frontend wiring:**
 - **TUI (`vis-channel-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates a fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes the env, the conversation stays in the `:vis` channel so other inspectors can see it.

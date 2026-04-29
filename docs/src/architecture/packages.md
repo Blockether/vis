@@ -42,6 +42,7 @@ re-listing it.
 | `src/com/blockether/vis/internal/loop.clj` | Iteration loop, query engine, conversation lifecycle, environment lifecycle, router management. |
 | `src/com/blockether/vis/internal/main.clj` | `vis` binary surface: `-main`, dispatcher wiring, persistence-backed Telemere `:db` handler, built-in commands (`run` / `auth` / `doctor` / `conversations` / `extensions list`), one-shot `agent` + `run!` helpers. |
 | `src/com/blockether/vis/internal/manifest.clj` | `META-INF/vis-extension/vis.edn` classpath scanner. |
+| `src/com/blockether/vis/internal/markdown.clj` | Conversation -> Markdown exporter. Single host helper for projecting a persisted conversation (every turn: user prompt + final answer + optional metadata) into a paste-friendly Markdown string. Surface: `conversation->markdown`. Lives in the runtime so every channel (TUI, Telegram, CLI agent, third-party) ships a `Copy as Markdown` / `Export conversation` affordance through the same projection. |
 | `src/com/blockether/vis/internal/persistance.clj` | Storage facade: `db-create-connection!`, every `db-store-*` / `db-list-*` / `db-update-*`, backend self-registration (`register-backend!`). |
 | `src/com/blockether/vis/internal/progress.clj` | Streaming progress tracker. |
 | `src/com/blockether/vis/internal/prompt.clj` | `assemble-system-prompt` (single source of truth), `build-iteration-context`, `CORE_SYSTEM_PROMPT`. |

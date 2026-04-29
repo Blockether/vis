@@ -156,9 +156,8 @@
    Never throws.
 
    `:provider-model` is a derived `\"provider/model\"` display string
-   (e.g. `\"openai/gpt-4o\"`) so callers don't have to format it
-   themselves — the canonical data still lives in `:provider` and
-   `:model` separately."
+   (e.g. `\"openai/gpt-4o\"`) so callers render it directly — the
+   canonical data still lives in `:provider` and `:model` separately."
   [query]
   (let [provider-model (format-provider-model (:provider query) (:model query))]
     (cond-> {}
@@ -294,10 +293,10 @@
 (defn- advice-for-classification [classification]
   (case classification
     :provider-schema-rejected
-    "Provider returned prose/string instead of the iteration map. Do not inspect SQLite; the raw preview is already here. Continue after the built-in schema retry, or switch model if it repeats."
+    "Provider returned prose/string instead of the iteration map. Skip the SQLite trip — the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "Clojure strings do not support \\|. Use bare | for regex alternation inside a string, or use a #\"…\" regex literal for complex patterns."
+    "Clojure strings reject \\| as an escape. Use bare | for regex alternation inside a string, or switch to a #\"…\" regex literal for complex patterns."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
@@ -495,7 +494,8 @@
     :else       (re-pattern (str x))))
 
 (defn- code-matches? [pattern attempt]
-  ;; `re-find` is `(pattern, string)` — don't thread it.
+  ;; `re-find` is `(pattern, string)` — call it positionally; threading
+  ;; would flip the args.
   (let [code (:code attempt)]
     (and (string? code) (re-find pattern code))))
 

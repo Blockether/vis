@@ -480,7 +480,7 @@
   (stdout! "  --model NAME      Override the configured model.")
   (stdout! "  --name NAME       Set the agent name (default: cli).")
   (stdout! "  --db PATH|:memory Override the SQLite path (or :memory).")
-  (stdout! "  --no-persist      Don't write anything to ~/.vis/vis.mdb.")
+  (stdout! "  --no-persist      Skip writes to ~/.vis/vis.mdb.")
   (stdout! "                    Runs in an ephemeral env; no row in the")
   (stdout! "                    `:cli` channel, no resume, no trace on disk.")
   (stdout! "")
@@ -701,8 +701,8 @@
 ;;
 ;; `run`, `auth`, `conversations`, `doctor` are the binary's own
 ;; commands. They live at the top of the command tree -- `vis run
-;; "..."`, NOT `vis extensions run "..."` -- and so they DO NOT use
-;; `:ext/cli` (which is the extensions-subcommand slot, see below).
+;; "..."`, NOT `vis extensions run "..."` -- so they bypass
+;; `:ext/cli` (the extensions-subcommand slot, see below).
 ;; Direct `register-cmd!` is the right plumbing here; vis-runtime
 ;; is the host, not an extension contributing to `vis extensions`.
 

@@ -196,8 +196,9 @@
               (cond-> {:id (:id preset)
                        :base-url base-url
                        :models [{:name model}]}
-                ;; For Copilot, don't persist the short-lived API token —
-                ;; config.clj resolves it dynamically from the OAuth token.
+                ;; For Copilot, leave the short-lived API token out of
+                ;; the persisted config — config.clj resolves it
+                ;; dynamically from the OAuth token on each request.
                 (and api-key (not oauth?)) (assoc :api-key api-key)))))))))
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
