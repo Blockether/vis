@@ -2254,6 +2254,34 @@
 (def ^:const MESSAGE_MARGIN_RIGHT  3)  ;; cols right gutter (1 col padding before
 ;; the scrollbar at cols-2, then 1 col edge after).
 (def ^:const MESSAGE_SIDE_PAD      (+ MESSAGE_MARGIN_LEFT MESSAGE_MARGIN_RIGHT))
+
+(defn scrollbar-thumb-geometry
+  "Pure thumb-row math, shared by the painter (`draw-messages-area!`)
+   and the click-detector (`screen.clj` mouse handler) so the two
+   layers can NEVER disagree about which rows belong to the thumb.
+
+   Inputs:
+   - `total-h`   total rendered height of all message bubbles.
+   - `inner-h`   visible viewport height (== `track-h`).
+   - `scroll`    current row offset; `nil` means auto-bottom.
+
+   Returns `{:thumb-top-rel long :thumb-h long :max-scroll long}`,
+   where `:thumb-top-rel` is rows from the TOP of the track (caller
+   adds the absolute `bar-top` to convert to screen coordinates).
+   Returns `nil` when there's no overflow — no thumb is drawn, no
+   click should hit-test as on-thumb."
+  [^long total-h ^long inner-h scroll]
+  (when (and (pos? inner-h) (> total-h inner-h))
+    (let [track-h    inner-h
+          max-scroll (max 1 (- total-h inner-h))
+          eff-scroll (let [s (long (or scroll max-scroll))]
+                       (max 0 (min s max-scroll)))
+          thumb-h    (max 1 (long (* track-h (/ (double inner-h) total-h))))
+          thumb-top  (long (* (- track-h thumb-h)
+                             (/ (double eff-scroll) max-scroll)))]
+      {:thumb-top-rel thumb-top
+       :thumb-h       thumb-h
+       :max-scroll    max-scroll})))
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.
@@ -2293,18 +2321,16 @@
                   (< message-top inner-h))
             (draw-chat-bubble! clip (nth messages idx) message-top MESSAGE_MARGIN_LEFT bubble-w))))
 
-      (when (> total-h inner-h)
-        (let [max-scroll (max 1 (- total-h inner-h))
-              track-h    inner-h
-              thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
-              thumb-pos  (int (* (- track-h thumb-h) (/ (double eff-scroll) max-scroll)))
-               ;; Place the scrollbar inside the right gutter so it
-               ;; never overlaps message content.
-              bar-col    (- cols 2)
-              bar-top    text-top]
+      (when-let [{:keys [thumb-top-rel thumb-h]}
+                 (scrollbar-thumb-geometry total-h inner-h eff-scroll)]
+        ;; Place the scrollbar inside the right gutter so it never
+        ;; overlaps message content.
+        (let [bar-col (- cols 2)
+              bar-top text-top
+              track-h inner-h]
           (doseq [r (range track-h)]
             (p/set-colors! g t/border-fg t/terminal-bg)
             (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
           (doseq [r (range thumb-h)]
             (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-            (p/set-char! g bar-col (+ bar-top thumb-pos r) \u2588)))))))
+            (p/set-char! g bar-col (+ bar-top thumb-top-rel r) \u2588)))))))

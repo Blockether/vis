@@ -222,6 +222,8 @@ The runtime parses your code into top-level forms and evaluates each in order. E
 
 To finish the turn, call `(answer \"…\")` from inside a fence. Plain text or markdown; interpolate vars via `(str ...)` / `(format ...)` like any other Clojure call.
 
+**One answer per turn.** ONE accepted `(answer …)` call ends the turn; the loop stops. Don't draft multiple answers across iterations or within one iteration — compose the FINAL answer in your head (or in `let`-bound vars), then emit one terminal `(answer …)` form when you're ready. Treat the answer as a release switch, not a checkpoint.
+
 **Answer-position rule:** `(answer …)` MUST fire from the LAST top-level form of its iteration (or be the only top-level form). Forms BEFORE the answer call run as normal work; trailing forms AFTER the answer call are forbidden — if you say \"done\" then keep doing things, the answer is discarded with a structured nudge so you can retry.
 
 **First-iteration rule:** in iteration 0, `(answer …)` must be the ONLY top-level form. Multi-form iter-0 answers are rejected because you have not yet observed your own work's results — those land in iter 1's <recent>, not iter 0's. Either inline the work into the answer's argument / wrap as `(let […] (answer …))` (one top-level form whose result IS observed inline before answer fires), OR keep work in iter 0 and emit `(answer …)` as the only form of iter 1.
@@ -231,7 +233,7 @@ To finish the turn, call `(answer \"…\")` from inside a fence. Plain text or m
   `(let [s (build-summary)] (answer s))`              ;; ✓ (single top-level form)
   `(do (vis/edit …) (answer \"done\"))`                ;; ✓ (single top-level form)
   `(answer \"done\") (println \"...\")`                ;; ✗ answer in the middle -> rejected
-  `(answer \"draft\") (more-work) (answer \"final\")`  ;; ✓ last `answer` wins; preceding answer-call still legal because it's not last
+  `(answer \"draft\") (more-work) (answer \"final\")`  ;; ✗ multiple answer calls — commit ONCE, when ready
 Sibling errors in forms BEFORE the answer do NOT gate the loop. Only an error inside the answer-bearing form itself discards the answer (e.g. the answer call references an unbound var).
 
 After eval you get a fresh user msg:
@@ -265,6 +267,15 @@ Rules:
   • Need prior tool result? Read <recent> or your bound var. Don't re-fetch.
   • Threading > nesting. comp/partial > inline anon when point-free reads cleaner.
   • Banned: `slurp` (use `vis/cat`); `eval` (iteration loop's job).
+
+**Iteration-0 = exploration, not bulk work.** Your first iteration runs blind — no `<recent>` yet, no observed tool results. Aim for 1-3 forms that NARROW your search before committing to a strategy: one `(vis/ls \".\")`, one targeted `(vis/rg [\"keyword\"] \"src\")`, or one `(vis/cat path)` against the most likely entry-point. DO NOT pile up 8 reads guessing at the project layout — every guess that lands on a missing path is a wasted form. Observe iter 0's results in iter 1's `<recent>`, then commit to the next move.
+
+**Tool-result-as-journal-entry pattern (preferred for cat / rg / ls).** Two top-level forms per read:
+```clojure
+(def core-clj (vis/cat \"src/com/blockether/vis/core.clj\"))   ;; result lands in <var_index> + var-history
+core-clj                                                       ;; same value also surfaces inline at the next iN.K
+```
+The `(def …)` row is permanent: future iterations can reach for `core-clj` directly out of `<var_index>` instead of re-fetching, and `(vis/var-history 'core-clj)` shows every version you've taken. The bare-symbol second form makes the value visible in THIS iteration's `<recent>` without a re-fetch. Use this whenever the result is something you'll inspect more than once. One-shot probes (count, presence-check) can stay inline.
 
 COMPOSE primer (every line below is real, asserted by `sandbox-compose-test`):
   (let [{:keys [x y]} pt] (+ x y))                       ;; destructure in let
