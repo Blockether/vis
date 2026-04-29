@@ -1578,8 +1578,8 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented six SYSTEM vars"
-    (expect (= '#{QUERY ANSWER REASONING
+  (it "SYSTEM_VAR_NAMES contains exactly the documented seven SYSTEM vars"
+    (expect (= '#{QUERY ANSWER REASONING TITLE
                   CURRENT_QUERY_ID CURRENT_ITERATION_ID
                   EXTENSIONS}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
@@ -1590,6 +1590,7 @@
       (expect (true?  (system-var-sym? 'QUERY)))
       (expect (true?  (system-var-sym? 'ANSWER)))
       (expect (true?  (system-var-sym? 'REASONING)))
+      (expect (true?  (system-var-sym? 'TITLE)))
       (expect (true?  (system-var-sym? 'EXTENSIONS)))
       (expect (false? (system-var-sym? 'CONFIG)))
       (expect (false? (system-var-sym? 'foo))))))
