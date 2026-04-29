@@ -243,7 +243,7 @@
         ;; one column makes `format-iteration-entry` size labels for
         ;; one bubble-w while `draw-chat-bubble!` paints into a
         ;; different bubble-w — right-aligned labels (`CODE 3`,
-        ;; `✓ 3ms`, `FINAL ASSISTANT_TURN_ANSWER`) wrap onto two lines from the
+        ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
         bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
         progress-extra {:now-ms         now-ms

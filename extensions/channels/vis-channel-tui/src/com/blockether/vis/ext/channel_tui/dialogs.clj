@@ -45,7 +45,7 @@
    (1) + body (~7) + separator (1) + hint (1) + borders (2). Below
    this the chrome eats the body and small dialogs look squashed next
    to each other."
-  12)
+  14)
 
 (def ^:const DIALOG_CHROME_W 4)  ;; border(1) + pad(1) each side
 (def ^:const DIALOG_CHROME_H 6)  ;; top + title + sep + body + sep + hint + bot

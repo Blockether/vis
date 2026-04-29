@@ -357,54 +357,76 @@
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 
 ;; SYSTEM vars are read-only bindings the loop maintains for the
-;; agent:
-;;   USER_TURN_REQUEST                 current user query (string)
-;;   REASONING             last iteration's thinking (string)
-;;   ASSISTANT_TURN_ANSWER                previous turn's final answer (string)
-;;   CURRENT_QUERY_ID      UUID of the in-flight turn (= current query)
-;;   CURRENT_ITERATION_ID  UUID of the most recently persisted iteration
-;;                         row (nil before the first iteration commits;
-;;                         iteration N's :code sees iteration N-1's id
-;;                         because the row for N is written AFTER eval)
-;;   ACTIVE_EXTENSIONS            vec of compact maps describing every extension
-;;                         that passed activation for THIS turn. Frozen at
-;;                         turn start; iteration-loop binds it once and
-;;                         never mutates again within the turn so the
-;;                         model can rely on a stable view
-;;                         (`(filter ...) ACTIVE_EXTENSIONS`) without
-;;                         round-tripping through `(foundation/extensions)`.
-;;                         Shape per element:
-;;                           {:alias    'foundation
-;;                            :namespace 'com.blockether.vis.ext.foundation.introspection
-;;                            :doc      "..."
-;;                            :version  "..."            ;; when present
-;;                            :group    "..."            ;; when present
-;;                            :symbols  [sym1 sym2 ...]
-;;                            :docs     ["README.md" ...]}
+;; agent. Three lifetime tiers, each tagged by its prefix:
+;;
+;;   TURN_*         frozen at turn start, immutable for the whole turn
+;;     TURN_USER_REQUEST           user's current message text (string)
+;;     TURN_QUERY_ID               UUID of THIS in-flight turn (== query soul)
+;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under
+;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
+;;                                 turn start (the row this query was attached
+;;                                 to). Stable for the whole turn even if a
+;;                                 sibling write changes title; only an
+;;                                 explicit fork bumps the state id.
+;;     TURN_SYSTEM_PROMPT          full assembled system prompt that drove THIS
+;;                                 turn (core prompt + every active-extension
+;;                                 prompt block). Useful for the model to
+;;                                 verify what rules it is operating under
+;;                                 without round-tripping through an extension.
+;;     TURN_ACTIVE_EXTENSIONS      vec of compact maps describing every extension
+;;                                 that passed activation for THIS turn.
+;;                                 Iteration-loop binds it once and never mutates
+;;                                 again within the turn so the model can rely on
+;;                                 a stable view (`(filter …) TURN_ACTIVE_EXTENSIONS`)
+;;                                 without round-tripping through
+;;                                 `(vis/extensions)`. Shape per element:
+;;                                   {:alias    'vis
+;;                                    :namespace 'com.blockether.vis.ext.foundation.introspection
+;;                                    :doc      "..."
+;;                                    :version  "..."            ;; when present
+;;                                    :group    "..."            ;; when present
+;;                                    :symbols  [sym1 sym2 ...]
+;;                                    :docs     ["README.md" ...]}
+;;
+;;   ITERATION_*    rebound at every iteration boundary
+;;     ITERATION_ID                  UUID of the most recently persisted iteration
+;;                                   row (nil before the first iteration commits;
+;;                                   iteration N's :code sees iteration N-1's id
+;;                                   because the row for N is written AFTER eval)
+;;     ITERATION_PREVIOUS_REASONING  previous iteration's :thinking text (string)
+;;
+;;   CONVERSATION_* conversation-state, mutates freely within the turn
+;;     CONVERSATION_TITLE            current conversation title ("" until set).
+;;                                   The model writes via the host primitive
+;;                                   `(conversation-title "...")`, never by
+;;                                   `def`-ing it directly — the SYSTEM-var write
+;;                                   guard in `loop.clj` rejects that on principle.
+;;     CONVERSATION_PREVIOUS_ANSWER  previous turn's final answer string ("" on
+;;                                   the very first turn). Despite being scoped
+;;                                   to the conversation, it is rebound at every
+;;                                   iteration so a `(answer …)` call inside
+;;                                   iteration N is observable in iteration N+1.
+;;
 ;; UPPERCASE marks them as constants. The set is a fixed registry;
 ;; adding to it is a deliberate API change. See AGENTS.md → "SYSTEM
 ;; vars are UPPERCASE and explicitly defined".
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
-   var?' check is needed: var-index sort+status, auto-forget guard,
-   <system_state> rendering, etc.
+   var?' check is needed: var-index sort+status, auto-forget guard, etc.
 
-   Each name is explicit about WHAT it carries so the agent never
-   guesses:
-     USER_TURN_REQUEST     — user's current message text
-     ASSISTANT_TURN_ANSWER — previous turn's final answer string
-     REASONING             — last iteration's :thinking text
-     CONVERSATION_TITLE    — current conversation title (\"\" until set)
-     CURRENT_QUERY_ID      — UUID of the in-flight turn
-     CURRENT_ITERATION_ID  — UUID of the last persisted iteration
-     ACTIVE_EXTENSIONS            — frozen vec of active-extension descriptors
-
-   The model writes the conversation title via the host primitive
-   `(conversation-title \"...\")`, never by `def`-ing CONVERSATION_TITLE
-   directly (the SYSTEM-var write guard in `loop.clj` rejects that on
-   principle)."
-  '#{USER_TURN_REQUEST REASONING ASSISTANT_TURN_ANSWER
-     CURRENT_QUERY_ID CURRENT_ITERATION_ID ACTIVE_EXTENSIONS CONVERSATION_TITLE})
+   See the comment block above this def for full per-name documentation
+   and the prefix-based lifetime convention
+   (`TURN_*`, `ITERATION_*`, `CONVERSATION_*`)."
+  '#{TURN_USER_REQUEST
+     TURN_QUERY_ID
+     TURN_CONVERSATION_SOUL_ID
+     TURN_CONVERSATION_STATE_ID
+     TURN_SYSTEM_PROMPT
+     TURN_ACTIVE_EXTENSIONS
+     ITERATION_ID
+     ITERATION_PREVIOUS_REASONING
+     CONVERSATION_TITLE
+     CONVERSATION_PREVIOUS_ANSWER})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed
@@ -601,9 +623,10 @@
   "Build the `<var_index>` block from user-defined vars in the SCI sandbox.
 
    Returns nil when no user vars exist; otherwise a multi-line string
-   with one entry per `(def ...)`. SYSTEM vars (USER_TURN_REQUEST / REASONING /
-   ASSISTANT_TURN_ANSWER) and initial-ns bindings (tools, helpers) are excluded —
-   the model reads SYSTEM vars by name directly from the sandbox.
+   with one entry per `(def ...)`. SYSTEM vars (every name in
+   `SYSTEM_VAR_NAMES` — `TURN_*`, `ITERATION_*`, `CONVERSATION_*`) and
+   initial-ns bindings (tools, helpers) are excluded — the model reads
+   SYSTEM vars by name directly from the sandbox.
 
    Sort order: most-recently-bound first."
   ([sci-ctx initial-ns-keys]

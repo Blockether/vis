@@ -225,8 +225,8 @@ Rules:
 - `vis.edn` is the **single source of truth** for that extension
   (purpose, surface, when to use it, when not to). End users read
   the docs via the book; the LLM reads them via
-  `(foundation/extension-doc '<id> "<doc-name>")` and
-  `(foundation/extension-readme '<id>)` from inside `:code`.
+  `(vis/extension-doc '<id> "<doc-name>")` and
+  `(vis/extension-readme '<id>)` from inside `:code`.
 - Do NOT add a second copy of any doc anywhere in the extension tree
   (no `extensions/<name>/README.md`, no
   `docs/src/extensions/<id>.md` containing inlined content,
@@ -236,7 +236,7 @@ Rules:
   characters — same rules as the book (see the docs-style rule
   above). When the extension is end-user-facing, surface it from
   `docs/src/SUMMARY.md` with a short manual page that points
-  readers at `(foundation/extension-readme '<id>)` (the book is allowed to
+  readers at `(vis/extension-readme '<id>)` (the book is allowed to
   briefly summarize, but MUST NOT inline the full body).
 - The id (top-level key in `vis.edn`) MUST equal the registered
   extension's `:ext/ns-alias :alias`. The loader does not enforce
@@ -254,11 +254,11 @@ Rules:
   contract is just "produce a valid EDN map"). Do NOT keep two
   on-disk copies of the same content under version control.
 - The vis-foundation extension exposes the LLM-facing surface for this:
-  `(foundation/extensions)` lists every loaded extension with its docs
-  catalog; `(foundation/extension-docs ext-ref)` returns the
+  `(vis/extensions)` lists every loaded extension with its docs
+  catalog; `(vis/extension-docs ext-ref)` returns the
   `[{:name :created-at :description :links :reflinks} …]` summaries
-  for one extension; `(foundation/extension-doc ext-ref name)` returns the
-  full descriptor including `:content`; `(foundation/extension-readme
+  for one extension; `(vis/extension-doc ext-ref name)` returns the
+  full descriptor including `:content`; `(vis/extension-readme
   ext-ref)` is the README `:content` convenience.
 
 Why: agents that need to verify what an extension actually does —
@@ -334,7 +334,7 @@ shipped to readers as broken rendering or unreadable noise.
    humans, not an API index entry.
 
    - Bad: `## \`:before-fn\` — entry decorator`,
-     `### \`(foundation/turn)\``,
+     `### \`(vis/turn)\``,
      `### 1) \`conversation_soul\``,
      `### Embedded \`:cmd/subcommands\` vector`,
      `### Render caches (\`ext/channel_tui/render.clj :: fmt-cache\`)`,
@@ -345,7 +345,7 @@ shipped to readers as broken rendering or unreadable noise.
 
    The keyword / function name / table name / file path that the
    section documents goes in the **first line of the body** as a
-   short "Slot key: \`:before-fn\`" / "Call: \`(foundation/turn)\`" /
+   short "Slot key: \`:before-fn\`" / "Call: \`(vis/turn)\`" /
    "Table: \`conversation_soul\`" / "Lives in:
    \`ext/channel_tui/render.clj\`" lead. The reader still gets the
    identifier; it just isn't load-bearing on the heading.
@@ -618,14 +618,23 @@ strings, log keys, and metric names.
 
 ### SYSTEM vars are UPPERCASE and explicitly defined
 
-The sandbox-visible system vars carrying the user's current query, the
-model's last reasoning text, and the prior-turn final answer are named
-**`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`** — ALL CAPS, no earmuffs.
+The sandbox-visible system vars are split across three prefix-tagged
+lifetime tiers:
 
-They are explicitly `(def USER_TURN_REQUEST nil)` / `(def REASONING nil)` /
-`(def ASSISTANT_TURN_ANSWER nil)` at environment construction so the symbols always
-resolve, even before the first turn. They are subsequently rebound
-after each iteration via the iteration loop's bookkeeping.
+- **`TURN_*`** — frozen at turn start: `TURN_USER_REQUEST`,
+  `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`,
+  `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`,
+  `TURN_ACTIVE_EXTENSIONS`.
+- **`ITERATION_*`** — rebound at every iteration: `ITERATION_ID`,
+  `ITERATION_PREVIOUS_REASONING`.
+- **`CONVERSATION_*`** — conversation-state, mutates freely:
+  `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`.
+
+ALL CAPS, no earmuffs.
+
+They are bound via `bind-and-bump!` in `iteration-loop` (turn-start
+for `TURN_*`, iteration boundaries for `ITERATION_*` /
+`CONVERSATION_*`) so the symbols always resolve in the sandbox.
 
 Do NOT introduce earmuffed names (`*query*`, `*foo*`) for new system
 vars. The system-var registry (`SYSTEM_VAR_NAMES`) is a fixed set;
@@ -910,15 +919,15 @@ three structured slots, not by a `<prior_thinking>` blob.
 - `<recent_thought>` — last iteration's `:thinking` text only,
   capped at 4000 chars.
 
-SYSTEM vars (`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`) appear inlined in
+SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_*`, `ITERATION_*`, `CONVERSATION_*`) appear inlined in
 `<system_state>` with their current values, NOT in `<var_index>`. The
 previous turn's bounded digest (`{:goal :counts :outcome
 :abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.
 
 When the agent genuinely needs older reasonings, the (opt-in)
-`vis-foundation` extension exposes `(foundation/diagnose)`, `(foundation/failures)`,
-`(foundation/turn)`, `(foundation/conversation)`, `(foundation/find-attempts pattern)`,
-and `(foundation/var-history 'sym)`.
+`vis-foundation` extension exposes `(vis/diagnose)`, `(vis/failures)`,
+`(vis/turn)`, `(vis/conversation)`, `(vis/find-attempts pattern)`,
+and `(vis/var-history 'sym)`.
 The deprecated built-in `var-history` still works for backwards
 compatibility.
 

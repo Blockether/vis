@@ -1329,63 +1329,82 @@
       vec)))
 
 (defn update-system-vars!
-  "Rebind REASONING, ASSISTANT_TURN_ANSWER and CONVERSATION_TITLE in the SCI sandbox after an
-   iteration. See `SYSTEM_VAR_NAMES` for the full SYSTEM-var registry.
+  "Rebind the per-iteration SYSTEM vars in the SCI sandbox after an
+   iteration commits. See `SYSTEM_VAR_NAMES` for the full SYSTEM-var
+   registry.
 
-   `CONVERSATION_TITLE` mirrors the env's `:conversation-title-atom` so a `(conversation-title \"...\")` call
-   inside iteration N is observable to the model in iteration N+1
-   without a DB round-trip."
+   Touches:
+     ITERATION_PREVIOUS_REASONING — last iteration's :thinking text.
+     CONVERSATION_PREVIOUS_ANSWER — latest finalized turn answer; only
+                                     bumps when this iteration produced
+                                     a `final-result` (= terminal answer
+                                     for this turn). For all earlier
+                                     iterations of the same turn it
+                                     keeps the previous turn's value.
+     CONVERSATION_TITLE           — mirrors `:conversation-title-atom`
+                                     so a `(conversation-title \"...\")`
+                                     inside iteration N is observable
+                                     to the model in iteration N+1
+                                     without a DB round-trip."
   [environment {:keys [thinking final-result final-answer]}]
   (when (seq thinking)
-    (env/bind-and-bump! environment 'REASONING thinking))
+    (env/bind-and-bump! environment 'ITERATION_PREVIOUS_REASONING thinking))
   (when final-result
-    (env/bind-and-bump! environment 'ASSISTANT_TURN_ANSWER final-answer))
+    (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER final-answer))
   (when-let [conversation-title-atom (:conversation-title-atom environment)]
     (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
-(defn update-current-iteration-id!
-  "Rebind `CURRENT_ITERATION_ID` in the SCI sandbox to the freshly-
-   persisted iteration row's UUID. Mirrors `:current-iteration-id-atom`.
-   No-op when `iteration-id` is nil."
+(defn update-iteration-id!
+  "Rebind `ITERATION_ID` in the SCI sandbox to the freshly-persisted
+   iteration row's UUID. Mirrors `:current-iteration-id-atom`. No-op
+   when `iteration-id` is nil."
   [environment iteration-id]
   (when iteration-id
-    (env/bind-and-bump! environment 'CURRENT_ITERATION_ID iteration-id)))
+    (env/bind-and-bump! environment 'ITERATION_ID iteration-id)))
 
 (defn inject-system-var-snapshots
   "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
    `SYSTEM_VAR_NAMES` on EVERY iteration. The model's
-   `(foundation/var-history 'X)` then returns ONE row per iteration
+   `(vis/var-history 'X)` then returns ONE row per iteration
    for each X, even when the value is unchanged or blank.
 
-   Yes, constant-value vars (USER_TURN_REQUEST, CURRENT_QUERY_ID,
-   ACTIVE_EXTENSIONS) repeat verbatim across iterations — that is the
-   intentional contract: \"every iteration carries a snapshot of
-   every SYSTEM var\". The dedup-on-unchanged optimization the
-   previous version did was a row-saving micro-opt that kept the
-   var-history vec stuck on iter 0 for those names.
+   Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_QUERY_ID,
+   TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
+   TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS) repeat verbatim across
+   iterations of the same turn — that is the intentional contract:
+   \"every iteration carries a snapshot of every SYSTEM var\". The
+   dedup-on-unchanged optimization the previous version did was a
+   row-saving micro-opt that kept the var-history vec stuck on iter 0
+   for those names.
 
    Each var is normalized to a non-nil string so `expression_state`
-   never stores nil for a SYSTEM var — makes the version vec a
-   clean log of values across iterations."
+   never stores nil for a SYSTEM var — makes the version vec a clean
+   log of values across iterations."
   [vars-snapshot {:keys [query thinking final-answer
-                         current-query-id current-iteration-id
+                         turn-query-id iteration-id
+                         conversation-soul-id conversation-state-id
+                         system-prompt
                          extensions-snapshot conversation-title]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
-      (stamp "USER_TURN_REQUEST"     (or query ""))
-      (stamp "REASONING"             (or thinking ""))
-      (stamp "ASSISTANT_TURN_ANSWER" (or final-answer ""))
-      (stamp "CONVERSATION_TITLE"    (or conversation-title ""))
-      (stamp "CURRENT_QUERY_ID"      (or current-query-id ""))
-      (stamp "CURRENT_ITERATION_ID"  (or current-iteration-id ""))
-      (stamp "ACTIVE_EXTENSIONS"            (or extensions-snapshot [])))))
+      (stamp "TURN_USER_REQUEST"            (or query ""))
+      (stamp "TURN_QUERY_ID"                (or turn-query-id ""))
+      (stamp "TURN_CONVERSATION_SOUL_ID"    (or conversation-soul-id ""))
+      (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
+      (stamp "TURN_SYSTEM_PROMPT"           (or system-prompt ""))
+      (stamp "TURN_ACTIVE_EXTENSIONS"       (or extensions-snapshot []))
+      (stamp "ITERATION_ID"                 (or iteration-id ""))
+      (stamp "ITERATION_PREVIOUS_REASONING" (or thinking ""))
+      (stamp "CONVERSATION_TITLE"           (or conversation-title ""))
+      (stamp "CONVERSATION_PREVIOUS_ANSWER" (or final-answer "")))))
 
 (defn update-title-system-var!
-  "Rebind CONVERSATION_TITLE in the SCI sandbox to whatever the env's conversation-title-atom
-   currently holds. Called once at iteration 0 so the first iteration
-   sees the live title; per-iteration rebinds happen in
-   `update-system-vars!` (alongside REASONING / ASSISTANT_TURN_ANSWER)."
+  "Rebind CONVERSATION_TITLE in the SCI sandbox to whatever the env's
+   conversation-title-atom currently holds. Called once at iteration 0
+   so the first iteration sees the live title; per-iteration rebinds
+   happen in `update-system-vars!` (alongside
+   ITERATION_PREVIOUS_REASONING / CONVERSATION_PREVIOUS_ANSWER)."
   [environment]
   (when-let [conversation-title-atom (:conversation-title-atom environment)]
     (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
@@ -1485,19 +1504,39 @@
                                                     (cond-> {:namespace (str (:ext/namespace ext))}
                                                       (:ext/version ext) (assoc :version (:ext/version ext))))
                                               active-exts)}))]
-    (env/bind-and-bump! environment 'USER_TURN_REQUEST query)
-    (env/bind-and-bump! environment 'CURRENT_QUERY_ID query-id)
-    ;; Reset CURRENT_ITERATION_ID to nil at turn start; rebound by
-    ;; `update-current-iteration-id!` after each iteration row commits.
-    (env/bind-and-bump! environment 'CURRENT_ITERATION_ID nil)
-    ;; ACTIVE_EXTENSIONS = frozen, fully-realized vec describing every
-    ;; extension that activated for THIS turn. Bound once here and
-    ;; never mutated within the loop — the model gets a stable view
-    ;; for the entire turn. Built off the same `active-exts` we hand
-    ;; to the prompt assembler / nudge collector, so the agent's
-    ;; <var_index> picture matches the actually-loaded surface.
-    (env/bind-and-bump! environment 'ACTIVE_EXTENSIONS
+    ;; -----------------------------------------------------------------
+    ;; Turn-start SYSTEM-var bindings.
+    ;;
+    ;; Every `TURN_*` here is bound exactly once per turn and never
+    ;; mutated again until the next turn opens — the model gets a
+    ;; stable view for the entire iteration loop. `ITERATION_*` resets
+    ;; here and rebinds per iteration. `CONVERSATION_*` is touched at
+    ;; iteration boundaries via `update-system-vars!` /
+    ;; `update-title-system-var!`.
+    ;; -----------------------------------------------------------------
+    (env/bind-and-bump! environment 'TURN_USER_REQUEST query)
+    (env/bind-and-bump! environment 'TURN_QUERY_ID query-id)
+    (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
+      (:conversation-id environment))
+    (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID
+      (persistance/db-latest-conversation-state-id
+        (:db-info environment) (:conversation-id environment)))
+    ;; The full assembled system prompt that drives THIS turn. SYSTEM
+    ;; vars are excluded from `<var_index>` (see `env/build-var-index`)
+    ;; so binding a multi-KB string here does NOT enter per-iteration
+    ;; prompt context — it is only paid for if the model evaluates the
+    ;; symbol explicitly (e.g. to verify what rules it is bound by).
+    (env/bind-and-bump! environment 'TURN_SYSTEM_PROMPT system-prompt)
+    ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
+    ;; every extension that activated for THIS turn. Built off the same
+    ;; `active-exts` we hand to the prompt assembler / nudge collector,
+    ;; so the agent's <var_index> picture matches the actually-loaded
+    ;; surface.
+    (env/bind-and-bump! environment 'TURN_ACTIVE_EXTENSIONS
       (prompt/extensions-snapshot active-exts))
+    ;; Reset ITERATION_ID to nil at turn start; rebound by
+    ;; `update-iteration-id!` after each iteration row commits.
+    (env/bind-and-bump! environment 'ITERATION_ID nil)
     (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-query-id-atom environment)] (reset! a query-id))
@@ -1574,7 +1613,7 @@
                   ;; \"iteration-error-data\" as cancellation, not a real failure: skip
                   ;; the trace entry, skip the DB write, skip the on-chunk
                   ;; error chunk (otherwise the bubble paints a phantom
-                  ;; ITERATION N ERROR block right next to FINAL ASSISTANT_TURN_ANSWER:
+                  ;; ITERATION N ERROR block right next to FINAL ANSWER:
                   ;; \"_Cancelled by user._\"). Bail straight to the cancel
                   ;; result that the top-of-loop branch would have produced.
                   (if (and cancel-atom @cancel-atom)
@@ -1600,7 +1639,7 @@
                                               :llm-model (str (:name resolved-model))
                                               :metadata (iteration-metadata)})]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
-                      (update-current-iteration-id! environment err-iteration-id)
+                      (update-iteration-id! environment err-iteration-id)
                       ;; Live error chunk — `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
@@ -1634,11 +1673,16 @@
                                         {:query              query
                                          :thinking           thinking
                                          :final-answer       final-answer
-                                         :current-query-id   query-id
-                                         :current-iteration-id previous-iteration-id
+                                         :turn-query-id      query-id
+                                         :iteration-id       previous-iteration-id
+                                         :conversation-soul-id  (:conversation-id environment)
+                                         :conversation-state-id (persistance/db-latest-conversation-state-id
+                                                                  (:db-info environment)
+                                                                  (:conversation-id environment))
+                                         :system-prompt      system-prompt
                                          ;; Same frozen snapshot bound in SCI.
                                          ;; Re-stamped every iteration so
-                                         ;; foundation/var-history 'ACTIVE_EXTENSIONS
+                                         ;; vis/var-history 'TURN_ACTIVE_EXTENSIONS
                                          ;; returns one row per iter, not just iter 0.
                                          :extensions-snapshot (prompt/extensions-snapshot active-exts)
                                          ;; Live conversation title; same value
@@ -1667,7 +1711,7 @@
                                         :llm-model (:llm-model iteration-result)
                                         :metadata iteration-metadata-with-metrics})
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
-                        _ (update-current-iteration-id! environment iteration-id)
+                        _ (update-iteration-id! environment iteration-id)
                         _ (emit-hook! on-iteration
                             {:iteration iteration
                              :status (cond final-result :final (empty? blocks) :empty :else :success)
@@ -2131,10 +2175,11 @@
   "Unmap `names` from the SCI sandbox namespace. Used by the
    deterministic auto-forget at query boundaries.
 
-   HARD GUARD: SYSTEM vars (USER_TURN_REQUEST, REASONING, ASSISTANT_TURN_ANSWER, ... see `SYSTEM_VAR_NAMES`)
-   can NEVER be forgotten — they are contract surfaces the iteration
-   loop re-binds every turn; dropping them would tear the sandbox
-   mid-turn. Filtered out + logged."
+   HARD GUARD: SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — the
+   `TURN_*` / `ITERATION_*` / `CONVERSATION_*` registry) can NEVER be
+   forgotten — they are contract surfaces the iteration loop re-binds
+   every turn; dropping them would tear the sandbox mid-turn.
+   Filtered out + logged."
   [sci-ctx names]
   (let [raw-syms (keep (fn [n]
                          (cond (symbol? n) n
@@ -2145,7 +2190,7 @@
     (when (seq system-syms)
       (tel/log! {:level :info :id ::forget-system-var-refused
                  :data {:requested (mapv str system-syms)}
-                 :msg "Refusing to forget SYSTEM vars (*foo*) — ignoring those names"}))
+                 :msg "Refusing to forget SYSTEM vars — ignoring those names"}))
     (when (seq user-syms)
       (try
         (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]

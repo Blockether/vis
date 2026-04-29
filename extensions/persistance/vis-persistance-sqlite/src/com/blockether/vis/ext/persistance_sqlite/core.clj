@@ -377,6 +377,18 @@
                          {:builder-fn rs/as-unqualified-lower-maps}))]
         (->uuid (:id row))))))
 
+(defn db-latest-conversation-state-id
+  "Return the latest `conversation_state.id` UUID for the soul behind
+   `conversation-id` (which is the soul id). Used by the iteration
+   loop to bind `TURN_CONVERSATION_STATE_ID` so the agent can reference
+   the exact `conversation_state` row this turn was attached to.
+   Returns nil when the conversation is unknown or the env has no
+   datasource."
+  [db-info conversation-id]
+  (when (and (ds db-info) conversation-id)
+    (let [soul-id-s (->ref conversation-id)]
+      (some-> (latest-state-for db-info soul-id-s) :id ->uuid))))
+
 (defn db-update-conversation-title! [db-info conversation-id title]
   (when (and (ds db-info) conversation-id)
     (let [soul-id-s (->ref conversation-id)]

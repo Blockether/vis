@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — `<recent>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`, `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS`) the model can read directly. Optional `[system_nudge]` line when the model executes the same expression twice.
+1. **Build Context** — `<recent>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) the model can read directly. Optional `[system_nudge]` line when the model executes the same expression twice.
 2. **Ask LLM** — plain-text completion + fenced code-block
    extraction. The call site is
    `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
@@ -113,24 +113,44 @@ between iterations. Continuity is delivered by:
   addressable by `iN.K` ids.
 - **`<var_index>`** — user-defined `(def …)` bindings, type-aware
   rendering (see below).
-- **SCI bindings** — the SYSTEM vars (`USER_TURN_REQUEST`, `ASSISTANT_TURN_ANSWER`, `REASONING`,
-  `CURRENT_QUERY_ID`, `CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS`) the model
-  can read directly from inside a fenced code block.
+- **SCI bindings** — the SYSTEM vars (every name in `SYSTEM_VAR_NAMES`
+  — see [SYSTEM vars](#system-vars) below) the model can read directly
+  from inside a fenced code block.
 
 For deeper introspection, the opt-in `vis-foundation` extension
-exposes `(foundation/turn)`, `(foundation/conversation)`, `(foundation/conversations)`,
-`(foundation/var-history 'sym)`, `(foundation/find-attempts pattern)`,
-`(foundation/failures)`, and `(foundation/diagnose)`. See
+exposes `(vis/turn)`, `(vis/conversation)`, `(vis/conversations)`,
+`(vis/var-history 'sym)`, `(vis/find-attempts pattern)`,
+`(vis/failures)`, and `(vis/diagnose)`. See
 [Meta extension](../extensions/common/vis-foundation.md).
 
 ## SYSTEM vars
 
-`USER_TURN_REQUEST`, `REASONING`, `ASSISTANT_TURN_ANSWER`, `CURRENT_QUERY_ID`,
-`CURRENT_ITERATION_ID`, `ACTIVE_EXTENSIONS` are read-only sandbox bindings.
-UPPERCASE marks them as constants; the registry `SYSTEM_VAR_NAMES`
-is fixed. See `com.blockether.vis.core/system-var-sym?` for the
-predicate. SYSTEM vars are excluded from `<var_index>` and are not
-subject to auto-forget — the model reads them as plain SCI symbols.
+The registry `SYSTEM_VAR_NAMES` is fixed. Names are split across three
+prefix-tagged lifetime tiers:
+
+- **`TURN_*`** — frozen at turn start, immutable for the whole turn:
+  - `TURN_USER_REQUEST` — user's current message text.
+  - `TURN_QUERY_ID` — UUID of THIS in-flight turn (== query soul id).
+  - `TURN_CONVERSATION_SOUL_ID` — UUID of the `conversation_soul` row.
+  - `TURN_CONVERSATION_STATE_ID` — UUID of the latest `conversation_state` row at turn start.
+  - `TURN_SYSTEM_PROMPT` — the full assembled system prompt driving THIS turn.
+  - `TURN_ACTIVE_EXTENSIONS` — frozen vec of compact extension descriptors.
+- **`ITERATION_*`** — rebound at every iteration boundary:
+  - `ITERATION_ID` — UUID of the most recently persisted iteration (nil before iter 1).
+  - `ITERATION_PREVIOUS_REASONING` — last iteration's `:thinking` text.
+- **`CONVERSATION_*`** — conversation-state, mutates freely within the turn:
+  - `CONVERSATION_TITLE` — current conversation title ("" until set).
+  - `CONVERSATION_PREVIOUS_ANSWER` — previous turn's final answer string.
+
+UPPERCASE marks them as constants. See
+`com.blockether.vis.core/system-var-sym?` for the predicate. SYSTEM
+vars are excluded from `<var_index>` and are not subject to
+auto-forget — the model reads them as plain SCI symbols.
+
+`TURN_SYSTEM_PROMPT` carries the full assembled system prompt as a
+multi-KB string; because SYSTEM vars are excluded from `<var_index>`,
+the binding costs zero per-iteration tokens. It only enters context
+when the model evaluates the symbol explicitly.
 
 ## Var index
 
@@ -171,4 +191,4 @@ There is no `<vars_archive>` block. Vars that get auto-forgotten
 (see `auto-forget-stale-vars!` in `internal/loop.clj`) drop out of
 the sandbox and are no longer rendered. The DB still carries their
 full history; the agent recovers prior versions on demand via
-`(foundation/var-history 'sym)` (from `vis-foundation`).
+`(vis/var-history 'sym)` (from `vis-foundation`).

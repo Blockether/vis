@@ -121,7 +121,7 @@
 
    The previous `:show-iteration-headers` and `:show-final-answer-header`
    toggles were removed: the ITERATION N / CODE N / STDOUT / ERROR /
-   FINAL ASSISTANT_TURN_ANSWER superscripts they controlled have been deleted from
+   FINAL ANSWER superscripts they controlled have been deleted from
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
   {:show-thinking             true

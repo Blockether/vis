@@ -71,7 +71,7 @@
 ;;   2nd pass: (247 250 254) — barely-tinted, still visible.
 ;;   3rd pass (current, per user request): identical to terminal-bg
 ;;     so there is NO visual answer-zone background at all. The
-;;     answer is distinguished by the optional `FINAL ASSISTANT_TURN_ANSWER`
+;;     answer is distinguished by the optional `FINAL ANSWER`
 ;;     header glyph + heading colours, NOT by a bg block. Cleaner
 ;;     read when answers are the bulk of the bubble.
 ;; Kept as a separate `def` (rather than aliased to `terminal-bg`)

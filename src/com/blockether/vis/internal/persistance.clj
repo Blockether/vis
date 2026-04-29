@@ -246,6 +246,7 @@
 (defdelegate db-delete-conversation-tree!        [db-info id])
 (defdelegate db-fork-conversation!               [db-info conversation-id opts])
 (defdelegate db-list-conversation-states         [db-info conversation-id])
+(defdelegate db-latest-conversation-state-id     [db-info conversation-id])
 
 ;; --- Query lifecycle ---
 (defdelegate db-store-query!                  [db-info opts])

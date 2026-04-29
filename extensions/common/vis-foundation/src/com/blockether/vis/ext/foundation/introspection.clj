@@ -3,17 +3,17 @@
    state from inside `:code`. Ten functions, all returning maps or
    vectors so the agent can manipulate the data structurally:
 
-   - `(foundation/turn)`                       → current turn snapshot (one map)
-   - `(foundation/conversation [id])`          → current or specific conversation
-   - `(foundation/conversations [channel])`    → list every conversation, optionally filtered
-   - `(foundation/var-history sym [id])`       → version timeline for a var
-   - `(foundation/find-attempts pattern [id])` → regex search over executed code
-   - `(foundation/failures [id])`              → provider + code failures as data
-   - `(foundation/diagnose [id])`              → counts and next actions for stalled turns
-   - `(foundation/extensions)`                 → catalog of every loaded extension
-   - `(foundation/extension-docs [ref])`       → docs declared by an extension with descriptions
-   - `(foundation/extension-doc ref name)`     → full Markdown body of a declared doc
-   - `(foundation/extension-readme ref)`       → convenience for (extension-doc ref README.md)
+   - `(vis/turn)`                       → current turn snapshot (one map)
+   - `(vis/conversation [id])`          → current or specific conversation
+   - `(vis/conversations [channel])`    → list every conversation, optionally filtered
+   - `(vis/var-history sym [id])`       → version timeline for a var
+   - `(vis/find-attempts pattern [id])` → regex search over executed code
+   - `(vis/failures [id])`              → provider + code failures as data
+   - `(vis/diagnose [id])`              → counts and next actions for stalled turns
+   - `(vis/extensions)`                 → catalog of every loaded extension
+   - `(vis/extension-docs [ref])`       → docs declared by an extension with descriptions
+   - `(vis/extension-doc ref name)`     → full Markdown body of a declared doc
+   - `(vis/extension-readme ref)`       → convenience for (extension-doc ref README.md)
 
    Every function is a pure read off the same DB tables the projection
    layer reads from (or a classpath read for the doc accessors).
@@ -34,7 +34,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
 ;; registry (`sdk/registered-channels`) so any third-party channel jar
-;; on the classpath surfaces in `(foundation/conversations)` automatically —
+;; on the classpath surfaces in `(vis/conversations)` automatically —
 ;; no edits to this file when a new front-end ships.
 ;;
 ;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
@@ -74,21 +74,20 @@
 (defn- current-query-id
   "UUID of the in-flight turn, or nil when no turn is running yet.
 
-   Internally the turn is persisted as a `query` row — hence the legacy
-   binding name `CURRENT_QUERY_ID` and this helper's `query-id` suffix.
-   The product concept is *turn*; everywhere this id is surfaced to
-   the model (e.g. `(foundation/turn)` results, the `:in-flight-turn-id`
-   slot) it's labelled `turn`. Read from `:current-query-id-atom` set
-   by
-   `iteration-loop`. Mirrors the SCI-visible `CURRENT_QUERY_ID` system
-   var so meta-fns can filter it without round-tripping through SCI."
+   Internally the turn is persisted as a `query` row — hence the
+   `:current-query-id-atom` env key and this helper's `query-id`
+   suffix. The product concept is *turn*; everywhere this id is
+   surfaced to the model (e.g. `(vis/turn)` results, the
+   `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
+   SCI-visible `TURN_QUERY_ID` SYSTEM var so meta-fns can filter
+   it without round-tripping through SCI."
   [env]
   (some-> (:current-query-id-atom env) deref))
 
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
    or any object whose `str` is the canonical UUID form. Used to
-   match `CURRENT_QUERY_ID` against a turn's `:id` regardless of
+   match `TURN_QUERY_ID` against a turn's `:id` regardless of
    whether the persistence layer returned a UUID or a string."
   [a b]
   (and a b (= (str a) (str b))))
@@ -115,7 +114,7 @@
 
 (defn- attempts-from-iterations
   "Walk `iterations` (in DB order) and collect every executed
-   expression. Used by `(foundation/turn)` and by `find-attempts`."
+   expression. Used by `(vis/turn)` and by `find-attempts`."
   [db-info iterations]
   (vec
     (mapcat (fn [iteration]
@@ -346,7 +345,7 @@
             (catch Throwable _ [])))))
 
 (defn- turn-snapshot
-  "The single-call rich snapshot returned by `(foundation/turn)`. Aggregates
+  "The single-call rich snapshot returned by `(vis/turn)`. Aggregates
    the per-iteration data the prompt projection does NOT carry
    (attempts, provider/code failures, cost, elapsed-ms, redundancy)
    plus the iteration pointer. The agent picks what it needs by map
@@ -370,7 +369,7 @@
 (defn- conversation-snapshot
   "Map for a single conversation: identity + every turn rolled up to a
    compact `{:id :goal :outcome :answer :iteration-count :status}`
-   shape. Used by `(foundation/conversation [id])`.
+   shape. Used by `(vis/conversation [id])`.
 
    `:iteration-count` is the integer number of LLM rounds the turn
    consumed. Spelled out so it never gets confused with the vector
@@ -406,14 +405,14 @@
 ;; ---------------------------------------------------------------------------
 ;; Meta fns — each takes `env` as first arg via the shared
 ;; `:before-fn` injector below. The agent never sees `env`; it calls
-;; e.g. `(foundation/turn)` with zero args.
+;; e.g. `(vis/turn)` with zero args.
 ;; ---------------------------------------------------------------------------
 
 (defn- foundation-turn [env]
   (turn-snapshot env))
 
 (defn- foundation-conversation
-  "Snapshot for a conversation. The in-flight turn (= current `CURRENT_QUERY_ID`)
+  "Snapshot for a conversation. The in-flight turn (= current `TURN_QUERY_ID`)
    is automatically excluded from `:turns` because its `:iteration-count` /
    `:total-cost` haven't been finalized yet — listing it would render
    as `null | $null` and confuse downstream summaries. The excluded id
@@ -504,7 +503,7 @@
   "Regex search over executed `:code` strings. With one arg, searches
    the CURRENT TURN's attempts only. With two args, searches every turn
    of the given conversation. To scan EVERY conversation in the DB use
-   `foundation/find-attempts-everywhere` instead. Returns
+   `vis/find-attempts-everywhere` instead. Returns
    `[{:turn-id :iteration-id :iteration :code :result :error} …]` —
    `[]` (never nil) when nothing matches or the env is missing handles."
   ([env pattern]
@@ -556,8 +555,8 @@
      :provider :model :created-at :iteration-count}`. Version 0 with
    `:forked-from-query-state-id nil` is the original run; any higher
    version is a retry. `query-id` is a `query_soul` UUID — the same id
-   surfaced as `:turn-id` by `foundation/find-attempts`, `:id` by `foundation/turn`,
-   or `:turns[].id` by `foundation/conversation`. Returns `[]` (never nil)
+   surfaced as `:turn-id` by `vis/find-attempts`, `:id` by `vis/turn`,
+   or `:turns[].id` by `vis/conversation`. Returns `[]` (never nil)
    when the query is unknown or the env is missing handles."
   [env query-id]
   (if (and (:db-info env) query-id)
@@ -586,7 +585,7 @@
   "Provider/schema and code/tool failures, normalized into one
    chronological vector. No arg = current turn. Pass a conversation id
    to scan every turn in that conversation. To scan EVERY conversation
-   in the DB use `foundation/failures-everywhere` instead. Returns `[]`
+   in the DB use `vis/failures-everywhere` instead. Returns `[]`
    (never nil) when there is nothing to report or the env is missing
    handles."
   ([env]
@@ -687,7 +686,7 @@
             clusters))
 
         (contains? classes :provider-schema-rejected)
-        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from foundation/failures and retry/switch model only if it repeats.")
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from vis/failures and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
         (conj (str "vis/rg now takes a non-empty vector of LITERAL substrings, not a regex string. "
@@ -704,7 +703,7 @@
         (conj "Use any :near-match hint, then re-read the smallest file slice and emit an exact SEARCH block.")))))
 
 (defn- foundation-diagnose
-  "Compact current-turn diagnosis built from foundation/failures. Returns a
+  "Compact current-turn diagnosis built from vis/failures. Returns a
    map with counts, repetition-loop detection, and next actions so the
    agent can stop burning iterations on DB spelunking. Pass a
    conversation id to diagnose all turns in that conversation.
@@ -744,12 +743,12 @@
 ;; Every extension declares itself in a single classpath resource at
 ;; `META-INF/vis-extension/vis.edn`, an EDN map keyed by id
 ;; (`{<id-symbol> {:nses [...] :docs {<name> <body>}}}`). The id is the
-;; same token the LLM uses as the SCI sandbox alias (`'foundation`, `'vis`,
+;; same token the LLM uses as the SCI sandbox alias (`'vis`, `'vis`,
 ;; etc.). Each doc descriptor is a map with `:description` (one-paragraph
 ;; summary) + `:content` (full Markdown body) as plain EDN strings.
-;; `(foundation/extension-docs ...)` returns the descriptions (no `:content`)
+;; `(vis/extension-docs ...)` returns the descriptions (no `:content`)
 ;; so the LLM can scan the index before pulling a full body via
-;; `(foundation/extension-doc ...)`.
+;; `(vis/extension-doc ...)`.
 ;; See AGENTS.md ▸ "Every extension ships a single canonical README
 ;; in vis.edn".
 ;; ---------------------------------------------------------------------------
@@ -759,8 +758,8 @@
 
 (defn- reference-as-symbol
   "Coerce an extension reference to the canonical id symbol used by
-   the docs registry. Accepts the id symbol itself (`'foundation`), a
-   keyword (`:foundation`), a string (`\"meta\"`), the alias-ns symbol
+   the docs registry. Accepts the id symbol itself (`'vis`), a
+   keyword (`:vis`), a string (`\"meta\"`), the alias-ns symbol
    (`'vis.ext.foundation`), or the full extension namespace (
    `'com.blockether.vis.ext.foundation.introspection`). Multi-segment symbols are
    resolved through the global extension registry."
@@ -845,7 +844,7 @@
 
 (defn- foundation-extension-readme
   "Convenience: full Markdown body of an extension's canonical
-   README. Equivalent to `(:content (foundation/extension-doc ref
+   README. Equivalent to `(:content (vis/extension-doc ref
    \"README.md\"))`. Every extension is required to declare a README
    in its `vis.edn`, so this returns text for any registered
    extension that follows the convention."
@@ -878,11 +877,11 @@
     {:doc       (str "Snapshot of the current turn as a single map: "
                   "{:id :goal :status :attempts :errors :failures "
                   ":iteration :cost :redundancy :elapsed-ms}. The agent "
-                  "reads keys directly: (filter :error (:attempts (foundation/turn))), etc.")
+                  "reads keys directly: (filter :error (:attempts (vis/turn))), etc.")
      :arglists  '([])
-     :examples  ["(foundation/turn)"
-                 "(count (:attempts (foundation/turn)))"
-                 "(filter #(re-find #\"grep\" (:code %)) (:attempts (foundation/turn)))"]
+     :examples  ["(vis/turn)"
+                 "(count (:attempts (vis/turn)))"
+                 "(filter #(re-find #\"grep\" (:code %)) (:attempts (vis/turn)))"]
      :before-fn inject-environment}))
 
 (def conversation-symbol
@@ -893,14 +892,14 @@
                   "(e.g. `\"openai/gpt-4o\"`); the raw `:provider` and `:model` "
                   "are kept as separate canonical keys. Default = current "
                   "conversation; pass an id to inspect any other. "
-                  "The in-flight turn (= `CURRENT_QUERY_ID`) is auto-excluded "
+                  "The in-flight turn (= `TURN_QUERY_ID`) is auto-excluded "
                   "from `:turns` because its `:iteration-count` / `:total-cost` are "
                   "not finalized yet; the excluded id is returned as "
                   "`:in-flight-turn-id` so callers can opt into seeing it.")
      :arglists  '([] [conversation-id])
-     :examples  ["(foundation/conversation)"
-                 "(foundation/conversation \"3a7b2c…\")"
-                 "(map :answer (:turns (foundation/conversation)))"]
+     :examples  ["(vis/conversation)"
+                 "(vis/conversation \"3a7b2c…\")"
+                 "(map :answer (:turns (vis/conversation)))"]
      :before-fn inject-environment}))
 
 (def conversations-symbol
@@ -910,9 +909,9 @@
                   "No arg = all channels; pass :tui / :telegram / :cli / "
                   ":vis to filter to one.")
      :arglists  '([] [channel])
-     :examples  ["(foundation/conversations)"
-                 "(foundation/conversations :telegram)"
-                 "(filter #(= :telegram (:channel %)) (foundation/conversations))"]
+     :examples  ["(vis/conversations)"
+                 "(vis/conversations :telegram)"
+                 "(filter #(= :telegram (:channel %)) (vis/conversations))"]
      :before-fn inject-environment}))
 
 (def var-history-symbol
@@ -921,9 +920,9 @@
                   "[{:value :code :version} …] oldest-first. Defaults to "
                   "the current conversation; pass an id to read from another.")
      :arglists  '([sym] [sym conversation-id])
-     :examples  ["(foundation/var-history 'callers)"
-                 "(foundation/var-history \"foo-fn\")"
-                 "(foundation/var-history 'foo \"3a7b2c…\")"]
+     :examples  ["(vis/var-history 'callers)"
+                 "(vis/var-history \"foo-fn\")"
+                 "(vis/var-history 'foo \"3a7b2c…\")"]
      :before-fn inject-environment}))
 
 (def find-attempts-symbol
@@ -931,13 +930,13 @@
     {:doc       (str "Regex search over executed :code strings. One-arg "
                   "form scans the CURRENT TURN only; two-arg form scans "
                   "every turn of the given conversation. To scan every "
-                  "conversation in the DB use `foundation/find-attempts-everywhere`. "
+                  "conversation in the DB use `vis/find-attempts-everywhere`. "
                   "Returns [{:turn-id :iteration-id :iteration :code :result :error} …] "
                   "— [] (never nil) when nothing matches.")
      :arglists  '([pattern] [pattern conversation-id])
-     :examples  ["(foundation/find-attempts \"grep\")"
-                 "(foundation/find-attempts #\"\\bdef\\b\" \"3a7b2c…\")"
-                 "(map :code (foundation/find-attempts \"foo-fn\"))"]
+     :examples  ["(vis/find-attempts \"grep\")"
+                 "(vis/find-attempts #\"\\bdef\\b\" \"3a7b2c…\")"
+                 "(map :code (vis/find-attempts \"foo-fn\"))"]
      :before-fn inject-environment}))
 
 (def conversation-forks-symbol
@@ -951,10 +950,10 @@
                   "No-arg form = current conversation. Returns [] (never nil) "
                   "when the conversation has no rows or no fork tree.")
      :arglists  '([] [conversation-id])
-     :examples  ["(foundation/conversation-forks)"
-                 "(foundation/conversation-forks \"3a7b2c…\")"
-                 "(group-by :parent-state-id (foundation/conversation-forks))"
-                 "(filter :parent-state-id (foundation/conversation-forks))"]
+     :examples  ["(vis/conversation-forks)"
+                 "(vis/conversation-forks \"3a7b2c…\")"
+                 "(group-by :parent-state-id (vis/conversation-forks))"
+                 "(filter :parent-state-id (vis/conversation-forks))"]
      :before-fn inject-environment}))
 
 (def query-retries-symbol
@@ -966,12 +965,12 @@
                   "Version 0 = the original run; higher versions are retries "
                   "with :forked-from-query-state-id pointing at the previous :state-id. "
                   "`query-id` = the query_soul UUID surfaced as :turn-id by "
-                  "find-attempts / :id by (foundation/turn) / :turns[].id by (foundation/conversation). "
+                  "find-attempts / :id by (vis/turn) / :turns[].id by (vis/conversation). "
                   "Returns [] (never nil) when the query has no rows.")
      :arglists  '([query-id])
-     :examples  ["(foundation/query-retries (:id (foundation/turn)))"
-                 "(foundation/query-retries \"3a7b2c…\")"
-                 "(filter :forked-from-query-state-id (foundation/query-retries qid))"]
+     :examples  ["(vis/query-retries (:id (vis/turn)))"
+                 "(vis/query-retries \"3a7b2c…\")"
+                 "(filter :forked-from-query-state-id (vis/query-retries qid))"]
      :before-fn inject-environment}))
 
 (def find-attempts-everywhere-symbol
@@ -983,8 +982,8 @@
                   "specific id when you already know the target. Returns "
                   "[] (never nil) when nothing matches.")
      :arglists  '([pattern])
-     :examples  ["(foundation/find-attempts-everywhere #\"Unmatched delimiter\")"
-                 "(map :conversation-id (foundation/find-attempts-everywhere \"vis/rg\"))"]
+     :examples  ["(vis/find-attempts-everywhere #\"Unmatched delimiter\")"
+                 "(map :conversation-id (vis/find-attempts-everywhere \"vis/rg\"))"]
      :before-fn inject-environment}))
 
 (def failures-symbol
@@ -993,13 +992,13 @@
                   "data. Includes classifications for schema rejections, "
                   "vis/rg escaping mistakes, malformed vis/patch payloads, "
                   "and SEARCH block misses. Pass a conversation id to scan "
-                  "every turn of one conversation; use `foundation/failures-everywhere` "
+                  "every turn of one conversation; use `vis/failures-everywhere` "
                   "to scan every conversation in the DB. Returns [] (never nil) "
                   "when there is nothing to report.")
      :arglists  '([] [conversation-id])
-     :examples  ["(foundation/failures)"
-                 "(filter #(= :patch-no-match (:classification %)) (foundation/failures))"
-                 "(foundation/failures \"3a7b2c…\")"]
+     :examples  ["(vis/failures)"
+                 "(filter #(= :patch-no-match (:classification %)) (vis/failures))"
+                 "(vis/failures \"3a7b2c…\")"]
      :before-fn inject-environment}))
 
 (def failures-everywhere-symbol
@@ -1011,8 +1010,8 @@
                   "when you already know the target. Returns [] (never nil) "
                   "when there is nothing to report.")
      :arglists  '([])
-     :examples  ["(foundation/failures-everywhere)"
-                 "(frequencies (map :classification (foundation/failures-everywhere)))"]
+     :examples  ["(vis/failures-everywhere)"
+                 "(frequencies (map :classification (vis/failures-everywhere)))"]
      :before-fn inject-environment}))
 
 (def diagnose-symbol
@@ -1029,11 +1028,11 @@
                   "First stop for stalled-agent triage, not raw "
                   "SQLite checks.")
      :arglists  '([] [conversation-id])
-     :examples  ["(foundation/diagnose)"
-                 "(:repetition-loop? (foundation/diagnose))"
-                 "(:repetition-clusters (foundation/diagnose))"
-                 "(:next-actions (foundation/diagnose))"
-                 "(foundation/diagnose \"3a7b2c…\")"]
+     :examples  ["(vis/diagnose)"
+                 "(:repetition-loop? (vis/diagnose))"
+                 "(:repetition-clusters (vis/diagnose))"
+                 "(:next-actions (vis/diagnose))"
+                 "(vis/diagnose \"3a7b2c…\")"]
      :before-fn inject-environment}))
 
 (def extensions-symbol
@@ -1045,9 +1044,9 @@
                   "Use this to discover what surfaces are available "
                   "before reaching for a specific tool.")
      :arglists  '([])
-     :examples  ["(foundation/extensions)"
-                 "(map :namespace (foundation/extensions))"
-                 "(map (juxt :alias :docs) (foundation/extensions))"]
+     :examples  ["(vis/extensions)"
+                 "(map :namespace (vis/extensions))"
+                 "(map (juxt :alias :docs) (vis/extensions))"]
      :before-fn inject-environment}))
 
 (def extension-docs-symbol
@@ -1055,15 +1054,15 @@
     {:doc       (str "Doc index for an extension as a vector of "
                   "summaries: {:name :created-at :description :links "
                   ":reflinks} (no :content -- pull that with "
-                  "foundation/extension-doc when needed). Scan descriptions "
+                  "vis/extension-doc when needed). Scan descriptions "
                   "first to decide which full body is worth a fetch. "
                   "With no arg, returns the full registry keyed by "
                   "extension id symbol.")
      :arglists  '([] [extension-ref])
-     :examples  ["(foundation/extension-docs)"
-                 "(foundation/extension-docs 'foundation)"
-                 "(map :description (foundation/extension-docs 'foundation))"
-                 "(:links (first (foundation/extension-docs 'foundation)))"]
+     :examples  ["(vis/extension-docs)"
+                 "(vis/extension-docs 'vis)"
+                 "(map :description (vis/extension-docs 'vis))"
+                 "(:links (first (vis/extension-docs 'vis)))"]
      :before-fn inject-environment}))
 
 (def extension-doc-symbol
@@ -1079,25 +1078,25 @@
                   "references. Returns nil when the extension is not "
                   "registered or declares no doc by that name.")
      :arglists  '([extension-ref doc-name])
-     :examples  ["(foundation/extension-doc 'foundation \"README.md\")"
-                 "(:content (foundation/extension-doc :vis \"README.md\"))"
-                 "(:links       (foundation/extension-doc 'foundation \"README.md\"))"
-                 "(:reflinks    (foundation/extension-doc 'foundation \"README.md\"))"]
+     :examples  ["(vis/extension-doc 'vis \"README.md\")"
+                 "(:content (vis/extension-doc :vis \"README.md\"))"
+                 "(:links       (vis/extension-doc 'vis \"README.md\"))"
+                 "(:reflinks    (vis/extension-doc 'vis \"README.md\"))"]
      :before-fn inject-environment}))
 
 (def extension-readme-symbol
   (sdk/symbol 'extension-readme foundation-extension-readme
     {:doc       (str "Convenience: full Markdown text of an extension's "
                   "canonical README. Equivalent to "
-                  "`(foundation/extension-doc ref \"README.md\")`. The arg may "
+                  "`(vis/extension-doc ref \"README.md\")`. The arg may "
                   "be the full namespace symbol, the alias symbol or "
                   "keyword, or the alias-ns symbol. Returns nil when the "
                   "extension is not registered or ships no README.")
      :arglists  '([extension-ref])
-     :examples  ["(foundation/extension-readme 'foundation)"
-                 "(foundation/extension-readme 'com.blockether.vis.ext.foundation.introspection)"
-                 "(foundation/extension-readme :vis)"
-                 "(println (foundation/extension-readme 'foundation))"]
+     :examples  ["(vis/extension-readme 'vis)"
+                 "(vis/extension-readme 'com.blockether.vis.ext.foundation.introspection)"
+                 "(vis/extension-readme :vis)"
+                 "(println (vis/extension-readme 'vis))"]
      :before-fn inject-environment}))
 
 (def all-symbols
@@ -1117,38 +1116,25 @@
    extension-doc-symbol
    extension-readme-symbol])
 
-;; ---------------------------------------------------------------------------
-;; Extension definition + global registration.
-;; ---------------------------------------------------------------------------
+(def introspection-prompt
+  (str "`vis/` introspection (READ-ONLY; returns maps/vecs; errors -> nil/[]):\n"
+    "  (vis/turn)                       in-flight turn snapshot {:id :goal :status :attempts :errors :failures :iteration :cost :redundancy :elapsed-ms}\n"
+    "  (vis/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= TURN_QUERY_ID).\n"
+    "  (vis/conversations channel?)     list conversations\n"
+    "  (vis/conversation-forks cid?)    list every conversation_state row (trunk + forks)\n"
+    "  (vis/query-retries qid)          list every query_state row (original + retries)\n"
+    "  (vis/var-history 'sym)           prior versions of a SCI def\n"
+    "  (vis/find-attempts pat cid?)     grep prior :code attempts (current turn or one conversation)\n"
+    "  (vis/find-attempts-everywhere pat) grep :code across EVERY conversation in DB (heavy)\n"
+    "  (vis/failures cid?)              classify failed iterations (current turn or one conversation)\n"
+    "  (vis/failures-everywhere)        classify failed iterations across EVERY conversation (heavy)\n"
+    "  (vis/diagnose cid?)              {:repetition-loop? :repetition-clusters :by-classification :next-actions ...}\n"
+    "  (vis/extensions)                 loaded ext catalog\n"
+    "  (vis/extension-docs ext-ref)     declared doc summaries (no content)\n"
+    "  (vis/extension-doc ext-ref name) full doc descriptor incl. :content\n"
+    "  (vis/extension-readme ext-ref)   README :content shortcut\n"))
 
-(def extension
-  (sdk/extension
-    {:ext/namespace 'com.blockether.vis.ext.foundation.introspection
-     :ext/doc       "Meta introspection: read your own turn, conversation, var history, attempts, failure diagnostics, and the canonical README + declared docs (with descriptions) of every loaded extension from inside :code. Returns plain maps and vectors for structural manipulation."
-     :ext/version   "0.6.0"
-     :ext/author    "Blockether"
-     :ext/license   "Apache-2.0"
-     :ext/ns-alias  {:ns 'vis.ext.foundation :alias 'foundation}
-     :ext/group     "meta"
-     :ext/prompt
-     (str "`meta/` = READ-ONLY introspection. Returns maps/vecs. Never throws (errors -> nil/[]).\n"
-       "  (foundation/turn)                       in-flight turn snapshot {:id :goal :status :attempts :errors :failures :iteration :cost :redundancy :elapsed-ms}\n"
-       "  (foundation/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= CURRENT_QUERY_ID).\n"
-       "  (foundation/conversations channel?)     list conversations\n"
-       "  (foundation/conversation-forks cid?)    list every conversation_state row (trunk + forks)\n"
-       "  (foundation/query-retries qid)          list every query_state row (original + retries)\n"
-       "  (foundation/var-history 'sym)           prior versions of a SCI def\n"
-       "  (foundation/find-attempts pat cid?)     grep prior :code attempts (current turn or one conversation)\n"
-       "  (foundation/find-attempts-everywhere pat) grep :code across EVERY conversation in DB (heavy)\n"
-       "  (foundation/failures cid?)              classify failed iterations (current turn or one conversation)\n"
-       "  (foundation/failures-everywhere)        classify failed iterations across EVERY conversation (heavy)\n"
-       "  (foundation/diagnose cid?)              {:repetition-loop? :repetition-clusters :by-classification :next-actions ...}\n"
-       "  (foundation/extensions)                 loaded ext catalog\n"
-       "  (foundation/extension-docs ext-ref)     declared doc summaries (no content)\n"
-       "  (foundation/extension-doc ext-ref name) full doc descriptor incl. :content\n"
-       "  (foundation/extension-readme ext-ref)   README :content shortcut\n"
-       "\n"
-       "Use when: stalled, malformed provider schema, vis/rg parse fail, vis/edit SEARCH miss, repeat fail, before guessing symbol names.")
-     :ext/symbols   all-symbols}))
-
-(sdk/register-extension! extension)
+;; The extension that owns all `vis/`-aliased symbols is built
+;; and registered by `com.blockether.vis.ext.foundation.core`,
+;; not here — this namespace only exposes the symbol vec + prompt
+;; fragment for the aggregator to assemble.

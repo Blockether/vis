@@ -120,7 +120,7 @@ Mount entries at any depth under `vis extensions …` by specifying a
 ;; Throws ex-info with :type :ext/cli-bad-parent at register-extension! time.
 ```
 
-`:ext/cli` is the ACTIVE_EXTENSIONS slot. For top-level commands or other
+`:ext/cli` is the registration slot for extension-owned commands. For top-level commands or other
 placements (the binary's own built-ins, custom command trees), call
 `com.blockether.vis.core/register-cmd!` directly. See
 `src/com/blockether/vis/internal/main.clj` for an example: `vis run`,

@@ -609,36 +609,36 @@
 ;; =============================================================================
 
 (defdescribe system-var-versioning-test
-  (it "REASONING gets a new version each iteration, all under same soul"
+  (it "ITERATION_PREVIOUS_REASONING gets a new version each iteration, all under same soul"
     (let [s   (h/store)
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "Explain monads" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [{:code "(+ 1 1)" :result 2}]
                                           :duration-ms 100
-                                          :vars [{:name "REASONING" :value "First I need to understand what a monad is" :code ";; SYSTEM var"}
-                                                 {:name "USER_TURN_REQUEST" :value "Explain monads" :code ";; SYSTEM var"}]})
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "First I need to understand what a monad is" :code ";; SYSTEM var"}
+                                                 {:name "TURN_USER_REQUEST" :value "Explain monads" :code ";; SYSTEM var"}]})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [{:code "(str \"A monad is\")" :result "A monad is"}]
                                           :duration-ms 200
-                                          :vars [{:name "REASONING" :value "Now I can explain: a monad wraps computation" :code ";; SYSTEM var"}]})
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "Now I can explain: a monad wraps computation" :code ";; SYSTEM var"}]})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks []
                                           :duration-ms 50
-                                          :vars [{:name "REASONING" :value "Final check: the explanation covers functor, applicative, monad" :code ";; SYSTEM var"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
-      ;; Only 1 expression_soul for REASONING (reused across iterations)
-      (expect (= 1 (raw-count s :expression_soul [:and [:= :kind "var"] [:= :name "REASONING"]])))
-      ;; 3 versions of REASONING
-      (let [history (sdk/db-var-history s cid 'REASONING)]
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "Final check: the explanation covers functor, applicative, monad" :code ";; SYSTEM var"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
+      ;; Only 1 expression_soul for ITERATION_PREVIOUS_REASONING (reused across iterations)
+      (expect (= 1 (raw-count s :expression_soul [:and [:= :kind "var"] [:= :name "ITERATION_PREVIOUS_REASONING"]])))
+      ;; 3 versions of ITERATION_PREVIOUS_REASONING
+      (let [history (sdk/db-var-history s cid 'ITERATION_PREVIOUS_REASONING)]
         (expect (= 3 (count history)))
         (expect (= [0 1 2] (mapv :version history)))
         (expect (= "First I need to understand what a monad is" (:value (nth history 0))))
         (expect (= "Now I can explain: a monad wraps computation" (:value (nth history 1))))
         (expect (= "Final check: the explanation covers functor, applicative, monad" (:value (nth history 2)))))
-      ;; USER_TURN_REQUEST has only 1 version (set once on first iteration)
-      (let [qh (sdk/db-var-history s cid 'USER_TURN_REQUEST)]
+      ;; TURN_USER_REQUEST has only 1 version (set once on first iteration)
+      (let [qh (sdk/db-var-history s cid 'TURN_USER_REQUEST)]
         (expect (= 1 (count qh)))
         (expect (= "Explain monads" (:value (first qh)))))
-      ;; ASSISTANT_TURN_ANSWER has only 1 version (set on final iteration)
-      (let [ah (sdk/db-var-history s cid 'ASSISTANT_TURN_ANSWER)]
+      ;; CONVERSATION_PREVIOUS_ANSWER has only 1 version (set on final iteration)
+      (let [ah (sdk/db-var-history s cid 'CONVERSATION_PREVIOUS_ANSWER)]
         (expect (= 1 (count ah)))
         (expect (= "A monad is a design pattern..." (:value (first ah)))))))
 
@@ -647,20 +647,20 @@
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "test" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "USER_TURN_REQUEST" :value "test" :code ";; SYSTEM"}
-                                                 {:name "REASONING" :value "step 1" :code ";; SYSTEM"}]})
+                                          :vars [{:name "TURN_USER_REQUEST" :value "test" :code ";; SYSTEM"}
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "step 1" :code ";; SYSTEM"}]})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}]})
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "step 2" :code ";; SYSTEM"}]})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "42" :code ";; SYSTEM"}]})
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "step 3" :code ";; SYSTEM"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "42" :code ";; SYSTEM"}]})
           reg (sdk/db-latest-var-registry s cid)]
-      (expect (= "test" (:value (get reg 'USER_TURN_REQUEST))))
-      (expect (= 0 (:version (get reg 'USER_TURN_REQUEST))))
-      (expect (= "step 3" (:value (get reg 'REASONING))))
-      (expect (= 2 (:version (get reg 'REASONING))))
-      (expect (= "42" (:value (get reg 'ASSISTANT_TURN_ANSWER))))
-      (expect (= 0 (:version (get reg 'ASSISTANT_TURN_ANSWER))))))
+      (expect (= "test" (:value (get reg 'TURN_USER_REQUEST))))
+      (expect (= 0 (:version (get reg 'TURN_USER_REQUEST))))
+      (expect (= "step 3" (:value (get reg 'ITERATION_PREVIOUS_REASONING))))
+      (expect (= 2 (:version (get reg 'ITERATION_PREVIOUS_REASONING))))
+      (expect (= "42" (:value (get reg 'CONVERSATION_PREVIOUS_ANSWER))))
+      (expect (= 0 (:version (get reg 'CONVERSATION_PREVIOUS_ANSWER))))))
 
   (it "user vars and system vars coexist, each with independent version chains"
     (let [s   (h/store)
@@ -670,14 +670,14 @@
                                           :blocks [{:code "(def data [1 2 3])" :result [1 2 3]}]
                                           :duration-ms 10
                                           :vars [{:name "data" :value [1 2 3] :code "(def data [1 2 3])"}
-                                                 {:name "USER_TURN_REQUEST" :value "compute" :code ";; SYSTEM"}
-                                                 {:name "REASONING" :value "I need to sum the data" :code ";; SYSTEM"}]})
+                                                 {:name "TURN_USER_REQUEST" :value "compute" :code ";; SYSTEM"}
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "I need to sum the data" :code ";; SYSTEM"}]})
           _   (sdk/db-store-iteration! s {:query-id qid
                                           :blocks [{:code "(def result (reduce + data))" :result 6}]
                                           :duration-ms 5
                                           :vars [{:name "result" :value 6 :code "(def result (reduce + data))"}
-                                                 {:name "REASONING" :value "Sum is 6, done" :code ";; SYSTEM"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "6" :code ";; SYSTEM"}]})
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "Sum is 6, done" :code ";; SYSTEM"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
           reg (sdk/db-latest-var-registry s cid)]
       ;; 5 distinct var souls
       (expect (= 5 (count reg)))
@@ -687,10 +687,10 @@
       (expect (= 6 (:value (get reg 'result))))
       (expect (= 0 (:version (get reg 'result))))
       ;; System vars
-      (expect (= "compute" (:value (get reg 'USER_TURN_REQUEST))))
-      (expect (= "Sum is 6, done" (:value (get reg 'REASONING))))
-      (expect (= 1 (:version (get reg 'REASONING))))
-      (expect (= "6" (:value (get reg 'ASSISTANT_TURN_ANSWER))))))
+      (expect (= "compute" (:value (get reg 'TURN_USER_REQUEST))))
+      (expect (= "Sum is 6, done" (:value (get reg 'ITERATION_PREVIOUS_REASONING))))
+      (expect (= 1 (:version (get reg 'ITERATION_PREVIOUS_REASONING))))
+      (expect (= "6" (:value (get reg 'CONVERSATION_PREVIOUS_ANSWER))))))
 
   (it "system vars version across multiple queries in same conversation"
     (let [s   (h/store)
@@ -698,25 +698,25 @@
           ;; Turn 1
           q1  (sdk/db-store-query! s {:parent-conversation-id cid :query "What is 2+2?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q1 :blocks [] :duration-ms 0
-                                          :vars [{:name "USER_TURN_REQUEST" :value "What is 2+2?" :code ";; SYSTEM"}
-                                                 {:name "REASONING" :value "Simple math" :code ";; SYSTEM"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "4" :code ";; SYSTEM"}]})
+                                          :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM"}
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "Simple math" :code ";; SYSTEM"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM"}]})
           ;; Turn 2
           q2  (sdk/db-store-query! s {:parent-conversation-id cid :query "And 3+3?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q2 :blocks [] :duration-ms 0
-                                          :vars [{:name "USER_TURN_REQUEST" :value "And 3+3?" :code ";; SYSTEM"}
-                                                 {:name "REASONING" :value "Another simple one" :code ";; SYSTEM"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "6" :code ";; SYSTEM"}]})
+                                          :vars [{:name "TURN_USER_REQUEST" :value "And 3+3?" :code ";; SYSTEM"}
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "Another simple one" :code ";; SYSTEM"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
           reg (sdk/db-latest-var-registry s cid)]
       ;; Each system var should have version 1 (v0 from turn 1, v1 from turn 2)
-      (expect (= "And 3+3?" (:value (get reg 'USER_TURN_REQUEST))))
-      (expect (= 1 (:version (get reg 'USER_TURN_REQUEST))))
-      (expect (= "Another simple one" (:value (get reg 'REASONING))))
-      (expect (= 1 (:version (get reg 'REASONING))))
-      (expect (= "6" (:value (get reg 'ASSISTANT_TURN_ANSWER))))
-      (expect (= 1 (:version (get reg 'ASSISTANT_TURN_ANSWER))))
-      ;; Full history for ASSISTANT_TURN_ANSWER shows both turns
-      (let [h (sdk/db-var-history s cid 'ASSISTANT_TURN_ANSWER)]
+      (expect (= "And 3+3?" (:value (get reg 'TURN_USER_REQUEST))))
+      (expect (= 1 (:version (get reg 'TURN_USER_REQUEST))))
+      (expect (= "Another simple one" (:value (get reg 'ITERATION_PREVIOUS_REASONING))))
+      (expect (= 1 (:version (get reg 'ITERATION_PREVIOUS_REASONING))))
+      (expect (= "6" (:value (get reg 'CONVERSATION_PREVIOUS_ANSWER))))
+      (expect (= 1 (:version (get reg 'CONVERSATION_PREVIOUS_ANSWER))))
+      ;; Full history for CONVERSATION_PREVIOUS_ANSWER shows both turns
+      (let [h (sdk/db-var-history s cid 'CONVERSATION_PREVIOUS_ANSWER)]
         (expect (= 2 (count h)))
         (expect (= ["4" "6"] (mapv :value h)))))))
 
@@ -742,33 +742,33 @@
         ;; Verify it's in the JSON metadata, not pr-str'd
         (expect (clojure.string/includes? (:metadata raw) "\"answer\":\"4\"")))))
 
-  (it "ASSISTANT_TURN_ANSWER var tracks across turns"
+  (it "CONVERSATION_PREVIOUS_ANSWER var tracks across turns"
     (let [s   (h/store)
           cid (sdk/db-store-conversation! s {:channel :tui})
           ;; Turn 1: answer is 4
           q1  (sdk/db-store-query! s {:parent-conversation-id cid :query "2+2?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q1 :blocks [{:code "(+ 2 2)" :result 4}]
                                           :duration-ms 100 :answer "4"
-                                          :vars [{:name "ASSISTANT_TURN_ANSWER" :value "4" :code ";; SYSTEM"}]})
+                                          :vars [{:name "CONVERSATION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM"}]})
           _   (sdk/db-update-query! s q1 {:answer "4" :status :success :iteration-count 1})
           ;; Turn 2: answer changes to 6
           q2  (sdk/db-store-query! s {:parent-conversation-id cid :query "3+3?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q2 :blocks [{:code "(+ 3 3)" :result 6}]
                                           :duration-ms 80 :answer "6"
-                                          :vars [{:name "ASSISTANT_TURN_ANSWER" :value "6" :code ";; SYSTEM"}]})
+                                          :vars [{:name "CONVERSATION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
           _   (sdk/db-update-query! s q2 {:answer "6" :status :success :iteration-count 1})
           ;; Turn 3: answer changes to 10
           q3  (sdk/db-store-query! s {:parent-conversation-id cid :query "5+5?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q3 :blocks [{:code "(+ 5 5)" :result 10}]
                                           :duration-ms 60 :answer "10"
-                                          :vars [{:name "ASSISTANT_TURN_ANSWER" :value "10" :code ";; SYSTEM"}]})
+                                          :vars [{:name "CONVERSATION_PREVIOUS_ANSWER" :value "10" :code ";; SYSTEM"}]})
           _   (sdk/db-update-query! s q3 {:answer "10" :status :success :iteration-count 1})]
       ;; Latest registry shows final answer
       (let [reg (sdk/db-latest-var-registry s cid)]
-        (expect (= "10" (:value (get reg 'ASSISTANT_TURN_ANSWER))))
-        (expect (= 2 (:version (get reg 'ASSISTANT_TURN_ANSWER)))))
+        (expect (= "10" (:value (get reg 'CONVERSATION_PREVIOUS_ANSWER))))
+        (expect (= 2 (:version (get reg 'CONVERSATION_PREVIOUS_ANSWER)))))
       ;; Full history shows all 3 answers in order
-      (let [h (sdk/db-var-history s cid 'ASSISTANT_TURN_ANSWER)]
+      (let [h (sdk/db-var-history s cid 'CONVERSATION_PREVIOUS_ANSWER)]
         (expect (= 3 (count h)))
         (expect (= ["4" "6" "10"] (mapv :value h)))
         (expect (= [0 1 2] (mapv :version h))))
@@ -932,17 +932,17 @@
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "analyze data" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "USER_TURN_REQUEST" :value "analyze data" :code ";; SYSTEM"}
-                                                 {:name "REASONING" :value "step 1" :code ";; SYSTEM"}
+                                          :vars [{:name "TURN_USER_REQUEST" :value "analyze data" :code ";; SYSTEM"}
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "step 1" :code ";; SYSTEM"}
                                                  {:name "dataset" :value [{:x 1 :y 2} {:x 3 :y 4}]
                                                   :code "(def dataset [{:x 1 :y 2} {:x 3 :y 4}])"}]})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "step 2" :code ";; SYSTEM"}
                                                  {:name "summarize" :value (fn [ds] ds)
                                                   :code "(defn summarize [ds] (map :x ds))"}]})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "[1 3]" :code ";; SYSTEM"}
+                                          :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "step 3" :code ";; SYSTEM"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "[1 3]" :code ";; SYSTEM"}
                                                  {:name "result" :value [1 3]
                                                   :code "(def result (summarize dataset))"}]})
           ;; Wire: dataset → summarize (it reads dataset), dataset + summarize → result
@@ -965,9 +965,9 @@
         ;; All 6 vars present (3 system + 3 user)
         (expect (= 6 (count restored)))
         ;; System vars have data values, latest versions
-        (expect (= "analyze data" (:result (by-name "USER_TURN_REQUEST"))))
-        (expect (= "step 3" (:result (by-name "REASONING"))))
-        (expect (= "[1 3]" (:result (by-name "ASSISTANT_TURN_ANSWER"))))
+        (expect (= "analyze data" (:result (by-name "TURN_USER_REQUEST"))))
+        (expect (= "step 3" (:result (by-name "ITERATION_PREVIOUS_REASONING"))))
+        (expect (= "[1 3]" (:result (by-name "CONVERSATION_PREVIOUS_ANSWER"))))
         ;; dataset is data
         (expect (= [{:x 1 :y 2} {:x 3 :y 4}] (:result (by-name "dataset"))))
         ;; summarize is fn ref
@@ -1398,24 +1398,24 @@
       ;; add-5 works (closure created by make-adder, restored via eval)
       (expect (= 12 (:val (sci/eval-string+ sci-ctx "(add-5 7)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))))
 
-  (it "system vars are restored: USER_TURN_REQUEST, REASONING, ASSISTANT_TURN_ANSWER"
+  (it "system vars are restored: TURN_USER_REQUEST, ITERATION_PREVIOUS_REASONING, CONVERSATION_PREVIOUS_ANSWER"
     (let [s   (h/store)
           cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "USER_TURN_REQUEST" :value "What is 2+2?" :code ";; SYSTEM var"}
-                                                 {:name "REASONING" :value "Simple math" :code ";; SYSTEM var"}
-                                                 {:name "ASSISTANT_TURN_ANSWER" :value "4" :code ";; SYSTEM var"}]})
+                                          :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM var"}
+                                                 {:name "ITERATION_PREVIOUS_REASONING" :value "Simple math" :code ";; SYSTEM var"}
+                                                 {:name "CONVERSATION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM var"}]})
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       (let [results (env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
         ;; SYSTEM vars with ;; SYSTEM var code are data-restored
-        (expect (= :data (:restored-via (by-name "USER_TURN_REQUEST"))))
-        (expect (= :data (:restored-via (by-name "REASONING"))))
-        (expect (= :data (:restored-via (by-name "ASSISTANT_TURN_ANSWER"))))
+        (expect (= :data (:restored-via (by-name "TURN_USER_REQUEST"))))
+        (expect (= :data (:restored-via (by-name "ITERATION_PREVIOUS_REASONING"))))
+        (expect (= :data (:restored-via (by-name "CONVERSATION_PREVIOUS_ANSWER"))))
         (expect (every? :success? results)))
-      (expect (= "What is 2+2?" (:val (sci/eval-string+ sci-ctx "USER_TURN_REQUEST" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
-      (expect (= "4" (:val (sci/eval-string+ sci-ctx "ASSISTANT_TURN_ANSWER" {:ns (sci/find-ns sci-ctx 'sandbox)})))))))
+      (expect (= "What is 2+2?" (:val (sci/eval-string+ sci-ctx "TURN_USER_REQUEST" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
+      (expect (= "4" (:val (sci/eval-string+ sci-ctx "CONVERSATION_PREVIOUS_ANSWER" {:ns (sci/find-ns sci-ctx 'sandbox)})))))))
 
 ;; =============================================================================
 ;; Log
@@ -1549,7 +1549,7 @@
       ;; Nothing exploded, var still there
       (expect (contains? (sandbox-syms sci-ctx) 'x))))
 
-  (it "🏰 REASONING and friends are fortress vars — stale or not, the janitor can't touch them"
+  (it "🏰 ITERATION_PREVIOUS_REASONING and friends are fortress vars — stale or not, the janitor can't touch them"
     (let [s       (h/store)
           cid     (sdk/db-store-conversation! s {:channel :tui})
           old-qid (sdk/db-store-query! s {:parent-conversation-id cid :query "old" :status :done})
@@ -1560,8 +1560,8 @@
           _       (Thread/sleep 5)
           _       (sdk/db-store-query! s {:parent-conversation-id cid :query "q4" :status :done})
           _       (sdk/db-store-iteration! s {:query-id old-qid :blocks [] :duration-ms 0
-                                              :vars [{:name "REASONING" :value "think" :code "(def REASONING \"think\")"}]})
-          sci-ctx (make-sci-ctx [['REASONING "think"]])
+                                              :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "think" :code "(def ITERATION_PREVIOUS_REASONING \"think\")"}]})
+          sci-ctx (make-sci-ctx [['ITERATION_PREVIOUS_REASONING "think"]])
           via     (atom {:current-revision 0})
           rlm-env {:db-info          s
                    :conversation-id  cid
@@ -1569,7 +1569,7 @@
                    :initial-ns-keys  #{}
                    :var-index-atom   via}]
       (#'lp/auto-forget-stale-vars! rlm-env)
-      (expect (contains? (sandbox-syms sci-ctx) 'REASONING))
+      (expect (contains? (sandbox-syms sci-ctx) 'ITERATION_PREVIOUS_REASONING))
       (expect (= 0 (:current-revision @via))))))
 
 ;; ─── (Removed) plan_slot_test.clj content
@@ -1591,20 +1591,32 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented seven SYSTEM vars"
-    (expect (= '#{USER_TURN_REQUEST ASSISTANT_TURN_ANSWER REASONING CONVERSATION_TITLE
-                  CURRENT_QUERY_ID CURRENT_ITERATION_ID
-                  ACTIVE_EXTENSIONS}
+  (it "SYSTEM_VAR_NAMES contains exactly the documented ten SYSTEM vars"
+    (expect (= '#{TURN_USER_REQUEST
+                  TURN_QUERY_ID
+                  TURN_CONVERSATION_SOUL_ID
+                  TURN_CONVERSATION_STATE_ID
+                  TURN_SYSTEM_PROMPT
+                  TURN_ACTIVE_EXTENSIONS
+                  ITERATION_ID
+                  ITERATION_PREVIOUS_REASONING
+                  CONVERSATION_TITLE
+                  CONVERSATION_PREVIOUS_ANSWER}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
   (it "system-var-sym? is true for registered names, false otherwise"
     (let [system-var-sym? (requiring-resolve
                             'com.blockether.vis.core/system-var-sym?)]
-      (expect (true?  (system-var-sym? 'USER_TURN_REQUEST)))
-      (expect (true?  (system-var-sym? 'ASSISTANT_TURN_ANSWER)))
-      (expect (true?  (system-var-sym? 'REASONING)))
+      (expect (true?  (system-var-sym? 'TURN_USER_REQUEST)))
+      (expect (true?  (system-var-sym? 'TURN_QUERY_ID)))
+      (expect (true?  (system-var-sym? 'TURN_CONVERSATION_SOUL_ID)))
+      (expect (true?  (system-var-sym? 'TURN_CONVERSATION_STATE_ID)))
+      (expect (true?  (system-var-sym? 'TURN_SYSTEM_PROMPT)))
+      (expect (true?  (system-var-sym? 'TURN_ACTIVE_EXTENSIONS)))
+      (expect (true?  (system-var-sym? 'ITERATION_ID)))
+      (expect (true?  (system-var-sym? 'ITERATION_PREVIOUS_REASONING)))
       (expect (true?  (system-var-sym? 'CONVERSATION_TITLE)))
-      (expect (true?  (system-var-sym? 'ACTIVE_EXTENSIONS)))
+      (expect (true?  (system-var-sym? 'CONVERSATION_PREVIOUS_ANSWER)))
       (expect (false? (system-var-sym? 'CONFIG)))
       (expect (false? (system-var-sym? 'foo))))))
 
