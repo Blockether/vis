@@ -399,8 +399,8 @@
                   :label "Show per-message timestamps"
                   :description "Date+time next to every 'You' / 'Vis' label"}
                  {:key :show-iteration-headers
-                  :label "Show 'ITERATION N' headers"
-                  :description "Right-aligned superscript above every iteration block"}
+                  :label "Show iteration / code / stdout headers"
+                  :description "Right-aligned ITERATION N, CODE N, STDOUT, ERROR superscripts above each block"}
                  {:key :show-final-answer-header
                   :label "Show 'FINAL ANSWER' header"
                   :description "Right-aligned superscript above the final answer body"}]

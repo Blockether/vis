@@ -62,8 +62,8 @@
          :error   (ex-message e)}))))
 
 (defn- path-error
-  [msg path]
-  (ex-info (str msg ": " path)
+  [message path]
+  (ex-info (str message ": " path)
     {:type :ext.common-editing.editing/path-traversal :path path}))
 
 (defn- delete-tree!
@@ -295,7 +295,7 @@
   (require '[edamame.core :as eda])
   ((resolve 'eda/parse-string-all) code {:all true}))
 
-(defn- edamame-error-msg [^String code]
+(defn- edamame-error-message [^String code]
   (try (edamame-parse code) nil
     (catch Throwable t (ex-message t))))
 
@@ -318,21 +318,21 @@
 
   (it "doubles the lone backslash in front of a regex meta char"
     (let [code  "(vis/rg \"foo\\|bar\")"
-          err   (edamame-error-msg code)
+          err   (edamame-error-message code)
           _     (expect (some? err))
           fixed (rescue-parse-error {:code code :error err :environment {}})]
       (expect (= "(vis/rg \"foo\\\\|bar\")" fixed))
       ;; And critically: the rewrite parses cleanly.
-      (expect (nil? (edamame-error-msg fixed)))))
+      (expect (nil? (edamame-error-message fixed)))))
 
   (it "repairs `\\.` and `\\$` and `\\(` the same way"
     (doseq [bad ["(re-find \"a\\.b\")"
                  "(re-find \"end\\$\")"
                  "(re-find \"\\(group\")"]]
-      (let [err   (edamame-error-msg bad)
+      (let [err   (edamame-error-message bad)
             fixed (rescue-parse-error {:code bad :error err :environment {}})]
         (expect (some? fixed))
-        (expect (nil? (edamame-error-msg fixed))))))
+        (expect (nil? (edamame-error-message fixed))))))
 
   (it "returns nil for a real letter typo — doesn't pretend to fix a single backslash followed by a letter"
     ;; Doubling a backslash before a letter would parse fine but might
@@ -346,7 +346,7 @@
     ;; string literal directly because the Clojure reader rejects
     ;; `\q` itself, so we synthesize via `str` + the backslash char.
     (let [code (str "(re-find \"foo" \\ "qbar\")")
-          err  (edamame-error-msg code)]
+          err  (edamame-error-message code)]
       (expect (some? err))
       (expect (nil? (rescue-parse-error {:code code :error err :environment {}})))))
 
@@ -365,13 +365,13 @@
     ;; iteration loop calls the hook again on the new error. We model
     ;; that here by parsing the rewrite and rescuing again.
     (let [code  "(do \"a\\|b\"\n    \"c\\|d\")"
-          err1  (edamame-error-msg code)
+          err1  (edamame-error-message code)
           fix1  (rescue-parse-error {:code code :error err1 :environment {}})
-          err2  (edamame-error-msg fix1)
+          err2  (edamame-error-message fix1)
           fix2  (rescue-parse-error {:code fix1 :error err2 :environment {}})]
       (expect (some? fix1))
       (expect (some? fix2))
-      (expect (nil? (edamame-error-msg fix2))))))
+      (expect (nil? (edamame-error-message fix2))))))
 
 ;; =============================================================================
 ;; patch — canonical shape: vector of {:path :search :replace} maps.
@@ -505,7 +505,7 @@
       ;; Smoke-test the symbol-level hook directly: the broken `\|` case
       ;; gets repaired so the LLM's intent (literal pipe) is preserved.
       (let [code "(vis/rg \"a\\|b\")"
-            err  (edamame-error-msg code)
+            err  (edamame-error-message code)
             out  (hook {:code code :error err
                         :sym 'rg :environment {}})]
         (expect (= "(vis/rg \"a\\\\|b\")" out)))))
@@ -514,7 +514,7 @@
     (require '[com.blockether.vis.ext.common-editing.core :as core])
     (let [registered @(resolve 'core/extension)
           code       "(vis/rg \"a\\|b\")"
-          err        (edamame-error-msg code)]
+          err        (edamame-error-message code)]
       ;; No extension-level catch-all anymore.
       (expect (nil? (:ext/on-parse-error-fn registered)))
       ;; But try-rescue-parse-error finds the symbol hook by name.
@@ -550,7 +550,7 @@
                     "  ...)\n")
           ;; Identical content but with 38 spaces of indent on line 3
           ;; instead of the file's 20 spaces. This is exactly the
-          ;; iter-15 shape from BUG_REPORT_2.
+          ;; iteration-15 shape from BUG_REPORT_2.
           search  (str "expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]\n"
                     "                                      (str (repeat-str \\space pl) expr-label \" \")")
           thrown  (try

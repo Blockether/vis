@@ -2,9 +2,13 @@
   "Aggregator for the `vis-common-editing` extension. Registers two
    extensions from one classpath manifest:
 
-     vis  (cat, ls, rg, edit, write, zedit)
+     vis  (cat, ls, rg, edit, write)
      fs   (cwd, exists?, glob, parent, components, file-name,
-           extension, expand-home, list-dir, relativize)"
+           extension, expand-home, list-dir, relativize)
+
+   Clojure-specific structured editing (clj/zedit + the rewrite-clj
+   zipper bound under z/) lives in vis-language-clojure under
+   extensions/languages/clojure/."
   (:require
    [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.common-editing.editing :as editing]
@@ -13,7 +17,7 @@
 (def editing-extension
   (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-editing.core
-     :ext/doc       "Editing tools: cat, ls, rg, edit, write, zedit."
+     :ext/doc       "Editing tools: cat, ls, rg, edit, write."
      :ext/version   "0.5.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"

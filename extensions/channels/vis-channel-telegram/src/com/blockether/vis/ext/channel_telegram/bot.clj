@@ -16,37 +16,27 @@
 
 (def ^:private poll-timeout-seconds 30)
 
-(defn- extract-text [msg] (or (:text msg) (:caption msg)))
+(defn- extract-text [message] (or (:text message) (:caption message)))
 
-(defn- extract-sender [msg]
-  (or (some-> msg :from :username not-empty)
-    (some-> msg :from :first_name)
+(defn- extract-sender [message]
+  (or (some-> message :from :username not-empty)
+    (some-> message :from :first_name)
     "user"))
 
 (defn- format-footer [result model-name]
-  (let [{:keys [iterations duration-ms tokens cost]} result
-        sec (if duration-ms
-              (String/format java.util.Locale/US "%.1f"
-                (into-array Object [(double (/ duration-ms 1000.0))]))
-              "?")
-        ctx-in  (or (:input tokens) 0)
-        ctx-out (or (:output tokens) 0)
-        c       (or (:total-cost cost) 0)
-        c-str   (if (pos? c)
-                  (String/format java.util.Locale/US "$%.4f"
-                    (into-array Object [(double c)]))
-                  "—")]
-    (str "\n\n_"
-      (tg/escape-markdown-v2 (str iterations " iters · " sec "s · " (or model-name "?")))
-      "\n"
-      (tg/escape-markdown-v2 (str "ctx " ctx-in "→" ctx-out " · " c-str))
-      "_")))
+  ;; Canonical " · "-joined turn-summary line, identical to the CLI
+  ;; bracket and the TUI per-message footer. Model auto-extracts from
+  ;; the result's `:cost :model`; the explicit `model-name` arg is
+  ;; an override sourced from the live router (in case the persisted
+  ;; result lags the current binding).
+  (let [line (sdk/format-meta-line result {:model model-name})]
+    (str "\n\n_" (tg/escape-markdown-v2 line) "_")))
 
 (defn- handle-update! [token update]
-  (when-let [msg (:message update)]
-    (let [chat-id (-> msg :chat :id)
-          text    (extract-text msg)
-          sender  (extract-sender msg)]
+  (when-let [message (:message update)]
+    (let [chat-id (-> message :chat :id)
+          text    (extract-text message)
+          sender  (extract-sender message)]
       (when (and chat-id text)
         (future
           (try
@@ -64,7 +54,7 @@
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}
                          :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (sdk/format-error (sdk/error->user-message e)))
+                     (sdk/format-error (sdk/db-error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]

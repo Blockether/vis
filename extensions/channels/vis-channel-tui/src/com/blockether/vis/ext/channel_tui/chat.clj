@@ -29,15 +29,15 @@
      :ex-data (ex-data e)
      :stack   (.toString sw)}))
 
-(defn user-msg
+(defn user-message
   "Create a structured user message with timestamp."
-  ([text] (user-msg text (java.util.Date.)))
+  ([text] (user-message text (java.util.Date.)))
   ([text timestamp]
    {:role :user :text text :timestamp timestamp}))
 
-(defn assistant-msg
+(defn assistant-message
   "Create a structured assistant (vis) message with timestamp."
-  ([text] (assistant-msg text (java.util.Date.)))
+  ([text] (assistant-message text (java.util.Date.)))
   ([text timestamp]
    {:role :assistant :text (if (string? text) text (pr-str text)) :timestamp timestamp}))
 
@@ -45,23 +45,23 @@
   "Reconstruct message history from DB for a conversation.
    Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}.
    Assistant messages include the code execution trace from all iterations."
-  [conv-id]
+  [conversation-id]
   (try
     (let [d       (lp/db-info)
-          queries (sdk/db-list-conversation-queries d conv-id)]
+          queries (sdk/db-list-conversation-queries d conversation-id)]
       (into []
         (mapcat (fn [q]
-                  (let [user-msg  (user-msg (or (:text q) "") (or (:created-at q) (java.util.Date.)))
+                  (let [user-message (user-message (or (:text q) "") (or (:created-at q) (java.util.Date.)))
                         answer    (or (:answer q) "")
                         model     (:model q)
                         tokens    (cond-> {}
                                     (:input-tokens q)  (assoc :input (:input-tokens q))
                                     (:output-tokens q) (assoc :output (:output-tokens q)))
-                        iters     (:iterations q)
-                        dur-ms    (:duration-ms q)
+                        iterations (:iterations q)
+                        duration-ms (:duration-ms q)
                         cost      (when (:cost q) {:total-cost (:cost q)})
                         ;; Rebuild trace from iterations + expressions
-                        query-iters (sdk/db-list-query-iterations d (:id q))
+                        query-iterations (sdk/db-list-query-iterations d (:id q))
                         trace (into []
                                 (map (fn [it]
                                        (let [exprs (sdk/db-list-iteration-expressions d (:id it))
@@ -71,23 +71,23 @@
                                                                    (pr-str result)))
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
-                                             dur-strs    (mapv #(or (:duration-ms %) 0) exprs)]
+                                             durations (mapv #(or (:duration-ms %) 0) exprs)]
                                          {:thinking  (:thinking it)
                                           :code      (mapv :code exprs)
                                           :results   result-strs
                                           :stdouts   stdout-strs
-                                          :durations dur-strs
+                                          :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)})))
-                                query-iters)
-                        ai-msg    (cond-> (assistant-msg (or answer "") (or (:created-at q) (java.util.Date.)))
-                                    true       (assoc :query-id (:id q))
-                                    (seq trace) (assoc :trace trace :raw-answer (or answer ""))
-                                    model  (assoc :model model)
-                                    iters  (assoc :iterations iters)
-                                    dur-ms (assoc :duration-ms dur-ms)
-                                    cost   (assoc :cost cost)
-                                    (seq tokens) (assoc :tokens tokens))]
-                    [user-msg ai-msg])))
+                                query-iterations)
+                        assistant-message (cond-> (assistant-message (or answer "") (or (:created-at q) (java.util.Date.)))
+                                            true       (assoc :query-id (:id q))
+                                            (seq trace) (assoc :trace trace :raw-answer (or answer ""))
+                                            model  (assoc :model model)
+                                            iterations  (assoc :iterations iterations)
+                                            duration-ms (assoc :duration-ms duration-ms)
+                                            cost   (assoc :cost cost)
+                                            (seq tokens) (assoc :tokens tokens))]
+                    [user-message assistant-message])))
         queries))
     (catch Exception e
       (t/log! {:level :warn :id ::rebuild-history-failed
@@ -96,7 +96,7 @@
       [])))
 
 (defn make-conversation
-  "Create a fresh `:vis` conversation. Returns `{:id conv-id :history []}`."
+  "Create a fresh `:vis` conversation. Returns `{:id conversation-id :history []}`."
   [_provider-config]
   (let [{:keys [id]} (lp/create! :vis)]
     {:id id :history []}))
@@ -118,11 +118,11 @@
 (defn resume-conversation
   "Resume an existing conversation by id.
    Accepts full UUID or unambiguous short UUID prefix.
-   Returns `{:id conv-id :history [...]}` with persisted messages."
+   Returns `{:id conversation-id :history [...]}` with persisted messages."
   [conversation-id]
   (when-let [resolved-id (resolve-resume-id conversation-id)]
-    (when-let [conv (lp/by-id resolved-id)]
-      {:id (str (:id conv)) :history (rebuild-history (str (:id conv)))})))
+    (when-let [conversation (lp/by-id resolved-id)]
+      {:id (str (:id conversation)) :history (rebuild-history (str (:id conversation)))})))
 
 (defn query!
   "Send a user query through the shared conversations cache. Blocking.
@@ -136,7 +136,7 @@
      :cancel-atom — (atom bool) honored by the iteration loop; flipping
                     it to true causes the current query to terminate at
                     the next safe point and return `{:status :cancelled}`."
-  ([conv text] (query! conv text {}))
+  ([conversation text] (query! conversation text {}))
   ([{:keys [id]} text {:keys [on-chunk cancel-atom]}]
    (try
      (let [send-opts (cond-> {}
@@ -183,7 +183,7 @@
            (t/log! {:level :error :id ::query-failed
                     :data  (exception->log-data e)
                     :msg   (str "Query failed: " (ex-message e))})
-           {:error (sdk/error->user-message e)}))))))
+           {:error (sdk/db-error->user-message e)}))))))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in

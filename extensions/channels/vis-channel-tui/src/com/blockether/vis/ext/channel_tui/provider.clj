@@ -285,15 +285,15 @@
 (defn- draw-model-card!
   "Two-line model card. Mirrors `draw-provider-card!` layout:
      Line 1: ① model-name                         ★ Primary
-     Line 2:    → then {next}  /  after {prev} → then {next}  /  ...
+     Line 2:    → then {next}  /  after {previous} → then {next}  /  ...
 
    Line 2 spells out the **default fallback chain**: svar's default
    routing picks `(first candidates)` from this provider's `:models`
    after filtering, so list order = chain order.
 
-   `prev-name` and `next-name` are the names of the model just before /
+   `previous-name` and `next-name` are the names of the model just before /
    after this one in the chain (nil at the ends)."
-  [g left row inner-w idx selected? is-root? _provider-id model prev-name next-name]
+  [g left row inner-w idx selected? is-root? _provider-id model previous-name next-name]
   (let [model-name (or (:name model) (str "model-" (inc idx)))
         text-w     (max 0 (- inner-w 2))
         text-x     (+ left 2)
@@ -304,17 +304,17 @@
         ;; Build the chain breadcrumb. Use Unicode arrows so the flow
         ;; reads left-to-right at a glance: "after X → then Y".
         subtitle   (cond
-                     (and (nil? prev-name) (nil? next-name))
+                     (and (nil? previous-name) (nil? next-name))
                      "   only model — no fallback configured"
 
-                     (nil? prev-name)
+                     (nil? previous-name)
                      (str "   → then " next-name)
 
                      (nil? next-name)
-                     (str "   after " prev-name " — last fallback")
+                     (str "   after " previous-name " — last fallback")
 
                      :else
-                     (str "   after " prev-name " → then " next-name))]
+                     (str "   after " previous-name " → then " next-name))]
     ;; Background fill across both lines
     (p/set-bg! g bg)
     (doseq [r (range card-rows)]
@@ -391,17 +391,17 @@
             (doseq [idx (range total)]
               (let [card-y (+ content-top (card-start-row idx))
                     model  (nth @models idx)
-                    prev-name (when (pos? idx)
-                                (:name (nth @models (dec idx))))
-                    next-name (when (< idx (dec total))
-                                (:name (nth @models (inc idx))))]
+                    previous-name (when (pos? idx)
+                                    (:name (nth @models (dec idx))))
+                    next-name     (when (< idx (dec total))
+                                    (:name (nth @models (inc idx))))]
                 (when (and (< card-y (+ content-top content-h))
                         (>= (+ card-y card-rows) content-top))
                   (draw-model-card! g left card-y inner-w idx (= idx @selected)
                     (zero? idx)
                     (:id provider)
                     model
-                    prev-name
+                    previous-name
                     next-name)))))
 
           (dlg/draw-hint-bar! g left hint-row inner-w

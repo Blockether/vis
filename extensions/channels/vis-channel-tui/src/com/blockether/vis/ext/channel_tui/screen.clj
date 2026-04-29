@@ -45,17 +45,21 @@
 (def ^:private input-max-lines 8)
 ;; Hint strip rules
 ;;
-;; Idle, input EMPTY    → show newline + menu (newcomers see how to wrap +
-;;                       discover the menu).
+;; Idle, input EMPTY    → show newline + history cycle + menu. The
+;;                       empty box is the moment someone is deciding
+;;                       what to type, so we surface `Ctrl+P/N` for
+;;                       cycling through prior prompts and `Alt+Enter`
+;;                       for multi-line composition right where the
+;;                       eye lands.
 ;; Idle, input NON-EMPTY → just menu. \"Enter send\" is monkey-obvious; once
-;;                        someone has typed they don't need that hint.
+;;                        someone has typed they don't need that hint,
+;;                        and history-cycle would clobber the buffer.
 ;; Loading              → cancel + quit. Same as before.
 ;; Cancelling            → progress message + quit.
 ;;
 ;; Removed from idle: `Enter send` (universally obvious), `↑↓ scroll`
-;; (intuitive in any text input), `Ctrl+P/N history` (now discoverable
-;; from the Ctrl+K menu).
-(def ^:private hint-idle-empty " Alt+Enter newline · Ctrl+K menu ")
+;; (intuitive in any text input).
+(def ^:private hint-idle-empty " Alt+Enter newline · Ctrl+P/N history · Ctrl+K menu ")
 (def ^:private hint-idle-typed " Ctrl+K menu ")
 (def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
@@ -130,40 +134,46 @@
         show-timestamps? (get settings :show-timestamps false)
         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
         ;; Apply trace→text projection and markdown to assistant messages.
-        projected (mapv (fn [msg]
+        projected (mapv (fn [message]
                           (cond
                             ;; Has trace: full iteration + answer rendering
-                            (and (= :assistant (:role msg)) (:trace msg))
-                            (-> msg
+                            (and (= :assistant (:role message)) (:trace message))
+                            (-> message
                               (assoc :text
                                 (render/format-answer-with-thinking
-                                  (:raw-answer msg) (:trace msg) bubble-w settings
-                                  (:confidence msg)))
+                                  (:raw-answer message) (:trace message) bubble-w settings
+                                  (:confidence message)))
                               strip-ts)
                             ;; Plain assistant message: apply markdown
-                            (= :assistant (:role msg))
-                            (-> msg
+                            (= :assistant (:role message))
+                            (-> message
                               (assoc :text
-                                (render/format-answer-markdown (:text msg) bubble-w))
+                                (render/format-answer-markdown (:text message) bubble-w))
                               strip-ts)
                             ;; User messages: only timestamp gating.
-                            :else (strip-ts msg)))
+                            :else (strip-ts message)))
                     messages)]
     ;; Replace the loading placeholder with the live progress block
     ;; (spinner + phase + iteration trace).
     (if (and loading? (seq projected))
-      (let [last-idx (dec (count projected))
-            last-msg (get projected last-idx)]
-        (if (= :assistant (:role last-msg))
+      (let [last-idx     (dec (count projected))
+            last-message (get projected last-idx)]
+        (if (= :assistant (:role last-message))
           (assoc projected last-idx
-            (assoc last-msg :text (render/progress->text progress bubble-w settings progress-extra)))
+            (assoc last-message :text (render/progress->text progress bubble-w settings progress-extra)))
           projected))
       projected)))
 
 (defn- input-text-rows
-  "Compute visible text rows for the input box based on content."
-  [{:keys [lines]}]
-  (let [n (count lines)]
+  "Compute visible text rows for the input box based on content,
+   counting SOFT-WRAPPED visual rows so the box grows as a single
+   logical line overflows the box width. Capped between
+   `input-min-lines` and `input-max-lines`; beyond the cap the box
+   stops growing and `draw-input-box!` scrolls vertically to keep
+   the cursor visible."
+  [{:keys [lines]} cols]
+  (let [text-w (render/input-text-w cols)
+        n     (render/input-visual-row-count lines text-w)]
     (min input-max-lines (max input-min-lines n))))
 
 (defn- render-frame!
@@ -178,12 +188,12 @@
    layout calculation and the actual draw — the old code path computed
    it twice per frame, which doubled cost on long traces."
   [^TerminalScreen screen cols rows
-   {:keys [messages msg-scroll input progress loading? cancelling?
+   {:keys [messages messages-scroll input progress loading? cancelling?
            query-start-ms settings] :as db}
    now-ms]
   (let [now-ms       (long now-ms)
         g            (.newTextGraphics screen)
-        text-rows    (input-text-rows input)
+        text-rows    (input-text-rows input cols)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
         ;; Reserve the bottom-most row for the dedicated footer
         ;; (model / run-state / ctx-left%). The input box sits
@@ -191,25 +201,25 @@
         ;; from the top down to the input-box top.
         footer-row   (dec rows)
         input-top    (- rows input-box-h 1)
-        msg-top      0
-        msg-bottom   input-top
+        messages-top    0
+        messages-bottom input-top
         ;; Single source of truth for the gutter math lives in
-        ;; `render.clj` (`MSG_SIDE_PAD`). Reference it directly; do
+        ;; `render.clj` (`MESSAGE_SIDE_PAD`). Reference it directly; do
         ;; NOT inline a literal here. Two layers disagreeing by even
         ;; one column makes `format-iteration-entry` size labels for
         ;; one bubble-w while `draw-chat-bubble!` paints into a
         ;; different bubble-w — right-aligned labels (`CODE 3`,
         ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
-        bubble-w     (max 1 (- cols render/MSG_SIDE_PAD))
+        bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
         progress-extra {:now-ms         now-ms
                         :query-start-ms query-start-ms
                         :cancelling?    (boolean cancelling?)}
         effective-messages (apply-settings messages progress loading? bubble-w settings progress-extra)
-        inner-h      (max 0 (- msg-bottom msg-top 2)) ;; top + bottom margins
+        inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
         total-h      (render/total-messages-height effective-messages bubble-w)]
     (render/fill-background! g cols rows)
-    (render/draw-messages-area! g effective-messages msg-top msg-bottom cols msg-scroll)
+    (render/draw-messages-area! g effective-messages messages-top messages-bottom cols messages-scroll)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
@@ -378,7 +388,7 @@
 
       ;; Sweep orphaned running queries from previous crashes so they
       ;; don't show raw query text in the rebuilt history.
-         (try (sdk/sweep-orphaned-running-queries!) (catch Throwable _ nil))
+         (try (sdk/db-sweep-orphaned-running-queries!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
       ;; The --conversation-id case was already validated above (before
@@ -395,8 +405,8 @@
                        (chat/make-conversation config))
                      (chat/make-conversation config)))
               ;; Set title from DB if present; do not synthesize from messages.
-                 conv-info (when-let [c (lp/by-id id)] c)
-                 title     (when-let [t (some-> conv-info :title)]
+                 conversation-info (when-let [c (lp/by-id id)] c)
+                 title     (when-let [t (some-> conversation-info :title)]
                              (when-not (str/blank? t) t))]
              (state/dispatch [:init-conversation {:id id} history])
              (when title
@@ -439,9 +449,9 @@
 
                              :system-prompt
                              (with-dialog-lock
-                               #(let [conv-id (get-in @state/app-db [:conv :id])
-                                      prompt  (if conv-id
-                                                (or (lp/effective-system-prompt conv-id)
+                               #(let [conversation-id (get-in @state/app-db [:conversation :id])
+                                      prompt  (if conversation-id
+                                                (or (lp/effective-system-prompt conversation-id)
                                                   "(no system prompt)")
                                                 "(no conversation)")]
                                   (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
@@ -471,7 +481,7 @@
                      (let [text (input/input->text state)]
                        (state/dispatch [:reset-input])
                        (when (and (seq (str/trim text))
-                               (:conv @state/app-db)
+                               (:conversation @state/app-db)
                                (not (:loading? @state/app-db)))
                          (state/dispatch [:send-message text]))
                        (recur))
@@ -499,8 +509,8 @@
            (state/dispatch [:shutdown])
            (when-let [t @render-thread]
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
-           (when-let [conv (:conv @state/app-db)]
-             (chat/dispose! conv))
+           (when-let [conversation (:conversation @state/app-db)]
+             (chat/dispose! conversation))
            (.stopScreen screen)))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────

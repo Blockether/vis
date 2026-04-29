@@ -3,61 +3,46 @@
   :docs
   {"README.md"
    {:created-at #inst "2026-04-28T08:00:00.000-00:00"
-    :abstract
-    "Filesystem + editing primitives for the SCI sandbox. Two aliases:
-`vis/` (cat, ls, rg, edit, write, zedit) and `fs/` (cwd, exists?,
-glob, parent, components, file-name, extension, expand-home,
-list-dir, relativize). Read once, bind a `(def ...)` if you need it
-again, edit with one search/replace call. No autobind, no patch
-DSL ceremony — just the small, useful surface."
+    :description
+    "FS + editing primitives for SCI sandbox. Two aliases. `vis/`: cat ls rg edit write. `fs/`: cwd exists? glob parent components file-name extension expand-home list-dir relativize. Read once, `(def x ...)` if reused, edit via search/replace. No autobind, no patch DSL. Clojure structured edit (`clj/zedit` + `z/` zipper) lives in sibling vis-language-clojure ext."
     :content
-    "
-# Common editing extension
+    "# Common editing extension
 
-Package: `com.blockether/vis-common-editing`. Source:
-`extensions/common/vis-common-editing/`.
+Pkg: `com.blockether/vis-common-editing`. Src: `extensions/common/vis-common-editing/`.
 
-Two aliases ship from this jar:
+Two aliases:
+  vis/  read+write    (cat ls rg edit write)
+  fs/   path math     (cwd exists? glob parent components file-name extension expand-home list-dir relativize)
 
-  vis/   read + write tools     (cat, ls, rg, edit, write, zedit)
-  fs/    babashka.fs path math  (cwd, exists?, glob, parent, components,
-                                  file-name, extension, expand-home,
-                                  list-dir, relativize)
+Clojure structured editing (`clj/zedit`, `z/` zipper) lives in sibling `vis-language-clojure`.
 
 ## Read
 
-`(vis/cat path)` returns line-numbered content. Default cap 6000 chars;
-pass `{:offset N :limit M :char-limit C}` to page.
+`(vis/cat path)` -> line-numbered content. Cap 6000 chars; opts `{:offset N :limit M :char-limit C}` for paging.
 
 ## List
 
-`(vis/ls path)` returns a tree map. opts: `{:depth :hidden? :respect-gitignore?}`.
+`(vis/ls path)` -> tree map. Opts `{:depth :hidden? :respect-gitignore?}`.
 
 ## Search
 
-`(vis/rg pattern path)` regex search via RE2/J (ReDoS-safe). Pattern is
-a string or `#\"...\"`. opts: `{:limit :hidden? :respect-gitignore?}`.
+`(vis/rg pattern path)` -> regex grep via RE2/J (ReDoS-safe). Pattern = string or `#\"...\"`. Opts `{:limit :hidden? :respect-gitignore?}`.
 
 ## Edit
 
-`(vis/edit path search replace)` replaces the FIRST occurrence of
-`search` with `replace`. `search` must be unique — add surrounding
-context if it isn't. Throws when missing or ambiguous.
+`(vis/edit path search replace)` replaces FIRST occurrence. `search` MUST be unique — add context if not. Throws on miss/ambiguity.
 
-`(vis/write path content)` overwrites or creates a file (creating
-parent directories).
+`(vis/write path content)` overwrite/create file (creates parent dirs).
 
-`(vis/zedit path zfn)` runs a `rewrite-clj` zipper transformer over a
-Clojure file and writes the result. Useful for adding a require,
-renaming a sym, or any AST-aware edit.
+AST-aware Clojure edits (rename def, add require, swap const while preserving formatting/comments): `(clj/zedit path zfn)` from `vis-language-clojure`.
 
 ## Path math
 
-The `fs/` alias exposes `babashka.fs` primitives. They never touch
-file contents. Use them for path math; reach for `vis/` when you also
-need to read or mutate the file."
+`fs/` = `babashka.fs` primitives. No file I/O. Use for path math; `vis/` for read/mutate."
     :links
     [{:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/editing.clj"
-      :context "Source for cat / ls / rg / edit / write / zedit"}
+      :context "Source: cat / ls / rg / edit / write"}
      {:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/fs_bindings.clj"
-      :context "Source for the fs/ alias bindings"}]}}}}
+      :context "Source: fs/ alias bindings"}
+     {:to-id clj :to-doc "README.md"
+      :context "Sibling ext for Clojure structured editing (clj/zedit, z/...)"}]}}}}

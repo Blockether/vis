@@ -5,5 +5,5 @@
    ;; Without this hook every `defdelegate` call shows up as an
    ;; unresolved-symbol error because clj-kondo can't expand the
    ;; runtime resolution. See the hook for details.
-   com.blockether.vis.internal.sdk/defdelegate
+   com.blockether.vis.internal.persistance/defdelegate
    hooks.com.blockether.vis.defdelegate/defdelegate}}}

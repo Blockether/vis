@@ -16,8 +16,8 @@
      log
 
    Connection lifecycle:
-     (open-store db-spec)   → {:datasource ds :path ...}
-     (close-store store)    → idempotent dispose"
+     (db-open! db-spec)   → {:datasource ds :path ...}
+     (db-close! store)    → idempotent dispose"
   (:require
    [charred.api :as json]
    [clojure.string :as str]
@@ -112,8 +112,8 @@
 ;; without amplifying writer contention. The pool keeps physical
 ;; connections alive for the process lifetime (no idle eviction,
 ;; no maxLifetime recycling — unlike a network DB, SQLite handles
-;; have no equivalent of a connection drop). `close-store` actually
-;; closes the pool now, so dispose-store-connection! releases handles
+;; have no equivalent of a connection drop). `db-close!` actually
+;; closes the pool now, so db-dispose-connection! releases handles
 ;; deterministically.
 ;; =============================================================================
 
@@ -199,7 +199,7 @@
     {:datasource pool :conn pool :path nil :db-file nil
      :backend :sqlite :owned? true :mode :memory}))
 
-(defn open-store [db-spec]
+(defn db-open! [db-spec]
   (cond
     (nil? db-spec)    nil
     (= :memory db-spec) (open-sqlite-mem)
@@ -224,7 +224,7 @@
     :else
     (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec}))))
 
-(defn close-store
+(defn db-close!
   "Idempotent dispose. Closes the Hikari pool when we own it; for
    `:external` mode (caller-supplied DataSource) it's a no-op so we
    don't yank the rug out from under whoever passed us the handle."
@@ -239,7 +239,7 @@
 ;; Logging — log table
 ;; =============================================================================
 
-(defn log! [db-info entry]
+(defn db-log! [db-info entry]
   (when (ds db-info)
     (execute! db-info
       {:insert-into :log
@@ -260,15 +260,20 @@
 ;; Conversation — conversation_soul + conversation_state
 ;; =============================================================================
 
-(defn store-conversation!
+(defn db-store-conversation!
   "Create conversation_soul + initial conversation_state (version 0).
    Returns the conversation-soul UUID.
 
    Metadata layout:
      conversation_soul.metadata  → {:channel :vis, :external-id \"...\"}
-     conversation_state.metadata → {:system-prompt \"...\", :model \"...\"}
-     conversation_state.title    → title column"
-  [db-info {:keys [channel external-id title system-prompt model]}]
+     conversation_state.metadata → {:system-prompt \"...\", :provider :openai,
+                                    :model \"gpt-4o\"}
+     conversation_state.title    → title column
+
+   `:provider` is stored as a keyword (e.g. `:openai`, `:github-copilot`)
+   so the snapshot is a faithful round-trip of the provider id; the
+   reader (`db-get-conversation`) re-keywordizes it on the way back."
+  [db-info {:keys [channel external-id title system-prompt provider model]}]
   (when (ds db-info)
     (let [soul-id  (UUID/randomUUID)
           state-id (UUID/randomUUID)
@@ -285,8 +290,9 @@
                    :conversation_soul_id (str soul-id)
                    :title                title
                    :version              0
-                   :metadata             (->json {:system-prompt (or system-prompt "")
-                                                  :model         (or model "")})
+                   :metadata             (->json (cond-> {:system-prompt (or system-prompt "")
+                                                          :model         (or model "")}
+                                                   provider (assoc :provider (->kw provider))))
                    :created_at           now}]})
       soul-id)))
 
@@ -308,15 +314,16 @@
         (let [state    (latest-state-for db-info id)
               soul-meta (<-json (:metadata soul))
               state-meta (when state (<-json (:metadata state)))]
-          {:id            (->uuid (:id soul))
-           :type          :conversation
-           :channel       (->kw-back (:channel soul-meta))
-           :external-id   (:external-id soul-meta)
-           :title         (or (:title state) (:title soul-meta))
-           :system-prompt (:system-prompt state-meta)
-           :model         (:model state-meta)
-           :version       (or (:version state) 0)
-           :created-at    (->date (:created_at soul))})))))
+          (cond-> {:id            (->uuid (:id soul))
+                   :type          :conversation
+                   :channel       (->kw-back (:channel soul-meta))
+                   :external-id   (:external-id soul-meta)
+                   :title         (or (:title state) (:title soul-meta))
+                   :system-prompt (:system-prompt state-meta)
+                   :model         (:model state-meta)
+                   :version       (or (:version state) 0)
+                   :created-at    (->date (:created_at soul))}
+            (:provider state-meta) (assoc :provider (->kw-back (:provider state-meta)))))))))
 
 (defn db-resolve-conversation-id [db-info selector]
   (cond
@@ -379,7 +386,7 @@
            :set    {:title title}
            :where  [:= :id (:id state)]})))))
 
-(defn delete-conversation-tree! [db-info conversation-soul-id]
+(defn db-delete-conversation-tree! [db-info conversation-soul-id]
   (when (and (ds db-info) conversation-soul-id)
     (execute! db-info
       {:delete-from :conversation_soul
@@ -389,11 +396,11 @@
 ;; Fork — branch a conversation at a point
 ;; =============================================================================
 
-(defn fork-conversation!
+(defn db-fork-conversation!
   "Fork a conversation. Creates a new conversation_state with
    parent_state_id pointing to the current latest state.
    Returns the new state UUID."
-  [db-info conversation-id {:keys [system-prompt model title]}]
+  [db-info conversation-id {:keys [system-prompt provider model title]}]
   (when (ds db-info)
     (let [soul-id-s (->ref conversation-id)
           current   (latest-state-for db-info soul-id-s)
@@ -411,6 +418,7 @@
                      :metadata             (->json
                                              (cond-> (or cur-meta {})
                                                system-prompt (assoc :system-prompt system-prompt)
+                                               provider      (assoc :provider (->kw provider))
                                                model         (assoc :model model)))
                      :created_at           now}]})
         new-id))))
@@ -428,7 +436,7 @@
 ;; Query — query_soul + query_state
 ;; =============================================================================
 
-(defn store-query!
+(defn db-store-query!
   "Create query_soul + initial query_state (version 0).
    Returns the query-soul UUID."
   [db-info {:keys [parent-conversation-id query messages status]}]
@@ -466,11 +474,11 @@
                 :from   :query_state
                 :where  [:= :query_soul_id query-soul-id-s]}]]}))
 
-(defn retry-query!
+(defn db-retry-query!
   "Create a new query_state (version N+1) for an existing query_soul.
-   Used when re-running a query with a different model or settings.
+   Used when re-running a query with a different provider/model or settings.
    Returns the new query-state UUID."
-  [db-info query-soul-id {:keys [status model]}]
+  [db-info query-soul-id {:keys [status provider model]}]
   (when (ds db-info)
     (let [soul-id-s (->ref query-soul-id)
           current   (latest-query-state db-info soul-id-s)
@@ -479,16 +487,17 @@
       (when current
         (execute! db-info
           {:insert-into :query_state
-           :values [{:id                         (str new-id)
-                     :query_soul_id              soul-id-s
-                     :forked_from_query_state_id (:id current)
-                     :version                    (inc (:version current))
-                     :status                     (normalize-status (or status :running))
-                     :llm_root_model             model
-                     :created_at                 now}]})
+           :values [(cond-> {:id                         (str new-id)
+                             :query_soul_id              soul-id-s
+                             :forked_from_query_state_id (:id current)
+                             :version                    (inc (:version current))
+                             :status                     (normalize-status (or status :running))
+                             :llm_root_model             model
+                             :created_at                 now}
+                      provider (assoc :llm_root_provider (name (->kw provider))))]})
         new-id))))
 
-(defn update-query!
+(defn db-update-query!
   "Update the latest query_state with final outcome.
 
    When `:prior-outcome` is provided (one of `:complete`,
@@ -514,9 +523,11 @@
                                             (:reasoning tokens) (assoc :reasoning-tokens (long (:reasoning tokens)))
                                             (:cached tokens)    (assoc :cached-tokens    (long (:cached tokens)))
                                             (:total-cost cost)  (assoc :total-cost       (double (:total-cost cost)))
+                                            (:provider cost)    (assoc :provider         (->kw (:provider cost)))
                                             (:model cost)       (assoc :model            (str (:model cost))))))}
-                     (:model cost)   (assoc :llm_root_model (str (:model cost)))
-                     prior-outcome   (assoc :prior_outcome (name prior-outcome)))
+                     (:model cost)    (assoc :llm_root_model (str (:model cost)))
+                     (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
+                     prior-outcome    (assoc :prior_outcome (name prior-outcome)))
            :where  [:= :id (:id state)]})))))
 
 ;; =============================================================================
@@ -563,7 +574,7 @@
 ;; Iteration — iteration table
 ;; =============================================================================
 
-(defn store-iteration!
+(defn db-store-iteration!
   "Store one iteration + expression_soul/expression_state rows for expressions and vars.
    Returns the iteration UUID.
 
@@ -571,11 +582,11 @@
    columns when the caller supplies them; otherwise the columns
    remain NULL."
   [db-info {:keys [query-id expressions thinking answer duration-ms vars error metadata
-                   llm-messages llm-model
+                   llm-messages llm-provider llm-model
                    plan-state breadcrumb plan-diff]}]
   (when (ds db-info)
-    (let [iter-id   (UUID/randomUUID)
-          iter-id-s (str iter-id)
+    (let [iteration-id   (UUID/randomUUID)
+          iteration-id-s (str iteration-id)
           now       (now-ms)
           query-soul-id-s (when query-id (->ref query-id))
           ;; Need query_state_id (iteration FK points to query_state)
@@ -583,28 +594,40 @@
                         (latest-query-state db-info query-soul-id-s))
           query-state-id-s (:id query-state)
           ;; Need conversation_state_id for expression_soul
-          conv-state-id (when query-state
-                          (:conversation_state_id
-                           (query-one! db-info
-                             {:select [:conversation_state_id]
-                              :from   :query_soul
-                              :where  [:= :id query-soul-id-s]})))
+          conversation-state-id (when query-state
+                                  (:conversation_state_id
+                                   (query-one! db-info
+                                     {:select [:conversation_state_id]
+                                      :from   :query_soul
+                                      :where  [:= :id query-soul-id-s]})))
           ;; Compute position (0-indexed within this query_state)
-          position  (or (:cnt (query-one! db-info
-                                {:select [[[:count :*] :cnt]]
-                                 :from   :iteration
-                                 :where  [:= :query_state_id query-state-id-s]}))
+          ;; Next position is `MAX(position)+1` (monotonic and survives
+          ;; row deletions), aliased as `:next_position` so the SQL
+          ;; column name and the Clojure key line up. HoneySQL renders
+          ;; `:row-count` as the SQL identifier `row_count`, and
+          ;; `as-unqualified-lower-maps` returns `:row_count` in the
+          ;; row map; reading via `:row-count` (with hyphen) was always
+          ;; `nil` and pinned every iteration to position 0, which
+          ;; collided with the `UNIQUE (query_state_id, position)`
+          ;; constraint on the second iteration of every query.
+          position  (or (:next_position
+                         (query-one! db-info
+                           {:select [[[:coalesce [:+ [:max :position] 1] 0]
+                                      :next_position]]
+                            :from   :iteration
+                            :where  [:= :query_state_id query-state-id-s]}))
                       0)]
       ;; 1. Iteration row
       (execute! db-info
         {:insert-into :iteration
-         :values [{:id                   iter-id-s
+         :values [{:id                   iteration-id-s
                    :query_state_id       query-state-id-s
                    :position             position
                    :status               (normalize-status (cond answer :done error :error :else :done))
                    :llm_system_prompt    (when (seq llm-messages)
                                            (:content (first (filter #(= "system" (:role %)) llm-messages))))
                    :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
+                   :llm_provider         (when llm-provider (name (->kw llm-provider)))
                    :llm_model            llm-model
                    :llm_thinking         (or thinking "")
                    :llm_full_duration_ms (or duration-ms 0)
@@ -625,13 +648,13 @@
       ;; 2. Executions → expression_soul (kind=call, stateless) + expression_state
       (let [blank? (fn [s] (or (nil? s) (and (string? s) (str/blank? s))))]
         (doseq [[pos exec] (map-indexed vector (or expressions []))]
-          (when conv-state-id
+          (when conversation-state-id
             (let [expr-soul-id (str (UUID/randomUUID))
                   expr-state-id (str (UUID/randomUUID))]
               (execute! db-info
                 {:insert-into :expression_soul
                  :values [{:id                    expr-soul-id
-                           :conversation_state_id conv-state-id
+                           :conversation_state_id conversation-state-id
                            :kind                  "call"
                            :state_mode            "stateless"
                            :metadata              (->json {:position pos})
@@ -640,7 +663,7 @@
                 {:insert-into :expression_state
                  :values [(cond-> {:id                 expr-state-id
                                    :expression_soul_id expr-soul-id
-                                   :iteration_id       iter-id-s
+                                   :iteration_id       iteration-id-s
                                    :version            0
                                    :success            (if (:error exec) 0 1)
                                    :expr               (:code exec)
@@ -660,7 +683,7 @@
                             (:repaired? exec)
                             (assoc :metadata (->json {:repaired true})))]})))))
       ;; 3. Vars → expression_soul (kind=var, stateful) + expression_state (versioned)
-      (when conv-state-id
+      (when conversation-state-id
         (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
           (when name
             (let [name-s (str name)
@@ -669,14 +692,14 @@
                                   {:select [:id]
                                    :from   :expression_soul
                                    :where  [:and
-                                            [:= :conversation_state_id conv-state-id]
+                                            [:= :conversation_state_id conversation-state-id]
                                             [:= :name name-s]]}))
                   soul-id (or existing
                             (let [new-id (str (UUID/randomUUID))]
                               (execute! db-info
                                 {:insert-into :expression_soul
                                  :values [{:id                    new-id
-                                           :conversation_state_id conv-state-id
+                                           :conversation_state_id conversation-state-id
                                            :kind                  "var"
                                            :state_mode            "stateful"
                                            :name                  name-s
@@ -691,7 +714,7 @@
                 {:insert-into :expression_state
                  :values [{:id                 (str (UUID/randomUUID))
                            :expression_soul_id soul-id
-                           :iteration_id       iter-id-s
+                           :iteration_id       iteration-id-s
                            :version            (inc max-ver)
                            :success            1
                            :expr               code
@@ -700,14 +723,20 @@
                                                          time-ms  (assoc :time-ms time-ms)
                                                          metadata (assoc :metadata metadata)))
                            :created_at         now}]})))))
-      iter-id)))
+      iteration-id)))
 
 ;; =============================================================================
 ;; Read helpers
 ;; =============================================================================
 
 (defn- row->query [row]
-  (let [state-meta (<-json (:state_metadata row))]
+  (let [state-meta (<-json (:state_metadata row))
+        ;; `:provider` may live in either the JSON metadata or the
+        ;; dedicated `llm_root_provider` column. The column is the
+        ;; canonical source (typed, indexable); the JSON copy is a
+        ;; convenience for older readers. Prefer the column, fall
+        ;; back to the JSON, and always re-keywordize.
+        provider   (or (:llm_root_provider row) (:provider state-meta))]
     (cond-> {:id                    (->uuid (:soul_id row))
              :type                  :query
              :conversation-state-id (->uuid (:conversation_state_id row))
@@ -718,6 +747,7 @@
       (:answer state-meta)      (assoc :answer (:answer state-meta))
       (:iterations state-meta)  (assoc :iterations (:iterations state-meta))
       (:duration-ms state-meta) (assoc :duration-ms (:duration-ms state-meta))
+      provider                  (assoc :provider (->kw-back provider))
       (:model state-meta)       (assoc :model (:model state-meta))
       (:input-tokens state-meta)     (assoc :input-tokens (:input-tokens state-meta))
       (:output-tokens state-meta)    (assoc :output-tokens (:output-tokens state-meta))
@@ -731,7 +761,7 @@
   {:select [:qs.id :qs.conversation_state_id :qs.title :qs.query
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status :qst.metadata [:qst.metadata :state_metadata]
-            :qst.llm_root_model]
+            :qst.llm_root_provider :qst.llm_root_model]
    :from   [[:query_soul :qs]]
    :join   [[:query_state :qst] [:= :qst.query_soul_id :qs.id]]
    :where  [:and
@@ -775,16 +805,18 @@
     (some? (:llm_error row))            (assoc :error (:llm_error row))
     (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
     (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
+    (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
+    (some? (:llm_model row))            (assoc :model (:llm_model row))
     ;; surface plan slot fields when populated. NULL columns stay
     ;; absent so the returned map keeps a tight shape.
     ;; Nippy round-trips keywords/sets/etc. losslessly — no shim needed.
     (some? (:plan_state row))           (assoc :plan-state (<-blob (:plan_state row)))
     (some? (:breadcrumb row))           (assoc :breadcrumb (:breadcrumb row))
     (some? (:plan_diff row))            (assoc :plan-diff  (<-blob (:plan_diff row)))
-    ;; Iteration metadata (JSON) carries the per-iter metrics:
+    ;; Iteration metadata (JSON) carries the per-iteration metrics:
     ;; :plan-edit-distance, :plan-changed?,
     ;; :var-history-recall-count, :expression-redundancy-fraction,
-    ;; :dedup-saves, :plan-validation-error, plus per-iter extension
+    ;; :dedup-saves, :plan-validation-error, plus per-iteration extension
     ;; info.
     (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))
 
@@ -802,7 +834,7 @@
 
 (defn db-list-iteration-vars [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
-    (let [iter-id-s (->ref iteration-id)]
+    (let [iteration-id-s (->ref iteration-id)]
       (mapv (fn [r]
               {:name    (:name r)
                :value   (<-blob (:result r))
@@ -813,7 +845,7 @@
            :from   [[:expression_state :est]]
            :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
            :where  [:and
-                    [:= :est.iteration_id iter-id-s]
+                    [:= :est.iteration_id iteration-id-s]
                     [:= :es.kind "var"]]
            :order-by [[:est.created_at :asc]]})))
     []))
@@ -823,7 +855,7 @@
    Each entry has :code, :result, :error, :stdout, :duration-ms."
   [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
-    (let [iter-id-s (->ref iteration-id)]
+    (let [iteration-id-s (->ref iteration-id)]
       (mapv (fn [r]
               (cond-> {:code (:expr r)}
                 (some? (:result r)) (assoc :result (<-blob (:result r)))
@@ -835,7 +867,7 @@
            :from     [[:expression_state :est]]
            :join     [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
            :where    [:and
-                      [:= :est.iteration_id iter-id-s]
+                      [:= :est.iteration_id iteration-id-s]
                       [:= :es.kind "call"]]
            :order-by [[:est.created_at :asc]]})))
     []))
@@ -894,7 +926,7 @@
   (let [queries (db-list-conversation-queries db-info conversation-id)]
     (mapv (fn [idx query]
             (let [qref       (:id query)
-                  iter-count (count (db-list-query-iterations db-info qref))
+                  iteration-count (count (db-list-query-iterations db-info qref))
                   answer-raw (or (:answer query) "")
                   answer-preview (subs answer-raw 0 (min (count answer-raw) 160))]
               {:query-pos      idx
@@ -902,7 +934,7 @@
                :created-at     (:created-at query)
                :query          (:text query)
                :status         (:status query)
-               :iterations     iter-count
+               :iterations     iteration-count
                :answer-preview answer-preview}))
       (range)
       queries)))
@@ -911,7 +943,7 @@
 ;; Expression dependencies
 ;; =============================================================================
 
-(defn store-dependency!
+(defn db-store-dependency!
   "Store an edge: downstream depends on upstream.
    Both must be expression_souls in the same conversation_state."
   [db-info {:keys [conversation-state-id downstream-soul-id upstream-soul-id]}]

@@ -85,9 +85,9 @@
 ;;; ── State shape ────────────────────────────────────────────────────────────
 ;;
 ;; {:config     nil              ;; provider config map or nil
-;;  :conv       nil              ;; {:id conv-id} or nil — handle to the shared conversations cache
+;;  :conversation nil            ;; {:id conversation-id} or nil — handle to the shared conversations cache
 ;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
-;;  :msg-scroll nil              ;; row offset into bubbles, nil = auto-bottom
+;;  :messages-scroll nil              ;; row offset into bubbles, nil = auto-bottom
 ;;  :input      {:lines [""] :crow 0 :ccol 0}
 ;;  :input-history []            ;; persisted user queries for this conversation
 ;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
@@ -155,10 +155,10 @@
   "Initialize app-db with default state."
   []
   (reset! app-db {:config     nil
-                  :conv       nil
+                  :conversation nil
                   :title      nil
                   :messages   []
-                  :msg-scroll nil
+                  :messages-scroll nil
                   :input      (input/empty-input)
                   :input-history []
                   :input-history-index nil
@@ -219,12 +219,12 @@
     (assoc db :shutdown? true)))
 
 (reg-event-db :init-conversation
-  (fn [db [_ conv history]]
+  (fn [db [_ conversation history]]
     (let [user-history (->> (or history [])
                          (filter #(= :user (:role %)))
                          (mapv :text))]
       (assoc db
-        :conv conv
+        :conversation conversation
         :messages (or history [])
         :input-history user-history
         :input-history-index nil
@@ -288,39 +288,39 @@
 
 (reg-event-db :set-scroll
   (fn [db [_ scroll]]
-    (assoc db :msg-scroll scroll)))
+    (assoc db :messages-scroll scroll)))
 
 (reg-event-db :scroll-up
   (fn [db [_ amount total-h inner-h]]
     (let [max-s (max 0 (- total-h inner-h))
-          cur   (or (:msg-scroll db) max-s)]
-      (assoc db :msg-scroll (max 0 (- cur amount))))))
+          cur   (or (:messages-scroll db) max-s)]
+      (assoc db :messages-scroll (max 0 (- cur amount))))))
 
 (reg-event-db :scroll-down
   (fn [db [_ amount total-h inner-h]]
     (let [max-s (max 0 (- total-h inner-h))
-          cur   (or (:msg-scroll db) max-s)]
+          cur   (or (:messages-scroll db) max-s)]
       (if (>= (+ cur amount) max-s)
-        (assoc db :msg-scroll nil)
-        (assoc db :msg-scroll (min max-s (+ cur amount)))))))
+        (assoc db :messages-scroll nil)
+        (assoc db :messages-scroll (min max-s (+ cur amount)))))))
 
 (reg-event-fx :send-message
   (fn [db [_ text]]
     (let [token (sdk/cancellation-token)]
       {:db (-> db
-             (update :messages conj (chat/user-msg text))
-             (update :messages conj (chat/assistant-msg "Sending request to provider…"))
+             (update :messages conj (chat/user-message text))
+             (update :messages conj (chat/assistant-message "Sending request to provider…"))
              (update :input-history (fn [xs]
                                       (let [xs (vec (or xs []))]
                                         (if (= text (last xs)) xs (conj xs text)))))
-             (assoc :msg-scroll nil :loading? true
+             (assoc :messages-scroll nil :loading? true
                :cancel-token token
                :cancelling? false
                :progress {:iterations []}
                :query-start-ms (System/currentTimeMillis)
                :input-history-index nil
                :input-history-draft nil))
-       :fx [[:rlm-query (:conv db) text token]]})))
+       :fx [[:rlm-query (:conversation db) text token]]})))
 
 (reg-event-fx :cancel-query
   (fn [db _]
@@ -350,7 +350,7 @@
           ;; iteration trace next to a \"Cancelled by user.\"
           ;; placeholder is more confusing than informative.
           cancelled? (= :cancelled status)
-          response (-> (chat/assistant-msg (or answer ""))
+          response (-> (chat/assistant-message (or answer ""))
                      (cond-> query-id                (assoc :query-id query-id)
                        (and (not cancelled?) (seq trace))
                        (assoc :trace trace :raw-answer (or answer ""))
@@ -364,14 +364,14 @@
       (-> db
         (update :messages pop)
         (update :messages conj response)
-        (assoc :msg-scroll nil :loading? false :progress nil
+        (assoc :messages-scroll nil :loading? false :progress nil
           :cancel-token nil :cancelling? false)
         (dissoc :query-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
 (reg-fx :rlm-query
-  (fn [conv text token]
+  (fn [conversation text token]
     (let [fut (future
                 (try
                   (let [{:keys [on-chunk]}
@@ -379,7 +379,7 @@
                           {:on-update (fn [timeline _chunk]
                                         (try (dispatch [:set-progress-iterations timeline])
                                           (catch Throwable _ nil)))})
-                        result (chat/query! conv text
+                        result (chat/query! conversation text
                                  {:on-chunk    on-chunk
                                   :cancel-atom (sdk/cancellation-atom token)})]
                     (if (:error result)

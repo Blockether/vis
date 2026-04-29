@@ -95,7 +95,7 @@
 (defdescribe markdown-headings-thinking-mode-test
   (describe "Thinking-mode headings use the thinking marker bundle"
     ;; The thinking-mode marker bundle is a parallel set of PUA
-    ;; codepoints; the renderer paints them with the iter-bg + dim
+    ;; codepoints; the renderer paints them with the iteration-bg + dim
     ;; italic style. Same H4-H6 → H3 collapse must apply.
     (it "#### Heading 4 (thinking) → MARKER_TH_MD_H3"
       (let [[line] (md->lines "#### Heading 4" 80 :thinking)]

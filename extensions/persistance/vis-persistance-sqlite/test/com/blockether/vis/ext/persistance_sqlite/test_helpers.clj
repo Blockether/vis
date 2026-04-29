@@ -30,12 +30,12 @@
   []
   (lt/set-ns-context!
     [(lt/around-each [f]
-       (let [s (sdk/create-store-connection :memory)]
+       (let [s (sdk/db-create-connection! :memory)]
          (try
            (binding [*store* s]
              (f))
            (finally
-             (sdk/dispose-store-connection! s)))))]))
+             (sdk/db-dispose-connection! s)))))]))
 
 (defn raw-query
   "Execute raw HoneySQL against the store's datasource."
@@ -46,9 +46,9 @@
 (defn raw-count
   "Count rows in a table, optionally with a where clause."
   ([store table]
-   (:cnt (first (raw-query store {:select [[[:count :*] :cnt]] :from [table]}))))
+   (:row-count (first (raw-query store {:select [[[:count :*] :row-count]] :from [table]}))))
   ([store table where]
-   (:cnt (first (raw-query store {:select [[[:count :*] :cnt]] :from [table] :where where})))))
+   (:row-count (first (raw-query store {:select [[[:count :*] :row-count]] :from [table] :where where})))))
 
 (defn thaw-blob
   "Thaw a nippy BLOB from a raw query result."

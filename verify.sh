@@ -183,6 +183,7 @@ _graal_safety() {
   # `load-file` can resolve every `:require`.
   clojure \
     -Sdeps '{:deps {com.blockether/vis-common-meta             {:local/root "extensions/common/vis-common-meta"}
+                    com.blockether/vis-common-environment      {:local/root "extensions/common/vis-common-environment"}
                     com.blockether/vis-common-editing          {:local/root "extensions/common/vis-common-editing"}
                     com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                     com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}

@@ -22,7 +22,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.env :as env]
-   [com.blockether.vis.internal.sdk :as sdk]
+   [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -237,61 +237,40 @@
 ;; System prompt
 ;; =============================================================================
 
-(defn environment-block []
-  (let [cwd   (System/getProperty "user.dir")
-        os    (System/getProperty "os.name")
-        arch  (System/getProperty "os.arch")
-        shell (or (System/getenv "SHELL") "unknown")
-        user  (System/getProperty "user.name")
-        home  (System/getProperty "user.home")]
-    (str "<environment>\n"
-      "  Working directory: " cwd "\n"
-      "  Home: " home "\n"
-      "  User: " user "\n"
-      "  Platform: " os " (" arch ")\n"
-      "  Shell: " shell "\n"
-      "</environment>\n")))
-
 (def CORE_SYSTEM_PROMPT
-  "You are a Clojure agent. You think by writing Clojure that runs in an SCI sandbox.
+  "Clojure agent. Think = write Clojure in SCI sandbox.
 
-Each turn you emit JSON:
-  :code      ONE Clojure source string. Multiple top-level forms allowed; the
-             runtime parses and evaluates each in order. Each form becomes one
-             addressable iN.K result. Pass `\"\"` when you have nothing to run.
-  :answer    optional. Emit when the task is satisfied; terminates the turn.
+Each turn emit JSON:
+  :code    ONE source string. Multiple top-level forms OK; runtime evals each in order.
+           Each form -> one iN.K result. `\"\"` = noop.
+  :answer  optional. Emit when done -> turn ends.
 
-After your code runs you receive a fresh user message containing:
-  <recent>      last few iterations' top-level forms and their results.
-                Addressable as iN.K (iteration N, form K, 1-indexed). The
-                result shown is the value the form returned. `(def x ...)`
-                returns the var, not the bound value — if you want to SEE
-                what a tool returned, call the tool inline and let it show
-                up in <recent>; do NOT wrap reads in `def` unless you need
-                to refer back to them across iterations.
-  <var_index>   every `(def name val)` you've written, still bound in the
-                sandbox. Strings are shown verbatim up to ~8000 chars.
+After eval you get fresh user msg:
+  <recent>     last few iters' forms + results. Addressable iN.K (iter N, form K, 1-indexed).
+               Shown = form's return val. `(def x ...)` returns the var, NOT the bound value.
+               To SEE a tool result, call inline. Don't wrap reads in `def` unless crossing iters.
+  <var_index>  your `(def name val)` bindings still alive. Strings verbatim up to ~8000 chars.
 
-`QUERY` (current request), `ANSWER` (previous turn's answer), and `REASONING`
-(last iteration's thinking) are bound as plain SCI vars — read them by name.
+SCI vars bound by name: `QUERY` (current req), `ANSWER` (prev turn), `REASONING` (last iter thinking).
 
-Guidance:
-  • Write real Clojure. Use `let` / `do` / threading inside one form when
-    steps depend on each other.
-  • Use `def` / `defn` only to KEEP a value across iterations.
-  • If you need to inspect a value, return it from your form (last expression
-    of a `do`) — it appears in <recent>. Don't print, don't def: return.
-  • If a tool returned a result you need again, read it from <recent> or from
-    a var you bound — don't re-fetch.")
+Rules:
+  • Real Clojure. `let` / `do` / threading inside one form when steps depend.
+  • `def` / `defn` only to KEEP values across iters.
+  • Inspect = RETURN from form (last expr of `do`) -> appears in <recent>. No print, no def: return.
+  • Need prior tool result? Read <recent> or your bound var. Don't re-fetch.")
 
 (defn build-system-prompt
-  "Core system prompt: agent rules + environment block + optional caller addendum."
+  "Core system prompt: agent rules + optional caller addendum.
+
+   The `<environment>` block (cwd, OS, git facts, languages,
+   monorepo shape) is NOT assembled here. It is rendered by the
+   `vis-common-environment` extension's `:ext/prompt` fragment, so
+   the runtime no longer hardcodes any environment text. Drop the
+   jar, drop the block."
   [{:keys [system-prompt]}]
   (str CORE_SYSTEM_PROMPT
-    "\n\n"
-    (environment-block)
     (when (and system-prompt (not (str/blank? system-prompt)))
-      (str "\nINSTRUCTIONS:\n" system-prompt "\n"))))
+      (str "\n\nINSTRUCTIONS:\n" system-prompt "\n"))))
 
 (defn active-extensions
   "Returns the seq of registered extensions whose `:ext/activation-fn` returns
@@ -314,7 +293,7 @@ Guidance:
 (defn- render-extension-prompt-block
   [environment ext]
   (try
-    (let [canonical (sdk/render-prompt ext)
+    (let [canonical (extension/render-prompt ext)
           extra-fn  (:ext/prompt ext)
           extra     (when extra-fn (extra-fn environment))
           body      (->> [canonical extra]

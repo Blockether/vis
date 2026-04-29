@@ -63,12 +63,12 @@
   "Execute `body-fn` (fn [g] ...) with the given styles enabled, then restore.
    Returns the result of `body-fn`."
   [^TextGraphics g styles body-fn]
-  (let [prev (vec (.getActiveModifiers g))]
+  (let [previous-modifiers (vec (.getActiveModifiers g))]
     (.enableModifiers g (into-array SGR styles))
     (let [result (body-fn g)]
       (.clearModifiers g)
-      (when (seq prev)
-        (.enableModifiers g (into-array SGR prev)))
+      (when (seq previous-modifiers)
+        (.enableModifiers g (into-array SGR previous-modifiers)))
       result)))
 
 (defmacro styled
@@ -539,20 +539,20 @@
 (def MARKER_CODE_ERR   "\u2062")  ;; invisible times        → code with error status
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    → error result line
 (def MARKER_DURATION   "\u2064")  ;; invisible plus         → duration annotation
-(def MARKER_ITER_HDR   "\u2066")  ;; LRI                    → iteration header with bg
+(def MARKER_ITERATION_HDR   "\u2066")  ;; LRI                    → iteration header with bg
 (def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    → stdout separator line
 (def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    → stdout empty padding line
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    → answer separator (trace→answer break)
 (def MARKER_CODE_PAD   "\u206A")  ;; ISS                    → code block empty padding line
 (def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   → error code block padding line
-(def MARKER_ITER_PAD   "\u206C")  ;; IAFS                   → iteration zone padding (margin between blocks)
+(def MARKER_ITERATION_PAD   "\u206C")  ;; IAFS                   → iteration zone padding (margin between blocks)
 (def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   → final answer header
 (def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   → answer text line (with answer bg)
 (def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   → answer padding line
 ;; Markdown markers (PUA \uE000+) — guaranteed unique, never collide
 ;; with the iteration/answer markers above. Two parallel sets:
 ;;   - MARKER_MD_*    → answer-zone markdown (answer-bg)
-;;   - MARKER_TH_MD_* → thinking-zone markdown (iter-header-bg, italic)
+;;   - MARKER_TH_MD_* → thinking-zone markdown (iteration-header-bg, italic)
 (def MARKER_MD_H1         "\uE001") ;; markdown heading 1 (answer)
 (def MARKER_MD_H2         "\uE002") ;; markdown heading 2 (answer)
 (def MARKER_MD_H3         "\uE003") ;; markdown heading 3 (answer)

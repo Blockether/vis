@@ -33,8 +33,8 @@ the base environment returned by `create-environment`.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `:current-iteration-atom` | `atom of int` | Plain integer counter for the iteration in flight (0-indexed). Bumped before every `store-iteration!`. Read by extensions that want to know which iteration they're in. |
-| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `store-iteration!`. Used for sub-RLM parenting and for log correlation. |
+| `:current-iteration-atom` | `atom of int` | Plain integer counter for the iteration in flight (0-indexed). Bumped before every `db-store-iteration!`. Read by extensions that want to know which iteration they're in. |
+| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `db-store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `db-store-iteration!`. Used for sub-RLM parenting and for log correlation. |
 
 ## Safe operations
 
