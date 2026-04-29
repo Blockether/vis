@@ -14,7 +14,8 @@
 | Current iteration counter | `environment :current-iteration-atom` (query-scoped, int counter starting at 0) | Query |
 | Current iteration row id | `environment :current-iteration-id-atom` (query-scoped, UUID of the latest `db-store-iteration!` row, or nil) | Query |
 | Token usage | `usage-atom` (local in iteration loop) | Query |
-| Repetition counts | `call-counts-atom` (local in iteration loop) | Query |
+| Seen-expression hashes | `seen-expression-hashes-atom` (local in iteration loop) | Query |
+| Dedup cache | `dedup-cache-atom` (local in iteration loop) | Query |
 
 ## Environment map
 

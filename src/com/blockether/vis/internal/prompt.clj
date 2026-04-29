@@ -11,8 +11,7 @@
           <recent>      last RECENT_KEEP_ITERS iterations, code + result,
                         addressable as iN.K. The model's working memory.
           <var_index>   user-defined `(def ...)` bindings in the SCI env.
-        Plus one optional [system_nudge] line when the model executes the
-        same expression twice.
+        Extensions can append `[system_nudge]` lines via `:ext/nudge-fn`.
 
    The two slots above plus the SYSTEM vars (every name in
    `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`,
@@ -142,31 +141,6 @@
           idx)))))
 
 ;; =============================================================================
-;; Repetition warning (the only nudge that survived the cull)
-;; =============================================================================
-
-(def ^:private REPETITION_THRESHOLD 1)
-
-(defn- repetition-warning
-  "Emit a single [system_nudge] line when the SAME (code, error?) was seen
-   in the previous iteration's blocks. Threshold of 1 means: one
-   repeat is enough; the model should change strategy."
-  [call-counts-atom previous-blocks]
-  (when (and call-counts-atom (seq previous-blocks))
-    (let [keys* (mapv (fn [{:keys [code error]}]
-                        (if error
-                          [:error-only (str/trim (str error))]
-                          [:code-only (str/trim (str code))]))
-                  previous-blocks)
-          max-count (swap! call-counts-atom
-                      (fn [m]
-                        (reduce (fn [acc k] (update acc k (fnil inc 0)))
-                          (or m {}) keys*)))
-          seen (apply max 0 (map #(get max-count % 0) keys*))]
-      (when (>= seen REPETITION_THRESHOLD)
-        "[system_nudge] You repeated the same expression. Either consult <recent> for the previous result, or change strategy."))))
-
-;; =============================================================================
 ;; Iteration context — the trailing user message
 ;; =============================================================================
 
@@ -177,7 +151,11 @@
      <recent>      — last RECENT_KEEP_ITERS iterations, code + result.
      <var_index>   — `(def ...)` bindings in the SCI env.
 
-   Plus one [system_nudge] line if the model is repeating itself.
+   Active extensions can append one `[system_nudge]` line each via
+   `:ext/nudge-fn`. There is no built-in repetition nudge — the model
+   already sees the previous iteration's result in <recent> and the
+   dedup cache short-circuits literal re-issues with `:cached? true`,
+   which is signal enough to change strategy.
 
    Required opts:
      `:active-extensions` — vec from `(active-extensions env)`. Computed once
@@ -185,8 +163,8 @@
         :ext/nudge-fn is consulted (rare).
 
    Optional:
-     `:blocks-by-iteration`, `:call-counts-atom`."
-  [environment {:keys [blocks-by-iteration call-counts-atom active-extensions] :as opts}]
+     `:blocks-by-iteration`."
+  [environment {:keys [blocks-by-iteration active-extensions] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
@@ -196,7 +174,6 @@
         var-block (when (and (string? var-index-str)
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
-        rep-nudge (repetition-warning call-counts-atom last-iteration-blocks)
         ext-nudges (when (seq active-extensions)
                      (let [ctx {:environment environment
                                 :previous-blocks last-iteration-blocks}]
@@ -211,10 +188,7 @@
                                        (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
                                        nil)))))
                          active-extensions)))
-        nudges (cond-> []
-                 rep-nudge          (conj rep-nudge)
-                 (seq ext-nudges)   (into ext-nudges))
-        nudges-block (when (seq nudges) (str/join "\n" nudges))
+        nudges-block (when (seq ext-nudges) (str/join "\n" ext-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [recent-block var-block nudges-block])]
     (when (seq parts)
