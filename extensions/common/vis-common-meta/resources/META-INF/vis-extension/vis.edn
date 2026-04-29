@@ -94,7 +94,7 @@ Call: `(meta/conversation)` or `(meta/conversation conversation-id)`:
 
 ```clojure
 {:id                \"uuid\"
- :channel           :vis
+ :channel           :tui
  :title             \"...\"
  :model             \"claude-sonnet-4-5\"
  :created-at        #inst \"...\"
@@ -121,11 +121,11 @@ perspective.
 Call: `(meta/conversations)` or `(meta/conversations channel)`. Newest-first vec:
 
 ```clojure
-[{:id \"...\" :channel :vis :title \"...\" :created-at #inst \"...\"
+[{:id \"...\" :channel :tui :title \"...\" :created-at #inst \"...\"
   :turn-count N :external-id \"...\"}]
 ```
 
-No-arg scans every channel (`:vis` `:tui` `:telegram` `:cli`). Channel kw = filter.
+No-arg scans every registered channel plus `:cli`. Channel kw = filter.
 
 ## Var history
 

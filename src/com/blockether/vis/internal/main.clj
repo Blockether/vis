@@ -487,7 +487,7 @@
 
 (defn- cli-conversations! [_parsed residual]
   (config/init-cli!)
-  (let [channel (or (some #{"vis" "telegram" "cli"} residual) "vis")
+  (let [channel (or (some #{"tui" "telegram" "cli"} residual) "tui")
         ch-kw   (keyword channel)
         convs   (lp/by-channel ch-kw)
         d       (lp/db-info)]
@@ -616,12 +616,12 @@
               count-ch    (fn [ch]
                             (try (count (lp/by-channel ch))
                               (catch Exception _ 0)))
-              vis-n  (count-ch :vis)
+              tui-n  (count-ch :tui)
               cli-n  (count-ch :cli)
               tg-n   (count-ch :telegram)
-              total  (+ vis-n cli-n tg-n)]
+              total  (+ tui-n cli-n tg-n)]
           (stdout! (str "  Conversations:  " total
-                     " (" vis-n " vis, " cli-n " cli, " tg-n " telegram)"
+                     " (" tui-n " tui, " cli-n " cli, " tg-n " telegram)"
                      " — " active-envs " active in memory"))))
       (finally
         (lp/dispose-environment! env)
@@ -679,7 +679,7 @@
 
          {:cmd/name  "conversations"
           :cmd/doc   "List conversations stored on disk."
-          :cmd/usage "vis conversations [vis|telegram|cli]"
+          :cmd/usage "vis conversations [tui|telegram|cli]"
           :cmd/examples ["vis conversations"
                          "vis conversations telegram"]
           :cmd/run-fn cli-conversations!}

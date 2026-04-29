@@ -18,11 +18,11 @@
 (defdescribe conversation-test
   (it "inserts into conversation_soul + conversation_state"
     (let [s  (store)
-          id (sdk/db-store-conversation! s {:channel :vis :system-prompt "Hi" :model "gpt-4o" :title "T"})
+          id (sdk/db-store-conversation! s {:channel :tui :system-prompt "Hi" :model "gpt-4o" :title "T"})
           conversation (sdk/db-get-conversation s id)]
       (expect (= 1 (raw-count s :conversation_soul)))
       (expect (= 1 (raw-count s :conversation_state)))
-      (expect (= :vis (:channel conversation)))
+      (expect (= :tui (:channel conversation)))
       (expect (= "Hi" (:system-prompt conversation)))
       (expect (= "gpt-4o" (:model conversation)))
       (expect (= "T" (:title conversation)))
@@ -30,18 +30,18 @@
 
   (it "resolves :latest"
     (let [s (store)]
-      (sdk/db-store-conversation! s {:channel :vis})
+      (sdk/db-store-conversation! s {:channel :tui})
       (Thread/sleep 2)
-      (let [id2    (sdk/db-store-conversation! s {:channel :vis})
+      (let [id2    (sdk/db-store-conversation! s {:channel :tui})
             latest (sdk/db-resolve-conversation-id s :latest)]
         (expect (= id2 latest)))))
 
   (it "lists by channel via metadata JSON"
     (let [s (store)]
-      (sdk/db-store-conversation! s {:channel :vis :title "A"})
+      (sdk/db-store-conversation! s {:channel :tui :title "A"})
       (sdk/db-store-conversation! s {:channel :telegram :title "B"})
-      (sdk/db-store-conversation! s {:channel :vis :title "C"})
-      (expect (= 2 (count (sdk/db-list-conversations s :vis))))
+      (sdk/db-store-conversation! s {:channel :tui :title "C"})
+      (expect (= 2 (count (sdk/db-list-conversations s :tui))))
       (expect (= 1 (count (sdk/db-list-conversations s :telegram))))))
 
   (it "finds by external-id via metadata JSON"
@@ -52,7 +52,7 @@
 
   (it "updates title on conversation_state"
     (let [s  (store)
-          id (sdk/db-store-conversation! s {:channel :vis :title "Old"})]
+          id (sdk/db-store-conversation! s {:channel :tui :title "Old"})]
       (sdk/db-update-conversation-title! s id "New")
       (expect (= "New" (:title (sdk/db-get-conversation s id)))))))
 
@@ -63,7 +63,7 @@
 (defdescribe fork-test
   (it "creates a new conversation_state row with parent_state_id"
     (let [s    (store)
-          cid  (sdk/db-store-conversation! s {:channel :vis :system-prompt "v0" :model "gpt-4o"})
+          cid  (sdk/db-store-conversation! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
           _    (sdk/db-fork-conversation! s cid {:title "Branch A"})
           conversation (sdk/db-get-conversation s cid)]
       (expect (= 2 (raw-count s :conversation_state)))
@@ -76,7 +76,7 @@
 
   (it "overrides model and system-prompt"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis :system-prompt "old" :model "gpt-4o"})
+          cid (sdk/db-store-conversation! s {:channel :tui :system-prompt "old" :model "gpt-4o"})
           _   (sdk/db-fork-conversation! s cid {:system-prompt "new" :model "claude-4"})
           conversation (sdk/db-get-conversation s cid)]
       (expect (= "new" (:system-prompt conversation)))
@@ -84,7 +84,7 @@
 
   (it "queries on forked state are isolated"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})]
+          cid (sdk/db-store-conversation! s {:channel :tui})]
       (sdk/db-store-query! s {:parent-conversation-id cid :query "Turn 1" :status :done})
       (sdk/db-fork-conversation! s cid {:title "Fork"})
       (sdk/db-store-query! s {:parent-conversation-id cid :query "Turn 2" :status :done})
@@ -94,7 +94,7 @@
 
   (it "double fork increments version"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})]
+          cid (sdk/db-store-conversation! s {:channel :tui})]
       (sdk/db-fork-conversation! s cid {})
       (sdk/db-fork-conversation! s cid {})
       (expect (= 2 (:version (sdk/db-get-conversation s cid))))
@@ -107,7 +107,7 @@
 (defdescribe query-test
   (it "inserts into query_soul + query_state"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})]
+          cid (sdk/db-store-conversation! s {:channel :tui})]
       (sdk/db-store-query! s {:parent-conversation-id cid :query "2+2?" :status :running})
       (expect (= 1 (raw-count s :query_soul)))
       (expect (= 1 (raw-count s :query_state)))
@@ -117,7 +117,7 @@
 
   (it "normalizes :success to done"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-update-query! s qid {:status :success :answer "42"
                                    :tokens {:input 100 :output 50}
@@ -128,7 +128,7 @@
 
   (it "persists :error without renormalization"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-update-query! s qid {:status :error})
       (expect (= :error (:status (first (sdk/db-list-conversation-queries s cid))))))))
@@ -140,7 +140,7 @@
 (defdescribe retry-test
   (it "creates query_state version 1 with forked_from ref"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "hard" :status :running})]
       (sdk/db-update-query! s qid {:status :error})
       (sdk/db-retry-query! s qid {:status :running :model "claude-4"})
@@ -150,7 +150,7 @@
 
   (it "iterations on retry go to new query_state"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 10})
       (sdk/db-update-query! s qid {:status :error})
@@ -166,7 +166,7 @@
 (defdescribe iteration-expression-test
   (it "inserts into iteration + expression_soul(call) + expression_state"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-store-iteration! s {:query-id qid
                                   :expressions [{:code "(+ 1 1)" :result 2 :execution-time-ms 5}
@@ -183,7 +183,7 @@
 
   (it "stores results as nippy BLOBs"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-store-iteration! s {:query-id qid
                                   :expressions [{:code "{:a [1 2]}" :result {:a [1 2]}}]
@@ -196,7 +196,7 @@
 
   (it "stores fn result as {:vis/ref :expr}"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-store-iteration! s {:query-id qid
                                   :expressions [{:code "(defn f [x] x)" :result (fn [x] x)}]
@@ -209,7 +209,7 @@
 
   (it "stores errors with success=0"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-store-iteration! s {:query-id qid
                                   :expressions [{:code "(/ 1 0)" :error "Divide by zero"
@@ -234,7 +234,7 @@
   ;; at 0, 1, 2 monotonically.
   (it "increments position monotonically across iterations in the same query_state"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 1})
       (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "2" :result 2}] :duration-ms 1})
@@ -251,7 +251,7 @@
 (defdescribe var-test
   (it "inserts expression_soul(var, stateful) + expression_state"
     (let [s    (store)
-          cid  (sdk/db-store-conversation! s {:channel :vis})
+          cid  (sdk/db-store-conversation! s {:channel :tui})
           qid  (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid  (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                            :vars [{:name "x" :value 42 :code "(def x 42)"}]})
@@ -264,7 +264,7 @@
 
   (it "reuses soul, increments version"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "x" :value 1}]})
@@ -276,7 +276,7 @@
 
   (it "soul persists across queries"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           q1  (sdk/db-store-query! s {:parent-conversation-id cid :query "t1" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
                                           :vars [{:name "x" :value 1}]})
@@ -288,7 +288,7 @@
 
   (it "fn var stores {:vis/ref :expr}"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
@@ -298,7 +298,7 @@
 
   (it "stores complex data via nippy"
     (let [s    (store)
-          cid  (sdk/db-store-conversation! s {:channel :vis})
+          cid  (sdk/db-store-conversation! s {:channel :tui})
           qid  (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           data {:users [{:name "Alice"} {:name "Bob"}] :tags #{:a :b} :n 42}
           iid  (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
@@ -307,7 +307,7 @@
 
   (it "latest var registry"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "x" :value 1} {:name "y" :value "hi"}]})
@@ -321,7 +321,7 @@
 
   (it "version history"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 1}]})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 50}]})
@@ -338,7 +338,7 @@
 (defdescribe cascade-delete-test
   (it "deletes soul + all descendants"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}]
                                           :duration-ms 0 :vars [{:name "x" :value 1}]})]
@@ -358,7 +358,7 @@
 (defdescribe query-history-test
   (it "builds ordered history with iteration counts"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "What?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :answer "A Lisp" :duration-ms 100})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :answer "JVM Lisp" :duration-ms 50})
@@ -374,14 +374,14 @@
 (defdescribe soul-state-integrity-test
   (it "conversation_state.conversation_soul_id points to conversation_soul.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis :title "FK test"})]
+          cid (sdk/db-store-conversation! s {:channel :tui :title "FK test"})]
       (let [soul  (first (raw-query s {:select [:id] :from :conversation_soul}))
             state (first (raw-query s {:select [:conversation_soul_id] :from :conversation_state}))]
         (expect (= (:id soul) (:conversation_soul_id state))))))
 
   (it "query_soul.conversation_state_id points to conversation_state.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           _   (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (let [state (first (raw-query s {:select [:id] :from :conversation_state}))
             qsoul (first (raw-query s {:select [:conversation_state_id] :from :query_soul}))]
@@ -389,7 +389,7 @@
 
   (it "query_state.query_soul_id points to query_soul.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           _   (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (let [qsoul  (first (raw-query s {:select [:id] :from :query_soul}))
             qstate (first (raw-query s {:select [:query_soul_id] :from :query_state}))]
@@ -397,7 +397,7 @@
 
   (it "iteration.query_state_id points to query_state.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0})]
       (let [qstate (first (raw-query s {:select [:id] :from :query_state}))
@@ -406,7 +406,7 @@
 
   (it "expression_soul.conversation_state_id points to conversation_state.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
       (let [state (first (raw-query s {:select [:id] :from :conversation_state}))
@@ -415,7 +415,7 @@
 
   (it "expression_state.expression_soul_id points to expression_soul.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
       (let [esoul  (first (raw-query s {:select [:id] :from :expression_soul}))
@@ -424,7 +424,7 @@
 
   (it "expression_state.iteration_id points to iteration.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
       (let [iteration (first (raw-query s {:select [:id] :from :iteration}))
@@ -433,7 +433,7 @@
 
   (it "retry query_state.forked_from_query_state_id points to previous query_state.id"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (sdk/db-update-query! s qid {:status :error})
       (sdk/db-retry-query! s qid {:status :running :model "claude-4"})
@@ -445,7 +445,7 @@
 
   (it "fork conversation_state.parent_state_id points to previous state"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})]
+          cid (sdk/db-store-conversation! s {:channel :tui})]
       (sdk/db-fork-conversation! s cid {:title "fork"})
       (let [states (raw-query s {:select [:id :version :parent_state_id]
                                  :from :conversation_state :order-by [[:version :asc]]})]
@@ -455,7 +455,7 @@
 
   (it "expression_soul kind and state_mode are correct for calls vs vars"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid
                                           :expressions [{:code "(+ 1 1)" :result 2}]
@@ -480,7 +480,7 @@
 (defdescribe system-var-versioning-test
   (it "REASONING gets a new version each iteration, all under same soul"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "Explain monads" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [{:code "(+ 1 1)" :result 2}]
                                           :duration-ms 100
@@ -513,7 +513,7 @@
 
   (it "latest var registry returns max version for each system var"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "test" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "QUERY" :value "test" :code ";; SYSTEM"}
@@ -533,7 +533,7 @@
 
   (it "user vars and system vars coexist, each with independent version chains"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "compute" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid
                                           :expressions [{:code "(def data [1 2 3])" :result [1 2 3]}]
@@ -563,7 +563,7 @@
 
   (it "system vars version across multiple queries in same conversation"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           ;; Turn 1
           q1  (sdk/db-store-query! s {:parent-conversation-id cid :query "What is 2+2?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
@@ -596,7 +596,7 @@
 (defdescribe answer-lifecycle-test
   (it "query_state metadata stores answer on update"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "2+2?" :status :running})]
       ;; Before update — no answer in metadata
       (let [q (first (sdk/db-list-conversation-queries s cid))]
@@ -613,7 +613,7 @@
 
   (it "ANSWER var tracks across turns"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           ;; Turn 1: answer is 4
           q1  (sdk/db-store-query! s {:parent-conversation-id cid :query "2+2?" :status :done})
           _   (sdk/db-store-iteration! s {:query-id q1 :expressions [{:code "(+ 2 2)" :result 4}]
@@ -658,7 +658,7 @@
 (defdescribe restore-test
   (it "restores vars in topological order — no dependencies"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "x" :value 42 :code "(def x 42)"}
@@ -676,7 +676,7 @@
 
   (it "restores fn vars with {:vis/ref :expr}"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "double-it" :value (fn [x] (* x 2))
@@ -689,7 +689,7 @@
 
   (it "linear dependency chain A → B → C restored in correct order"
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Iteration 1: define base-rate
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
@@ -732,7 +732,7 @@
 
   (it "diamond dependency: D depends on B and C, both depend on A"
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                              :vars [{:name "config" :value {:rate 0.1} :code "(def config {:rate 0.1})"}
@@ -776,7 +776,7 @@
 
   (it "deep chain: 5 levels deep, each depending on previous"
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           var-names ["level-0" "level-1" "level-2" "level-3" "level-4"]
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
@@ -798,7 +798,7 @@
 
   (it "mixed data + fn vars with system vars, all restored correctly"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "analyze data" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "QUERY" :value "analyze data" :code ";; SYSTEM"}
@@ -858,7 +858,7 @@
     ;; (def add-10 (make-adder 10))
     ;; (def result (add-10 5))  => 15
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                              :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
@@ -900,7 +900,7 @@
     ;; (def scale (make-scaler))
     ;; (def scaled-data (mapv scale [1 2 3 4 5]))
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                              :vars [{:name "config" :value {:multiplier 3}
@@ -948,7 +948,7 @@
     ;; Iter 4: (def answer (compute 5)) -- should use new base
     ;; At restore time, base=20 (latest version), compute has :vis/ref :expr
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                              :vars [{:name "base" :value 10 :code "(def base 10)"}]})
@@ -991,7 +991,7 @@
 
   (it "wide fan-out: one config feeds 5 independent fns"
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           qid    (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           fn-names ["fn-a" "fn-b" "fn-c" "fn-d" "fn-e"]
           _      (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
@@ -1018,7 +1018,7 @@
 
   (it "cross-query dependency: var from turn 1 used by fn in turn 2"
     (let [s      (store)
-          cid    (sdk/db-store-conversation! s {:channel :vis})
+          cid    (sdk/db-store-conversation! s {:channel :tui})
           ;; Turn 1: define data
           q1     (sdk/db-store-query! s {:parent-conversation-id cid :query "load data" :status :done})
           _      (sdk/db-store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
@@ -1066,7 +1066,7 @@
 (defdescribe lazy-seq-safety-test
   (it "infinite range → {:vis/ref :expr} — never realized"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
@@ -1077,7 +1077,7 @@
 
   (it "infinite repeat → {:vis/ref :expr}"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
@@ -1086,7 +1086,7 @@
 
   (it "iterate → {:vis/ref :expr}"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "nats" :value (iterate inc 0)
@@ -1096,7 +1096,7 @@
 
   (it "small lazy seq (map inc [1 2 3]) → {:vis/ref :expr} — lazy is lazy"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "small" :value (map inc [1 2 3])
@@ -1107,7 +1107,7 @@
 
   (it "realized vector is stored as data"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "v" :value [1 2 3 4 5]
@@ -1117,7 +1117,7 @@
 
   (it "realized list is stored as data"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "l" :value '(1 2 3)
@@ -1127,7 +1127,7 @@
 
   (it "lazy seq inside a map → map stored, lazy value becomes ref"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           iid (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "mixed" :value {:data [1 2 3]
@@ -1143,7 +1143,7 @@
 
   (it "lazy seq as expression result → ref"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})
           _   (sdk/db-store-iteration! s {:query-id qid
                                           :expressions [{:code "(range)" :result (range)}
@@ -1165,7 +1165,7 @@
 (defdescribe restore-integration-test
   (it "data var: store, wipe, restore, read back"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Create SCI sandbox, def a var
           {:keys [sci-ctx]} (env/create-sci-context nil)
@@ -1188,7 +1188,7 @@
 
   (it "function var: store, wipe, restore via eval, call it"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Store a fn (result will be {:vis/ref :expr})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
@@ -1206,7 +1206,7 @@
 
   (it "dependency chain: data → fn → result, all restored in order"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Store chain: rate → calc → answer
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
@@ -1247,7 +1247,7 @@
 
   (it "higher-order fn chain: factory → instance → call"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
@@ -1272,7 +1272,7 @@
 
   (it "system vars are restored: QUERY, REASONING, ANSWER"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})
+          cid (sdk/db-store-conversation! s {:channel :tui})
           qid (sdk/db-store-query! s {:parent-conversation-id cid :query "x" :status :done})
           _   (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                           :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM var"}
@@ -1296,7 +1296,7 @@
 (defdescribe log-test
   (it "inserts into log table with FK scope"
     (let [s   (store)
-          cid (sdk/db-store-conversation! s {:channel :vis})]
+          cid (sdk/db-store-conversation! s {:channel :tui})]
       (sdk/db-log! s {:level :info :event "test.event" :data "{\"k\":1}"
                       :conversation-soul-id cid})
       (expect (= 1 (raw-count s :log)))
@@ -1342,7 +1342,7 @@
 
   (it "🔥 stale var evicted from live SCI sandbox, fresh var untouched, revision bumped"
     (let [s       (store)
-          cid     (sdk/db-store-conversation! s {:channel :vis})
+          cid     (sdk/db-store-conversation! s {:channel :tui})
           ;; Create 4 queries — only last 3 are "recent" (AUTO_FORGET_STALE_QUERIES=3)
           old-qid (sdk/db-store-query! s {:parent-conversation-id cid :query "old" :status :done})
           _       (Thread/sleep 5)
@@ -1373,7 +1373,7 @@
 
   (it "😴 all vars recent → janitor naps, sandbox untouched, no revision bump"
     (let [s       (store)
-          cid     (sdk/db-store-conversation! s {:channel :vis})
+          cid     (sdk/db-store-conversation! s {:channel :tui})
           qid     (sdk/db-store-query! s {:parent-conversation-id cid :query "q1" :status :done})
           _       (sdk/db-store-iteration! s {:query-id qid :expressions [] :duration-ms 0
                                               :vars [{:name "x" :value 1 :code "(def x 1)"}]})
@@ -1391,7 +1391,7 @@
 
   (it "📖 docstring = immortality shield — stale but documented vars survive the purge"
     (let [s       (store)
-          cid     (sdk/db-store-conversation! s {:channel :vis})
+          cid     (sdk/db-store-conversation! s {:channel :tui})
           old-qid (sdk/db-store-query! s {:parent-conversation-id cid :query "old" :status :done})
           _       (Thread/sleep 5)
           _       (sdk/db-store-query! s {:parent-conversation-id cid :query "q2" :status :done})
@@ -1423,7 +1423,7 @@
 
   (it "🏰 REASONING and friends are fortress vars — stale or not, the janitor can't touch them"
     (let [s       (store)
-          cid     (sdk/db-store-conversation! s {:channel :vis})
+          cid     (sdk/db-store-conversation! s {:channel :tui})
           old-qid (sdk/db-store-query! s {:parent-conversation-id cid :query "old" :status :done})
           _       (Thread/sleep 5)
           _       (sdk/db-store-query! s {:parent-conversation-id cid :query "q2" :status :done})
@@ -1456,7 +1456,7 @@
 (defn- bootstrap-conversation+query!
   "Returns {:store … :conversation-id … :query-id …}."
   [store]
-  (let [conversation-id (sdk/db-store-conversation! store {:channel :vis :title "test"})
+  (let [conversation-id (sdk/db-store-conversation! store {:channel :tui :title "test"})
         query-id        (sdk/db-store-query! store
                           {:parent-conversation-id conversation-id
                            :query "test query"

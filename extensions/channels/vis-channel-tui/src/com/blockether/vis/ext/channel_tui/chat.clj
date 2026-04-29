@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.chat
   "TUI-side projections over the shared conversations API.
 
-   On startup the TUI creates a fresh `:vis` conversation by default.
+   On startup the TUI creates a fresh `:tui` conversation by default.
    Pass `--conversation-id ID` or `--resume` to pick up an existing one.
    Conversation data is persisted in `~/.vis/vis.mdb` so you can come
    back to it."
@@ -106,19 +106,19 @@
       [])))
 
 (defn make-conversation
-  "Create a fresh `:vis` conversation. Returns `{:id conversation-id :history []}`."
+  "Create a fresh `:tui` conversation. Returns `{:id conversation-id :history []}`."
   [_provider-config]
-  (let [{:keys [id]} (lp/create! :vis)]
+  (let [{:keys [id]} (lp/create! :tui)]
     {:id id :history []}))
 
 (defn- resolve-resume-id
   "Resolve a resume id. Accepts full UUID or an unambiguous prefix
-   among :vis conversations. Returns full UUID string or nil."
+   among :tui conversations. Returns full UUID string or nil."
   [conversation-id]
   (let [cid (some-> conversation-id str str/trim)]
     (when (seq cid)
       (or (some-> (lp/by-id cid) :id str)
-        (let [matches (->> (lp/by-channel :vis)
+        (let [matches (->> (lp/by-channel :tui)
                         (map :id)
                         (filter #(str/starts-with? (str %) cid))
                         vec)]
@@ -197,7 +197,7 @@
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in
-   `~/.vis/vis.mdb` so other consumers of the `:vis` channel
-   (e.g. `vis conversations vis`, future inspectors) still see it."
+   `~/.vis/vis.mdb` so other consumers of the `:tui` channel
+   (e.g. `vis conversations tui`, future inspectors) still see it."
   [{:keys [id]}]
   (when id (lp/close! id)))

@@ -2135,7 +2135,7 @@
         resolved-conversation-id (persistance/db-resolve-conversation-id db-info conversation)
         conversation-id          (or resolved-conversation-id
                                    (persistance/db-store-conversation! db-info
-                                     (cond-> {:channel       (or channel :vis)
+                                     (cond-> {:channel       (or channel :tui)
                                               :external-id   external-id
                                               :model         root-model
                                               :title         title

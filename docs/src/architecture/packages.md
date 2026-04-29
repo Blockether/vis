@@ -65,7 +65,7 @@ re-listing it.
 | ------- | ---- | ------- | ---------- | ----- |
 | `vis-persistance-sqlite` | `extensions/persistance/vis-persistance-sqlite/` | SQLite backend for the persistence facade. Owns the SQLite schema resources and JDBC stack: sqlite-jdbc, next.jdbc, HoneySQL, HikariCP, nippy, and the SQLite Flyway driver. Internal namespace: `com.blockether.vis.ext.persistance-sqlite.core`. | — | Depends on `vis-runtime`. Loading the namespace auto-registers the `:sqlite` backend with the persistence facade. The canonical SQLite schema resource ships from this package at `db/sqlite/migration/V1__schema.sql`. |
 | `vis-provider-github-copilot` | `extensions/providers/vis-provider-github-copilot/` | GitHub Copilot OAuth device-flow provider. Internal namespace: `com.blockether.vis.ext.provider-github-copilot`. | — | Depends on `vis-runtime`. Ships a `META-INF/vis-extension/vis.edn` entry that registers the provider on startup. |
-| `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat UI. Internal namespace: `com.blockether.vis.ext.channel-tui.*`. | `:tui` | `:channel/owns-tty? true`. Uses `:vis` as its conversations-channel namespace (i.e. `(conversations/create! :vis)`). |
+| `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat UI. Internal namespace: `com.blockether.vis.ext.channel-tui.*`. | `:tui` | `:channel/owns-tty? true`. Conversations are stored under `:tui` (the same id used for CLI dispatch). |
 | `vis-channel-telegram` | `extensions/channels/vis-channel-telegram/` | Telegram Bot API long-poll loop wired into `conversations/for-telegram-chat!`. Internal namespace: `com.blockether.vis.ext.channel-telegram.*`. | `:telegram` | Optional. Resolves into vis-runtime lazily via `requiring-resolve` — omitting the jar leaves the rest of vis usable. |
 | `vis-common-meta` | `extensions/common/vis-common-meta/` | SCI sandbox introspection extension (`(meta/turn)`, `(meta/diagnose)`, etc.). Internal namespace: `com.blockether.vis.ext.common-meta.*`. | — | Pure `:ext/symbols` contribution. See [vis-common-meta](../extensions/common/vis-common-meta.md). |
 | `vis-common-editing` | `extensions/common/vis-common-editing/` | Filesystem / shell / search tools exposed to the agent (`vis/rg`, `vis/patch`, etc.). Internal namespace: `com.blockether.vis.ext.common-editing.*`. | — | Pure `:ext/symbols` contribution. |
@@ -78,13 +78,14 @@ re-listing it.
 
 > **Two senses of "channel".** A *registered channel* (`:tui`,
 > `:telegram`) is a CLI front-end registered through
-> `com.blockether.vis.core/register-global!` and exposed
-> under `vis channels <name>`. A *conversations channel* is the
-> keyword stored in `conversation_soul.metadata.channel` — the
-> namespace conversations are grouped under (`:vis`, `:telegram`,
-> `:cli`). `vis-channel-tui` registers as `:tui` but writes its conversations
-> under `:vis`. The CLI agent (in vis-cli) doesn't register any
-> channel at all but writes its conversations under `:cli`.
+> `com.blockether.vis.core/register-global!` and exposed under
+> `vis channels <name>`. A *conversations channel* is the keyword
+> stored in `conversation_soul.metadata.channel` — the namespace
+> conversations are grouped under. Registered channels use the same
+> keyword for both senses (`:tui`, `:telegram`). The CLI agent (in
+> vis-main) is the lone exception: it doesn't register a channel
+> descriptor (the `vis` dispatcher itself is its surface), but it
+> writes its conversations under `:cli`.
 
 ## Auto-discovery
 

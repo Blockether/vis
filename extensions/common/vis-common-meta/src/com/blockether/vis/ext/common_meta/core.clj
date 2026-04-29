@@ -32,14 +32,27 @@
    [com.blockether.vis.core :as sdk]))
 
 ;; ---------------------------------------------------------------------------
-;; Channels we know how to enumerate. Every channel-aware extension
-;; registers itself, so this constant is the agent-visible canonical
-;; list — new channels only need to be added here when they want
-;; `(meta/conversations)` (no-arg form) to surface them.
+;; Channels we know how to enumerate. Derived from the global channel
+;; registry (`sdk/registered-channels`) so any third-party channel jar
+;; on the classpath surfaces in `(meta/conversations)` automatically —
+;; no edits to this file when a new front-end ships.
+;;
+;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
+;; its conversations-channel namespace WITHOUT registering a channel
+;; descriptor (the `vis` dispatcher itself is the surface; there is no
+;; `vis channels cli` sub-command, so it has no `:channel/cmd`). Every
+;; other channel id comes from the registry.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private KNOWN_CHANNELS
-  [:vis :tui :telegram :cli])
+(defn- known-channels
+  "Vec of conversations-channel keywords known to this process. Derived
+   from the global channel registry plus the implicit `:cli` namespace."
+  []
+  (->> (sdk/registered-channels)
+    (map :channel/id)
+    (cons :cli)
+    distinct
+    vec))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers — derive ids, deref atoms, normalize sym args.
@@ -429,8 +442,8 @@
 
 (defn- meta-conversations
   "List every conversation the DB knows about, newest-first. With no
-   arg, scans every channel in `KNOWN_CHANNELS`. With a channel kw,
-   filters to that channel."
+   arg, scans every channel surfaced by `known-channels`. With a
+   channel kw, filters to that channel."
   ([env]
    (when (:db-info env)
      (vec
@@ -440,7 +453,7 @@
                            :else        0)
                          0)
                   identity)
-         (mapcat #(meta-conversations env %) KNOWN_CHANNELS)))))
+         (mapcat #(meta-conversations env %) (known-channels))))))
   ([env channel]
    (when (:db-info env)
      (try
