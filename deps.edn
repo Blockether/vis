@@ -54,7 +54,7 @@
   ;;   re2j / jgit              → vis-common-editing
   ;;   rewrite-clj              → vis-language-clojure
   ;;   lanterna                 → vis-channel-tui
-  com.blockether/svar              {:mvn/version "0.3.11"}
+  com.blockether/svar              {:mvn/version "0.4.1"}
   com.blockether/anomaly           {:mvn/version "1.0.1"}
   org.clojure/clojure              {:mvn/version "1.12.4"}
   com.taoensso/telemere            {:mvn/version "1.2.1"}

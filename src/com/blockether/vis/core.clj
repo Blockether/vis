@@ -36,12 +36,11 @@
                          delete!, set-title!, effective-system-prompt,
                          create-environment, dispose-environment!,
                          get-router, rebuild-router!, refresh-cached-routers!,
-                         resolve-effective-model, ask-with-schema-retry!,
+                         resolve-effective-model,
                          render, db-info, auto-forget-stale-vars!,
                          dedup-cache-lookup, dedup-cache-record!,
                          count-duplicates, canonical-expression-hash,
                          extract-defining-name
-     Iteration spec      iteration-spec, ITERATION_SPEC_*
      Manifest discovery  rediscover!  (test/REPL utility)
      Persistance facade  db-create-connection!, db-dispose-connection!,
                          log!, ds, now-ms, every store-*/db-*/update-*/etc.
@@ -70,8 +69,7 @@
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
-   [com.blockether.vis.internal.registry     :as registry]
-   [com.blockether.vis.internal.spec         :as spec]))
+   [com.blockether.vis.internal.registry     :as registry]))
 
 ;; =============================================================================
 ;; Cancellation
@@ -274,7 +272,6 @@
 ;; =============================================================================
 (def query!                       lp/query!)
 (def ask!                         lp/ask!)
-(def ask-with-schema-retry!       lp/ask-with-schema-retry!)
 (def render                       lp/render)
 (def get-router                   lp/get-router)
 (def reset-router!                lp/reset-router!)
@@ -318,14 +315,6 @@
 (def close!                       lp/close!)
 (def delete!                      lp/delete!)
 (def close-all!                   lp/close-all!)
-
-;; =============================================================================
-;; Iteration spec (plan validation + svar shapes)
-;; =============================================================================
-(def iteration-spec                  spec/iteration-spec)
-(def ITERATION_SPEC_BASE             spec/ITERATION_SPEC_BASE)
-(def ITERATION_SPEC_REASONING        spec/ITERATION_SPEC_REASONING)
-(def ITERATION_SPEC_NON_REASONING    spec/ITERATION_SPEC_NON_REASONING)
 
 ;; =============================================================================
 ;; Prompt builders

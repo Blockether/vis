@@ -50,7 +50,7 @@ this section before changing provider/model-switching code.
 2. **Per-environment snapshot** — `(:router env)`, captured in
    `loop-core/create-environment` at env-creation time. Read by the
    iteration loop's actual LLM call site
-   (`iteration/core.clj :: (llm/ask! (:router environment) …)`).
+   (`iteration/core.clj :: (svar/ask-code! (:router environment) …)`).
    The env is the unit of routing for in-flight queries — sub-RLM
    forks, extensions, and the iteration engine all use the env's
    router, never the global.
