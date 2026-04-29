@@ -1352,26 +1352,34 @@
     (env/bind-and-bump! environment 'CURRENT_ITERATION_ID iteration-id)))
 
 (defn inject-system-var-snapshots
-  "Append SYSTEM-var entries to a vars-snapshot vec for persistence.
-   Names match `SYSTEM_VAR_NAMES`.
+  "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
+   `SYSTEM_VAR_NAMES` on EVERY iteration. The model's
+   `(foundation/var-history 'X)` then returns ONE row per iteration
+   for each X, even when the value is unchanged or blank.
 
-   `EXTENSIONS` is captured exactly once — on iteration 0, alongside
-   `USER_TURN_REQUEST` — because the loop binds the snapshot once at turn start
-   and never mutates it within the turn (see `iteration-loop`). Every
-   subsequent iteration would persist an identical row, so we skip
-   them."
-  [vars-snapshot {:keys [iteration query thinking final-result final-answer
-                         current-query-id current-iteration-id extensions-snapshot]}]
-  (cond-> vars-snapshot
-    (zero? iteration)        (conj {:name "USER_TURN_REQUEST"     :value query        :code ";; SYSTEM var"})
-    (and (zero? iteration)
-      current-query-id)   (conj {:name "CURRENT_QUERY_ID" :value current-query-id :code ";; SYSTEM var"})
-    (and (zero? iteration)
-      (some? extensions-snapshot))
-    (conj {:name "EXTENSIONS" :value extensions-snapshot :code ";; SYSTEM var"})
-    (seq thinking)           (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
-    final-result             (conj {:name "ASSISTANT_TURN_ANSWER"    :value final-answer :code ";; SYSTEM var"})
-    current-iteration-id     (conj {:name "CURRENT_ITERATION_ID" :value current-iteration-id :code ";; SYSTEM var"})))
+   Yes, constant-value vars (USER_TURN_REQUEST, CURRENT_QUERY_ID,
+   ACTIVE_EXTENSIONS) repeat verbatim across iterations — that is the
+   intentional contract: \"every iteration carries a snapshot of
+   every SYSTEM var\". The dedup-on-unchanged optimization the
+   previous version did was a row-saving micro-opt that kept the
+   var-history vec stuck on iter 0 for those names.
+
+   Each var is normalized to a non-nil string so `expression_state`
+   never stores nil for a SYSTEM var — makes the version vec a
+   clean log of values across iterations."
+  [vars-snapshot {:keys [query thinking final-answer
+                         current-query-id current-iteration-id
+                         extensions-snapshot conversation-title]}]
+  (let [stamp (fn [vs nm v]
+                (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
+    (-> vars-snapshot
+      (stamp "USER_TURN_REQUEST"     (or query ""))
+      (stamp "REASONING"             (or thinking ""))
+      (stamp "ASSISTANT_TURN_ANSWER" (or final-answer ""))
+      (stamp "CONVERSATION_TITLE"    (or conversation-title ""))
+      (stamp "CURRENT_QUERY_ID"      (or current-query-id ""))
+      (stamp "CURRENT_ITERATION_ID"  (or current-iteration-id ""))
+      (stamp "ACTIVE_EXTENSIONS"            (or extensions-snapshot [])))))
 
 (defn update-title-system-var!
   "Rebind CONVERSATION_TITLE in the SCI sandbox to whatever the env's conversation-title-atom
@@ -1482,13 +1490,13 @@
     ;; Reset CURRENT_ITERATION_ID to nil at turn start; rebound by
     ;; `update-current-iteration-id!` after each iteration row commits.
     (env/bind-and-bump! environment 'CURRENT_ITERATION_ID nil)
-    ;; EXTENSIONS = frozen, fully-realized vec describing every
+    ;; ACTIVE_EXTENSIONS = frozen, fully-realized vec describing every
     ;; extension that activated for THIS turn. Bound once here and
     ;; never mutated within the loop — the model gets a stable view
     ;; for the entire turn. Built off the same `active-exts` we hand
     ;; to the prompt assembler / nudge collector, so the agent's
     ;; <var_index> picture matches the actually-loaded surface.
-    (env/bind-and-bump! environment 'EXTENSIONS
+    (env/bind-and-bump! environment 'ACTIVE_EXTENSIONS
       (prompt/extensions-snapshot active-exts))
     (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
@@ -1623,15 +1631,20 @@
                         vars-snapshot (restorable-var-snapshots environment blocks)
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
-                                        {:iteration iteration :query query :thinking thinking
-                                         :final-result final-result :final-answer final-answer
-                                         :current-query-id query-id
+                                        {:query              query
+                                         :thinking           thinking
+                                         :final-answer       final-answer
+                                         :current-query-id   query-id
                                          :current-iteration-id previous-iteration-id
-                                         ;; Persist the same frozen snapshot that's
-                                         ;; bound in SCI. Captured on iteration 0
-                                         ;; only — see `inject-system-var-snapshots`.
-                                         :extensions-snapshot (when (zero? iteration)
-                                                                (prompt/extensions-snapshot active-exts))})
+                                         ;; Same frozen snapshot bound in SCI.
+                                         ;; Re-stamped every iteration so
+                                         ;; foundation/var-history 'ACTIVE_EXTENSIONS
+                                         ;; returns one row per iter, not just iter 0.
+                                         :extensions-snapshot (prompt/extensions-snapshot active-exts)
+                                         ;; Live conversation title; same value
+                                         ;; the SCI sandbox sees as CONVERSATION_TITLE.
+                                         :conversation-title (some-> (:conversation-title-atom environment)
+                                                               deref str)})
                         [redundant-count expression-count]
                         (count-duplicates seen-expression-hashes-atom
                           (or blocks []))

@@ -332,12 +332,24 @@
                                                ;; (real Clojure reach for namespace discovery), but we
                                                ;; deliberately don't advertise them in tool docs so the
                                                ;; LLM's canonical playbook stays narrow.
+                                       ;; `*out*` / `*err*` are NOT denied so model
+                                       ;; code can reach for them directly:
+                                       ;;   `(binding [*out* writer] …)`,
+                                       ;;   `(.write *out* s)`,
+                                       ;;   `(.write *err* s)`.
+                                       ;; SCI's `sci/binding [sci/out writer
+                                       ;; sci/err writer]` (set per-iteration
+                                       ;; in `run-sci-code`) auto-rebinds the
+                                       ;; sandbox's `*out*` / `*err*` to those
+                                       ;; writers, so model writes land in the
+                                       ;; same captured stream the iteration
+                                       ;; loop reads back as `:stdout` / `:stderr`.
                                        :deny '[ns eval load-string load-file
                                                read-string
                                                spit
                                                intern
                                                sh
-                                               *in* *out* *err* *command-line-args*]}))]
+                                               *in* *command-line-args*]}))]
     {:sci-ctx sci-ctx
      :sandbox-ns sandbox-ns
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
@@ -354,12 +366,12 @@
 ;;                         row (nil before the first iteration commits;
 ;;                         iteration N's :code sees iteration N-1's id
 ;;                         because the row for N is written AFTER eval)
-;;   EXTENSIONS            vec of compact maps describing every extension
+;;   ACTIVE_EXTENSIONS            vec of compact maps describing every extension
 ;;                         that passed activation for THIS turn. Frozen at
 ;;                         turn start; iteration-loop binds it once and
 ;;                         never mutates again within the turn so the
 ;;                         model can rely on a stable view
-;;                         (`(filter ...) EXTENSIONS`) without
+;;                         (`(filter ...) ACTIVE_EXTENSIONS`) without
 ;;                         round-tripping through `(foundation/extensions)`.
 ;;                         Shape per element:
 ;;                           {:alias    'foundation
@@ -385,14 +397,14 @@
      CONVERSATION_TITLE    — current conversation title (\"\" until set)
      CURRENT_QUERY_ID      — UUID of the in-flight turn
      CURRENT_ITERATION_ID  — UUID of the last persisted iteration
-     EXTENSIONS            — frozen vec of active-extension descriptors
+     ACTIVE_EXTENSIONS            — frozen vec of active-extension descriptors
 
    The model writes the conversation title via the host primitive
    `(conversation-title \"...\")`, never by `def`-ing CONVERSATION_TITLE
    directly (the SYSTEM-var write guard in `loop.clj` rejects that on
    principle)."
   '#{USER_TURN_REQUEST REASONING ASSISTANT_TURN_ANSWER
-     CURRENT_QUERY_ID CURRENT_ITERATION_ID EXTENSIONS CONVERSATION_TITLE})
+     CURRENT_QUERY_ID CURRENT_ITERATION_ID ACTIVE_EXTENSIONS CONVERSATION_TITLE})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed
