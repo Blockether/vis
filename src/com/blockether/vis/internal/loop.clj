@@ -1444,7 +1444,7 @@
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per query. Threaded through both the
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
-        ;; nudge collector — activation-fn never re-fires inside the loop.
+        ;; ext nudge collector — activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         system-prompt (prompt/assemble-system-prompt environment
                         {:system-prompt      system-prompt
@@ -1464,7 +1464,6 @@
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
-        call-counts-atom (atom {})
         ;; Phase 2-m measurement: per-query set of canonical hashes
         ;; for SUCCESSFUL blocks. The iteration handler counts how
         ;; many of THIS iteration's blocks were already in the set
@@ -1586,8 +1585,7 @@
                                           [[(or previous-iteration 0) previous-blocks]])
                     iteration-context (prompt/build-iteration-context environment
                                         {:blocks-by-iteration blocks-by-iteration
-                                         :call-counts-atom         call-counts-atom
-                                         :active-extensions        active-exts})
+                                         :active-extensions   active-exts})
                     base-messages (prompt/trim-to-initial-history messages (count initial-messages))
                     effective-messages (cond-> base-messages
                                          (not (str/blank? iteration-context))
@@ -2749,8 +2747,7 @@
           query-row     (some #(when (= (:id %) query-id) %) queries)
           query-text    (or (:query query-row) "<the user's message appears here>")
           iteration-context-block (prompt/build-iteration-context env
-                                    {:call-counts-atom  (atom {})
-                                     :active-extensions active-exts})]
+                                    {:active-extensions active-exts})]
       ;; Iterations now go through `svar/ask-code!` — a plain-text
       ;; completion path with no JSON spec. svar appends one short
       ;; code-format reminder (`:code-tail-pointer? true`) as the last

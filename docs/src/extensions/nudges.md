@@ -3,16 +3,20 @@
 Nudges are short `[system_nudge]` strings injected into the iteration
 prompt to steer the LLM's behavior. They come from two sources:
 
-1. **Built-in nudges** — `internal/loop.clj` (var-index overflow,
-   repetition detection)
+1. **Built-in nudges** — `internal/loop.clj` (consecutive-error
+   warning, strategy-restart hint)
 2. **Extension nudges** — any extension's `:ext/nudge-fn`
+
+There is no built-in repetition / duplication nudge. The model
+already sees the previous iteration's result in `<recent>`, and the
+dedup cache short-circuits literal re-issues with `:cached? true`,
+which is signal enough to change strategy.
 
 ## Built-in nudges
 
 | Nudge | When it fires |
 |-------|--------------|
-| Var-index overflow | >150 user-defined vars in the sandbox |
-| Repetition warning | Same code/result pair seen ≥3 times |
+| Consecutive-error warning | `CONSECUTIVE_ERROR_NUDGE_AT` (=2) consecutive failed iterations |
 
 ## Extension nudges
 
@@ -68,7 +72,7 @@ Key names spell out the full word (`:previous-blocks`, not
 Inside `build-iteration-context` (called every iteration):
 
 ```
-1. Compute built-in nudges (budget, var-overflow, repetition).
+1. Compute built-in nudges (consecutive-error warning).
 2. Call collect-extension-nudges (internal/loop.clj):
    for each registered extension with `:ext/nudge-fn`:
      a. Check `:ext/activation-fn` against environment.
