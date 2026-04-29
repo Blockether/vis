@@ -158,7 +158,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (sdk/db-update-query! s query-id
-        {:answer "42" :iterations 1 :duration-ms 50 :status :done
+        {:answer "42" :iteration-count 1 :duration-ms 50 :status :done
          :prior-outcome :complete})
       (let [conversation ((private-fn "meta-conversation") (env s conversation-id))
             turn (first (:turns conversation))]
@@ -325,7 +325,45 @@
         (expect (= 2 (:failure-count diagnosis)))
         (expect (= 1 (get-in diagnosis [:by-classification :regex-unsupported-escape])))
         (expect (= 1 (get-in diagnosis [:by-classification :patch-no-match])))
-        (expect (seq (:next-actions diagnosis))))))
+        (expect (seq (:next-actions diagnosis)))
+        ;; Two distinct one-off failures — no cluster meets the
+        ;; repetition threshold.
+        (expect (false? (:repetition-loop? diagnosis)))
+        (expect (= [] (:repetition-clusters diagnosis))))))
+
+  (it "flags a same-error repetition loop when one signature dominates"
+    ;; Mirrors the worst case the report flagged: 148 'Path/File not
+    ;; found' failures inside a single iteration. Test seeds a smaller
+    ;; cluster (6 + 2) just past `REPETITION_THRESHOLD` so the bucket
+    ;; with 6 fires and the bucket with 2 stays below the floor.
+    (let [s (h/store)
+          {:keys [conversation-id query-id]} (bootstrap s)]
+      (db-store-iteration! s query-id
+        {:expressions
+         (into
+           (mapv (fn [i]
+                   {:id i
+                    :code (str "(vis/cat \"src/tui/file" i ".clj\")")
+                    :error (str "File not found: /Users/x/vis/src/tui/file" i ".clj")
+                    :execution-time-ms 1})
+             (range 6))
+           [{:id 6 :code "(vis/cat \"src/tui/render.clj\")"
+             :error "Path not found: /Users/x/vis/src/tui"
+             :execution-time-ms 1}
+            {:id 7 :code "(vis/cat \"src/tui\")"
+             :error "Path not found: /Users/x/vis/src/tui"
+             :execution-time-ms 1}])})
+      (let [diag ((private-fn "meta-diagnose") (env s conversation-id))
+            clusters (:repetition-clusters diag)]
+        (expect (= 8 (:failure-count diag)))
+        (expect (true? (:repetition-loop? diag)))
+        ;; Only the 6-strong 'File not found' cluster meets the floor.
+        (expect (= 1 (count clusters)))
+        (expect (= 6 (-> clusters first :count)))
+        (expect (= "File not found" (-> clusters first :signature last)))
+        ;; First next-action calls out the loop and steers off it.
+        (expect (some #(re-find #"Same error repeated" %)
+                  (:next-actions diag))))))
 
   (it "conversation-id form scans every turn"
     (let [s (h/store)

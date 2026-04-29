@@ -79,14 +79,22 @@ Call: `(meta/diagnose)` or `(meta/diagnose conversation-id)`. Compact summary, f
 {:turn-id \"uuid\"
  :goal \"...\"
  :status :running
- :failure-count 3
- :by-classification {:provider-schema-rejected 1
-                     :patch-no-match 2}
+ :failure-count 148
+ :by-classification {:code-execution-error 148}
+ :repetition-loop? true                    ;; same root cause N× — stop varying inputs
+ :repetition-clusters [{:signature [:code :code-execution-error \"File not found\"]
+                        :count 134
+                        :sample {:source :code :classification :code-execution-error
+                                 :message \"File not found: /…/markdown.clj\" …}}
+                       {:signature [:code :code-execution-error \"Path not found\"]
+                        :count 14
+                        :sample {…}}]
  :failures [...]
- :next-actions [\"...\"]}
+ :next-actions [\"Same error repeated 134× this turn… STOP varying inputs…\"
+                \"…\"]}
 ```
 
-Provider previews, parse/tool error messages, classifications, next actions — all as Clojure data.
+Provider previews, parse/tool error messages, classifications, next actions — all as Clojure data. **Read `:repetition-loop?` first.** When it is `true`, the agent has been retrying the same broken call shape (different filename / argument / regex — same root cause); the next action will spell out which signature is on fire and that varying inputs alone will not converge. Each cluster is sized at `≥ 5` matching failures.
 
 ## Single conversation snapshot
 

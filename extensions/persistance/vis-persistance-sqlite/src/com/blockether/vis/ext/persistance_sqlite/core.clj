@@ -505,7 +505,8 @@
    `prior_outcome` column so the next turn's handover digest can read
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
-  [db-info query-id {:keys [answer iterations duration-ms status tokens cost prior-outcome]}]
+  [db-info query-id {:keys [answer iteration-count duration-ms
+                            status tokens cost prior-outcome]}]
   (when (and (ds db-info) query-id)
     (let [soul-id-s (->ref query-id)
           state     (latest-query-state db-info soul-id-s)]
@@ -515,9 +516,9 @@
            :set    (cond-> {:status (normalize-status (or status :done))
                             :metadata (->json
                                         (merge (<-json (:metadata state))
-                                          (cond-> {:answer      (or answer "")
-                                                   :iterations  (or iterations 0)
-                                                   :duration-ms (or duration-ms 0)}
+                                          (cond-> {:answer          (or answer "")
+                                                   :iteration-count (or iteration-count 0)
+                                                   :duration-ms     (or duration-ms 0)}
                                             (:input tokens)     (assoc :input-tokens     (long (:input tokens)))
                                             (:output tokens)    (assoc :output-tokens    (long (:output tokens)))
                                             (:reasoning tokens) (assoc :reasoning-tokens (long (:reasoning tokens)))
@@ -744,9 +745,9 @@
              :status                (->kw-back (:status row))
              :created-at            (->date (:soul_created_at row))}
       (:title row)              (assoc :name (:title row))
-      (:answer state-meta)      (assoc :answer (:answer state-meta))
-      (:iterations state-meta)  (assoc :iterations (:iterations state-meta))
-      (:duration-ms state-meta) (assoc :duration-ms (:duration-ms state-meta))
+      (:answer state-meta)           (assoc :answer (:answer state-meta))
+      (:iteration-count state-meta)  (assoc :iteration-count (:iteration-count state-meta))
+      (:duration-ms state-meta)      (assoc :duration-ms (:duration-ms state-meta))
       provider                  (assoc :provider (->kw-back provider))
       (:model state-meta)       (assoc :model (:model state-meta))
       (:input-tokens state-meta)     (assoc :input-tokens (:input-tokens state-meta))
@@ -929,13 +930,13 @@
                   iteration-count (count (db-list-query-iterations db-info qref))
                   answer-raw (or (:answer query) "")
                   answer-preview (subs answer-raw 0 (min (count answer-raw) 160))]
-              {:query-pos      idx
-               :query-id       (:id query)
-               :created-at     (:created-at query)
-               :query          (:text query)
-               :status         (:status query)
-               :iterations     iteration-count
-               :answer-preview answer-preview}))
+              {:query-pos       idx
+               :query-id        (:id query)
+               :created-at      (:created-at query)
+               :query           (:text query)
+               :status          (:status query)
+               :iteration-count iteration-count
+               :answer-preview  answer-preview}))
       (range)
       queries)))
 

@@ -64,8 +64,9 @@
           queries         (when conversation-id (rlm/db-list-conversation-queries db-info conversation-id))]
       (when (seq queries)
         (let [enriched (mapv (fn [q]
-                               (let [iterations (vec (rlm/db-list-query-iterations db-info (:id q)))]
-                                 (assoc q :conversation conversation :iterations iterations)))
+                               (let [query-iterations (vec (rlm/db-list-query-iterations db-info (:id q)))]
+                                 (assoc q :conversation conversation
+                                   :query-iterations query-iterations)))
                          queries)]
           (spit edn-path (pr-str enriched))
           edn-path)))))
@@ -348,7 +349,7 @@
                   (update :total-input-tokens + (or (get-in eval-result [:tokens :input]) 0))
                   (update :total-output-tokens + (or (get-in eval-result [:tokens :output]) 0))
                   (update :total-cost + (or (get-in eval-result [:cost :total-cost]) 0.0))
-                  (update :total-iterations + (or (:iterations eval-result) 0)))))))
+                  (update :total-iterations + (or (:iteration-count eval-result) 0)))))))
 
         ;; Print progress after each batch
         (let [s         @state

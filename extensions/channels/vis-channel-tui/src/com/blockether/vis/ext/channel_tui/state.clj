@@ -115,18 +115,18 @@
          Default ON because new users want to SEE the agent reasoning;
          power users turn them off when they want a clean transcript.
 
-     show-timestamps / show-iteration-headers / show-final-answer-header
-         — chrome controls. Default OFF because timestamps duplicate
-         info already on screen, the `ITERATION N` superscript is
-         redundant with the trace's visual zone, and the
-         `FINAL ANSWER` superscript is redundant with the answer-bg
-         color band. Off-by-default keeps the surface clean; users
-         opt back in via Ctrl+K → Toggles."
+     show-timestamps — chrome control. Default OFF because timestamps
+         duplicate info already on screen. Users opt back in via
+         Ctrl+K → Toggles.
+
+   The previous `:show-iteration-headers` and `:show-final-answer-header`
+   toggles were removed: the ITERATION N / CODE N / STDOUT / ERROR /
+   FINAL ANSWER superscripts they controlled have been deleted from
+   the rendering pipeline outright (the visual zones already convey
+   the same boundaries without the labels)."
   {:show-thinking             true
    :show-iterations           true
    :show-timestamps           false
-   :show-iteration-headers    false
-   :show-final-answer-header  false
    ;; `collapse-old-traces`: every assistant turn except the most
    ;; recent one renders as just the final answer (the meta line
    ;; below already shows iteration count, duration, tokens, cost).
@@ -309,6 +309,24 @@
         (assoc db :messages-scroll nil)
         (assoc db :messages-scroll (min max-s (+ cur amount)))))))
 
+;; Scrollbar mouse drag/click. Mirrors the thumb-positioning math in
+;; `render/draw-messages-area!` so a click on the bar lands the thumb
+;; top at the cursor row, and a drag follows the cursor. `bar-top` is
+;; the row of the topmost track cell; `track-h` is the track length
+;; in rows; `total-h`/`inner-h` are the layout sizes the render thread
+;; published into app-db.
+(reg-event-db :scroll-to-y
+  (fn [db [_ mouse-y bar-top track-h total-h inner-h]]
+    (if (or (<= total-h inner-h) (<= track-h 0))
+      db
+      (let [thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
+            max-scroll (max 0 (- total-h inner-h))
+            relative   (- mouse-y bar-top)
+            denom      (max 1 (- track-h thumb-h))
+            fraction   (max 0.0 (min 1.0 (double (/ relative denom))))
+            new-scroll (long (Math/round (* fraction max-scroll)))]
+        (assoc db :messages-scroll (max 0 (min max-scroll new-scroll)))))))
+
 (reg-event-fx :send-message
   (fn [db [_ text]]
     (let [token (sdk/cancellation-token)]
@@ -345,7 +363,7 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iterations duration-ms tokens cost confidence query-id status]}]]]
+  (fn [db [_ answer & [{:keys [model iteration-count duration-ms tokens cost confidence query-id status]}]]]
     (let [start    (:query-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
@@ -362,7 +380,7 @@
                        (assoc :trace trace :raw-answer (or answer ""))
                        (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                        model      (assoc :model model)
-                       iterations (assoc :iterations iterations)
+                       iteration-count (assoc :iteration-count iteration-count)
                        tokens     (assoc :tokens tokens)
                        cost       (assoc :cost cost)
                        confidence (assoc :confidence confidence)
@@ -392,7 +410,7 @@
                       (dispatch [:message-received (sdk/format-error (:error result))])
                       (dispatch [:message-received (:answer result)
                                  (select-keys result
-                                   [:model :iterations :duration-ms :tokens
+                                   [:model :iteration-count :duration-ms :tokens
                                     :cost :confidence :query-id :status])])))
                   (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in

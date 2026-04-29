@@ -1232,7 +1232,7 @@
               (emit-hook! on-cancel {:iteration iteration :status :cancelled
                                      :status-id (status->id :cancelled)} "on-cancel hook threw")
               (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
-                      :trace trace :iterations iteration} (finalize-cost)))
+                      :trace trace :iteration-count iteration} (finalize-cost)))
 
             :else
             (if (>= consecutive-errors max-consecutive-errors)
@@ -1255,7 +1255,7 @@
                                      errors-block)]
                   (merge {:answer fallback
                           :status :error :status-id (status->id :error)
-                          :trace trace :iterations iteration} (finalize-cost))))
+                          :trace trace :iteration-count iteration} (finalize-cost))))
 
               (let [reasoning-level (when has-reasoning?
                                       (reasoning-level-for-errors base-reasoning-level consecutive-errors))
@@ -1301,7 +1301,7 @@
                         "on-cancel hook threw")
                       (merge {:answer nil :status :cancelled
                               :status-id (status->id :cancelled)
-                              :trace trace :iterations iteration}
+                              :trace trace :iteration-count iteration}
                         (finalize-cost)))
                     (let [error-feedback (str "[Iteration " (inc iteration) "]\n"
                                            "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
@@ -1384,7 +1384,7 @@
                       final-result
                       (do (log-stage! :final iteration
                             {:answer (truncate (answer-str (:answer final-result)) 200)
-                             :iterations (inc iteration)})
+                             :iteration-count (inc iteration)})
                         (log-stage! :iteration-end iteration
                           {:blocks (count expressions) :errors (count (filter :error expressions))
                            :times (mapv :execution-time-ms expressions)})
@@ -1396,10 +1396,10 @@
                                      :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                      :successes (mapv #(nil? (:error %)) expressions)
                                      :final {:answer (:answer final-result)
-                                             :iterations (inc iteration) :status :success}
+                                             :iteration-count (inc iteration) :status :success}
                                      :done? true}))
                         (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
-                                :iterations (inc iteration)}
+                                :iteration-count (inc iteration)}
                           (finalize-cost)))
 
                       :else
@@ -1455,13 +1455,13 @@
         result (iteration-loop env query (assoc loop-opts :query-id query-id))
         prior-outcome (->prior-outcome result)
         _ (persistance/db-update-query! (:db-info env) query-id
-            {:answer        (:answer result)
-             :iterations    (:iterations result)
-             :duration-ms   (:duration-ms result)
-             :status        (or (:status result) :success)
-             :tokens        (:tokens result)
-             :cost          (:cost result)
-             :prior-outcome prior-outcome})]
+            {:answer          (:answer result)
+             :iteration-count (:iteration-count result)
+             :duration-ms     (:duration-ms result)
+             :status          (or (:status result) :success)
+             :tokens          (:tokens result)
+             :cost            (:cost result)
+             :prior-outcome   prior-outcome})]
     (assoc result :query-id query-id :prior-outcome prior-outcome)))
 
 ;; -----------------------------------------------------------------------------
@@ -1622,7 +1622,7 @@
    map so the web footer / meta layer can render `provider/model · N
    iteration · duration · tokens · $total` after a restart."
   [{:keys [db-info root-model root-provider]}
-   {:keys [query-id start-time iterations status status-id trace locals
+   {:keys [query-id start-time iteration-count status status-id trace locals
            answer confidence reasoning total-tokens-atom total-cost-atom]}]
   (let [duration-ms (util/elapsed-since start-time)
         cost-with-model (cond-> @total-cost-atom
@@ -1637,50 +1637,50 @@
       ;; we had diagnostic text ready.
       (do
         (log-stage! :query-end 0
-          {:duration-ms duration-ms :iterations iterations :status status})
+          {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
             (persistance/db-update-query! db-info query-id
-              {:answer      fallback-answer
-               :iterations  iterations
-               :duration-ms duration-ms
-               :status      status
-               :tokens      @total-tokens-atom
-               :cost        cost-with-model})
+              {:answer          fallback-answer
+               :iteration-count iteration-count
+               :duration-ms     duration-ms
+               :status          status
+               :tokens          @total-tokens-atom
+               :cost            cost-with-model})
             (catch Exception e
               (tel/log! {:level :warn :data (format-exception-short e)
                          :msg   "Failed to update query (max iterations)"})))
-          (cond-> {:answer      fallback-answer
-                   :status      status
-                   :status-id   status-id
-                   :trace       trace
-                   :iterations  iterations
-                   :duration-ms duration-ms
-                   :tokens      @total-tokens-atom
-                   :cost        cost-with-model}
+          (cond-> {:answer          fallback-answer
+                   :status          status
+                   :status-id       status-id
+                   :trace           trace
+                   :iteration-count iteration-count
+                   :duration-ms     duration-ms
+                   :tokens          @total-tokens-atom
+                   :cost            cost-with-model}
             (some? locals) (assoc :locals locals))))
       ;; success path
       (do
         (log-stage! :query-end 0
-          {:duration-ms duration-ms :iterations iterations
+          {:duration-ms duration-ms :iteration-count iteration-count
            :cost (str (:total-cost cost-with-model))})
         (try
           (persistance/db-update-query! db-info query-id
-            {:answer      answer
-             :iterations  iterations
-             :duration-ms duration-ms
-             :status      :success
-             :tokens      @total-tokens-atom
-             :cost        cost-with-model})
+            {:answer          answer
+             :iteration-count iteration-count
+             :duration-ms     duration-ms
+             :status          :success
+             :tokens          @total-tokens-atom
+             :cost            cost-with-model})
           (catch Exception e
             (tel/log! {:level :warn :data (format-exception-short e)
                        :msg   "Failed to update query (success)"})))
-        (cond-> {:answer      answer
-                 :trace       trace
-                 :iterations  iterations
-                 :duration-ms duration-ms
-                 :tokens      @total-tokens-atom
-                 :cost        cost-with-model}
+        (cond-> {:answer          answer
+                 :trace           trace
+                 :iteration-count iteration-count
+                 :duration-ms     duration-ms
+                 :tokens          @total-tokens-atom
+                 :cost            cost-with-model}
           (some? confidence) (assoc :confidence confidence)
           (some? reasoning)  (assoc :reasoning reasoning))))))
 
@@ -1712,7 +1712,7 @@
            :response <llm-response-text>
            :expressions [{:id 0 :code <code-str> :result <value> :stdout <str> :error nil :execution-time-ms 5}
                        ...]}
-     - :iterations - Number of iterations used.
+     - :iteration-count - Number of iterations used.
      - :duration-ms - Query duration in milliseconds.
      - :tokens - Token usage map {:input N :output N :total N}.
      - :cost - Cost map {:input-cost N :output-cost N :total-cost N}.
@@ -1746,19 +1746,19 @@
                {:keys [iteration-result query-id
                        total-tokens-atom total-cost-atom]} phase2
                {iteration-answer :answer
-                trace       :trace
-                iterations  :iterations
-                status      :status
-                status-id   :status-id
-                locals      :locals
-                confidence  :confidence
-                reasoning   :reasoning} iteration-result]
+                trace            :trace
+                iteration-count  :iteration-count
+                status           :status
+                status-id        :status-id
+                locals           :locals
+                confidence       :confidence
+                reasoning        :reasoning} iteration-result]
            (if status
              (finalize-query-result
                ctx
-               {:query-id         query-id
+               {:query-id          query-id
                 :start-time        start-time
-                :iterations        iterations
+                :iteration-count   iteration-count
                 :status            status
                 :status-id         status-id
                 :trace             trace
@@ -1768,9 +1768,9 @@
                 :total-cost-atom   total-cost-atom})
              (finalize-query-result
                ctx
-               {:query-id         query-id
+               {:query-id          query-id
                 :start-time        start-time
-                :iterations        iterations
+                :iteration-count   iteration-count
                 :trace             trace
                 :answer            iteration-answer
                 :confidence        confidence

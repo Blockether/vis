@@ -400,13 +400,13 @@
   [db-info]
   (let [orphans (try (db-list-queries-by-status db-info :running)
                   (catch Exception _ []))]
-    (doseq [{:keys [id iterations duration-ms]} orphans]
+    (doseq [{:keys [id iteration-count duration-ms]} orphans]
       (try
         (db-update-query! db-info id
-          {:answer        ORPHAN_INTERRUPTED_ANSWER
-           :iterations    (or iterations 0)
-           :duration-ms   (or duration-ms 0)
-           :status        :interrupted
-           :prior-outcome :cancelled})
+          {:answer          ORPHAN_INTERRUPTED_ANSWER
+           :iteration-count (or iteration-count 0)
+           :duration-ms     (or duration-ms 0)
+           :status          :interrupted
+           :prior-outcome   :cancelled})
         (catch Exception _ nil)))
     (count orphans)))
