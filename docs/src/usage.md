@@ -82,7 +82,7 @@ and copy/paste dialogs.
 
 ```bash
 vis channels tui                                  # fresh conversation
-vis channels tui --resume                         # resume the most recent :vis conversation
+vis channels tui --resume                         # resume the most recent :tui conversation
 vis channels tui --conversation-id <UUID>         # resume a specific one (full or short ID)
 ```
 
@@ -133,8 +133,8 @@ Every conversation — from any channel — lives in a single SQLite DB
 at `~/.vis/vis.mdb/vis.db`. Inspect it through the CLI:
 
 ```bash
-vis conversations             # default: :vis (TUI)
-vis conversations vis         # explicit
+vis conversations             # default: :tui
+vis conversations tui         # explicit
 vis conversations telegram    # Telegram chats
 vis conversations cli         # CLI one-shots
 ```

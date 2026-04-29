@@ -293,7 +293,7 @@ Docs build: `cd docs && mdbook-mermaid install . && mdbook serve --open` (mdBook
 - Use `turn` for product-level ask+answer. `query` and `iteration` remain runtime internals.
 - Use `tool` and `skill`. Do not use `capability` as catch-all for agent features.
 - Keep `capability` / `capabilities` only where external provider/router API already requires that word.
-- Use `channel` for `:tui`, `:vis`, `:telegram`, `:cli`. `:vis` channel = TUI's conversation namespace (TUI calls `(conversations/create! :vis)`); `:tui` = registered channel id used by `vis-channel-tui`'s `channel/register-global!` for CLI dispatch.
+- Use `channel` for `:tui`, `:telegram`, `:cli`. Registered channels use one keyword end-to-end — `vis-channel-tui` registers `:tui` for CLI dispatch AND stores conversations under `:tui`. The CLI agent (vis-main) is the only exception: it doesn't register a channel descriptor but stores conversations under `:cli`.
 - Use `environment` in public API. `env` allowed in internal local bindings only.
 
 ### No abbreviated identifiers in source code
@@ -492,16 +492,16 @@ All app state lives in `ext/channel_tui/state.clj` using a re-frame dispatch pat
 
 ### Conversations (`com.blockether.vis.core`)
 
-**One module owns env lifecycle for every frontend.** TUI uses `:vis` channel, CLI agent uses `:cli`, Telegram uses `:telegram`. Conversation IDs = plain UUIDs. No name prefixes, no string lookups.
+**One module owns env lifecycle for every frontend.** TUI uses `:tui` channel, CLI agent uses `:cli`, Telegram uses `:telegram`. Conversation IDs = plain UUIDs. No name prefixes, no string lookups.
 
 ```clojure
 (require '[com.blockether.vis.core :as conversations])
 
 ;; Create / lookup
-(conversations/create! :vis)                    ;; new TUI conversation
+(conversations/create! :tui)                    ;; new TUI conversation
 (conversations/create! :cli {:title "…"})       ;; one-shot CLI agent run
 (conversations/by-id conversation-id)                   ;; conversation map or nil
-(conversations/by-channel :vis)                         ;; sidebar / list, recent first
+(conversations/by-channel :tui)                         ;; sidebar / list, recent first
 (conversations/by-channel :telegram)
 (conversations/for-telegram-chat! chat-id)              ;; find-or-create by chat-id
 
@@ -538,7 +538,7 @@ Every `(def ...)` persisted as versioned `expression_state` row. `var-history` i
          '[com.blockether.vis.core :as db])
 
 ;; List conversations
-(conversations/by-channel :vis)
+(conversations/by-channel :tui)
 (conversations/by-channel :telegram)
 (conversations/by-channel :cli)
 
@@ -575,7 +575,7 @@ Agent genuinely needs older reasonings? (Opt-in) `vis-common-meta` ext exposes `
 Do NOT reintroduce a `<prior_thinking>` blob, the lossy summarization chain it produced, or the `HANDOVER_KEEP_LAST=2` cross-query special case — deleted on purpose. Plan slot replaces all of them with bounded, structured, sticky projection.
 
 **Frontend wiring:**
-- **TUI (`vis-channel-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates fresh `:vis` conversation on every boot (history starts empty); disposal on exit only closes env, conversation stays in `:vis` channel so other inspectors can see it.
+- **TUI (`vis-channel-tui`)** — registered channel id `:tui` (default channel for `vis` with no sub-command). `chat/make-conversation` creates fresh `:tui` conversation on every boot (history starts empty); disposal on exit only closes env, conversation stays in `:tui` channel so other inspectors can see it.
 - **Telegram (`vis-channel-telegram`)** — registered channel id `:telegram`. `conversations/for-telegram-chat!` find-or-creates by chat-id; each incoming message becomes a `conversations/send!` with the Telegram persona system prompt.
 - **CLI `agent/run!`** — one-shot. Creates fresh conversation in `:cli` channel + runs single query. Conversations persist — past runs browsable via `(conversations/by-channel :cli)`.
 - **Third-party channels** — ship a jar with `META-INF/vis-extension/vis.edn` resource, namespace that calls `(channel/register-global! …)` at load, `:channel/main-fn` consuming CLI tail. Dispatcher picks them up automatically; no edits to `vis-runtime`.

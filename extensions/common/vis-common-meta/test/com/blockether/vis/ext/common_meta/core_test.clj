@@ -27,7 +27,7 @@
 
 (defn- bootstrap [store]
   (let [conversation-id (sdk/db-store-conversation! store
-                          {:channel :vis :title "meta test"})
+                          {:channel :tui :title "meta test"})
         query-id (sdk/db-store-query! store
                    {:parent-conversation-id conversation-id
                     :query "what's the plan?"
@@ -140,7 +140,7 @@
           {:keys [conversation-id]} (bootstrap s)
           conversation ((private-fn "meta-conversation") (env s conversation-id))]
       (expect (= conversation-id (:id conversation)))
-      (expect (= :vis (:channel conversation)))
+      (expect (= :tui (:channel conversation)))
       (expect (vector? (:turns conversation)))
       (expect (= 1 (:turn-count conversation)))))
 
@@ -201,7 +201,7 @@
 (defdescribe meta-conversations-test
   (it "no-arg form scans every known channel"
     (let [s (h/store)
-          a (sdk/db-store-conversation! s {:channel :vis :title "vis-a"})
+          a (sdk/db-store-conversation! s {:channel :tui :title "vis-a"})
           b (sdk/db-store-conversation! s {:channel :telegram :title "tg-b"})
           all ((private-fn "meta-conversations") (env s a))
           ids (set (map :id all))]
@@ -210,7 +210,7 @@
 
   (it "channel-arg form filters to one channel"
     (let [s (h/store)
-          a (sdk/db-store-conversation! s {:channel :vis :title "vis-a"})
+          a (sdk/db-store-conversation! s {:channel :tui :title "vis-a"})
           _ (sdk/db-store-conversation! s {:channel :telegram :title "tg-b"})
           tui-list ((private-fn "meta-conversations") (env s a) :telegram)]
       (expect (= 1 (count tui-list)))
@@ -243,7 +243,7 @@
   (it "explicit conversation-id form queries a different conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/db-store-conversation! s {:channel :vis :title "other"})]
+          other (sdk/db-store-conversation! s {:channel :tui :title "other"})]
       (expect (= [] ((private-fn "meta-var-history") (env s conversation-id) 'foo other))))))
 
 ;; -----------------------------------------------------------------------------

@@ -264,7 +264,14 @@
 
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 
-(def input-pad-y 1)  ;; internal vertical padding (rows above/below text)
+(def input-pad-y
+  "Internal vertical padding (rows above/below text) inside the input
+   box. Set to 0: the top + bottom rule lines already provide all the
+   visual breathing room the editor needs; an extra padded row on each
+   side just wasted vertical space and pushed the cursor down a line.
+   The previous value (1) made an empty editor render four rows tall
+   (rule + pad + line + pad + rule) when three is the right minimum."
+  0)
 (def ^:private input-pad-x 3)  ;; internal horizontal padding (cols left/right of text)
 
 (defn input-text-w

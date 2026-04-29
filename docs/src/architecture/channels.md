@@ -104,11 +104,9 @@ this section only highlights which packages register a channel.
 > **The `:cli` channel id is not a registered channel.** The CLI agent
 > calls `(conversations/create! :cli …)` so its conversations show up
 > under the `:cli` namespace, but there is no `channel/register-global!`
-> for it — the `vis` dispatcher itself is the CLI surface. Same shape
-> for the TUI's `:vis` conversations channel: `vis-channel-tui` registers the
-> CLI-level channel id `:tui`, but it writes its conversations under
-> `:vis`. Two related but separate keywords (see
-> [Packages — Two senses of "channel"](packages.md#package-map)).
+> for it — the `vis` dispatcher itself is the CLI surface. The TUI, by
+> contrast, both registers `:tui` as its dispatch channel AND writes its
+> conversations under `:tui`: one keyword end-to-end.
 
 ## Adding a channel from a third-party jar
 

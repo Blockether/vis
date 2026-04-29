@@ -371,10 +371,10 @@
 
 (defn- format-conversation-not-found
   "Build a friendly multi-line message for `--conversation-id` misses,
-   listing the most recent :vis conversations so the user has
+   listing the most recent :tui conversations so the user has
    something to copy-paste."
   [cid]
-  (let [available (try (vec (take 10 (lp/by-channel :vis)))
+  (let [available (try (vec (take 10 (lp/by-channel :tui)))
                     (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
@@ -383,10 +383,10 @@
                  (str "  " id8 "  " (or title "(untitled)"))))]
     (str "Conversation not found: " cid
       (if (seq available)
-        (str "\n\nAvailable :vis conversations (most recent first):\n"
+        (str "\n\nAvailable :tui conversations (most recent first):\n"
           (str/join "\n" (map line available))
           "\n\nUse the 8-char prefix or full UUID with --conversation-id.")
-        "\n\nNo :vis conversations exist yet — run `vis channels tui` without --conversation-id first."))))
+        "\n\nNo :tui conversations exist yet — run `vis channels tui` without --conversation-id first."))))
 
 (defn- register-conversation-shutdown-hook!
   "Register a JVM shutdown hook that prints the TUI resume command for
@@ -407,7 +407,7 @@
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
      :conversation-id uuid-string — resume a specific conversation
-     :resume          true        — resume the latest :vis conversation"
+     :resume          true        — resume the latest :tui conversation"
   ([] (run-chat! {}))
   ([opts]
   ;; Validate --conversation-id BEFORE we boot Lanterna. A miss here
@@ -453,8 +453,8 @@
                  (if (:conversation-id opts)
                    resumed-from-flag
                    (if (:resume opts)
-                  ;; --resume: pick up the latest :vis conversation
-                     (if-let [latest (first (lp/by-channel :vis))]
+                  ;; --resume: pick up the latest :tui conversation
+                     (if-let [latest (first (lp/by-channel :tui))]
                        (or (chat/resume-conversation (:id latest))
                          (chat/make-conversation config))
                        (chat/make-conversation config))
@@ -582,7 +582,7 @@
   "Parse `vis tui` flags. Unknown flags are ignored on purpose so the
    TUI never refuses to start because of a stray argument.
      --conversation-id ID   Resume a conversation (full UUID or short prefix)
-     --resume               Resume the latest :vis conversation"
+     --resume               Resume the latest :tui conversation"
   [args]
   (loop [args (seq args) opts {}]
     (if-not args

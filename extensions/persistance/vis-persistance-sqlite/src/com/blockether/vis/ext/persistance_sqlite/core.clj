@@ -265,7 +265,7 @@
    Returns the conversation-soul UUID.
 
    Metadata layout:
-     conversation_soul.metadata  → {:channel :vis, :external-id \"...\"}
+     conversation_soul.metadata  → {:channel :tui, :external-id \"...\"}
      conversation_state.metadata → {:system-prompt \"...\", :provider :openai,
                                     :model \"gpt-4o\"}
      conversation_state.title    → title column
@@ -281,7 +281,7 @@
       (execute! db-info
         {:insert-into :conversation_soul
          :values [{:id         (str soul-id)
-                   :metadata   (->json {:channel     (->kw (or channel :vis))
+                   :metadata   (->json {:channel     (->kw (or channel :tui))
                                         :external-id external-id})
                    :created_at now}]})
       (execute! db-info
