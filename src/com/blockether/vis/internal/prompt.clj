@@ -22,6 +22,7 @@
    model needs."
   (:require
    [clojure.string :as str]
+   [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
@@ -35,12 +36,27 @@
   6000)
 
 (def ^:const JOURNAL_KEEP_ITERS
-  "Number of iterations carried in <journal>. 2 gives the model the
-   immediate-prior iteration plus one before it — enough context to
-   compare what it just observed against the prior step without
-   ballooning the projection beyond the model's working-memory
-   horizon."
-  2)
+  "Rolling-window size for <journal> entries. 12 carries the last
+   dozen iterations of the conversation (cross-turn) so a follow-up
+   turn sees the immediate context of the prior turn's work without
+   re-fetching via `(vis/conversation)`.
+
+   When the iteration's prompt token count crosses
+   `CONTEXT_PRESSURE_THRESHOLD` of the model's context window the
+   loop fires a `[system_nudge]` instructing the model to curate
+   `(def …)` summaries it cares about; older entries then drop off
+   the rolling window verbatim. The runtime never auto-summarizes —
+   the model owns its working memory, in line with the RLM
+   principle this project is built on (see AGENTS.md ▸ 'No
+   auto-compaction')."
+  12)
+
+(def ^:const CONTEXT_PRESSURE_THRESHOLD
+  "Fraction of the model's effective input-token budget at which the
+   loop fires a context-pressure nudge. 60% leaves headroom for the
+   current iteration's own thinking + tool calls + answer payload
+   without forcing the model to firefight an overflow."
+  0.60)
 
 ;; =============================================================================
 ;; Generic helpers
@@ -194,6 +210,71 @@
    settled conversation isn't pestered every turn."
   12)
 
+(defn- ^:long count-prompt-tokens
+  "Token count for `text` against `model`. Falls back to
+   `(quot (count text) 4)` (rough English/code rule of thumb) when
+   the encoder lookup fails for an unrecognized model id."
+  [model text]
+  (when (string? text)
+    (or (try
+          (when (string? model)
+            (svar-router/count-tokens model text))
+          (catch Throwable _ nil))
+      (long (quot (count text) 4)))))
+
+(defn- model-context-limit
+  "Best-effort lookup of `model`'s context window. Falls back to a
+   conservative 32k when the table doesn't know the model id, which
+   is the smallest mainstream tier still in production use — better
+   to nudge a bit early on a 200k model than to never nudge at all."
+  [model]
+  (or (try
+        (when (string? model)
+          (svar-router/context-limit model svar-router/MODEL_CONTEXT_LIMITS))
+        (catch Throwable _ nil))
+    32000))
+
+(defn- context-pressure-nudge
+  "Built-in `[system_nudge]` line that fires when the assembled prompt
+   (system message + history + new iteration trailer) crosses
+   `CONTEXT_PRESSURE_THRESHOLD` of the model's input-token budget.
+   Returns nil when usage is below threshold or token info is
+   unavailable.
+
+   The nudge does NOT auto-summarize — RLM puts curation in the
+   model's hands. Instead it (a) reports the live usage so the model
+   sees the budget concretely, (b) gives a Chain-of-Density-style
+   recipe for a `(def …)` summary the MODEL writes itself, and (c)
+   reminds the model that older raw iters stay reachable through the
+   foundation read API even after they roll off the journal."
+  [_model used-tokens limit-tokens]
+  (when (and (integer? used-tokens) (integer? limit-tokens) (pos? limit-tokens))
+    (let [util (double (/ used-tokens limit-tokens))]
+      (when (>= util CONTEXT_PRESSURE_THRESHOLD)
+        (str "[system_nudge] Context window is at "
+          (int (Math/round (* 100.0 util))) "% ("
+          used-tokens " / " limit-tokens " tokens). Older <journal>\n"
+          "  iterations will roll off the rolling window soon. Curate the\n"
+          "  insight you've earned BEFORE that happens — emit a structured\n"
+          "  `(def …)` so the value lands in <var_index> + var-history and\n"
+          "  survives the roll. Chain-of-Density-style recipe (use only\n"
+          "  facts that already appeared in the journal; no new\n"
+          "  characterizations / evaluative adjectives):\n"
+          "\n"
+          "    (def turn-summary\n"
+          "      {:findings   [{:where \"src/auth.clj:42\" :what \"jwt-decode rejects nbf-skew\"}\n"
+          "                    {:where \"iN.K\"           :what \"<concrete-fact>\"}]\n"
+          "       :errors     [{:iteration N :class :patch-no-match :recovery \"…\"}]\n"
+          "       :decisions  [{:choice \"validate-then-decode\" :rationale \"…\"}]\n"
+          "       :next-step  \"extract verify-jwt to its own ns\"})\n"
+          "\n"
+          "  Keys above are illustrative — use whatever shape fits the\n"
+          "  task. Atoms preferred (file paths, symbol names, error keys,\n"
+          "  iN.K refs) over prose. Raw history stays reachable via\n"
+          "  `(vis/find-attempts \"…\")` and `(vis/conversation)` after\n"
+          "  iterations roll off; use those when you genuinely need\n"
+          "  precision your `(def …)` didn't capture.")))))
+
 (defn- title-nudge
   "Built-in `[system_nudge]` line that fires when:
      1. `CONVERSATION_TITLE` is currently empty, OR
@@ -242,7 +323,9 @@
         <journal> renderer.
      `:iteration` — 0-based iteration counter; threaded into the
         title-nudge cadence check."
-  [environment {:keys [blocks-by-iteration active-extensions iteration] :as opts}]
+  [environment {:keys [blocks-by-iteration active-extensions iteration
+                       model system-prompt]
+                :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
@@ -253,6 +336,18 @@
                           (not (str/blank? var-index-str)))
                     (str "<var_index>\n" var-index-str "\n</var_index>"))
         title-line (title-nudge environment iteration)
+        ;; Token-budget probe. Estimate the size of the assembled
+        ;; prompt that would be sent to the LLM; fire the
+        ;; context-pressure nudge when it crosses
+        ;; `CONTEXT_PRESSURE_THRESHOLD`. The probe is a no-op when
+        ;; `:model` isn't supplied (e.g. test fixtures).
+        prompt-text (str/join "\n\n"
+                      (keep identity
+                        [system-prompt recent-block var-block]))
+        used-tokens (count-prompt-tokens model prompt-text)
+        ctx-limit   (model-context-limit model)
+        pressure-line (when (and used-tokens ctx-limit)
+                        (context-pressure-nudge model used-tokens ctx-limit))
         ext-nudges (when (seq active-extensions)
                      (let [ctx {:environment environment
                                 :previous-blocks last-iteration-blocks}]
@@ -269,6 +364,7 @@
                          active-extensions)))
         all-nudges (cond-> []
                      title-line       (conj title-line)
+                     pressure-line    (conj pressure-line)
                      (seq ext-nudges) (into ext-nudges))
         nudges-block (when (seq all-nudges) (str/join "\n" all-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
