@@ -59,7 +59,8 @@
 ;; conversation env — both of which are loop-owned. The pure read-only
 ;; provider-state fns (`current-config`, `active-provider`, …) stay in sdk.
 
-(declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings auto-forget-stale-vars!)
+(declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings auto-forget-stale-vars!
+  set-title! set-title-with-broadcast! env-for)
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates
@@ -375,22 +376,37 @@
                                        (when (and s e (>= s 0) (<= e (count src)) (<= s e))
                                          [s e]))))
                              forms)
-               ;; For form K, slice from end-of-form-(K-1) (or 0)
-               ;; through end-of-form-K. Captures any `;; comments` /
-               ;; `#_(...)` discards / blank lines that sat between
-               ;; the previous form and this one as part of THIS
-               ;; form's source. Trimming on the way out drops the
-               ;; leading whitespace but keeps the comment lines
-               ;; verbatim, so `<recent>` shows what the model wrote.
-               slice (fn [idx]
-                       (when-let [[_ end] (nth form-bounds idx nil)]
-                         (let [start (or (some-> (nth form-bounds (dec idx) nil) (nth 1)) 0)]
-                           (subs src start end))))]
+               ;; For form K, two slices:
+               ;;   `:comment` = the GAP (end-of-K-1 .. start-of-K).
+               ;;     Captures any `;; …` / `#_(...)` / blank lines
+               ;;     that sat between the previous form and this
+               ;;     one. Trimmed; nil when empty.
+               ;;   `:expr`    = the form's own bounds. The actual
+               ;;     Clojure code, no preamble.
+               ;; Persisting these as TWO fields (instead of glued
+               ;; into one `:expr` blob) keeps the executable code
+               ;; clean for hashing / dedup / display while still
+               ;; preserving the model's authored prose alongside
+               ;; each form.
+               comment-slice (fn [idx]
+                               (when-let [[start _] (nth form-bounds idx nil)]
+                                 (let [prev-end (or (some-> (nth form-bounds (dec idx) nil)
+                                                      (nth 1))
+                                                  0)]
+                                   (when (> start prev-end)
+                                     (let [trimmed (str/trim (subs src prev-end start))]
+                                       (when (pos? (count trimmed))
+                                         trimmed))))))
+               expr-slice (fn [idx]
+                            (when-let [[start end] (nth form-bounds idx nil)]
+                              (subs src start end)))]
            (mapv (fn [idx form]
-                   (let [src-slice (or (slice idx)
-                                     (binding [*print-meta* false] (pr-str form)))]
-                     (cond-> {:expr (str/trim (str src-slice))}
-                       repaired? (assoc :repaired? true))))
+                   (let [expr-src (or (expr-slice idx)
+                                    (binding [*print-meta* false] (pr-str form)))
+                         comment  (comment-slice idx)]
+                     (cond-> {:expr (str/trim (str expr-src))}
+                       comment    (assoc :comment comment)
+                       repaired?  (assoc :repaired? true))))
              (range) forms)))]
       (try
         ;; Attempt 1: edamame on raw source.
@@ -987,7 +1003,7 @@
                          [{:expr (str raw-code) :parse-error parse-error}]
                          (vec (filter #(not (str/blank? (:expr %))) (or forms []))))
           total-blocks (count code-entries)
-          executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired?}]
+          executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            ;; Stamp form-idx BEFORE eval so any
@@ -1034,6 +1050,7 @@
                                           :form-of           total-blocks
                                           :iteration-id      iteration-id
                                           :code              expr
+                                          :comment           form-comment
                                           :result            (:result result)
                                           :error             (:error result)
                                           :stdout            (:stdout result)
@@ -1041,21 +1058,23 @@
                                           :execution-time-ms (:execution-time-ms result)
                                           :timeout?          (boolean (:timeout? result))
                                           :repaired?         (boolean (:repaired? result))}))
-                             {:block expr :result result}))
+                             {:block expr :result result :form-comment form-comment}))
                      (range) code-entries)
           code-blocks (mapv :block executed)
           expression-results (mapv :result executed)
-          expressions (mapv (fn [idx code result]
-                              {:id idx
-                               :code code
-                               :result (:result result)
-                               :stdout (:stdout result)
-                               :stderr (:stderr result)
-                               :error (:error result)
-                               :execution-time-ms (:execution-time-ms result)
-                               :timeout? (:timeout? result)
-                               :repaired? (:repaired? result)})
-                        (range) code-blocks expression-results)]
+          expression-comments (mapv :form-comment executed)
+          expressions (mapv (fn [idx code result form-comment]
+                              (cond-> {:id idx
+                                       :code code
+                                       :result (:result result)
+                                       :stdout (:stdout result)
+                                       :stderr (:stderr result)
+                                       :error (:error result)
+                                       :execution-time-ms (:execution-time-ms result)
+                                       :timeout? (:timeout? result)
+                                       :repaired? (:repaired? result)}
+                                form-comment (assoc :comment form-comment)))
+                        (range) code-blocks expression-results expression-comments)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. Three
@@ -1320,13 +1339,19 @@
       vec)))
 
 (defn update-system-vars!
-  "Rebind REASONING and ANSWER in the SCI sandbox after an iteration.
-   See `SYSTEM_VAR_NAMES` for the full SYSTEM-var registry."
+  "Rebind REASONING, ANSWER and TITLE in the SCI sandbox after an
+   iteration. See `SYSTEM_VAR_NAMES` for the full SYSTEM-var registry.
+
+   `TITLE` mirrors the env's `:title-atom` so a `(title \"...\")` call
+   inside iteration N is observable to the model in iteration N+1
+   without a DB round-trip."
   [environment {:keys [thinking final-result final-answer]}]
   (when (seq thinking)
     (env/bind-and-bump! environment 'REASONING thinking))
   (when final-result
-    (env/bind-and-bump! environment 'ANSWER final-answer)))
+    (env/bind-and-bump! environment 'ANSWER final-answer))
+  (when-let [title-atom (:title-atom environment)]
+    (env/bind-and-bump! environment 'TITLE (or @title-atom ""))))
 
 (defn update-current-iteration-id!
   "Rebind `CURRENT_ITERATION_ID` in the SCI sandbox to the freshly-
@@ -1357,6 +1382,15 @@
     (seq thinking)           (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
     final-result             (conj {:name "ANSWER"    :value final-answer :code ";; SYSTEM var"})
     current-iteration-id     (conj {:name "CURRENT_ITERATION_ID" :value current-iteration-id :code ";; SYSTEM var"})))
+
+(defn update-title-system-var!
+  "Rebind TITLE in the SCI sandbox to whatever the env's title-atom
+   currently holds. Called once at iteration 0 so the first iteration
+   sees the live title; per-iteration rebinds happen in
+   `update-system-vars!` (alongside REASONING / ANSWER)."
+  [environment]
+  (when-let [title-atom (:title-atom environment)]
+    (env/bind-and-bump! environment 'TITLE (or @title-atom ""))))
 
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-query! (inlined from former base)
@@ -1466,6 +1500,7 @@
     ;; <var_index> picture matches the actually-loaded surface.
     (env/bind-and-bump! environment 'EXTENSIONS
       (prompt/extensions-snapshot active-exts))
+    (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-query-id-atom environment)] (reset! a query-id))
     (auto-forget-stale-vars! environment)
@@ -1622,6 +1657,7 @@
                                        {:query-id query-id :expressions expressions :vars vars-snapshot
                                         :thinking thinking
                                         :answer (when final-result (answer-str (:answer final-result)))
+                                        :answer-form-idx (when final-result (:answer-form-idx final-result))
                                         :duration-ms (or (:duration-ms iteration-result) 0)
                                         :llm-messages (:llm-messages iteration-result)
                                         :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
@@ -2243,6 +2279,13 @@
         ;; form's evaluation invoked it. Pairs with `answer-atom` to
         ;; implement Option C (scoped) discard semantics.
         current-form-idx-atom    (atom nil)
+        ;; Title atom: in-memory cache for the conversation title.
+        ;; The DB column on `conversation_state` is the persisted
+        ;; truth; this atom is the fast read path for `(title)` and
+        ;; the source for the `TITLE` SYSTEM var rebind at iteration
+        ;; boundaries. `set-title!` writes both, in that order, then
+        ;; broadcasts to every registered listener.
+        title-atom               (atom (or title ""))
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
@@ -2282,8 +2325,27 @@
                                      {:value    (str s)
                                       :form-idx @current-form-idx-atom})
                                    :vis/answer)
+        ;; SCI binding for the conversation title:
+        ;;   `(title \"...\")` — writes the title through to DB,
+        ;;                    syncs the in-memory atom, and broadcasts
+        ;;                    `:title-changed` to every registered
+        ;;                    listener so channels (e.g. the TUI
+        ;;                    header) can refresh without polling.
+        ;; ONE-ARITY ONLY. To READ the current title from `:code`,
+        ;; reference the `TITLE` SYSTEM var — there is no zero-arg
+        ;; reader, by design: a `(title)` call would invite the
+        ;; model to round-trip what it can read for free. Calling
+        ;; with the wrong arity raises an `ArityException` from SCI
+        ;; like any other Clojure fn.
+        title-fn                 (fn title [s]
+                                   (let [s (str s)]
+                                     (set-title-with-broadcast!
+                                       db-info conversation-id
+                                       title-atom s)
+                                     s))
         env-bindings             {'var-history var-history-fn
-                                  'answer      answer-fn}
+                                  'answer      answer-fn
+                                  'title       title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -2299,6 +2361,7 @@
              :router          router
              :answer-atom           answer-atom
              :current-form-idx-atom current-form-idx-atom
+             :title-atom            title-atom
              :extensions            (atom [])}]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
@@ -2528,9 +2591,91 @@
           (by-id (str (second ref))))
       (create! :telegram {:external-id ext}))))
 
+;; =============================================================================
+;; Title listeners + set-title! broadcast
+;;
+;; Channels (TUI, Telegram, ...) that want to react to a conversation
+;; title change — typically because the model emitted `(title "...")`
+;; mid-turn — register a listener via `add-title-listener!`. The
+;; listener fn receives the new title; it MUST be cheap (typically a
+;; `state/dispatch` into the channel's app-db). Listeners are stored
+;; per conversation-id so a TUI watching conversation A doesn't get
+;; woken by a Telegram bot updating conversation B.
+;;
+;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
+;; `(title "...")` fn (model-driven) funnel through
+;; `set-title-with-broadcast!`, which is the single mutation point.
+;; That keeps the in-memory env atom + DB column + listener fan-out
+;; in lockstep — no path can update one without the others.
+;; =============================================================================
+
+(defonce ^:private title-listeners
+  ;; {conversation-id-uuid #{listener-fn ...}}
+  (atom {}))
+
+(defn add-title-listener!
+  "Register `listener-fn` for `conversation-id`. The fn is invoked with
+   the new title (a string) every time the title changes. Multiple
+   listeners are supported; they fire in unspecified order.
+
+   Returns the listener fn so callers can pass it to
+   `remove-title-listener!` later."
+  [conversation-id listener-fn]
+  (let [cid (persistance/->uuid conversation-id)]
+    (swap! title-listeners update cid (fnil conj #{}) listener-fn))
+  listener-fn)
+
+(defn remove-title-listener!
+  "Deregister a previously added listener. Idempotent."
+  [conversation-id listener-fn]
+  (let [cid (persistance/->uuid conversation-id)]
+    (swap! title-listeners update cid
+      (fn [existing] (disj (or existing #{}) listener-fn))))
+  nil)
+
+(defn- broadcast-title-change!
+  "Fire every registered listener for `conversation-id` with `title`.
+   Listeners that throw are swallowed and logged — a misbehaving
+   channel must NOT block the iteration loop."
+  [conversation-id title]
+  (let [cid (persistance/->uuid conversation-id)]
+    (doseq [f (get @title-listeners cid)]
+      (try (f title)
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::title-listener-failed
+                     :data {:conversation-id cid
+                            :error (ex-message t)}
+                     :msg (str "Title listener threw: " (ex-message t))}))))))
+
+(defn set-title-with-broadcast!
+  "Single mutation point for conversation titles.
+
+   1. Writes the title to the persisted `conversation_state` row.
+   2. Updates the env's in-memory `:title-atom` so the next iteration's
+      `TITLE` SYSTEM var rebind sees the new value AND so a `(title)`
+      read from the SCI sandbox returns the fresh string immediately,
+      without a DB round-trip.
+   3. Broadcasts to every registered listener.
+
+   `title-atom` may be nil (host-driven path with no live env)."
+  [db-info conversation-id title-atom title]
+  (let [t (str title)]
+    (persistance/db-update-conversation-title! db-info conversation-id t)
+    (when title-atom (reset! title-atom t))
+    (broadcast-title-change! conversation-id t)
+    nil))
+
 (defn set-title!
+  "Host-driven title change. Resolves the live env (if any) so the
+   in-memory atom + listener fan-out stay in sync; falls back to a
+   plain DB write when no env is live for this conversation (e.g.
+   `vis conversations` rename ops)."
   [id title]
-  (persistance/db-update-conversation-title! (db-info) id title)
+  (let [env (env-for id)]
+    (set-title-with-broadcast! (or (:db-info env) (db-info))
+      id
+      (:title-atom env)
+      title))
   nil)
 
 (defn env-for

@@ -375,8 +375,14 @@
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
    var?' check is needed: var-index sort+status, auto-forget guard,
-   <system_state> rendering, etc."
-  '#{QUERY REASONING ANSWER CURRENT_QUERY_ID CURRENT_ITERATION_ID EXTENSIONS})
+   <system_state> rendering, etc.
+
+   `TITLE` carries the current conversation title (\"\" when not yet
+   set). Loop owns the rebind: read-only from the model's POV. The
+   model writes the title via the host primitive `(title \"...\")`,
+   never by `def`-ing TITLE directly (the SYSTEM-var write guard in
+   `loop.clj` rejects that on principle)."
+  '#{QUERY REASONING ANSWER CURRENT_QUERY_ID CURRENT_ITERATION_ID EXTENSIONS TITLE})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed

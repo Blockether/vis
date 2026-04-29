@@ -15,7 +15,7 @@
         same expression twice.
 
    The two slots above plus the SYSTEM vars (`QUERY` `ANSWER` `REASONING`
-   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `EXTENSIONS`) bound in SCI
+   `CURRENT_QUERY_ID` `CURRENT_ITERATION_ID` `EXTENSIONS` `TITLE`) bound in SCI
    cover everything the model needs."
   (:require
    [clojure.string :as str]
@@ -264,9 +264,14 @@ SCI vars bound by name:
   QUERY                 current request (string)
   ANSWER                previous turn's answer (string)
   REASONING             last iter's thinking (string)
+  TITLE                 current conversation title (string; \"\" until set)
   CURRENT_QUERY_ID      UUID of THIS in-flight turn
   CURRENT_ITERATION_ID  UUID of last persisted iter (nil at iter 0)
   EXTENSIONS            frozen vec of {:alias :namespace :doc :version :group :symbols :docs} for every extension active this turn. Filter / inspect directly — don't round-trip through `(foundation/extensions)` for the same data.
+
+Host primitives bound at the top level (no alias):
+  (answer ARG)     finish the turn with this string (ARG = string). See answer-position rules above.
+  (title ARG)      ONE-ARITY ONLY. Writes the conversation title through to the DB and notifies every channel watching this conversation. To READ the current title, reference the `TITLE` SYSTEM var — it always carries the live value, no fn call needed. ARG = a short noun phrase (3-7 words). Safe to call any iteration; the next iteration's `TITLE` reflects the new value. Setting the title on the first turn is encouraged so the conversation is discoverable in the sidebar; refresh it later when the focus shifts.
 
 Rules:
   • Real Clojure: let / do / threading inside one form when steps depend.
