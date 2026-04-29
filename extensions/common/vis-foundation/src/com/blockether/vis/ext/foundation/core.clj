@@ -9,20 +9,20 @@
                                  vis/diagnose, vis/var-history,
                                  vis/find-attempts, vis/failures,
                                  vis/extensions, vis/extension-doc, \u2026)
-     editing/tools.clj          (vis/cat, vis/ls, vis/rg, vis/edit,
+     editing/core.clj          (vis/cat, vis/ls, vis/rg, vis/edit,
                                  vis/write)
-     environment/core.clj       (vis/environment-snapshot,
-                                 vis/environment-git,
-                                 vis/environment-languages,
-                                 vis/environment-monorepo,
-                                 vis/environment-render,
-                                 vis/environment-refresh!)\n
+     environment/core.clj       (vis/snapshot,
+                                 vis/git,
+                                 vis/languages,
+                                 vis/monorepo,
+                                 vis/render,
+                                 vis/refresh!)\n
    Plus a live `<environment>` block in the system prompt, owned by
    `environment/core.clj`'s `environment-prompt`.\n
    The legacy `fs/` alias (babashka.fs path-math wrappers) was\n   dropped: the `vis/` editing tools resolve every path internally\n   against `(fs/cwd)` already, and the model has no need to do path\n   math directly inside the sandbox. If it ever does, the host's\n   `clojure.java.io` namespace is still available."
   (:require
    [com.blockether.vis.core :as sdk]
-   [com.blockether.vis.ext.foundation.editing.tools :as editing]
+   [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]))
 

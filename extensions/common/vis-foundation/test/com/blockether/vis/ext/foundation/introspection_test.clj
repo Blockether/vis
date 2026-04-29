@@ -582,7 +582,7 @@
       ;; under one alias. Spot-check one symbol from each area.
       (expect (contains? (set (:symbols this)) 'extensions))
       (expect (contains? (set (:symbols this)) 'cat))
-      (expect (contains? (set (:symbols this)) 'environment-snapshot))
+      (expect (contains? (set (:symbols this)) 'snapshot))
       ;; :docs is a vector of summary maps. Each summary carries the
       ;; structured descriptor fields except :content; :content lives
       ;; on the full descriptor returned by (vis/extension-doc ...).

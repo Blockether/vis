@@ -1215,6 +1215,15 @@
 
 (declare markdown->inline)
 
+(defn- word-char-at?
+  "True iff index `i` is inside `s` and points at a letter or digit.
+   Out-of-bounds -> false. Used to enforce CommonMark/GFM's intra-word
+   underscore rule: `VAR_NAME_HERE` must not light up as italic."
+  [^String s ^long i]
+  (and (>= i 0)
+    (< i (.length s))
+    (Character/isLetterOrDigit (.charAt s i))))
+
 (defn- find-inline-close
   "Scan `s` from index `from` for the next occurrence of `closer`,
    stepping over nested constructs that we don't want to break:
@@ -1230,15 +1239,21 @@
      what makes `*italic with **bold** inside*` parse the way a human
      reads it (italic wrapping bold) instead of `italic with` /
      literal-`*bold` / italic-` inside`.
+   - Underscore closers (`_` and `__`) are rejected when the character
+     immediately after the candidate match is a letter or digit.
+     CommonMark/GFM forbids intra-word underscore emphasis, so
+     `FOO_BAR_BAZ` must NOT close at the second `_`. Companion rule on
+     opener-side lives in `markdown->inline`.
 
    Empty spans (`**` immediately followed by `**`, etc.) are rejected
    by returning -1 — GitHub does the same.
 
    Returns the index of the matched closer or -1 if none."
   [^String s ^String closer ^long from]
-  (let [n         (.length s)
-        cl-len    (.length closer)
-        single-ch (when (= 1 cl-len) (.charAt closer 0))]
+  (let [n           (.length s)
+        cl-len      (.length closer)
+        single-ch   (when (= 1 cl-len) (.charAt closer 0))
+        underscore? (= \_ (.charAt closer 0))]
     (loop [k from]
       (cond
         (> (+ k cl-len) n) -1
@@ -1264,7 +1279,14 @@
 
         ;; Match!
         (.regionMatches s k closer 0 cl-len)
-        (if (= k from) -1 k)             ;; reject empty span
+        (cond
+          ;; Empty span (`__` immediately after the opener, etc.).
+          (= k from) -1
+          ;; Intra-word underscore: candidate `_` / `__` followed by
+          ;; a word char cannot close. Keep scanning past it.
+          (and underscore? (word-char-at? s (+ k cl-len)))
+          (recur (+ k cl-len))
+          :else k)
 
         :else
         (recur (inc k))))))
@@ -1293,12 +1315,16 @@
    Empty spans (`****`, `__`, `~~~~`) and orphan openers fall through
    as literal text — also matches GitHub behaviour for the same input.
 
-   What this is NOT: a full CommonMark parser. There's no flanking-
-   rule support (`a*b*c` always becomes italic-b here, while CommonMark
-   would call it literal). No autolinks. No HTML. No images. We cover
-   the 95% of inline markup that real assistant answers emit; the
-   other 5% is either rare enough to ignore or already handled by
-   line-level markers (`# heading`, `- bullet`, `> quote`, fenced code)."
+   What this is NOT: a full CommonMark parser. We DO honour CommonMark's
+   intra-word underscore rule (`VAR_NAME_HERE` is left alone — `_` /
+   `__` cannot open when preceded by a word char, cannot close when
+   followed by one), because identifier-mangling is the single most
+   visible regression a markdown presenter can ship. Asterisks keep
+   the permissive behaviour: `a*b*c` is still italic-b, mirroring real
+   prose. No autolinks. No HTML. No images. We cover the 95% of inline
+   markup real assistant answers emit; the other 5% is either rare
+   enough to ignore or already handled by line-level markers
+   (`# heading`, `- bullet`, `> quote`, fenced code)."
   ^String [^String s]
   (if (or (nil? s) (zero? (.length s)))
     (or s "")
@@ -1314,11 +1340,25 @@
                   ["*"  "*"  p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF true]
                   ["_"  "_"  p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF true]
                   ["`"  "`"  p/INLINE_CODE_ON   p/INLINE_CODE_OFF   false]]
+          ;; CommonMark/GFM intra-word underscore rule: `_` and `__`
+          ;; cannot OPEN emphasis when the immediately preceding
+          ;; character is a letter or digit. This is what keeps
+          ;; `VARIABLES_LIKE_THIS`, `snake_case_var`, `text_with_under`
+          ;; etc. rendering as plain literal text instead of being
+          ;; mangled into italics with the underscores eaten.
+          ;; Asterisks (`*` / `**`) keep CommonMark's permissive
+          ;; behaviour — `a*b*c` is still italic-b — because real
+          ;; prose relies on it.
+          opener-allowed?
+          (fn [^String op ^long i]
+            (or (not= \_ (.charAt op 0))
+              (not (word-char-at? s (dec i)))))
           match-opener (fn [^long i]
                          (some (fn [[op _ _ _ _ :as t]]
                                  (let [op-len (.length ^String op)]
                                    (when (and (<= (+ i op-len) n)
-                                           (.regionMatches s i ^String op 0 op-len))
+                                           (.regionMatches s i ^String op 0 op-len)
+                                           (opener-allowed? op i))
                                      t)))
                            tokens))]
       (loop [i 0]

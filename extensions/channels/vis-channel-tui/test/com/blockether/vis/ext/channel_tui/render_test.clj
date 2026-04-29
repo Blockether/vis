@@ -304,7 +304,50 @@
     (it "Adjacent spans don't bleed: **a****b** → BOLD a, BOLD b"
       ;; The middle `**` closes the first bold and opens the second.
       (expect (= (str B "a" B' B "b" B')
-                (markdown->inline "**a****b**"))))))
+                (markdown->inline "**a****b**")))))
+
+  (describe "Intra-word underscore rule (CommonMark / GFM)"
+    ;; Bug repro: identifiers with underscores were being chewed up
+    ;; into italic spans by an underscore-greedy tokenizer. CommonMark
+    ;; explicitly forbids underscore emphasis from opening or closing
+    ;; mid-word; asterisk emphasis is unaffected.
+    (it "VARIABLES_LIKE_THIS stays literal — no italic, underscores preserved"
+      (expect (= "VARIABLES_LIKE_THIS"
+                (markdown->inline "VARIABLES_LIKE_THIS"))))
+    (it "Trailing prose after an identifier stays literal too"
+      (expect (= "VARIABLES_LIKE_THIS in code"
+                (markdown->inline "VARIABLES_LIKE_THIS in code"))))
+    (it "FOO_BAR_BAZ — every underscore preserved"
+      (expect (= "FOO_BAR_BAZ" (markdown->inline "FOO_BAR_BAZ"))))
+    (it "snake_case_var here — lowercase identifiers also protected"
+      (expect (= "snake_case_var here"
+                (markdown->inline "snake_case_var here"))))
+    (it "text_with_under — plain word with embedded underscores"
+      (expect (= "text_with_under"
+                (markdown->inline "text_with_under"))))
+    (it "call(VAR_NAME) stays literal even with surrounding punctuation"
+      (expect (= "call(VAR_NAME) please"
+                (markdown->inline "call(VAR_NAME) please"))))
+    (it "Repeated identifiers in one line: VAR_A and VAR_B"
+      (expect (= "VAR_A and VAR_B"
+                (markdown->inline "VAR_A and VAR_B"))))
+    ;; And the regression sentinels for the CommonMark cases the rule
+    ;; MUST NOT break: real underscore emphasis still works as long as
+    ;; the boundaries are non-word characters (BOL/EOL/space/punct).
+    (it "_word_ at boundaries still italicises"
+      (expect (= (str I "word" I') (markdown->inline "_word_"))))
+    (it "a _word_ b still italicises"
+      (expect (= (str "a " I "word" I' " b")
+                (markdown->inline "a _word_ b"))))
+    (it "__bold__ at boundaries still bolds"
+      (expect (= (str B "bold" B') (markdown->inline "__bold__"))))
+    (it "_emph_, then text — punctuation after closer is allowed"
+      (expect (= (str I "emph" I' ", then text")
+                (markdown->inline "_emph_, then text"))))
+    (it "Asterisk emphasis is intentionally unaffected: a*b*c stays italic-b"
+      ;; CommonMark allows intra-word asterisk emphasis; we mirror it
+      ;; on purpose so prose like `re*ally* good` keeps working.
+      (expect (= (str "a" I "b" I' "c") (markdown->inline "a*b*c"))))))
 
 (defdescribe display-width-with-nesting-test
   (describe "Sentinel-decorated nested spans count zero columns total"
