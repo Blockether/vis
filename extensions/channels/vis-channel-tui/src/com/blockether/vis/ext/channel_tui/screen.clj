@@ -494,14 +494,29 @@
       ;; the first frame as soon as `:render-version` is non-zero (every
       ;; init dispatch above bumps it).
          (vreset! render-thread (start-render-thread! screen))
-         ;; Local UI state that lives only in the input thread:
-         ;; while the user holds the mouse button after grabbing the
-         ;; scrollbar, every subsequent DRAG event re-positions the
-         ;; thumb regardless of where the cursor is — even if it
-         ;; wanders outside the right gutter — until the button is
-         ;; released. Standard scrollbar behaviour; matches what
-         ;; users expect from any GUI scroll thumb.
-         (let [scrollbar-dragging? (volatile! false)]
+         ;; Local UI state that lives only in the input thread.
+         ;;
+         ;; `scrollbar-drag-offset` is `nil` when no drag is in
+         ;; progress; otherwise it carries the integer row offset
+         ;; between the click row and the TOP of the thumb captured
+         ;; at CLICK_DOWN time (i.e. "how many rows from the top of
+         ;; the thumb did the user grab?").
+         ;;
+         ;; Drag math then becomes `new-thumb-top = my - offset`,
+         ;; which keeps the grip-point fixed under the cursor for
+         ;; the entire drag — same contract every GUI scroll thumb
+         ;; honours. A simple boolean would force the thumb to snap
+         ;; its TOP to the cursor on the first DRAG event, which is
+         ;; what made the previous implementation "jump" the moment
+         ;; the user started moving.
+         ;;
+         ;; Clicks that DON'T land on the thumb itself (anywhere on
+         ;; the messages area, including the track above/below the
+         ;; thumb and the right gutter columns) are deliberately
+         ;; ignored — no jump-to-position. Wheel scroll, keyboard
+         ;; PageUp/PageDown and arrows remain the supported ways to
+         ;; move the viewport without grabbing the thumb.
+         (let [scrollbar-drag-offset (volatile! nil)]
            (loop []
            ;; Layout fields are populated by the render thread after
            ;; the first paint. Until then, scroll handlers fall back
@@ -524,16 +539,30 @@
                ;; thread, which `handle-key` doesn't see.
                  (instance? MouseAction key)
                  (let [^MouseAction ma key
-                       atype (.getActionType ma)
-                       pos   (.getPosition ma)
-                       mx    (.getColumn pos)
-                       my    (.getRow pos)
-                       bar-top    (+ messages-top render/MESSAGE_MARGIN_TOP)
-                       track-h    inner-h
-                       bar-min-col (- cols render/MESSAGE_MARGIN_RIGHT)
-                       in-track? (and (>= my bar-top)
-                                   (< my (+ bar-top track-h)))
-                       in-bar?   (and in-track? (>= mx bar-min-col))]
+                       atype     (.getActionType ma)
+                       pos       (.getPosition ma)
+                       mx        (.getColumn pos)
+                       my        (.getRow pos)
+                       bar-top   (+ messages-top render/MESSAGE_MARGIN_TOP)
+                       ;; Single source of truth for thumb geometry
+                       ;; lives in `render/scrollbar-thumb-geometry`,
+                       ;; so painter and hit-test cannot drift apart.
+                       ;; A nil return means there's no overflow — no
+                       ;; thumb is painted, and every click below is
+                       ;; correctly classified as off-thumb.
+                       geom      (render/scrollbar-thumb-geometry
+                                   total-h inner-h (:messages-scroll db))
+                       thumb-top (when geom
+                                   (+ bar-top (long (:thumb-top-rel geom))))
+                       thumb-h   (long (or (:thumb-h geom) 0))
+                       ;; Hit-zone: the thumb's actual rows, with a
+                       ;; 3-column-wide x-band on the right gutter so
+                       ;; the user doesn't need pixel-perfect aim.
+                       on-thumb? (and (some? geom)
+                                   (>= mx (- cols render/MESSAGE_MARGIN_RIGHT))
+                                   (< mx cols)
+                                   (>= my (long thumb-top))
+                                   (< my (+ (long thumb-top) thumb-h)))]
                    (cond
                      (= atype MouseActionType/SCROLL_UP)
                      (do (state/dispatch [:scroll-up 3 total-h inner-h])
@@ -543,25 +572,43 @@
                      (do (state/dispatch [:scroll-down 3 total-h inner-h])
                        (recur))
 
-                     (and (= atype MouseActionType/CLICK_DOWN) in-bar?)
-                     (do (vreset! scrollbar-dragging? true)
-                       (state/dispatch [:scroll-to-y my bar-top track-h total-h inner-h])
+                     ;; CLICK_DOWN on the thumb itself: arm a drag.
+                     ;; Record the offset between the click row and
+                     ;; the thumb's top so subsequent DRAG events can
+                     ;; preserve the grip-point. Crucially we do NOT
+                     ;; dispatch any scroll mutation here — a bare
+                     ;; click without movement must not move content.
+                     (and (= atype MouseActionType/CLICK_DOWN) on-thumb?)
+                     (do (vreset! scrollbar-drag-offset (- my thumb-top))
                        (recur))
 
-                   ;; Drag continues to track the cursor's Y as long
-                   ;; as the user is holding the button after a
-                   ;; scrollbar grab — we deliberately ignore the X
-                   ;; position once dragging starts so the thumb
-                   ;; doesn't pop loose if the cursor strays out of
-                   ;; the right gutter.
-                     (and (= atype MouseActionType/DRAG) @scrollbar-dragging?)
-                     (do (state/dispatch [:scroll-to-y my bar-top track-h total-h inner-h])
+                     ;; Drag continues to track the cursor's Y as
+                     ;; long as the user is holding the button after
+                     ;; a thumb grab. We feed `(my - drag-offset)` to
+                     ;; `:scroll-to-y` so the row under the user's
+                     ;; finger stays glued to the same point on the
+                     ;; thumb — no jump, no snap. X is intentionally
+                     ;; ignored once dragging starts so the thumb
+                     ;; doesn't pop loose if the cursor strays out
+                     ;; of the right gutter.
+                     (and (= atype MouseActionType/DRAG)
+                       (some? @scrollbar-drag-offset))
+                     (do (state/dispatch
+                           [:scroll-to-y
+                            (- my (long @scrollbar-drag-offset))
+                            bar-top inner-h total-h inner-h])
                        (recur))
 
                      (= atype MouseActionType/CLICK_RELEASE)
-                     (do (vreset! scrollbar-dragging? false)
+                     (do (vreset! scrollbar-drag-offset nil)
                        (recur))
 
+                     ;; Every other click — track above/below the
+                     ;; thumb, the rest of the messages area, the
+                     ;; input box, headers, footers — is ignored.
+                     ;; No "click-on-track jumps the thumb here" page
+                     ;; behaviour; users found that surprising and
+                     ;; lossy on long conversations.
                      :else (recur)))
 
                  :else

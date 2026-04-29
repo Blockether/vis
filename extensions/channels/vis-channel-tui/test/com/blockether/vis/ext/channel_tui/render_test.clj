@@ -592,3 +592,58 @@
                    ["x" "y"]]
                   100 dummy-markers)]
         (expect (= 1 (count (visual-widths out))))))))
+
+(defdescribe scrollbar-thumb-geometry-test
+  ;; Pinning the painter/hit-test contract. Both the message-area
+  ;; painter and the input-thread mouse handler must agree on which
+  ;; rows belong to the thumb; if they drift, the user clicks "on
+  ;; the thumb" and nothing happens, or clicks "off the thumb" and
+  ;; the viewport jumps. The pure helper IS the contract.
+  (let [g render/scrollbar-thumb-geometry]
+    (describe "Returns nil when there's no overflow"
+      (it "total-h < inner-h: nothing to scroll"
+        (expect (nil? (g 10 20 nil))))
+      (it "total-h == inner-h: nothing to scroll"
+        (expect (nil? (g 20 20 nil))))
+      (it "inner-h is zero: no viewport, no thumb"
+        (expect (nil? (g 100 0 0)))))
+
+    (describe "Standard 100/20 conversation"
+      (it "Auto-bottom (scroll=nil) places thumb at the END of the track"
+        (let [{:keys [thumb-top-rel thumb-h max-scroll]} (g 100 20 nil)]
+          (expect (= 16 thumb-top-rel))   ;; track-h(20) - thumb-h(4) = 16
+          (expect (= 4 thumb-h))           ;; 20 * 20/100
+          (expect (= 80 max-scroll))))    ;; 100 - 20
+
+      (it "scroll=0 places thumb at the TOP"
+        (expect (= {:thumb-top-rel 0 :thumb-h 4 :max-scroll 80}
+                  (g 100 20 0))))
+
+      (it "scroll=40 places thumb in the MIDDLE of the free track"
+        (expect (= {:thumb-top-rel 8 :thumb-h 4 :max-scroll 80}
+                  (g 100 20 40))))
+
+      (it "scroll=80 places thumb at the BOTTOM (== max-scroll)"
+        (expect (= {:thumb-top-rel 16 :thumb-h 4 :max-scroll 80}
+                  (g 100 20 80)))))
+
+    (describe "Out-of-range scroll values are clamped"
+      (it "Negative scroll clamps to 0 (top)"
+        (expect (zero? (:thumb-top-rel (g 100 20 -50)))))
+      (it "Excessive scroll clamps to max-scroll (bottom)"
+        (let [{:keys [thumb-top-rel max-scroll]} (g 100 20 9999)]
+          (expect (= 16 thumb-top-rel))
+          (expect (= 80 max-scroll)))))
+
+    (describe "Tiny viewport on huge content keeps thumb-h >= 1"
+      ;; If `inner-h * track-h / total-h` rounds to 0, we still draw
+      ;; SOMETHING — a 1-row thumb — so the user has a target to grab.
+      (it "1000-row content in a 5-row viewport: thumb-h is 1, not 0"
+        (let [{:keys [thumb-h]} (g 1000 5 0)]
+          (expect (= 1 thumb-h))))
+      (it "And the thumb still slides through the full track"
+        (let [top (:thumb-top-rel (g 1000 5 0))
+              bot (:thumb-top-rel (g 1000 5 995))]
+          (expect (= 0 top))
+          (expect (= 4 bot)))))    ;; track-h(5) - thumb-h(1) = 4
+    ))
