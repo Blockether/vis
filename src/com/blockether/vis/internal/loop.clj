@@ -49,16 +49,6 @@
     Mustache$Formatter Mustache$VariableFetcher]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
-;; vis-runtime body — iteration loop + conversations
-;; ===========================================================================
-;; Provider state mutation
-;; ===========================================================================
-;;
-;; Lives in loop.clj (not sdk.clj) because mutating the active provider has
-;; to also rebuild the global router cache and reseat it on every cached
-;; conversation env — both of which are loop-owned. The pure read-only
-;; provider-state fns (`current-config`, `active-provider`, …) stay in sdk.
-
 (declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings auto-forget-stale-vars!
   set-title! set-title-with-broadcast! env-for)
 
