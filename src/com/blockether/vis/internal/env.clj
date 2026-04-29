@@ -3,7 +3,7 @@
 
    INTERNAL — only `com.blockether.vis.internal.loop` imports this namespace.
    Foundation utilities (storage facade, extension specs, format helpers,
-   etc.) live in `com.blockether.vis.internal.sdk`. Channels and extensions never
+   etc.) live across `com.blockether.vis.internal.{persistance,extension,config,registry}`. Channels and extensions never
    reach into here; they go through the public iteration entry points
    in `com.blockether.vis.internal.loop` (`send!`, `create!`, `query!`, …)."
   (:require
@@ -12,7 +12,7 @@
    [clojure.walk]
    [clojure+.core]
    [clojure+.walk]
-   [com.blockether.vis.internal.sdk :as sdk]
+   [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :as lazytest]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
@@ -37,7 +37,7 @@
    iteration's `<var_index>` context block to reflect the new binding, they
    MUST also call `bump-var-index!` on the env — the var-index is cached and
    only rebuilds when `:current-revision` advances. Every past cache-staleness
-   bug (4-iter `(restore-vars …)` spin, turn-3 `*query*=\"Siema\"` replay)
+   bug (4-iteration `(restore-vars …)` spin, turn-3 `*query*=\"Siema\"` replay)
    traces back to forgetting this pair. Prefer `bind-and-bump!` below."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
@@ -565,7 +565,7 @@
   ([sci-ctx initial-ns-keys sandbox db-info conversation-id _opts]
    (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
          var-registry (when (and db-info conversation-id)
-                        (sdk/db-latest-var-registry db-info conversation-id))
+                        (persistance/db-latest-var-registry db-info conversation-id))
          recency-of (fn [sym]
                       (if-let [ts (some-> (get var-registry sym) :created-at)]
                         (cond (inst? ts) (inst-ms ts)
@@ -612,7 +612,7 @@
 
    Returns a vec of {:name :restored-via (:data | :eval) :success? :error}."
   [sci-ctx db-info conversation-id]
-  (let [entries (sdk/db-restore-expressions db-info conversation-id)]
+  (let [entries (persistance/db-restore-expressions db-info conversation-id)]
     (mapv (fn [{:keys [name expr result]}]
             (let [sym (symbol name)]
               (try

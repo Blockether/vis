@@ -6,7 +6,7 @@ What happens when the user sends a message, end to end.
 
 ```
 user message
-  → conversation/core.clj :: send!         acquire per-conv lock; build history
+  → conversation/core.clj :: send!         acquire per-conversation lock; build history
   → query/core.clj       :: query!         validate; store query; enter loop
       loop:
         1. Build Context
@@ -28,7 +28,7 @@ user message
    [Router Lifecycle](state.md#router-lifecycle) for why this matters
    when provider/model is switched mid-session.
 3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
-4. **Persist + Decide** — `store-iteration!`, attach extension metadata, route to next step
+4. **Persist + Decide** — `db-store-iteration!`, attach extension metadata, route to next step
 
 ## System prompt assembly
 

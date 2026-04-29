@@ -31,7 +31,7 @@ slot to its matching sub-registry as a side effect.
 | `:ext/cli`         | CLI subcommands the extension contributes. **Always auto-mount under `vis extensions <cmd>`**; deeper nests like `vis extensions git status` are allowed via `:cmd/parent ["extensions" "git"]`. | `vis extensions <name>`. |
 | `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
 | `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis auth <id>`. |
-| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `persistance.core/create-store-connection`. |
+| `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `persistance.core/db-create-connection!`. |
 
 Alongside those surfaces, every extension may also:
 

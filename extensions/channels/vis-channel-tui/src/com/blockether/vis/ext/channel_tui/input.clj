@@ -43,8 +43,8 @@
 
 (defn clipboard-paste []
   (try
-    (let [cb   (.getSystemClipboard (Toolkit/getDefaultToolkit))
-          data (.getContents cb nil)]
+    (let [clipboard (.getSystemClipboard (Toolkit/getDefaultToolkit))
+          data      (.getContents clipboard nil)]
       (when (and data (.isDataFlavorSupported data DataFlavor/stringFlavor))
         (let [text (.getTransferData data DataFlavor/stringFlavor)]
           (when (seq text) text))))
@@ -52,9 +52,9 @@
 
 (defn clipboard-copy! [^String text]
   (try
-    (let [cb  (.getSystemClipboard (Toolkit/getDefaultToolkit))
-          sel (StringSelection. text)]
-      (.setContents cb sel nil))
+    (let [clipboard (.getSystemClipboard (Toolkit/getDefaultToolkit))
+          selection (StringSelection. text)]
+      (.setContents clipboard selection nil))
     (catch Exception _ nil)))
 
 ;;; ── Input buffer state ─────────────────────────────────────────────────────
@@ -91,13 +91,13 @@
         (update :ccol dec)))
 
     (pos? crow)
-    (let [prev (nth lines (dec crow))
-          curr (nth lines crow)]
+    (let [previous-line (nth lines (dec crow))
+          current-line  (nth lines crow)]
       (-> st
-        (assoc :lines (into (conj (subvec lines 0 (dec crow)) (str prev curr))
+        (assoc :lines (into (conj (subvec lines 0 (dec crow)) (str previous-line current-line))
                         (subvec lines (inc crow))))
         (assoc :crow (dec crow))
-        (assoc :ccol (count prev))))
+        (assoc :ccol (count previous-line))))
 
     :else st))
 

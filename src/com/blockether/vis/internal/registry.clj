@@ -43,12 +43,37 @@
    `::arg`) live here too — the spec IS the registry's contract.
 
    Parsing / help rendering / dispatch utilities live in
-   `com.blockether.vis.internal.commandline`. Discovery scanning lives in
-   `com.blockether.vis.internal.sdk` (`discover-extensions!`)."
+   `com.blockether.vis.internal.commandline`. Classpath manifest
+   scanning lives in `com.blockether.vis.internal.manifest`; the
+   docs-registry layer that wraps it (and re-exports
+   `discover-extensions!`) lives in
+   `com.blockether.vis.internal.extension`."
   (:require
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [taoensso.telemere :as tel]))
+
+;; =============================================================================
+;; Quiet boot
+;;
+;; Telemere ships with a `:default/console` handler that prints every
+;; signal to stdout at INFO and above. That is loud noise for a CLI:
+;; every `register-cmd!` / `register-channel!` / `register-extension!`
+;; that fires at namespace load (this very file does so at the bottom)
+;; would dump a multi-line log entry before the user's `vis run …`
+;; output ever appears. The CLI's `configure-logging!` hook in
+;; `internal.main` removes the handler too, but it runs AFTER every
+;; internal namespace has already loaded and emitted -- by then the
+;; noise is on screen.
+;;
+;; Killing the default handler HERE -- at the very first vis namespace
+;; that calls `tel/log!` at load time -- means `vis` boots silently.
+;; Channels that genuinely want stdout output (none currently do; the
+;; TUI uses `/dev/tty` directly, the CLI prints its own results) can
+;; re-add it explicitly. Boot-time registration logs are noise; if a
+;; user wants them they pass `--debug` and the CLI re-adds the handler.
+(try (tel/remove-handler! :default/console)
+  (catch Throwable _ nil))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 

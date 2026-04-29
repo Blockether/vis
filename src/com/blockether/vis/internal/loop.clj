@@ -18,12 +18,15 @@
    `create!` / `create-environment`; the binary reaches it through
    `main.clj`.
 
-   Spec / prompt / sdk / env are all required directly. The SCI
-   sandbox machinery lives in `com.blockether.vis.internal.env`; the iteration
-   spec + plan validation in `com.blockether.vis.internal.spec`; system-prompt
+   Spec / prompt / env / persistance / config / extension / error are
+   all required directly. The SCI sandbox machinery lives in
+   `com.blockether.vis.internal.env`; the iteration spec + plan
+   validation in `com.blockether.vis.internal.spec`; system-prompt
    assembly + per-iteration context blocks in
-   `com.blockether.vis.internal.prompt`; foundation utilities (storage facade,
-   registries, format helpers) in `com.blockether.vis.internal.sdk`."
+   `com.blockether.vis.internal.prompt`; the storage facade in
+   `com.blockether.vis.internal.persistance`; configuration + active
+   provider state in `com.blockether.vis.internal.config`; the
+   extension subsystem in `com.blockether.vis.internal.extension`."
   (:refer-clojure :exclude [agent run!])
   (:require
    [charred.api :as json]
@@ -34,10 +37,12 @@
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.spec :as svar-spec]
    [com.blockether.svar.internal.util :as util]
+   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.error :as error]
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
-   [com.blockether.vis.internal.sdk :as sdk
-    :refer [create-store-connection dispose-store-connection!]]
    [com.blockether.vis.internal.spec :as spec]
    [edamame.core :as edamame]
    [sci.core :as sci]
@@ -66,15 +71,15 @@
    `{:id :base-url :api-key :models [...]}`. Replaces an existing
    provider with the same `:id` or appends a new entry."
   [provider]
-  (let [cfg     (or (sdk/current-config) {:providers []})
+  (let [cfg     (or (config/current-config) {:providers []})
         pid     (:id provider)
         provs   (vec (:providers cfg))
         idx     (some (fn [[i p]] (when (= (:id p) pid) i))
                   (map-indexed vector provs))
         updated (if idx (assoc provs idx provider) (conj provs provider))
         new-cfg {:providers updated}]
-    (sdk/save-config! new-cfg)
-    (reset! @#'sdk/active-config new-cfg)
+    (config/save-config! new-cfg)
+    (reset! @#'config/active-config new-cfg)
     (try (let [r (rebuild-router! new-cfg)]
            (refresh-cached-routers! r))
       (catch Exception e
@@ -85,11 +90,11 @@
 (defn remove-provider!
   "Remove a provider by `:id`. Persists to disk and reseats cached envs."
   [provider-id]
-  (let [cfg     (or (sdk/current-config) {:providers []})
+  (let [cfg     (or (config/current-config) {:providers []})
         updated (vec (remove #(= (:id %) provider-id) (:providers cfg)))
         new-cfg {:providers updated}]
-    (sdk/save-config! new-cfg)
-    (reset! @#'sdk/active-config new-cfg)
+    (config/save-config! new-cfg)
+    (reset! @#'config/active-config new-cfg)
     new-cfg))
 
 ;; ===========================================================================
@@ -433,7 +438,7 @@
            current-error parse-error
            iterations    0]
       (when (< iterations parse-rescue-max-iterations)
-        (let [fixed (sdk/try-rescue-parse-error exts current-code current-error environment)]
+        (let [fixed (extension/try-rescue-parse-error exts current-code current-error environment)]
           (cond
             (nil? fixed)              nil
             (= fixed current-code)    nil  ; no progress — bail
@@ -463,7 +468,7 @@
   "Count how many entries in `expressions` have a canonical hash that
    already lives in `seen-hashes-atom`, INCLUDING intra-iteration
    duplicates. The seen-set is grown incrementally during the walk:
-   `(grep \"X\")` followed by another `(grep \"X\")` in the same iter
+   `(grep \"X\")` followed by another `(grep \"X\")` in the same iteration
    counts the second occurrence as a duplicate. After counting, the
    atom is updated with the SUCCESSFUL hashes (errors / timeouts are
    NOT recorded — retrying after failure is legitimate).
@@ -895,9 +900,9 @@
    `iteration-id`s as `iN.K` (1-based) and threads them into each
    `execute-code` call so cache hits carry a stable `:cached-from`
    reference."
-  [environment messages & [{:keys [iter-spec-val routing iteration reasoning-level resolved-model on-chunk
+  [environment messages & [{:keys [iteration-spec routing iteration reasoning-level resolved-model on-chunk
                                    dedup-cache-atom]
-                            :or {iter-spec-val spec/ITERATION_SPEC_NON_REASONING}}]]
+                            :or {iteration-spec spec/ITERATION_SPEC_NON_REASONING}}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
@@ -914,7 +919,7 @@
                                         :done?     (boolean done?)}))))
           ask-result (binding [svar-llm/*log-context* {:query-id (:environment-id environment) :iteration iteration}]
                        (ask-with-schema-retry! (:router environment)
-                         (cond-> {:spec iter-spec-val
+                         (cond-> {:spec iteration-spec
                                   :messages messages
                                   :routing (or routing {})
                                   :check-context? false}
@@ -998,29 +1003,38 @@
                 mustache-missing (:error mustache-result)
                 final-answer (or mustache-answer raw-answer)
                 validation-error (or (when expression-errors
-                                       (sdk/final-answer-code-error-message (:error (first expression-errors))))
+                                       (error/final-answer-code-error-message (:error (first expression-errors))))
                                    mustache-missing)]
-            (if validation-error
-              {:thinking thinking
-               :expressions (or (seq expressions)
-                              [{:id 0 :code "(final-answer-validation)"
-                                :result nil :stdout "" :stderr ""
-                                :error validation-error}])
-               :final-result nil :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :llm-messages messages :llm-model (str resolved-model)}
-              {:thinking thinking
-               :expressions (strip-noop-expressions expressions)
-               :final-result {:final? true :answer final-answer}
-               :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :llm-messages messages :llm-model (str resolved-model)}))
+            ;; `resolved-model` is a MAP — `{:name str :provider kw
+            ;; :reasoning? bool}` — not a string. Persisting `(str
+            ;; resolved-model)` would land a stringified map in
+            ;; `iteration.llm_model`; surface `:name` and `:provider`
+            ;; separately so both columns get clean values.
+            (let [model-name (some-> (:name resolved-model) str)
+                  provider   (:provider resolved-model)]
+              (if validation-error
+                {:thinking thinking
+                 :expressions (or (seq expressions)
+                                [{:id 0 :code "(final-answer-validation)"
+                                  :result nil :stdout "" :stderr ""
+                                  :error validation-error}])
+                 :final-result nil :api-usage api-usage
+                 :duration-ms (or (:duration-ms ask-result) 0)
+                 :llm-messages messages :llm-provider provider :llm-model model-name}
+                {:thinking thinking
+                 :expressions (strip-noop-expressions expressions)
+                 :final-result {:final? true :answer final-answer}
+                 :api-usage api-usage
+                 :duration-ms (or (:duration-ms ask-result) 0)
+                 :llm-messages messages :llm-provider provider :llm-model model-name})))
           ;; Normal path
           {:thinking thinking
            :expressions (strip-noop-expressions expressions)
            :final-result nil :api-usage api-usage
            :duration-ms (or (:duration-ms ask-result) 0)
-           :llm-messages messages :llm-model (str resolved-model)})))))
+           :llm-messages messages
+           :llm-provider (:provider resolved-model)
+           :llm-model    (some-> (:name resolved-model) str)})))))
 
 ;; =============================================================================
 ;; Multi-iteration query engine
@@ -1042,13 +1056,13 @@
    were stored in the DB but the user only saw the schema-rejection
    wrapper text. The raw response is the actually-useful part."
   [err]
-  (let [msg  (or (:message err) (str err))
-        data (:data err)
-        raw  (some-> (:raw-data data) str)
-        recv (:received-type data)
-        body (when (and raw (not (str/blank? raw)))
-               (truncate raw 400))]
-    (cond-> (str "- " msg)
+  (let [message (or (:message err) (str err))
+        data    (:data err)
+        raw     (some-> (:raw-data data) str)
+        recv    (:received-type data)
+        body    (when (and raw (not (str/blank? raw)))
+                  (truncate raw 400))]
+    (cond-> (str "- " message)
       body (str "\n  provider returned"
              (when recv (str " (" recv ")"))
              ": " body))))
@@ -1087,7 +1101,7 @@
   "Get or create the shared LLM router."
   []
   (or @router-atom
-    (let [cfg (sdk/resolve-config)
+    (let [cfg (config/resolve-config)
           r   (svar/make-router (:providers cfg))]
       (reset! router-atom r)
       r)))
@@ -1108,9 +1122,20 @@
   (svar/ask! (get-router) opts))
 
 (defn resolve-effective-model
-  "Best-effort root model descriptor from router config."
+  "Best-effort root model descriptor from router config.
+
+   The returned map carries `:name` (model id, e.g. \"gpt-4o\") AND
+   `:provider` (provider id keyword, e.g. `:openai`) so every caller
+   can persist BOTH alongside the model. Earlier versions returned
+   just the model map and the provider id was silently dropped on
+   the way to the DB — leaving the meta layer with no way to render
+   `provider/model`."
   ([router]
-   (first (mapcat :models (:providers router))))
+   (let [provider (first (:providers router))
+         model    (first (:models provider))]
+     (when model
+       (cond-> (if (map? model) model {:name (str model)})
+         (:id provider) (assoc :provider (:id provider))))))
   ([router _routing-overrides]
    (resolve-effective-model router)))
 
@@ -1280,7 +1305,7 @@
         call-counts-atom (atom {})
         ;; Phase 2-m measurement: per-query set of canonical hashes
         ;; for SUCCESSFUL expressions. The iteration handler counts how
-        ;; many of THIS iter's blocks were already in the set
+        ;; many of THIS iteration's blocks were already in the set
         ;; (`:expression-redundancy-fraction` + `:dedup-saves` metadata)
         ;; before adding the new successful ones.
         seen-expression-hashes-atom (atom #{})
@@ -1304,11 +1329,11 @@
         on-iteration (:on-iteration hooks)
         on-chunk (:on-chunk hooks)
         on-cancel (:on-cancel hooks)
-        emit-hook! (fn [hook-fn payload log-msg]
+        emit-hook! (fn [hook-fn payload log-message]
                      (when hook-fn
                        (try (hook-fn payload)
                          (catch Exception e
-                           (tel/log! {:level :warn :data (format-exception-short e)} log-msg)))))
+                           (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
         ;; Metadata persisted on each iteration row — reuses the
         ;; precomputed `active-exts` (no second activation pass).
         iteration-metadata (fn []
@@ -1343,9 +1368,9 @@
                                (str/join "\n"))
                       hint (str "Previous attempts failed with these errors:\n" failed
                              "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " query)
-                      msgs [{:role "system" :content system-prompt} {:role "user" :content hint}]]
+                      messages [{:role "system" :content system-prompt} {:role "user" :content hint}]]
                   (recur (assoc loop-state
-                           :iteration (inc iteration) :messages msgs
+                           :iteration (inc iteration) :messages messages
                            :trace trace :consecutive-errors 0 :restarts (inc restarts))))
                 (let [errors-block (recent-errors-block trace 3)
                       fallback     (str "Warning: Too many errors (" consecutive-errors ") across "
@@ -1375,7 +1400,7 @@
                     effective-routing (or routing {})
                     iteration-result (try
                                        (run-iteration environment effective-messages
-                                         {:iter-spec-val (if has-reasoning? spec/ITERATION_SPEC_REASONING spec/ITERATION_SPEC_NON_REASONING)
+                                         {:iteration-spec (if has-reasoning? spec/ITERATION_SPEC_REASONING spec/ITERATION_SPEC_NON_REASONING)
                                           :iteration iteration :reasoning-level reasoning-level
                                           :routing effective-routing
                                           :resolved-model resolved-model
@@ -1411,15 +1436,16 @@
                           trace-entry {:iteration iteration :error iteration-error-data :final? false}
                           empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
                                             (:reasoning (:data iteration-error-data)))
-                          err-iteration-id (sdk/store-iteration! (:db-info environment)
+                          err-iteration-id (persistance/db-store-iteration! (:db-info environment)
                                              {:query-id query-id :vars [] :expressions nil
                                               :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
                                               :llm-messages effective-messages
+                                              :llm-provider (:provider resolved-model)
                                               :llm-model (str (:name resolved-model))
                                               :metadata (iteration-metadata)})]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                       ;; Live error chunk — lets the TUI / web bubble show
-                      ;; \"iteration N failed: <msg>\" the moment it happens, instead
+                      ;; \"iteration N failed: <message>\" the moment it happens, instead
                       ;; of waiting for the whole loop to give up. The chunk
                       ;; carries the same shape on-iteration sees so any UI
                       ;; that already reads :error gets it for free.
@@ -1457,12 +1483,13 @@
                         (merge (or (iteration-metadata) {})
                           {:expression-redundancy-fraction redundancy-fraction
                            :dedup-saves                    redundant-count})
-                        iteration-id (sdk/store-iteration! (:db-info environment)
+                        iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        {:query-id query-id :expressions expressions :vars vars-snapshot
                                         :thinking thinking
                                         :answer (when final-result (answer-str (:answer final-result)))
                                         :duration-ms (or (:duration-ms iteration-result) 0)
                                         :llm-messages (:llm-messages iteration-result)
+                                        :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                         :llm-model (:llm-model iteration-result)
                                         :metadata iteration-metadata-with-metrics})
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
@@ -1486,7 +1513,7 @@
                         (when on-chunk
                           (on-chunk {:iteration iteration :thinking thinking
                                      :code (mapv :code expressions)
-                                     :results (mapv #(if (:error %) (sdk/format-error (:error %)) (prompt/safe-pr-str (:result %))) expressions)
+                                     :results (mapv #(if (:error %) (error/format-error (:error %)) (prompt/safe-pr-str (:result %))) expressions)
                                      :stdouts (mapv #(or (:stdout %) "") expressions)
                                      :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                      :successes (mapv #(nil? (:error %)) expressions)
@@ -1510,7 +1537,7 @@
                           (when on-chunk
                             (on-chunk {:iteration iteration :thinking thinking
                                        :code (mapv :code expressions)
-                                       :results (mapv #(if (:error %) (sdk/format-error (:error %)) (prompt/safe-pr-str (:result %))) expressions)
+                                       :results (mapv #(if (:error %) (error/format-error (:error %)) (prompt/safe-pr-str (:result %))) expressions)
                                        :stdouts (mapv #(or (:stdout %) "") expressions)
                                        :durations (mapv #(or (:execution-time-ms %) 0) expressions)
                                        :successes (mapv #(nil? (:error %)) expressions)
@@ -1542,14 +1569,14 @@
     (throw (ex-info "run-query! requires an env map" {:got (type env)})))
   (when (clojure.string/blank? query)
     (throw (ex-info "run-query! requires a non-blank query string" {:got query})))
-  (let [query-id (sdk/store-query! (:db-info env)
+  (let [query-id (persistance/db-store-query! (:db-info env)
                    {:parent-conversation-id (:conversation-id env)
                     :query query
                     :messages nil
                     :status :running})
         result (iteration-loop env query (assoc loop-opts :query-id query-id))
         prior-outcome (->prior-outcome result)
-        _ (sdk/update-query! (:db-info env) query-id
+        _ (persistance/db-update-query! (:db-info env) query-id
             {:answer        (:answer result)
              :iterations    (:iterations result)
              :duration-ms   (:duration-ms result)
@@ -1586,7 +1613,7 @@
           ;; `query-str` = ONLY the current turn's user message.
           ;;
           ;; Prior behavior joined every message's :content (including
-          ;; previous turns' user msgs + assistant answers + system!) into
+          ;; previous turns' user messages + assistant answers + system!) into
           ;; one growing blob. That corrupted three things at once:
           ;;   1. `query_attrs.text` / `.name` stored the entire transcript
           ;;      for every turn — the sidebar showed "Siema\nSiema!\n…".
@@ -1614,8 +1641,8 @@
                                    (some (fn [[i m]]
                                            (when (contains? #{"user" :user} (:role m))
                                              i))))
-          last-user-msg          (when last-user-idx (nth messages last-user-idx))
-          query-str              (or (some-> last-user-msg :content extract-text)
+          last-user-message      (when last-user-idx (nth messages last-user-idx))
+          query-str              (or (some-> last-user-message :content extract-text)
                                    ;; Fallback: no :user role found (malformed caller) —
                                    ;; use the last message's text. Better than an empty query.
                                    (some-> messages last :content extract-text)
@@ -1624,7 +1651,9 @@
                                    (vec (take last-user-idx messages))
                                    (vec messages))
           env-router             (:router env)
-          root-model             (or (when env-router (:name (resolve-effective-model env-router))) model)
+          root-resolved-model    (when env-router (resolve-effective-model env-router))
+          root-model             (or (:name root-resolved-model) model)
+          root-provider          (:provider root-resolved-model)
           db-info                (:db-info env)
           custom-bindings        (custom-bindings env)
           current-iteration-atom (atom 0)
@@ -1643,6 +1672,7 @@
        :query-str              query-str
        :router                 env-router
        :root-model             root-model
+       :root-provider          root-provider
        :db-info                db-info
        :current-iteration-atom current-iteration-atom
        :environment            environment
@@ -1708,15 +1738,18 @@
 (defn- finalize-query-result
   "Updates DB query record, builds result map.
 
-   `:model` is attached to the persisted cost map so the web footer can
-   render `model · N iteration · duration · tokens · $total` after a restart."
-  [{:keys [db-info root-model]}
+   `:provider` and `:model` are both attached to the persisted cost
+   map so the web footer / meta layer can render `provider/model · N
+   iteration · duration · tokens · $total` after a restart."
+  [{:keys [db-info root-model root-provider]}
    {:keys [query-id start-time iterations status status-id trace locals
            answer confidence reasoning total-tokens-atom total-cost-atom]}]
   (let [duration-ms (util/elapsed-since start-time)
         cost-with-model (cond-> @total-cost-atom
                           (and root-model (not (:model @total-cost-atom)))
-                          (assoc :model (str root-model)))]
+                          (assoc :model (str root-model))
+                          (and root-provider (not (:provider @total-cost-atom)))
+                          (assoc :provider root-provider))]
     (if status
       ;; failure path — surface the fallback answer (built by the loop for
       ;; :error) to the caller. Leaving
@@ -1727,7 +1760,7 @@
           {:duration-ms duration-ms :iterations iterations :status status})
         (let [fallback-answer (:result answer answer)]
           (try
-            (sdk/update-query! db-info query-id
+            (persistance/db-update-query! db-info query-id
               {:answer      fallback-answer
                :iterations  iterations
                :duration-ms duration-ms
@@ -1752,7 +1785,7 @@
           {:duration-ms duration-ms :iterations iterations
            :cost (str (:total-cost cost-with-model))})
         (try
-          (sdk/update-query! db-info query-id
+          (persistance/db-update-query! db-info query-id
             {:answer      answer
              :iterations  iterations
              :duration-ms duration-ms
@@ -2006,9 +2039,9 @@
   (when (and db-info conversation-id sci-ctx)
     (try
       (let [all-queries  (sort-by :created-at
-                           (sdk/db-list-conversation-queries db-info conversation-id))
+                           (persistance/db-list-conversation-queries db-info conversation-id))
             recent-ids   (into #{} (map :id) (take-last AUTO_FORGET_STALE_QUERIES all-queries))
-            var-registry (sdk/db-latest-var-registry db-info conversation-id)
+            var-registry (persistance/db-latest-var-registry db-info conversation-id)
             sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
             candidates   (auto-forget-candidates sandbox-map initial-ns-keys
                            var-registry recent-ids)]
@@ -2060,34 +2093,37 @@
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
-        db-info                  (sdk/create-store-connection db)
+        db-info                  (persistance/db-create-connection! db)
         var-index-atom           (atom {:index nil :revision -1 :current-revision 0})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :conversation-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
-        root-model               (or (:name (resolve-effective-model router)) "unknown")
+        root-resolved-model      (resolve-effective-model router)
+        root-model               (or (:name root-resolved-model) "unknown")
+        root-provider            (:provider root-resolved-model)
         ;; Snapshot a base system prompt for the conversation row so the
         ;; sidebar / DB inspectors have something stable to display.
         ;; Real per-query assembly goes through `prompt/assemble-system-prompt`
         ;; with `:active-extensions`, so this snapshot is just metadata.
         system-prompt            (prompt/build-system-prompt {})
-        resolved-conversation-id (sdk/db-resolve-conversation-id db-info conversation)
+        resolved-conversation-id (persistance/db-resolve-conversation-id db-info conversation)
         conversation-id          (or resolved-conversation-id
-                                   (sdk/store-conversation! db-info
-                                     {:channel       (or channel :vis)
-                                      :external-id   external-id
-                                      :model         root-model
-                                      :title         title
-                                      :system-prompt system-prompt}))
+                                   (persistance/db-store-conversation! db-info
+                                     (cond-> {:channel       (or channel :vis)
+                                              :external-id   external-id
+                                              :model         root-model
+                                              :title         title
+                                              :system-prompt system-prompt}
+                                       root-provider (assoc :provider root-provider))))
         ;; Bind sandbox helpers that need env identity (db-info +
         ;; conversation-id). They go through `custom-bindings` so they
         ;; land in `initial-ns-keys` and therefore stay out of
         ;; `<var_index>` (matches the treatment of every other system
         ;; binding shipped via EXTRA_BINDINGS).
         var-history-fn           (fn var-history [sym]
-                                   (sdk/db-var-history db-info conversation-id
+                                   (persistance/db-var-history db-info conversation-id
                                      (cond
                                        (symbol? sym) sym
                                        (string? sym) (clojure.core/symbol sym)
@@ -2124,8 +2160,8 @@
     ;; same loader populates channel/command/provider/persistance
     ;; registries as a side effect; we just care about the extension
     ;; rows here.
-    (sdk/discover-extensions!)
-    (sdk/register-extensions! env install-extension!)
+    (extension/discover-extensions!)
+    (extension/register-extensions! env install-extension!)
     env))
 
 (defn dispose-environment!
@@ -2134,7 +2170,7 @@
    data is deleted."
   [environment]
   (when-let [db-info (:db-info environment)]
-    (sdk/dispose-store-connection! db-info)))
+    (persistance/db-dispose-connection! db-info)))
 
 (defn install-extension!
   "Register a validated extension into `environment` (per-env registration,
@@ -2175,7 +2211,7 @@
   ;; Bind extension symbols ONLY into the aliased namespace — never
   ;; into sandbox. The LLM must always use the alias form
   ;; `(alias/symbol ...)`, not `(sdk/symbol ...)`.
-  (let [wrapped (sdk/wrap-extension ext environment)
+  (let [wrapped (extension/wrap-extension ext environment)
         sci-ctx (:sci-ctx environment)]
     (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
       (let [ext-ns      (sci/create-ns ns-sym)
@@ -2245,7 +2281,7 @@
   [id {:keys [channel external-id title]}]
   (let [router (get-router)
         env    (create-environment router
-                 (cond-> {:db (sdk/resolve-db-spec)}
+                 (cond-> {:db (config/resolve-db-spec)}
                    id          (assoc :conversation id)
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
@@ -2266,11 +2302,11 @@
 
 (defn db-info
   "Return the process-wide shared DB connection bound to
-   `(sdk/resolve-db-spec)`. Thin wrapper over
-   `persistance.core/shared-conn!` that fills in the default db-spec
+   `(config/resolve-db-spec)`. Thin wrapper over
+   `persistance.core/db-shared-connection!` that fills in the default db-spec
    so frontend callers don't have to know about config resolution."
   []
-  (sdk/shared-conn! (sdk/resolve-db-spec)))
+  (persistance/db-shared-connection! (config/resolve-db-spec)))
 
 (defn create!
   ([channel] (create! channel nil))
@@ -2287,14 +2323,14 @@
 
 (defn by-id
   [id]
-  (when-let [conv (sdk/db-get-conversation (db-info) id)]
-    {:id            (str (:id conv))
-     :channel       (:channel conv)
-     :external-id   (:external-id conv)
-     :system-prompt (:system-prompt conv)
-     :model         (:model conv)
-     :title         (:title conv)
-     :created-at    (:created-at conv)}))
+  (when-let [conversation (persistance/db-get-conversation (db-info) id)]
+    {:id            (str (:id conversation))
+     :channel       (:channel conversation)
+     :external-id   (:external-id conversation)
+     :system-prompt (:system-prompt conversation)
+     :model         (:model conversation)
+     :title         (:title conversation)
+     :created-at    (:created-at conversation)}))
 
 (defn by-channel
   [channel]
@@ -2304,18 +2340,18 @@
            :external-id (:external-id c)
            :title       (:title c)
            :created-at  (:created-at c)})
-    (sdk/db-list-conversations (db-info) channel)))
+    (persistance/db-list-conversations (db-info) channel)))
 
 (defn for-telegram-chat!
   [chat-id]
   (let [ext (str chat-id)]
-    (or (when-let [ref (sdk/db-find-conversation-by-external (db-info) :telegram ext)]
+    (or (when-let [ref (persistance/db-find-conversation-by-external (db-info) :telegram ext)]
           (by-id (str (second ref))))
       (create! :telegram {:external-id ext}))))
 
 (defn set-title!
   [id title]
-  (sdk/db-update-conversation-title! (db-info) id title)
+  (persistance/db-update-conversation-title! (db-info) id title)
   nil)
 
 (defn env-for
@@ -2333,7 +2369,7 @@
                            :active-extensions active-exts})
           db-info       (:db-info env)
           queries       (when db-info
-                          (try (sdk/db-list-conversation-queries db-info (:conversation-id env))
+                          (try (persistance/db-list-conversation-queries db-info (:conversation-id env))
                             (catch Throwable _ nil)))
           query-row     (some #(when (= (:id %) query-id) %) queries)
           query-text    (or (:query query-row) "<the user's message appears here>")
@@ -2341,10 +2377,10 @@
                                     {:call-counts-atom  (atom {})
                                      :active-extensions active-exts})
           has-reasoning? (provider-has-reasoning? (:router env))
-          iter-spec-val (if has-reasoning?
-                          spec/ITERATION_SPEC_REASONING
-                          spec/ITERATION_SPEC_NON_REASONING)
-          spec-prompt (svar-spec/spec->prompt iter-spec-val)]
+          iteration-spec (if has-reasoning?
+                           spec/ITERATION_SPEC_REASONING
+                           spec/ITERATION_SPEC_NON_REASONING)
+          spec-prompt    (svar-spec/spec->prompt iteration-spec)]
       (str "═══ MESSAGE 1: System (role: system) ═══\n"
         system-prompt
         "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
@@ -2359,7 +2395,7 @@
   "Return the reconstructed prompt snapshot for the latest query in a conversation."
   [conversation-id]
   (when-let [d (some-> (env-for conversation-id) :db-info)]
-    (let [queries (try (sdk/db-list-conversation-queries d conversation-id)
+    (let [queries (try (persistance/db-list-conversation-queries d conversation-id)
                     (catch Throwable _ nil))
           last-q  (last queries)]
       (when last-q
@@ -2369,9 +2405,9 @@
   ([id messages] (send! id messages {}))
   ([id messages opts]
    (let [{:keys [environment lock]} (ensure-env! id)
-         msgs (if (string? messages) [(svar/user messages)] messages)]
+         message-vec (if (string? messages) [(svar/user messages)] messages)]
      (locking lock
-       (query! environment msgs opts)))))
+       (query! environment message-vec opts)))))
 
 (defn close!
   [id]
@@ -2383,19 +2419,19 @@
   [id]
   (close! id)
   (let [d (db-info)]
-    (try (sdk/delete-conversation-tree! d id)
+    (try (persistance/db-delete-conversation-tree! d id)
       (catch Exception _ nil))))
 
-(defn sweep-orphaned-running-queries!
+(defn db-sweep-orphaned-running-queries!
   "Convenience wrapper: run the persistence-layer sweep against the
    shared DB handle. Frontends call this on startup to mark queries
    that crashed mid-write as `:interrupted`."
-  ([] (sdk/sweep-orphaned-running-queries! (db-info)))
-  ([db] (sdk/sweep-orphaned-running-queries! db)))
+  ([] (persistance/db-sweep-orphaned-running-queries! (db-info)))
+  ([db] (persistance/db-sweep-orphaned-running-queries! db)))
 
 (defn close-all!
   []
   (doseq [[_ {:keys [environment]}] @cache]
     (try (dispose-environment! environment) (catch Exception _ nil)))
   (reset! cache {})
-  (sdk/dispose-shared-conn!))
+  (persistance/db-dispose-shared-connection!))

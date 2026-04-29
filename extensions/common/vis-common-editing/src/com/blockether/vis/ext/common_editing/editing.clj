@@ -10,13 +10,16 @@
      (vis/rg pattern path)     ; ripgrep over a tree (re2j; ReDoS-safe)
      (vis/edit path search replace)   ; exact-match search/replace; :search must be unique
      (vis/write path content)         ; overwrite or create the file
-     (vis/zedit path zfn)             ; rewrite-clj structured edit on a Clojure file
 
    Plus the babashka.fs surface bound under `fs/` (cwd, exists?, glob,
    parent, components, file-name, extension, expand-home, list-dir,
    relativize). Use the fs primitives for path math; reach for a
    higher-level vis/ symbol when you also need to read or mutate the
    file's contents.
+
+   Clojure-specific structured editing (`clj/zedit` plus the `z/`
+   rewrite-clj zipper API) lives in the `vis-language-clojure`
+   extension under `extensions/languages/clojure/`.
 
    No autobind, no patch DSL, no parse-error rescue stack. Read once,
    bind to a `(def ...)` if you need it across iterations, edit in
@@ -28,8 +31,7 @@
    [babashka.fs :as fs]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as sdk]
-   [rewrite-clj.zip :as z])
+   [com.blockether.vis.core :as sdk])
   (:import
    (com.google.re2j Pattern PatternSyntaxException)
    (java.io File)
@@ -328,19 +330,6 @@
             :bytes-before (count original)
             :bytes-after  (count updated)}))))))
 
-(defn- zedit-file
-  "rewrite-clj structured edit. `zfn` receives a zipper at the file root
-   and must return a zipper. The new source is written back."
-  [path zfn]
-  (let [f (ensure-existing-file! (safe-path path))
-        zloc (z/of-file f {:track-position? true})
-        zout (zfn zloc)]
-    (when (nil? zout)
-      (throw (ex-info "zedit zfn must return a zipper, got nil"
-               {:type :ext.common-editing/zedit-nil-result})))
-    (spit f (z/root-string zout))
-    {:path (rel-path f)}))
-
 ;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
@@ -379,33 +368,20 @@
      :arglists '([path content])
      :examples ["(vis/write \"new.txt\" \"hello\")"]}))
 
-(def zedit-symbol
-  (sdk/symbol 'zedit zedit-file
-    {:doc "Structured edit of a Clojure file using rewrite-clj. zfn receives a zipper and must return a zipper. Useful for adding requires, renaming syms, etc."
-     :arglists '([path zfn])
-     :examples ["(vis/zedit \"src/x.clj\" #(rewrite-clj.zip/edit % str/upper-case))"]}))
-
 (def editing-symbols
-  [cat-symbol ls-symbol rg-symbol edit-symbol write-symbol zedit-symbol])
+  [cat-symbol ls-symbol rg-symbol edit-symbol write-symbol])
 
 (def editing-prompt
-  "EDITING. Six tools, all under the `vis/` alias:
+  "EDITING. `vis/` alias, 5 tools:
+  (vis/cat path)            read file (cap 6000 chars; opts {:offset :limit :char-limit})
+  (vis/ls path)             tree list (opts {:depth :hidden? :respect-gitignore?})
+  (vis/rg pattern path)     regex grep (re2j, ReDoS-safe)
+  (vis/edit path s r)       replace FIRST `s` -> `r`. `s` must be unique.
+                            4th arg {:line N} disambiguates by line.
+  (vis/write path content)  overwrite/create file.
 
-  (vis/cat path)              read a file (default cap 6000 chars; pass {:offset :limit :char-limit} for paging)
-  (vis/ls path)               list a tree ({:depth :hidden? :respect-gitignore?})
-  (vis/rg pattern path)       regex grep (re2j; ReDoS-safe)
-  (vis/edit path s r)         replace FIRST occurrence of `s` with `r`. `s` must be unique.
-                              Pass {:line N} as 4th arg to disambiguate by line number
-                              when context-anchoring is hard - (vis/edit path s r {:line 1992}).
-  (vis/write path content)    overwrite or create a file
-  (vis/zedit path zfn)        rewrite-clj structured edit on a Clojure file
+`fs/` = babashka.fs path math: cwd exists? glob parent file-name extension components expand-home list-dir relativize.
 
-Babashka filesystem helpers are bound under `fs/`:
-  (fs/cwd) (fs/exists? p) (fs/glob root pat) (fs/parent p)
-  (fs/file-name p) (fs/extension p) (fs/components p)
-  (fs/expand-home p) (fs/list-dir d) (fs/relativize a b)
+Structured Clojure edits -> `(clj/zedit path zfn)` (vis-language-clojure ext; aliases `clj/` `z/`).
 
-Read once, then operate on the result. If you'll need a value across
-iterations, `(def x (vis/cat \"foo\"))`. Repeating an identical call is
-deduped automatically; non-identical re-reads of the same region waste
-your turn budget.")
+Read once, reuse. Cross-iter? `(def x (vis/cat ...))`. Identical repeat = deduped. Non-identical re-read of same region = wasted turn.")

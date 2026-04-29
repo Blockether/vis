@@ -1,0 +1,30 @@
+{:paths ["src" "resources"]
+ ;; Z.ai (ZhipuAI) provider — covers BOTH Z.ai endpoints in one
+ ;; classpath plug-in:
+ ;;   - `:zai-coding` → coding-plan subscription
+ ;;     (https://api.z.ai/api/coding/paas/v4)
+ ;;   - `:zai`        → pay-as-you-go / "Pass" gateway
+ ;;     (https://api.z.ai/api/paas/v4)
+ ;; The two endpoints share the GLM model family (`glm-5-turbo`,
+ ;; `glm-5.1`, `glm-4.7`, …) but bill against different quotas, so
+ ;; users typically have one API key per plan. This extension ships a
+ ;; single namespace that registers both `:provider/id`s with their
+ ;; own auth/get-token/status/logout fns and a shared on-disk auth
+ ;; file (`~/.vis/zai-auth.json`) keyed by plan.
+ ;;
+ ;; Self-registers with `com.blockether.vis.core` at namespace load
+ ;; via the unified `META-INF/vis-extension/vis.edn`.
+ :deps
+ {org.clojure/clojure   {:mvn/version "1.12.4"}
+  ;; vis owns the extension/provider registries.
+  com.blockether/vis    {:local/root "../../.."}
+  ;; JSON for the persisted auth file (charred is already on the
+  ;; runtime classpath via vis itself).
+  com.cnuernber/charred {:mvn/version "1.038"}
+  com.taoensso/telemere {:mvn/version "1.2.1"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}

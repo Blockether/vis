@@ -87,6 +87,7 @@ CREATE TABLE query_state (
   forked_from_query_state_id   TEXT
                                REFERENCES query_state(id) ON DELETE SET NULL,
   version                      INTEGER NOT NULL CHECK (version >= 0),
+  llm_root_provider            TEXT,    -- provider id (e.g. 'openai', 'github-copilot')
   llm_root_model               TEXT,
   prompt_enrichment            TEXT,
   subtitle                     TEXT,
@@ -128,6 +129,7 @@ CREATE TABLE iteration (
 
   llm_system_prompt               TEXT,
   llm_user_prompt                 TEXT,    -- JSON envelope for multimodal user input (text/images/audio/files)
+  llm_provider                    TEXT,    -- provider id used for this iteration (e.g. 'openai', 'github-copilot')
   llm_model                       TEXT,
 
   llm_full_duration_ms            INTEGER CHECK (

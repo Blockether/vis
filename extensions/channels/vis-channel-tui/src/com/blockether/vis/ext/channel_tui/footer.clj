@@ -136,13 +136,21 @@
   (let [{:keys [messages cancelling?]} db
         info       (chosen-model-info)
         model      (:name info)
+        provider   (:provider info)
+        ;; Show the provider/model lineage in the footer so the user
+        ;; never has to guess which backend is on the wire. Falls
+        ;; back to plain model name when the resolver did not
+        ;; surface a provider id (e.g. legacy router shape).
+        model-display (if (and provider model)
+                        (str (name provider) "/" model)
+                        model)
         reasoning? (boolean (:reasoning? info))
         ctx        (ctx-left-info messages model)
         cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
-      model
-      (conj {:text model
+      model-display
+      (conj {:text model-display
              :fg t/footer-fg-strong :bold? true
              :region :left :priority 2})
 

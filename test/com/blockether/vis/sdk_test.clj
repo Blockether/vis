@@ -1108,7 +1108,7 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe count-duplicates-test
-  (it "first iter has zero duplicates and seeds the seen-set"
+  (it "first iteration has zero duplicates and seeds the seen-set"
     (let [seen (atom #{})
           [duplicates total] (lp/count-duplicates seen
                                [{:code "(+ 1 2)"}
@@ -1117,7 +1117,7 @@
       (expect (= 2 total))
       (expect (= 2 (count @seen)))))
 
-  (it "subsequent iter reports duplicates and grows the seen-set with new hashes only"
+  (it "subsequent iteration reports duplicates and grows the seen-set with new hashes only"
     (let [seen (atom #{})]
       (lp/count-duplicates seen
         [{:code "(grep \"X\")"}
@@ -1132,7 +1132,7 @@
         (expect (= 3 (count @seen))))))
 
   (it "errors are NOT recorded — retrying after failure is legitimate"
-    ;; Iter 1 errored out; iter 2 retries the same call; iter 2's call
+    ;; Iteration 1 errored out; iteration 2 retries the same call; iteration 2's call
     ;; must NOT count as a duplicate.
     (let [seen (atom #{})]
       (lp/count-duplicates seen
@@ -1150,9 +1150,9 @@
         (expect (= 1 duplicates))
         (expect (= 1 total)))))
 
-  (it "intra-iter duplicates count: identical calls in the SAME iter"
-    ;; The seen-set rolls forward as we walk the iter's expressions,
-    ;; so the SECOND occurrence of `(grep \"X\")` within one iter
+  (it "intra-iteration duplicates count: identical calls in the SAME iteration"
+    ;; The seen-set rolls forward as we walk the iteration's expressions,
+    ;; so the SECOND occurrence of `(grep \"X\")` within one iteration
     ;; counts as a duplicate. Without this, calls like 'three
     ;; identical greps in one :code array' would report 0
     ;; duplicates even though the dedup short-circuit fires for
@@ -1455,7 +1455,7 @@
     true
     (catch Throwable _ false)))
 
-(defn- parse-error-msg [^String code]
+(defn- parse-error-message [^String code]
   (try
     (require '[edamame.core :as eda])
     ((resolve 'eda/parse-string-all) code {:all true})
@@ -1467,7 +1467,7 @@
   (it "repairs a single `\\|` site (baseline; pre-fix already passed)"
     (let [env  (minimal-environment)
           code "(vis/rg \"a\\|b\")"
-          err  (parse-error-msg code)
+          err  (parse-error-message code)
           out  (try-extension-parse-rescue env code err)]
       (expect (some? err))
       (expect (= "(vis/rg \"a\\\\|b\")" out))
@@ -1478,7 +1478,7 @@
     ;; Post-fix: returns a fully repaired string that parses cleanly.
     (let [env  (minimal-environment)
           code "(vis/rg \"foo\\|bar\\|baz\\|qux\")"
-          err  (parse-error-msg code)
+          err  (parse-error-message code)
           out  (try-extension-parse-rescue env code err)]
       (expect (some? err))
       (expect (string? out))
@@ -1489,7 +1489,7 @@
   (it "loops across `\\|` AND `\\.` AND `\\(` mixed escapes"
     (let [env  (minimal-environment)
           code "(vis/rg \"a\\|b\\.c\\(d\")"
-          err  (parse-error-msg code)
+          err  (parse-error-message code)
           out  (try-extension-parse-rescue env code err)]
       (expect (some? err))
       (expect (string? out))
@@ -1502,7 +1502,7 @@
     ;; nil from every iteration of the loop.
     (let [env  (minimal-environment)
           code "(vis/rg 'unterminated"
-          err  (parse-error-msg code)
+          err  (parse-error-message code)
           out  (try-extension-parse-rescue env code err)]
       (expect (some? err))
       (expect (nil? out))))
@@ -1529,7 +1529,7 @@
                  :ext/symbols   [rg]})
           env {:extensions (atom [ext]) :sci-ctx (sci/init {})}
           code "(vis/rg \"a\\|b\")"
-          err  (parse-error-msg code)
+          err  (parse-error-message code)
           start-ms (System/currentTimeMillis)
           out  (try-extension-parse-rescue env code err)
           elapsed (- (System/currentTimeMillis) start-ms)]

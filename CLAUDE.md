@@ -165,7 +165,7 @@ same token the LLM uses as the SCI sandbox alias — e.g. `meta`,
  {:nses [com.blockether.vis.ext.common-meta.core]
   :docs {"README.md"
          {:created-at #inst "2026-04-28"
-          :abstract   "One-paragraph LLM-facing summary..."
+          :description   "One-paragraph LLM-facing summary..."
           :content    "# Meta extension\n..."
           :links      [{:to-id vis :to-doc "README.md"
                         :context "Companion filesystem extension"}
@@ -191,7 +191,7 @@ Doc descriptor fields:
 
 - `:created-at` (mandatory) — `#inst` literal, when the doc was
   first authored.
-- `:abstract` (mandatory) — one-paragraph LLM-facing summary as a
+- `:description` (mandatory) — one-paragraph LLM-facing summary as a
   plain Clojure string. NO YAML frontmatter inside `:content`; the
   abstract is its own EDN field, not parsed out of Markdown.
 - `:content` (mandatory) — full Markdown body. Pure Markdown only,
@@ -214,7 +214,7 @@ Mandatory contents:
 
 - Every extension's `:docs` map MUST include a `"README.md"` entry.
   No README → the extension is not shippable. The loader logs a
-  `:warn` and skips any doc descriptor missing `:abstract` or
+  `:warn` and skips any doc descriptor missing `:description` or
   `:content`.
 - Use real `#inst` literals for `:created-at`; the registry
   preserves them as `java.util.Date` so the agent can sort by
@@ -256,7 +256,7 @@ Rules:
 - The vis-common-meta extension exposes the LLM-facing surface for this:
   `(meta/extensions)` lists every loaded extension with its docs
   catalog; `(meta/extension-docs ext-ref)` returns the
-  `[{:name :created-at :abstract :links :reflinks} …]` summaries
+  `[{:name :created-at :description :links :reflinks} …]` summaries
   for one extension; `(meta/extension-doc ext-ref name)` returns the
   full descriptor including `:content`; `(meta/extension-readme
   ext-ref)` is the README `:content` convenience.
@@ -270,7 +270,7 @@ introduced (`vis/<id>` reads as a sandbox call), and makes the
 abstract index trivially queryable.
 
 Any PR that adds a new extension without `vis.edn`, omits the
-README, omits `:abstract` or `:content` on any declared doc, hand-
+README, omits `:description` or `:content` on any declared doc, hand-
 authors a `:reflinks` field, or introduces a duplicate doc somewhere
 outside `vis.edn` must be rejected.
 
@@ -703,7 +703,7 @@ All under `packages/vis-runtime/src/com/blockether/vis_runtime/`:
 - `loop/runtime/conversation/core.clj` — conversation lifecycle
   (`create!`, `by-id`, `by-channel`, `for-telegram-chat!`,
   `set-title!`, `env-for`, `effective-system-prompt`, `send!`,
-  `close!`, `delete!`, `sweep-orphaned-running-queries!`, `close-all!`)
+  `close!`, `delete!`, `db-sweep-orphaned-running-queries!`, `close-all!`)
 - `loop/runtime/conversation/environment/core.clj` — SCI sandbox + var-index
 - `loop/runtime/conversation/environment/query/core.clj` — query engine
 - `loop/runtime/conversation/environment/query/iteration/core.clj` — iteration engine
@@ -713,7 +713,7 @@ All under `packages/vis-runtime/src/com/blockether/vis_runtime/`:
 ### Persistence + extension contract
 
 - `packages/vis-persistance/src/com/blockether/vis_persistance/{base,core,migration}.clj` —
-  facade API (`create-store-connection`, `dispose-store-connection!`,
+  facade API (`db-create-connection!`, `db-dispose-connection!`,
   `db-list-conversations`, etc.) + migration runner. Backends
   self-register via the unified `META-INF/vis-extension/vis.edn`
   resource and call `register-backend!` at namespace load time.
@@ -802,7 +802,7 @@ All application state lives in `ext/channel_tui/state.clj` using a re-frame disp
 (reg-event-fx :send-message
   (fn [db [_ text]]
     {:db (-> db (update :messages conj msg) (assoc :loading? true))
-     :fx [[:rlm-query (:conv db) text]]}))
+     :fx [[:rlm-query (:conversation db) text]]}))
 
 ;; Bad — direct atom mutation
 (swap! some-atom assoc :key val)
@@ -811,7 +811,7 @@ All application state lives in `ext/channel_tui/state.clj` using a re-frame disp
 **App-db shape:**
 ```clojure
 {:config     nil              ;; provider config map: {:providers [{:id kw :label str :api-base str :api-key? str :model str} ...]}
- :conv       nil              ;; {:id conv-id} — handle into the conversations cache
+ :conversation nil            ;; {:id conversation-id} — handle into the conversations cache
  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
  :msg-scroll nil              ;; row offset, nil = auto-bottom
  :input      {:lines [] :crow 0 :ccol 0}
@@ -831,23 +831,23 @@ Conversation IDs are plain UUIDs. No name prefixes, no string lookups.
 ;; Create / lookup
 (conversations/create! :vis)                    ;; new TUI conversation
 (conversations/create! :cli {:title "…"})       ;; one-shot CLI agent run
-(conversations/by-id conv-id)                   ;; conv map or nil
+(conversations/by-id conversation-id)                   ;; conversation map or nil
 (conversations/by-channel :vis)                 ;; sidebar / list, recent first
 (conversations/by-channel :telegram)
 (conversations/for-telegram-chat! chat-id)      ;; find-or-create by chat-id
 
 ;; Mutate
-(conversations/set-title! conv-id "New title")
-(conversations/env-for conv-id)                 ;; raw env (for presenter projections / inspectors)
-(conversations/effective-system-prompt conv-id) ;; assembled system prompt for the [?] inspector
+(conversations/set-title! conversation-id "New title")
+(conversations/env-for conversation-id)                 ;; raw env (for presenter projections / inspectors)
+(conversations/effective-system-prompt conversation-id) ;; assembled system prompt for the [?] inspector
 
 ;; Turn
-(conversations/send! conv-id msgs opts)         ;; locked per conv-id; see docstring for every opt
+(conversations/send! conversation-id messages opts)     ;; locked per conversation-id; see docstring for every opt
 
 ;; Lifecycle
-(conversations/close! conv-id)                  ;; release env handle, keep DB data
-(conversations/delete! conv-id)                 ;; close + purge entity tree + sidecar row
-(conversations/sweep-orphaned-running-queries!) ;; mark crashed queries as :error on boot
+(conversations/close! conversation-id)                  ;; release env handle, keep DB data
+(conversations/delete! conversation-id)                 ;; close + purge entity tree + sidecar row
+(conversations/db-sweep-orphaned-running-queries!) ;; mark crashed queries as :error on boot
 (conversations/close-all!)                      ;; process shutdown
 ```
 
@@ -875,7 +875,7 @@ Every `(def ...)` is persisted as a versioned `expression_state` row. `var-histo
 (conversations/by-channel :cli)
 
 ;; Access environment for a conversation
-(let [env     (conversations/env-for conv-id)
+(let [env     (conversations/env-for conversation-id)
       db-info (:db-info env)]
   ;; Use persistance.core functions with db-info, or drop to raw
   ;; HoneySQL via (jdbc/execute! (:datasource db-info) ...).

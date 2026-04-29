@@ -127,7 +127,7 @@ auto-discovered at the next process boot — no edits to vis-runtime, no
 `discover-extensions!` once at `-main` startup; SDK callers that
 bypass the CLI also get a lazy safety-net call from
 `com.blockether.vis.core/create-environment` and from
-`com.blockether.vis.core/create-store-connection`.
+`com.blockether.vis.core/db-create-connection!`.
 
 ## Dependency direction
 

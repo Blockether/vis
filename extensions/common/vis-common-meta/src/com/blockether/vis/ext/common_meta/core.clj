@@ -11,7 +11,7 @@
    - `(meta/failures [id])`              → provider + code failures as data
    - `(meta/diagnose [id])`              → counts and next actions for stalled turns
    - `(meta/extensions)`                 → catalog of every loaded extension
-   - `(meta/extension-docs [ref])`       → docs declared by an extension with abstracts
+   - `(meta/extension-docs [ref])`       → docs declared by an extension with descriptions
    - `(meta/extension-doc ref name)`     → full Markdown body of a declared doc
    - `(meta/extension-readme ref)`       → convenience for (extension-doc ref README.md)
 
@@ -111,18 +111,43 @@
 (defn- sticky-plan [iterations]
   (some :plan-state (reverse iterations)))
 
+(defn- format-provider-model
+  "Render `\"provider/model\"` when both are known, otherwise just the
+   model (or just the provider) so callers always get a non-empty
+   string when at least one component exists. Returns nil when both
+   are nil/blank — callers `cond->` on the result."
+  [provider model]
+  (let [provider-str (some-> provider name str/trim not-empty)
+        model-str    (some-> model str str/trim not-empty)]
+    (cond
+      (and provider-str model-str) (str provider-str "/" model-str)
+      model-str                    model-str
+      provider-str                 provider-str
+      :else                        nil)))
+
 (defn- query-cost-summary
-  "Pull the token / cost map persisted on `query_state.metadata`. Returns
-   a map with the :input-tokens / :output-tokens / :total-cost keys
-   when present, or an empty map. Never throws."
+  "Pull the token / cost / provider / model map persisted on
+   `query_state.metadata` (with `llm_root_provider` /
+   `llm_root_model` as the canonical typed columns). Returns a map
+   with the :input-tokens / :output-tokens / :total-cost / :provider
+   / :model / :provider-model keys when present, or an empty map.
+   Never throws.
+
+   `:provider-model` is a derived `\"provider/model\"` display string
+   (e.g. `\"openai/gpt-4o\"`) so callers don't have to format it
+   themselves — the canonical data still lives in `:provider` and
+   `:model` separately."
   [query]
-  (cond-> {}
-    (:input-tokens query)     (assoc :input-tokens     (:input-tokens query))
-    (:output-tokens query)    (assoc :output-tokens    (:output-tokens query))
-    (:reasoning-tokens query) (assoc :reasoning-tokens (:reasoning-tokens query))
-    (:cached-tokens query)    (assoc :cached-tokens    (:cached-tokens query))
-    (:total-cost query)       (assoc :total-cost       (:total-cost query))
-    (:model query)            (assoc :model            (:model query))))
+  (let [provider-model (format-provider-model (:provider query) (:model query))]
+    (cond-> {}
+      (:input-tokens query)     (assoc :input-tokens     (:input-tokens query))
+      (:output-tokens query)    (assoc :output-tokens    (:output-tokens query))
+      (:reasoning-tokens query) (assoc :reasoning-tokens (:reasoning-tokens query))
+      (:cached-tokens query)    (assoc :cached-tokens    (:cached-tokens query))
+      (:total-cost query)       (assoc :total-cost       (:total-cost query))
+      (:provider query)         (assoc :provider         (:provider query))
+      (:model query)            (assoc :model            (:model query))
+      provider-model            (assoc :provider-model   provider-model))))
 
 (defn- elapsed-ms
   "Wall-clock duration for the query in milliseconds. Read from
@@ -157,7 +182,7 @@
 (defn- parse-json-map
   "Best-effort JSON object parser for persisted provider errors. The
    persistence layer stores `iteration.llm_error` as JSON text; meta
-   keeps parsing local so callers never need to run sqlite3 by hand."
+   keeps parsing local so callers get failures as Clojure data."
   [text]
   (when (and (string? text) (not (str/blank? text)))
     (try
@@ -339,13 +364,18 @@
                               (:iterations query) (assoc :iterations (:iterations query))
                               (:total-cost query) (assoc :total-cost (:total-cost query))))
                       queries)]
-          {:id          conversation-id
-           :channel     (:channel conversation)
-           :title       (:title conversation)
-           :model       (:model conversation)
-           :created-at  (:created-at conversation)
-           :turns       turns
-           :turn-count  (count turns)}))
+          (cond-> {:id          conversation-id
+                   :channel     (:channel conversation)
+                   :title       (:title conversation)
+                   :model       (:model conversation)
+                   :created-at  (:created-at conversation)
+                   :turns       turns
+                   :turn-count  (count turns)}
+            (:provider conversation)
+            (assoc :provider (:provider conversation))
+            (format-provider-model (:provider conversation) (:model conversation))
+            (assoc :provider-model
+              (format-provider-model (:provider conversation) (:model conversation))))))
       (catch Throwable _ nil))))
 
 ;; ---------------------------------------------------------------------------
@@ -448,8 +478,7 @@
 (defn- meta-failures
   "Provider/schema and code/tool failures, normalized into one
    chronological vector. No arg = current turn. Pass a conversation id
-   to scan every turn in that conversation. This is the replacement
-   for ad-hoc sqlite3 triage from inside the agent."
+   to scan every turn in that conversation."
   ([env]
    (when-let [turn (turn-snapshot env)]
      (:failures turn)))
@@ -519,11 +548,11 @@
 ;; `META-INF/vis-extension/vis.edn`, an EDN map keyed by id
 ;; (`{<id-symbol> {:nses [...] :docs {<name> <body>}}}`). The id is the
 ;; same token the LLM uses as the SCI sandbox alias (`'meta`, `'vis`,
-;; etc.). Doc bodies are inlined as Clojure strings; every body MUST
-;; begin with a YAML frontmatter block whose `abstract:` field is a
-;; one-paragraph summary. `(meta/extension-docs ...)` returns those
-;; abstracts alongside each doc descriptor so the LLM can scan the
-;; index before pulling a full body via `(meta/extension-doc ...)`.
+;; etc.). Each doc descriptor is a map with `:description` (one-paragraph
+;; summary) + `:content` (full Markdown body) as plain EDN strings.
+;; `(meta/extension-docs ...)` returns the descriptions (no `:content`)
+;; so the LLM can scan the index before pulling a full body via
+;; `(meta/extension-doc ...)`.
 ;; See AGENTS.md ▸ "Every extension ships a single canonical README
 ;; in vis.edn".
 ;; ---------------------------------------------------------------------------
@@ -590,15 +619,14 @@
 (defn- meta-extensions
   "Catalog every loaded extension as data. Returns a vector of
    `{:namespace :alias :group :version :doc :symbols :docs}` maps.
-   `:docs` is a vector of `{:name :abstract}` descriptors for every
-   doc the extension declares (each abstract is parsed from the doc's
-   YAML frontmatter)."
+   `:docs` is a vector of `{:name :description}` descriptors for every
+   doc the extension declares."
   [_env]
   (mapv extension-summary (registered-extensions)))
 
 (defn- meta-extension-docs
   "With one arg, return the doc catalog for one extension as a vector
-   of `{:name :abstract}` descriptors. With no arg, return the full
+   of `{:name :description}` descriptors. With no arg, return the full
    registry as `{<id-symbol> [<descriptor> ...]}`."
   ([_env]
    (try (sdk/extension-docs) (catch Throwable _ {})))
@@ -610,7 +638,7 @@
   "Return the full descriptor map for one declared doc, by extension
    reference (id, alias, or full namespace) and doc name (e.g.
    \"README.md\"). The descriptor carries
-   {:name :created-at :abstract :content :links :reflinks}; the
+   {:name :created-at :description :content :links :reflinks}; the
    Markdown body is at `:content`. Returns `nil` when the extension
    is not registered or declares no doc by that name."
   [_env reference doc-name]
@@ -663,8 +691,11 @@
 
 (def conversation-symbol
   (sdk/symbol 'conversation meta-conversation
-    {:doc       (str "Conversation snapshot: {:id :channel :title :model "
-                  ":created-at :turns :turn-count}. Default = current "
+    {:doc       (str "Conversation snapshot: {:id :channel :title :provider "
+                  ":model :provider-model :created-at :turns :turn-count}. "
+                  "`:provider-model` is a `\"provider/model\"` display string "
+                  "(e.g. `\"openai/gpt-4o\"`); the raw `:provider` and `:model` "
+                  "are kept as separate canonical keys. Default = current "
                   "conversation; pass an id to inspect any other.")
      :arglists  '([] [conversation-id])
      :examples  ["(meta/conversation)"
@@ -713,7 +744,7 @@
                   "data. Includes classifications for schema rejections, "
                   "vis/rg escaping mistakes, malformed vis/patch payloads, "
                   "and SEARCH block misses. Pass a conversation id to scan "
-                  "every turn. Use this instead of running sqlite3 from :code.")
+                  "every turn.")
      :arglists  '([] [conversation-id])
      :examples  ["(meta/failures)"
                  "(filter #(= :patch-no-match (:classification %)) (meta/failures))"
@@ -737,11 +768,10 @@
   (sdk/symbol 'extensions meta-extensions
     {:doc       (str "Catalog of every loaded extension: "
                   "[{:namespace :alias :group :version :doc :symbols "
-                  ":docs} …]. `:docs` is a vector of {:name :abstract} "
-                  "descriptors for every doc the extension declares; "
-                  "each `abstract` is parsed from the doc's YAML "
-                  "frontmatter. Use this to discover what surfaces are "
-                  "available before reaching for a specific tool.")
+                  ":docs} …]. `:docs` is a vector of {:name :description} "
+                  "descriptors for every doc the extension declares. "
+                  "Use this to discover what surfaces are available "
+                  "before reaching for a specific tool.")
      :arglists  '([])
      :examples  ["(meta/extensions)"
                  "(map :namespace (meta/extensions))"
@@ -751,23 +781,23 @@
 (def extension-docs-symbol
   (sdk/symbol 'extension-docs meta-extension-docs
     {:doc       (str "Doc index for an extension as a vector of "
-                  "summaries: {:name :created-at :abstract :links "
+                  "summaries: {:name :created-at :description :links "
                   ":reflinks} (no :content -- pull that with "
-                  "meta/extension-doc when needed). Scan abstracts "
+                  "meta/extension-doc when needed). Scan descriptions "
                   "first to decide which full body is worth a fetch. "
                   "With no arg, returns the full registry keyed by "
                   "extension id symbol.")
      :arglists  '([] [extension-ref])
      :examples  ["(meta/extension-docs)"
                  "(meta/extension-docs 'meta)"
-                 "(map :abstract (meta/extension-docs 'meta))"
+                 "(map :description (meta/extension-docs 'meta))"
                  "(:links (first (meta/extension-docs 'meta)))"]
      :before-fn inject-environment}))
 
 (def extension-doc-symbol
   (sdk/symbol 'extension-doc meta-extension-doc
     {:doc       (str "Full descriptor map for one declared extension "
-                  "doc: {:name :created-at :abstract :content :links "
+                  "doc: {:name :created-at :description :content :links "
                   ":reflinks}. The first arg is the extension "
                   "reference (id symbol, alias symbol/keyword, or full "
                   "extension namespace); the second arg is the doc "
@@ -779,8 +809,8 @@
      :arglists  '([extension-ref doc-name])
      :examples  ["(meta/extension-doc 'meta \"README.md\")"
                  "(:content (meta/extension-doc :vis \"README.md\"))"
-                 "(:links   (meta/extension-doc 'meta \"README.md\"))"
-                 "(:reflinks (meta/extension-doc 'meta \"README.md\"))"]
+                 "(:links       (meta/extension-doc 'meta \"README.md\"))"
+                 "(:reflinks    (meta/extension-doc 'meta \"README.md\"))"]
      :before-fn inject-environment}))
 
 (def extension-readme-symbol
@@ -818,26 +848,16 @@
 (def extension
   (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.common-meta.core
-     :ext/doc       "Meta introspection: read your own turn, conversation, var history, attempts, failure diagnostics, and the canonical README + declared docs (with abstracts) of every loaded extension from inside :code. Returns plain maps and vectors for structural manipulation."
+     :ext/doc       "Meta introspection: read your own turn, conversation, var history, attempts, failure diagnostics, and the canonical README + declared docs (with descriptions) of every loaded extension from inside :code. Returns plain maps and vectors for structural manipulation."
      :ext/version   "0.5.0"
      :ext/author    "Blockether"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.meta :alias 'meta}
      :ext/group     "meta"
-     :ext/prompt    (str "Meta functions are READ-ONLY introspection that return\n"
-                      "Clojure maps/vectors. They never throw — DB / context\n"
-                      "errors return nil/[]. Use meta/diagnose or meta/failures\n"
-                      "when a turn stalls, a provider returns malformed schema\n"
-                      "content, vis/rg parsing fails, or vis/patch reports a\n"
-                      "SEARCH miss. Do NOT run sqlite3 from :code for current-turn\n"
-                      "triage; these functions expose the same useful signal as\n"
-                      "data. Use meta/extensions to discover what extensions are\n"
-                      "loaded, meta/extension-docs to scan their declared doc\n"
-                      "abstracts, and meta/extension-doc / meta/extension-readme\n"
-                      "to read the full body of any of them before guessing\n"
-                      "from symbol names. For just reading the plan or\n"
-                      "breadcrumbs, the projection (`<plan>`, `<breadcrumbs>`,\n"
-                      "`<system_state>`) is already in your prompt — use that.")
+     :ext/prompt    (str "`meta/` = READ-ONLY introspection. Returns maps/vecs. Never throws (errors -> nil/[]).\n"
+                      "- Stall / malformed provider schema / vis/rg parse fail / vis/patch SEARCH miss -> (meta/diagnose) or (meta/failures).\n"
+                      "- Discover surface: (meta/extensions). Scan descriptions: (meta/extension-docs). Full body: (meta/extension-doc) / (meta/extension-readme). Read before guessing from symbol names.\n"
+                      "- Plan / breadcrumbs already in prompt (<plan>, <breadcrumbs>, <system_state>) — use those, don't fetch.")
      :ext/symbols   all-symbols}))
 
 (sdk/register-extension! extension)

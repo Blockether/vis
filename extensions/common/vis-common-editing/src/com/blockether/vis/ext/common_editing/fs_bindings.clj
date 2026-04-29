@@ -66,6 +66,4 @@
       :examples ["(fs/relativize \"/a\" \"/a/b/c\")"]})])
 
 (def fs-prompt
-  "FS PATH MATH. babashka.fs primitives under the `fs/` alias —
-ergonomic path operations that don't read or mutate files. Use the
-`vis/` alias for cat / ls / rg / edit / write / zedit.")
+  "`fs/` = babashka.fs path math. No I/O, no mutation. Use `vis/` for cat/ls/rg/edit/write, `clj/zedit` for structured Clojure edits.")

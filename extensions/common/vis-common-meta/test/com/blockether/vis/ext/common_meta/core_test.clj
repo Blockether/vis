@@ -19,18 +19,18 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- bootstrap [store]
-  (let [conversation-id (sdk/store-conversation! store
+  (let [conversation-id (sdk/db-store-conversation! store
                           {:channel :vis :title "meta test"})
-        query-id (sdk/store-query! store
+        query-id (sdk/db-store-query! store
                    {:parent-conversation-id conversation-id
                     :query "what's the plan?"
                     :status :running})]
     {:conversation-id conversation-id :query-id query-id}))
 
-(defn- store-iteration!
+(defn- db-store-iteration!
   [store query-id {:keys [plan-state breadcrumb expressions thinking error]
                    :or {expressions []}}]
-  (sdk/store-iteration! store
+  (sdk/db-store-iteration! store
     (cond-> {:query-id    query-id
              :expressions expressions
              :duration-ms 100
@@ -79,8 +79,8 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
           plan {:goal "g" :items [{:id 1 :content "a" :status :in-progress}]}]
-      (store-iteration! s query-id {:plan-state plan :breadcrumb "i0 first"})
-      (store-iteration! s query-id {:breadcrumb "i1 second"})
+      (db-store-iteration! s query-id {:plan-state plan :breadcrumb "i0 first"})
+      (db-store-iteration! s query-id {:breadcrumb "i1 second"})
       (let [turn ((private-fn "meta-turn") (env s conversation-id))]
         (expect (= "g" (-> turn :plan :goal)))
         (expect (= 2 (count (:breadcrumbs turn))))
@@ -89,7 +89,7 @@
   (it "splits attempts and errors so callers don't have to filter twice"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id
+      (db-store-iteration! s query-id
         {:expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
                        {:id 1 :code "(boom)"  :error "boom" :execution-time-ms 1}]})
       (let [turn ((private-fn "meta-turn") (env s conversation-id))]
@@ -102,7 +102,7 @@
     ;; per iteration; (meta/turn).:redundancy aggregates across iterations.
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (sdk/store-iteration! s
+      (sdk/db-store-iteration! s
         {:query-id    query-id
          :expressions [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
                        {:id 1 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
@@ -110,7 +110,7 @@
          :llm-model   "test-model"
          :metadata    {:dedup-saves 0
                        :expression-redundancy-fraction 0.0}})
-      (sdk/store-iteration! s
+      (sdk/db-store-iteration! s
         {:query-id    query-id
          :expressions [{:id 0 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
          :duration-ms 100
@@ -140,7 +140,7 @@
   (it "arg form fetches any conversation by id"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/store-conversation! s {:channel :telegram :title "other"})]
+          other (sdk/db-store-conversation! s {:channel :telegram :title "other"})]
       (let [conversation ((private-fn "meta-conversation") (env s conversation-id) other)]
         (expect (= other (:id conversation)))
         (expect (= :telegram (:channel conversation)))
@@ -149,7 +149,7 @@
   (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (sdk/update-query! s query-id
+      (sdk/db-update-query! s query-id
         {:answer "42" :iterations 1 :duration-ms 50 :status :done
          :prior-outcome :complete})
       (let [conversation ((private-fn "meta-conversation") (env s conversation-id))
@@ -165,8 +165,8 @@
 (defdescribe meta-conversations-test
   (it "no-arg form scans every known channel"
     (let [s (h/store)
-          a (sdk/store-conversation! s {:channel :vis :title "vis-a"})
-          b (sdk/store-conversation! s {:channel :telegram :title "tg-b"})
+          a (sdk/db-store-conversation! s {:channel :vis :title "vis-a"})
+          b (sdk/db-store-conversation! s {:channel :telegram :title "tg-b"})
           all ((private-fn "meta-conversations") (env s a))
           ids (set (map :id all))]
       (expect (contains? ids a))
@@ -174,8 +174,8 @@
 
   (it "channel-arg form filters to one channel"
     (let [s (h/store)
-          a (sdk/store-conversation! s {:channel :vis :title "vis-a"})
-          _ (sdk/store-conversation! s {:channel :telegram :title "tg-b"})
+          a (sdk/db-store-conversation! s {:channel :vis :title "vis-a"})
+          _ (sdk/db-store-conversation! s {:channel :telegram :title "tg-b"})
           tui-list ((private-fn "meta-conversations") (env s a) :telegram)]
       (expect (= 1 (count tui-list)))
       (expect (= :telegram (:channel (first tui-list))))))
@@ -207,7 +207,7 @@
   (it "explicit conversation-id form queries a different conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/store-conversation! s {:channel :vis :title "other"})]
+          other (sdk/db-store-conversation! s {:channel :vis :title "other"})]
       (expect (= [] ((private-fn "meta-var-history") (env s conversation-id) 'foo other))))))
 
 ;; -----------------------------------------------------------------------------
@@ -218,7 +218,7 @@
   (it "one-arg form regex-searches the current turn"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id
+      (db-store-iteration! s query-id
         {:expressions [{:id 0 :code "(+ 1 2)"        :result 3 :execution-time-ms 1}
                        {:id 1 :code "(grep \"FOO\")" :result [] :execution-time-ms 1}
                        {:id 2 :code "(grep \"BAR\")" :result [] :execution-time-ms 1}]})
@@ -233,7 +233,7 @@
   (it "accepts a Pattern object directly"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id
+      (db-store-iteration! s query-id
         {:expressions [{:id 0 :code "(defn foo [x] x)" :result nil :execution-time-ms 1}]})
       (let [hits ((private-fn "meta-find-attempts") (env s conversation-id) #"\bdefn\b")]
         (expect (= 1 (count hits))))))
@@ -241,11 +241,11 @@
   (it "two-arg form scans every turn of the given conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          q2 (sdk/store-query! s
+          q2 (sdk/db-store-query! s
                {:parent-conversation-id conversation-id
                 :query "second turn" :status :running})]
       ;; Leave q1 empty; fill q2.
-      (store-iteration! s q2
+      (db-store-iteration! s q2
         {:expressions [{:id 0 :code "(grep \"target\")" :result [] :execution-time-ms 1}]})
       (let [hits ((private-fn "meta-find-attempts") (env s conversation-id) "grep" conversation-id)]
         (expect (= 1 (count hits)))))))
@@ -258,7 +258,7 @@
   (it "normalizes provider schema rejections with raw previews"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id
+      (db-store-iteration! s query-id
         {:error {:message "Your response did not match the JSON schema contract."
                  :data {:type :svar.spec/schema-rejected
                         :reason :not-a-map
@@ -275,7 +275,7 @@
   (it "classifies regex escaping and patch no-match tool failures"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (store-iteration! s query-id
+      (db-store-iteration! s query-id
         {:expressions [{:id 0
                         :code "(vis/rg \"foo\\|bar\\|baz\" \"x\")"
                         :error "Unsupported escape character: \\|"
@@ -293,15 +293,15 @@
   (it "conversation-id form scans every turn"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          second-query-id (sdk/store-query! s
+          second-query-id (sdk/db-store-query! s
                             {:parent-conversation-id conversation-id
                              :query "second turn"
                              :status :running})]
-      (store-iteration! s query-id
+      (db-store-iteration! s query-id
         {:expressions [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
                         :error "Unsupported escape character: \\|"
                         :execution-time-ms 1}]})
-      (store-iteration! s second-query-id
+      (db-store-iteration! s second-query-id
         {:expressions [{:id 0 :code "(vis/patch [{:path \"x\"}])"
                         :error "SEARCH block 1 not found in x"
                         :execution-time-ms 1}]})

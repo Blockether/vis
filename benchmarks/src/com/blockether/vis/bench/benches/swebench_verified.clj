@@ -219,9 +219,9 @@
         (let [s    @state
               done (:done s)
               avg-ms (if (pos? done) (/ (double (:total-duration-ms s)) done) 0.0)
-              avg-iters (when (= agent-name :vis)
+              avg-iterations (when (= agent-name :vis)
                           (/ (double (:total-iterations s)) (max 1 done)))]
-          (common/print-progress done total-q 0 0 agent-name avg-iters avg-ms)
+          (common/print-progress done total-q 0 0 agent-name avg-iterations avg-ms)
           (flush))))
 
     (:results @state)))
@@ -286,19 +286,19 @@
       (let [exit-code (.waitFor proc)
             stdout    (str/join "\n" @stdout-lines)]
         (when (pos? exit-code)
-          (let [msg (cond
-                      (or (str/includes? stdout "No module named swebench")
-                        (str/includes? stdout "command not found"))
-                      (str "swebench not installed. Install with:\n"
-                        "  pip install swebench\n"
-                        "Also requires Docker to be installed and running.")
+          (let [message (cond
+                          (or (str/includes? stdout "No module named swebench")
+                            (str/includes? stdout "command not found"))
+                          (str "swebench not installed. Install with:\n"
+                            "  pip install swebench\n"
+                            "Also requires Docker to be installed and running.")
 
-                      (str/includes? stdout "docker")
-                      "Docker does not appear to be running. Start Docker and retry."
+                          (str/includes? stdout "docker")
+                          "Docker does not appear to be running. Start Docker and retry."
 
-                      :else
-                      (format "Harness exited with code %d. Check output above." exit-code))]
-            (throw (ex-info msg {:exit-code exit-code :stdout stdout}))))
+                          :else
+                          (format "Harness exited with code %d. Check output above." exit-code))]
+            (throw (ex-info message {:exit-code exit-code :stdout stdout}))))
         report-dir))))
 
 ;; =============================================================================
@@ -374,8 +374,8 @@
         errors      (count (filter #(= :error (:harness-status %)) results))
         empty-count (count (filter #(= :empty (:harness-status %)) results))
         not-eval    (count (filter #(= :not-evaluated (:harness-status %)) results))
-        total-dur   (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
-        avg-dur-s   (if (pos? total-q) (/ (double total-dur) total-q 1000.0) 0.0)
+        total-duration   (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
+        avg-duration-s   (if (pos? total-q) (/ (double total-duration) total-q 1000.0) 0.0)
         total-cost  (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
         pct         (if (pos? total-q) (* 100.0 (/ (double resolved) total-q)) 0.0)]
     (println)
@@ -390,7 +390,7 @@
     (println (format "Empty:      %d" empty-count))
     (when (pos? not-eval)
       (println (format "Not evaluated: %d" not-eval)))
-    (println (format "Avg duration: %.1fs" avg-dur-s))
+    (println (format "Avg duration: %.1fs" avg-duration-s))
     (println (format "Total cost: $%.4f" total-cost))))
 
 ;; =============================================================================
@@ -457,16 +457,16 @@
 
         resolved   (count (filter #(= :resolved (:harness-status %)) results))
         unresolved (count (filter #(= :unresolved (:harness-status %)) results))
-        errors-cnt (count (filter #(or (= :error (:harness-status %))
+        errors-count (count (filter #(or (= :error (:harness-status %))
                                      (some? (:error %))) results))
         accuracy   (if (pos? total-q) (/ (double resolved) total-q) 0.0)
-        total-dur  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
-        avg-dur    (if (pos? total-q) (/ (double total-dur) total-q) 0.0)
+        total-duration  (reduce + 0 (map #(or (:duration-ms %) 0) predictions))
+        avg-duration    (if (pos? total-q) (/ (double total-duration) total-q) 0.0)
         total-cost (reduce + 0.0 (map #(double (or (get-in % [:cost :total-cost]) 0.0)) predictions))
-        avg-iters  (when (= agent-name :vis)
-                     (let [iters (keep :iterations predictions)]
-                       (when (seq iters)
-                         (/ (double (reduce + 0 iters)) (count iters)))))]
+        avg-iterations (when (= agent-name :vis)
+                         (let [iterations (keep :iterations predictions)]
+                           (when (seq iterations)
+                             (/ (double (reduce + 0 iterations)) (count iterations)))))]
 
     ;; Phase 6: Print summary
     (print-swebench-summary agent-name model total-q predictions results report-map)
@@ -480,10 +480,10 @@
      :total-dataset    total-ds
      :correct          resolved
      :incorrect        unresolved
-     :errors           (if harness-ok? errors-cnt total-q)
+     :errors           (if harness-ok? errors-count total-q)
      :accuracy         accuracy
-     :avg-duration-ms  avg-dur
-     :avg-iterations   avg-iters
+     :avg-duration-ms  avg-duration
+     :avg-iterations   avg-iterations
      :total-cost       total-cost
      :results          results
      :saved-to         saved

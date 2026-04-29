@@ -45,6 +45,8 @@
 (def warning-bg (TextColor$RGB. 255 245 180))  ;; soft yellow warning background
 (def warning-fg (TextColor$RGB. 80 60 0))      ;; dark amber warning text
 (def warning-border (TextColor$RGB. 190 150 40)) ;; amber warning border
+(def cancelled-bg (TextColor$RGB. 240 240 240))  ;; soft gray — "this turn was aborted" zone
+(def cancelled-fg (TextColor$RGB. 110 110 110))  ;; muted gray text on the cancelled bg
 
 ;; Code block styling
 (def code-block-bg     (TextColor$RGB. 240 243 248))  ;; light blue-gray — code blocks
@@ -60,8 +62,8 @@
 (def stdout-fg         (TextColor$RGB. 80 80 80))     ;; dim text in stdout
 (def stdout-label-fg   (TextColor$RGB. 155 155 155))  ;; muted "stdout" label
 (def stdout-sep-fg     (TextColor$RGB. 210 205 195))  ;; separator in stdout (warm)
-(def iter-header-fg    (TextColor$RGB. 170 170 170))  ;; iteration header label (subtle)
-(def iter-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
+(def iteration-header-fg    (TextColor$RGB. 170 170 170))  ;; iteration header label (subtle)
+(def iteration-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
 (def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
 (def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
 ;; Final answer zone background.

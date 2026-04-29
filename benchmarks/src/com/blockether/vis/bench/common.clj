@@ -59,13 +59,13 @@
    writes them to a denormalized EDN file."
   [env edn-path]
   (when-let [db-info (:db-info env)]
-    (let [conv-id (:conversation-id env)
-          conv    (when conv-id (rlm/db-get-conversation db-info conv-id))
-          queries (when conv-id (rlm/db-list-conversation-queries db-info conv-id))]
+    (let [conversation-id (:conversation-id env)
+          conversation    (when conversation-id (rlm/db-get-conversation db-info conversation-id))
+          queries         (when conversation-id (rlm/db-list-conversation-queries db-info conversation-id))]
       (when (seq queries)
         (let [enriched (mapv (fn [q]
-                               (let [iters (vec (rlm/db-list-query-iterations db-info (:id q)))]
-                                 (assoc q :conversation conv :iterations iters)))
+                               (let [iterations (vec (rlm/db-list-query-iterations db-info (:id q)))]
+                                 (assoc q :conversation conversation :iterations iterations)))
                          queries)]
           (spit edn-path (pr-str enriched))
           edn-path)))))
@@ -209,12 +209,14 @@
 ;; =============================================================================
 
 (defn print-progress
-  [done total correct errors agent-name avg-iters avg-ms]
-  (let [pct      (if (pos? done) (/ (* 100.0 correct) done) 0.0)
-        err-str  (if (pos? errors) (format " | errors: %d" errors) "")
-        iter-str (if avg-iters (format " | avg-iter: %.1f" (double avg-iters)) "")]
+  [done total correct errors agent-name avg-iterations avg-ms]
+  (let [percent        (if (pos? done) (/ (* 100.0 correct) done) 0.0)
+        errors-str     (if (pos? errors) (format " | errors: %d" errors) "")
+        iterations-str (if avg-iterations
+                         (format " | avg-iter: %.1f" (double avg-iterations))
+                         "")]
     (println (format "[%d/%d] [%s] pass@1: %d (%.1f%%)%s%s | avg-ms: %d"
-               done total (name agent-name) correct pct err-str iter-str (long avg-ms)))))
+               done total (name agent-name) correct percent errors-str iterations-str (long avg-ms)))))
 
 ;; =============================================================================
 ;; Python task helpers
@@ -351,32 +353,32 @@
         ;; Print progress after each batch
         (let [s         @state
               done      (:done s)
-              avg-ms    (if (pos? done) (/ (double (:total-duration-ms s)) done) 0.0)
-              avg-iters (if (and (= agent-name :vis) (pos? done))
+              avg-ms          (if (pos? done) (/ (double (:total-duration-ms s)) done) 0.0)
+              avg-iterations  (if (and (= agent-name :vis) (pos? done))
                           (/ (double (:total-iterations s)) done)
                           nil)]
-          (print-progress done total-q (:correct s) (:errors s) agent-name avg-iters avg-ms)
+          (print-progress done total-q (:correct s) (:errors s) agent-name avg-iterations avg-ms)
           (flush))))
 
     ;; Build unified result
     (let [s         @state
           n         (max 1 total-q)
-          avg-dur   (/ (double (:total-duration-ms s)) n)
-          avg-toks  {:input  (/ (double (:total-input-tokens s)) n)
-                     :output (/ (double (:total-output-tokens s)) n)}
-          accuracy  (if (pos? total-q) (/ (double (:correct s)) total-q) 0.0)
-          avg-iters (if (= agent-name :vis)
-                      (/ (double (:total-iterations s)) n)
-                      nil)
-          durations (sort (keep :duration-ms (:results s)))
-          dur-count (count durations)
-          percentile (fn [p] (when (pos? dur-count)
-                               (nth durations (min (dec dur-count) (int (* p dur-count))))))
-          median    (percentile 0.5)
-          std-dev   (when (> dur-count 1)
-                      (let [mean avg-dur
-                            variance (/ (reduce + (map #(Math/pow (- (double %) mean) 2.0) durations)) dur-count)]
-                        (Math/sqrt variance)))
+          avg-duration    (/ (double (:total-duration-ms s)) n)
+          avg-tokens      {:input  (/ (double (:total-input-tokens s)) n)
+                           :output (/ (double (:total-output-tokens s)) n)}
+          accuracy        (if (pos? total-q) (/ (double (:correct s)) total-q) 0.0)
+          avg-iterations  (if (= agent-name :vis)
+                            (/ (double (:total-iterations s)) n)
+                            nil)
+          durations       (sort (keep :duration-ms (:results s)))
+          duration-count  (count durations)
+          percentile      (fn [p] (when (pos? duration-count)
+                                    (nth durations (min (dec duration-count) (int (* p duration-count))))))
+          median          (percentile 0.5)
+          std-dev         (when (> duration-count 1)
+                            (let [mean     avg-duration
+                                  variance (/ (reduce + (map #(Math/pow (- (double %) mean) 2.0) durations)) duration-count)]
+                              (Math/sqrt variance)))
           saved     (save-results! bench-name agent-name model (:results s))]
       {:bench            bench-name
        :mode             agent-name
@@ -387,13 +389,13 @@
        :incorrect        (:incorrect s)
        :errors           (:errors s)
        :accuracy         accuracy
-       :avg-duration-ms  avg-dur
+       :avg-duration-ms  avg-duration
        :median-ms        median
        :p90-ms           (percentile 0.9)
        :p99-ms           (percentile 0.99)
        :std-dev-ms       std-dev
-       :avg-iterations   avg-iters
-       :avg-tokens       avg-toks
+       :avg-iterations   avg-iterations
+       :avg-tokens       avg-tokens
        :total-cost       (:total-cost s)
        :results          (:results s)
        :saved-to         saved})))

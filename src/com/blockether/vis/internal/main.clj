@@ -29,8 +29,15 @@
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
+   [com.blockether.vis.internal.commandline :as commandline]
+   [com.blockether.vis.internal.config :as config]
+   [com.blockether.vis.internal.error :as error]
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.loop :as lp]
-   [com.blockether.vis.internal.sdk :as sdk]
+   [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.progress :as progress]
+   [com.blockether.vis.internal.registry :as registry]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -43,7 +50,7 @@
 
 (defn- signal->entry
   "Transform a telemere signal into the entry map accepted by the
-   persistence facade's `log!`. The facade fills in `:id`/`:created_at`
+   persistence facade's `db-log!`. The facade fills in `:id`/`:created_at`
    and converts ids/keywords through `persistance.base`, so this fn
    only carries the semantic payload."
   [signal]
@@ -83,7 +90,7 @@
    Usage:
      (tel/add-handler! :db (handler:db))
 
-     (tel/with-ctx+ {:db-info db-info :conversation-soul-id conv-id}
+     (tel/with-ctx+ {:db-info db-info :conversation-soul-id conversation-id}
        (tel/log! :info \"something happened\"))"
   ([] (handler:db nil))
   ([_opts]
@@ -91,7 +98,7 @@
      ([signal]
       (when-let [db-info (get-in signal [:ctx :db-info])]
         (try
-          (sdk/log! db-info (signal->entry signal))
+          (persistance/db-log! db-info (signal->entry signal))
           (catch Throwable _ nil))))
      ([] nil))))
 
@@ -126,7 +133,7 @@
            :group     (:ext/group e)
            :version   (or (:ext/version e) "—")
            :cli-cmds  (str/join ", " (map :cmd/name (or (:ext/cli e) [])))})
-    (sdk/registered-extensions)))
+    (extension/registered-extensions)))
 
 (defn find-extension-cmd
   "Find an extension CLI command by name. Returns {:ext ext :cmd cmd-map} or nil."
@@ -136,7 +143,7 @@
                   (when (= (:cmd cmd) cmd-name)
                     {:ext e :cmd cmd}))
             (:ext/cli e)))
-    (sdk/registered-extensions)))
+    (extension/registered-extensions)))
 
 (defn all-extension-cmds
   "Return a flat vec of {:cmd :doc :ext-ns :args} for every registered extension CLI command."
@@ -145,7 +152,7 @@
     (mapcat (fn [e]
               (map (fn [c] (assoc c :ext-ns (str (:ext/namespace e))))
                 (or (:ext/cli e) []))))
-    (sdk/registered-extensions)))
+    (extension/registered-extensions)))
 
 ;;; ── Arg parsing & validation ───────────────────────────────────────────
 
@@ -296,7 +303,7 @@
    Creates a conversation → runs the query → returns result.
 
    Returns map with:
-   - :conv-id      — Conversation ID (UUID string)
+   - :conversation-id — Conversation ID (UUID string)
    - :answer       — The agent's response
    - :iterations   — Number of iterations executed
    - :duration-ms  — Total wall-clock time
@@ -319,14 +326,14 @@
   [agent-def prompt & [{:keys [spec model on-chunk
                                debug? config]
                         :as _opts}]]
-  (let [_cfg      (sdk/resolve-config config)
+  (let [_cfg      (config/resolve-config config)
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
         title     (let [t (str/trim prompt-s)]
                     (if (> (count t) 100) (str (subs t 0 97) "…") t))
-        {conv-id :id} (lp/create! :cli {:title title})
+        {conversation-id :id} (lp/create! :cli {:title title})
         mdl       (or model (:model agent-def))
         tracker   (when on-chunk
-                    (sdk/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
+                    (progress/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
         on-chunk* (when tracker (:on-chunk tracker))
         q-opts    (cond-> {}
                     spec      (assoc :spec spec)
@@ -335,21 +342,21 @@
                     debug?    (assoc :debug? true))
         messages  (if (string? prompt) [(svar/user prompt)] prompt)]
     (try
-      (let [result (lp/send! conv-id messages q-opts)]
-        (cond-> {:conv-id     conv-id
-                 :answer      (:answer result)
-                 :iterations  (:iterations result)
-                 :duration-ms (:duration-ms result)
-                 :tokens      (:tokens result)
-                 :cost        (:cost result)
-                 :trace       (:trace result)}
+      (let [result (lp/send! conversation-id messages q-opts)]
+        (cond-> {:conversation-id conversation-id
+                 :answer          (:answer result)
+                 :iterations      (:iterations result)
+                 :duration-ms     (:duration-ms result)
+                 :tokens          (:tokens result)
+                 :cost            (:cost result)
+                 :trace           (:trace result)}
           (:status result)     (assoc :status (:status result))
           (:confidence result) (assoc :confidence (:confidence result))))
       (catch Exception e
-        {:conv-id   conv-id
-         :error     (sdk/error->user-message e)
-         :type      (str (type e))
-         :exception e}))))
+        {:conversation-id conversation-id
+         :error           (persistance/db-error->user-message e)
+         :type            (str (type e))
+         :exception       e}))))
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
 
@@ -369,8 +376,8 @@
   "Print to the real terminal via the saved original stdout. Other
    output (telemere, SLF4J) is redirected to the log file."
   [^String s]
-  (.println ^java.io.PrintStream sdk/original-stdout s)
-  (.flush ^java.io.PrintStream sdk/original-stdout))
+  (.println ^java.io.PrintStream config/original-stdout s)
+  (.flush ^java.io.PrintStream config/original-stdout))
 
 (defn- truncate-str [s max-len]
   (let [s (str s)]
@@ -385,12 +392,12 @@
   (let [pad   (fn [v {:keys [width align]}]
                 (let [s (truncate-str (str v) width)]
                   (if (= align :right)
-                    (sdk/pad-left s width)
-                    (sdk/pad-right s width))))
+                    (commandline/pad-left s width)
+                    (commandline/pad-right s width))))
         sep    (str "─" (str/join "─┼─"
                           (map #(apply str (repeat (:width %) \─)) cols)) "─")
         header (str " " (str/join " │ "
-                          (map #(sdk/pad-right (:label %) (:width %)) cols)) " ")]
+                          (map #(commandline/pad-right (:label %) (:width %)) cols)) " ")]
     (stdout! header)
     (stdout! sep)
     (doseq [row rows]
@@ -434,7 +441,7 @@
   "`vis run` handler. `_parsed` is unused — we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
-  (sdk/init-cli!)
+  (config/init-cli!)
   (let [{:keys [prompt json? edn? trace? help? agent-name db] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
@@ -443,7 +450,7 @@
     (let [agent-def (agent {:name (or agent-name "cli")})
           run-opts  (cond-> (dissoc opts :prompt :json? :edn? :trace? :compact?
                               :agent-name :db)
-                      db (assoc :db (sdk/resolve-db-spec
+                      db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
           result    (run! agent-def prompt run-opts)]
@@ -461,38 +468,25 @@
           (when (:error result)
             (when-let [ex (:exception result)]
               (stdout! "\nStack trace:")
-              (.printStackTrace ^Throwable ex ^java.io.PrintStream sdk/original-stdout))
+              (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))
             (shutdown-agents)
             (System/exit 1)))
 
         (:error result)
-        (do (stdout! (sdk/format-error (:error result)))
+        (do (stdout! (error/format-error (:error result)))
           (shutdown-agents)
           (System/exit 1))
 
         :else
         (do (stdout! (str (:answer result)))
           (when (:duration-ms result)
-            (let [tokens  (:tokens result)
-                  ctx-in  (some-> tokens :input)
-                  ctx-out (some-> tokens :output)
-                  cost    (some-> result :cost :total-cost)]
-              (stdout! (str "\n["
-                         (:iterations result) " iterations"
-                         (when ctx-in  (str ", ctx-in: "  ctx-in))
-                         (when ctx-out (str ", ctx-out: " ctx-out))
-                         (when cost
-                           (str ", ~$"
-                             (String/format java.util.Locale/US "%.6f"
-                               (into-array Object [(double cost)]))))
-                         ", " (:duration-ms result) "ms"
-                         "]"))))))
+            (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents))))
 
 ;;; ── `vis conversations` ─────────────────────────────────────────────────
 
 (defn- cli-conversations! [_parsed residual]
-  (sdk/init-cli!)
+  (config/init-cli!)
   (let [channel (or (some #{"vis" "telegram" "cli"} residual) "vis")
         ch-kw   (keyword channel)
         convs   (lp/by-channel ch-kw)
@@ -500,14 +494,14 @@
     (if (empty? convs)
       (stdout! (str "No " channel " conversations found."))
       (let [rows (mapv (fn [c]
-                         (let [queries (sdk/db-list-conversation-queries d (:id c))
+                         (let [queries (persistance/db-list-conversation-queries d (:id c))
                                turns   (count queries)
                                last-q  (last queries)]
                            {:id        (str (:id c))
                             :title     (or (:title c) "—")
                             :turns     turns
-                            :last-turn (or (some-> last-q :created-at sdk/format-date) "—")
-                            :created   (or (sdk/format-date (:created-at c)) "—")}))
+                            :last-turn (or (some-> last-q :created-at fmt/format-date) "—")
+                            :created   (or (fmt/format-date (:created-at c)) "—")}))
                    convs)]
         (stdout! (str "\n  " (str/upper-case channel) " Conversations\n"))
         (print-table!
@@ -550,11 +544,11 @@
    (`vis-provider-github-copilot`, future `vis-provider-anthropic`,
    …); vis-runtime never references them by namespace."
   [_parsed residual]
-  (sdk/init-cli!)
+  (config/init-cli!)
   (let [provider-id (some-> (first residual) keyword)
         flags       (set (rest residual))
-        provider    (when provider-id (sdk/provider-by-id provider-id))
-        all         (sdk/registered-providers)]
+        provider    (when provider-id (registry/provider-by-id provider-id))
+        all         (registry/registered-providers)]
     (cond
       (nil? provider-id)
       (do (stdout! "Usage: vis auth <provider> [--status | --logout]")
@@ -562,7 +556,7 @@
         (if (seq all)
           (do (stdout! "Available providers:")
             (doseq [p (sort-by :provider/id all)]
-              (stdout! (str "  " (sdk/pad-right (name (:provider/id p)) 22)
+              (stdout! (str "  " (commandline/pad-right (name (:provider/id p)) 22)
                          (:provider/label p)))))
           (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")))
 
@@ -586,15 +580,15 @@
       (when-let [auth-fn (:provider/auth-fn provider)]
         (try (auth-fn stdout!)
           (catch Exception e
-            (stdout! (sdk/format-error (str "Authentication failed: " (ex-message e)))))))))
+            (stdout! (error/format-error (str "Authentication failed: " (ex-message e)))))))))
   (shutdown-agents))
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────
 
 (defn- cli-doctor! [_parsed _residual]
-  (sdk/init-cli!)
+  (config/init-cli!)
   (let [env (lp/create-environment (lp/get-router)
-              {:db (sdk/resolve-db-spec)})]
+              {:db (config/resolve-db-spec)})]
     (try
       (let [db-info (:db-info env)]
         (stdout! "vis doctor")
@@ -636,7 +630,7 @@
 ;;; ── `vis extensions` ────────────────────────────────────────────────────
 
 (defn- cli-extensions! [_parsed _residual]
-  (sdk/init-cli!)
+  (config/init-cli!)
   (let [exts (list-extensions)]
     (if (empty? exts)
       (stdout! "No extensions registered.")
@@ -651,7 +645,7 @@
         (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 
-;;; ── Top-level binary built-ins (sdk/register-cmd! direct) ─────────
+;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
 ;; `run`, `auth`, `conversations`, `doctor` are the binary's own
 ;; commands. They live at the top of the command tree -- `vis run
@@ -694,7 +688,7 @@
           :cmd/doc   "Show environment + DB diagnostics."
           :cmd/usage "vis doctor"
           :cmd/run-fn cli-doctor!}]]
-  (sdk/register-cmd! spec))
+  (registry/register-cmd! spec))
 
 ;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────
 ;;
@@ -705,8 +699,8 @@
 ;; participates in the unified extension contract for this entry, the
 ;; same way every other extension does.
 
-(sdk/register-extension!
-  (sdk/extension
+(extension/register-extension!
+  (extension/extension
     {:ext/namespace 'com.blockether.vis.core
      :ext/doc       "vis-runtime's contribution to the `vis extensions` subtree."
      :ext/version   "0.3.0"
@@ -748,11 +742,13 @@
     (str log-dir "/vis.log")))
 
 (defn- configure-logging!
-  "Route Telemere signals: file handler always on, console handler
-   removed unless `--debug`, persistence-backed `:db` handler always
-   on so the loop's `tel/with-ctx+ {:db-info …}` bindings actually
-   land in the conversation_log table. Idempotent -- the same
-   handler keys are reused so re-running this is a no-op."
+  "Route Telemere signals: file handler always on, persistence-backed
+   `:db` handler always on (so the loop's `tel/with-ctx+ {:db-info …}`
+   bindings land in the conversation_log table), and the
+   `:default/console` handler is OFF by default — it was removed by
+   `internal.registry` at namespace load so boot-time registration
+   logs never spray to stdout. We re-add it here only when `--debug`
+   / `--verbose` / `-v` / `VIS_DEBUG=1` is set. Idempotent."
   [args]
   (let [debug? (debug-mode? args)
         path   (log-file-path)]
@@ -762,9 +758,12 @@
         (tel/handler:file {:path path})
         {:min-level :info})
       (catch Throwable _ nil))
-    ;; Console handler: removed unless the user asked for verbosity.
-    (when-not debug?
-      (try (tel/remove-handler! :default/console)
+    ;; Console handler: re-add only when the user asked for verbosity.
+    ;; Boot-time noise is already gone (registry.clj removed it during
+    ;; namespace load); this restores the stdout stream for debugging.
+    (when debug?
+      (try (tel/add-handler! :default/console
+             (tel/handler:console))
         (catch Throwable _ nil)))
     ;; Persistence handler: scopes signals to the right DB rows via
     ;; `:db-info` / `:conversation-soul-id` / `:query-id` /
@@ -785,7 +784,7 @@
   "Run the unified extension discovery scan. Idempotent through
    Clojure's `require` cache. Returns nil."
   []
-  (sdk/discover-extensions!)
+  (extension/discover-extensions!)
   nil)
 
 ;; =============================================================================
@@ -805,10 +804,10 @@
   "Build the root `vis` command tree. Subcommands are pulled fresh on
    every call so newly registered extensions show up immediately."
   []
-  (sdk/command
+  (registry/command
     {:cmd/name        "vis"
      :cmd/doc         DEFAULT_DOC
-     :cmd/subcommands #(sdk/registered-under [])}))
+     :cmd/subcommands #(registry/registered-under [])}))
 
 ;; =============================================================================
 ;; Pre-redirect stderr for TTY-owning channels
@@ -821,7 +820,7 @@
 ;; =============================================================================
 
 (defn- pre-redirect-stderr! [args]
-  (when-let [{:keys [command]} (sdk/find-leaf (root-command) (cons "vis" args))]
+  (when-let [{:keys [command]} (commandline/find-leaf (root-command) (cons "vis" args))]
     (when (:cmd/owns-tty? command)
       (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
         (when-not (.exists log-dir) (.mkdirs log-dir))
@@ -840,7 +839,7 @@
    request, the user gave us an unknown command."
   [root args]
   (when (seq args)
-    (let [{:keys [path residual]} (sdk/find-leaf root (cons (:cmd/name root) args))]
+    (let [{:keys [path residual]} (commandline/find-leaf root (cons (:cmd/name root) args))]
       (and (= 1 (count path))
         (seq residual)
         (not-any? #{"--help" "-h"} residual)))))
@@ -869,20 +868,20 @@
         full-args (cons "vis" args)]
     (cond
       (empty? args)
-      (println (sdk/render-tree root))
+      (println (commandline/render-tree root))
 
       ;; `vis help` is a universal synonym for `vis --help`. Without
       ;; this branch the dispatcher would treat `help` as an unknown
       ;; command, print the tree, AND tag it with "Unknown command:
       ;; help" + exit 1 -- which surprised everyone who tried it.
       (= ["help"] (vec args))
-      (println (sdk/render-tree root))
+      (println (commandline/render-tree root))
 
       (unknown-command? root args)
-      (do (println (sdk/render-tree root))
+      (do (println (commandline/render-tree root))
         (println)
         (println (str "Unknown command: " (str/join " " args)))
         (System/exit 1))
 
       :else
-      (sdk/dispatch! root full-args))))
+      (commandline/dispatch! root full-args))))

@@ -8,33 +8,29 @@
    not stable — it's where modules get split, merged, and renamed as
    the architecture evolves. The names below ARE the contract.
 
-   Six conceptual groups, alphabetic within each:
+   Conceptual groups, alphabetic within each:
 
      Cancellation        cancel!, cancellation-atom, cancellation-set-future!,
                          cancellation-token, cancellation?
-     Error formatting    error-message, error->user-message, format-error,
-                         final-answer-code-error-message
-     Format helpers      format-clojure, format-date, format-duration
-     Progress tracker    make-progress-tracker
+     Channel registry    channel, register-channel!, registered-channels,
+                         channel-by-id, by-cmd
      CLI dispatcher      command, dispatch!, find-leaf, parse-args,
                          render-command, render-tree, validate-args,
                          register-cmd!, deregister-cmd!,
                          registered-commands, registered-under
-     Persistance facade  create-store-connection, dispose-store-connection!,
-                         log!, ds, now-ms, every store-*/db-*/update-*/etc.
-                         delegating fn, sweep-orphaned-running-queries!
-     Extension contract  extension, symbol, value, register-extension!,
-                         registered-extensions, registered-extension-ids,
-                         extension-id-of-ns, extension-doc, extension-docs,
-                         render-prompt, invoke-symbol-wrapper,
-                         try-rescue-parse-error
      Configuration       init!, init-cli!, shutdown!, load-config,
                          load-config-raw, save-config!, reload-config!,
                          tty-in, tty-out, original-stdout,
                          display-label, model-name, provider-base-url,
                          provider-presets, provider-template
-     SCI sandbox         create-sci-context, build-var-index,
-                         restore-sandbox!, system-var-sym?, SYSTEM_VAR_NAMES
+     Error formatting    error-message, db-error->user-message, format-error,
+                         final-answer-code-error-message
+     Extension contract  extension, symbol, value, register-extension!,
+                         registered-extensions, registered-extension-ids,
+                         extension-id-of-ns, extension-doc, extension-docs,
+                         render-prompt, invoke-symbol-wrapper,
+                         try-rescue-parse-error, discover-extensions!
+     Format helpers      format-clojure, format-date, format-duration
      Iteration loop      query!, send!, create!, by-id, by-channel,
                          for-telegram-chat!, env-for, close!, close-all!,
                          delete!, set-title!, effective-system-prompt,
@@ -42,29 +38,39 @@
                          get-router, rebuild-router!, refresh-cached-routers!,
                          resolve-effective-model, ask-with-schema-retry!,
                          render, db-info, auto-forget-stale-vars!,
-                         auto-forget-candidates, dedup-cache-lookup,
-                         dedup-cache-record!, count-duplicates,
-                         canonical-expression-hash, extract-defining-name,
-                         try-extension-parse-rescue
+                         dedup-cache-lookup, dedup-cache-record!,
+                         count-duplicates, canonical-expression-hash,
+                         extract-defining-name
      Iteration spec      iteration-spec, ITERATION_SPEC_*
+     Manifest discovery  rediscover!  (test/REPL utility)
+     Persistance facade  db-create-connection!, db-dispose-connection!,
+                         log!, ds, now-ms, every store-*/db-*/update-*/etc.
+                         delegating fn, db-sweep-orphaned-running-queries!
+     Progress tracker    make-progress-tracker
      Prompt builders     active-extensions, assemble-system-prompt,
-                         build-iteration-context,
-                         safe-pr-str
+                         build-iteration-context, safe-pr-str
+     Provider registry   provider, register-provider!, registered-providers,
+                         provider-by-id
+     SCI sandbox         create-sci-context, build-var-index,
+                         restore-sandbox!, system-var-sym?, SYSTEM_VAR_NAMES
 
      Binary entry        -main  (invoked by `clojure -M:vis`)"
   (:refer-clojure :exclude [agent run! symbol])
   (:require
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.commandline  :as commandline]
+   [com.blockether.vis.internal.config       :as config]
    [com.blockether.vis.internal.env          :as env]
    [com.blockether.vis.internal.error        :as error]
+   [com.blockether.vis.internal.extension    :as extension]
    [com.blockether.vis.internal.format       :as fmt]
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
+   [com.blockether.vis.internal.manifest     :as manifest]
+   [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.registry     :as registry]
-   [com.blockether.vis.internal.sdk          :as sdk]
    [com.blockether.vis.internal.spec         :as spec]))
 
 ;; =============================================================================
@@ -83,14 +89,18 @@
 (def error-message                    error/error-message)
 (def format-error                     error/format-error)
 (def final-answer-code-error-message  error/final-answer-code-error-message)
-(def error->user-message              sdk/error->user-message)
+(def db-error->user-message              persistance/db-error->user-message)
 
 ;; =============================================================================
 ;; Format helpers
 ;; =============================================================================
-(def format-date     fmt/format-date)
-(def format-clojure  fmt/format-clojure)
-(def format-duration fmt/format-duration)
+(def format-date       fmt/format-date)
+(def format-clojure    fmt/format-clojure)
+(def format-duration   fmt/format-duration)
+(def format-tokens     fmt/format-tokens)
+(def format-cost       fmt/format-cost)
+(def format-iterations fmt/format-iterations)
+(def format-meta-line  fmt/format-meta-line)
 
 ;; =============================================================================
 ;; Progress tracker
@@ -137,115 +147,115 @@
 ;; =============================================================================
 ;; Persistance facade
 ;; =============================================================================
-(def ds                                  sdk/ds)
-(def now-ms                              sdk/now-ms)
-(def ->id                                sdk/->id)
-(def ->uuid                              sdk/->uuid)
-(def ->ref                               sdk/->ref)
-(def ->kw                                sdk/->kw)
-(def ->kw-back                           sdk/->kw-back)
-(def ->epoch-ms                          sdk/->epoch-ms)
-(def ->date                              sdk/->date)
-(def create-store-connection             sdk/create-store-connection)
-(def dispose-store-connection!           sdk/dispose-store-connection!)
-(def shared-conn!                        sdk/shared-conn!)
-(def dispose-shared-conn!                sdk/dispose-shared-conn!)
-(def register-backend!                   sdk/register-backend!)
-(def deregister-backend!                 sdk/deregister-backend!)
-(def registered-backends                 sdk/registered-backends)
+(def ds                                  persistance/ds)
+(def now-ms                              persistance/now-ms)
+(def ->id                                persistance/->id)
+(def ->uuid                              persistance/->uuid)
+(def ->ref                               persistance/->ref)
+(def ->kw                                persistance/->kw)
+(def ->kw-back                           persistance/->kw-back)
+(def ->epoch-ms                          persistance/->epoch-ms)
+(def ->date                              persistance/->date)
+(def db-create-connection!             persistance/db-create-connection!)
+(def db-dispose-connection!           persistance/db-dispose-connection!)
+(def db-shared-connection!                        persistance/db-shared-connection!)
+(def db-dispose-shared-connection!                persistance/db-dispose-shared-connection!)
+(def register-backend!                   persistance/register-backend!)
+(def deregister-backend!                 persistance/deregister-backend!)
+(def registered-backends                 persistance/registered-backends)
 
 ;; Logging
-(def log!                                sdk/log!)
+(def db-log!                             persistance/db-log!)
 
 ;; Conversation lifecycle (storage facade)
-(def store-conversation!                 sdk/store-conversation!)
-(def db-get-conversation                 sdk/db-get-conversation)
-(def db-resolve-conversation-id          sdk/db-resolve-conversation-id)
-(def db-list-conversations               sdk/db-list-conversations)
-(def db-find-conversation-by-external    sdk/db-find-conversation-by-external)
-(def db-update-conversation-title!       sdk/db-update-conversation-title!)
-(def delete-conversation-tree!           sdk/delete-conversation-tree!)
-(def fork-conversation!                  sdk/fork-conversation!)
+(def db-store-conversation!                 persistance/db-store-conversation!)
+(def db-get-conversation                 persistance/db-get-conversation)
+(def db-resolve-conversation-id          persistance/db-resolve-conversation-id)
+(def db-list-conversations               persistance/db-list-conversations)
+(def db-find-conversation-by-external    persistance/db-find-conversation-by-external)
+(def db-update-conversation-title!       persistance/db-update-conversation-title!)
+(def db-delete-conversation-tree!           persistance/db-delete-conversation-tree!)
+(def db-fork-conversation!                  persistance/db-fork-conversation!)
 
 ;; Query lifecycle
-(def store-query!                        sdk/store-query!)
-(def update-query!                       sdk/update-query!)
-(def db-list-queries-by-status           sdk/db-list-queries-by-status)
-(def db-list-conversation-queries        sdk/db-list-conversation-queries)
-(def retry-query!                        sdk/retry-query!)
+(def db-store-query!                        persistance/db-store-query!)
+(def db-update-query!                       persistance/db-update-query!)
+(def db-list-queries-by-status           persistance/db-list-queries-by-status)
+(def db-list-conversation-queries        persistance/db-list-conversation-queries)
+(def db-retry-query!                        persistance/db-retry-query!)
 
 ;; Iteration lifecycle
-(def store-iteration!                    sdk/store-iteration!)
-(def db-list-query-iterations            sdk/db-list-query-iterations)
-(def db-list-iteration-vars              sdk/db-list-iteration-vars)
-(def db-list-iteration-expressions       sdk/db-list-iteration-expressions)
+(def db-store-iteration!                    persistance/db-store-iteration!)
+(def db-list-query-iterations            persistance/db-list-query-iterations)
+(def db-list-iteration-vars              persistance/db-list-iteration-vars)
+(def db-list-iteration-expressions       persistance/db-list-iteration-expressions)
 
 ;; Var registry & history
-(def db-latest-var-registry              sdk/db-latest-var-registry)
-(def db-var-history                      sdk/db-var-history)
-(def db-query-history                    sdk/db-query-history)
+(def db-latest-var-registry              persistance/db-latest-var-registry)
+(def db-var-history                      persistance/db-var-history)
+(def db-query-history                    persistance/db-query-history)
 
 ;; Dependencies
-(def store-dependency!                   sdk/store-dependency!)
-(def db-list-dependencies                sdk/db-list-dependencies)
+(def db-store-dependency!                   persistance/db-store-dependency!)
+(def db-list-dependencies                persistance/db-list-dependencies)
 
 ;; Restore
-(def db-restore-expressions              sdk/db-restore-expressions)
+(def db-restore-expressions              persistance/db-restore-expressions)
 
 ;; Process-restart cleanup
-(def sweep-orphaned-running-queries!     sdk/sweep-orphaned-running-queries!)
+(def db-sweep-orphaned-running-queries!     persistance/db-sweep-orphaned-running-queries!)
 
 ;; =============================================================================
 ;; Extension contract
 ;; =============================================================================
-(def extension                           sdk/extension)
-(def symbol                              sdk/symbol)
-(def value                               sdk/value)
-(def render-prompt                       sdk/render-prompt)
-(def register-extension!                 sdk/register-extension!)
-(def registered-extensions               sdk/registered-extensions)
-(def registered-extension-ids            sdk/registered-extension-ids)
-(def extension-namespaces                sdk/extension-namespaces)
-(def extension-id-of-ns                  sdk/extension-id-of-ns)
-(def extension-doc                       sdk/extension-doc)
-(def extension-docs                      sdk/extension-docs)
-(def extension-doc-content               sdk/extension-doc-content)
-(def extension-doc-abstract              sdk/extension-doc-abstract)
-(def extension-doc-summary               sdk/extension-doc-summary)
-(def extension-doc-names                 sdk/extension-doc-names)
-(def registered-extensions-summary       sdk/registered-extensions-summary)
-(def invoke-symbol-wrapper               sdk/invoke-symbol-wrapper)
-(def try-rescue-parse-error              sdk/try-rescue-parse-error)
-(def discover-extensions!                sdk/discover-extensions!)
-(def rediscover!                         sdk/rediscover!)
+(def extension                           extension/extension)
+(def symbol                              extension/symbol)
+(def value                               extension/value)
+(def render-prompt                       extension/render-prompt)
+(def register-extension!                 extension/register-extension!)
+(def registered-extensions               extension/registered-extensions)
+(def registered-extension-ids            extension/registered-extension-ids)
+(def extension-namespaces                extension/extension-namespaces)
+(def extension-id-of-ns                  extension/extension-id-of-ns)
+(def extension-doc                       extension/extension-doc)
+(def extension-docs                      extension/extension-docs)
+(def extension-doc-content               extension/extension-doc-content)
+(def extension-doc-description           extension/extension-doc-description)
+(def extension-doc-summary               extension/extension-doc-summary)
+(def extension-doc-names                 extension/extension-doc-names)
+(def registered-extensions-summary       extension/registered-extensions-summary)
+(def invoke-symbol-wrapper               extension/invoke-symbol-wrapper)
+(def try-rescue-parse-error              extension/try-rescue-parse-error)
+(def discover-extensions!                extension/discover-extensions!)
+(def rediscover!                         manifest/rediscover!)
 
 ;; =============================================================================
 ;; Configuration / paths / logging
 ;; =============================================================================
-(def init!                               sdk/init!)
-(def init-cli!                           sdk/init-cli!)
-(def shutdown!                           sdk/shutdown!)
-(def tty-in                              sdk/tty-in)
-(def tty-out                             sdk/tty-out)
-(def original-stdout                     sdk/original-stdout)
-(def load-config-raw                     sdk/load-config-raw)
-(def load-config                         sdk/load-config)
-(def save-config!                        sdk/save-config!)
-(def reload-config!                      sdk/reload-config!)
-(def resolve-config                      sdk/resolve-config)
-(def resolve-db-spec                     sdk/resolve-db-spec)
-(def current-config                      sdk/current-config)
-(def active-provider                     sdk/active-provider)
-(def active-model                        sdk/active-model)
-(def provider-ids                        sdk/provider-ids)
-(def has-provider?                       sdk/has-provider?)
-(def display-label                       sdk/display-label)
-(def model-name                          sdk/model-name)
-(def provider-base-url                   sdk/provider-base-url)
-(def provider-presets                    sdk/provider-presets)
-(def provider-template                   sdk/provider-template)
-(def ->svar-model                        sdk/->svar-model)
-(def ->svar-provider                     sdk/->svar-provider)
+(def init!                               config/init!)
+(def init-cli!                           config/init-cli!)
+(def shutdown!                           config/shutdown!)
+(def tty-in                              config/tty-in)
+(def tty-out                             config/tty-out)
+(def original-stdout                     config/original-stdout)
+(def load-config-raw                     config/load-config-raw)
+(def load-config                         config/load-config)
+(def save-config!                        config/save-config!)
+(def reload-config!                      config/reload-config!)
+(def resolve-config                      config/resolve-config)
+(def resolve-db-spec                     config/resolve-db-spec)
+(def current-config                      config/current-config)
+(def active-provider                     config/active-provider)
+(def active-model                        config/active-model)
+(def provider-ids                        config/provider-ids)
+(def has-provider?                       config/has-provider?)
+(def display-label                       config/display-label)
+(def model-name                          config/model-name)
+(def provider-base-url                   config/provider-base-url)
+(def provider-presets                    config/provider-presets)
+(def provider-template                   config/provider-template)
+(def ->svar-model                        config/->svar-model)
+(def ->svar-provider                     config/->svar-provider)
 
 ;; =============================================================================
 ;; SCI sandbox
@@ -312,7 +322,7 @@
 ;; =============================================================================
 ;; Iteration spec (plan validation + svar shapes)
 ;; =============================================================================
-(def iteration-spec         spec/iteration-spec)
+(def iteration-spec                  spec/iteration-spec)
 (def ITERATION_SPEC_BASE             spec/ITERATION_SPEC_BASE)
 (def ITERATION_SPEC_REASONING        spec/ITERATION_SPEC_REASONING)
 (def ITERATION_SPEC_NON_REASONING    spec/ITERATION_SPEC_NON_REASONING)

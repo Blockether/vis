@@ -5,7 +5,7 @@ Layer stack, top to bottom:
 ```
 Channels (TUI, Telegram, CLI)            external surfaces
     ↓
-Conversation layer                       lifecycle + per-conv lock
+Conversation layer                       lifecycle + per-conversation lock
     ↓
 Environment                              SCI sandbox + extensions + var-index + DB handle
     ↓

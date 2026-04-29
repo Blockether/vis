@@ -11,7 +11,7 @@
  ;;   - the SQLite SQL migration resources (resources/db/sqlite/migration/)
  ;;
  ;; Loading `com.blockether.vis.ext.persistance-sqlite.core` auto-registers
- ;; the `:sqlite` backend with the facade. `open-store` invokes
+ ;; the `:sqlite` backend with the facade. `db-open!` invokes
  ;; `vis-runtime`'s `persistance.migration/migrate!` against
  ;; `classpath:db/sqlite/migration` (SQL ships in this package) so
  ;; every store starts with the canonical schema applied.
@@ -32,7 +32,7 @@
   ;; Real connection pool. xerial's `SQLiteConnectionPoolDataSource`
   ;; is a JNDI-shaped façade that opens a NEW physical SQLite
   ;; connection on every `getConnection()` — it does NOT pool. Under
-  ;; bursty workloads (5–10 store-iteration! writes per agent turn)
+  ;; bursty workloads (5–10 db-store-iteration! writes per agent turn)
   ;; this churns WAL/-shm files, can race with directory-level
   ;; events on macOS APFS, and surfaces sporadic SQLITE_CANTOPEN.
   ;; HikariCP wraps the underlying `SQLiteDataSource` with a real

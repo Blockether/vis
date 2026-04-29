@@ -85,7 +85,7 @@ Table: `query_state`. One run/retry state for `query_soul`.
 | `run_label` | TEXT | |
 | `status` | TEXT | `running\|done\|error\|interrupted` |
 | `metadata` | TEXT | JSON-encoded |
-| `prior_outcome` | TEXT | nullable; one of `complete\|abandoned\|cancelled\|error`. Set on the terminal iteration (and by `sweep-orphaned-running-queries!` for crashed runs) so the next turn's handover digest can summarize the previous turn without scanning every iteration. |
+| `prior_outcome` | TEXT | nullable; one of `complete\|abandoned\|cancelled\|error`. Set on the terminal iteration (and by `db-sweep-orphaned-running-queries!` for crashed runs) so the next turn's handover digest can summarize the previous turn without scanning every iteration. |
 | `created_at` | INTEGER | |
 
 Constraints: `UNIQUE(query_soul_id, version)`
