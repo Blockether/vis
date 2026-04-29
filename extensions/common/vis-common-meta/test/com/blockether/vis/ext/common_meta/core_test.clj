@@ -12,6 +12,13 @@
 ;; required eagerly so the impl fns are interned before tests run.
 (require '[com.blockether.vis.ext.common-meta.core])
 
+;; Populate the classpath docs registry once for the whole namespace.
+;; The (meta/extensions ...) / (meta/extension-docs ...) / etc. tests
+;; read from the registry that `discover-extensions!` produces by
+;; merging every `META-INF/vis-extension/vis.edn` on the classpath.
+;; Idempotent across runs (memoized inside the loader).
+(sdk/discover-extensions!)
+
 (h/use-mem-store!)
 
 ;; -----------------------------------------------------------------------------
@@ -156,7 +163,36 @@
             turn (first (:turns conversation))]
         (expect (= "what's the plan?" (:goal turn)))
         (expect (= "42" (:answer turn)))
-        (expect (= :complete (:outcome turn)))))))
+        (expect (= :complete (:outcome turn))))))
+
+  (it "auto-excludes the in-flight turn (= CURRENT_QUERY_ID) from the current conversation"
+    (let [s (h/store)
+          {:keys [conversation-id query-id]} (bootstrap s)
+          env-with-in-flight (assoc (env s conversation-id)
+                               :current-query-id-atom (atom query-id))
+          conversation ((private-fn "meta-conversation") env-with-in-flight)]
+      (expect (= 0 (:turn-count conversation))) ; bootstrap creates exactly 1 turn, the in-flight one
+      (expect (empty? (:turns conversation)))
+      (expect (= query-id (:in-flight-turn-id conversation)))))
+
+  (it "does NOT filter when inspecting a foreign conversation"
+    (let [s (h/store)
+          {:keys [conversation-id query-id]} (bootstrap s)
+          other (sdk/db-store-conversation! s {:channel :telegram :title "other"})
+          env-with-in-flight (assoc (env s conversation-id)
+                               :current-query-id-atom (atom query-id))
+          conversation ((private-fn "meta-conversation") env-with-in-flight other)]
+      ;; Foreign conversation untouched: no in-flight-turn-id, original turns kept.
+      (expect (= other (:id conversation)))
+      (expect (= 0 (:turn-count conversation)))
+      (expect (nil? (:in-flight-turn-id conversation)))))
+
+  (it "does NOT filter when no turn is in flight (current-query-id-atom = nil)"
+    (let [s (h/store)
+          {:keys [conversation-id]} (bootstrap s)
+          conversation ((private-fn "meta-conversation") (env s conversation-id))]
+      (expect (= 1 (:turn-count conversation)))
+      (expect (nil? (:in-flight-turn-id conversation))))))
 
 ;; -----------------------------------------------------------------------------
 ;; (meta/conversations [channel]) — list across one or all channels
@@ -334,8 +370,8 @@
             readme (some #(when (= "README.md" (:name %)) %) docs)]
         (expect (vector? docs))
         (expect (some? readme))
-        (expect (string? (:abstract readme)))
-        (expect (pos? (count (:abstract readme))))
+        (expect (string? (:description readme)))
+        (expect (pos? (count (:description readme))))
         (expect (vector? (:links readme)))
         (expect (vector? (:reflinks readme)))
         ;; Summaries omit :content -- catalog stays small.
@@ -352,7 +388,7 @@
     (let [docs ((private-fn "meta-extension-docs") {} 'meta)]
       (expect (vector? docs))
       (expect (= #{"README.md"} (set (map :name docs))))
-      (expect (every? #(string? (:abstract %)) docs))
+      (expect (every? #(string? (:description %)) docs))
       (expect (every? #(vector? (:links %)) docs))
       (expect (every? #(vector? (:reflinks %)) docs))))
 
@@ -381,7 +417,7 @@
     (let [doc ((private-fn "meta-extension-doc") {} 'meta "README.md")]
       (expect (map? doc))
       (expect (= "README.md" (:name doc)))
-      (expect (string? (:abstract doc)))
+      (expect (string? (:description doc)))
       (expect (string? (:content doc)))
       (expect (clojure.string/includes? (:content doc) "# Meta extension"))
       (expect (vector? (:links doc)))

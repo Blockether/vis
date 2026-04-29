@@ -4,7 +4,7 @@
   {"README.md"
    {:created-at #inst "2026-04-28T08:00:00.000-00:00"
     :description
-    "FS + editing primitives for SCI sandbox. Two aliases. `vis/`: cat ls rg edit write. `fs/`: cwd exists? glob parent components file-name extension expand-home list-dir relativize. Read once, `(def x ...)` if reused, edit via search/replace. No autobind, no patch DSL. Clojure structured edit (`clj/zedit` + `z/` zipper) lives in sibling vis-language-clojure ext."
+    "FS + editing primitives for SCI sandbox. Two aliases. `vis/`: cat ls rg edit write. `fs/`: cwd exists? glob parent components file-name extension expand-home list-dir relativize. Read once, `(def x ...)` if reused, edit via search/replace. No patch DSL. Clojure structured edit (`clj/zedit` + `z/` zipper) lives in sibling vis-language-clojure ext."
     :content
     "# Common editing extension
 
@@ -45,4 +45,6 @@ AST-aware Clojure edits (rename def, add require, swap const while preserving fo
      {:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/fs_bindings.clj"
       :context "Source: fs/ alias bindings"}
      {:to-id clj :to-doc "README.md"
-      :context "Sibling ext for Clojure structured editing (clj/zedit, z/...)"}]}}}}
+      :context "Sibling ext for Clojure structured editing (clj/zedit, z/...)"}
+     {:to-id meta :to-doc "README.md"
+      :context "Companion introspection extension; pair vis/cat reads with (meta/diagnose) when triaging stalled turns."}]}}}}

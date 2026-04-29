@@ -21,7 +21,7 @@
    rewrite-clj zipper API) lives in the `vis-language-clojure`
    extension under `extensions/languages/clojure/`.
 
-   No autobind, no patch DSL, no parse-error rescue stack. Read once,
+   No patch DSL, no parse-error rescue stack. Read once,
    bind to a `(def ...)` if you need it across iterations, edit in
    one call.
 

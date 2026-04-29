@@ -8,9 +8,9 @@
       {:nses [com.acme.ext.git.core
               com.acme.channel.web.bot
               ...]
-       :docs {\"README.md\" {:created-at #inst \"...\"
-                              :description   \"...\"
-                              :content \"...\"
+       :docs {\"README.md\" {:created-at  #inst \"...\"
+                              :description \"...\"
+                              :content     \"...\"
                               :links       [...]}}}}
 
    `scan-extensions!` is the primitive: it walks every URL, parses
@@ -83,8 +83,8 @@
 
     :else
     {:created-at  (:created-at descriptor)
-     :description    (:description descriptor)
-     :content (:content descriptor)
+     :description (:description descriptor)
+     :content     (:content descriptor)
      :links       (vec (filter valid-link? (:links descriptor)))
      :reflinks    []}))
 

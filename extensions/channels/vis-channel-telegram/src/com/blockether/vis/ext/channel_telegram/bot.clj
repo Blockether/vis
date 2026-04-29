@@ -23,13 +23,12 @@
     (some-> message :from :first_name)
     "user"))
 
-(defn- format-footer [result model-name]
+(defn- format-footer [result]
   ;; Canonical " · "-joined turn-summary line, identical to the CLI
-  ;; bracket and the TUI per-message footer. Model auto-extracts from
-  ;; the result's `:cost :model`; the explicit `model-name` arg is
-  ;; an override sourced from the live router (in case the persisted
-  ;; result lags the current binding).
-  (let [line (sdk/format-meta-line result {:model model-name})]
+  ;; bracket and the TUI per-message footer. Provider + model
+  ;; auto-extract from the result's `:cost :provider` / `:cost :model`,
+  ;; rendering as `provider/model` (e.g. `blockether/glm-5.1`).
+  (let [line (sdk/format-meta-line result)]
     (str "\n\n_" (tg/escape-markdown-v2 line) "_")))
 
 (defn- handle-update! [token update]
@@ -44,11 +43,9 @@
             (let [{:keys [id]} (lp/for-telegram-chat! chat-id)
                   result       (lp/send! id text
                                  {:max-context-tokens 2200})
-                  answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))
-                  env          (lp/env-for id)
-                  model-name   (:name (lp/resolve-effective-model (:router env)))]
+                  answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))]
               (tg/send-message! token chat-id
-                (str answer (format-footer result model-name))))
+                (str answer (format-footer result))))
             (catch Exception e
               (tel/log! {:level :error :id ::handle-message
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}

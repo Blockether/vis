@@ -93,16 +93,28 @@ Provider previews, parse/tool error messages, classifications, next actions — 
 Call: `(meta/conversation)` or `(meta/conversation conversation-id)`:
 
 ```clojure
-{:id         \"uuid\"
- :channel    :vis
- :title      \"...\"
- :model      \"claude-sonnet-4-5\"
- :created-at #inst \"...\"
- :turns      [{:id :goal :outcome :answer :iterations :total-cost}]
- :turn-count N}
+{:id                \"uuid\"
+ :channel           :vis
+ :title             \"...\"
+ :model             \"claude-sonnet-4-5\"
+ :created-at        #inst \"...\"
+ :turns             [{:id :goal :outcome :answer :iterations :total-cost}]
+ :turn-count        N
+ :in-flight-turn-id #uuid \"...\"}  ;; only when current conversation
 ```
 
 No-arg = current. UUID = any other.
+
+**The in-flight turn is auto-excluded.** When the snapshot covers the
+current conversation, the row whose `:id` = `CURRENT_QUERY_ID` is
+dropped from `:turns` because its `:iterations` and `:total-cost` are
+not finalized yet — listing it would render as `null | $null` in any
+markdown table the agent composes. The excluded id is returned as
+`:in-flight-turn-id`, so callers who genuinely need to see it can
+request the unfiltered snapshot another way (or wait for the turn to
+finalize). Foreign conversations (passed `conversation-id` ≠ current)
+are returned verbatim — their turns are all complete from this env's
+perspective.
 
 ## Conversation list
 
@@ -152,7 +164,7 @@ Call: `(meta/extensions)`. Vec of every loaded ext + metadata + summary descript
               extension-readme]
   :docs      [{:name       \"README.md\"
                :created-at #inst \"2026-04-28\"
-               :description   \"Read-only introspection extension...\"
+               :description \"Read-only introspection extension...\"
                :links      [...]
                :reflinks   [...]}]}
  ...]

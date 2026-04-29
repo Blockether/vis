@@ -605,7 +605,7 @@
    answer-bg, stdout, etc.).
 
    Returns the number of screen rows consumed (including spacing)."
-  [^TextGraphics g {:keys [role text timestamp duration-ms model iterations tokens cost status]} start-row left max-w]
+  [^TextGraphics g {:keys [role text timestamp duration-ms iterations tokens cost status]} start-row left max-w]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
         ;; Cancelled turns are status messages, not real answers —
@@ -652,21 +652,23 @@
                     user?      t/user-role-fg
                     :else      t/ai-role-fg)
         time-str   (sdk/format-date timestamp)
-        ;; Below-message meta (assistant only): "glm-5.1 · 1 iter · ↑11461 · ↓35 · ~$0.006954 · 4.9s".
-        ;; Same surface form `format-meta-line` produces for the CLI
-        ;; bracket and the Telegram tagline. Model auto-extracts from
-        ;; `:cost :model`; pass `:model` here to override (e.g. when
-        ;; the chat-state binding holds a fresher value than the
-        ;; persisted cost map). Cancelled turns skip the whole block;
-        ;; there's no answer to attribute and "0 iters / no model"
-        ;; reads as clutter under a "Cancelled" placeholder.
+        ;; Below-message meta (assistant only): "blockether/glm-5.1 ·
+        ;; 1 iter · ↑11461 · ↓35 · ~$0.006954 · 4.9s". Same surface
+        ;; form `format-meta-line` produces for the CLI bracket and
+        ;; the Telegram tagline. Provider + model auto-extract from
+        ;; `:cost :provider` / `:cost :model` (where the iteration
+        ;; runtime persists them). The chat-state's bare-name `:model`
+        ;; field is intentionally NOT passed as the `:model` override
+        ;; here — doing so would defeat the provider/model rendering.
+        ;; Cancelled turns skip the whole block; there's no answer to
+        ;; attribute and "0 iters / no model" reads as clutter under
+        ;; a "Cancelled" placeholder.
         meta-str   (when (and (not user?) (not cancelled?))
                      (let [line (sdk/format-meta-line
                                   {:iterations iterations
                                    :duration-ms duration-ms
                                    :tokens tokens
-                                   :cost cost}
-                                  {:model model})]
+                                   :cost cost})]
                        (when-not (str/blank? line) line)))]
 
     ;; Row 0: label (bold, role-colored) + timestamp (dim, right-aligned).
@@ -678,15 +680,15 @@
       (p/set-colors! g t/dialog-hint t/terminal-bg)
       (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str))
 
-    ;; Content begins on row 1 (= start-row + 1), directly under the
-    ;; role banner. We used to leave row 1 blank as a "breathing gap"
-    ;; on terminal bg, but it read as an unwanted top margin above
-    ;; the assistant's thinking block (and above every other reply).
-    ;; The colored role label + the message's own zone bg (thinking,
-    ;; answer, code, user yellow) are enough visual separation; the
-    ;; bottom gap row (row 2+N) still keeps consecutive bubbles
-    ;; from running into each other.
-    (let [btop (+ start-row 1)]
+    ;; Content begins directly under the role banner for ASSISTANT
+    ;; bubbles — the previous breathing row read as an unwanted top
+    ;; margin above the thinking block. USER bubbles keep the
+    ;; breathing row so the yellow block has visible vertical
+    ;; padding above the typed text (otherwise the yellow band
+    ;; hugs the first character and reads as a single-row strip).
+    ;; Mirror this in `bubble-height*` so the math stays in sync.
+    (let [top-pad (if user? 1 0)
+          btop    (+ start-row 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg — the only fills come from
       ;; structured-trace marker zones (code blocks, stdout, answer
@@ -713,16 +715,15 @@
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx btop bubble-w (+ (max 1 bubble-h) 1)))
       ;;
-      ;; User messages: fill content rows PLUS the would-be meta-row
-      ;; below (always empty for user messages per
-      ;; `meta-parts (when (and (not user?) ...) ...)`). That extra
-      ;; bottom row gives the yellow block a visible foot — the
-      ;; bubble reads as a proper highlighted zone instead of a
-      ;; single-row band hugging the text. The breathing row above
-      ;; was dropped along with the global breathing gap.
+      ;; User messages: fill the breathing row above content + the
+      ;; content rows + the would-be meta-row below (always empty
+      ;; for user messages per `meta-str (when (and (not user?) ...))`).
+      ;; The two extra rows give the yellow block visible vertical
+      ;; padding so the bubble reads as a proper highlighted zone
+      ;; instead of a single-row band hugging the text.
       (when user?
         (p/set-bg! g bg-color)
-        (p/fill-rect! g bx btop bubble-w (+ (max 1 bubble-h) 1)))
+        (p/fill-rect! g bx (- btop top-pad) bubble-w (+ (max 1 bubble-h) top-pad 1)))
 
       ;; Text content — per-line styling via invisible marker prefixes
       ;;
@@ -1157,25 +1158,28 @@
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
-   label(1) + wrapped-lines + meta(1) + gap(1). Mirrors
-   `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so layout
-   math stays consistent across the height calc and the draw. The
-   role banner sits directly above content — the previous breathing
-   gap row read as an unwanted top margin above the assistant's
-   thinking block; the bottom gap row alone is enough separation
-   between consecutive bubbles."
-  [{:keys [text]} max-w]
+   label(1) + optional top-pad(1, user only) + wrapped-lines + meta(1)
+   + gap(1). Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w -
+   2*h-pad`) so layout math stays consistent across the height calc
+   and the draw. Assistant bubbles sit directly under the role
+   banner — the previous global breathing row read as an unwanted
+   top margin above the thinking block. User bubbles keep the
+   breathing row so the yellow block has visible top padding;
+   `draw-chat-bubble!` shifts content + bg-fill down accordingly."
+  [{:keys [text role]} max-w]
   (let [bubble-w  max-w
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
-        lines     (wrap-text text content-w)]
-    (+ 1 (count lines) 1 1)))
+        lines     (wrap-text text content-w)
+        top-pad   (if (= role :user) 1 0)]
+    (+ 1 top-pad (count lines) 1 1)))
 
 (defn bubble-height
-  "Memoized `bubble-height*`. Keyed by `:text` identity + width — same
-   string instance + width = same height, no need to re-wrap."
-  [{:keys [text] :as message} max-w]
-  (cached* [::bh (System/identityHashCode text) (long max-w)]
+  "Memoized `bubble-height*`. Keyed by `:text` identity + role +
+   width — same string instance + role + width = same height, no
+   need to re-wrap."
+  [{:keys [text role] :as message} max-w]
+  (cached* [::bh (System/identityHashCode text) role (long max-w)]
     #(bubble-height* message max-w)))
 
 (defn total-messages-height
@@ -2067,8 +2071,13 @@
                    (into acc (mapv emit-plain (wrap-text decorated max-w)))))))))))))
 
 (defn format-answer-with-thinking*
-  "Uncached implementation. See `format-answer-with-thinking`."
-  [answer trace bubble-w settings confidence]
+  "Uncached implementation. See `format-answer-with-thinking`.
+   `cancelled?` switches the trailer from a real answer block to a
+   plain status footer (\"Cancelled by user.\") rendered without
+   answer-pad markers, so the bubble's cancelled-bg fill shows
+   through and the footer reads as a system note rather than a
+   half-baked answer in the answer zone."
+  [answer trace bubble-w settings confidence cancelled?]
   (let [content-w (max 10 (- bubble-w 4))
         fill-w    (max 1 (dec content-w))
         show-thinking?     (get settings :show-thinking true)
@@ -2088,12 +2097,13 @@
         ;; opt-in chrome. The blue answer-bg + bold horizontal rule
         ;; (`ans-sep`) above the answer body already shout \"this is
         ;; the answer\"; the superscript is redundant unless the
-        ;; user explicitly turns it back on.
+        ;; user explicitly turns it back on. Cancelled bubbles never
+        ;; get the FINAL ANSWER chrome — there is no final answer.
         fa-label    (label-text "final answer")
         conf-str    (when confidence (str " · " (name confidence)))
         full-label  (str fa-label (or conf-str ""))
         fa-pad      (max 0 (- fill-w (count full-label) 1))
-        fa-hdr      (when show-final-hdr?
+        fa-hdr      (when (and show-final-hdr? (not cancelled?))
                       (str answer-hdr-marker (repeat-str \space fa-pad) full-label " "))
         ;; The answer-bg paint is anchored on the FIRST line carrying
         ;; an `answer-*` marker (`draw-chat-bubble!` searches for
@@ -2108,36 +2118,50 @@
                       (wrap-text answer-str (max 1 (- fill-w 2))))
         ans-pad     (str answer-pad-marker "")
         ans-sep     (str answer-sep-marker "")
+        ;; Cancelled trailer: plain lines (no answer-pad markers)
+        ;; so the bubble's cancelled-bg fill is what shows under
+        ;; the status text. The wrapped status string \"Cancelled by
+        ;; user.\" is short enough to fit on one row at any sane
+        ;; bubble width, but we wrap-text defensively in case the
+        ;; column gets squeezed below ~20 chars.
+        cancel-text   (or answer "Cancelled by user.")
+        cancel-rows   (wrap-text cancel-text (max 1 (- fill-w 2)))
+        cancel-block  (vec (concat [ans-sep ""] cancel-rows [""]))
         answer-block (cond-> [ans-sep]
                        fa-hdr (conj fa-hdr)
                        :always (conj ans-pad)
                        :always (into ans-lines)
-                       :always (conj ans-pad))]
+                       :always (conj ans-pad))
+        trailer       (if cancelled? cancel-block answer-block)]
     (if (seq trace-lines)
-      (str/join "\n" (concat trace-lines answer-block))
-      ;; No trace — don't emit the thinking/answer separator at the
-      ;; top of an otherwise-empty bubble; jump straight to the answer.
-      (str/join "\n" (rest answer-block)))))
+      (str/join "\n" (concat trace-lines trailer))
+      ;; No trace — don't emit the trace/trailer separator at the top
+      ;; of an otherwise-empty bubble; jump straight to the trailer
+      ;; body (drop the leading separator marker).
+      (str/join "\n" (rest trailer)))))
 
 (defn format-answer-with-thinking
   "Build the final bubble text: thinking trace + answer. Memoized by
-   `(answer-identity, trace-identity, bubble-w, settings, confidence)`.
+   `(answer-identity, trace-identity, bubble-w, settings, confidence,
+   cancelled?)`.
 
    Finalized assistant messages never mutate after `:message-received`,
    so the same key tuple comes in on every subsequent frame and we
    short-circuit straight to the cached string. This is the single
    biggest CPU win for long conversations."
-  ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil))
-  ([answer trace bubble-w settings] (format-answer-with-thinking answer trace bubble-w settings nil))
-  ([answer trace bubble-w settings confidence]
+  ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil false))
+  ([answer trace bubble-w settings] (format-answer-with-thinking answer trace bubble-w settings nil false))
+  ([answer trace bubble-w settings confidence] (format-answer-with-thinking answer trace bubble-w settings confidence false))
+  ([answer trace bubble-w settings confidence cancelled?]
    (cached* [::fawt
              (System/identityHashCode answer)
              (System/identityHashCode trace)
              (long bubble-w)
              (boolean (get settings :show-thinking true))
              (boolean (get settings :show-iterations true))
-             confidence]
-     #(format-answer-with-thinking* answer trace bubble-w settings confidence))))
+             confidence
+             (boolean cancelled?)]
+     #(format-answer-with-thinking* answer trace bubble-w settings confidence cancelled?))))
 
 (defn format-answer-markdown*
   "Uncached implementation. See `format-answer-markdown`."

@@ -13,6 +13,59 @@
 
 (def ^:private input-field-bg (TextColor$RGB. 255 255 252))
 
+;;; ── Default modal footprint ─────────────────────────────────────────────────
+;;
+;; Every modal in the TUI shares ONE default WIDTH (terminal-proportional,
+;; clamped 50–100 cols). HEIGHT is content-driven and grows only as far
+;; as the body needs, with a small floor (`DEFAULT_DIALOG_MIN_HEIGHT`,
+;; box rows). Rationale: an ESC-stack of nested dialogs reads more cleanly
+;; when each layer lines up at the same column footprint, but pinning a
+;; one-size-fits-all height (70% of terminal) wiped out most of the chat
+;; underneath every popup — even a 4-item palette painted as a giant
+;; box. Flexible height keeps small dialogs small (chat stays visible)
+;; while letting big ones (text viewer, long settings) still use the
+;; vertical room they actually need.
+;;
+;; Every dialog passes its own `content-h` to `draw-dialog-chrome!`'s
+;; default-width arity. The chrome floors that against `MIN_HEIGHT` so
+;; tiny content (1-line confirm) still renders in a deliberate-feeling
+;; box, not a squashed 5-row one.
+
+(def ^:const DEFAULT_DIALOG_WIDTH_RATIO
+  "Fraction of terminal width every modal occupies by default."
+  0.7)
+
+(def ^:const DEFAULT_DIALOG_MIN_WIDTH 50)
+(def ^:const DEFAULT_DIALOG_MAX_WIDTH 100)
+
+(def ^:const DEFAULT_DIALOG_MIN_HEIGHT
+  "Minimum dialog box height in rows. Floor so a 1-line confirm or
+   blank palette still renders with breathing room. 10 rows = title
+   bar (1) + separator (1) + body (~5) + separator (1) + hint (1) +
+   borders (2). Below this the chrome eats the body and things look
+   broken."
+  10)
+
+(def ^:const DIALOG_CHROME_W 4)  ;; border(1) + pad(1) each side
+(def ^:const DIALOG_CHROME_H 6)  ;; top + title + sep + body + sep + hint + bot
+
+(defn default-content-width
+  "Shared content width every dialog uses, derived from `cols`. Clamped
+   between `DEFAULT_DIALOG_MIN_WIDTH` and `DEFAULT_DIALOG_MAX_WIDTH` and
+   bounded by the terminal so the box never paints off-screen."
+  [cols]
+  (let [box-w (-> (int (* cols DEFAULT_DIALOG_WIDTH_RATIO))
+                (max DEFAULT_DIALOG_MIN_WIDTH)
+                (min DEFAULT_DIALOG_MAX_WIDTH)
+                (min (max DEFAULT_DIALOG_MIN_WIDTH (- cols 4))))]
+    (max 1 (- box-w DIALOG_CHROME_W))))
+
+(defn floor-content-height
+  "Raise `content-h` to the value that produces a box at least
+   `DEFAULT_DIALOG_MIN_HEIGHT` rows tall. Idempotent; never shrinks."
+  [content-h]
+  (max (or content-h 0) (- DEFAULT_DIALOG_MIN_HEIGHT DIALOG_CHROME_H)))
+
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
    to cleanly replace the current dialog (wizard step pattern)."
@@ -152,54 +205,65 @@
 
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
-   `content-w` and `content-h` define the content area — the dialog sizes to
-   fit them while maintaining golden ratio proportions.
+
+   Three arities:
+   - `(g cols rows title content-h)` — shared default width
+     (`default-content-width`), caller-provided content height (floored
+     to `DEFAULT_DIALOG_MIN_HEIGHT`). PREFERRED. Width stays consistent
+     across the ESC stack; height grows only as far as the content needs.
+   - `(g cols rows title content-w content-h)` — fully explicit. Use
+     only when a dialog genuinely needs a non-default width.
+
    Returns {:left :top :right :bottom :inner-w :inner-h}."
-  [g cols rows title content-w content-h]
-  (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
-        box-left      (quot (- cols box-w) 2)
-        box-top       (quot (- rows box-h) 2)
-        box-right     (+ box-left box-w -1)
-        box-bottom    (+ box-top box-h -1)
-        inner-w       (- box-w 2)]
+  ([g cols rows title content-h]
+   (draw-dialog-chrome! g cols rows title
+     (default-content-width cols)
+     (floor-content-height content-h)))
+  ([g cols rows title content-w content-h]
+   (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
+         box-left      (quot (- cols box-w) 2)
+         box-top       (quot (- rows box-h) 2)
+         box-right     (+ box-left box-w -1)
+         box-bottom    (+ box-top box-h -1)
+         inner-w       (- box-w 2)]
 
     ;; Shadow — clipped to terminal bounds
-    (let [shd-left (+ box-left 2)
-          shd-top  (inc box-top)
-          shd-w    (min box-w (- cols shd-left))
-          shd-h    (min box-h (- rows shd-top))]
-      (when (and (pos? shd-w) (pos? shd-h))
-        (p/set-bg! g t/dialog-shadow)
-        (p/fill-rect! g shd-left shd-top shd-w shd-h)))
+     (let [shd-left (+ box-left 2)
+           shd-top  (inc box-top)
+           shd-w    (min box-w (- cols shd-left))
+           shd-h    (min box-h (- rows shd-top))]
+       (when (and (pos? shd-w) (pos? shd-h))
+         (p/set-bg! g t/dialog-shadow)
+         (p/fill-rect! g shd-left shd-top shd-w shd-h)))
 
     ;; Background
-    (p/set-bg! g t/dialog-bg)
-    (p/fill-rect! g box-left box-top box-w box-h)
+     (p/set-bg! g t/dialog-bg)
+     (p/fill-rect! g box-left box-top box-w box-h)
 
     ;; Border
-    (p/set-colors! g t/dialog-border t/dialog-bg)
-    (p/draw-box! g box-left box-top box-w box-h)
+     (p/set-colors! g t/dialog-border t/dialog-bg)
+     (p/draw-box! g box-left box-top box-w box-h)
 
     ;; Title bar — full-width accent stripe with centered title
-    (let [title-row  (inc box-top)
-          title-text (ellipsize (or title "") (max 0 (- inner-w 2)))
-          tx         (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
+     (let [title-row  (inc box-top)
+           title-text (ellipsize (or title "") (max 0 (- inner-w 2)))
+           tx         (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
       ;; Accent bar background
-      (p/set-bg! g t/dialog-title-bg)
-      (p/fill-rect! g (inc box-left) title-row inner-w 1)
+       (p/set-bg! g t/dialog-title-bg)
+       (p/fill-rect! g (inc box-left) title-row inner-w 1)
       ;; Title text
-      (p/set-fg! g t/dialog-title-fg)
-      (p/put-str! g tx title-row title-text)
+       (p/set-fg! g t/dialog-title-fg)
+       (p/put-str! g tx title-row title-text)
       ;; Top separator — below title bar
-      (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/draw-separator! g box-left box-right (inc title-row))
+       (p/set-colors! g t/dialog-border t/dialog-bg)
+       (p/draw-separator! g box-left box-right (inc title-row))
       ;; Bottom separator — above hint bar
-      (let [bot-sep (- box-bottom 2)]
-        (when (> bot-sep (+ box-top 3))
-          (p/draw-separator! g box-left box-right bot-sep))))
+       (let [bot-sep (- box-bottom 2)]
+         (when (> bot-sep (+ box-top 3))
+           (p/draw-separator! g box-left box-right bot-sep))))
 
-    {:left box-left :top box-top :right box-right :bottom box-bottom
-     :inner-w inner-w :inner-h (- box-h 2)}))
+     {:left box-left :top box-top :right box-right :bottom box-bottom
+      :inner-w inner-w :inner-h (- box-h 2)})))
 
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 
@@ -209,15 +273,13 @@
   [^TerminalScreen screen title items]
   (let [selected  (atom 0)
         scroll    (atom 0)
-        max-label (apply max 1 (map (comp count :label) items))
-        cw        (max (+ max-label 6) (+ (count title) 4))
         ch        (count items)]
     (loop []
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title cw ch)
+            bounds (draw-dialog-chrome! g cols rows title ch)
             {:keys [left inner-w]} bounds
             total  (count items)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
@@ -252,15 +314,14 @@
    Options: :mask char (e.g. \\* for passwords), :initial string."
   [^TerminalScreen screen title label & {:keys [mask initial] :or {initial ""}}]
   (let [text   (atom (vec initial))
-        cursor (atom (count initial))
-        cw     (max (count label) (count title) 30)
-        ch     2]
+        cursor (atom (count initial))]
     (loop []
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title cw ch)
+            ;; Content: label row + input row.
+            bounds (draw-dialog-chrome! g cols rows title 2)
             {:keys [left inner-w]} bounds
             {:keys [content-top hint-row]} (dialog-layout bounds 2)
             label-row  content-top
@@ -316,12 +377,10 @@
   "Show Y/N confirmation with side-by-side buttons. Returns true/false, nil on Esc."
   [^TerminalScreen screen title message]
   (let [raw-lines  (if (string? message) [message] message)
-        max-line-w (apply max 1 (map count raw-lines))
         btn-yes    "Yes"
         btn-no     "No"
         btn-w      (+ 2 (max (count btn-yes) (count btn-no))) ;; " Yes " / " No  "
         btn-gap    4
-        cw         (max (+ btn-w btn-gap btn-w 4) max-line-w (+ (count title) 4))
         ;; content: message lines + blank + button row = lines + 2
         ch         (+ (count raw-lines) 2)
         focus      (atom 0)] ;; 0 = Yes, 1 = No
@@ -330,7 +389,7 @@
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title cw ch)
+            bounds (draw-dialog-chrome! g cols rows title ch)
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds ch)
             text-w (max 0 (- inner-w 2))
@@ -395,6 +454,9 @@
                  {:key :show-iterations
                   :label "Show full execution trace"
                   :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
+                 {:key :collapse-old-traces
+                  :label "Collapse old traces (keep latest expanded)"
+                  :description "Older assistant turns render as just the answer; only the most recent turn shows its full trace"}
                  {:key :show-timestamps
                   :label "Show per-message timestamps"
                   :description "Date+time next to every 'You' / 'Vis' label"}
@@ -416,20 +478,13 @@
         check-w  4   ;; \"[x] \"
         gap      "  "
         gap-w    (count gap)
-        label-w  (apply max (map (comp count :label) options))
-        desc-w   (apply max (map (comp count :description) options))
-        ;; Content width includes padding inside the dialog frame; +2
-        ;; absorbs the box's inner gutter so text never touches the
-        ;; vertical border.
-        cw       (max (+ check-w label-w gap-w desc-w 2)
-                   (+ (count "Settings") 4))
-        ch       n]
+        label-w  (apply max (map (comp count :label) options))]
     (loop []
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Settings" cw ch)
+            bounds (draw-dialog-chrome! g cols rows "Settings" n)
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds n)
             ;; Pad description to fill remaining space; ellipsize if
@@ -510,19 +565,14 @@
    {:id :system-prompt      :label "Inspect Latest System Prompt"}])
 
 (defn command-palette!
-  "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc."
+  "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.
+   No bespoke padding — `select-dialog!` runs at the shared default modal
+   footprint, and `draw-list-item!` already fills the highlight stripe
+   across the full inner width regardless of label length."
   [^TerminalScreen screen]
-  (let [items (mapv (fn [cmd] {:label (:label cmd)}) palette-commands)
-        ;; Force a minimum width so the palette feels roomy
-        size  (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-        cols  (.getColumns size)
-        min-w (min (- cols 12) (max 50 (int (* cols 0.45))))
-        padded-items (mapv (fn [{:keys [label]}]
-                             {:label (str label
-                                       (apply str (repeat (max 0 (- min-w (count label))) \space)))})
-                       items)]
-    (when-let [choice (select-dialog! screen "Commands" padded-items)]
-      (:id (nth palette-commands (.indexOf ^java.util.List (mapv :label padded-items) (:label choice)))))))
+  (let [items (mapv (fn [cmd] {:label (:label cmd)}) palette-commands)]
+    (when-let [choice (select-dialog! screen "Commands" items)]
+      (:id (nth palette-commands (.indexOf ^java.util.List (mapv :label items) (:label choice)))))))
 
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 
@@ -534,17 +584,17 @@
    reformatting.
    Returns nil on Esc. Supports keyboard scrolling."
   [^TerminalScreen screen title text]
-  (let [scroll (atom 0)
-        term-size (.getTerminalSize screen)
-        max-w  (- (.getColumns term-size) 6)
-        cw     (max 40 (min max-w (+ 4 (apply max 1 (map count (str/split-lines (or text "")))))))
-        ch     (max 20 (- (.getRows term-size) 8))]
+  (let [scroll (atom 0)]
     (loop []
       (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols    (.getColumns size)
             rows    (.getRows size)
             g       (.newTextGraphics screen)
-            bounds  (draw-dialog-chrome! g cols rows title cw ch)
+            ;; Text viewer is the only dialog that should consume the
+            ;; vertical room it can get — it scrolls long content. Ask
+            ;; for terminal-bound height so the viewport is generous,
+            ;; while still sharing the standard width.
+            bounds  (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             ;; Reserve the last inner column for a scrollbar that matches
@@ -641,15 +691,13 @@
         selected    (atom 0)
         scroll      (atom 0)
         checked     (atom #{})
-        max-preview (apply max 1 (map (comp count :text) items))
-        cw          (max (+ 4 (min max-preview 50)) (+ (count "Copy Messages") 4))
         ch          (count items)]
     (loop [status [["Space" "toggle"] ["A" "all"] ["Enter" "copy"] ["Esc" "cancel"]]]
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Copy Messages" cw ch)
+            bounds (draw-dialog-chrome! g cols rows "Copy Messages" ch)
             {:keys [left inner-w]} bounds
             total  (count items)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds total)

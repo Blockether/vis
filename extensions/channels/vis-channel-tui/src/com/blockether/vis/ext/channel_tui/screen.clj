@@ -41,8 +41,16 @@
           duration of a modal dialog session."}
   (ReentrantLock.))
 
-(def ^:private input-min-lines 3)
-(def ^:private input-max-lines 8)
+;; Input box auto-sizing: starts at one row when empty (the smallest
+;; surface that still reads as an input field) and grows by one row
+;; per soft-wrap line of typed content, capped at four rows. Beyond
+;; the cap `draw-input-box!` keeps the cursor in view by scrolling
+;; the visible window vertically over the underlying text. The cap
+;; was 8 rows; four is the sweet spot — long enough to show a real
+;; multi-paragraph prompt, short enough that the input never eats
+;; more than ~25% of a 1080p terminal's chat area.
+(def ^:private input-min-lines 1)
+(def ^:private input-max-lines 4)
 ;; Hint strip rules
 ;;
 ;; Idle, input EMPTY    → show newline + history cycle + menu. The
@@ -122,7 +130,13 @@
    toggling settings is immediately reactive.
 
    `progress-extra` carries the wall-clock start, cancelling flag, and
-   `:now-ms` so `progress->text` can render the spinner frame."
+   `:now-ms` so `progress->text` can render the spinner frame.
+
+   When `:collapse-old-traces` is on (default), every assistant turn
+   except the most recent one with a trace renders as just the final
+   answer — the meta-line below already summarises iteration count,
+   tokens, cost, duration. Toggle the setting off to expand every
+   historical trace at once."
   [messages progress loading? bubble-w settings progress-extra]
   (let [;; The `:show-timestamps` toggle drops the per-message
         ;; date/time stamp from the role-label row. We do this here
@@ -133,26 +147,67 @@
         ;; behavior, fewer arg-threading scars.
         show-timestamps? (get settings :show-timestamps false)
         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
+        ;; Index of the latest assistant message that carries a trace.
+        ;; That one stays expanded; every earlier assistant trace is
+        ;; collapsed to the plain answer when `:collapse-old-traces`
+        ;; is on. Live (loading?) placeholder is the very last message
+        ;; and has no `:trace` yet — the spinner path replaces its
+        ;; text after this projection pass, so the \"latest trace\"
+        ;; index correctly points at the most recent FINISHED turn.
+        collapse-old?    (get settings :collapse-old-traces true)
+        last-trace-idx   (when collapse-old?
+                           (->> messages
+                             (map-indexed vector)
+                             (filter (fn [[_ m]]
+                                       (and (= :assistant (:role m))
+                                         (:trace m))))
+                             last
+                             first))
         ;; Apply trace→text projection and markdown to assistant messages.
-        projected (mapv (fn [message]
-                          (cond
-                            ;; Has trace: full iteration + answer rendering
-                            (and (= :assistant (:role message)) (:trace message))
-                            (-> message
-                              (assoc :text
-                                (render/format-answer-with-thinking
-                                  (:raw-answer message) (:trace message) bubble-w settings
-                                  (:confidence message)))
-                              strip-ts)
-                            ;; Plain assistant message: apply markdown
+        projected (vec
+                    (map-indexed
+                      (fn [idx message]
+                        (cond
+                          ;; Old assistant turn with trace, collapse-old
+                          ;; setting is on — strip the trace so this
+                          ;; bubble renders as the plain answer alone.
+                          ;; The persisted trace is still in app-db; a
+                          ;; future per-message expand toggle can pull
+                          ;; it back in without re-querying the DB.
+                          (and collapse-old?
+                            last-trace-idx
                             (= :assistant (:role message))
-                            (-> message
-                              (assoc :text
-                                (render/format-answer-markdown (:text message) bubble-w))
-                              strip-ts)
-                            ;; User messages: only timestamp gating.
-                            :else (strip-ts message)))
-                    messages)]
+                            (:trace message)
+                            (< idx last-trace-idx))
+                          (-> message
+                            (assoc :text
+                              (render/format-answer-markdown
+                                (or (:raw-answer message) (:text message) "")
+                                bubble-w))
+                            strip-ts)
+                          ;; Has trace: full iteration + answer rendering.
+                          ;; Cancelled bubbles flow through here too —
+                          ;; format-answer-with-thinking emits a plain
+                          ;; status footer instead of an answer block,
+                          ;; so partial work stays visible above the
+                          ;; \"Cancelled by user.\" line.
+                          (and (= :assistant (:role message)) (:trace message))
+                          (-> message
+                            (assoc :text
+                              (render/format-answer-with-thinking
+                                (:raw-answer message) (:trace message) bubble-w settings
+                                (:confidence message)
+                                (= :cancelled (:status message))))
+                            strip-ts)
+                          ;; Plain assistant message: apply markdown
+                          (= :assistant (:role message))
+                          (-> message
+                            (assoc :text
+                              (render/format-answer-markdown (:text message) bubble-w))
+                            strip-ts)
+                          ;; User messages: only timestamp gating.
+                          :else (strip-ts message)))
+                      messages))]
     ;; Replace the loading placeholder with the live progress block
     ;; (spinner + phase + iteration trace).
     (if (and loading? (seq projected))
@@ -463,11 +518,19 @@
                      :quit nil
 
                      :show-palette
-                     (if (:dialog-open? @state/app-db)
-                       (recur)
-                       (let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
-                         (when cmd (run-command! cmd))
-                         (recur)))
+                     ;; Modal stack: each command runs nested inside the
+                     ;; palette's open state, so ESC from a sub-dialog
+                     ;; (Settings, Copy, etc.) reopens the palette
+                     ;; instead of dropping the user back to the chat.
+                     ;; Only ESC pressed *inside* the palette itself
+                     ;; closes the whole stack.
+                     (do
+                       (when-not (:dialog-open? @state/app-db)
+                         (loop []
+                           (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
+                             (run-command! cmd)
+                             (recur))))
+                       (recur))
 
                      :history-up
                      (do (state/dispatch [:history-up])

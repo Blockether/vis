@@ -345,16 +345,23 @@
 (def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
 
 ;; SYSTEM vars are read-only bindings the loop maintains for the
-;; agent: QUERY (current user query), REASONING (last iteration's
-;; thinking), ANSWER (previous turn's final answer). UPPERCASE marks
-;; them as constants. The set is a fixed registry; adding to it is a
-;; deliberate API change. See AGENTS.md → "SYSTEM vars are UPPERCASE
-;; and explicitly defined".
+;; agent:
+;;   QUERY                 current user query (string)
+;;   REASONING             last iteration's thinking (string)
+;;   ANSWER                previous turn's final answer (string)
+;;   CURRENT_QUERY_ID      UUID of the in-flight turn (= current query)
+;;   CURRENT_ITERATION_ID  UUID of the most recently persisted iteration
+;;                         row (nil before the first iteration commits;
+;;                         iteration N's :code sees iteration N-1's id
+;;                         because the row for N is written AFTER eval)
+;; UPPERCASE marks them as constants. The set is a fixed registry;
+;; adding to it is a deliberate API change. See AGENTS.md → "SYSTEM
+;; vars are UPPERCASE and explicitly defined".
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
    var?' check is needed: var-index sort+status, auto-forget guard,
    <system_state> rendering, etc."
-  '#{QUERY REASONING ANSWER})
+  '#{QUERY REASONING ANSWER CURRENT_QUERY_ID CURRENT_ITERATION_ID})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed
