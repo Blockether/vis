@@ -8,24 +8,24 @@ for the full convention.
 
 ## Building an extension
 
-The constructor lives at `com.blockether.vis-sdk.core/extension`:
+The constructor lives at `com.blockether.vis.core/extension`:
 
 ```clojure
-(require '[com.blockether.vis-sdk.core :as ext])
+(require '[com.blockether.vis.core :as ext])
 
 (ext/extension spec) → validated extension map
 ```
 
-The extension contract lives entirely on `com.blockether.vis-sdk.core`,
+The extension contract lives entirely on `com.blockether.vis.core`,
 which is shipped by `com.blockether/vis-runtime`. The older re-exports of
 `extension` / `symbol` / `value` / `register-global!` / `render-prompt`
-from `com.blockether.vis-runtime.core` were **removed on purpose** so authoring
+from `com.blockether.vis.core` were **removed on purpose** so authoring
 code requires the dedicated extension namespace instead of the public
 runtime facade.
 
 The runtime composition helpers that DO need a live environment
 (`active-extensions`, `assemble-system-prompt`, `register-extension!`)
-stay on `com.blockether.vis-runtime.core` because they only make sense against
+stay on `com.blockether.vis.core` because they only make sense against
 a running env.
 
 Only `:ext/namespace` and `:ext/doc` are unconditionally required.
@@ -58,10 +58,10 @@ Two conditional rules apply on top of the spec:
 | `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol → Class}` — Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
 | `:ext/imports`           | ✗              | `{}`                  | `{short-symbol → fq-symbol}` — short-name imports for sandbox interop (`(LocalDate/now)` style). |
 | `:ext/ns-alias`          | conditional     | —                    | `{:ns 'vis.ext.tools :alias 'vis}` — **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(vis/cat …)` — bare `(cat …)` does not resolve. |
-| `:ext/cli`               | ✗              | `[]`                  | Vector of [`com.blockether.vis-sdk.core`](../architecture/packages.md#package-map) command maps (`{:cmd/name … :cmd/doc … :cmd/run-fn … :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** — the dispatcher defaults `:cmd/parent` to `["extensions"]` for entries that don't specify one, and rejects entries whose `:cmd/parent` doesn't start with `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` are NOT extension commands; they use `cmd/register-global!` directly. See the [CLI command slot](#cli-command-slot) section below for the three accepted forms. |
+| `:ext/cli`               | ✗              | `[]`                  | Vector of [`com.blockether.vis.core`](../architecture/packages.md#package-map) command maps (`{:cmd/name … :cmd/doc … :cmd/run-fn … :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** — the dispatcher defaults `:cmd/parent` to `["extensions"]` for entries that don't specify one, and rejects entries whose `:cmd/parent` doesn't start with `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` are NOT extension commands; they use `cmd/register-global!` directly. See the [CLI command slot](#cli-command-slot) section below for the three accepted forms. |
 | `:ext/channels`          | ✗              | `[]`                  | Vector of channel descriptors (`{:channel/id :channel/cmd :channel/doc :channel/main-fn :channel/usage? :channel/owns-tty?}`). Each entry is forwarded to `channel/register-global!`; it appears under `vis channels <cmd>`. See [Channels](../architecture/channels.md). |
-| `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn …}`). Each entry is forwarded to `com.blockether.vis-sdk.core/register-global!`. |
-| `:ext/persistance`       | ✗              | `[]`                  | Vector of persistence-backend descriptors (`{:persistance/id <kw> :persistance/ns <fq-symbol>}`). Each entry is forwarded to `com.blockether.vis-sdk.core/register-backend!`. |
+| `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn …}`). Each entry is forwarded to `com.blockether.vis.core/register-global!`. |
+| `:ext/persistance`       | ✗              | `[]`                  | Vector of persistence-backend descriptors (`{:persistance/id <kw> :persistance/ns <fq-symbol>}`). Each entry is forwarded to `com.blockether.vis.core/register-backend!`. |
 
 ## CLI command slot
 
@@ -125,7 +125,7 @@ Mount entries at any depth under `vis extensions …` by specifying a
 
 `:ext/cli` is the EXTENSIONS slot. For top-level commands or other
 placements (the binary's own built-ins, custom command trees), use
-`com.blockether.vis-sdk.core/register-global!` directly. See
+`com.blockether.vis.core/register-global!` directly. See
 `packages/vis-main/src/com/blockether/vis_main/channels/cli.clj` for an example: `vis run`,
 `vis auth`, `vis doctor`, `vis conversations` are registered with
 `cmd/register-global!`; only the `vis extensions list` subcommand
@@ -233,7 +233,7 @@ Called internally by `extension`; safe to call standalone.
 ```clojure
 (ns com.blockether.vis.ext.documents
   (:require [clojure.string :as str]
-            [com.blockether.vis-sdk.core :as ext]))
+            [com.blockether.vis.core :as ext]))
 
 (defn- search-fn [query] ...)
 (defn- search-with-opts [query opts] ...)

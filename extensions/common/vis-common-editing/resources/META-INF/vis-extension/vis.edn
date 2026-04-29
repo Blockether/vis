@@ -4,150 +4,60 @@
   {"README.md"
    {:created-at #inst "2026-04-28T08:00:00.000-00:00"
     :abstract
-    "Filesystem and code-editing primitives for the SCI sandbox: read,
-list, search, and patch files. Bound under the `vis` alias as
-`vis/cat`, `vis/ls`, `vis/rg` (RE2/J, ReDoS-safe regex search), and
-`vis/patch` (canonical shape: a vector of `{:path :search :replace}`
-maps -- one shape for single, multi-edit, and multi-file flows).
-Default toolbelt the agent reaches for in nearly every coding task."
+    "Filesystem + editing primitives for the SCI sandbox. Two aliases:
+`vis/` (cat, ls, rg, edit, write, zedit) and `fs/` (cwd, exists?,
+glob, parent, components, file-name, extension, expand-home,
+list-dir, relativize). Read once, bind a `(def ...)` if you need it
+again, edit with one search/replace call. No autobind, no patch
+DSL ceremony — just the small, useful surface."
     :content
     "
-# Common operations extension
+# Common editing extension
 
 Package: `com.blockether/vis-common-editing`. Source:
-`extensions/common/vis-common-editing/`. Canonical location: inlined
-under `[vis :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`
-(shipped in the jar). The LLM reads it via
-`(meta/extension-readme 'vis)` from inside `:code`.
+`extensions/common/vis-common-editing/`.
 
-Filesystem and code-editing primitives the agent reaches for in
-nearly every task. Symbols bind under the `vis` alias inside the SCI
-sandbox; the underlying namespace alias is `vis.ext.tools`.
+Two aliases ship from this jar:
 
-Add the jar to the classpath, or list
-`com.blockether/vis-common-editing` in your `deps.edn`, to enable
-it. The CLI's default `:vis` alias already wires it in for daily
-agent runs.
+  vis/   read + write tools     (cat, ls, rg, edit, write, zedit)
+  fs/    babashka.fs path math  (cwd, exists?, glob, parent, components,
+                                  file-name, extension, expand-home,
+                                  list-dir, relativize)
 
-## Read a file
+## Read
 
-Call: `(vis/cat path)` or `(vis/cat path opts)`. Returns the file
-contents along with size and line count. The opts MAP supports paging
-for large files; see the symbol's `:examples` for the full form.
+`(vis/cat path)` returns line-numbered content. Default cap 6000 chars;
+pass `{:offset N :limit M :char-limit C}` to page.
 
-```clojure
-(vis/cat \"deps.edn\")
-(vis/cat \"packages/vis-runtime/src/com/blockether/vis/core.clj\"
-         {:from-line 1 :to-line 80})
-```
+## List
 
-## List files and directories
+`(vis/ls path)` returns a tree map. opts: `{:depth :hidden? :respect-gitignore?}`.
 
-Call: `(vis/ls)` or `(vis/ls path opts)`. Returns a tree projection
-trimmed to fit the current context budget; honors `.gitignore` and a
-configurable depth/limit.
+## Search
 
-```clojure
-(vis/ls)
-(vis/ls \"packages\")
-(vis/ls \"extensions\" {:depth 2})
-```
+`(vis/rg pattern path)` regex search via RE2/J (ReDoS-safe). Pattern is
+a string or `#\"...\"`. opts: `{:limit :hidden? :respect-gitignore?}`.
 
-## Search files
+## Edit
 
-Call: `(vis/rg pattern)` or `(vis/rg pattern path opts)`. Linear-time
-regex search using RE2/J (ReDoS-safe). Returns hits as
-`{:path :line :match}` maps. Inside a Clojure string `\\|` is not a
-valid escape — use bare `|` for regex alternation, or use a `#\"…\"`
-regex literal for complex patterns.
+`(vis/edit path search replace)` replaces the FIRST occurrence of
+`search` with `replace`. `search` must be unique — add surrounding
+context if it isn't. Throws when missing or ambiguous.
 
-```clojure
-(vis/rg \"TODO\")
-(vis/rg \"defn\" \"packages/vis-runtime/src\")
-(vis/rg #\"\\bdef(n|method)\\b\" \"src\")
-```
+`(vis/write path content)` overwrites or creates a file (creating
+parent directories).
 
-## Patch a file
+`(vis/zedit path zfn)` runs a `rewrite-clj` zipper transformer over a
+Clojure file and writes the result. Useful for adding a require,
+renaming a sym, or any AST-aware edit.
 
-Call: `(vis/patch edits)`. ONE shape, always: a non-empty vector of
-`{:path :search :replace}` maps. Single edit? Vector of one. Multiple
-edits in the same file? Multiple maps with the same `:path`. Edits
-across files? Multiple maps with different `:path` values. Each entry
-contributes one SEARCH/REPLACE block, applied in vector order.
+## Path math
 
-Every map MUST have exactly `:path`, `:search`, `:replace` (all
-strings). Extra keys throw a teaching error. `:search` must match the
-file contents EXACTLY ONCE — pick the smallest unique snippet;
-whitespace and indentation must match the file. Use `:search \"\"` to
-insert at the start of a (possibly new) file.
-
-For multi-line content, compose with `(str ...)` so each line stays
-on its own physical line and the closing quote stays visible:
-
-```clojure
-(vis/patch [{:path \"src/auth.clj\"
-             :search  \"(defn login [user]\"
-             :replace \"(defn login [user opts]\"}])
-
-(vis/patch [{:path \"src/auth.clj\"
-             :search  (str \"(defn login [user]\\n\"
-                           \"  (verify user))\")
-             :replace (str \"(defn login [user opts]\\n\"
-                           \"  (verify user opts))\")}])
-
-(vis/patch [{:path \"src/a.clj\" :search \"x\" :replace \"y\"}
-            {:path \"src/b.clj\" :search \"foo\" :replace \"bar\"}])
-
-(vis/patch [{:path \"new.clj\"
-             :search  \"\"
-             :replace (str \"(ns new)\\n\" \"(def x 1)\\n\")}])
-```
-
-When a SEARCH block fails to match exactly, the error includes a
-`:near-match` hint when the only difference is leading whitespace, so
-you can re-emit a corrected SEARCH block on the next iteration without
-re-reading the whole file.
-
-Legacy call shapes (`(vis/patch path search replace)`,
-`(vis/patch path marker-text)`, and Codex `*** Begin Patch` payloads)
-were removed in favor of this single canonical shape; calling them
-throws a teaching error pointing at the canonical example above.
-
-## When to use it
-
-- Reading, listing, searching, or editing files inside the project the
-  agent is working on.
-- Multi-line or multi-file edits — use ONE `vis/patch` call with a
-  vector of edit maps rather than fanning out separate calls.
-
-## When not to use it
-
-- Pure data transformations on already-loaded values; that's plain
-  Clojure inside the sandbox.
-- Cross-process work that needs a real shell. The extension is
-  filesystem-scoped on purpose.
-
-## Implementation notes
-
-- All four symbols are dispatched through the extension framework;
-  parse-error rescue lives at the symbol level (e.g. on `vis/rg`) so
-  the iteration loop only retries when the broken source actually
-  mentions the offending symbol.
-- `vis/rg` uses RE2/J (no backtracking, ReDoS-safe). `vis/cat` and
-  `vis/ls` are bounded and trim to fit the current context budget.
-- `vis/patch` validates the edit vector entirely in memory before any
-  disk write — if any entry fails (invalid shape, no SEARCH match,
-  ambiguous match), nothing is written and the call throws.
-- The extension owns no persistence state. Every call is pure with
-  respect to the runtime — the only side effects are file reads and
-  the explicit writes performed by `vis/patch`.
-"
+The `fs/` alias exposes `babashka.fs` primitives. They never touch
+file contents. Use them for path math; reach for `vis/` when you also
+need to read or mutate the file."
     :links
-    [{:to-id meta
-      :to-doc "README.md"
-      :context
-      "Read-only introspection extension; pair with vis/* tools when triaging stalled turns"}
-     {:file
-      "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/editing.clj"
-      :context
-      "Source for cat / ls / rg / patch -- including the patch-no-match near-match diagnostic"}]}}}}
+    [{:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/editing.clj"
+      :context "Source for cat / ls / rg / edit / write / zedit"}
+     {:file "extensions/common/vis-common-editing/src/com/blockether/vis/ext/common_editing/fs_bindings.clj"
+      :context "Source for the fs/ alias bindings"}]}}}}

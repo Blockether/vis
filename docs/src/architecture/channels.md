@@ -2,16 +2,16 @@
 
 A **channel** is a vis adapter — a user-facing front-end that turns
 external input (terminal keys, HTTP requests, Telegram messages) into
-calls to the runtime API in `com.blockether.vis-runtime.loop.runtime.conversation.core`.
+calls to the runtime API in `com.blockether.vis.core`.
 
 Channels are one **slot** on an extension. The word "extension" is
 the umbrella term for everything extensible in vis: SCI sandbox
 symbols, CLI commands, channels, LLM providers, persistance entries.
 All five surfaces share one classpath-discovery resource
 (`META-INF/vis-extension/vis.edn`), one loader
-(`com.blockether.vis-sdk.core/discover-extensions!`), and one
+(`com.blockether.vis.core/discover-extensions!`), and one
 author-facing entry point
-(`com.blockether.vis-sdk.core/register-global!`). Each surface is a
+(`com.blockether.vis.core/register-global!`). Each surface is a
 slot key (`:ext/symbols`, `:ext/cli`, `:ext/channels`,
 `:ext/providers`, `:ext/persistance`); the registrar dispatches each
 populated slot to its matching internal sub-registry. See
@@ -36,7 +36,7 @@ list it inside an extension's `:ext/channels` slot:
 
 ```clojure
 (ns com.blockether.vis.ext.channel-tui.screen
-  (:require [com.blockether.vis-sdk.core :as ext]))
+  (:require [com.blockether.vis.core :as ext]))
 
 (defn channel-main [args] …)
 
@@ -54,7 +54,7 @@ list it inside an extension's `:ext/channels` slot:
 ```
 
 The lower-level `(channel/register-global! …)` call (from
-`com.blockether.vis-sdk.core`) still works for embedded / programmatic
+`com.blockether.vis.core`) still works for embedded / programmatic
 registration, and is what `ext/register-global!` ultimately calls
 under the hood. New code should prefer the slot form because it lets
 a single jar register everything an extension contributes in one

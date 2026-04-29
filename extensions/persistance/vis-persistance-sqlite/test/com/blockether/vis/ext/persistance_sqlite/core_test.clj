@@ -1,15 +1,9 @@
 (ns com.blockether.vis.ext.persistance-sqlite.core-test
   (:require
-   [com.blockether.vis-sdk.core :as db]
-   [com.blockether.vis-runtime.loop.runtime.conversation.environment.core :as sci-env]
+   [com.blockether.vis.core :as sdk]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [store raw-count raw-query thaw-blob]]
    [lazytest.core :refer [defdescribe it expect throws?]]
-   [sci.core :as sci]
-   [com.blockether.vis-runtime.loop.core :as loop]
-   [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [store]]
-   [lazytest.core :refer [defdescribe it expect]]
-   [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.iteration.core :as iterate]
-   [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]))
+   [sci.core :as sci]))
 
 ;; ─── from db_test.clj ───
 
@@ -22,8 +16,8 @@
 (defdescribe conversation-test
   (it "inserts into conversation_soul + conversation_state"
     (let [s  (store)
-          id (db/store-conversation! s {:channel :vis :system-prompt "Hi" :model "gpt-4o" :title "T"})
-          conv (db/db-get-conversation s id)]
+          id (sdk/store-conversation! s {:channel :vis :system-prompt "Hi" :model "gpt-4o" :title "T"})
+          conv (sdk/db-get-conversation s id)]
       (expect (= 1 (raw-count s :conversation_soul)))
       (expect (= 1 (raw-count s :conversation_state)))
       (expect (= :vis (:channel conv)))
@@ -34,31 +28,31 @@
 
   (it "resolves :latest"
     (let [s (store)]
-      (db/store-conversation! s {:channel :vis})
+      (sdk/store-conversation! s {:channel :vis})
       (Thread/sleep 2)
-      (let [id2    (db/store-conversation! s {:channel :vis})
-            latest (db/db-resolve-conversation-id s :latest)]
+      (let [id2    (sdk/store-conversation! s {:channel :vis})
+            latest (sdk/db-resolve-conversation-id s :latest)]
         (expect (= id2 latest)))))
 
   (it "lists by channel via metadata JSON"
     (let [s (store)]
-      (db/store-conversation! s {:channel :vis :title "A"})
-      (db/store-conversation! s {:channel :telegram :title "B"})
-      (db/store-conversation! s {:channel :vis :title "C"})
-      (expect (= 2 (count (db/db-list-conversations s :vis))))
-      (expect (= 1 (count (db/db-list-conversations s :telegram))))))
+      (sdk/store-conversation! s {:channel :vis :title "A"})
+      (sdk/store-conversation! s {:channel :telegram :title "B"})
+      (sdk/store-conversation! s {:channel :vis :title "C"})
+      (expect (= 2 (count (sdk/db-list-conversations s :vis))))
+      (expect (= 1 (count (sdk/db-list-conversations s :telegram))))))
 
   (it "finds by external-id via metadata JSON"
     (let [s  (store)
-          id (db/store-conversation! s {:channel :telegram :external-id "chat-42"})]
-      (expect (= id (db/db-find-conversation-by-external s :telegram "chat-42")))
-      (expect (nil? (db/db-find-conversation-by-external s :telegram "nope")))))
+          id (sdk/store-conversation! s {:channel :telegram :external-id "chat-42"})]
+      (expect (= id (sdk/db-find-conversation-by-external s :telegram "chat-42")))
+      (expect (nil? (sdk/db-find-conversation-by-external s :telegram "nope")))))
 
   (it "updates title on conversation_state"
     (let [s  (store)
-          id (db/store-conversation! s {:channel :vis :title "Old"})]
-      (db/db-update-conversation-title! s id "New")
-      (expect (= "New" (:title (db/db-get-conversation s id)))))))
+          id (sdk/store-conversation! s {:channel :vis :title "Old"})]
+      (sdk/db-update-conversation-title! s id "New")
+      (expect (= "New" (:title (sdk/db-get-conversation s id)))))))
 
 ;; =============================================================================
 ;; Fork
@@ -67,9 +61,9 @@
 (defdescribe fork-test
   (it "creates a new conversation_state row with parent_state_id"
     (let [s    (store)
-          cid  (db/store-conversation! s {:channel :vis :system-prompt "v0" :model "gpt-4o"})
-          _    (db/fork-conversation! s cid {:title "Branch A"})
-          conv (db/db-get-conversation s cid)]
+          cid  (sdk/store-conversation! s {:channel :vis :system-prompt "v0" :model "gpt-4o"})
+          _    (sdk/fork-conversation! s cid {:title "Branch A"})
+          conv (sdk/db-get-conversation s cid)]
       (expect (= 2 (raw-count s :conversation_state)))
       (expect (= 1 (:version conv)))
       (expect (= "Branch A" (:title conv)))
@@ -80,28 +74,28 @@
 
   (it "overrides model and system-prompt"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis :system-prompt "old" :model "gpt-4o"})
-          _   (db/fork-conversation! s cid {:system-prompt "new" :model "claude-4"})
-          conv (db/db-get-conversation s cid)]
+          cid (sdk/store-conversation! s {:channel :vis :system-prompt "old" :model "gpt-4o"})
+          _   (sdk/fork-conversation! s cid {:system-prompt "new" :model "claude-4"})
+          conv (sdk/db-get-conversation s cid)]
       (expect (= "new" (:system-prompt conv)))
       (expect (= "claude-4" (:model conv)))))
 
   (it "queries on forked state are isolated"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})]
-      (db/store-query! s {:parent-conversation-id cid :query "Turn 1" :status :done})
-      (db/fork-conversation! s cid {:title "Fork"})
-      (db/store-query! s {:parent-conversation-id cid :query "Turn 2" :status :done})
-      (let [queries (db/db-list-conversation-queries s cid)]
+          cid (sdk/store-conversation! s {:channel :vis})]
+      (sdk/store-query! s {:parent-conversation-id cid :query "Turn 1" :status :done})
+      (sdk/fork-conversation! s cid {:title "Fork"})
+      (sdk/store-query! s {:parent-conversation-id cid :query "Turn 2" :status :done})
+      (let [queries (sdk/db-list-conversation-queries s cid)]
         (expect (= 1 (count queries)))
         (expect (= "Turn 2" (:text (first queries)))))))
 
   (it "double fork increments version"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})]
-      (db/fork-conversation! s cid {})
-      (db/fork-conversation! s cid {})
-      (expect (= 2 (:version (db/db-get-conversation s cid))))
+          cid (sdk/store-conversation! s {:channel :vis})]
+      (sdk/fork-conversation! s cid {})
+      (sdk/fork-conversation! s cid {})
+      (expect (= 2 (:version (sdk/db-get-conversation s cid))))
       (expect (= 3 (raw-count s :conversation_state))))))
 
 ;; =============================================================================
@@ -111,31 +105,31 @@
 (defdescribe query-test
   (it "inserts into query_soul + query_state"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})]
-      (db/store-query! s {:parent-conversation-id cid :query "2+2?" :status :running})
+          cid (sdk/store-conversation! s {:channel :vis})]
+      (sdk/store-query! s {:parent-conversation-id cid :query "2+2?" :status :running})
       (expect (= 1 (raw-count s :query_soul)))
       (expect (= 1 (raw-count s :query_state)))
-      (let [q (first (db/db-list-conversation-queries s cid))]
+      (let [q (first (sdk/db-list-conversation-queries s cid))]
         (expect (= "2+2?" (:text q)))
         (expect (= :running (:status q))))))
 
   (it "normalizes :success to done"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/update-query! s qid {:status :success :answer "42"
-                               :tokens {:input 100 :output 50}
-                               :cost {:total-cost 0.005 :model "gpt-4o"}})
-      (let [q (first (db/db-list-conversation-queries s cid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/update-query! s qid {:status :success :answer "42"
+                                :tokens {:input 100 :output 50}
+                                :cost {:total-cost 0.005 :model "gpt-4o"}})
+      (let [q (first (sdk/db-list-conversation-queries s cid))]
         (expect (= :done (:status q)))
         (expect (= "gpt-4o" (:model q))))))
 
   (it "persists :error without renormalization"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/update-query! s qid {:status :error})
-      (expect (= :error (:status (first (db/db-list-conversation-queries s cid))))))))
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/update-query! s qid {:status :error})
+      (expect (= :error (:status (first (sdk/db-list-conversation-queries s cid))))))))
 
 ;; =============================================================================
 ;; Retry
@@ -144,24 +138,24 @@
 (defdescribe retry-test
   (it "creates query_state version 1 with forked_from ref"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "hard" :status :running})]
-      (db/update-query! s qid {:status :error})
-      (db/retry-query! s qid {:status :running :model "claude-4"})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "hard" :status :running})]
+      (sdk/update-query! s qid {:status :error})
+      (sdk/retry-query! s qid {:status :running :model "claude-4"})
       (expect (= 1 (raw-count s :query_soul)))
       (expect (= 2 (raw-count s :query_state)))
-      (expect (= :running (:status (first (db/db-list-conversation-queries s cid)))))))
+      (expect (= :running (:status (first (sdk/db-list-conversation-queries s cid)))))))
 
   (it "iterations on retry go to new query_state"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 10})
-      (db/update-query! s qid {:status :error})
-      (db/retry-query! s qid {:status :running :model "better"})
-      (db/store-iteration! s {:query-id qid :expressions [{:code "2" :result 2}] :duration-ms 5})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 10})
+      (sdk/update-query! s qid {:status :error})
+      (sdk/retry-query! s qid {:status :running :model "better"})
+      (sdk/store-iteration! s {:query-id qid :expressions [{:code "2" :result 2}] :duration-ms 5})
       (expect (= 2 (raw-count s :iteration)))
-      (expect (= 1 (count (db/db-list-query-iterations s qid)))))))
+      (expect (= 1 (count (sdk/db-list-query-iterations s qid)))))))
 
 ;; =============================================================================
 ;; Iteration + stateless expressions
@@ -170,28 +164,28 @@
 (defdescribe iteration-expression-test
   (it "inserts into iteration + expression_soul(call) + expression_state"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/store-iteration! s {:query-id qid
-                              :expressions [{:code "(+ 1 1)" :result 2 :execution-time-ms 5}
-                                            {:code "(* 3 4)" :result 12 :execution-time-ms 3}]
-                              :thinking "Computing" :duration-ms 50})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/store-iteration! s {:query-id qid
+                               :expressions [{:code "(+ 1 1)" :result 2 :execution-time-ms 5}
+                                             {:code "(* 3 4)" :result 12 :execution-time-ms 3}]
+                               :thinking "Computing" :duration-ms 50})
       (expect (= 1 (raw-count s :iteration)))
       (expect (= 2 (raw-count s :expression_soul [:= :kind "call"])))
       (expect (= 2 (raw-count s :expression_state
                      [:in :expression_soul_id
                       {:select [:id] :from :expression_soul :where [:= :kind "call"]}])))
-      (let [iter (first (db/db-list-query-iterations s qid))]
+      (let [iter (first (sdk/db-list-query-iterations s qid))]
         (expect (= "Computing" (:thinking iter)))
         (expect (= 0 (:position iter))))))
 
   (it "stores results as nippy BLOBs"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/store-iteration! s {:query-id qid
-                              :expressions [{:code "{:a [1 2]}" :result {:a [1 2]}}]
-                              :duration-ms 5})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/store-iteration! s {:query-id qid
+                               :expressions [{:code "{:a [1 2]}" :result {:a [1 2]}}]
+                               :duration-ms 5})
       (let [rows (raw-query s {:select [:est.result :est.expr]
                                :from [[:expression_state :est]]
                                :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
@@ -200,11 +194,11 @@
 
   (it "stores fn result as {:vis/ref :expr}"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/store-iteration! s {:query-id qid
-                              :expressions [{:code "(defn f [x] x)" :result (fn [x] x)}]
-                              :duration-ms 5})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/store-iteration! s {:query-id qid
+                               :expressions [{:code "(defn f [x] x)" :result (fn [x] x)}]
+                               :duration-ms 5})
       (let [rows (raw-query s {:select [:est.result]
                                :from [[:expression_state :est]]
                                :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
@@ -213,12 +207,12 @@
 
   (it "stores errors with success=0"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/store-iteration! s {:query-id qid
-                              :expressions [{:code "(/ 1 0)" :error "Divide by zero"
-                                             :stdout "dbg" :stderr "warn"}]
-                              :duration-ms 5})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/store-iteration! s {:query-id qid
+                               :expressions [{:code "(/ 1 0)" :error "Divide by zero"
+                                              :stdout "dbg" :stderr "warn"}]
+                               :duration-ms 5})
       (let [row (first (raw-query s {:select [:success :error :stdout :stderr]
                                      :from [[:expression_state :est]]
                                      :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
@@ -235,11 +229,11 @@
 (defdescribe var-test
   (it "inserts expression_soul(var, stateful) + expression_state"
     (let [s    (store)
-          cid  (db/store-conversation! s {:channel :vis})
-          qid  (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid  (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                       :vars [{:name "x" :value 42 :code "(def x 42)"}]})
-          vars (db/db-list-iteration-vars s iid)]
+          cid  (sdk/store-conversation! s {:channel :vis})
+          qid  (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid  (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                        :vars [{:name "x" :value 42 :code "(def x 42)"}]})
+          vars (sdk/db-list-iteration-vars s iid)]
       (expect (= 1 (raw-count s :expression_soul [:= :kind "var"])))
       (expect (= 1 (count vars)))
       (expect (= "x" (:name (first vars))))
@@ -248,56 +242,56 @@
 
   (it "reuses soul, increments version"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 1}]})
-          i2  (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 99}]})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 1}]})
+          i2  (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 99}]})]
       (expect (= 1 (raw-count s :expression_soul [:= :kind "var"])))
-      (expect (= 99 (:value (first (db/db-list-iteration-vars s i2)))))
-      (expect (= 1 (:version (first (db/db-list-iteration-vars s i2)))))))
+      (expect (= 99 (:value (first (sdk/db-list-iteration-vars s i2)))))
+      (expect (= 1 (:version (first (sdk/db-list-iteration-vars s i2)))))))
 
   (it "soul persists across queries"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          q1  (db/store-query! s {:parent-conversation-id cid :query "t1" :status :done})
-          _   (db/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 1}]})
-          q2  (db/store-query! s {:parent-conversation-id cid :query "t2" :status :done})
-          i2  (db/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 100}]})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          q1  (sdk/store-query! s {:parent-conversation-id cid :query "t1" :status :done})
+          _   (sdk/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 1}]})
+          q2  (sdk/store-query! s {:parent-conversation-id cid :query "t2" :status :done})
+          i2  (sdk/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 100}]})]
       (expect (= 1 (raw-count s :expression_soul [:= :kind "var"])))
-      (expect (= 100 (:value (first (db/db-list-iteration-vars s i2)))))))
+      (expect (= 100 (:value (first (sdk/db-list-iteration-vars s i2)))))))
 
   (it "fn var stores {:vis/ref :expr}"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))
       (expect (= "(defn f [x] x)" (:code v)))))
 
   (it "stores complex data via nippy"
     (let [s    (store)
-          cid  (db/store-conversation! s {:channel :vis})
-          qid  (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          cid  (sdk/store-conversation! s {:channel :vis})
+          qid  (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
           data {:users [{:name "Alice"} {:name "Bob"}] :tags #{:a :b} :n 42}
-          iid  (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                       :vars [{:name "db" :value data}]})]
-      (expect (= data (:value (first (db/db-list-iteration-vars s iid)))))))
+          iid  (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                        :vars [{:name "db" :value data}]})]
+      (expect (= data (:value (first (sdk/db-list-iteration-vars s iid)))))))
 
   (it "latest var registry"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 1} {:name "y" :value "hi"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 99}]})
-          reg (db/db-latest-var-registry s cid)]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 1} {:name "y" :value "hi"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 99}]})
+          reg (sdk/db-latest-var-registry s cid)]
       (expect (= 99 (:value (get reg 'x))))
       (expect (= 1 (:version (get reg 'x))))
       (expect (= "hi" (:value (get reg 'y))))
@@ -305,12 +299,12 @@
 
   (it "version history"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 1}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 50}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 99}]})
-          h   (db/db-var-history s cid 'x)]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 1}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 50}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0 :vars [{:name "x" :value 99}]})
+          h   (sdk/db-var-history s cid 'x)]
       (expect (= 3 (count h)))
       (expect (= [1 50 99] (mapv :value h)))
       (expect (= [0 1 2] (mapv :version h))))))
@@ -322,11 +316,11 @@
 (defdescribe cascade-delete-test
   (it "deletes soul + all descendants"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}]
-                                      :duration-ms 0 :vars [{:name "x" :value 1}]})]
-      (db/delete-conversation-tree! s cid)
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}]
+                                       :duration-ms 0 :vars [{:name "x" :value 1}]})]
+      (sdk/delete-conversation-tree! s cid)
       (expect (= 0 (raw-count s :conversation_soul)))
       (expect (= 0 (raw-count s :conversation_state)))
       (expect (= 0 (raw-count s :query_soul)))
@@ -342,11 +336,11 @@
 (defdescribe query-history-test
   (it "builds ordered history with iteration counts"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "What?" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :answer "A Lisp" :duration-ms 100})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :answer "JVM Lisp" :duration-ms 50})
-          h   (db/db-query-history s cid)]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "What?" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :answer "A Lisp" :duration-ms 100})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :answer "JVM Lisp" :duration-ms 50})
+          h   (sdk/db-query-history s cid)]
       (expect (= 1 (count h)))
       (expect (= "What?" (:query (first h))))
       (expect (= 2 (:iterations (first h)))))))
@@ -358,69 +352,69 @@
 (defdescribe soul-state-integrity-test
   (it "conversation_state.conversation_soul_id points to conversation_soul.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis :title "FK test"})]
+          cid (sdk/store-conversation! s {:channel :vis :title "FK test"})]
       (let [soul  (first (raw-query s {:select [:id] :from :conversation_soul}))
             state (first (raw-query s {:select [:conversation_soul_id] :from :conversation_state}))]
         (expect (= (:id soul) (:conversation_soul_id state))))))
 
   (it "query_soul.conversation_state_id points to conversation_state.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          _   (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          _   (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (let [state (first (raw-query s {:select [:id] :from :conversation_state}))
             qsoul (first (raw-query s {:select [:conversation_state_id] :from :query_soul}))]
         (expect (= (:id state) (:conversation_state_id qsoul))))))
 
   (it "query_state.query_soul_id points to query_soul.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          _   (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          _   (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
       (let [qsoul  (first (raw-query s {:select [:id] :from :query_soul}))
             qstate (first (raw-query s {:select [:query_soul_id] :from :query_state}))]
         (expect (= (:id qsoul) (:query_soul_id qstate))))))
 
   (it "iteration.query_state_id points to query_state.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0})]
       (let [qstate (first (raw-query s {:select [:id] :from :query_state}))
             iter   (first (raw-query s {:select [:query_state_id] :from :iteration}))]
         (expect (= (:id qstate) (:query_state_id iter))))))
 
   (it "expression_soul.conversation_state_id points to conversation_state.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
       (let [state (first (raw-query s {:select [:id] :from :conversation_state}))
             esoul (first (raw-query s {:select [:conversation_state_id] :from :expression_soul}))]
         (expect (= (:id state) (:conversation_state_id esoul))))))
 
   (it "expression_state.expression_soul_id points to expression_soul.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
       (let [esoul  (first (raw-query s {:select [:id] :from :expression_soul}))
             estate (first (raw-query s {:select [:expression_soul_id] :from :expression_state}))]
         (expect (= (:id esoul) (:expression_soul_id estate))))))
 
   (it "expression_state.iteration_id points to iteration.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [{:code "1" :result 1}] :duration-ms 0})]
       (let [iter   (first (raw-query s {:select [:id] :from :iteration}))
             estate (first (raw-query s {:select [:iteration_id] :from :expression_state}))]
         (expect (= (:id iter) (:iteration_id estate))))))
 
   (it "retry query_state.forked_from_query_state_id points to previous query_state.id"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
-      (db/update-query! s qid {:status :error})
-      (db/retry-query! s qid {:status :running :model "claude-4"})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (sdk/update-query! s qid {:status :error})
+      (sdk/retry-query! s qid {:status :running :model "claude-4"})
       (let [states (raw-query s {:select [:id :version :forked_from_query_state_id]
                                  :from :query_state :order-by [[:version :asc]]})]
         (expect (= 2 (count states)))
@@ -429,8 +423,8 @@
 
   (it "fork conversation_state.parent_state_id points to previous state"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})]
-      (db/fork-conversation! s cid {:title "fork"})
+          cid (sdk/store-conversation! s {:channel :vis})]
+      (sdk/fork-conversation! s cid {:title "fork"})
       (let [states (raw-query s {:select [:id :version :parent_state_id]
                                  :from :conversation_state :order-by [[:version :asc]]})]
         (expect (= 2 (count states)))
@@ -439,12 +433,12 @@
 
   (it "expression_soul kind and state_mode are correct for calls vs vars"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid
-                                      :expressions [{:code "(+ 1 1)" :result 2}]
-                                      :duration-ms 0
-                                      :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid
+                                       :expressions [{:code "(+ 1 1)" :result 2}]
+                                       :duration-ms 0
+                                       :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
       (let [souls (raw-query s {:select [:kind :state_mode :name] :from :expression_soul
                                 :order-by [[:kind :asc]]})]
         (expect (= 2 (count souls)))
@@ -464,50 +458,50 @@
 (defdescribe system-var-versioning-test
   (it "REASONING gets a new version each iteration, all under same soul"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "Explain monads" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [{:code "(+ 1 1)" :result 2}]
-                                      :duration-ms 100
-                                      :vars [{:name "REASONING" :value "First I need to understand what a monad is" :code ";; SYSTEM var"}
-                                             {:name "QUERY" :value "Explain monads" :code ";; SYSTEM var"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [{:code "(str \"A monad is\")" :result "A monad is"}]
-                                      :duration-ms 200
-                                      :vars [{:name "REASONING" :value "Now I can explain: a monad wraps computation" :code ";; SYSTEM var"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions []
-                                      :duration-ms 50
-                                      :vars [{:name "REASONING" :value "Final check: the explanation covers functor, applicative, monad" :code ";; SYSTEM var"}
-                                             {:name "ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "Explain monads" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [{:code "(+ 1 1)" :result 2}]
+                                       :duration-ms 100
+                                       :vars [{:name "REASONING" :value "First I need to understand what a monad is" :code ";; SYSTEM var"}
+                                              {:name "QUERY" :value "Explain monads" :code ";; SYSTEM var"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [{:code "(str \"A monad is\")" :result "A monad is"}]
+                                       :duration-ms 200
+                                       :vars [{:name "REASONING" :value "Now I can explain: a monad wraps computation" :code ";; SYSTEM var"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions []
+                                       :duration-ms 50
+                                       :vars [{:name "REASONING" :value "Final check: the explanation covers functor, applicative, monad" :code ";; SYSTEM var"}
+                                              {:name "ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
       ;; Only 1 expression_soul for REASONING (reused across iterations)
       (expect (= 1 (raw-count s :expression_soul [:and [:= :kind "var"] [:= :name "REASONING"]])))
       ;; 3 versions of REASONING
-      (let [history (db/db-var-history s cid 'REASONING)]
+      (let [history (sdk/db-var-history s cid 'REASONING)]
         (expect (= 3 (count history)))
         (expect (= [0 1 2] (mapv :version history)))
         (expect (= "First I need to understand what a monad is" (:value (nth history 0))))
         (expect (= "Now I can explain: a monad wraps computation" (:value (nth history 1))))
         (expect (= "Final check: the explanation covers functor, applicative, monad" (:value (nth history 2)))))
       ;; QUERY has only 1 version (set once on first iteration)
-      (let [qh (db/db-var-history s cid 'QUERY)]
+      (let [qh (sdk/db-var-history s cid 'QUERY)]
         (expect (= 1 (count qh)))
         (expect (= "Explain monads" (:value (first qh)))))
       ;; ANSWER has only 1 version (set on final iteration)
-      (let [ah (db/db-var-history s cid 'ANSWER)]
+      (let [ah (sdk/db-var-history s cid 'ANSWER)]
         (expect (= 1 (count ah)))
         (expect (= "A monad is a design pattern..." (:value (first ah)))))))
 
   (it "latest var registry returns max version for each system var"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "test" :status :running})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "QUERY" :value "test" :code ";; SYSTEM"}
-                                             {:name "REASONING" :value "step 1" :code ";; SYSTEM"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
-                                             {:name "ANSWER" :value "42" :code ";; SYSTEM"}]})
-          reg (db/db-latest-var-registry s cid)]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "test" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "QUERY" :value "test" :code ";; SYSTEM"}
+                                              {:name "REASONING" :value "step 1" :code ";; SYSTEM"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
+                                              {:name "ANSWER" :value "42" :code ";; SYSTEM"}]})
+          reg (sdk/db-latest-var-registry s cid)]
       (expect (= "test" (:value (get reg 'QUERY))))
       (expect (= 0 (:version (get reg 'QUERY))))
       (expect (= "step 3" (:value (get reg 'REASONING))))
@@ -517,21 +511,21 @@
 
   (it "user vars and system vars coexist, each with independent version chains"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "compute" :status :running})
-          _   (db/store-iteration! s {:query-id qid
-                                      :expressions [{:code "(def data [1 2 3])" :result [1 2 3]}]
-                                      :duration-ms 10
-                                      :vars [{:name "data" :value [1 2 3] :code "(def data [1 2 3])"}
-                                             {:name "QUERY" :value "compute" :code ";; SYSTEM"}
-                                             {:name "REASONING" :value "I need to sum the data" :code ";; SYSTEM"}]})
-          _   (db/store-iteration! s {:query-id qid
-                                      :expressions [{:code "(def result (reduce + data))" :result 6}]
-                                      :duration-ms 5
-                                      :vars [{:name "result" :value 6 :code "(def result (reduce + data))"}
-                                             {:name "REASONING" :value "Sum is 6, done" :code ";; SYSTEM"}
-                                             {:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
-          reg (db/db-latest-var-registry s cid)]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "compute" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid
+                                       :expressions [{:code "(def data [1 2 3])" :result [1 2 3]}]
+                                       :duration-ms 10
+                                       :vars [{:name "data" :value [1 2 3] :code "(def data [1 2 3])"}
+                                              {:name "QUERY" :value "compute" :code ";; SYSTEM"}
+                                              {:name "REASONING" :value "I need to sum the data" :code ";; SYSTEM"}]})
+          _   (sdk/store-iteration! s {:query-id qid
+                                       :expressions [{:code "(def result (reduce + data))" :result 6}]
+                                       :duration-ms 5
+                                       :vars [{:name "result" :value 6 :code "(def result (reduce + data))"}
+                                              {:name "REASONING" :value "Sum is 6, done" :code ";; SYSTEM"}
+                                              {:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
+          reg (sdk/db-latest-var-registry s cid)]
       ;; 5 distinct var souls
       (expect (= 5 (count reg)))
       ;; User vars
@@ -547,20 +541,20 @@
 
   (it "system vars version across multiple queries in same conversation"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
+          cid (sdk/store-conversation! s {:channel :vis})
           ;; Turn 1
-          q1  (db/store-query! s {:parent-conversation-id cid :query "What is 2+2?" :status :done})
-          _   (db/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
-                                      :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM"}
-                                             {:name "REASONING" :value "Simple math" :code ";; SYSTEM"}
-                                             {:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
+          q1  (sdk/store-query! s {:parent-conversation-id cid :query "What is 2+2?" :status :done})
+          _   (sdk/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
+                                       :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM"}
+                                              {:name "REASONING" :value "Simple math" :code ";; SYSTEM"}
+                                              {:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
           ;; Turn 2
-          q2  (db/store-query! s {:parent-conversation-id cid :query "And 3+3?" :status :done})
-          _   (db/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
-                                      :vars [{:name "QUERY" :value "And 3+3?" :code ";; SYSTEM"}
-                                             {:name "REASONING" :value "Another simple one" :code ";; SYSTEM"}
-                                             {:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
-          reg (db/db-latest-var-registry s cid)]
+          q2  (sdk/store-query! s {:parent-conversation-id cid :query "And 3+3?" :status :done})
+          _   (sdk/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
+                                       :vars [{:name "QUERY" :value "And 3+3?" :code ";; SYSTEM"}
+                                              {:name "REASONING" :value "Another simple one" :code ";; SYSTEM"}
+                                              {:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
+          reg (sdk/db-latest-var-registry s cid)]
       ;; Each system var should have version 1 (v0 from turn 1, v1 from turn 2)
       (expect (= "And 3+3?" (:value (get reg 'QUERY))))
       (expect (= 1 (:version (get reg 'QUERY))))
@@ -569,7 +563,7 @@
       (expect (= "6" (:value (get reg 'ANSWER))))
       (expect (= 1 (:version (get reg 'ANSWER))))
       ;; Full history for ANSWER shows both turns
-      (let [h (db/db-var-history s cid 'ANSWER)]
+      (let [h (sdk/db-var-history s cid 'ANSWER)]
         (expect (= 2 (count h)))
         (expect (= ["4" "6"] (mapv :value h)))))))
 
@@ -580,15 +574,15 @@
 (defdescribe answer-lifecycle-test
   (it "query_state metadata stores answer on update"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "2+2?" :status :running})]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "2+2?" :status :running})]
       ;; Before update — no answer in metadata
-      (let [q (first (db/db-list-conversation-queries s cid))]
+      (let [q (first (sdk/db-list-conversation-queries s cid))]
         (expect (= :running (:status q)))
         (expect (nil? (:answer q))))
       ;; After update — answer present
-      (db/update-query! s qid {:answer "4" :status :success :iterations 1 :duration-ms 500})
-      (let [q   (first (db/db-list-conversation-queries s cid))
+      (sdk/update-query! s qid {:answer "4" :status :success :iterations 1 :duration-ms 500})
+      (let [q   (first (sdk/db-list-conversation-queries s cid))
             raw (first (raw-query s {:select [:metadata] :from :query_state}))]
         (expect (= :done (:status q)))
         (expect (= "4" (:answer q)))
@@ -597,31 +591,31 @@
 
   (it "ANSWER var tracks across turns"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
+          cid (sdk/store-conversation! s {:channel :vis})
           ;; Turn 1: answer is 4
-          q1  (db/store-query! s {:parent-conversation-id cid :query "2+2?" :status :done})
-          _   (db/store-iteration! s {:query-id q1 :expressions [{:code "(+ 2 2)" :result 4}]
-                                      :duration-ms 100 :answer "4"
-                                      :vars [{:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
-          _   (db/update-query! s q1 {:answer "4" :status :success :iterations 1})
+          q1  (sdk/store-query! s {:parent-conversation-id cid :query "2+2?" :status :done})
+          _   (sdk/store-iteration! s {:query-id q1 :expressions [{:code "(+ 2 2)" :result 4}]
+                                       :duration-ms 100 :answer "4"
+                                       :vars [{:name "ANSWER" :value "4" :code ";; SYSTEM"}]})
+          _   (sdk/update-query! s q1 {:answer "4" :status :success :iterations 1})
           ;; Turn 2: answer changes to 6
-          q2  (db/store-query! s {:parent-conversation-id cid :query "3+3?" :status :done})
-          _   (db/store-iteration! s {:query-id q2 :expressions [{:code "(+ 3 3)" :result 6}]
-                                      :duration-ms 80 :answer "6"
-                                      :vars [{:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
-          _   (db/update-query! s q2 {:answer "6" :status :success :iterations 1})
+          q2  (sdk/store-query! s {:parent-conversation-id cid :query "3+3?" :status :done})
+          _   (sdk/store-iteration! s {:query-id q2 :expressions [{:code "(+ 3 3)" :result 6}]
+                                       :duration-ms 80 :answer "6"
+                                       :vars [{:name "ANSWER" :value "6" :code ";; SYSTEM"}]})
+          _   (sdk/update-query! s q2 {:answer "6" :status :success :iterations 1})
           ;; Turn 3: answer changes to 10
-          q3  (db/store-query! s {:parent-conversation-id cid :query "5+5?" :status :done})
-          _   (db/store-iteration! s {:query-id q3 :expressions [{:code "(+ 5 5)" :result 10}]
-                                      :duration-ms 60 :answer "10"
-                                      :vars [{:name "ANSWER" :value "10" :code ";; SYSTEM"}]})
-          _   (db/update-query! s q3 {:answer "10" :status :success :iterations 1})]
+          q3  (sdk/store-query! s {:parent-conversation-id cid :query "5+5?" :status :done})
+          _   (sdk/store-iteration! s {:query-id q3 :expressions [{:code "(+ 5 5)" :result 10}]
+                                       :duration-ms 60 :answer "10"
+                                       :vars [{:name "ANSWER" :value "10" :code ";; SYSTEM"}]})
+          _   (sdk/update-query! s q3 {:answer "10" :status :success :iterations 1})]
       ;; Latest registry shows final answer
-      (let [reg (db/db-latest-var-registry s cid)]
+      (let [reg (sdk/db-latest-var-registry s cid)]
         (expect (= "10" (:value (get reg 'ANSWER))))
         (expect (= 2 (:version (get reg 'ANSWER)))))
       ;; Full history shows all 3 answers in order
-      (let [h (db/db-var-history s cid 'ANSWER)]
+      (let [h (sdk/db-var-history s cid 'ANSWER)]
         (expect (= 3 (count h)))
         (expect (= ["4" "6" "10"] (mapv :value h)))
         (expect (= [0 1 2] (mapv :version h))))
@@ -642,13 +636,13 @@
 (defdescribe restore-test
   (it "restores vars in topological order — no dependencies"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "x" :value 42 :code "(def x 42)"}
-                                             {:name "y" :value "hello" :code "(def y \"hello\")"}
-                                             {:name "z" :value [1 2 3] :code "(def z [1 2 3])"}]})
-          restored (db/db-restore-expressions s cid)]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "x" :value 42 :code "(def x 42)"}
+                                              {:name "y" :value "hello" :code "(def y \"hello\")"}
+                                              {:name "z" :value [1 2 3] :code "(def z [1 2 3])"}]})
+          restored (sdk/db-restore-expressions s cid)]
       (expect (= 3 (count restored)))
       (expect (= #{"x" "y" "z"} (set (map :name restored))))
       ;; All have data values
@@ -660,12 +654,12 @@
 
   (it "restores fn vars with {:vis/ref :expr}"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "double-it" :value (fn [x] (* x 2))
-                                              :code "(defn double-it [x] (* x 2))"}]})
-          restored (db/db-restore-expressions s cid)
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "double-it" :value (fn [x] (* x 2))
+                                               :code "(defn double-it [x] (* x 2))"}]})
+          restored (sdk/db-restore-expressions s cid)
           entry    (first restored)]
       (expect (= "double-it" (:name entry)))
       (expect (= {:vis/ref :expr} (:result entry)))
@@ -673,33 +667,33 @@
 
   (it "linear dependency chain A → B → C restored in correct order"
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Iteration 1: define base-rate
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "base-rate" :value 0.05 :code "(def base-rate 0.05)"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "base-rate" :value 0.05 :code "(def base-rate 0.05)"}]})
           ;; Iteration 2: define calc-interest (depends on base-rate)
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "calc-interest" :value (fn [p] p)
-                                                 :code "(defn calc-interest [principal] (* principal base-rate))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "calc-interest" :value (fn [p] p)
+                                                  :code "(defn calc-interest [principal] (* principal base-rate))"}]})
           ;; Iteration 3: define monthly-payment (depends on calc-interest)
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "monthly-payment" :value (fn [p] p)
-                                                 :code "(defn monthly-payment [principal] (/ (calc-interest principal) 12))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "monthly-payment" :value (fn [p] p)
+                                                  :code "(defn monthly-payment [principal] (/ (calc-interest principal) 12))"}]})
           ;; Now wire the dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul
                                  :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; base-rate → calc-interest
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "calc-interest")
-                               :upstream-soul-id   (soul-by "base-rate")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "calc-interest")
+                                :upstream-soul-id   (soul-by "base-rate")})
       ;; calc-interest → monthly-payment
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "monthly-payment")
-                               :upstream-soul-id   (soul-by "calc-interest")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "monthly-payment")
+                                :upstream-soul-id   (soul-by "calc-interest")})
+      (let [restored (sdk/db-restore-expressions s cid)
             names    (mapv :name restored)]
         (expect (= 3 (count restored)))
         ;; base-rate MUST come before calc-interest, calc-interest before monthly-payment
@@ -716,31 +710,31 @@
 
   (it "diamond dependency: D depends on B and C, both depend on A"
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "config" :value {:rate 0.1} :code "(def config {:rate 0.1})"}
-                                                {:name "tax-fn" :value (fn [x] x) :code "(defn tax-fn [amount] (* amount (:rate config)))"}
-                                                {:name "fee-fn" :value (fn [x] x) :code "(defn fee-fn [amount] (+ 10 (* amount (:rate config))))"}
-                                                {:name "total-fn" :value (fn [x] x) :code "(defn total-fn [amount] (+ (tax-fn amount) (fee-fn amount)))"}]})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "config" :value {:rate 0.1} :code "(def config {:rate 0.1})"}
+                                                 {:name "tax-fn" :value (fn [x] x) :code "(defn tax-fn [amount] (* amount (:rate config)))"}
+                                                 {:name "fee-fn" :value (fn [x] x) :code "(defn fee-fn [amount] (+ 10 (* amount (:rate config))))"}
+                                                 {:name "total-fn" :value (fn [x] x) :code "(defn total-fn [amount] (+ (tax-fn amount) (fee-fn amount)))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; config → tax-fn, config → fee-fn
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "tax-fn")
-                               :upstream-soul-id   (soul-by "config")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "fee-fn")
-                               :upstream-soul-id   (soul-by "config")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "tax-fn")
+                                :upstream-soul-id   (soul-by "config")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "fee-fn")
+                                :upstream-soul-id   (soul-by "config")})
       ;; tax-fn → total-fn, fee-fn → total-fn
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "total-fn")
-                               :upstream-soul-id   (soul-by "tax-fn")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "total-fn")
-                               :upstream-soul-id   (soul-by "fee-fn")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "total-fn")
+                                :upstream-soul-id   (soul-by "tax-fn")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "total-fn")
+                                :upstream-soul-id   (soul-by "fee-fn")})
+      (let [restored (sdk/db-restore-expressions s cid)
             names    (mapv :name restored)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 4 (count restored)))
@@ -760,21 +754,21 @@
 
   (it "deep chain: 5 levels deep, each depending on previous"
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           var-names ["level-0" "level-1" "level-2" "level-3" "level-4"]
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars (mapv (fn [n] {:name n :value (fn [x] x)
-                                                              :code (str "(defn " n " [x] x)")}) var-names)})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars (mapv (fn [n] {:name n :value (fn [x] x)
+                                                               :code (str "(defn " n " [x] x)")}) var-names)})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; Chain: level-0 → level-1 → level-2 → level-3 → level-4
       (doseq [i (range 4)]
-        (db/store-dependency! s {:conversation-state-id state-id
-                                 :downstream-soul-id (soul-by (var-names (inc i)))
-                                 :upstream-soul-id   (soul-by (var-names i))}))
-      (let [restored (db/db-restore-expressions s cid)
+        (sdk/store-dependency! s {:conversation-state-id state-id
+                                  :downstream-soul-id (soul-by (var-names (inc i)))
+                                  :upstream-soul-id   (soul-by (var-names i))}))
+      (let [restored (sdk/db-restore-expressions s cid)
             names    (mapv :name restored)]
         (expect (= 5 (count restored)))
         ;; Strict order: level-0, level-1, level-2, level-3, level-4
@@ -782,36 +776,36 @@
 
   (it "mixed data + fn vars with system vars, all restored correctly"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "analyze data" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "QUERY" :value "analyze data" :code ";; SYSTEM"}
-                                             {:name "REASONING" :value "step 1" :code ";; SYSTEM"}
-                                             {:name "dataset" :value [{:x 1 :y 2} {:x 3 :y 4}]
-                                              :code "(def dataset [{:x 1 :y 2} {:x 3 :y 4}])"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}
-                                             {:name "summarize" :value (fn [ds] ds)
-                                              :code "(defn summarize [ds] (map :x ds))"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
-                                             {:name "ANSWER" :value "[1 3]" :code ";; SYSTEM"}
-                                             {:name "result" :value [1 3]
-                                              :code "(def result (summarize dataset))"}]})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "analyze data" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "QUERY" :value "analyze data" :code ";; SYSTEM"}
+                                              {:name "REASONING" :value "step 1" :code ";; SYSTEM"}
+                                              {:name "dataset" :value [{:x 1 :y 2} {:x 3 :y 4}]
+                                               :code "(def dataset [{:x 1 :y 2} {:x 3 :y 4}])"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "REASONING" :value "step 2" :code ";; SYSTEM"}
+                                              {:name "summarize" :value (fn [ds] ds)
+                                               :code "(defn summarize [ds] (map :x ds))"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "REASONING" :value "step 3" :code ";; SYSTEM"}
+                                              {:name "ANSWER" :value "[1 3]" :code ";; SYSTEM"}
+                                              {:name "result" :value [1 3]
+                                               :code "(def result (summarize dataset))"}]})
           ;; Wire: dataset → summarize (it reads dataset), dataset + summarize → result
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "summarize")
-                               :upstream-soul-id   (soul-by "dataset")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "result")
-                               :upstream-soul-id   (soul-by "dataset")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "result")
-                               :upstream-soul-id   (soul-by "summarize")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "summarize")
+                                :upstream-soul-id   (soul-by "dataset")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "result")
+                                :upstream-soul-id   (soul-by "dataset")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "result")
+                                :upstream-soul-id   (soul-by "summarize")})
+      (let [restored (sdk/db-restore-expressions s cid)
             names    (mapv :name restored)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)
             by-name  (into {} (map (fn [e] [(:name e) e])) restored)]
@@ -842,28 +836,28 @@
     ;; (def add-10 (make-adder 10))
     ;; (def result (add-10 5))  => 15
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
-                                                 :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "add-10" :value (fn [x] (+ x 10))
-                                                 :code "(def add-10 (make-adder 10))"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "result" :value 15
-                                                 :code "(def result (add-10 5))"}]})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
+                                                  :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "add-10" :value (fn [x] (+ x 10))
+                                                  :code "(def add-10 (make-adder 10))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "result" :value 15
+                                                  :code "(def result (add-10 5))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; make-adder -> add-10 -> result
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "add-10")
-                               :upstream-soul-id   (soul-by "make-adder")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "result")
-                               :upstream-soul-id   (soul-by "add-10")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "add-10")
+                                :upstream-soul-id   (soul-by "make-adder")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "result")
+                                :upstream-soul-id   (soul-by "add-10")})
+      (let [restored (sdk/db-restore-expressions s cid)
             by-name  (into {} (map (fn [e] [(:name e) e])) restored)
             names    (mapv :name restored)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
@@ -884,34 +878,34 @@
     ;; (def scale (make-scaler))
     ;; (def scaled-data (mapv scale [1 2 3 4 5]))
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "config" :value {:multiplier 3}
-                                                 :code "(def config {:multiplier 3})"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "make-scaler" :value (fn [] (fn [x] (* x 3)))
-                                                 :code "(defn make-scaler [] (let [m (:multiplier config)] (fn [x] (* x m))))"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "scale" :value (fn [x] (* x 3))
-                                                 :code "(def scale (make-scaler))"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "scaled-data" :value [3 6 9 12 15]
-                                                 :code "(def scaled-data (mapv scale [1 2 3 4 5]))"}]})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "config" :value {:multiplier 3}
+                                                  :code "(def config {:multiplier 3})"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "make-scaler" :value (fn [] (fn [x] (* x 3)))
+                                                  :code "(defn make-scaler [] (let [m (:multiplier config)] (fn [x] (* x m))))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "scale" :value (fn [x] (* x 3))
+                                                  :code "(def scale (make-scaler))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "scaled-data" :value [3 6 9 12 15]
+                                                  :code "(def scaled-data (mapv scale [1 2 3 4 5]))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; config -> make-scaler -> scale -> scaled-data
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "make-scaler")
-                               :upstream-soul-id   (soul-by "config")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "scale")
-                               :upstream-soul-id   (soul-by "make-scaler")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "scaled-data")
-                               :upstream-soul-id   (soul-by "scale")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "make-scaler")
+                                :upstream-soul-id   (soul-by "config")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "scale")
+                                :upstream-soul-id   (soul-by "make-scaler")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "scaled-data")
+                                :upstream-soul-id   (soul-by "scale")})
+      (let [restored (sdk/db-restore-expressions s cid)
             by-name  (into {} (map (fn [e] [(:name e) e])) restored)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 4 (count restored)))
@@ -932,32 +926,32 @@
     ;; Iter 4: (def answer (compute 5)) -- should use new base
     ;; At restore time, base=20 (latest version), compute has :vis/ref :expr
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "base" :value 10 :code "(def base 10)"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "compute" :value (fn [x] (+ x 10))
-                                                 :code "(defn compute [x] (+ x base))"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "base" :value 20 :code "(def base 20)"}]})
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars [{:name "answer" :value 25
-                                                 :code "(def answer (compute 5))"}]})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "base" :value 10 :code "(def base 10)"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "compute" :value (fn [x] (+ x 10))
+                                                  :code "(defn compute [x] (+ x base))"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "base" :value 20 :code "(def base 20)"}]})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars [{:name "answer" :value 25
+                                                  :code "(def answer (compute 5))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; base -> compute, compute -> answer, base -> answer (transitive)
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "compute")
-                               :upstream-soul-id   (soul-by "base")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "answer")
-                               :upstream-soul-id   (soul-by "compute")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "answer")
-                               :upstream-soul-id   (soul-by "base")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "compute")
+                                :upstream-soul-id   (soul-by "base")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "answer")
+                                :upstream-soul-id   (soul-by "compute")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "answer")
+                                :upstream-soul-id   (soul-by "base")})
+      (let [restored (sdk/db-restore-expressions s cid)
             by-name  (into {} (map (fn [e] [(:name e) e])) restored)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 3 (count restored)))
@@ -975,23 +969,23 @@
 
   (it "wide fan-out: one config feeds 5 independent fns"
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
-          qid    (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          cid    (sdk/store-conversation! s {:channel :vis})
+          qid    (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           fn-names ["fn-a" "fn-b" "fn-c" "fn-d" "fn-e"]
-          _      (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                         :vars (into [{:name "shared-cfg" :value {:k 1}
-                                                       :code "(def shared-cfg {:k 1})"}]
-                                                 (mapv (fn [n] {:name n :value (fn [x] x)
-                                                                :code (str "(defn " n " [x] (+ x (:k shared-cfg)))")}) fn-names))})
+          _      (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                          :vars (into [{:name "shared-cfg" :value {:k 1}
+                                                        :code "(def shared-cfg {:k 1})"}]
+                                                  (mapv (fn [n] {:name n :value (fn [x] x)
+                                                                 :code (str "(defn " n " [x] (+ x (:k shared-cfg)))")}) fn-names))})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; shared-cfg -> each fn
       (doseq [n fn-names]
-        (db/store-dependency! s {:conversation-state-id state-id
-                                 :downstream-soul-id (soul-by n)
-                                 :upstream-soul-id   (soul-by "shared-cfg")}))
-      (let [restored (db/db-restore-expressions s cid)
+        (sdk/store-dependency! s {:conversation-state-id state-id
+                                  :downstream-soul-id (soul-by n)
+                                  :upstream-soul-id   (soul-by "shared-cfg")}))
+      (let [restored (sdk/db-restore-expressions s cid)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 6 (count restored)))
         ;; shared-cfg must be first (all fns depend on it)
@@ -1002,34 +996,34 @@
 
   (it "cross-query dependency: var from turn 1 used by fn in turn 2"
     (let [s      (store)
-          cid    (db/store-conversation! s {:channel :vis})
+          cid    (sdk/store-conversation! s {:channel :vis})
           ;; Turn 1: define data
-          q1     (db/store-query! s {:parent-conversation-id cid :query "load data" :status :done})
-          _      (db/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
-                                         :vars [{:name "raw-data" :value [10 20 30]
-                                                 :code "(def raw-data [10 20 30])"}]})
+          q1     (sdk/store-query! s {:parent-conversation-id cid :query "load data" :status :done})
+          _      (sdk/store-iteration! s {:query-id q1 :expressions [] :duration-ms 0
+                                          :vars [{:name "raw-data" :value [10 20 30]
+                                                  :code "(def raw-data [10 20 30])"}]})
           ;; Turn 2: define fn + compute result using data from turn 1
-          q2     (db/store-query! s {:parent-conversation-id cid :query "process it" :status :done})
-          _      (db/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
-                                         :vars [{:name "avg-fn" :value (fn [xs] (/ (reduce + xs) (count xs)))
-                                                 :code "(defn avg-fn [xs] (/ (reduce + xs) (count xs)))"}]})
-          _      (db/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
-                                         :vars [{:name "average" :value 20
-                                                 :code "(def average (avg-fn raw-data))"}]})
+          q2     (sdk/store-query! s {:parent-conversation-id cid :query "process it" :status :done})
+          _      (sdk/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
+                                          :vars [{:name "avg-fn" :value (fn [xs] (/ (reduce + xs) (count xs)))
+                                                  :code "(defn avg-fn [xs] (/ (reduce + xs) (count xs)))"}]})
+          _      (sdk/store-iteration! s {:query-id q2 :expressions [] :duration-ms 0
+                                          :vars [{:name "average" :value 20
+                                                  :code "(def average (avg-fn raw-data))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; raw-data -> avg-fn (reads it), raw-data -> average, avg-fn -> average
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "avg-fn")
-                               :upstream-soul-id   (soul-by "raw-data")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "average")
-                               :upstream-soul-id   (soul-by "raw-data")})
-      (db/store-dependency! s {:conversation-state-id state-id
-                               :downstream-soul-id (soul-by "average")
-                               :upstream-soul-id   (soul-by "avg-fn")})
-      (let [restored (db/db-restore-expressions s cid)
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "avg-fn")
+                                :upstream-soul-id   (soul-by "raw-data")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "average")
+                                :upstream-soul-id   (soul-by "raw-data")})
+      (sdk/store-dependency! s {:conversation-state-id state-id
+                                :downstream-soul-id (soul-by "average")
+                                :upstream-soul-id   (soul-by "avg-fn")})
+      (let [restored (sdk/db-restore-expressions s cid)
             by-name  (into {} (map (fn [e] [(:name e) e])) restored)
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 3 (count restored)))
@@ -1050,75 +1044,75 @@
 (defdescribe lazy-seq-safety-test
   (it "infinite range → {:vis/ref :expr} — never realized"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       ;; Must not hang!
       (expect (= {:vis/ref :expr} (:value v)))
       (expect (= "(def nums (range))" (:code v)))))
 
   (it "infinite repeat → {:vis/ref :expr}"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))))
 
   (it "iterate → {:vis/ref :expr}"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "nats" :value (iterate inc 0)
-                                              :code "(def nats (iterate inc 0))"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "nats" :value (iterate inc 0)
+                                               :code "(def nats (iterate inc 0))"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))))
 
   (it "small lazy seq (map inc [1 2 3]) → {:vis/ref :expr} — lazy is lazy"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "small" :value (map inc [1 2 3])
-                                              :code "(def small (map inc [1 2 3]))"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "small" :value (map inc [1 2 3])
+                                               :code "(def small (map inc [1 2 3]))"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       ;; Even small lazy seqs are refs — they're computations, not data
       (expect (= {:vis/ref :expr} (:value v)))))
 
   (it "realized vector is stored as data"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "v" :value [1 2 3 4 5]
-                                              :code "(def v [1 2 3 4 5])"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "v" :value [1 2 3 4 5]
+                                               :code "(def v [1 2 3 4 5])"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       (expect (= [1 2 3 4 5] (:value v)))))
 
   (it "realized list is stored as data"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "l" :value '(1 2 3)
-                                              :code "(def l '(1 2 3))"}]})
-          v   (first (db/db-list-iteration-vars s iid))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "l" :value '(1 2 3)
+                                               :code "(def l '(1 2 3))"}]})
+          v   (first (sdk/db-list-iteration-vars s iid))]
       (expect (= '(1 2 3) (:value v)))))
 
   (it "lazy seq inside a map → map stored, lazy value becomes ref"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          iid (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "mixed" :value {:data [1 2 3]
-                                                                    :lazy (map inc [10 20])
-                                                                    :infinite (range)}
-                                              :code "(def mixed {...})"}]})
-          m   (:value (first (db/db-list-iteration-vars s iid)))]
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          iid (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "mixed" :value {:data [1 2 3]
+                                                                     :lazy (map inc [10 20])
+                                                                     :infinite (range)}
+                                               :code "(def mixed {...})"}]})
+          m   (:value (first (sdk/db-list-iteration-vars s iid)))]
       (expect (map? m))
       (expect (= [1 2 3] (:data m)))
       ;; Both lazy seqs → ref, regardless of size
@@ -1127,12 +1121,12 @@
 
   (it "lazy seq as expression result → ref"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :running})
-          _   (db/store-iteration! s {:query-id qid
-                                      :expressions [{:code "(range)" :result (range)}
-                                                    {:code "(vec (range 5))" :result [0 1 2 3 4]}]
-                                      :duration-ms 5})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :running})
+          _   (sdk/store-iteration! s {:query-id qid
+                                       :expressions [{:code "(range)" :result (range)}
+                                                     {:code "(vec (range 5))" :result [0 1 2 3 4]}]
+                                       :duration-ms 5})
           rows (raw-query s {:select [:est.result :est.expr]
                              :from [[:expression_state :est]]
                              :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
@@ -1149,21 +1143,21 @@
 (defdescribe restore-integration-test
   (it "data var: store, wipe, restore, read back"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Create SCI sandbox, def a var
-          {:keys [sci-ctx]} (sci-env/create-sci-context nil)
+          {:keys [sci-ctx]} (env/create-sci-context nil)
           _   (sci/eval-string+ sci-ctx "(def data [10 20 30])" {:ns (sci/find-ns sci-ctx 'sandbox)})
           ;; Store it
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "data" :value [10 20 30] :code "(def data [10 20 30])"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "data" :value [10 20 30] :code "(def data [10 20 30])"}]})
           ;; Wipe: fresh sandbox (simulates disconnect)
-          {:keys [sci-ctx]} (sci-env/create-sci-context nil)]
+          {:keys [sci-ctx]} (env/create-sci-context nil)]
       ;; Verify var is gone
       (expect (try (sci/eval-string+ sci-ctx "data" {:ns (sci/find-ns sci-ctx 'sandbox)}) false
                 (catch Exception _ true)))
       ;; Restore
-      (let [results (sci-env/restore-sandbox! sci-ctx s cid)]
+      (let [results (env/restore-sandbox! sci-ctx s cid)]
         (expect (= 1 (count results)))
         (expect (true? (:success? (first results))))
         (expect (= :data (:restored-via (first results)))))
@@ -1172,16 +1166,16 @@
 
   (it "function var: store, wipe, restore via eval, call it"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Store a fn (result will be {:vis/ref :expr})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "double-it" :value (fn [x] (* x 2))
-                                              :code "(defn double-it [x] (* x 2))"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "double-it" :value (fn [x] (* x 2))
+                                               :code "(defn double-it [x] (* x 2))"}]})
           ;; Fresh sandbox
-          {:keys [sci-ctx]} (sci-env/create-sci-context nil)]
+          {:keys [sci-ctx]} (env/create-sci-context nil)]
       ;; Restore
-      (let [results (sci-env/restore-sandbox! sci-ctx s cid)]
+      (let [results (env/restore-sandbox! sci-ctx s cid)]
         (expect (= 1 (count results)))
         (expect (= :eval (:restored-via (first results))))
         (expect (true? (:success? (first results)))))
@@ -1190,34 +1184,34 @@
 
   (it "dependency chain: data → fn → result, all restored in order"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
           ;; Store chain: rate → calc → answer
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "rate" :value 0.1 :code "(def rate 0.1)"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "calc" :value (fn [x] (* x 0.1))
-                                              :code "(defn calc [amount] (* amount rate))"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "answer" :value 100.0
-                                              :code "(def answer (calc 1000))"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "rate" :value 0.1 :code "(def rate 0.1)"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "calc" :value (fn [x] (* x 0.1))
+                                               :code "(defn calc [amount] (* amount rate))"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "answer" :value 100.0
+                                               :code "(def answer (calc 1000))"}]})
           ;; Wire dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)
-          _   (db/store-dependency! s {:conversation-state-id state-id
-                                       :downstream-soul-id (soul-by "calc")
-                                       :upstream-soul-id   (soul-by "rate")})
-          _   (db/store-dependency! s {:conversation-state-id state-id
-                                       :downstream-soul-id (soul-by "answer")
-                                       :upstream-soul-id   (soul-by "calc")})
-          _   (db/store-dependency! s {:conversation-state-id state-id
-                                       :downstream-soul-id (soul-by "answer")
-                                       :upstream-soul-id   (soul-by "rate")})
+          _   (sdk/store-dependency! s {:conversation-state-id state-id
+                                        :downstream-soul-id (soul-by "calc")
+                                        :upstream-soul-id   (soul-by "rate")})
+          _   (sdk/store-dependency! s {:conversation-state-id state-id
+                                        :downstream-soul-id (soul-by "answer")
+                                        :upstream-soul-id   (soul-by "calc")})
+          _   (sdk/store-dependency! s {:conversation-state-id state-id
+                                        :downstream-soul-id (soul-by "answer")
+                                        :upstream-soul-id   (soul-by "rate")})
           ;; Fresh sandbox
-          {:keys [sci-ctx]} (sci-env/create-sci-context nil)]
+          {:keys [sci-ctx]} (env/create-sci-context nil)]
       ;; Restore
-      (let [results (sci-env/restore-sandbox! sci-ctx s cid)
+      (let [results (env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
         ;; rate restored as data, calc as eval, answer as data
         (expect (= :data (:restored-via (by-name "rate"))))
@@ -1231,24 +1225,24 @@
 
   (it "higher-order fn chain: factory → instance → call"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
-                                              :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "add-5" :value (fn [x] (+ x 5))
-                                              :code "(def add-5 (make-adder 5))"}]})
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
+                                               :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "add-5" :value (fn [x] (+ x 5))
+                                               :code "(def add-5 (make-adder 5))"}]})
           ;; Wire: make-adder → add-5
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)
-          _   (db/store-dependency! s {:conversation-state-id state-id
-                                       :downstream-soul-id (soul-by "add-5")
-                                       :upstream-soul-id   (soul-by "make-adder")})
+          _   (sdk/store-dependency! s {:conversation-state-id state-id
+                                        :downstream-soul-id (soul-by "add-5")
+                                        :upstream-soul-id   (soul-by "make-adder")})
           ;; Fresh sandbox
-          {:keys [sci-ctx]} (sci-env/create-sci-context nil)]
-      (sci-env/restore-sandbox! sci-ctx s cid)
+          {:keys [sci-ctx]} (env/create-sci-context nil)]
+      (env/restore-sandbox! sci-ctx s cid)
       ;; make-adder works (it's a fn, restored via eval)
       (expect (= 15 (:val (sci/eval-string+ sci-ctx "((make-adder 10) 5)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
       ;; add-5 works (closure created by make-adder, restored via eval)
@@ -1256,14 +1250,14 @@
 
   (it "system vars are restored: QUERY, REASONING, ANSWER"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})
-          qid (db/store-query! s {:parent-conversation-id cid :query "x" :status :done})
-          _   (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                      :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM var"}
-                                             {:name "REASONING" :value "Simple math" :code ";; SYSTEM var"}
-                                             {:name "ANSWER" :value "4" :code ";; SYSTEM var"}]})
-          {:keys [sci-ctx]} (sci-env/create-sci-context nil)]
-      (let [results (sci-env/restore-sandbox! sci-ctx s cid)
+          cid (sdk/store-conversation! s {:channel :vis})
+          qid (sdk/store-query! s {:parent-conversation-id cid :query "x" :status :done})
+          _   (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                       :vars [{:name "QUERY" :value "What is 2+2?" :code ";; SYSTEM var"}
+                                              {:name "REASONING" :value "Simple math" :code ";; SYSTEM var"}
+                                              {:name "ANSWER" :value "4" :code ";; SYSTEM var"}]})
+          {:keys [sci-ctx]} (env/create-sci-context nil)]
+      (let [results (env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
         ;; SYSTEM vars with ;; SYSTEM var code are data-restored
         (expect (= :data (:restored-via (by-name "QUERY"))))
@@ -1280,9 +1274,9 @@
 (defdescribe log-test
   (it "inserts into log table with FK scope"
     (let [s   (store)
-          cid (db/store-conversation! s {:channel :vis})]
-      (db/log! s {:level :info :event "test.event" :data "{\"k\":1}"
-                  :conversation-soul-id cid})
+          cid (sdk/store-conversation! s {:channel :vis})]
+      (sdk/log! s {:level :info :event "test.event" :data "{\"k\":1}"
+                   :conversation-soul-id cid})
       (expect (= 1 (raw-count s :log)))
       (let [row (first (raw-query s {:select [:*] :from :log}))]
         (expect (= "info" (:level row)))
@@ -1326,20 +1320,20 @@
 
   (it "🔥 stale var evicted from live SCI sandbox, fresh var untouched, revision bumped"
     (let [s       (store)
-          cid     (db/store-conversation! s {:channel :vis})
+          cid     (sdk/store-conversation! s {:channel :vis})
           ;; Create 4 queries — only last 3 are "recent" (AUTO_FORGET_STALE_QUERIES=3)
-          old-qid (db/store-query! s {:parent-conversation-id cid :query "old" :status :done})
+          old-qid (sdk/store-query! s {:parent-conversation-id cid :query "old" :status :done})
           _       (Thread/sleep 5)
-          q2id    (db/store-query! s {:parent-conversation-id cid :query "q2" :status :done})
+          q2id    (sdk/store-query! s {:parent-conversation-id cid :query "q2" :status :done})
           _       (Thread/sleep 5)
-          q3id    (db/store-query! s {:parent-conversation-id cid :query "q3" :status :done})
+          q3id    (sdk/store-query! s {:parent-conversation-id cid :query "q3" :status :done})
           _       (Thread/sleep 5)
-          q4id    (db/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
+          q4id    (sdk/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
           ;; Persist vars: `stale` was defined in old query, `fresh` in q4
-          _       (db/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
-                                          :vars [{:name "stale" :value 1 :code "(def stale 1)"}]})
-          _       (db/store-iteration! s {:query-id q4id :expressions [] :duration-ms 0
-                                          :vars [{:name "fresh" :value 2 :code "(def fresh 2)"}]})
+          _       (sdk/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
+                                           :vars [{:name "stale" :value 1 :code "(def stale 1)"}]})
+          _       (sdk/store-iteration! s {:query-id q4id :expressions [] :duration-ms 0
+                                           :vars [{:name "fresh" :value 2 :code "(def fresh 2)"}]})
           ;; Build SCI sandbox with both vars (no docstrings)
           sci-ctx (make-sci-ctx [['stale 1] ['fresh 2]])
           via     (atom {:current-revision 0})
@@ -1348,7 +1342,7 @@
                    :sci-ctx          sci-ctx
                    :initial-ns-keys  #{}
                    :var-index-atom   via}]
-      (#'loop/auto-forget-stale-vars! rlm-env)
+      (#'lp/auto-forget-stale-vars! rlm-env)
       ;; `stale` should be gone, `fresh` should remain
       (expect (not (contains? (sandbox-syms sci-ctx) 'stale)))
       (expect (contains? (sandbox-syms sci-ctx) 'fresh))
@@ -1357,10 +1351,10 @@
 
   (it "😴 all vars recent → janitor naps, sandbox untouched, no revision bump"
     (let [s       (store)
-          cid     (db/store-conversation! s {:channel :vis})
-          qid     (db/store-query! s {:parent-conversation-id cid :query "q1" :status :done})
-          _       (db/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
-                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})
+          cid     (sdk/store-conversation! s {:channel :vis})
+          qid     (sdk/store-query! s {:parent-conversation-id cid :query "q1" :status :done})
+          _       (sdk/store-iteration! s {:query-id qid :expressions [] :duration-ms 0
+                                           :vars [{:name "x" :value 1 :code "(def x 1)"}]})
           sci-ctx (make-sci-ctx [['x 1]])
           via     (atom {:current-revision 0})
           rlm-env {:db-info          s
@@ -1368,23 +1362,23 @@
                    :sci-ctx          sci-ctx
                    :initial-ns-keys  #{}
                    :var-index-atom   via}]
-      (#'loop/auto-forget-stale-vars! rlm-env)
+      (#'lp/auto-forget-stale-vars! rlm-env)
       (expect (contains? (sandbox-syms sci-ctx) 'x))
       ;; No bump — nothing was forgotten
       (expect (= 0 (:current-revision @via)))))
 
   (it "📖 docstring = immortality shield — stale but documented vars survive the purge"
     (let [s       (store)
-          cid     (db/store-conversation! s {:channel :vis})
-          old-qid (db/store-query! s {:parent-conversation-id cid :query "old" :status :done})
+          cid     (sdk/store-conversation! s {:channel :vis})
+          old-qid (sdk/store-query! s {:parent-conversation-id cid :query "old" :status :done})
           _       (Thread/sleep 5)
-          _       (db/store-query! s {:parent-conversation-id cid :query "q2" :status :done})
+          _       (sdk/store-query! s {:parent-conversation-id cid :query "q2" :status :done})
           _       (Thread/sleep 5)
-          _       (db/store-query! s {:parent-conversation-id cid :query "q3" :status :done})
+          _       (sdk/store-query! s {:parent-conversation-id cid :query "q3" :status :done})
           _       (Thread/sleep 5)
-          _       (db/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
-          _       (db/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
-                                          :vars [{:name "keeper" :value 42 :code "(def keeper 42)"}]})
+          _       (sdk/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
+          _       (sdk/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
+                                           :vars [{:name "keeper" :value 42 :code "(def keeper 42)"}]})
           ;; `keeper` has a docstring in the live SCI sandbox
           sci-ctx (make-sci-ctx [['keeper 42 "I'm documented, keep me"]])
           via     (atom {:current-revision 0})
@@ -1393,7 +1387,7 @@
                    :sci-ctx          sci-ctx
                    :initial-ns-keys  #{}
                    :var-index-atom   via}]
-      (#'loop/auto-forget-stale-vars! rlm-env)
+      (#'lp/auto-forget-stale-vars! rlm-env)
       (expect (contains? (sandbox-syms sci-ctx) 'keeper))
       (expect (= 0 (:current-revision @via)))))
 
@@ -1401,22 +1395,22 @@
     (let [sci-ctx (make-sci-ctx [['x 1]])
           rlm-env {:db-info nil :conversation-id nil :sci-ctx sci-ctx
                    :initial-ns-keys #{} :var-index-atom (atom {:current-revision 0})}]
-      (#'loop/auto-forget-stale-vars! rlm-env)
+      (#'lp/auto-forget-stale-vars! rlm-env)
       ;; Nothing exploded, var still there
       (expect (contains? (sandbox-syms sci-ctx) 'x))))
 
   (it "🏰 REASONING and friends are fortress vars — stale or not, the janitor can't touch them"
     (let [s       (store)
-          cid     (db/store-conversation! s {:channel :vis})
-          old-qid (db/store-query! s {:parent-conversation-id cid :query "old" :status :done})
+          cid     (sdk/store-conversation! s {:channel :vis})
+          old-qid (sdk/store-query! s {:parent-conversation-id cid :query "old" :status :done})
           _       (Thread/sleep 5)
-          _       (db/store-query! s {:parent-conversation-id cid :query "q2" :status :done})
+          _       (sdk/store-query! s {:parent-conversation-id cid :query "q2" :status :done})
           _       (Thread/sleep 5)
-          _       (db/store-query! s {:parent-conversation-id cid :query "q3" :status :done})
+          _       (sdk/store-query! s {:parent-conversation-id cid :query "q3" :status :done})
           _       (Thread/sleep 5)
-          _       (db/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
-          _       (db/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
-                                          :vars [{:name "REASONING" :value "think" :code "(def REASONING \"think\")"}]})
+          _       (sdk/store-query! s {:parent-conversation-id cid :query "q4" :status :done})
+          _       (sdk/store-iteration! s {:query-id old-qid :expressions [] :duration-ms 0
+                                           :vars [{:name "REASONING" :value "think" :code "(def REASONING \"think\")"}]})
           sci-ctx (make-sci-ctx [['REASONING "think"]])
           via     (atom {:current-revision 0})
           rlm-env {:db-info          s
@@ -1424,7 +1418,7 @@
                    :sci-ctx          sci-ctx
                    :initial-ns-keys  #{}
                    :var-index-atom   via}]
-      (#'loop/auto-forget-stale-vars! rlm-env)
+      (#'lp/auto-forget-stale-vars! rlm-env)
       (expect (contains? (sandbox-syms sci-ctx) 'REASONING))
       (expect (= 0 (:current-revision @via))))))
 
@@ -1440,8 +1434,8 @@
 (defn- bootstrap-conversation+query!
   "Returns {:store … :conv-id … :query-id …}."
   [store]
-  (let [conv-id  (db/store-conversation! store {:channel :vis :title "test"})
-        query-id (db/store-query! store
+  (let [conv-id  (sdk/store-conversation! store {:channel :vis :title "test"})
+        query-id (sdk/store-query! store
                    {:parent-conversation-id conv-id
                     :query "test query"
                     :status :running})]
@@ -1451,7 +1445,7 @@
   "Store a synthetic iteration row with explicit plan/breadcrumb fields."
   [store query-id {:keys [plan-state breadcrumb plan-diff thinking expressions]
                    :or {expressions []}}]
-  (db/store-iteration! store
+  (sdk/store-iteration! store
     (cond-> {:query-id    query-id
              :expressions expressions
              :duration-ms 100
@@ -1478,7 +1472,7 @@
         {:plan-state plan
          :breadcrumb "i0  decomposed task; starting [1]"
          :plan-diff  {:added [1 2] :removed [] :status-changed [] :goal-changed? true}})
-      (let [iters (db/db-list-query-iterations store query-id)]
+      (let [iters (sdk/db-list-query-iterations store query-id)]
         (expect (= 1 (count iters)))
         (expect (= plan (:plan-state (first iters))))
         (expect (= "i0  decomposed task; starting [1]" (:breadcrumb (first iters))))
@@ -1487,7 +1481,7 @@
   (it "leaves columns nil when caller omits plan keys"
     (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))]
       (store-iteration! store query-id {:thinking "tactical step"})
-      (let [it (first (db/db-list-query-iterations store query-id))]
+      (let [it (first (sdk/db-list-query-iterations store query-id))]
         (expect (nil? (:plan-state it)))
         (expect (nil? (:breadcrumb it)))
         (expect (nil? (:plan-diff it)))))))
@@ -1506,18 +1500,18 @@
       (store-iteration! store query-id {:breadcrumb "i1 — no plan re-emit"})
       (store-iteration! store query-id {:plan-state plan-v2 :breadcrumb "i2"})
       (store-iteration! store query-id {:breadcrumb "i3 — no plan re-emit"})
-      (expect (= plan-v2 (iterate/load-effective-plan store query-id)))))
+      (expect (= plan-v2 (prompt/load-effective-plan store query-id)))))
 
   (it "returns nil when no iteration ever emitted a plan"
     (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))]
       (store-iteration! store query-id {:thinking "no plan yet"})
-      (expect (nil? (iterate/load-effective-plan store query-id)))))
+      (expect (nil? (prompt/load-effective-plan store query-id)))))
 
   (it "load-breadcrumb-chain returns oldest-first, capped"
     (let [{:keys [store query-id]} (bootstrap-conversation+query! (h/store))]
       (doseq [n (range 25)]
         (store-iteration! store query-id {:breadcrumb (str "i" n " breadcrumb")}))
-      (let [chain (iterate/load-breadcrumb-chain store query-id)]
+      (let [chain (prompt/load-breadcrumb-chain store query-id)]
         (expect (= 20 (count chain)))
         (expect (= "i5 breadcrumb" (:breadcrumb (first chain))))
         (expect (= "i24 breadcrumb" (:breadcrumb (last chain))))))))
@@ -1529,32 +1523,32 @@
 (defdescribe plan-diff-test
   (it "no diff for identical plans"
     (let [p {:goal "g" :items [{:id 1 :content "a" :status :pending}]}]
-      (expect (nil? (iterate/compute-plan-diff p p)))
-      (expect (zero? (iterate/plan-edit-distance nil)))))
+      (expect (nil? (spec/compute-plan-diff p p)))
+      (expect (zero? (spec/plan-edit-distance nil)))))
 
   (it "added items"
-    (let [d (iterate/compute-plan-diff
+    (let [d (spec/compute-plan-diff
               {:goal "g" :items [{:id 1 :content "a" :status :pending}]}
               {:goal "g" :items [{:id 1 :content "a" :status :pending}
                                  {:id 2 :content "b" :status :pending}]})]
       (expect (= [2] (:added d)))
-      (expect (= 1 (iterate/plan-edit-distance d)))))
+      (expect (= 1 (spec/plan-edit-distance d)))))
 
   (it "status change bumps distance by 1"
-    (let [d (iterate/compute-plan-diff
+    (let [d (spec/compute-plan-diff
               {:goal "g" :items [{:id 1 :content "a" :status :pending}]}
               {:goal "g" :items [{:id 1 :content "a" :status :in-progress}]})]
       (expect (= 1 (count (:status-changed d))))
       (expect (= :pending (-> d :status-changed first :from)))
       (expect (= :in-progress (-> d :status-changed first :to)))
-      (expect (= 1 (iterate/plan-edit-distance d)))))
+      (expect (= 1 (spec/plan-edit-distance d)))))
 
   (it "goal change is observable but does not count toward distance"
-    (let [d (iterate/compute-plan-diff
+    (let [d (spec/compute-plan-diff
               {:goal "g1" :items [{:id 1 :content "a" :status :pending}]}
               {:goal "g2" :items [{:id 1 :content "a" :status :pending}]})]
       (expect (true? (:goal-changed? d)))
-      (expect (= 0 (iterate/plan-edit-distance d))))))
+      (expect (= 0 (spec/plan-edit-distance d))))))
 
 ;; =============================================================================
 ;; Cross-field validation
@@ -1562,7 +1556,7 @@
 
 (defdescribe plan-validation-test
   (it "accepts a well-formed plan"
-    (expect (nil? (iterate/validate-plan-state
+    (expect (nil? (spec/validate-plan-state
                     {:goal "g"
                      :items [{:id 1 :content "a" :status :pending}
                              {:id 2 :content "b" :status :in-progress}
@@ -1570,13 +1564,13 @@
 
   (it "rejects >20 items"
     (let [items (mapv (fn [i] {:id i :content (str i) :status :pending}) (range 21))
-          err (iterate/validate-plan-state {:goal "g" :items items})]
+          err (spec/validate-plan-state {:goal "g" :items items})]
       (expect (= :vis/plan-too-large (:type err)))
       (expect (string? (:message err)))
       (expect (= 21 (-> err :data :item-count)))))
 
   (it "rejects two :in-progress items"
-    (let [err (iterate/validate-plan-state
+    (let [err (spec/validate-plan-state
                 {:goal "g"
                  :items [{:id 1 :content "a" :status :in-progress}
                          {:id 2 :content "b" :status :in-progress}]})]
@@ -1584,7 +1578,7 @@
       (expect (= [1 2] (-> err :data :in-progress-ids)))))
 
   (it "rejects non-monotonic ids"
-    (let [err (iterate/validate-plan-state
+    (let [err (spec/validate-plan-state
                 {:goal "g"
                  :items [{:id 2 :content "a" :status :pending}
                          {:id 1 :content "b" :status :pending}]})]
@@ -1592,7 +1586,7 @@
       (expect (= [2 1] (-> err :data :ids)))))
 
   (it "accepts string status values when they use canonical kebab-case"
-    (expect (nil? (iterate/validate-plan-state
+    (expect (nil? (spec/validate-plan-state
                     {:goal "g"
                      :items [{:id 1 :content "a" :status "in-progress"}]})))))
 
@@ -1604,7 +1598,7 @@
 
 (defdescribe format-loop-nudge-test
   (it "renders the canonical incomplete-plan-on-answer message"
-    (let [out (iterate/format-loop-nudge
+    (let [out (prompt/format-loop-nudge
                 {:type :vis/incomplete-plan-on-answer
                  :data {:open-item-ids [3 4]}})]
       (expect (re-find #"^\[system_nudge\] Cannot finalize" out))
@@ -1612,25 +1606,25 @@
       (expect (re-find #":abandon-reason" out))))
 
   (it "prefers an explicit :message over the canonical body"
-    (let [out (iterate/format-loop-nudge
+    (let [out (prompt/format-loop-nudge
                 {:type :vis/plan-too-large
                  :message "Custom override message."
                  :data {}})]
       (expect (= "[system_nudge] Custom override message." out))))
 
   (it "renders the low-confidence gate nudge"
-    (let [out (iterate/format-loop-nudge {:type :vis/low-confidence-on-answer
-                                          :data {:confidence :low}})]
+    (let [out (prompt/format-loop-nudge {:type :vis/low-confidence-on-answer
+                                         :data {:confidence :low}})]
       (expect (re-find #"\[system_nudge\]" out))
       (expect (re-find #":confidence :low" out))
       (expect (re-find #":abandon-reason" out))))
 
   (it "falls through to a generic line for an unknown :type"
-    (let [out (iterate/format-loop-nudge {:type :vis/something-else})]
+    (let [out (prompt/format-loop-nudge {:type :vis/something-else})]
       (expect (= "[system_nudge] Loop violation: :vis/something-else" out))))
 
   (it "returns nil for nil input so callers can keep over a sparse vec"
-    (expect (nil? (iterate/format-loop-nudge nil)))))
+    (expect (nil? (prompt/format-loop-nudge nil)))))
 
 ;; =============================================================================
 ;; Projection — build-iteration-context layered output
@@ -1643,11 +1637,11 @@
 (defdescribe system-var-registry-test
   (it "SYSTEM_VAR_NAMES contains exactly QUERY, ANSWER, REASONING"
     (expect (= '#{QUERY ANSWER REASONING}
-              com.blockether.vis-runtime.loop.runtime.conversation.environment.core/SYSTEM_VAR_NAMES)))
+              @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
   (it "system-var-sym? is true for registered names, false otherwise"
-    (let [system-var-sym? (resolve
-                            'com.blockether.vis-runtime.loop.runtime.conversation.environment.core/system-var-sym?)]
+    (let [system-var-sym? (requiring-resolve
+                            'com.blockether.vis.core/system-var-sym?)]
       (expect (true?  (system-var-sym? 'QUERY)))
       (expect (true?  (system-var-sym? 'ANSWER)))
       (expect (true?  (system-var-sym? 'REASONING)))
@@ -1656,7 +1650,7 @@
 
 (defdescribe projection-test
   (it "renders <plan> when plan-state is provided"
-    (let [out (iterate/build-iteration-context {}
+    (let [out (prompt/build-iteration-context {}
                 {:iteration 1
                  :active-extensions []
                  :plan-state {:goal "ship phase 1"
@@ -1668,7 +1662,7 @@
       (expect (re-find #"\[2\] in-progress" out))))
 
   (it "renders <breadcrumbs> with iN prefix"
-    (let [out (iterate/build-iteration-context {}
+    (let [out (prompt/build-iteration-context {}
                 {:iteration 2
                  :active-extensions []
                  :breadcrumbs [{:position 0 :breadcrumb "decomposed"}
@@ -1679,7 +1673,7 @@
 
   (it "renders <recent_thought> capped at 4000c"
     (let [long-thought (apply str (repeat 5000 "x"))
-          out (iterate/build-iteration-context {}
+          out (prompt/build-iteration-context {}
                 {:iteration 1
                  :active-extensions []
                  :recent-thought long-thought})]
@@ -1688,7 +1682,7 @@
       (expect (= 4000 (count (re-find #"x{1,}" out))))))
 
   (it "renders <system_state> with QUERY and PRIOR_TURN digest"
-    (let [out (iterate/build-iteration-context {}
+    (let [out (prompt/build-iteration-context {}
                 {:iteration 0
                  :active-extensions []
                  :system-vars {:QUERY "do the thing"}
@@ -1700,7 +1694,7 @@
       (expect (re-find #":outcome :complete" out))))
 
   (it "renders <recent> with addressable iN.K ids"
-    (let [out (iterate/build-iteration-context {}
+    (let [out (prompt/build-iteration-context {}
                 {:iteration 4
                  :active-extensions []
                  :expressions-by-iteration [[3 [{:code "(+ 1 2)" :result 3 :execution-time-ms 1}
@@ -1713,7 +1707,7 @@
     ;; The model has no iteration counter / budget / remaining
     ;; pointer; <system_state> carries QUERY / ANSWER / REASONING /
     ;; PRIOR_TURN only. Guard against any future regression.
-    (let [out (iterate/build-iteration-context {}
+    (let [out (prompt/build-iteration-context {}
                 {:iteration 0
                  :active-extensions []
                  :system-vars {:QUERY "do the thing"}})]
@@ -1723,7 +1717,7 @@
       (expect (not (re-find #":remaining" out)))))
 
   (it "renders loop-nudges as [system_nudge] lines"
-    (let [out (iterate/build-iteration-context {}
+    (let [out (prompt/build-iteration-context {}
                 {:iteration 0
                  :active-extensions []
                  :loop-nudges ["Cannot finalize: plan items [3] are :pending."

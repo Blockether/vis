@@ -8,7 +8,7 @@
  ;; of vis usable.
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
-  com.blockether/vis-sdk          {:local/root "../../../packages/vis-sdk"}
+  com.blockether/vis          {:local/root "../../.."}
   ;; Blockether fork of mabe02/lanterna 3.1.5 with three patches on top:
   ;;   1. PR #625 cherry-pick — emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
@@ -28,12 +28,10 @@
   ;; for the OAuth device-flow login. The previous `dynaload` indirection
   ;; was removed; explicit beats clever.
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}}
-  ;; svar is intentionally NOT declared here. The TUI footer/provider used
-  ;; to import svar directly; both call sites now go through the
-  ;; `vis-sdk.core/router-context-limit` and
-  ;; `vis-sdk.core/parse-llm-response` wrappers, which `requiring-resolve`
-  ;; svar at call time. svar lives on the classpath transitively via
-  ;; vis-runtime in any process that runs the iteration loop.
+  ;; svar is NOT declared here. It lives on the classpath transitively via
+  ;; the vis dep above, and the TUI's footer (`svar-router/context-limit`)
+  ;; and provider (`svar/str->data` for the model-list endpoint) require
+  ;; it directly.
 
  :aliases
  {:test

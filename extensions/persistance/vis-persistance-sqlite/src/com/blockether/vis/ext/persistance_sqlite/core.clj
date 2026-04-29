@@ -21,7 +21,8 @@
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis-sdk.core :as base]
+   [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
+   [com.blockether.vis.core :as sdk]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -37,14 +38,14 @@
 ;; Helpers
 ;; =============================================================================
 
-(def ds      base/ds)
-(def now-ms  base/now-ms)
-(def ->id    base/->id)
-(def ->uuid  base/->uuid)
-(def ->ref   base/->ref)
-(def ->kw    base/->kw)
-(def ->kw-back base/->kw-back)
-(def ->date  base/->date)
+(def ds      sdk/ds)
+(def now-ms  sdk/now-ms)
+(def ->id    sdk/->id)
+(def ->uuid  sdk/->uuid)
+(def ->ref   sdk/->ref)
+(def ->kw    sdk/->kw)
+(def ->kw-back sdk/->kw-back)
+(def ->date  sdk/->date)
 
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
@@ -96,7 +97,7 @@
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
 
 (defn- install-schema! [^DataSource ds]
-  (base/migrate! ds MIGRATIONS))
+  (migration/migrate! ds MIGRATIONS))
 
 ;; =============================================================================
 ;; Connection management
@@ -1039,8 +1040,8 @@
 ;; routes here.
 ;; =============================================================================
 
-(base/register-extension!
-  (base/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.persistance-sqlite.core
      :ext/doc       "SQLite + Flyway persistence backend."
      :ext/version   "0.3.0"

@@ -1,14 +1,14 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
-            [com.blockether.vis-sdk.core :as ext]
+            [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
-            [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis-runtime.loop.runtime.conversation.core :as conversations])
+            [com.blockether.vis.ext.channel-tui.dialogs :as dlg])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
@@ -309,7 +309,7 @@
    listing the most recent :vis conversations so the user has
    something to copy-paste."
   [cid]
-  (let [available (try (vec (take 10 (conversations/by-channel :vis)))
+  (let [available (try (vec (take 10 (lp/by-channel :vis)))
                     (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
@@ -330,7 +330,7 @@
    only consumer instead of in vis-runtime or vis-cli."
   [conversation-id]
   (let [hook (Thread. (fn []
-                        (let [^java.io.PrintStream out ext/original-stdout]
+                        (let [^java.io.PrintStream out sdk/original-stdout]
                           (.println out "")
                           (.println out (str "  vis channels tui --conversation-id " conversation-id))
                           (.println out "")
@@ -358,10 +358,10 @@
      (state/init!)
 
   ;; Load persisted config
-     (when-let [c (ext/load-config)]
+     (when-let [c (sdk/load-config)]
        (state/dispatch [:set-config c]))
 
-     (let [terminal (UnixTerminal. @ext/tty-in @ext/tty-out (Charset/defaultCharset))
+     (let [terminal (UnixTerminal. @sdk/tty-in @sdk/tty-out (Charset/defaultCharset))
            _        (input/register-custom-patterns! terminal)
            screen   (TerminalScreen. terminal)
         ;; Render thread handle is held in a volatile so the `finally`
@@ -378,7 +378,7 @@
 
       ;; Sweep orphaned running queries from previous crashes so they
       ;; don't show raw query text in the rebuilt history.
-         (try (conversations/sweep-orphaned-running-queries!) (catch Throwable _ nil))
+         (try (sdk/sweep-orphaned-running-queries!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
       ;; The --conversation-id case was already validated above (before
@@ -389,13 +389,13 @@
                    resumed-from-flag
                    (if (:resume opts)
                   ;; --resume: pick up the latest :vis conversation
-                     (if-let [latest (first (conversations/by-channel :vis))]
+                     (if-let [latest (first (lp/by-channel :vis))]
                        (or (chat/resume-conversation (:id latest))
                          (chat/make-conversation config))
                        (chat/make-conversation config))
                      (chat/make-conversation config)))
               ;; Set title from DB if present; do not synthesize from messages.
-                 conv-info (when-let [c (conversations/by-id id)] c)
+                 conv-info (when-let [c (lp/by-id id)] c)
                  title     (when-let [t (some-> conv-info :title)]
                              (when-not (str/blank? t) t))]
              (state/dispatch [:init-conversation {:id id} history])
@@ -441,7 +441,7 @@
                              (with-dialog-lock
                                #(let [conv-id (get-in @state/app-db [:conv :id])
                                       prompt  (if conv-id
-                                                (or (conversations/effective-system-prompt conv-id)
+                                                (or (lp/effective-system-prompt conv-id)
                                                   "(no system prompt)")
                                                 "(no conversation)")]
                                   (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
@@ -542,14 +542,14 @@
 
 (defn channel-main
   "Channel entry point: full TUI bootstrap. Performs the stdout/stderr
-   redirect, runs `ext/init!`, then hands off to `run-chat!`. Errors
+   redirect, runs `sdk/init!`, then hands off to `run-chat!`. Errors
    surface on the original terminal and the log file.
 
-   Invoked by `com.blockether.vis-sdk.core` dispatch — not called from
+   Invoked by `com.blockether.vis.core` dispatch — not called from
    vis-runtime directly."
   [args]
   (redirect-stdio-to-log!)
-  (ext/init!)
+  (sdk/init!)
   (let [exit-code (atom 0)]
     (try
       (run-chat! (parse-args args))
@@ -559,22 +559,22 @@
           ;; conversation id, etc. Print the message clean and let the
           ;; process exit non-zero — no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
-          (do (.println ^java.io.PrintStream ext/original-stdout (str "vis: " (.getMessage t)))
+          (do (.println ^java.io.PrintStream sdk/original-stdout (str "vis: " (.getMessage t)))
             (reset! exit-code 2))
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
-          (do (.println ^java.io.PrintStream ext/original-stdout (str "vis: fatal error — " (.getMessage t)))
-            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @ext/tty-out true))
+          (do (.println ^java.io.PrintStream sdk/original-stdout (str "vis: fatal error — " (.getMessage t)))
+            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @sdk/tty-out true))
             (throw t))))
       (finally
-        (ext/shutdown!)))
+        (sdk/shutdown!)))
     (when (pos? @exit-code)
       (System/exit @exit-code))))
 
 ;;; ── Channel registration (auto-discovered via META-INF/vis-extension/vis.edn) ──
 
-(ext/register-extension!
-  (ext/extension
+(sdk/register-extension!
+  (sdk/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
      :ext/doc       "Lanterna-based terminal UI channel."
      :ext/version   "0.3.0"

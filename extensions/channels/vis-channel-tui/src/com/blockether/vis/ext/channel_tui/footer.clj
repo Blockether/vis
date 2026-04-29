@@ -29,10 +29,10 @@
    `embed-in-bar`, which forced single-color rendering and was the
    reason run-state had to live inside the assistant bubble; this
    namespace replaces that whole path."
-  (:require [com.blockether.vis-sdk.core :as sdk]
+  (:require [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis-runtime.loop.runtime.conversation.environment.query.core :as query-core])
+            [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [java.util Locale]))
 
 ;;; ── Number formatting (locale-safe) ────────────────────────────────────────
@@ -59,8 +59,8 @@
 (defn- chosen-model-info
   "Resolved model map for the configured root model, or nil."
   []
-  (when-let [r (try (query-core/get-router) (catch Throwable _ nil))]
-    (try (query-core/resolve-effective-model r) (catch Throwable _ nil))))
+  (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
+    (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
 
 (defn- last-assistant-tokens
   "Token map `{:input n :output n}` of the most recent finalized assistant
@@ -98,7 +98,8 @@
    came from chars/4, false when from a real prior-turn :input count."
   [messages model-name]
   (when-let [ctx-max (and model-name
-                       (sdk/router-context-limit model-name))]
+                       (try (svar-router/context-limit model-name)
+                         (catch Throwable _ nil)))]
     (when (pos? ctx-max)
       (let [last-tok (last-assistant-tokens messages)
             actual?  (some? (:input last-tok))

@@ -45,7 +45,7 @@ the system message content. Both iteration loop paths and the TUI
    plus any optional extra `:ext/prompt` tail
 
 The iteration spec schema lives with the iteration engine in
-`com.blockether.vis-runtime.loop.runtime.conversation.environment.query.iteration.spec`.
+`com.blockether.vis.core`.
 svar’s `spec->prompt` appends that schema separately as a final user
 message — it is NOT part of the system message.
 
