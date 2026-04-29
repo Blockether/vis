@@ -47,7 +47,7 @@
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
 (declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings auto-forget-stale-vars!
-  set-title! set-title-with-broadcast! env-for)
+  set-title! set-title-with-broadcast! env-for spawn-auto-title!)
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates
@@ -1138,9 +1138,13 @@
     (reset! router-atom r)
     r))
 
-(defn ask!
+(defn ask-code!
+  "One-shot routed `svar/ask-code!` against the global router.
+   Plain-text completion + fenced code-block extraction — returns the
+   svar map `{:result :blocks :raw :tokens :cost :duration-ms}`.
+   `ask!` (JSON-spec) is gone; every Vis caller uses `ask-code!`."
   [opts]
-  (svar/ask! (get-router) opts))
+  (svar/ask-code! (get-router) opts))
 
 (defn resolve-effective-model
   "Best-effort root model descriptor from router config.
@@ -2061,31 +2065,44 @@
                 status-id        :status-id
                 locals           :locals
                 confidence       :confidence
-                reasoning        :reasoning} iteration-result]
-           (if status
-             (finalize-query-result
-               ctx
-               {:query-id          query-id
-                :start-time        start-time
-                :iteration-count   iteration-count
-                :status            status
-                :status-id         status-id
-                :trace             trace
-                :locals            locals
-                :answer            iteration-answer
-                :total-tokens-atom total-tokens-atom
-                :total-cost-atom   total-cost-atom})
-             (finalize-query-result
-               ctx
-               {:query-id          query-id
-                :start-time        start-time
-                :iteration-count   iteration-count
-                :trace             trace
-                :answer            iteration-answer
-                :confidence        confidence
-                :reasoning         reasoning
-                :total-tokens-atom total-tokens-atom
-                :total-cost-atom   total-cost-atom}))))))))
+                reasoning        :reasoning} iteration-result
+               result
+               (if status
+                 (finalize-query-result
+                   ctx
+                   {:query-id          query-id
+                    :start-time        start-time
+                    :iteration-count   iteration-count
+                    :status            status
+                    :status-id         status-id
+                    :trace             trace
+                    :locals            locals
+                    :answer            iteration-answer
+                    :total-tokens-atom total-tokens-atom
+                    :total-cost-atom   total-cost-atom})
+                 (finalize-query-result
+                   ctx
+                   {:query-id          query-id
+                    :start-time        start-time
+                    :iteration-count   iteration-count
+                    :trace             trace
+                    :answer            iteration-answer
+                    :confidence        confidence
+                    :reasoning         reasoning
+                    :total-tokens-atom total-tokens-atom
+                    :total-cost-atom   total-cost-atom}))]
+           ;; Auto-title hook: fire-and-forget on a successful turn
+           ;; when the conversation has no title yet. Background
+           ;; future -> answer return is never blocked. Failure is
+           ;; logged at :debug and silently dropped.
+           (when-not status
+             (spawn-auto-title!
+               {:router                  (:router environment)
+                :db-info                 db-info
+                :conversation-id         (:conversation-id environment)
+                :conversation-title-atom (:conversation-title-atom environment)
+                :user-query              query-str}))
+           result))))))
 
 ;; =============================================================================
 ;; Environment lifecycle + system prompt
@@ -2681,6 +2698,81 @@
       id
       (:conversation-title-atom env)
       title))
+  nil)
+
+(def ^:private auto-title-max-words 6)
+(def ^:private auto-title-max-chars 80)
+
+(defn- clean-auto-title
+  "Trim, drop wrapping quotes/backticks, collapse whitespace, drop
+   trailing punctuation, and clamp word count. Returns nil if the
+   result is unusable."
+  [s]
+  (when s
+    (let [t (-> (str s)
+              (str/replace #"^[\s\"'`]+|[\s\"'`]+$" "")
+              (str/replace #"\s+" " ")
+              (str/replace #"[.。\!\?]+$" ""))
+          words (str/split t #"\s+")
+          clamped (str/join " " (take auto-title-max-words words))]
+      (when (and (not (str/blank? clamped))
+              (<= (count clamped) auto-title-max-chars))
+        clamped))))
+
+(defn- auto-title!
+  "Generate a 6-words-max title for `conversation-id` from the user
+   query, persist it, and broadcast. Synchronous — caller picks the
+   thread (we wrap it in a `future` from `query!` so the answer path
+   is never blocked).
+
+   Skipped silently when:
+     - the conversation already has a non-blank title
+     - the user query is blank
+     - the LLM call fails / returns blank
+     - the post-cleaned candidate is unusable
+
+   Goes through `svar/ask-code!` with `:lang \"text\"` (no JSON spec
+   anywhere in Vis)."
+  [{:keys [router db-info conversation-id conversation-title-atom user-query]}]
+  (when (and router db-info conversation-id
+          (string? user-query)
+          (not (str/blank? user-query)))
+    (let [conv  (try (persistance/db-get-conversation db-info conversation-id)
+                  (catch Throwable _ nil))
+          cur   (some-> conv :title str)]
+      (when (str/blank? cur)
+        (try
+          (let [prompt (str "Pick a short conversation title for this user request — at most "
+                         auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
+                         "User request:\n" user-query "\n\n"
+                         "Reply with ONE fenced ```text block containing only the title.")
+                resp (svar/ask-code! router
+                       {:messages           [(svar/user prompt)]
+                        :lang               "text"
+                        :reasoning          :off
+                        :code-tail-pointer? true})
+                raw  (or (some-> resp :result str/trim not-empty)
+                       (some-> resp :raw str/trim not-empty))
+                title (clean-auto-title raw)]
+            (when title
+              (set-title-with-broadcast! db-info conversation-id
+                conversation-title-atom title)))
+          (catch Throwable t
+            (tel/log! {:level :debug :id ::auto-title-failed
+                       :data  {:conversation-id conversation-id
+                               :error           (ex-message t)}
+                       :msg   "Auto-title generation failed (silently skipped)"})))))))
+
+(defn- spawn-auto-title!
+  "Fire-and-forget wrapper around `auto-title!`. Runs on a JVM future
+   so the iteration loop returns immediately to the channel; the
+   eventual `set-title-with-broadcast!` call wakes title listeners
+   (TUI header, Telegram label) on its own."
+  [args]
+  (when args
+    (future
+      (try (auto-title! args)
+        (catch Throwable _))))
   nil)
 
 (defn env-for

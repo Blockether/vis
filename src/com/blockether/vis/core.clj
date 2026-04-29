@@ -31,6 +31,7 @@
                          render-prompt, invoke-symbol-wrapper,
                          try-rescue-parse-error, discover-extensions!
      Format helpers      format-clojure, format-date, format-duration
+     Markdown export     conversation->markdown
      Iteration loop      query!, send!, create!, by-id, by-channel,
                          for-telegram-chat!, env-for, close!, close-all!,
                          delete!, set-title!, effective-system-prompt,
@@ -66,6 +67,7 @@
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
+   [com.blockether.vis.internal.markdown     :as markdown]
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
@@ -99,6 +101,18 @@
 (def format-cost       fmt/format-cost)
 (def format-iterations fmt/format-iterations)
 (def format-meta-line  fmt/format-meta-line)
+
+;; =============================================================================
+;; Markdown export
+;;
+;; Single host-runtime helper for projecting a persisted conversation
+;; (every turn: user prompt + final answer + optional metadata) into a
+;; Markdown string. Lives in the runtime so EVERY channel — TUI,
+;; Telegram, CLI agent, third-party plug-ins — can ship a `Copy as
+;; Markdown` / `Export conversation` affordance without re-implementing
+;; the projection. See `internal.markdown/DEFAULT_OPTS` for tunables.
+;; =============================================================================
+(def conversation->markdown markdown/conversation->markdown)
 
 ;; =============================================================================
 ;; Progress tracker
@@ -274,7 +288,7 @@
 ;; Iteration loop / query / environment / conversations
 ;; =============================================================================
 (def query!                       lp/query!)
-(def ask!                         lp/ask!)
+(def ask-code!                    lp/ask-code!)
 (def get-router                   lp/get-router)
 (def reset-router!                lp/reset-router!)
 (def rebuild-router!              lp/rebuild-router!)
