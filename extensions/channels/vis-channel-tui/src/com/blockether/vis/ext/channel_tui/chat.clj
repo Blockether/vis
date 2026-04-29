@@ -79,6 +79,15 @@
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)})))
                                 query-iterations)
+                        ;; `:prior-outcome :cancelled` is how the
+                        ;; persistance layer marks an aborted turn (the
+                        ;; sweep + cancel paths both write that value).
+                        ;; Surface it as `:status :cancelled` on the
+                        ;; assistant message so the bubble renderer
+                        ;; paints the gray cancelled-bg zone and the
+                        ;; trace + status footer the same way live
+                        ;; cancellations render.
+                        cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message (or answer "") (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :query-id (:id q))
                                             (seq trace) (assoc :trace trace :raw-answer (or answer ""))
@@ -86,7 +95,8 @@
                                             iterations  (assoc :iterations iterations)
                                             duration-ms (assoc :duration-ms duration-ms)
                                             cost   (assoc :cost cost)
-                                            (seq tokens) (assoc :tokens tokens))]
+                                            (seq tokens) (assoc :tokens tokens)
+                                            cancelled? (assoc :status :cancelled))]
                     [user-message assistant-message])))
         queries))
     (catch Exception e

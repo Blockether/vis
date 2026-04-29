@@ -148,7 +148,6 @@ The `symbol` constructor produces a function entry for `:ext/symbols`:
 | `:after-fn` | ✗ | — | `(fn [env f args result] → map)` — exit decorator (transform result). See [Symbol Decorators](hooks.md). |
 | `:on-error-fn` | ✗ | — | `(fn [err env f args] → map)` — error decorator (recover, retry, or rethrow). See [Symbol Decorators](hooks.md). |
 | `:on-parse-error-fn` | ✗ | — | `(fn [{:code :error :sym :environment}] → string\|nil)` — parse rescue (not a decorator) that fires when SCI/edamame rejects the LLM's source AND this symbol's name appears in the broken code. See [Symbol Decorators](hooks.md). |
-| `:autobind-fn` | ✗ | — | `(fn [{:keys [args result environment]}] → map\|nil)` — post-call hook that asks the runtime to persist tool results into sandbox vars. Return `{:bindings [{:kind :file :id path :content value :doc "..." :tag "sha"}]}`. Return `nil` to skip autobind for that call. |
 
 ## Constant binding
 

@@ -58,6 +58,22 @@
 (defn- current-conversation-id [env]
   (:conversation-id env))
 
+(defn- current-query-id
+  "UUID of the in-flight turn (= current query) or nil when no turn
+   is running yet. Read from `:current-query-id-atom` set by
+   `iteration-loop`. Mirrors the SCI-visible `CURRENT_QUERY_ID` system
+   var so meta-fns can filter it without round-tripping through SCI."
+  [env]
+  (some-> (:current-query-id-atom env) deref))
+
+(defn- same-uuid?
+  "True when two values denote the same UUID. Accepts UUID instances
+   or any object whose `str` is the canonical UUID form. Used to
+   match `CURRENT_QUERY_ID` against a turn's `:id` regardless of
+   whether the persistence layer returned a UUID or a string."
+  [a b]
+  (and a b (= (str a) (str b))))
+
 (defn- iteration-rows
   "Fetch the iteration rows for `query-id`; returns [] on any failure."
   [db-info query-id]
@@ -388,10 +404,28 @@
   (turn-snapshot env))
 
 (defn- meta-conversation
+  "Snapshot for a conversation. The in-flight turn (= current `CURRENT_QUERY_ID`)
+   is automatically excluded from `:turns` because its `:iterations` /
+   `:total-cost` haven't been finalized yet — listing it would render
+   as `null | $null` and confuse downstream summaries. The excluded id
+   is surfaced as `:in-flight-turn-id` so callers can opt into seeing
+   it. Filtering happens only when the in-flight query belongs to this
+   conversation; foreign conversations are returned verbatim."
   ([env]
    (meta-conversation env (current-conversation-id env)))
   ([env conversation-id]
-   (conversation-snapshot (:db-info env) conversation-id)))
+   (when-let [snapshot (conversation-snapshot (:db-info env) conversation-id)]
+     (let [in-flight-id (current-query-id env)
+           same-conv?   (and in-flight-id
+                          (same-uuid? conversation-id (current-conversation-id env)))]
+       (if-not same-conv?
+         snapshot
+         (let [filtered (filterv #(not (same-uuid? in-flight-id (:id %)))
+                          (:turns snapshot))]
+           (-> snapshot
+             (assoc :turns filtered)
+             (assoc :turn-count (count filtered))
+             (assoc :in-flight-turn-id in-flight-id))))))))
 
 (defn- meta-conversations
   "List every conversation the DB knows about, newest-first. With no
@@ -696,7 +730,11 @@
                   "`:provider-model` is a `\"provider/model\"` display string "
                   "(e.g. `\"openai/gpt-4o\"`); the raw `:provider` and `:model` "
                   "are kept as separate canonical keys. Default = current "
-                  "conversation; pass an id to inspect any other.")
+                  "conversation; pass an id to inspect any other. "
+                  "The in-flight turn (= `CURRENT_QUERY_ID`) is auto-excluded "
+                  "from `:turns` because its `:iterations` / `:total-cost` are "
+                  "not finalized yet; the excluded id is returned as "
+                  "`:in-flight-turn-id` so callers can opt into seeing it.")
      :arglists  '([] [conversation-id])
      :examples  ["(meta/conversation)"
                  "(meta/conversation \"3a7b2c…\")"
@@ -857,7 +895,8 @@
      :ext/prompt    (str "`meta/` = READ-ONLY introspection. Returns maps/vecs. Never throws (errors -> nil/[]).\n"
                       "- Stall / malformed provider schema / vis/rg parse fail / vis/patch SEARCH miss -> (meta/diagnose) or (meta/failures).\n"
                       "- Discover surface: (meta/extensions). Scan descriptions: (meta/extension-docs). Full body: (meta/extension-doc) / (meta/extension-readme). Read before guessing from symbol names.\n"
-                      "- Plan / breadcrumbs already in prompt (<plan>, <breadcrumbs>, <system_state>) — use those, don't fetch.")
+                      "- Plan / breadcrumbs already in prompt (<plan>, <breadcrumbs>, <system_state>) — use those, don't fetch.\n"
+                      "- (meta/conversation) AUTO-EXCLUDES the in-flight turn (= CURRENT_QUERY_ID) because its iterations/cost aren't finalized; excluded id is returned as :in-flight-turn-id. Don't render the in-flight row — you'd emit literal `null | $null`.")
      :ext/symbols   all-symbols}))
 
 (sdk/register-extension! extension)

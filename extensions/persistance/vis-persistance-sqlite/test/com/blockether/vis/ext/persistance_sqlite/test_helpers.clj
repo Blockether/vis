@@ -44,11 +44,17 @@
     {:builder-fn rs/as-unqualified-lower-maps}))
 
 (defn raw-count
-  "Count rows in a table, optionally with a where clause."
+  "Count rows in a table, optionally with a where clause.
+
+   Note: the result-set builder is `as-unqualified-lower-maps`, which
+   returns keys exactly as the JDBC driver reports them. HoneySQL
+   default-rewrites the alias `:row-count` to SQL `row_count`, so the
+   row key is `:row_count` (underscore), not `:row-count` (hyphen).
+   This helper hides that asymmetry from callers."
   ([store table]
-   (:row-count (first (raw-query store {:select [[[:count :*] :row-count]] :from [table]}))))
+   (:row_count (first (raw-query store {:select [[[:count :*] :row_count]] :from [table]}))))
   ([store table where]
-   (:row-count (first (raw-query store {:select [[[:count :*] :row-count]] :from [table] :where where})))))
+   (:row_count (first (raw-query store {:select [[[:count :*] :row_count]] :from [table] :where where})))))
 
 (defn thaw-blob
   "Thaw a nippy BLOB from a raw query result."

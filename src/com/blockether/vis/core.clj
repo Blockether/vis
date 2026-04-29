@@ -220,7 +220,7 @@
 (def extension-doc                       extension/extension-doc)
 (def extension-docs                      extension/extension-docs)
 (def extension-doc-content               extension/extension-doc-content)
-(def extension-doc-description           extension/extension-doc-description)
+(def extension-doc-abstract              extension/extension-doc-abstract)
 (def extension-doc-summary               extension/extension-doc-summary)
 (def extension-doc-names                 extension/extension-doc-names)
 (def registered-extensions-summary       extension/registered-extensions-summary)

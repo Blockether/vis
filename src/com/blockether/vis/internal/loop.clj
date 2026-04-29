@@ -1237,14 +1237,26 @@
   (when final-result
     (env/bind-and-bump! environment 'ANSWER final-answer)))
 
+(defn update-current-iteration-id!
+  "Rebind `CURRENT_ITERATION_ID` in the SCI sandbox to the freshly-
+   persisted iteration row's UUID. Mirrors `:current-iteration-id-atom`.
+   No-op when `iteration-id` is nil."
+  [environment iteration-id]
+  (when iteration-id
+    (env/bind-and-bump! environment 'CURRENT_ITERATION_ID iteration-id)))
+
 (defn inject-system-var-snapshots
   "Append SYSTEM-var entries to a vars-snapshot vec for persistence.
    Names match `SYSTEM_VAR_NAMES`."
-  [vars-snapshot {:keys [iteration query thinking final-result final-answer]}]
+  [vars-snapshot {:keys [iteration query thinking final-result final-answer
+                         current-query-id current-iteration-id]}]
   (cond-> vars-snapshot
-    (zero? iteration) (conj {:name "QUERY"     :value query        :code ";; SYSTEM var"})
-    (seq thinking)    (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
-    final-result      (conj {:name "ANSWER"    :value final-answer :code ";; SYSTEM var"})))
+    (zero? iteration)        (conj {:name "QUERY"     :value query        :code ";; SYSTEM var"})
+    (and (zero? iteration)
+      current-query-id)   (conj {:name "CURRENT_QUERY_ID" :value current-query-id :code ";; SYSTEM var"})
+    (seq thinking)           (conj {:name "REASONING" :value thinking     :code ";; SYSTEM var"})
+    final-result             (conj {:name "ANSWER"    :value final-answer :code ";; SYSTEM var"})
+    current-iteration-id     (conj {:name "CURRENT_ITERATION_ID" :value current-iteration-id :code ";; SYSTEM var"})))
 
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-query! (inlined from former base)
@@ -1343,7 +1355,12 @@
                                                       (:ext/version ext) (assoc :version (:ext/version ext))))
                                               active-exts)}))]
     (env/bind-and-bump! environment 'QUERY query)
+    (env/bind-and-bump! environment 'CURRENT_QUERY_ID query-id)
+    ;; Reset CURRENT_ITERATION_ID to nil at turn start; rebound by
+    ;; `update-current-iteration-id!` after each iteration row commits.
+    (env/bind-and-bump! environment 'CURRENT_ITERATION_ID nil)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
+    (when-let [a (:current-query-id-atom environment)] (reset! a query-id))
     (auto-forget-stale-vars! environment)
     (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
       (loop [loop-state (merge {:iteration 0 :messages initial-messages
@@ -1444,6 +1461,7 @@
                                               :llm-model (str (:name resolved-model))
                                               :metadata (iteration-metadata)})]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
+                      (update-current-iteration-id! environment err-iteration-id)
                       ;; Live error chunk — lets the TUI / web bubble show
                       ;; \"iteration N failed: <message>\" the moment it happens, instead
                       ;; of waiting for the whole loop to give up. The chunk
@@ -1469,9 +1487,12 @@
                         _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
                         vars-snapshot (restorable-var-snapshots environment expressions)
+                        previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
                                         {:iteration iteration :query query :thinking thinking
-                                         :final-result final-result :final-answer final-answer})
+                                         :final-result final-result :final-answer final-answer
+                                         :current-query-id query-id
+                                         :current-iteration-id previous-iteration-id})
                         [redundant-count expression-count]
                         (count-duplicates seen-expression-hashes-atom
                           (or expressions []))
@@ -1493,6 +1514,7 @@
                                         :llm-model (:llm-model iteration-result)
                                         :metadata iteration-metadata-with-metrics})
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
+                        _ (update-current-iteration-id! environment iteration-id)
                         _ (emit-hook! on-iteration
                             {:iteration iteration
                              :status (cond final-result :final (empty? expressions) :empty :else :success)
@@ -1664,9 +1686,11 @@
                                      (env/sci-update-binding! sci-ctx sym val)))
           _                      (env/bump-var-index! env)
           current-iteration-id-atom (atom nil)
+          current-query-id-atom    (atom nil)
           environment            (assoc env
                                    :current-iteration-atom current-iteration-atom
-                                   :current-iteration-id-atom current-iteration-id-atom)
+                                   :current-iteration-id-atom current-iteration-id-atom
+                                   :current-query-id-atom current-query-id-atom)
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
        :query-str              query-str

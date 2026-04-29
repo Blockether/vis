@@ -371,11 +371,16 @@
               rows    (.getRows size)
               g       (.newTextGraphics screen)
               total   (count @models)
-              _       (do (p/set-bg! g t/terminal-bg) (p/fill-rect! g 0 0 cols rows))
-              cw      (min 84 (max 50 (- cols 12)))
-              ch      (max 4 (card-height total))
+              ;; Do NOT clear the whole terminal here — the chat
+              ;; behind the dialog should stay visible (other modals
+              ;; in `dialogs.clj` already behave this way). The dialog
+              ;; chrome paints its own background + drop shadow over
+              ;; whatever was underneath, which is the desired "floating
+              ;; popup" look. Wiping `0 0 cols rows` to terminal-bg every
+              ;; frame is what made the chat disappear behind the
+              ;; provider dialogs.
               title   (str (sdk/display-label (:id provider)) " Models")
-              bounds  (dlg/draw-dialog-chrome! g cols rows title cw ch)
+              bounds  (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
               {:keys [left inner-w]} bounds
               {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
               _       (swap! selected #(dlg/clamp % 0 (max 0 (dec total))))]
@@ -492,12 +497,15 @@
              cols    (.getColumns size)
              rows    (.getRows size)
              g       (.newTextGraphics screen)
-             ;; Clear full screen each frame — removes sub-dialog artifacts
-             _       (do (p/set-bg! g t/terminal-bg) (p/fill-rect! g 0 0 cols rows))
+             ;; Do NOT clear the whole terminal here — keep the chat
+             ;; visible behind the dialog (see model-manager note).
+             ;; Sub-dialog artifact concern is moot: every sub-modal
+             ;; (`add-provider!`, `confirm-dialog!`, `select-dialog!`,
+             ;; `show-model-manager!`) repaints its own chrome on every
+             ;; frame and on return the parent loop’s next iteration
+             ;; redraws the parent chrome on top of any leftovers.
              total   (count @items)
-             cw      (min 72 (max 40 (- cols 16)))
-             ch      (max 4 (card-height total))
-             bounds  (dlg/draw-dialog-chrome! g cols rows "Router" cw ch)
+             bounds  (dlg/draw-dialog-chrome! g cols rows "Router" (card-height (max 1 total)))
              {:keys [left inner-w]} bounds
              {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
              _       (swap! selected #(dlg/clamp % 0 (max 0 (dec total))))]

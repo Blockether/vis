@@ -162,28 +162,6 @@ suffix prevents collisions. It is **not** because these are something
 fundamentally different from decorators. They aren't. They're
 decorators.
 
-## Autobind hook
-
-Function symbols can also define `:autobind-fn`:
-
-```clojure
-(ext/symbol 'cat cat
-  {:doc "Read file contents."
-   :arglists '([path] [path offset limit])
-   :autobind-fn
-   (fn [{:keys [args result environment]}]
-     {:bindings [{:kind    :file
-                  :id      (first args)
-                  :content result
-                  :doc     "Pinned file content"
-                  :tag     (hash result)}]})})
-```
-
-The hook runs after a successful call. Return `nil` to skip autobind.
-When you return `:bindings`, the runtime computes the canonical symbol
-name, binds the value in SCI, and appends an autobind footer to
-`<recent>`.
-
 ## Observability
 
 Every decorator invocation is logged via `taoensso.telemere/log!`:

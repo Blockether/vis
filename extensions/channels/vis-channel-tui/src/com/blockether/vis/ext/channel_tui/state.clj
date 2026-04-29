@@ -127,7 +127,13 @@
    :show-iterations           true
    :show-timestamps           false
    :show-iteration-headers    false
-   :show-final-answer-header  false})
+   :show-final-answer-header  false
+   ;; `collapse-old-traces`: every assistant turn except the most
+   ;; recent one renders as just the final answer (the meta line
+   ;; below already shows iteration count, duration, tokens, cost).
+   ;; Default ON so the conversation reads as a clean transcript;
+   ;; toggle off to expand every historical trace at once.
+   :collapse-old-traces       true})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over
@@ -345,14 +351,15 @@
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
           ;; Cancelled turns get a `:status :cancelled` flag on the
-          ;; message so the bubble renderer can dim the content. We
-          ;; also keep the trace off cancelled messages — a partial
-          ;; iteration trace next to a \"Cancelled by user.\"
-          ;; placeholder is more confusing than informative.
-          cancelled? (= :cancelled status)
+          ;; message so the bubble renderer dims the content with the
+          ;; cancelled-bg zone. We KEEP the iteration trace on cancelled
+          ;; messages so the user can see how far the agent got before
+          ;; the abort — the renderer sews the trace together with a
+          ;; plain status footer (\"Cancelled by user.\") rendered on
+          ;; the gray cancelled bg, so partial work stays visible.
           response (-> (chat/assistant-message (or answer ""))
                      (cond-> query-id                (assoc :query-id query-id)
-                       (and (not cancelled?) (seq trace))
+                       (seq trace)
                        (assoc :trace trace :raw-answer (or answer ""))
                        (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                        model      (assoc :model model)

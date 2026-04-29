@@ -830,7 +830,7 @@
 
 (defn extension-doc
   "Return the full descriptor map for a declared extension doc:
-   `{:name :created-at :description :content :links :reflinks}`. Returns
+   `{:name :created-at :abstract :content :links :reflinks}`. Returns
    `nil` when the id is unknown or no doc by that name was declared."
   [id doc-name]
   (when-let [descriptor (and id doc-name
@@ -843,15 +843,15 @@
   [id doc-name]
   (:content (extension-doc id doc-name)))
 
-(defn extension-doc-description
-  "Return the `:description` field of a declared extension doc, or `nil`
+(defn extension-doc-abstract
+  "Return the `:abstract` field of a declared extension doc, or `nil`
    when the doc is unknown."
   [id doc-name]
-  (:description (extension-doc id doc-name)))
+  (:abstract (extension-doc id doc-name)))
 
 (defn extension-doc-summary
   "Lightweight doc descriptor (no `:content`):
-   `{:name :created-at :description :links :reflinks}`. Returns `nil`
+   `{:name :created-at :abstract :links :reflinks}`. Returns `nil`
    when the doc is unknown."
   [id doc-name]
   (when-let [descriptor (and id doc-name
