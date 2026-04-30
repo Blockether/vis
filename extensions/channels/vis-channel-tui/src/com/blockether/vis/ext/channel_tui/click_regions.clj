@@ -46,12 +46,14 @@
 ;; pipeline can communicate \"this one is blocked\" to the user.
 ;; They never produce an open!.
 
+;; Currently-registered click regions for the painted scrollback.
+;; The vec is small (tens of entries) so a linear scan on lookup
+;; is fine and we avoid the locking dance a spatial index would need.
 (defonce ^:private regions-atom (atom []))
 
-(defonce ^:private hover-atom
-  "Currently-hovered region, or nil. Read by the renderer to paint a
-   highlight; written by the mouse handler on `MOVE` events."
-  (atom nil))
+;; Currently-hovered region, or nil. Read by the renderer to paint a
+;; highlight; written by the mouse handler on `MOVE` events.
+(defonce ^:private hover-atom (atom nil))
 
 ;; =============================================================================
 ;; Mutators

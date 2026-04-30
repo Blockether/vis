@@ -213,6 +213,16 @@
     ;; render-version (see no-render-bump-events).
     (assoc db :layout layout)))
 
+(reg-event-db :bump-render-version
+  (fn [db _]
+    ;; No-op state mutator. The dispatcher itself bumps
+    ;; `:render-version` and notifies the render monitor whenever an
+    ;; event lands (unless the event id is in `no-render-bump-events`),
+    ;; so simply dispatching this event is enough to wake the painter.
+    ;; Used by the mouse handler when a hover-state change needs the
+    ;; chrome row repainted with its hover background.
+    db))
+
 (reg-event-db :shutdown
   (fn [db _]
     (assoc db :shutdown? true)))

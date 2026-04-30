@@ -104,6 +104,54 @@ Conventions:
 - **`md/anchor` is for in-document jumps**, e.g. linking to a
   later section of the same answer.
 
+## Clicking links in the TUI
+
+The Lanterna TUI renders every `md/link` / `md/image` /
+`md/file-link` reference in the assistant’s answer as a one-row
+clickable chrome strip at the bottom of the bubble:
+
+```text
+  📷 diagram → ./flow.png
+  🔗 docs    → https://example.com/spec
+  📄 src/loop.clj:142
+```
+
+Hover the row — the band lights up in pale blue. Click it — the
+URL gets handed to the host OS’s opener (`open` on macOS,
+`xdg-open` / `gio open` / `kde-open` / `gnome-open` chain on
+Linux/BSD, `cmd /c start "" …` on Windows). The opener runs in a
+side thread so a slow desktop helper never freezes the redraw
+loop.
+
+What is and isn’t clickable:
+
+- `http://`, `https://`, `file://` URLs that resolve under
+  `(fs/cwd)`, and bare relative paths (`src/foo.clj`,
+  `./diagram.png`) are clickable.
+- `javascript:`, `data:`, `mailto:`, `ssh:`, etc. — anything not
+  on the whitelist — paint with a 🚫 marker and refuse to open.
+- `..`-traversal that escapes the working directory paints with
+  the same blocked marker. Same guard the editing tools enforce.
+- Anchor-only links (`[text](#section)`) are dropped: there’s no
+  in-document anchor to jump to in a chat surface.
+
+### Terminal compatibility
+
+Mouse capture relies on the terminal forwarding mouse-mode escape
+sequences. Modern terminals work out of the box; the one common
+catch on macOS:
+
+- **Terminal.app**: enable **View → Send Mouse Events** (or use
+  iTerm2 / WezTerm / Ghostty / Alacritty / kitty, all of which
+  pass clicks by default).
+- **tmux** users: `set -g mouse on` in `.tmux.conf`.
+- **SSH sessions**: works as long as the local terminal honours
+  mouse mode — the escapes pass through SSH transparently.
+
+If the host terminal silently drops the mouse-mode escape, the
+chrome rows still paint but stay inert. There is no keyboard
+fallback by design — the click affordance IS the picker.
+
 ### Block elements
 
 | Form | Output |

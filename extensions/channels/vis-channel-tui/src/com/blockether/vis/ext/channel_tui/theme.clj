@@ -99,6 +99,28 @@
 (def md-h3-fg          (TextColor$RGB. 100 65 0))     ;; deep bronze — H3 is the most muted of the three
 (def confidence-fg     (TextColor$RGB. 140 140 140))  ;; muted confidence label
 
+;; Clickable link / image / file-link chrome painted at the foot of
+;; an assistant bubble. Three states:
+;;
+;;   normal   — enabled, not hovered. Reads as a quiet hyperlink.
+;;   hover    — mouse cursor is over the row. Subtle bg fill +
+;;              brighter fg so the click affordance is unambiguous.
+;;   blocked  — ref's scheme is rejected (javascript:, ..-escape
+;;              etc.). Painted dim + struck-through so the user
+;;              sees “this is here but I won’t open it.”
+;;
+;; The hover bg is intentionally pale (no aggressive solid fill)
+;; because mouse-mode terminals already invert text selection on
+;; the row underneath the cursor; piling more colour on top makes
+;; the highlight read as a glitch. WCAG ratio on hover-bg vs
+;; link-chrome-fg holds at >= 7.0 (AAA).
+(def link-chrome-fg       (TextColor$RGB. 30 90 200))   ;; classic underline-blue link colour
+(def link-chrome-arrow-fg (TextColor$RGB. 130 130 130)) ;; the " → " separator between text + url
+(def link-chrome-url-fg   (TextColor$RGB. 90 110 140))  ;; muted url tail
+(def link-chrome-hover-bg (TextColor$RGB. 232 240 252)) ;; pale blue hover band
+(def link-chrome-hover-fg (TextColor$RGB. 10 50 160))   ;; deeper blue on hover for stronger contrast
+(def link-chrome-blocked-fg (TextColor$RGB. 170 170 170)) ;; muted gray for rejected entries
+
 ;; Footer (dedicated row below the input box)
 ;; Codex-style three-region status: left=identity, center=run-state, right=budget.
 ;; Colors are tuned to match the existing muted palette — the footer should
