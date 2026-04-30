@@ -8,7 +8,7 @@
                  md/code, md/kbd, md/link, md/image
      Block       md/p, md/code-block, md/blockquote, md/hr, md/br,
                  md/details
-     Lists       md/ul, md/ol, md/checklist
+     Lists       md/li, md/ul, md/ol, md/checklist
      Tables      md/table
      Compose     md/join (blank line), md/lines (newline),
                  md/section, md/escape
@@ -319,6 +319,11 @@
   (if (sequential? x)
     (compose-text x)
     (->str x)))
+(defn li
+  "Returns a single unordered-list item string: `\"- text\"`.
+   Variadic — parts are joined like other inline fns (nil dropped, seqs spliced)."
+  [& parts]
+  (str "- " (compose-text parts)))
 
 (defn ul
   "Unordered list. Accepts a single seq or variadic args.
@@ -598,7 +603,10 @@
       :examples ["(md/details (md/summary \"Logs\") body)"
                  "(md/details intro snippet (md/summary \"Trace\"))"
                  "(md/details para1 para2)"]})
-
+   (vis/symbol 'li li
+     {:doc "Single unordered-list item: `\"- text\"`. Variadic — nil dropped, seqs spliced."
+      :arglists '([& parts])
+      :examples ["(md/li \"hello\")" "(md/li \"build \" (md/code \"v1.2.3\"))"]})
    (vis/symbol 'ul ul
      {:doc "Unordered list. items = seq; each entry becomes one `- item` line."
       :arglists '([items])
@@ -656,7 +664,8 @@
     "             (md/anchor text) (md/anchor text slug)         ; same-doc heading link\n"
     "  Block      (md/p …parts) (md/code-block s lang?) (md/blockquote s) md/hr md/br (md/details …parts)\n"
     "             ; md/p joins parts with single space; nil dropped; seqs spliced (like md/join / md/lines).\n"
-    "  Lists      (md/ul items) (md/ol items) (md/checklist [[t done?] …])\n"
+    "  Lists      (md/li parts…)                  ; single list item: \"- text\"\n"
+    "             (md/ul items) (md/ol items) (md/checklist [[t done?] …])\n"
     "  Tables     (md/table headers rows) (md/table headers rows {:align [:left :center :right]})\n"
     "  Compose    (md/join …blocks) (md/lines …lines) (md/section title body) (md/escape s)\n"
     "Block fns return text WITHOUT trailing newline. Stitch with (md/join …), feed to (answer …).\n"

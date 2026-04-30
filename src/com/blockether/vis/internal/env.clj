@@ -526,6 +526,38 @@
                                                  'java.lang.Comparable java.lang.Comparable
                                                  'java.lang.Number java.lang.Number
                                                  'java.lang.Exception java.lang.Exception
+                                                 ;; Throwable + the common JVM runtime exception subclasses
+                                                 ;; the model reaches for after `(catch Throwable t …)` /
+                                                 ;; `(catch Exception e …)`. Pre-fix, only `java.lang.Exception`
+                                                 ;; was on the allow-list; SCI checks method calls against the
+                                                 ;; ACTUAL runtime class, so `(catch Exception e (.getMessage e))`
+                                                 ;; threw "Method getMessage on class java.lang.NullPointerException
+                                                 ;; not allowed!" the moment the thrown instance was an NPE / IAE /
+                                                 ;; ISE / etc. Conversation d8aff512-d60d-42b6-a009-041f1bec3891
+                                                 ;; tripped this on iter where the model wrote `(catch Exception e
+                                                 ;; {:error (.getMessage e)})` and the wrapped value was an NPE.
+                                                 ;; Allowing Throwable + the common subclasses makes `.getMessage`
+                                                 ;; / `.getCause` / `.getClass` / `.getStackTrace` work uniformly
+                                                 ;; regardless of the concrete thrown class.
+                                                 'java.lang.Throwable java.lang.Throwable
+                                                 'java.lang.Error     java.lang.Error
+                                                 'java.lang.RuntimeException java.lang.RuntimeException
+                                                 'java.lang.NullPointerException java.lang.NullPointerException
+                                                 'java.lang.IllegalArgumentException java.lang.IllegalArgumentException
+                                                 'java.lang.IllegalStateException    java.lang.IllegalStateException
+                                                 'java.lang.IndexOutOfBoundsException java.lang.IndexOutOfBoundsException
+                                                 'java.lang.ArrayIndexOutOfBoundsException java.lang.ArrayIndexOutOfBoundsException
+                                                 'java.lang.ClassCastException       java.lang.ClassCastException
+                                                 'java.lang.ArithmeticException      java.lang.ArithmeticException
+                                                 'java.lang.NumberFormatException    java.lang.NumberFormatException
+                                                 'java.lang.UnsupportedOperationException java.lang.UnsupportedOperationException
+                                                 'java.lang.InterruptedException     java.lang.InterruptedException
+                                                 'java.lang.AssertionError           java.lang.AssertionError
+                                                 'java.lang.StackOverflowError       java.lang.StackOverflowError
+                                                 'java.lang.OutOfMemoryError         java.lang.OutOfMemoryError
+                                                 'java.io.IOException                java.io.IOException
+                                                 'java.io.FileNotFoundException      java.io.FileNotFoundException
+                                                 'clojure.lang.ExceptionInfo         clojure.lang.ExceptionInfo
                                                  'java.util.Collections java.util.Collections
                                                  'java.util.Arrays java.util.Arrays
                                                  'java.util.regex.Pattern java.util.regex.Pattern
@@ -556,6 +588,29 @@
                                                   Comparable java.lang.Comparable
                                                   Double java.lang.Double
                                                   Exception java.lang.Exception
+                                                  ;; Mirror of the new exception classes added to `:classes` above.
+                                                  ;; Without these the model can call `(catch java.lang.Throwable t …)`
+                                                  ;; via the FQN but the more idiomatic `(catch Throwable t …)` /
+                                                  ;; `(catch NullPointerException e …)` short forms wouldn't resolve.
+                                                  Throwable                       java.lang.Throwable
+                                                  Error                           java.lang.Error
+                                                  RuntimeException                java.lang.RuntimeException
+                                                  NullPointerException            java.lang.NullPointerException
+                                                  IllegalArgumentException        java.lang.IllegalArgumentException
+                                                  IllegalStateException           java.lang.IllegalStateException
+                                                  IndexOutOfBoundsException       java.lang.IndexOutOfBoundsException
+                                                  ArrayIndexOutOfBoundsException  java.lang.ArrayIndexOutOfBoundsException
+                                                  ClassCastException              java.lang.ClassCastException
+                                                  ArithmeticException             java.lang.ArithmeticException
+                                                  NumberFormatException           java.lang.NumberFormatException
+                                                  UnsupportedOperationException   java.lang.UnsupportedOperationException
+                                                  InterruptedException            java.lang.InterruptedException
+                                                  AssertionError                  java.lang.AssertionError
+                                                  StackOverflowError              java.lang.StackOverflowError
+                                                  OutOfMemoryError                java.lang.OutOfMemoryError
+                                                  IOException                     java.io.IOException
+                                                  FileNotFoundException           java.io.FileNotFoundException
+                                                  ExceptionInfo                   clojure.lang.ExceptionInfo
                                                   Float java.lang.Float
                                                   Integer java.lang.Integer
                                                   Long java.lang.Long

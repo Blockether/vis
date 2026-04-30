@@ -26,7 +26,9 @@
                                     :query "First turn"
                                     :status :running})]
     ;; Turn 1: terminal iteration with a `(def …)` var, an `(answer …)`
-    ;; block (idx 1), and a thinking trace.
+    ;; block (idx 1), thinking trace, system prompt, and a full LLM
+    ;; message envelope. The persistance layer derives :llm_system_prompt
+    ;; + :llm_user_prompt from the :llm-messages we pass in here.
     (vis/db-store-iteration! s {:query-id q1
                                 :blocks [{:code              "(+ 1 1)"
                                           :comment           ";; double-check arithmetic"
@@ -43,6 +45,8 @@
                                 :duration-ms 12
                                 :llm-provider :blockether
                                 :llm-model    "gpt-4o"
+                                :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
+                                               {:role "user"   :content "USER_TURN_TEXT_FIXTURE"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cost-usd 0.0042})
     (vis/db-update-query! s q1 {:status :done :answer "42"})
@@ -254,5 +258,16 @@
           (expect (str/includes? out "[answer]"))
           ;; The final answer text renders under a `#### Final answer`
           ;; section after every iteration of its turn.
-          (expect (str/includes? out "#### Final answer")))
+          (expect (str/includes? out "#### Final answer"))
+          ;; System prompt renders inside a collapsible <details> with
+          ;; a size summary so the file stays scannable.
+          (expect (str/includes? out "<details><summary>System prompt ("))
+          (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
+          ;; LLM message envelope ALSO renders collapsible — every
+          ;; `[{:role :content}]` pair the provider saw, with a
+          ;; per-role fenced sub-block.
+          (expect (str/includes? out "<details><summary>LLM messages ("))
+          (expect (str/includes? out "_system:_"))
+          (expect (str/includes? out "_user:_"))
+          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE")))
         (finally (vis/db-dispose-connection! s))))))
