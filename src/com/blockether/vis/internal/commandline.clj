@@ -435,5 +435,5 @@
                    (when print-fn (print-fn help))
                    {:status :error :command command :error err :help-text help})
                  {:status :ok :command command
-                  :result ((:cmd/run-fn command) parsed residual)})))))))
+                  :result ((:cmd/run-fn command) parsed residual)}))))))
      {:status :no-match :args args})))

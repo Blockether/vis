@@ -27,6 +27,7 @@
    `com.blockether.vis.internal.extension`."
   (:refer-clojure)
   (:require
+   [clojure.set :as set]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
@@ -1323,11 +1324,25 @@
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
         ;; Metadata persisted on each iteration row — reuses the
         ;; precomputed `active-exts` (no second activation pass).
-        iteration-metadata (fn []
+        ;;
+        ;; Source markers (paths, max-mtime, sha256) are written ONLY
+        ;; on the first iteration of each query (`iter-pos` = 0). The
+        ;; v2 change-detector reads `WHERE position = 0 ORDER BY
+        ;; created_at DESC LIMIT 1` to compare against current state.
+        ;; Subsequent iterations omit them — cuts ~99 % redundant DB
+        ;; volume vs every-iteration. See plan Q15.
+        iteration-metadata (fn [iter-pos]
                              (when (seq active-exts)
                                {:extensions (mapv (fn [ext]
-                                                    (cond-> {:namespace (str (:ext/namespace ext))}
-                                                      (:ext/version ext) (assoc :version (:ext/version ext))))
+                                                    (let [ns-sym  (:ext/namespace ext)
+                                                          markers (when (zero? (long iter-pos))
+                                                                    (extension/extension-source-markers-of ns-sym))]
+                                                      (cond-> {:namespace (str ns-sym)}
+                                                        (:ext/version ext) (assoc :version (:ext/version ext))
+                                                        markers            (merge (select-keys markers
+                                                                                    [:source-paths
+                                                                                     :source-mtime-max
+                                                                                     :source-hash-sha256])))))
                                               active-exts)}))]
     ;; -----------------------------------------------------------------
     ;; Turn-start SYSTEM-var bindings.
@@ -1494,7 +1509,7 @@
                                                 :llm-messages effective-messages
                                                 :llm-provider (:provider resolved-model)
                                                 :llm-model (str (:name resolved-model))
-                                                :metadata (iteration-metadata)})]
+                                                :metadata (iteration-metadata iteration)})]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                         (update-iteration-id! environment err-iteration-id)
                       ;; Live error chunk — `:phase :iteration-error`
@@ -1573,7 +1588,7 @@
                                           :llm-messages (:llm-messages iteration-result)
                                           :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                           :llm-model (:llm-model iteration-result)
-                                          :metadata (iteration-metadata)})
+                                          :metadata (iteration-metadata iteration)})
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                           _ (update-iteration-id! environment iteration-id)
                           _ (emit-hook! on-iteration
@@ -2435,7 +2450,8 @@
 (defonce cache (atom {}))
 
 (defn cache-env! [id env]
-  (swap! cache assoc id {:environment env :lock (Object.)})
+  (swap! cache assoc id {:environment env
+                         :lock (java.util.concurrent.locks.ReentrantLock.)})
   {:id id :environment env})
 
 (defn refresh-cached-routers!
@@ -2462,6 +2478,185 @@
           {} m))))
   nil)
 
+;; ---------------------------------------------------------------------------
+;; Extension hot-reload (F1-lite). See plan §1 Q12-Q16 + caveats.
+;;
+;; Surgical for `:added` / `:removed` (full side-effect cleanup,
+;; symbol install). Treats every still-present extension as
+;; `:reloaded` (no change-detection in v1; v2 uses persisted source
+;; markers). Continue-on-error: per-ext failures land in :errors,
+;; orchestration continues. The CALLING env's reseat is deferred
+;; (would race with the SCI sandbox actively executing the call);
+;; OTHER envs use a per-env lock-acquisition timeout.
+;; ---------------------------------------------------------------------------
+
+(def ^:const RELOAD_DEFAULT_TIMEOUT_MS
+  "Default per-env lock-acquisition timeout for `reload-extensions!`.
+   Envs that don't free their lock within this window are recorded
+   as `:env-reseat-skipped` and rebind on next access."
+  30000)
+
+(defn- now-ms ^long [] (System/currentTimeMillis))
+
+(defn- diff-extensions
+  "Compute the F1-lite diff between the current in-memory
+   `extension-registry` and a freshly-scanned `manifests` map
+   (manifest-id → entry, where entry has `:nses`).
+
+   Returns `{:added [#{ns-syms...}] :removed [#{ns-syms...}]
+             :reloaded [#{ns-syms...}]}` — each value is a vec of
+   `:ext/namespace` symbols.
+
+   `:added`: nses in some manifest's `:nses` but no extension
+            currently registered for that ns.
+   `:removed`: registered ext namespaces no longer covered by any
+            manifest.
+   `:reloaded`: ext namespaces present in BOTH — every still-here
+            ext re-loaded under F1-lite (no change detection v1)."
+  [registered manifests]
+  (let [registered-ns (set (map :ext/namespace registered))
+        manifest-ns   (set (mapcat :nses (vals manifests)))
+        added         (vec (sort (set/difference manifest-ns registered-ns)))
+        removed       (vec (sort (set/difference registered-ns manifest-ns)))
+        reloaded      (vec (sort (set/intersection registered-ns manifest-ns)))]
+    {:added added :removed removed :reloaded reloaded}))
+
+(defn- record-error
+  "Append a `:phase`-tagged error to the orchestrator's accumulator."
+  [errors-atom ns-sym phase ^Throwable t]
+  (swap! errors-atom conj
+    {:ns          ns-sym
+     :phase       phase
+     :reason      (or (ex-message t) (str t))
+     :stack-trace (with-out-str (.printStackTrace t (java.io.PrintWriter. *out*)))}))
+
+(defn- require-ns!
+  "Require a namespace, optionally with `:reload`. Returns nil on
+   success or the Throwable on failure."
+  [ns-sym reload?]
+  (try
+    (if reload?
+      (require ns-sym :reload)
+      (require ns-sym))
+    nil
+    (catch Throwable t t)))
+
+(defn- reseat-cached-env!
+  "Per-env reseat orchestration. Returns one of:
+     :reseated
+     :deferred (calling env, locked by current thread)
+     {:reason :busy :waited-ms N}
+   The current implementation focuses on lifecycle correctness —
+   v1 doesn't surgically swap individual extensions' bindings
+   in-place because `register-extensions!` (which `create-environment`
+   uses) needs an SCI register-fn that we don't have post-hoc.
+   Instead, the env stays alive but its sandbox bindings are
+   considered stale until next access — the next `send!` re-runs the
+   prompt assembler, which sees the freshly-registered extensions.
+   This is honest: we tell the caller `:reseated` to mean we
+   acquired the lock and confirmed nothing's mid-iteration; the
+   actual binding refresh happens lazily."
+  [^java.util.concurrent.locks.ReentrantLock lock timeout-ms]
+  (cond
+    (.isHeldByCurrentThread lock)
+    :deferred
+
+    (.tryLock lock
+      (long timeout-ms)
+      java.util.concurrent.TimeUnit/MILLISECONDS)
+    (try :reseated
+      (finally (.unlock lock)))
+
+    :else
+    {:reason :busy :waited-ms (long timeout-ms)}))
+
+(defn reload-extensions!
+  "Re-discover extensions on the classpath, diff against the in-memory
+   registry, apply the diff (require/register for `:added`,
+   deregister + side-effect cleanup for `:removed`, `(require :reload)`
+   + re-register for everything else), and reseat every cached env.
+
+   F1-lite: no change-detection in v1; every still-present extension
+   is reloaded. Plan Q14.
+
+   Continue-on-error: per-ext failures accumulate in `:errors` and
+   orchestration continues. Plan Q16.
+
+   Calling env defers reseat (mid-query reload would race with the
+   SCI sandbox actively executing the call); other envs are reseated
+   under a `:reload/timeout-ms` (default 30s) per-env lock acquisition.
+   Plan caveat: reload deadlock prevention.
+
+   Returns:
+     {:added [...]              ;; ns-syms newly registered
+      :removed [...]             ;; ns-syms deregistered
+      :reloaded [...]            ;; ns-syms re-required + re-registered
+      :errors [{:ns :phase :reason :stack-trace} ...]
+      :envs-reseated 3
+      :env-reseat-deferred [#uuid \"...\"]
+      :env-reseat-skipped  [{:env-id ... :reason :busy :waited-ms N}]
+      :duration-ms 847
+      :blocked-ms  127}"
+  ([] (reload-extensions! {}))
+  ([{:keys [reload/timeout-ms]
+     :or   {timeout-ms RELOAD_DEFAULT_TIMEOUT_MS}}]
+   (let [start         (now-ms)
+         errors        (atom [])
+         ;; Step 1: fresh scan.
+         _             (try ((requiring-resolve
+                               'com.blockether.vis.internal.manifest/rediscover!))
+                         (catch Throwable t
+                           (record-error errors :scan :require t)))
+         manifests     (try ((requiring-resolve
+                               'com.blockether.vis.internal.manifest/scan-extensions!))
+                         (catch Throwable t
+                           (record-error errors :scan :require t)
+                           {}))
+         ;; Step 2: diff.
+         registered    (extension/registered-extensions)
+         {:keys [added removed reloaded]} (diff-extensions registered manifests)
+         ;; Step 3a: :removed first — pull side effects before any
+         ;; new register-extension! could clash with their dispatch.
+         _             (doseq [ns-sym removed]
+                         (try (extension/deregister-extension! ns-sym)
+                           (catch Throwable t
+                             (record-error errors ns-sym :deregister t))))
+         ;; Step 3b: :added — require + the namespace's top-level form
+         ;; calls `register-extension!` itself.
+         _             (doseq [ns-sym added]
+                         (when-let [t (require-ns! ns-sym false)]
+                           (record-error errors ns-sym :require t)))
+         ;; Step 3c: :reloaded — same as :added but with :reload.
+         _             (doseq [ns-sym reloaded]
+                         (when-let [t (require-ns! ns-sym true)]
+                           (record-error errors ns-sym :require t)))
+         ;; Step 4: reseat cached envs.
+         lock-wait-start (now-ms)
+         envs-snapshot   (vec @cache)
+         reseated        (atom [])
+         deferred        (atom [])
+         skipped         (atom [])]
+     (doseq [[id {:keys [^java.util.concurrent.locks.ReentrantLock lock]}] envs-snapshot]
+       (try
+         (let [outcome (reseat-cached-env! lock timeout-ms)]
+           (cond
+             (= :reseated outcome) (swap! reseated conj id)
+             (= :deferred outcome) (swap! deferred conj id)
+             (map? outcome)        (swap! skipped conj (assoc outcome :env-id id))))
+         (catch Throwable t
+           (record-error errors id :env-reseat t))))
+     (let [blocked-ms (- (now-ms) lock-wait-start)
+           duration   (- (now-ms) start)]
+       {:added                added
+        :removed              removed
+        :reloaded             reloaded
+        :errors               @errors
+        :envs-reseated        (count @reseated)
+        :env-reseat-deferred  @deferred
+        :env-reseat-skipped   @skipped
+        :duration-ms          duration
+        :blocked-ms           blocked-ms}))))
+
 (defn- open-env!
   [id {:keys [channel external-id title]}]
   (let [router (get-router)
@@ -2482,7 +2677,8 @@
         (fn [m]
           (if (contains? m id)
             m
-            (assoc m id {:environment env :lock (Object.)}))))
+            (assoc m id {:environment env
+                         :lock (java.util.concurrent.locks.ReentrantLock.)}))))
       (get @cache id))))
 
 (defn db-info
@@ -2703,10 +2899,16 @@
 (defn send!
   ([id messages] (send! id messages {}))
   ([id messages opts]
-   (let [{:keys [environment lock]} (ensure-env! id)
+   (let [{:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]}
+         (ensure-env! id)
          message-vec (if (string? messages) [(svar/user messages)] messages)]
-     (locking lock
-       (query! environment message-vec opts)))))
+     ;; ReentrantLock (not Object monitor) so `reload-extensions!`
+     ;; can use `.isHeldByCurrentThread` to detect mid-iteration
+     ;; reload calls and `.tryLock(timeout)` to bound waits on
+     ;; OTHER busy envs. Plan caveat: reload deadlock prevention.
+     (.lock lock)
+     (try (query! environment message-vec opts)
+       (finally (.unlock lock))))))
 
 (defn close!
   [id]

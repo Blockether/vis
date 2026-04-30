@@ -263,6 +263,9 @@
 (def try-rescue-parse-error              extension/try-rescue-parse-error)
 (def discover-extensions!                extension/discover-extensions!)
 (def rediscover!                         manifest/rediscover!)
+(def deregister-extension!               extension/deregister-extension!)
+(def extension-source-markers-of         extension/extension-source-markers-of)
+(def reload-extensions!                  lp/reload-extensions!)
 
 ;; =============================================================================
 ;; Doctor protocol

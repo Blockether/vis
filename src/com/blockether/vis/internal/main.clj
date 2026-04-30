@@ -643,9 +643,62 @@
 
 ;;; ── `vis conversations` ─────────────────────────────────────────────────
 
-(defn- cli-conversations! [_parsed residual]
-  (config/init-cli!)
-  (let [channel (or (some #{"tui" "telegram" "cli"} residual) "tui")
+(def ^:private known-channels #{"tui" "telegram" "cli"})
+
+(defn- resolve-conversation-by-prefix
+  "Resolve a user-supplied conversation reference (full UUID or an
+   unambiguous prefix) to the canonical UUID. Scans every channel
+   because forks are channel-agnostic; the user typed an id, we find
+   it. Returns nil on miss or ambiguous prefix."
+  [d input]
+  (let [s (str input)]
+    (or (try (persistance/db-resolve-conversation-id d s) (catch Throwable _ nil))
+      (let [all     (mapcat #(lp/by-channel %) [:tui :telegram :cli])
+            matches (vec (filter #(str/starts-with? (str (:id %)) s) all))]
+        (when (= 1 (count matches))
+          (persistance/db-resolve-conversation-id d (str (:id (first matches)))))))))
+
+(defn- cli-fork-conversation!
+  "Fork a conversation by id. Creates a new `conversation_state` row
+   that points at the latest state as its parent, optionally with a
+   user-supplied title. Prints the new state UUID; the conversation
+   id (soul-id) stays the same so `vis channels tui --conversation-id
+   <ID>` keeps working and now resumes from the fork."
+  [cid-input title]
+  (let [d        (lp/db-info)
+        resolved (resolve-conversation-by-prefix d cid-input)]
+    (cond
+      (nil? resolved)
+      (do (stdout! (str "Conversation not found: " cid-input))
+        (stdout! "")
+        (stdout! "List existing conversations with:")
+        (stdout! "  vis conversations")
+        (shutdown-agents)
+        (System/exit 1))
+
+      :else
+      (let [opts      (cond-> {} (and title (not (str/blank? title)))
+                        (assoc :title title))
+            new-state (persistance/db-fork-conversation! d resolved opts)]
+        (if new-state
+          (do (stdout! "")
+            (stdout! (str "  Forked conversation " resolved))
+            (when title (stdout! (str "  Title:        " title)))
+            (stdout! (str "  New state-id: " new-state))
+            (stdout! "")
+            (stdout! (str "  Resume with: vis channels tui --conversation-id " resolved))
+            (stdout! ""))
+          (do (stdout! (str "Failed to fork conversation " resolved
+                         "; no existing state to fork from."))
+            (shutdown-agents)
+            (System/exit 1)))
+        (shutdown-agents)))))
+
+(defn- cli-list-conversations!
+  "List persisted conversations for one channel. `channel-input` may
+   be nil (defaults to `tui`)."
+  [channel-input]
+  (let [channel (or channel-input "tui")
         ch-kw   (keyword channel)
         convs   (lp/by-channel ch-kw)
         d       (lp/db-info)]
@@ -671,8 +724,38 @@
           rows)
         (stdout! (str "\n  " (count rows) " conversation(s)\n"))
         (stdout! "  Resume with: vis channels tui --conversation-id <ID>  (full or short)")
-        (stdout! "  Or latest:   vis channels tui --resume"))))
+        (stdout! "  Or latest:   vis channels tui --resume")
+        (stdout! "  Fork:        vis conversations --fork <ID> [--title TITLE]"))))
   (shutdown-agents))
+
+(defn- cli-conversations!
+  "`vis conversations` handler.
+
+   Two modes:
+   - List   --  `vis conversations [tui|telegram|cli]`
+   - Fork   --  `vis conversations --fork <CONVERSATION-ID> [--title TITLE]`
+
+   The `parsed` map carries the spec'd flags; the bare positional
+   `channel` (if present) is also in `parsed`. Anything not in the
+   spec is rejected upstream by `commandline/dispatch!`."
+  [parsed _residual]
+  (config/init-cli!)
+  (let [fork-target (get parsed "fork")
+        title       (get parsed "title")
+        channel     (get parsed "channel")]
+    (cond
+      (and (some? fork-target) (not (str/blank? fork-target)))
+      (cli-fork-conversation! fork-target title)
+
+      :else
+      (let [ch (when channel
+                 (when (contains? known-channels channel) channel))]
+        (when (and channel (nil? ch))
+          (stdout! (str "Unknown channel: " channel
+                     ". Expected one of: " (str/join ", " (sort known-channels))
+                     ". Defaulting to tui."))
+          (stdout! ""))
+        (cli-list-conversations! ch)))))
 
 ;;; ── `vis auth` ──────────────────────────────────────────────────────────
 
@@ -819,10 +902,18 @@
           :cmd/run-fn cli-auth!}
 
          {:cmd/name  "conversations"
-          :cmd/doc   "List conversations stored on disk."
-          :cmd/usage "vis conversations [tui|telegram|cli]"
+          :cmd/doc   "List conversations stored on disk, or fork one."
+          :cmd/usage "vis conversations [tui|telegram|cli] [--fork ID [--title TITLE]]"
+          :cmd/args  [{:name "channel" :kind :positional :type :string
+                       :doc  "Channel to list (tui|telegram|cli; default tui)."}
+                      {:name "fork"  :kind :flag :type :string
+                       :doc  "Fork the conversation with the given id (full UUID or unambiguous prefix)."}
+                      {:name "title" :kind :flag :type :string
+                       :doc  "Title to set on the new fork (used with --fork)."}]
           :cmd/examples ["vis conversations"
-                         "vis conversations telegram"]
+                         "vis conversations telegram"
+                         "vis conversations --fork 3a7b2c1d-..."
+                         "vis conversations --fork 3a7b2c1d --title \"Branch A\""]
           :cmd/run-fn cli-conversations!}]]
   (registry/register-cmd! spec))
 
@@ -1015,4 +1106,16 @@
         (System/exit 1))
 
       :else
-      (commandline/dispatch! root full-args))))
+      ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
+      ;; `:error` covers spec-validation failures (missing required
+      ;; args, unknown flags). Without an explicit `System/exit 1` here
+      ;; the process exited 0 even though the user-visible output was
+      ;; an error message + help text -- so any shell pipeline like
+      ;; `vis foo --bogus && echo ok` printed `ok`. Map `:error` to
+      ;; exit code 2 (POSIX convention for usage errors); `:no-match`
+      ;; can't actually fire here because `unknown-command?` above
+      ;; already short-circuited that case.
+      (let [{:keys [status]} (commandline/dispatch! root full-args)]
+        (case status
+          :error (System/exit 2)
+          nil)))))

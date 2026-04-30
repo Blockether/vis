@@ -177,3 +177,68 @@
         (doseq [i (range (count original-lines))]
           (when (and (not= 13 i) (not= 14 i)) ;; line 14 (1-based) is at idx 13
             (expect (= (nth original-lines i) (nth fixed-lines i)))))))))
+
+;; -----------------------------------------------------------------------------
+;; Multi-line unclosed-string regression — eeaf9651-…
+;;
+;; Different shape of the same LLM-mistake family: the model wrote
+;; `(let [content "..."])` with a multi-line markdown blob inside
+;; and forgot to close the string at the END of the markdown.
+;; Edamame surfaces the failure as `Invalid symbol: with:` (or any
+;; other word ending with a colon) somewhere mid-prose, because the
+;; unclosed string lets the reader chew through what was supposed
+;; to be plain text and stumble on the first colon-suffixed token.
+;;
+;; The existing `try-quote-rebalance` only walks repair candidates
+;; on the FIRST odd-quote line — fine for the cf9e29b5 case where
+;; the missing close-quote is on the same line as the opener, but
+;; broken for a multi-line unclosed string. Until the rescue is
+;; extended to try inserting `\"` at later line breaks, this test
+;; pins the failure shape so the gap is visible.
+;;
+;; Source: conversation eeaf9651-06c7-4dda-9e97-877fcef06337,
+;;         query 760d9435-…, iter 0 (status :done, no answer).
+;; The verbatim 5 KB block lives at
+;; `test/resources/parse-fixtures/eeaf9651-multi-line-unclosed-string.clj.txt`
+;; — don't pretty-print or auto-balance it; the broken byte sequence
+;; IS the regression signature.
+;; -----------------------------------------------------------------------------
+
+(def multi-line-unclosed-string
+  ;; Slurped at namespace-load time; the fixture is checked in
+  ;; verbatim so the test stays deterministic across machines.
+  (slurp
+    (clojure.java.io/resource
+      "parse-fixtures/eeaf9651-multi-line-unclosed-string.clj.txt")))
+
+(defdescribe multi-line-unclosed-string-failure-test
+  (it "edamame surfaces the failure as `Invalid symbol: <word>:`"
+    ;; The exact word edamame trips on depends on the input shape;
+    ;; what matters is that it's a colon-suffixed prose token that
+    ;; the reader walked into AFTER the unclosed string opener.
+    ;; In the live blob it's `with:` (line of `… search with re-seq:`).
+    (let [thrown (try
+                   (edamame/parse-string-all multi-line-unclosed-string
+                     {:all true :readers (fn [_tag] (fn [v] (list 'do v)))})
+                   nil
+                   (catch Throwable t t))]
+      (expect (some? thrown))
+      (let [msg (.getMessage ^Throwable thrown)]
+        (expect (str/includes? msg "Invalid symbol"))
+        ;; The message ends with `:` — the colon-suffixed word that
+        ;; tripped the reader. Pin the shape, not the exact word.
+        (expect (re-find #"Invalid symbol: \S+:" msg)))))
+
+  (it "the source has an ODD count of unescaped quotes (the regression signature)"
+    (expect (odd? (diag/count-unescaped-quotes multi-line-unclosed-string))))
+
+  (it "current try-quote-rebalance does NOT repair the multi-line case"
+    ;; This is the gap. `try-quote-rebalance` only walks repair
+    ;; candidates ON the first odd-quote line: removing the `\"`
+    ;; from the opener line turns the markdown body into bare
+    ;; symbols, and appending `\"` at end of the opener line
+    ;; leaves the next ~150 lines unparseable. Neither produces a
+    ;; parseable variant, so the function returns nil. Pin the
+    ;; gap so it's obvious when it's been closed.
+    (expect (nil? (diag/try-quote-rebalance multi-line-unclosed-string
+                    edamame-parses?)))))

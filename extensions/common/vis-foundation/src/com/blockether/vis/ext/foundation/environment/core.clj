@@ -214,12 +214,20 @@
      :arglists '([])
      :examples ["(v/reload-skills!)"]}))
 
+(def reload-extensions!-symbol
+  (vis/symbol 'reload-extensions! vis/reload-extensions!
+    {:doc      "Re-discover extensions on the classpath, diff against current registry, surgically apply :added / :removed / :reloaded. F1-lite: every still-present extension is re-required + re-registered (no change-detection in v1). Continue-on-error per-extension; the calling env's reseat is deferred until the current iteration completes. Returns the diff summary: {:added :removed :reloaded :errors :envs-reseated :env-reseat-deferred :env-reseat-skipped :duration-ms :blocked-ms}."
+     :arglists '([] [{:reload/timeout-ms n}])
+     :examples ["(v/reload-extensions!)"
+                "(v/reload-extensions! {:reload/timeout-ms 5000})"]}))
+
 (def environment-symbols
   [snapshot-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
    main-agent-instructions-symbol skills-symbol skill-symbol
    scan-warnings-symbol
-   reload-instructions!-symbol reload-skills!-symbol])
+   reload-instructions!-symbol reload-skills!-symbol
+   reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
   "One-line surface listing for the environment fns under the `v/`
@@ -231,7 +239,7 @@
   (str "`v/` environment fns: (v/snapshot) (v/git) (v/languages) "
     "(v/monorepo) (v/render) (v/refresh!)"
     " | project-guidance + skills: (v/main-agent-instructions) (v/skills) (v/skill \"name\") (v/scan-warnings)"
-    " | reload: (v/reload-instructions!) (v/reload-skills!)"))
+    " | reload: (v/reload-instructions!) (v/reload-skills!) (v/reload-extensions!)"))
 
 (defn environment-prompt
   "Renders the live foundation block: <project-guidance> (when
