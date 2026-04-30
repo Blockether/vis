@@ -102,8 +102,8 @@
 
 (defn refresh!
   "Invalidate the cached snapshot AND cascade into the agents +
-   skills caches. Next call to `snapshot` (and `(vis/main-agent-instructions)`,
-   `(vis/skills)`) will recompute. Returns the freshly computed snapshot.
+   skills caches. Next call to `snapshot` (and `(v/main-agent-instructions)`,
+   `(v/skills)`) will recompute. Returns the freshly computed snapshot.
 
    Cascade rationale: users editing `AGENTS.md` reach for
    `(vis/refresh!)` (existing muscle memory). Without the cascade,
@@ -185,12 +185,12 @@
                 "(map :name (v/skills))"
                 "(filter #(= :repo (:source %)) (v/skills))"]}))
 
-(def skill-symbol
-  (vis/symbol 'skill skills/lookup
-    {:doc      "Look up one skill by name. Always returns a map. Present: {:found? true :name :description :path :source :body :extra}. Absent: {:found? false :name <queried>}."
+(def load-skill-symbol
+  (vis/symbol 'load-skill skills/lookup
+    {:doc      "Load one skill's full body by name. This is the activation step — TURN_ACCESSIBLE_SKILLS only carries `:name`/`:description` summaries; `(v/load-skill name)` returns the full SKILL.md content under `:body`. Always returns a map. Present: {:found? true :name :description :path :source :body :extra}. Absent: {:found? false :name <queried>}."
      :arglists '([skill-name])
-     :examples ["(v/skill \"diagnose\")"
-                "(:body (v/skill \"caveman\"))"]}))
+     :examples ["(v/load-skill \"diagnose\")"
+                "(:body (v/load-skill \"caveman\"))"]}))
 
 (defn- combined-scan-warnings []
   (vec (concat (agents/scan-warnings) (skills/scan-warnings))))
@@ -224,7 +224,7 @@
 (def environment-symbols
   [snapshot-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
-   main-agent-instructions-symbol skills-symbol skill-symbol
+   main-agent-instructions-symbol skills-symbol load-skill-symbol
    scan-warnings-symbol
    reload-instructions!-symbol reload-skills!-symbol
    reload-extensions!-symbol])
@@ -238,7 +238,7 @@
    for the rationale."
   (str "`v/` environment fns: (v/snapshot) (v/git) (v/languages) "
     "(v/monorepo) (v/render) (v/refresh!)"
-    " | project-guidance + skills: (v/main-agent-instructions) (v/skills) (v/skill \"name\") (v/scan-warnings)"
+    " | project-guidance + skills: (v/main-agent-instructions) (v/skills) (v/load-skill \"name\") (v/scan-warnings)"
     " | reload: (v/reload-instructions!) (v/reload-skills!) (v/reload-extensions!)"))
 
 (defn environment-prompt

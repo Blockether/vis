@@ -429,7 +429,14 @@ SYSTEM vars (read-only; bound by name in the sandbox):
   TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
   TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
   TURN_SYSTEM_PROMPT           the assembled system prompt for this turn
-  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :version :kind :symbols :docs} for every active extension
+  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :version :kind :symbols :docs} for every active extension.
+                               \"Active\" = loaded into the sandbox; the model can call its symbols directly.
+  TURN_ACCESSIBLE_SKILLS       vec of {:name :description :path :source} for every accessible skill (no body —
+                               loading the body via `(v/load-skill name)` is the activation step). Use this vec
+                               when the user asks \"what can you do\" / \"what skills do you have\"; never invent
+                               a filter over TURN_ACTIVE_EXTENSIONS for skills.
+                               Use `(shape x)` on any value to see its structure: scalars return their type keyword;
+                               collections return `[type N <element-shape>]` (vec/seq/set/list) or `[:map N <keys>]`.
   ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
   ITERATION_PREVIOUS_REASONING last iteration's :thinking text
   CONVERSATION_TITLE           current conversation title (\"\" until set)
@@ -527,6 +534,40 @@ Host primitives (top-level, no alias — named for what they write):
                 (:ext/kind ext)      (assoc :kind    (:ext/kind ext))
                 (:ext/version ext)   (assoc :version (:ext/version ext))
                 (:ext/doc ext)       (assoc :doc     (:ext/doc ext))))))))
+
+(defn accessible-skills-snapshot
+  "Build the value of the `TURN_ACCESSIBLE_SKILLS` SYSTEM var: a vec of
+   compact skill summaries the model can `filter`/`map`/`some` over
+   without paying for the full SKILL.md body.
+
+   Per element: `{:name :description :path :source :extra}`. The `:body`
+   field is INTENTIONALLY omitted — it lazy-loads via `(v/load-skill name)`,
+   the canonical activation surface. Pulling every body into a SYSTEM
+   var would balloon turn-start memory for a value the model rarely
+   needs in full (the `<skills>` block already shows name + description).
+
+   Reads from `vis-foundation`'s skills cache via `requiring-resolve`.
+   When the foundation extension isn't on the classpath (smoke build,
+   pared-down packaging) the snapshot degrades to `[]`, matching the
+   \"no skills installed\" case.
+
+   Frozen ONCE at turn start (see `iteration-loop`). The model sees the
+   same vec across every iteration of the same turn."
+  []
+  (or (when-let [list-all (try (requiring-resolve
+                                 'com.blockether.vis.ext.foundation.environment.skills/list-all)
+                            (catch Throwable _ nil))]
+        (try
+          (->> (list-all)
+            (mapv (fn [s]
+                    (cond-> (select-keys s [:name :description :path :source])
+                      (seq (:extra s)) (assoc :extra (:extra s))))))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::skills-snapshot-failed
+                       :data  {:error (ex-message t)}}
+              "TURN_ACCESSIBLE_SKILLS snapshot failed; defaulting to []")
+            nil)))
+    []))
 
 (defn- render-extension-prompt-block
   "Render one extension's contribution to the system prompt. Honors

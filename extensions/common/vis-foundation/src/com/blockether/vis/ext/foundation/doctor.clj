@@ -1,6 +1,9 @@
 (ns com.blockether.vis.ext.foundation.doctor
-  "Foundation's contributions to the `vis doctor` aggregator. Four
-   checks make up the first batch (plan §1 Q18 / §10):
+  "Foundation's contribution to the `vis doctor` aggregator. ONE fn
+   (`check-fn`) returns the full message stream from four logical
+   sections, each stamping its own `:check-id` so the formatter
+   groups them under the same banner the original four-checks-vec
+   shape produced (plan §1 Q18 / §10):
 
      ::system            JVM / OS / Clojure / memory / DB-path facts
                           (lifted from the old host built-in
@@ -15,16 +18,16 @@
                           SKILL.md file.
      ::scan-warnings     Aggregated warnings from agents + skills
                           scanners (already surfaced via
-                          `(vis/scan-warnings)`); promoted to
+                          `(v/scan-warnings)`); promoted to
                           :error level for prominence in the
                           doctor output.
 
-   These check fns are pure data → message-vec; they don't mutate
+   These section fns are pure data → message-seq; they don't mutate
    anything and don't depend on the runtime environment beyond
    what's needed to read the existing scanners. Activation
-   contract per plan: every registered extension's checks run
-   regardless of `:ext/activation-fn`, so check fns must NOT
-   assume `:db-info` or other env keys are present."
+   contract per plan: every registered extension's `:ext/doctor-check-fn`
+   runs regardless of `:ext/activation-fn`, so the section fns must
+   NOT assume `:db-info` or other env keys are present."
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.environment.agents :as agents]
@@ -72,12 +75,6 @@
      {:level   :info
       :message (str "DB path: "  db-path)}]))
 
-(def system-check
-  {:check/id          ::system
-   :check/name        "System health"
-   :check/description "JVM, OS, Clojure version, heap usage, configured DB path."
-   :check/run-fn      system-check-fn})
-
 ;; ---------------------------------------------------------------------------
 ;; ::agents-md — project guidance presence
 ;; ---------------------------------------------------------------------------
@@ -98,12 +95,6 @@
         :message     "No project guidance found (neither AGENTS.md nor CLAUDE.md in the repo root)."
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
-(def agents-md-check
-  {:check/id          ::agents-md
-   :check/name        "Project guidance presence"
-   :check/description "Reports whether AGENTS.md (or CLAUDE.md fallback) is loaded; flags truncation when the file exceeds 16 KB."
-   :check/run-fn      agents-md-check-fn})
-
 ;; ---------------------------------------------------------------------------
 ;; ::skills — catalog summary
 ;; ---------------------------------------------------------------------------
@@ -120,12 +111,6 @@
       [{:level   :info
         :message (str total " skill" (when (not= 1 total) "s")
                    " loaded (" repo-n " repo, " user-n " user-global)")}])))
-
-(def skills-check
-  {:check/id          ::skills
-   :check/name        "Skills catalog"
-   :check/description "Counts the loaded skills broken down by source. Malformed skills are reported by `::scan-warnings`."
-   :check/run-fn      skills-check-fn})
 
 ;; ---------------------------------------------------------------------------
 ;; ::scan-warnings — promotes scanner warnings into doctor :error msgs
@@ -153,24 +138,27 @@
                :data        {:path path :source source}})
         warnings))))
 
-(def scan-warnings-check
-  {:check/id          ::scan-warnings
-   :check/name        "Scanner warnings"
-   :check/description "Surfaces malformed SKILL.md files and AGENTS.md / CLAUDE.md read failures detected at scan time."
-   :check/run-fn      scan-warnings-check-fn})
-
 ;; ---------------------------------------------------------------------------
-;; The combined vec the foundation aggregator declares as
-;; `:ext/doctor-checks`. Order is intentional: system facts first,
+;; The single fn the foundation extension wires into
+;; `:ext/doctor-check-fn`. Order is intentional: system facts first,
 ;; then project-guidance presence, then skills summary, then any
-;; scan failures.
+;; scan failures. Each section stamps its own `:check-id` so the
+;; formatter still groups the output under the documented prefixes.
 ;; ---------------------------------------------------------------------------
 
-(def all-checks
-  [system-check
-   agents-md-check
-   skills-check
-   scan-warnings-check])
+(defn- stamp [check-id msgs]
+  (mapv #(assoc % :check-id check-id) msgs))
+
+(defn check-fn
+  "Foundation's `:ext/doctor-check-fn`. Concatenates the four
+   logical section streams into a single message seq."
+  [environment]
+  (vec
+    (concat
+      (stamp ::system        (system-check-fn        environment))
+      (stamp ::agents-md     (agents-md-check-fn     environment))
+      (stamp ::skills        (skills-check-fn        environment))
+      (stamp ::scan-warnings (scan-warnings-check-fn environment)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level `vis doctor` CLI command. Foundation owns this now —
@@ -191,7 +179,7 @@
 
 (defn- cli-doctor-run!
   "CLI handler for `vis doctor`. Init host runtime, walk every
-   extension's `:ext/doctor-checks` via [[vis/run-doctor-checks]],
+   extension's `:ext/doctor-check-fn` via [[vis/run-doctor-checks]],
    format + print to original-stdout, exit with 0 / 1 / 2 by max
    level."
   [_parsed _residual]

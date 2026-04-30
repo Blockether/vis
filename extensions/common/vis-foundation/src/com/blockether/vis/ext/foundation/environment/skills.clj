@@ -246,14 +246,16 @@
 
 (defn list-all
   "Vec of skill maps, alphabetical by `:name`. Empty when no skills
-   are found anywhere. Surfaces as `(vis/skills)`."
+   are found anywhere. Surfaces as `(v/skills)`."
   []
   (or (:loaded (current)) []))
 
 (defn lookup
   "Find one skill by `:name`. Always returns a map; `:found?` flag
    discriminates present vs absent (plan Q6). Surfaces as
-   `(vis/skill \"name\")`."
+   `(v/load-skill \"name\")` — the activation step that materialises
+   the SKILL.md body into a sandbox value (TURN_ACCESSIBLE_SKILLS
+   carries only the summary)."
   [^String skill-name]
   (if-let [s (some #(when (= skill-name (:name %)) %) (list-all))]
     (assoc s :found? true)

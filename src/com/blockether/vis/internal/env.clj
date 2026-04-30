@@ -23,10 +23,112 @@
 ;; SCI sandbox + var-index
 ;; =============================================================================
 
-(defn- shape [v]
-  (cond (map? v) :map (vector? v) :vector (set? v) :set (list? v) :list
-    (string? v) :string (number? v) :number (keyword? v) :keyword
-    (symbol? v) :symbol (nil? v) :nil :else :value))
+;; ---------------------------------------------------------------------------
+;; `shape` — sandbox-bound structural describe.
+;;
+;; Replaces the original 9-line typology-only shape. The model uses this to
+;; learn what a value is BEFORE walking it: keys of a map, element-shape of a
+;; collection, length of a string. Critical for guarding against "assumed the
+;; data lived in `TURN_ACTIVE_EXTENSIONS` with `:kind :skill`"-class bugs:
+;; one `(shape (v/skills))` returns `[:vec 6 [:map 6 [:body :description
+;; :extra :found? :name :path :source]]]` and the misconception evaporates.
+;;
+;; Returns plain Clojure data — readable, diff-friendly, safe to embed in the
+;; <journal>. Bounded: never walks past element 0 of a collection, never
+;; renders more than `SHAPE_MAX_KEYS` keys for a map, and uses
+;; `bounded-count` so an infinite seq returns a finite size.
+;; ---------------------------------------------------------------------------
+
+(def ^:private ^:const SHAPE_MAX_KEYS
+  "Max keys rendered in a map shape before the tail collapses to `…`."
+  16)
+
+(def ^:private ^:const SHAPE_BOUNDED_COUNT_CAP
+  "Upper bound when sizing a sequence. Anything at-or-above is reported as
+   `(str cap \"+\")` so callers see \"large but finite\" without forcing the
+   tail of a lazy/infinite seq."
+  4096)
+
+(declare ^:private shape*)
+
+(defn- col-shape
+  "Render a collection's shape as `[tag size]` (empty) or
+   `[tag size <element-shape-of-first>]`. Walks at most one element; recurses
+   one level via `shape*` with `(dec depth)`."
+  [tag v depth]
+  (let [n         (bounded-count SHAPE_BOUNDED_COUNT_CAP v)
+        size-form (if (>= n SHAPE_BOUNDED_COUNT_CAP) (str n "+") n)]
+    (if (zero? n)
+      [tag 0]
+      (if (pos? depth)
+        [tag size-form (shape* (first v) (dec depth))]
+        [tag size-form]))))
+
+(defn- shape*
+  "Recursive shape walker. `depth` caps recursion: 0 = scalar / size only,
+   1 = collection with first-element type, 2 = first-element with its own
+   keys/element-shape (the default top-level depth)."
+  [v depth]
+  (cond
+    (nil? v)        :nil
+    (boolean? v)    :bool
+    (integer? v)    :int
+    (float? v)      :float
+    (ratio? v)      :ratio
+    (keyword? v)    :keyword
+    (symbol? v)     :symbol
+    (string? v)     [:string (count v)]
+    (instance? java.util.regex.Pattern v) :regex
+    (inst? v)       :inst
+    (uuid? v)       :uuid
+    (map? v)        (let [n  (count v)
+                          ks (->> (keys v)
+                               (take (inc SHAPE_MAX_KEYS))
+                               (sort-by str)
+                               vec)]
+                      (cond
+                        (zero? n)        [:map 0]
+                        (zero? depth)    [:map n]
+                        (> n SHAPE_MAX_KEYS) [:map n (conj (vec (take SHAPE_MAX_KEYS ks)) '…)]
+                        :else            [:map n ks]))
+    (vector? v)     (col-shape :vec  v depth)
+    (set? v)        (col-shape :set  v depth)
+    (list? v)       (col-shape :list v depth)
+    (sequential? v) (col-shape :seq  v depth)
+    (fn? v)         :fn
+    ;; Catch-all: anything we don't have a predicate for surfaces its
+    ;; FULLY-QUALIFIED class name as a string. Lossy lowercase shortnames
+    ;; (`:stringbuilder`) hide which package the value came from — a
+    ;; `java.io.File` and a `java.nio.file.Path` shouldn't both collapse
+    ;; to `:file`. Strings preserve dots + case faithfully.
+    :else           (if-let [c (class v)]
+                      (.getName c)
+                      "?")))
+
+(defn shape
+  "Describe a value's structure as plain Clojure data.
+
+   Scalars return a type keyword (`:int`, `:bool`, `:keyword`, …). Strings
+   return `[:string N]`. Collections return `[tag size <element-shape>]`
+   for non-empty colls; the element-shape is computed from the FIRST element
+   only — cheap and bounded. Maps return `[:map size <sorted-keys>]`; keys
+   over `SHAPE_MAX_KEYS` collapse to a trailing `…`.
+
+   Two-arity form lets callers cap recursion depth (default 2) when they only
+   want the outer shell. Always finite, never throws on lazy/infinite seqs
+   (uses `bounded-count` with a 4096 cap; sizes at-or-above render as
+   `\"4096+\"`).
+
+   Examples:
+     (shape nil)                          ;; => :nil
+     (shape \"hello\")                      ;; => [:string 5]
+     (shape {:a 1 :b 2})                  ;; => [:map 2 [:a :b]]
+     (shape [1 2 3])                      ;; => [:vec 3 :int]
+     (shape ())                           ;; => [:list 0]
+     (shape (StringBuilder. \"hi\"))       ;; => \"java.lang.StringBuilder\"
+     (shape (v/skills))                   ;; => [:vec 6 [:map 6 [:body :description :extra :name :path :source]]]"
+  ([v]       (shape* v 2))
+  ([v depth] (shape* v (long (or depth 2)))))
 
 (defn sci-update-binding!
   "Update a binding in an existing SCI context.
@@ -416,13 +518,23 @@
 
    See the comment block above this def for full per-name documentation
    and the prefix-based lifetime convention
-   (`TURN_*`, `ITERATION_*`, `CONVERSATION_*`)."
+   (`TURN_*`, `ITERATION_*`, `CONVERSATION_*`).
+
+   Vocabulary note: `ACTIVE` vs `ACCESSIBLE`. An extension is ACTIVE when
+   its activation-fn returned truthy and its symbols got intern'd into
+   the SCI sandbox (the model can call `v/cat` directly because the var
+   is loaded). A skill is ACCESSIBLE when the loader can find it on disk
+   and surface its `:name`/`:description`; the body becomes a sandbox var
+   only after the model calls `(v/load-skill \"name\")` — that's the
+   activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
+   TURN_ACCESSIBLE_SKILLS (discoverable, lazy-load on demand)."
   '#{TURN_USER_REQUEST
      TURN_QUERY_ID
      TURN_CONVERSATION_SOUL_ID
      TURN_CONVERSATION_STATE_ID
      TURN_SYSTEM_PROMPT
      TURN_ACTIVE_EXTENSIONS
+     TURN_ACCESSIBLE_SKILLS
      ITERATION_ID
      ITERATION_PREVIOUS_REASONING
      CONVERSATION_TITLE

@@ -226,7 +226,7 @@
         ;; Every layout pass MUST agree on total-h after pre-warm.
         (let [totals (mapv (fn [s]
                              (:total-h
-                               (virtual/layout msgs bubble-w settings s 10 {})))
+                              (virtual/layout msgs bubble-w settings s 10 {})))
                        [nil 0 50 100 500 (long 1e6)])]
           (expect (= 1 (count (distinct totals)))))))
 

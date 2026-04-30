@@ -1860,13 +1860,20 @@
       (expect (str/includes? out "vis — iterative coding agent CLI")))))
 
 (defdescribe vis-doctor
-  (it "prints environment diagnostics and exits 0"
+  (it "prints environment diagnostics from the foundation doctor sections and exits 0"
+    ;; Foundation owns `vis doctor`. Its `:ext/doctor-check-fn` emits four
+    ;; sections (system, agents-md, skills, scan-warnings); the host
+    ;; aggregator wraps them under the foundation namespace header. Pin
+    ;; the markers that survive both the section refactor and any
+    ;; future re-wording — the title banner, the ::system OS+JVM lines,
+    ;; the DB path line, the trailing summary.
     (let [{:keys [exit out]} (run-vis "doctor")]
       (expect (zero? exit))
       (expect (contains-all? out ["vis doctor"
-                                  "Environment"
+                                  "OS:"
+                                  "Java:"
                                   "DB path:"
-                                  "Conversations:"])))))
+                                  "Summary:"])))))
 
 (defdescribe vis-extensions
   (it "lists the `vis-foundation` extension as discovered"

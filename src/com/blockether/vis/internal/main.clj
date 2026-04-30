@@ -24,7 +24,7 @@
      vis channels <name>    — auto-mounted via the channel registry
 
    `vis doctor` is registered by vis-foundation (extension-owned)
-   so every extension can plug its `:ext/doctor-checks` into the
+   so every extension can plug its `:ext/doctor-check-fn` into the
    aggregator. See plan §1 Q18 + plans/2026-04-30-..."
 
   (:refer-clojure :exclude [agent run!])
@@ -827,10 +827,10 @@
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────
 
 ;; The `vis doctor` command lives in vis-foundation now — see plan §1 Q18.
-;; Foundation contributes its own `:ext/doctor-checks` (system, agents-md,
-;; skills, scan-warnings) and registers the top-level `vis doctor`
+;; Foundation contributes its own `:ext/doctor-check-fn` (sections: system,
+;; agents-md, skills, scan-warnings) and registers the top-level `vis doctor`
 ;; command via `register-cmd!`. Other extensions plug into the same
-;; aggregator by declaring their own `:ext/doctor-checks` vec.
+;; aggregator by declaring their own `:ext/doctor-check-fn`.
 
 ;;; ── `vis extensions` ────────────────────────────────────────────────────
 
