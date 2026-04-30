@@ -313,8 +313,8 @@
    are composed via compose-text so inline helpers inside a vector
    item just work:
 
-     (item-text "plain string")              ;=> "plain string"
-     (item-text ["a " (md/code "b") " c"])  ;=> "a `b` c"
+     (item-text \"plain string\")              ;=> \"plain string\"
+     (item-text [\"a \" (md/code \"b\") \" c\"])  ;=> \"a `b` c\""
   [x]
   (if (sequential? x)
     (compose-text x)
@@ -341,7 +341,6 @@
 
      (md/ol [\"a\" \"b\"])
      (md/ol [[\"Step \" (md/code \"1\") \": go\"] \"done\"])"
-  [& items]
   [& items]
   (->> (normalize-list-items items)
     (map-indexed (fn [i x] (str (inc i) ". " (item-text x))))

@@ -199,7 +199,25 @@
                 "(:body (v/load-skill \"caveman\"))"]}))
 
 (defn- combined-scan-warnings []
-  (vec (concat (agents/scan-warnings) (skills/scan-warnings))))
+  ;; Three sources, all `{:source :reason :path}` shaped so the
+  ;; renderer can splice them into one `<scan-warnings>` block:
+  ;;
+  ;;   (a) AGENTS.md / CLAUDE.md read failures              — agents/scan-warnings
+  ;;   (b) SKILL.md frontmatter / shape rejections           — skills/scan-warnings
+  ;;   (c) Extension namespace `(require)` failures collected
+  ;;       during classpath discovery                        — vis/extension-load-failures
+  ;;
+  ;; (c) is the load-bearing addition. Pre-fix a single typo in any
+  ;; extension source file silently disabled its alias namespace
+  ;; (`v/`, `md/`, `clj/`, …). The user saw nothing; the LLM saw
+  ;; "Unable to resolve symbol" forever (conversation
+  ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks on this).
+  ;; Surfacing the failure here puts the actual root cause — "foundation.core
+  ;; failed to load: Syntax error reading source at markdown.clj:328:17" —
+  ;; into the system prompt where the model will read it.
+  (vec (concat (agents/scan-warnings)
+         (skills/scan-warnings)
+         (vis/extension-load-failures))))
 
 (def scan-warnings-symbol
   (vis/symbol 'scan-warnings combined-scan-warnings

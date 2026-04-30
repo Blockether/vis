@@ -38,6 +38,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.progress :as progress]
    [com.blockether.vis.internal.registry :as registry]
@@ -1002,11 +1003,48 @@
 ;; ONE call. The unified loader lives in the extension facade.
 ;; =============================================================================
 
+(defn- print-extension-load-failures!
+  "Print every classpath extension namespace whose `(require)` blew
+   up during the most recent scan to stderr, along with the
+   user-actionable hint. Pre-fix the failure was a buried
+   `~/.vis/vis.log` ERROR line and the user had no surface clue
+   that an entire alias namespace was unbound — the LLM in the
+   sandbox would loop on `Unable to resolve symbol: v/cat` until
+   the user manually dug through the log file. Now the launcher
+   shouts the failure on every startup so the user can `git diff`
+   the broken extension and fix the typo.
+
+   No-op when every extension loaded cleanly."
+  []
+  (let [failures (manifest/load-failures)]
+    (when (seq failures)
+      (binding [*out* *err*]
+        (println)
+        (println "⚠  vis: " (count failures) "extension namespace(s) failed to load.")
+        (println "   The associated alias namespace will be UNBOUND in the sandbox.")
+        (println "   The agent will see `Unable to resolve symbol` for every call into it.")
+        (println)
+        (doseq [{:keys [extension-id extension-ns reason path]} failures]
+          (println (str "   • extension '" extension-id "' (" extension-ns ")"))
+          (println (str "     " reason))
+          (when path
+            (println (str "     manifest: " path))))
+        (println)))))
+
 (defn discover-all!
   "Run the unified extension discovery scan. Idempotent through
-   Clojure's `require` cache. Returns nil."
+   Clojure's `require` cache. Returns nil.
+
+   Prints a stderr banner enumerating every extension namespace
+   whose `(require)` failed during discovery. The same warnings are
+   also fed into the per-turn `<scan-warnings>` system-prompt block
+   by `vis-foundation/combined-scan-warnings`, so both the user (at
+   the terminal) and the LLM (in its prompt) see the failure
+   immediately instead of bouncing off `Unable to resolve symbol`
+   for an entire conversation."
   []
   (extension/discover-extensions!)
+  (print-extension-load-failures!)
   nil)
 
 ;; =============================================================================
