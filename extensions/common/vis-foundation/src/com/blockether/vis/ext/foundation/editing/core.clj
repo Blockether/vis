@@ -494,4 +494,4 @@
 
 For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).
 
-Read once, reuse. Cross-iter? `(def x (vis/cat ...))`. Identical repeat = deduped. Non-identical re-read of same region = wasted turn.")
+Read once, reuse. Cross-iter? `(def x (vis/cat ...))`. Identical re-reads run again on every call — bind once, reuse via the var.")

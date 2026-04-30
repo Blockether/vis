@@ -92,31 +92,20 @@
         (expect (= 1 (count (:errors turn))))
         (expect (= "boom" (-> turn :errors first :error))))))
 
-  (it "surfaces the redundancy summary aggregated across iteration metadata"
-    ;; The Phase 2-m metric lands in iteration.metadata as :dedup-saves
-    ;; per iteration; (vis/turn).:redundancy aggregates across iterations.
+  (it "omits the dropped :redundancy key from the snapshot"
+    ;; The dedup cache + redundancy metric were removed; (vis/turn)
+    ;; no longer surfaces a `:redundancy` key. Asserting absence here
+    ;; pins the contract so a future addition is a deliberate decision,
+    ;; not a silent regression.
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (sdk/db-store-iteration! s
         {:query-id    query-id
-         :blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
-                  {:id 1 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
+         :blocks      [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]
          :duration-ms 100
-         :llm-model   "test-model"
-         :metadata    {:dedup-saves 0
-                       :expression-redundancy-fraction 0.0}})
-      (sdk/db-store-iteration! s
-        {:query-id    query-id
-         :blocks [{:id 0 :code "(grep \"X\")" :result [] :execution-time-ms 1}]
-         :duration-ms 100
-         :llm-model   "test-model"
-         :metadata    {:dedup-saves 1
-                       :expression-redundancy-fraction 1.0}})
-      (let [turn ((private-fn "foundation-turn") (env s conversation-id))
-            redundancy (:redundancy turn)]
-        (expect (= 1 (:duplicate-count redundancy)))
-        (expect (= 3 (:total-count redundancy)))
-        (expect (< (Math/abs (- (/ 1.0 3.0) (:fraction redundancy))) 1e-9))))))
+         :llm-model   "test-model"})
+      (let [turn ((private-fn "foundation-turn") (env s conversation-id))]
+        (expect (not (contains? turn :redundancy)))))))
 
 ;; -----------------------------------------------------------------------------
 ;; (vis/conversation [id]) — current or specific conversation

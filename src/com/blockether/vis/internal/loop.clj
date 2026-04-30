@@ -259,7 +259,7 @@
    Repair pipeline when the raw source fails edamame:
      1. parinfer indent-mode rebalance → re-parse via edamame;
         on success every form gets `:repaired? true` so the channel
-        + dedup layers can see the repair happened.
+        can see the repair happened.
      2. on second failure return `[nil parse-error]` and let the
         caller (`execute-code`) dispatch to the extension rescue
         chain (`try-extension-parse-rescue`).
@@ -296,9 +296,8 @@
                ;;     Clojure code, no preamble.
                ;; Persisting these as TWO fields (instead of glued
                ;; into one `:expr` blob) keeps the executable code
-               ;; clean for hashing / dedup / display while still
-               ;; preserving the model's authored prose alongside
-               ;; each form.
+               ;; clean for display while still preserving the
+               ;; model's authored prose alongside each form.
                comment-slice (fn [idx]
                                (when-let [[start _] (nth form-bounds idx nil)]
                                  (let [prev-end (or (some-> (nth form-bounds (dec idx) nil)
@@ -435,85 +434,6 @@
                 fixed                       ; parses cleanly — done
                 (recur fixed next-error (inc iterations))))))))))
 
-(defn canonical-expression-hash
-  "Whitespace-and-form-normalized hash of `expression`. Parses the form
-   via edamame so `(grep \"X\")` and `(grep   \"X\")` collapse to the
-   same hash, then `pr-str`s the AST and hashes that. Falls back to a
-   raw-string hash when the parser can't read the input — better to
-   over-count duplicates than to miss them due to a tagged literal.
-
-   Stable across JVM runs because we hash the printed AST, not the
-   reader's internal data structures."
-  [expression]
-  (try
-    (let [forms (edamame/parse-string-all expression edamame-opts)]
-      (str (hash (pr-str forms))))
-    (catch Throwable _
-      (str (hash (str expression))))))
-
-(defn count-duplicates
-  "Count how many entries in `blocks` have a canonical hash that
-   already lives in `seen-hashes-atom`, INCLUDING intra-iteration
-   duplicates. The seen-set is grown incrementally during the walk:
-   `(grep \"X\")` followed by another `(grep \"X\")` in the same iteration
-   counts the second occurrence as a duplicate. After counting, the
-   atom is updated with the SUCCESSFUL hashes (errors / timeouts are
-   NOT recorded — retrying after failure is legitimate).
-
-   Returns `[duplicates total]`."
-  [seen-hashes-atom blocks]
-  (let [{:keys [duplicates seen]}
-        (reduce (fn [{:keys [duplicates seen]} expression]
-                  (let [h      (canonical-expression-hash (or (:code expression) ""))
-                        is-dup (contains? seen h)
-                        ok?    (and (nil? (:error expression))
-                                 (not (:timeout? expression)))]
-                    {:duplicates (if is-dup (inc duplicates) duplicates)
-                     :seen (if (and ok? (not is-dup)) (conj seen h) seen)}))
-          {:duplicates 0 :seen @seen-hashes-atom}
-          blocks)]
-    (reset! seen-hashes-atom seen)
-    [duplicates (count blocks)]))
-
-(defn dedup-cache-lookup
-  "Returns a synthetic execution-result map when `expression`'s
-   canonical hash is already in `dedup-cache-atom`, else nil. The
-   cached map carries the prior result + a `:cached-from` annotation
-   pointing at the iteration-id that originally produced it.
-
-   The synthetic result has `:execution-time-ms 0` and `:cached? true`
-   so downstream rendering / metadata collection can flag the
-   short-circuit."
-  [dedup-cache-atom expression]
-  (when (and dedup-cache-atom expression)
-    (let [h   (canonical-expression-hash expression)
-          hit (get @dedup-cache-atom h)]
-      (when hit
-        (assoc hit
-          :cached? true
-          :execution-time-ms 0)))))
-
-(defn dedup-cache-record!
-  "Record `result` in `dedup-cache-atom` keyed by the canonical hash of
-   `expression`. No-op when the result is an error/timeout (retries are
-   legitimate). The recorded entry carries an `:cached-from` field
-   naming the iteration-id where the call originally succeeded."
-  [dedup-cache-atom expression result iteration-id]
-  (when (and dedup-cache-atom expression result
-          (nil? (:error result))
-          (not (:timeout? result)))
-    (let [h (canonical-expression-hash expression)]
-      (swap! dedup-cache-atom
-        (fn [cache]
-          (if (contains? cache h)
-            cache
-            (assoc cache h
-              {:result            (:result result)
-               :stdout            (:stdout result)
-               :stderr            (:stderr result)
-               :cached-from       iteration-id
-               :original-duration (:execution-time-ms result)})))))))
-
 (def ^:private DEF_HEADS '#{def defn defn- defmacro})
 
 (defn extract-defining-name
@@ -554,41 +474,29 @@
   "Run a single :code block through the SCI sandbox.
 
    Optional kwargs:
-     :timeout-ms          — hard-cap eval time, clamped at the
-                            *eval-timeout-ms* bounds.
-     :doc                 — docstring to attach to the var defined by
-                            this :expr.
-     :dedup-cache-atom    — per-query `{hash -> cached-result}` atom.
-                            When the canonical hash of `code` is
-                            already in the cache, the SCI eval is
-                            skipped and a synthetic `:cached?`
-                            result is returned. Misses fall through
-                            to a real eval and the success is
-                            recorded back into the cache.
-     :iteration-id        — `iN.K` string used as `:cached-from` on
-                            cache writes. Required when
-                            `:dedup-cache-atom` is provided."
+     :timeout-ms — hard-cap eval time, clamped at the
+                   *eval-timeout-ms* bounds.
+     :doc        — docstring to attach to the var defined by this :expr.
+
+   Every call performs a real SCI eval. There is no result cache:
+   forms with side effects (e.g. host primitives `(answer …)` and
+   `(conversation-title …)`) MUST run their bodies on every
+   invocation, and forms without side effects re-run cheaply enough
+   that caching them is not worth the correctness footgun."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
-   & {:keys [timeout-ms doc dedup-cache-atom iteration-id]}]
+   & {:keys [timeout-ms doc]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
-          lint-error (detect-common-mistakes code)
-          cached     (dedup-cache-lookup dedup-cache-atom code)]
-      (cond
-        lint-error
+          lint-error (detect-common-mistakes code)]
+      (if lint-error
         {:result nil :stdout "" :stderr "" :error lint-error
          :execution-time-ms 0 :timeout? false}
-
-        cached cached
-
-        :else
         (let [parse-error (parse-clojure-syntax code)]
           (if parse-error
             (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
               (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time)]
                 (when (nil? (:error exec))
-                  (attach-doc-meta! environment rescued doc)
-                  (dedup-cache-record! dedup-cache-atom rescued exec iteration-id))
+                  (attach-doc-meta! environment rescued doc))
                 (assoc exec
                   :repaired? true
                   :original-code code
@@ -597,8 +505,7 @@
                :execution-time-ms 0 :timeout? false})
             (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time)]
               (when (nil? (:error exec))
-                (attach-doc-meta! environment code doc)
-                (dedup-cache-record! dedup-cache-atom code exec iteration-id))
+                (attach-doc-meta! environment code doc))
               exec)))))))
 
 ;; Print-cap defaults for `prompt/safe-pr-str` — chosen so a wide flat
@@ -767,69 +674,17 @@
 
 (defn answer-position-error-message
   "Validation-error string surfaced when `answer-position-violation?`
-   fires. Tells the model exactly what's wrong (which form's index
-   vs. the required last index, both 1-based for human readability)
-   and offers two recovery paths."
+   fires. Tells the model where its answer call landed (1-based form
+   index) vs. where the rule expects it (last form), and offers two
+   concrete recovery paths."
   [form-idx total-forms]
   (let [actual-1 (inc (or form-idx 0))]
-    (str "(answer …) must be either the ONLY top-level form OR the LAST "
-      "top-level form in its iteration. This iteration had " total-forms
-      " top-level forms but answer fired from form " actual-1
-      "; it must fire from form " total-forms
-      ". Either: (a) move the answer call to the end of this iteration, "
-      "OR (b) drop trailing forms and emit them as a separate next "
-      "iteration before the answer.")))
-
-;; ---------------------------------------------------------------------------
-;; Rule c — \"answer in iter 0 must be the ONLY form\"
-;;
-;; Rule b' allows answer as the last of N top-level forms, but in
-;; iteration 0 the model has no prior `<journal>` context. If it
-;; emits work-forms followed by `(answer …)` in iter 0, the answer
-;; was formed WITHOUT observing the work's results — those land in
-;; iter 1's prompt, not iter 0's. The answer is therefore
-;; uninformed regardless of whether the work succeeded.
-;;
-;; Recovery: model can either (a) inline the work into the answer's
-;; argument or wrap it in a structural `(let […] (answer …))` so
-;; results ARE observed inline before the answer fires (still ONE
-;; top-level form, allowed), OR (b) split the work into iter 0 and
-;; emit `(answer …)` as the only form of iter 1 once the work's
-;; results are visible in `<journal>`.
-;;
-;; Iter 1+ is unaffected — by then the model has seen at least one
-;; feedback round, so multi-form answer iterations carry real
-;; information.
-;; ---------------------------------------------------------------------------
-
-(defn answer-first-iteration-violation?
-  "True when `(answer …)` fired during iteration 0 AND the iteration
-   had more than one top-level form. `iteration` is the 0-based
-   iteration number; `total-forms` is the count of parsed top-level
-   blocks; `answer-fired?` is whether the answer-atom was set.
-   Pure; public so loop + tests share the rule."
-  [iteration total-forms answer-fired?]
-  (boolean (and answer-fired?
-             (integer? iteration)
-             (zero? iteration)
-             (integer? total-forms)
-             (> total-forms 1))))
-
-(defn answer-first-iteration-error-message
-  "Validation-error string surfaced when
-   `answer-first-iteration-violation?` fires. Spells out WHY this is
-   wrong (the model didn't observe its own work's results before
-   answering) and offers both recovery paths."
-  [total-forms]
-  (str "(answer …) cannot fire in iteration 0 alongside other top-level "
-    "work forms. This iteration had " total-forms " top-level forms; the "
-    "answer was discarded. The model has not yet observed the results "
-    "of its own work in iteration 0 — those land in iteration 1's <journal>, "
-    "not iteration 0's. Either: (a) inline the work into the answer's "
-    "argument or wrap it as `(let […] (answer …))` so the iteration has "
-    "ONE top-level form whose result IS observed before answer fires, OR "
-    "(b) keep the work in iteration 0 and emit (answer …) as the only "
-    "form of iteration 1 once the work's results are visible in <journal>."))
+    (str "(answer …) is the LAST top-level form of its iteration. "
+      "This iteration had " total-forms " top-level forms; answer "
+      "fired from form " actual-1 "; it must fire from form " total-forms
+      ". Recovery: (a) move the answer call to the end of this iteration, "
+      "OR (b) keep the trailing forms in this iteration and emit "
+      "`(answer …)` as the only form of the next iteration.")))
 
 ;; ---------------------------------------------------------------------------
 ;; run-iteration
@@ -837,15 +692,8 @@
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
-   Returns map with :thinking :blocks :final-result :api-usage etc.
-
-   Optional `:dedup-cache-atom` is the per-query cache that skips
-   re-execution of identical canonical forms. The handler builds
-   `iteration-id`s as `iN.K` (1-based) and threads them into each
-   `execute-code` call so cache hits carry a stable `:cached-from`
-   reference."
-  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk
-                                   dedup-cache-atom]}]]
+   Returns map with :thinking :blocks :final-result :api-usage etc."
+  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
@@ -930,9 +778,7 @@
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
-                                                (let [r (execute-code environment expr
-                                                          :dedup-cache-atom dedup-cache-atom
-                                                          :iteration-id iteration-id)]
+                                                (let [r (execute-code environment expr)]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
                                                      :execution-time-ms (:execution-time-ms r)
@@ -988,22 +834,15 @@
                    (range) code-blocks block-results block-comments)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
-          ;; iteration. Atom payload is `{:value :form-idx}`. Three
+          ;; iteration. Atom payload is `{:value :form-idx}`. Two
           ;; gates fire in order:
           ;;
-          ;;   1. Rule c (first-iter informedness): in iteration 0,
-          ;;      `(answer …)` must be the ONLY top-level form.
-          ;;      Multi-form iter-0 answers are rejected because the
-          ;;      model has no prior `<journal>` to draw on — the
-          ;;      answer was formed WITHOUT observing the iteration's
-          ;;      own work, which only lands in iter 1's prompt.
-          ;;
-          ;;   2. Rule b' (answer position): `(answer …)` must fire
+          ;;   1. Rule b' (answer position): `(answer …)` must fire
           ;;      from the last (or only) top-level form. Mid-
           ;;      iteration answers are rejected; trailing work
           ;;      after an answer is incoherent.
           ;;
-          ;;   3. Option C (form-scoped error gate): if the answer-
+          ;;   2. Option C (form-scoped error gate): if the answer-
           ;;      bearing form's own evaluation errored anyway
           ;;      (e.g. `(do (vis/edit …throws…) (answer "x"))` —
           ;;      the form had inner work that crashed), the answer
@@ -1018,14 +857,10 @@
           ;; separately so both columns get clean values.
         (let [final-answer    (str value)
               total-forms     (count code-entries)
-              first-iter-bad? (answer-first-iteration-violation? iteration total-forms true)
-              position-bad?   (when-not first-iter-bad?
-                                (answer-position-violation? form-idx total-forms))
-              own-form-error  (when (and (not first-iter-bad?) (not position-bad?))
+              position-bad?   (answer-position-violation? form-idx total-forms)
+              own-form-error  (when-not position-bad?
                                 (answer-form-error block-results form-idx))
               validation-error (cond
-                                 first-iter-bad?
-                                 (answer-first-iteration-error-message total-forms)
                                  position-bad?
                                  (answer-position-error-message form-idx total-forms)
                                  own-form-error
@@ -1038,6 +873,30 @@
                               (< form-idx (count blocks))
                               (nil? (get-in blocks [form-idx :error])))
                             (assoc-in [form-idx :error] validation-error))
+              ;; Re-emit a `:phase :form-result` chunk for the
+              ;; answer-bearing form when the validator attached an
+              ;; error post-hoc. The original `:form-result` chunk
+              ;; fired the moment the form returned `:vis/answer`
+              ;; with `:error nil`; without this re-emit the TUI
+              ;; tracker renders the rejected answer as a succeeded
+              ;; form, hiding the validation error from the user.
+              _ (when (and validation-error form-idx on-chunk
+                        (< form-idx (count blocks*)))
+                  (let [b (get blocks* form-idx)]
+                    (on-chunk {:phase             :form-result
+                               :iteration         iteration
+                               :form-idx          form-idx
+                               :form-of           total-forms
+                               :iteration-id      (str "i" iteration "." (inc form-idx))
+                               :code              (:code b)
+                               :comment           (get block-comments form-idx)
+                               :result            (:result b)
+                               :error             (:error b)
+                               :stdout            (:stdout b)
+                               :stderr            (:stderr b)
+                               :execution-time-ms (:execution-time-ms b)
+                               :timeout?          (boolean (:timeout? b))
+                               :repaired?         (boolean (:repaired? b))})))
               model-name       (some-> (:name resolved-model) str)
               provider         (:provider resolved-model)]
           (if validation-error
@@ -1394,19 +1253,6 @@
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
-        ;; Phase 2-m measurement: per-query set of canonical hashes
-        ;; for SUCCESSFUL blocks. The iteration handler counts how
-        ;; many of THIS iteration's blocks were already in the set
-        ;; (`:expression-redundancy-fraction` + `:dedup-saves` metadata)
-        ;; before adding the new successful ones.
-        seen-expression-hashes-atom (atom #{})
-        ;; Per-query map of canonical hash -> cached execution result.
-        ;; When the model re-issues an identical canonical form,
-        ;; `execute-code` returns the cached result with `:cached?
-        ;; true` and `:cached-from "iN.K"` instead of re-running SCI.
-        ;; Saves SCI eval cost + downstream side effects AND tells the
-        ;; model the call was already made so it stops re-issuing.
-        dedup-cache-atom (atom {})
         finalize-cost (fn []
                         (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} @usage-atom
                               total-tokens (+ input-tokens output-tokens)
@@ -1561,8 +1407,7 @@
                                            {:iteration iteration :reasoning-level reasoning-level
                                             :routing effective-routing
                                             :resolved-model resolved-model
-                                            :on-chunk on-chunk
-                                            :dedup-cache-atom dedup-cache-atom})
+                                            :on-chunk on-chunk})
                                          (catch Exception e
                                            (handle-iteration-exception! e
                                              {:iteration iteration :messages effective-messages
@@ -1669,17 +1514,6 @@
                                          ;; round-trip when it just needs one of
                                          ;; those fields.
                                            :conversation-metadata conversation-metadata})
-                          [redundant-count expression-count]
-                          (count-duplicates seen-expression-hashes-atom
-                            (or blocks []))
-                          redundancy-fraction
-                          (if (pos? expression-count)
-                            (double (/ redundant-count expression-count))
-                            0.0)
-                          iteration-metadata-with-metrics
-                          (merge (or (iteration-metadata) {})
-                            {:expression-redundancy-fraction redundancy-fraction
-                             :dedup-saves                    redundant-count})
                           iteration-id (persistance/db-store-iteration! (:db-info environment)
                                          {:query-id query-id :blocks blocks :vars vars-snapshot
                                           :thinking thinking
@@ -1689,7 +1523,7 @@
                                           :llm-messages (:llm-messages iteration-result)
                                           :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                           :llm-model (:llm-model iteration-result)
-                                          :metadata iteration-metadata-with-metrics})
+                                          :metadata (iteration-metadata)})
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                           _ (update-iteration-id! environment iteration-id)
                           _ (emit-hook! on-iteration

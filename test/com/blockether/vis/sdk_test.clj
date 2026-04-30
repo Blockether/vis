@@ -582,57 +582,10 @@
       (expect (re-find #"3 top-level forms" msg))
       (expect (re-find #"answer fired from form 1" msg))
       (expect (re-find #"must fire from form 3" msg))
-      (expect (re-find #"ONLY top-level form" msg))
-      (expect (re-find #"LAST\s+top-level form" msg))
-      ;; Both escape hatches: move-to-end OR split-iteration.
+      (expect (re-find #"LAST top-level form" msg))
+      ;; Both recovery paths surface in the message.
       (expect (re-find #"move the answer call to the end" msg))
-      (expect (re-find #"separate next\s+iteration" msg)))))
-
-;; -----------------------------------------------------------------------------
-;; answer-first-iteration — rule c (\"answer in iter 0 must be the only form\")
-;;
-;; In iteration 0 the model has not yet observed its own work's
-;; results (those land in iter 1's <journal>). Multi-form iter-0
-;; answers are therefore uninformed; we reject them and nudge the
-;; model to either inline the work or split into iter 1.
-;; -----------------------------------------------------------------------------
-
-(defdescribe answer-first-iteration-rule-test
-  (it "iter 0 + single form + answer fired — NOT a violation"
-    (expect (false? (sdk/answer-first-iteration-violation? 0 1 true))))
-
-  (it "iter 0 + multi form + answer fired — violation"
-    (expect (true? (sdk/answer-first-iteration-violation? 0 2 true)))
-    (expect (true? (sdk/answer-first-iteration-violation? 0 5 true))))
-
-  (it "iter 1+ + multi form + answer fired — NOT a violation (rule b' applies)"
-    (expect (false? (sdk/answer-first-iteration-violation? 1 5 true)))
-    (expect (false? (sdk/answer-first-iteration-violation? 7 3 true))))
-
-  (it "iter 0 + multi form but answer NOT fired — not a violation"
-    (expect (false? (sdk/answer-first-iteration-violation? 0 5 false))))
-
-  (it "iter 0 + single form but answer NOT fired — not a violation"
-    (expect (false? (sdk/answer-first-iteration-violation? 0 1 false))))
-
-  (it "non-integer / nil iteration — defensively returns false"
-    (expect (false? (sdk/answer-first-iteration-violation? nil 5 true)))
-    (expect (false? (sdk/answer-first-iteration-violation? :zero 5 true))))
-
-  (it "first-iter error message names the form count, the WHY, and BOTH recovery paths"
-    (let [msg (sdk/answer-first-iteration-error-message 3)]
-      (expect (string? msg))
-      (expect (re-find #"3 top-level forms" msg))
-      (expect (re-find #"iteration 0" msg))
-      ;; The rationale must appear so the model understands WHY,
-      ;; not just that something was rejected.
-      (expect (re-find #"not yet observed" msg))
-      (expect (re-find #"<journal>" msg))
-      ;; Recovery path (a): inline / structural wrapper.
-      (expect (re-find #"inline the work" msg))
-      (expect (re-find #"\(let " msg))
-      ;; Recovery path (b): split into iter 1.
-      (expect (re-find #"only.*form of iteration 1" msg)))))
+      (expect (re-find #"only form of the next iteration" msg)))))
 
 ;; -----------------------------------------------------------------------------
 ;; make-progress-tracker — phased chunk accumulation
@@ -725,6 +678,43 @@
       (let [entry (first (get-timeline))]
         (expect (= 1 (count (:code entry))))
         (expect (nil? (:final entry))))))
+
+  (it "a re-emitted :form-result with :error overwrites the prior success slot"
+    ;; The iteration loop emits a `:form-result` chunk the moment a
+    ;; form returns. When `(answer …)` returns its `:vis/answer`
+    ;; sentinel and the post-hoc validator (rule b' / own-form-error)
+    ;; rejects it, the loop re-emits a second `:form-result` chunk
+    ;; carrying `:error <validation-error>`. The tracker MUST
+    ;; overwrite the slot so the TUI surfaces the rejection instead
+    ;; of the original success.
+    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+      ;; iteration had three forms; (answer …) fired from form 1 (mid-
+      ;; iteration), violating rule b'. Forms 0 and 2 ran clean.
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(def x 1)" :result 1 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
+                 :code "(answer \"early\")" :result :vis/answer
+                 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 2
+                 :code "(def y 2)" :result 2 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      ;; Validator re-emits form 1 with `:error` populated.
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
+                 :code "(answer \"early\")" :result :vis/answer
+                 :stdout "" :stderr ""
+                 :execution-time-ms 1
+                 :error "(answer …) is the LAST top-level form of its iteration. …"})
+      (let [entry (first (get-timeline))]
+        ;; Slots 0 + 2 stay successful; slot 1 flips to error and
+        ;; carries the formatted validation message.
+        (expect (= [true false true] (:successes entry)))
+        (expect (re-find #"ERROR:" (nth (:results entry) 1)))
+        (expect (re-find #"LAST top-level form" (nth (:results entry) 1)))
+        ;; Sibling slots untouched.
+        (expect (= "1" (str (nth (:results entry) 0))))
+        (expect (= "2" (str (nth (:results entry) 2)))))))
 
   (it ":iteration-error sets :error and :done? true"
     (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
@@ -1415,163 +1405,6 @@
       (expect (= #{'CONFIG} (sdk/auto-forget-candidates sandbox #{} registry recent))))))
 
 ;; ─── from core_test.clj ───
-
-;; ─── from redundancy_metric_test.clj ───
-
-;; -----------------------------------------------------------------------------
-;; canonical-expression-hash
-;; -----------------------------------------------------------------------------
-
-(defdescribe canonical-expression-hash-test
-  (it "collapses whitespace differences"
-    (expect (= (sdk/canonical-expression-hash "(grep \"X\")")
-              (sdk/canonical-expression-hash "(grep   \"X\")"))))
-
-  (it "collapses leading/trailing whitespace"
-    (expect (= (sdk/canonical-expression-hash "(grep \"X\")")
-              (sdk/canonical-expression-hash "  (grep \"X\")\n"))))
-
-  (it "produces different hashes for different forms"
-    (expect (not= (sdk/canonical-expression-hash "(grep \"X\")")
-              (sdk/canonical-expression-hash "(grep \"Y\")"))))
-
-  (it "produces different hashes for forms with different head sym"
-    (expect (not= (sdk/canonical-expression-hash "(grep \"X\")")
-              (sdk/canonical-expression-hash "(read-file \"X\")"))))
-
-  (it "falls back to raw-string hash on parse failure (never throws)"
-    ;; A truncated form like \"(def\" is unparseable; the helper must
-    ;; still return a stable hash.
-    (let [a (sdk/canonical-expression-hash "(def")
-          b (sdk/canonical-expression-hash "(def")
-          c (sdk/canonical-expression-hash "(defn")]
-      (expect (= a b))
-      (expect (not= a c))))
-
-  (it "treats nil / empty string as a stable hash, not a throw"
-    (expect (string? (sdk/canonical-expression-hash "")))
-    (expect (string? (sdk/canonical-expression-hash nil)))))
-
-;; -----------------------------------------------------------------------------
-;; count-duplicates
-;; -----------------------------------------------------------------------------
-
-(defdescribe count-duplicates-test
-  (it "first iteration has zero duplicates and seeds the seen-set"
-    (let [seen (atom #{})
-          [duplicates total] (sdk/count-duplicates seen
-                               [{:code "(+ 1 2)"}
-                                {:code "(grep \"X\")"}])]
-      (expect (= 0 duplicates))
-      (expect (= 2 total))
-      (expect (= 2 (count @seen)))))
-
-  (it "subsequent iteration reports duplicates and grows the seen-set with new hashes only"
-    (let [seen (atom #{})]
-      (sdk/count-duplicates seen
-        [{:code "(grep \"X\")"}
-         {:code "(read-file \"a\")"}])
-      (let [[duplicates total] (sdk/count-duplicates seen
-                                 [{:code "(grep \"X\")"}            ;; duplicate
-                                  {:code "(grep \"Y\")"}             ;; new
-                                  {:code "(read-file \"a\")"}])]      ;; duplicate
-        (expect (= 2 duplicates))
-        (expect (= 3 total))
-        ;; Seen-set now has 3 distinct hashes: grep X, grep Y, read-file a.
-        (expect (= 3 (count @seen))))))
-
-  (it "errors are NOT recorded — retrying after failure is legitimate"
-    ;; Iteration 1 errored out; iteration 2 retries the same call; iteration 2's call
-    ;; must NOT count as a duplicate.
-    (let [seen (atom #{})]
-      (sdk/count-duplicates seen
-        [{:code "(grep \"X\")" :error "regex broken"}])
-      (let [[duplicates total] (sdk/count-duplicates seen
-                                 [{:code "(grep \"X\")"}])]
-        (expect (= 0 duplicates))
-        (expect (= 1 total)))))
-
-  (it "whitespace-equivalent retries dedup correctly"
-    (let [seen (atom #{})]
-      (sdk/count-duplicates seen [{:code "(+ 1 2)"}])
-      (let [[duplicates total] (sdk/count-duplicates seen
-                                 [{:code "(+   1   2)"}])]
-        (expect (= 1 duplicates))
-        (expect (= 1 total)))))
-
-  (it "intra-iteration duplicates count: identical calls in the SAME iteration"
-    ;; The seen-set rolls forward as we walk the iteration's blocks,
-    ;; so the SECOND occurrence of `(grep \"X\")` within one iteration
-    ;; counts as a duplicate. Without this, calls like 'three
-    ;; identical greps in one :code array' would report 0
-    ;; duplicates even though the dedup short-circuit fires for
-    ;; calls 2 and 3.
-    (let [seen (atom #{})
-          [duplicates total] (sdk/count-duplicates seen
-                               [{:code "(grep \"X\")"}
-                                {:code "(grep \"X\")"}
-                                {:code "(grep \"X\")"}
-                                {:code "(read-file \"a\")"}])]
-      (expect (= 2 duplicates))                                       ;; calls #2 and #3
-      (expect (= 4 total))
-      (expect (= 2 (count @seen)))))                                  ;; only 2 distinct hashes seeded
-
-  (it "handles an empty blocks vec gracefully"
-    (let [seen (atom #{})
-          [duplicates total] (sdk/count-duplicates seen [])]
-      (expect (= 0 duplicates))
-      (expect (= 0 total)))))
-
-;; -----------------------------------------------------------------------------
-;; dedup-cache short-circuit — the actual Phase 2 mechanism.
-;; -----------------------------------------------------------------------------
-
-(defdescribe dedup-cache-test
-  (it "lookup returns nil when the cache is empty"
-    (let [cache (atom {})]
-      (expect (nil? (sdk/dedup-cache-lookup cache "(grep \"X\")")))))
-
-  (it "lookup returns nil when expression is nil"
-    (let [cache (atom {})]
-      (expect (nil? (sdk/dedup-cache-lookup cache nil)))))
-
-  (it "record! stores successful results, lookup hits afterwards"
-    (let [cache (atom {})
-          successful {:result :ok :stdout "" :stderr "" :execution-time-ms 7}]
-      (sdk/dedup-cache-record! cache "(grep \"X\")" successful "i3.1")
-      (let [hit (sdk/dedup-cache-lookup cache "(grep \"X\")")]
-        (expect (some? hit))
-        (expect (= :ok (:result hit)))
-        (expect (= "i3.1" (:cached-from hit)))
-        (expect (true? (:cached? hit)))
-        (expect (= 0 (:execution-time-ms hit))))))
-
-  (it "record! is a no-op for error results"
-    (let [cache (atom {})
-          err-result {:result nil :error "boom" :stdout "" :stderr ""}]
-      (sdk/dedup-cache-record! cache "(grep \"X\")" err-result "i3.1")
-      (expect (nil? (sdk/dedup-cache-lookup cache "(grep \"X\")")))))
-
-  (it "record! is a no-op for timeouts"
-    (let [cache (atom {})
-          timeout-result {:result nil :timeout? true :stdout "" :stderr ""}]
-      (sdk/dedup-cache-record! cache "(grep \"X\")" timeout-result "i3.1")
-      (expect (nil? (sdk/dedup-cache-lookup cache "(grep \"X\")")))))
-
-  (it "record! preserves the FIRST writer when racing"
-    (let [cache (atom {})
-          first-result  {:result :first :execution-time-ms 1}
-          second-result {:result :second :execution-time-ms 2}]
-      (sdk/dedup-cache-record! cache "(grep \"X\")" first-result "i1.1")
-      (sdk/dedup-cache-record! cache "(grep \"X\")" second-result "i5.2")
-      (let [hit (sdk/dedup-cache-lookup cache "(grep \"X\")")]
-        (expect (= :first (:result hit)))
-        (expect (= "i1.1" (:cached-from hit))))))
-
-  (it "whitespace-equivalent forms hit the same cache entry"
-    (let [cache (atom {})]
-      (sdk/dedup-cache-record! cache "(grep \"X\")" {:result :ok} "i1.1")
-      (expect (some? (sdk/dedup-cache-lookup cache "(grep    \"X\")"))))))
 
 ;; ─── from schema_reject_retry_test.clj — DELETED
 ;;

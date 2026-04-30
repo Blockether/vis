@@ -897,8 +897,7 @@
     (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
     (some? (:llm_model row))            (assoc :model (:llm_model row))
     ;; Iteration metadata (JSON) carries the per-iteration metrics:
-    ;; :var-history-recall-count, :expression-redundancy-fraction,
-    ;; :dedup-saves, plus per-iteration extension info.
+    ;; :var-history-recall-count plus per-iteration extension info.
     (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))
 
 (defn db-list-query-iterations [db-info query-id]
