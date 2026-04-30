@@ -435,8 +435,19 @@ SYSTEM vars (read-only; bound by name in the sandbox):
                                loading the body via `(v/load-skill name)` is the activation step). Use this vec
                                when the user asks \"what can you do\" / \"what skills do you have\"; never invent
                                a filter over TURN_ACTIVE_EXTENSIONS for skills.
-                               Use `(shape x)` on any value to see its structure: scalars return their type keyword;
-                               collections return `[type N <element-shape>]` (vec/seq/set/list) or `[:map N <keys>]`.
+                               Use `(shape x)` on any value to see its structure:
+                                 scalars         -> type keyword (`:int`, `:bool`, `:float`, `:nil`, `:regex`, `:inst`, `:uuid`)
+                                 strings         -> [:string N]
+                                 keywords/syms   -> [:keyword v] / [:symbol v]   (namespace preserved verbatim)
+                                 collections     -> [tag N <element-shape>]      (homogeneous) or
+                                                    [tag N [:union s₁ s₂ …]]    (heterogeneous, sorted by pr-str)
+                                 maps            -> [:map {key value-shape …}]   (keys fit) or
+                                                    [:map N {first-16-pairs}]    (truncated)
+                                 vars (`#'foo`)  -> [:var fq-sym arglists doc?]  for fn vars,
+                                                    [:var fq-sym value-shape]    for value vars
+                                 fns             -> :fn  (or [:fn arglists doc?] when meta is set)
+                                 unknown JVM     -> \"java.fully.qualified.ClassName\"
+                               Recurses 4 levels deep by default; pass `(shape x N)` to override.
   ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
   ITERATION_PREVIOUS_REASONING last iteration's :thinking text
   CONVERSATION_TITLE           current conversation title (\"\" until set)

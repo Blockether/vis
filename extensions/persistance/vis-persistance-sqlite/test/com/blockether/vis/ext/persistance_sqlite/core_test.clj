@@ -363,7 +363,67 @@
       (let [iterations (vis/db-list-query-iterations s qid)
             positions  (sort (mapv :position iterations))]
         (expect (= 3 (count iterations)))
-        (expect (= [0 1 2] positions))))))
+        (expect (= [0 1 2] positions)))))
+
+  ;; Token + cost round-trip — iteration.llm_input_tokens /
+  ;; llm_output_tokens / llm_reasoning_tokens / llm_cached_tokens /
+  ;; llm_cost_usd are written by db-store-iteration! when the caller
+  ;; passes :tokens / :cost-usd, and surfaced by db-list-query-iterations
+  ;; under :input-tokens / :output-tokens / :reasoning-tokens /
+  ;; :cached-tokens / :cost-usd. Pinned so a future schema rewrite
+  ;; that drops or renames the columns trips this test before it
+  ;; ships.
+  (it "persists per-iteration token + cost columns and surfaces them on read"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      (vis/db-store-iteration! s {:query-id qid
+                                  :blocks [{:code "(+ 1 1)" :result 2}]
+                                  :duration-ms 5
+                                  :tokens   {:input 1200 :output 150 :reasoning 80 :cached 600}
+                                  :cost-usd 0.0123})
+      (let [iter (first (vis/db-list-query-iterations s qid))]
+        (expect (= 1200 (:input-tokens iter)))
+        (expect (= 150  (:output-tokens iter)))
+        (expect (= 80   (:reasoning-tokens iter)))
+        (expect (= 600  (:cached-tokens iter)))
+        (expect (= 0.0123 (:cost-usd iter))))))
+
+  (it "defaults absent token + cost columns to 0 / 0.0 on read"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      ;; Caller passes neither :tokens nor :cost-usd — the columns
+      ;; stay NULL on disk, but the read side normalizes to 0 / 0.0
+      ;; so consumers never have to `or`-pad. Callers that need to
+      ;; distinguish "no usage reported" from "zero tokens" can
+      ;; check the raw column via :metadata or a custom query; the
+      ;; default API path is always numeric.
+      (vis/db-store-iteration! s {:query-id qid
+                                  :blocks [{:code "(+ 1 1)" :result 2}]
+                                  :duration-ms 5})
+      (let [iter (first (vis/db-list-query-iterations s qid))]
+        (expect (= 0   (:input-tokens iter)))
+        (expect (= 0   (:output-tokens iter)))
+        (expect (= 0   (:reasoning-tokens iter)))
+        (expect (= 0   (:cached-tokens iter)))
+        (expect (= 0.0 (:cost-usd iter))))))
+
+  (it "rejects negative token counts via the schema CHECK"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-query! s {:parent-conversation-id cid :query "x" :status :running})]
+      ;; Negative usage is structurally impossible — the schema CHECK
+      ;; is the last line of defence. Any caller that fabricates a
+      ;; negative value gets a SQLite constraint exception (wrapped
+      ;; through next.jdbc). lazytest has no `thrown?` macro; use a
+      ;; plain try/catch and assert the throw landed.
+      (let [thrown? (try (vis/db-store-iteration! s {:query-id qid
+                                                     :blocks [{:code "x" :result 1}]
+                                                     :tokens   {:input -5 :output 10}})
+                      false
+                      (catch Throwable _ true))]
+        (expect (true? thrown?))))))
 
 ;; =============================================================================
 ;; Stateful vars

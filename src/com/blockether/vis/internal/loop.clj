@@ -1305,6 +1305,24 @@
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
+        ;; Per-iteration token + cost projection. The schema's
+        ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
+        ;; carry one row per iteration so a future `vis diagnose`
+        ;; query can sum or break down cost without re-walking
+        ;; provider envelopes. Returns nil when the call surfaced no
+        ;; usage (e.g. iteration-level error before a response
+        ;; landed), in which case the persistance layer leaves the
+        ;; columns NULL.
+        iteration-token-cost (fn [api-usage]
+                               (when api-usage
+                                 (let [in   (long (or (:prompt_tokens api-usage) 0))
+                                       out  (long (or (:completion_tokens api-usage) 0))
+                                       reas (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
+                                       cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0))
+                                       cost (try (svar-router/estimate-cost effective-model in out)
+                                              (catch Throwable _ nil))]
+                                   {:tokens   {:input in :output out :reasoning reas :cached cach}
+                                    :cost-usd (when (number? cost) (double cost))})))
         finalize-cost (fn []
                         (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} @usage-atom
                               total-tokens (+ input-tokens output-tokens)
@@ -1511,12 +1529,15 @@
                             empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
                                               (:reasoning (:data iteration-error-data)))
                             err-iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                               {:query-id query-id :vars [] :blocks nil
-                                                :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
-                                                :llm-messages effective-messages
-                                                :llm-provider (:provider resolved-model)
-                                                :llm-model (str (:name resolved-model))
-                                                :metadata (iteration-metadata iteration)})]
+                                               (let [tc (iteration-token-cost (:api-usage iteration-result))]
+                                                 (cond-> {:query-id query-id :vars [] :blocks nil
+                                                          :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
+                                                          :llm-messages effective-messages
+                                                          :llm-provider (:provider resolved-model)
+                                                          :llm-model (str (:name resolved-model))
+                                                          :metadata (iteration-metadata iteration)}
+                                                   tc (assoc :tokens (:tokens tc)
+                                                        :cost-usd (:cost-usd tc)))))]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                         (update-iteration-id! environment err-iteration-id)
                       ;; Live error chunk — `:phase :iteration-error`
@@ -1589,15 +1610,18 @@
                                          ;; those fields.
                                            :conversation-metadata conversation-metadata})
                           iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                         {:query-id query-id :blocks blocks :vars vars-snapshot
-                                          :thinking thinking
-                                          :answer (when final-result (answer-str (:answer final-result)))
-                                          :answer-form-idx (when final-result (:answer-form-idx final-result))
-                                          :duration-ms (or (:duration-ms iteration-result) 0)
-                                          :llm-messages (:llm-messages iteration-result)
-                                          :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
-                                          :llm-model (:llm-model iteration-result)
-                                          :metadata (iteration-metadata iteration)})
+                                         (let [tc (iteration-token-cost (:api-usage iteration-result))]
+                                           (cond-> {:query-id query-id :blocks blocks :vars vars-snapshot
+                                                    :thinking thinking
+                                                    :answer (when final-result (answer-str (:answer final-result)))
+                                                    :answer-form-idx (when final-result (:answer-form-idx final-result))
+                                                    :duration-ms (or (:duration-ms iteration-result) 0)
+                                                    :llm-messages (:llm-messages iteration-result)
+                                                    :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
+                                                    :llm-model (:llm-model iteration-result)
+                                                    :metadata (iteration-metadata iteration)}
+                                             tc (assoc :tokens (:tokens tc)
+                                                  :cost-usd (:cost-usd tc)))))
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                           _ (update-iteration-id! environment iteration-id)
                           _ (emit-hook! on-iteration

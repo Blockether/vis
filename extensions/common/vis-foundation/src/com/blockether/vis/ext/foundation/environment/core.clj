@@ -103,7 +103,8 @@
 (defn refresh!
   "Invalidate the cached snapshot AND cascade into the agents +
    skills caches. Next call to `snapshot` (and `(v/main-agent-instructions)`,
-   `(v/skills)`) will recompute. Returns the freshly computed snapshot.
+   the `TURN_ACCESSIBLE_SKILLS` snapshot) will recompute. Returns the
+   freshly computed snapshot.
 
    Cascade rationale: users editing `AGENTS.md` reach for
    `(vis/refresh!)` (existing muscle memory). Without the cascade,
@@ -177,13 +178,18 @@
      :examples ["(v/main-agent-instructions)"
                 "(:content (v/main-agent-instructions))"]}))
 
-(def skills-symbol
-  (vis/symbol 'skills skills/list-all
-    {:doc      "Vec of installed skills, alphabetical by :name. Each entry: {:name :description :path :source :body :extra}. Sources: :repo (from <repo>/.agents/skills/) or :user-global (from ~/.agents/skills/). Repo wins silently on name collision."
-     :arglists '([])
-     :examples ["(v/skills)"
-                "(map :name (v/skills))"
-                "(filter #(= :repo (:source %)) (v/skills))"]}))
+;; (v/skills) WAS HERE. Removed: enumeration is now the
+;; `TURN_ACCESSIBLE_SKILLS` SYSTEM var (frozen at turn start, vec of
+;; summaries, no body). Having both `(v/skills)` AND the SYSTEM var
+;; trained the model to call the symbol — see conversation
+;; eeaf9651-06c7-4dda-9e97-877fcef06337's `(def skills (v/skills))`
+;; followed by an answer composed straight off the call result, when
+;; the same data was already in the prompt's <skills> block + the
+;; SYSTEM var. ONE source of truth wins; the redundant call goes.
+;;
+;; Surfaces still exposed: TURN_ACCESSIBLE_SKILLS for filtering,
+;; `(v/load-skill "name")` for activation (loads body),
+;; `(v/reload-skills!)` for the cache-bust after editing on disk.
 
 (def load-skill-symbol
   (vis/symbol 'load-skill skills/lookup
@@ -224,7 +230,7 @@
 (def environment-symbols
   [snapshot-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
-   main-agent-instructions-symbol skills-symbol load-skill-symbol
+   main-agent-instructions-symbol load-skill-symbol
    scan-warnings-symbol
    reload-instructions!-symbol reload-skills!-symbol
    reload-extensions!-symbol])
@@ -238,7 +244,7 @@
    for the rationale."
   (str "`v/` environment fns: (v/snapshot) (v/git) (v/languages) "
     "(v/monorepo) (v/render) (v/refresh!)"
-    " | project-guidance + skills: (v/main-agent-instructions) (v/skills) (v/load-skill \"name\") (v/scan-warnings)"
+    " | project-guidance + skills: (v/main-agent-instructions) (v/load-skill \"name\") (v/scan-warnings)"
     " | reload: (v/reload-instructions!) (v/reload-skills!) (v/reload-extensions!)"))
 
 (defn environment-prompt

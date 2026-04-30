@@ -139,8 +139,8 @@
 (def ^:const SKILLS_PROMPT_BUDGET_BYTES
   "Total byte cap for the rendered <skills> block. Plan Q7: skills
    alphabetized; full descriptions; `+ N more skills not shown
-   (prompt budget). Enumerate full list via (v/skills).` marker
-   when truncated."
+   (prompt budget). Enumerate full list via TURN_ACCESSIBLE_SKILLS.`
+   marker when truncated."
   8192)
 
 (defn- skill-line
@@ -152,13 +152,14 @@
   "Render the `<skills>` block. Skills come pre-sorted from
    `(skills/list-all)` (alphabetical by `:name`). Honors
    SKILLS_PROMPT_BUDGET_BYTES; remaining skills are dropped from the
-   prompt index but still loadable via `(v/load-skill ...)`.
+   prompt index but still discoverable via `TURN_ACCESSIBLE_SKILLS`
+   and loadable via `(v/load-skill ...)`.
    Returns nil when the catalog is empty."
   [skills]
   (let [skills (vec skills)]
     (when (seq skills)
-      (let [tail-line (str "  ;; Enumerate: (v/skills)              ; vec of {:name :description :path :source :body :extra}\n"
-                        "  ;; Activate:  (v/load-skill \"name\")    ; loads the full SKILL.md body; returns {:found? bool … :body …}")
+      (let [tail-line (str "  ;; Filter:   TURN_ACCESSIBLE_SKILLS    ; SYSTEM var, vec of {:name :description :path :source}\n"
+                        "  ;; Activate: (v/load-skill \"name\")    ; loads the full SKILL.md body; returns {:found? bool … :body …}")
             header    (str "<skills count=\"" (count skills) "\">")
             footer    "</skills>"
             ;; Greedily fit lines under the byte budget. Each line ~UTF-8.
@@ -174,7 +175,7 @@
             [lines dropped] taken
             trunc     (when (pos? dropped)
                         (str "  + " dropped " more skills not shown (prompt budget). "
-                          "Enumerate full list via (v/skills)."))
+                          "Enumerate full list via TURN_ACCESSIBLE_SKILLS."))
             body      (->> (cond-> lines
                              trunc (conj "" trunc)
                              true  (conj "" tail-line))
