@@ -176,6 +176,35 @@
         (expect (str/includes? out "[system_nudge]"))
         (expect (str/includes? out (str "You're " period " iterations")))))))
 
+(defdescribe core-system-prompt-test
+  (it "front-loads the RLM control-flow contract"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "recursive language model (RLM)"))
+      (expect (str/includes? p "read/eval/observe loop"))
+      (expect (str/includes? p "terminal COMMIT"))
+      (expect (str/includes? p "TURN_USER_REQUEST is fully satisfied"))
+      (expect (str/includes? p "UNDERSTAND"))
+      (expect (str/includes? p "PLAN"))
+      (expect (str/includes? p "EXPLORE"))
+      (expect (str/includes? p "OBSERVE"))
+      (expect (str/includes? p "ACT"))
+      (expect (str/includes? p "VERIFY"))
+      (expect (str/includes? p "ANSWER"))))
+
+  (it "teaches functional state surfacing and gates"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "(def observation (v/rg"))
+      (expect (str/includes? p "observation"))
+      (expect (str/includes? p "turn-state"))
+      (expect (str/includes? p ":gates"))
+      (expect (str/includes? p "Close or block gates with observed evidence"))))
+
+  (it "rejects exploration-only terminal progress answers"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "Exploration-only iterations must not call `(answer …)`"))
+      (expect (str/includes? p "(answer \"scanned\") ; BAD"))
+      (expect (not (str/includes? p "last 2 iters"))))))
+
 (defdescribe assemble-initial-messages-test
   (it "places system, history, and trailing user content in order"
     (let [msgs (prompt/assemble-initial-messages
