@@ -186,21 +186,6 @@
             :else              0))
         (catch Throwable _ nil)))))
 
-(defn- redundancy-summary
-  "Aggregate `:expression-redundancy-fraction` + `:dedup-saves` across
-   `iterations`. Returns a map the agent can use to check whether it
-   has been issuing duplicate calls in this turn. Total / total
-   ratio is computed from the actual expression count, not from
-   per-iteration fractions averaged (which would over-weight short iterations)."
-  [iterations attempt-count]
-  (let [duplicate-total (reduce + 0
-                          (keep #(get-in % [:metadata :dedup-saves]) iterations))]
-    {:duplicate-count duplicate-total
-     :total-count     attempt-count
-     :fraction        (if (pos? attempt-count)
-                        (double (/ duplicate-total attempt-count))
-                        0.0)}))
-
 (defn- parse-json-map
   "Best-effort JSON object parser for persisted provider errors. The
    persistence layer stores `iteration.llm_error` as JSON text; meta
@@ -346,9 +331,9 @@
 (defn- turn-snapshot
   "The single-call rich snapshot returned by `(vis/turn)`. Aggregates
    the per-iteration data the prompt projection does NOT carry
-   (attempts, provider/code failures, cost, elapsed-ms, redundancy)
-   plus the iteration pointer. The agent picks what it needs by map
-   key instead of querying SQLite manually."
+   (attempts, provider/code failures, cost, elapsed-ms) plus the
+   iteration pointer. The agent picks what it needs by map key
+   instead of querying SQLite manually."
   [env]
   (let [{:keys [db-info conversation-id]} env]
     (when-let [query (latest-query db-info conversation-id)]
@@ -361,8 +346,7 @@
                  :errors      (filterv :error attempts)
                  :failures    (failures-from-iterations db-info iterations)
                  :iteration   (iteration-pointer env)
-                 :cost        (query-cost-summary query)
-                 :redundancy  (redundancy-summary iterations (count attempts))}
+                 :cost        (query-cost-summary query)}
           (elapsed-ms query) (assoc :elapsed-ms (elapsed-ms query)))))))
 
 (defn- conversation-snapshot
@@ -876,7 +860,7 @@
   (sdk/symbol 'turn foundation-turn
     {:doc       (str "Snapshot of the current turn as a single map: "
                   "{:id :goal :status :attempts :errors :failures "
-                  ":iteration :cost :redundancy :elapsed-ms}. The agent "
+                  ":iteration :cost :elapsed-ms}. The agent "
                   "reads keys directly: (filter :error (:attempts (vis/turn))), etc.")
      :arglists  '([])
      :examples  ["(vis/turn)"
@@ -1118,7 +1102,7 @@
 
 (def introspection-prompt
   (str "`vis/` introspection (READ-ONLY; returns maps/vecs; errors -> nil/[]):\n"
-    "  (vis/turn)                       in-flight turn snapshot {:id :goal :status :attempts :errors :failures :iteration :cost :redundancy :elapsed-ms}\n"
+    "  (vis/turn)                       in-flight turn snapshot {:id :goal :status :attempts :errors :failures :iteration :cost :elapsed-ms}\n"
     "  (vis/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= TURN_QUERY_ID).\n"
     "  (vis/conversations channel?)     list conversations\n"
     "  (vis/conversation-forks cid?)    list every conversation_state row (trunk + forks)\n"

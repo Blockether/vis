@@ -33,7 +33,9 @@ Everything else is optional (with sensible defaults applied by the
 Two conditional rules apply on top of the spec:
 
 - `:ext/group` is required when `:ext/symbols` is non-empty (enforced
-  by `group-required-when-symbols?`).
+  by `group-required-when-symbols?`). For pure non-symbol extensions
+  (channels-only / providers-only) the `extension` builder
+  auto-derives `:ext/group` — see the table row below.
 - `:ext/ns-alias` is required when `:ext/symbols` is non-empty
   (enforced by `ns-alias-required-when-symbols?`).
 
@@ -41,8 +43,7 @@ Two conditional rules apply on top of the spec:
 |--------------------------|-----------------|----------------------|-------------|
 | `:ext/namespace`         | ✓              | —                    | Fully qualified symbol, e.g. `'com.blockether.vis.ext.foundation.editing.core`, `'com.acme.ext.git`. Also the dedup key in the global registry. |
 | `:ext/doc`               | ✓              | —                    | Extension-level description. |
-| `:ext/group`             | conditional     | —                    | Top-level prompt group (e.g. `"knowledge"`). **Required when `:ext/symbols` is non-empty.** Pure non-symbol extensions (channels-only, providers-only, persistence-only) may omit it. |
-| `:ext/subgroup`          | ✗              | same as `:ext/group` | Finer-grained grouping within the group. Defaults to `:ext/group` only when `:ext/group` is itself present. |
+| `:ext/group`             | conditional     | auto                 | Top-level group used for prompt rendering AND as the bucket label in `vis extensions list`. **Required when `:ext/symbols` is non-empty.** Auto-derived for the categorical cases when not set: extensions contributing `:ext/providers` get `"providers"`, extensions contributing `:ext/channels` get `"channels"`. Explicit `:ext/group` always wins. |
 | `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] → bool)` — when falsy, all symbols are unbound and `:ext/nudge-fn` is skipped. |
 | `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt. Strings are normalized to `(constantly s)`. |
 | `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)). |
@@ -257,7 +258,6 @@ Called internally by `extension`; safe to call standalone.
      :ext/author        "Blockether"
      :ext/license       "Apache-2.0"
      :ext/group         "knowledge"
-     :ext/subgroup      "documents"
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
      :ext/requires      ['com.blockether.vis.ext.foundation.editing.core]
      :ext/prompt        "Prefer narrow searches before broad scans."

@@ -274,7 +274,20 @@
    The previous value (1) made an empty editor render four rows tall
    (rule + pad + line + pad + rule) when three is the right minimum."
   0)
-(def ^:private input-pad-x 3)  ;; internal horizontal padding (cols left/right of text)
+(def ^:private input-pad-x
+  "Internal horizontal padding (cols left/right of text). Set to 0:
+   text + cursor sit flush against the column-0 edge of the terminal
+   so the typing zone uses the full width and the eye tracks the
+   prompt straight from the left margin.
+
+   The earlier value (3) left typed text one column further in than
+   the input box's top/bottom rules (which are inset by
+   `INPUT_BORDER_HORIZONTAL_PAD` = 2). The visual gap read as
+   asymmetric chrome — 'why is the text indented past where the
+   rule starts?'. Zeroing the pad puts text at col 0; rules stay
+   inset by 2 (purely cosmetic underline / overline that doesn't
+   fight the typing zone for horizontal real estate)."
+  0)
 
 (defn input-text-w
   "Visible text width (in columns) inside the input box for a given
@@ -282,11 +295,9 @@
    wrapped row counts and `draw-input-box!` can render with the same
    wrap point.
 
-   The input box is SIDELESS (top/bottom rules only, no `│` rails),
-   so the only horizontal chrome is `input-pad-x` cols of breathing
-   space on each side. Do NOT subtract phantom border cols here —
-   that was the bug that left an asymmetric \"missing\" column on
-   the right edge of soft-wrapped text."
+   The input box is SIDELESS (top/bottom rules only, no `│` rails)
+   and `input-pad-x` is now 0, so the typing zone spans the full
+   terminal width — `text-w` = `cols` (clamped to ≥1)."
   [cols]
   (max 1 (- cols (* 2 input-pad-x))))
 

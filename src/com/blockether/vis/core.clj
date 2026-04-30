@@ -39,8 +39,6 @@
                          get-router, rebuild-router!, refresh-cached-routers!,
                          resolve-effective-model,
                          db-info, auto-forget-stale-vars!,
-                         dedup-cache-lookup, dedup-cache-record!,
-                         count-duplicates, canonical-expression-hash,
                          extract-defining-name
      Manifest discovery  rediscover!  (test/REPL utility)
      Persistance facade  db-create-connection!, db-dispose-connection!,
@@ -297,17 +295,11 @@
 (def set-provider!                lp/set-provider!)
 (def remove-provider!             lp/remove-provider!)
 
-;; SCI execution helpers (used by extensions for parse-rescue + dedup)
-(def canonical-expression-hash    lp/canonical-expression-hash)
-(def count-duplicates             lp/count-duplicates)
-(def dedup-cache-lookup           lp/dedup-cache-lookup)
-(def dedup-cache-record!          lp/dedup-cache-record!)
+;; SCI execution helpers (used by extensions for parse-rescue)
 (def extract-defining-name        lp/extract-defining-name)
 (def answer-form-error              lp/answer-form-error)
 (def answer-position-violation?              lp/answer-position-violation?)
 (def answer-position-error-message           lp/answer-position-error-message)
-(def answer-first-iteration-violation?       lp/answer-first-iteration-violation?)
-(def answer-first-iteration-error-message    lp/answer-first-iteration-error-message)
 (def parinfer-rebalance             lp/parinfer-rebalance)
 (def split-top-level-forms          lp/split-top-level-forms)
 

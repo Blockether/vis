@@ -405,15 +405,17 @@ x                                  ;; surfaces value in this iter's <journal>
 ```
 `(def …)` persists across iterations; the bare symbol surfaces the value in the current iteration's `<journal>` so you (and future iterations) can see what you just bound. One-shot probes (count, presence-check) stay inline.
 
-Terminal: `(answer \"…\")` as the LAST top-level form (or only). Iter 0 must use it as the ONLY top-level form — wrap prerequisite work into a `let` or `do` that culminates in the answer:
+Terminal: `(answer …)` is the LAST top-level form of its iteration (last or only). ONE accepted answer ends the turn; compose your final string in let-bound vars and emit it once. Shapes:
 ```clojure
 (answer \"done\")
 (let [s (build-summary)] (answer s))
 (do (vis/edit …) (answer \"done\"))
+(work-1) (work-2) (answer (compose work-1 work-2))   ;; iter 1+, after observing iN.K results
 ```
-For iter 1+, work forms come first, then `(answer …)` last. ONE accepted answer ends the turn; compose your final string in let-bound vars and emit it once.
 
-Iter 0 has no `<journal>` yet — use it for exploration. Aim for 1–3 forms that narrow your search (one `(vis/ls \".\")`, one targeted `(vis/rg [\"keyword\"] \"src\")`, one `(vis/cat path)` at the likely entry-point), observe results in iter 1's `<journal>`, then commit.
+Iter 0 answer fits when the reply is self-contained: static markdown, a fixed list, the value of a SYSTEM var (`TURN_ACTIVE_EXTENSIONS`, `CONVERSATION_TITLE`, …), or anything you can compose inline without needing to read iN.K results first. Wrap any prerequisite work into one structural form: `(let [s (build)] (answer s))`, `(answer (md/join …))`, `(do (vis/edit …) (answer \"done\"))`.
+
+Iter 0 also fits exploration. Aim for 1–3 forms that narrow your search (one `(vis/ls \".\")`, one targeted `(vis/rg [\"keyword\"] \"src\")`, one `(vis/cat path)` at the likely entry-point), then read results in iter 1's `<journal>` and commit `(answer …)` there once the picture is clear.
 
 Each iteration's user msg carries:
   <journal>     last 2 iters: thinking + comments + code + results, addressable iN.K
