@@ -8,11 +8,20 @@
    [com.blockether.vis.ext.foundation.environment.skills :as skills]
    [lazytest.core :refer [defdescribe expect it]]))
 
-(defmacro ^:private with-tmp [sym & body]
-  `(let [tmp# (fs/create-temp-dir {:prefix "vis-skills-test-"})
-         ~sym (.toFile tmp#)]
-     (try ~@body
-       (finally (fs/delete-tree tmp#)))))
+(defn- with-tmp*
+  "Run `f` with a freshly-created temp dir (as `java.io.File`); always
+   delete the tree on exit. Function-based to keep clj-kondo happy."
+  [f]
+  (let [tmp (fs/create-temp-dir {:prefix "vis-skills-test-"})]
+    (try (f (.toFile tmp))
+      (finally (fs/delete-tree tmp)))))
+
+(defn- with-two-tmps*
+  "Run `f` with two freshly-created temp dirs (repo-root, user-root)."
+  [f]
+  (with-tmp* (fn [repo-root]
+               (with-tmp* (fn [user-root]
+                            (f repo-root user-root))))))
 
 (defn- write-skill!
   "Write a SKILL.md under `<root>/.agents/skills/<name>/SKILL.md`.
@@ -51,9 +60,9 @@
 
 (defdescribe scan-with-roots-test
   (it "finds repo skills and parses single-line descriptions"
-    (with-tmp root
-      (write-skill! root "alpha" SAMPLE_SINGLE_LINE)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "alpha" SAMPLE_SINGLE_LINE)
         (let [{:keys [loaded warnings]} (skills/scan-with-roots root user-root)]
           (expect (empty? warnings))
           (expect (= 1 (count loaded)))
@@ -65,30 +74,28 @@
             (expect (= {} (:extra s))))))))
 
   (it "parses folded scalar descriptions (caveman case)"
-    (with-tmp root
-      (write-skill! root "caveman" SAMPLE_FOLDED)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "caveman" SAMPLE_FOLDED)
         (let [{:keys [loaded]} (skills/scan-with-roots root user-root)
               s (first loaded)]
           (expect (= "caveman" (:name s)))
-          ;; YAML folded scalar collapses single newlines into spaces.
           (expect (str/includes? (:description s) "Multi-line folded"))
           (expect (str/includes? (:description s) "collapses newlines into spaces"))
-          ;; Non-required field passes through under :extra.
           (expect (= "passthrough" (get-in s [:extra :other])))))))
 
   (it "preserves `disable-model-invocation` under :extra (grill-with-docs case)"
-    (with-tmp root
-      (write-skill! root "grill-with-docs" SAMPLE_DISABLE_INVOCATION)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "grill-with-docs" SAMPLE_DISABLE_INVOCATION)
         (let [s (first (:loaded (skills/scan-with-roots root user-root)))]
           (expect (= true (get-in s [:extra :disable-model-invocation]))))))))
 
 (defdescribe malformed-frontmatter-test
   (it "missing required `name` → drop with warning"
-    (with-tmp root
-      (write-skill! root "no-name" SAMPLE_MISSING_NAME)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "no-name" SAMPLE_MISSING_NAME)
         (let [{:keys [loaded warnings]} (skills/scan-with-roots root user-root)]
           (expect (empty? loaded))
           (expect (= 1 (count warnings)))
@@ -97,52 +104,50 @@
             (expect (str/includes? (:reason w) "name")))))))
 
   (it "missing required `description` → drop with warning"
-    (with-tmp root
-      (write-skill! root "no-desc" SAMPLE_MISSING_DESCRIPTION)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "no-desc" SAMPLE_MISSING_DESCRIPTION)
         (let [{:keys [loaded warnings]} (skills/scan-with-roots root user-root)]
           (expect (empty? loaded))
           (expect (= 1 (count warnings)))
           (expect (str/includes? (:reason (first warnings)) "description"))))))
 
   (it "YAML parse error → drop with warning"
-    (with-tmp root
-      (write-skill! root "bad-yaml" SAMPLE_BAD_YAML)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "bad-yaml" SAMPLE_BAD_YAML)
         (let [{:keys [loaded warnings]} (skills/scan-with-roots root user-root)]
           (expect (empty? loaded))
           (expect (= 1 (count warnings)))
           (expect (str/includes? (:reason (first warnings)) "YAML parse error"))))))
 
   (it "no frontmatter at all → drop with warning"
-    (with-tmp root
-      (write-skill! root "no-front" SAMPLE_NO_FRONTMATTER)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "no-front" SAMPLE_NO_FRONTMATTER)
         (let [{:keys [loaded warnings]} (skills/scan-with-roots root user-root)]
           (expect (empty? loaded))
           (expect (= 1 (count warnings)))
           (expect (str/includes? (:reason (first warnings)) "missing YAML frontmatter"))))))
 
   (it "empty frontmatter (`---\\n---\\n`) → drop with warning (missing required fields)"
-    (with-tmp root
-      (write-skill! root "empty-front" SAMPLE_EMPTY_FRONTMATTER)
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [root user-root]
+        (write-skill! root "empty-front" SAMPLE_EMPTY_FRONTMATTER)
         (let [{:keys [loaded warnings]} (skills/scan-with-roots root user-root)]
           (expect (empty? loaded))
           (expect (= 1 (count warnings))))))))
 
 (defdescribe collision-policy-test
   (it "repo wins silently when same `:name` exists in user-global"
-    (with-tmp repo-root
-      (write-skill! repo-root "diagnose"
-        "---\nname: diagnose\ndescription: REPO version of diagnose.\n---\n\nrepo body")
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [repo-root user-root]
+        (write-skill! repo-root "diagnose"
+          "---\nname: diagnose\ndescription: REPO version of diagnose.\n---\n\nrepo body")
         (write-skill! user-root "diagnose"
           "---\nname: diagnose\ndescription: USER-GLOBAL version (should be hidden).\n---\n\nuser body")
         (let [{:keys [loaded warnings]} (skills/scan-with-roots repo-root user-root)]
-          ;; Plan Q6: collision is silent — no warning.
           (expect (empty? warnings))
-          ;; Exactly one entry, sourced from :repo.
           (expect (= 1 (count loaded)))
           (let [s (first loaded)]
             (expect (= "diagnose" (:name s)))
@@ -151,12 +156,12 @@
 
 (defdescribe alphabetical-order-test
   (it "merged catalog sorted alphabetically by :name"
-    (with-tmp repo-root
-      (write-skill! repo-root "zebra"
-        "---\nname: zebra\ndescription: Last alphabetically.\n---\n")
-      (write-skill! repo-root "apple"
-        "---\nname: apple\ndescription: First alphabetically.\n---\n")
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [repo-root user-root]
+        (write-skill! repo-root "zebra"
+          "---\nname: zebra\ndescription: Last alphabetically.\n---\n")
+        (write-skill! repo-root "apple"
+          "---\nname: apple\ndescription: First alphabetically.\n---\n")
         (write-skill! user-root "mango"
           "---\nname: mango\ndescription: Middle, from user-global.\n---\n")
         (let [{:keys [loaded]} (skills/scan-with-roots repo-root user-root)]
@@ -164,16 +169,16 @@
 
 (defdescribe scan-with-roots-empty-cases
   (it "no .agents/skills/ at all → empty catalog, no warnings"
-    (with-tmp repo-root
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [repo-root user-root]
         (let [{:keys [loaded warnings]} (skills/scan-with-roots repo-root user-root)]
           (expect (empty? loaded))
           (expect (empty? warnings))))))
 
   (it "empty .agents/skills/ dir → empty catalog, no warnings"
-    (with-tmp repo-root
-      (.mkdirs (java.io.File. repo-root ".agents/skills"))
-      (with-tmp user-root
+    (with-two-tmps*
+      (fn [repo-root user-root]
+        (.mkdirs (java.io.File. repo-root ".agents/skills"))
         (let [{:keys [loaded warnings]} (skills/scan-with-roots repo-root user-root)]
           (expect (empty? loaded))
           (expect (empty? warnings)))))))

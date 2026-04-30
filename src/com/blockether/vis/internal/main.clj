@@ -19,10 +19,14 @@
    Built-in commands registered here:
      vis run                — one-shot agent query (CLI agent helper)
      vis auth               — provider authentication
-     vis doctor             — environment + DB diagnostics
      vis conversations      — list persisted conversations
      vis extensions list    — list registered extensions
-     vis channels <name>    — auto-mounted via the channel registry"
+     vis channels <name>    — auto-mounted via the channel registry
+
+   `vis doctor` is registered by vis-foundation (extension-owned)
+   so every extension can plug its `:ext/doctor-checks` into the
+   aggregator. See plan §1 Q18 + plans/2026-04-30-..."
+
   (:refer-clojure :exclude [agent run!])
   (:require
    [charred.api :as json]
@@ -739,47 +743,11 @@
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────
 
-(defn- cli-doctor! [_parsed _residual]
-  (config/init-cli!)
-  (let [env (lp/create-environment (lp/get-router)
-              {:db (config/resolve-db-spec)})]
-    (try
-      (let [db-info (:db-info env)]
-        (stdout! "vis doctor")
-        (stdout! "")
-        (stdout! "  Environment")
-        (stdout! "  ───────────")
-        (stdout! (str "  OS:           " (System/getProperty "os.name") " "
-                   (System/getProperty "os.arch")))
-        (stdout! (str "  Java:         " (System/getProperty "java.version")
-                   " (" (System/getProperty "java.vendor") ")"))
-        (stdout! (str "  Clojure:      " (clojure-version)))
-        (stdout! (str "  Memory:       "
-                   (let [rt   (Runtime/getRuntime)
-                         used (- (.totalMemory rt) (.freeMemory rt))
-                         max  (.maxMemory rt)
-                         mb   (fn [b] (format "%.0fMB" (/ (double b) 1048576)))]
-                     (str (mb used) " / " (mb max)))))
-        (stdout! (str "  DB path:      " (or (:path db-info) "none")))
-        ;; Use the conversation API — it owns the channel-metadata
-        ;; storage layout (JSON-extracted from conversation_soul.metadata
-        ;; via the persistence backend). Reaching into raw JDBC here used
-        ;; to query a non-existent `conversation` table and silently
-        ;; reported 0 for every channel.
-        (let [active-envs (count @lp/cache)
-              count-ch    (fn [ch]
-                            (try (count (lp/by-channel ch))
-                              (catch Exception _ 0)))
-              tui-n  (count-ch :tui)
-              cli-n  (count-ch :cli)
-              tg-n   (count-ch :telegram)
-              total  (+ tui-n cli-n tg-n)]
-          (stdout! (str "  Conversations:  " total
-                     " (" tui-n " tui, " cli-n " cli, " tg-n " telegram)"
-                     " — " active-envs " active in memory"))))
-      (finally
-        (lp/dispose-environment! env)
-        (shutdown-agents)))))
+;; The `vis doctor` command lives in vis-foundation now — see plan §1 Q18.
+;; Foundation contributes its own `:ext/doctor-checks` (system, agents-md,
+;; skills, scan-warnings) and registers the top-level `vis doctor`
+;; command via `register-cmd!`. Other extensions plug into the same
+;; aggregator by declaring their own `:ext/doctor-checks` vec.
 
 ;;; ── `vis extensions` ────────────────────────────────────────────────────
 
@@ -855,12 +823,7 @@
           :cmd/usage "vis conversations [tui|telegram|cli]"
           :cmd/examples ["vis conversations"
                          "vis conversations telegram"]
-          :cmd/run-fn cli-conversations!}
-
-         {:cmd/name  "doctor"
-          :cmd/doc   "Show environment + DB diagnostics."
-          :cmd/usage "vis doctor"
-          :cmd/run-fn cli-doctor!}]]
+          :cmd/run-fn cli-conversations!}]]
   (registry/register-cmd! spec))
 
 ;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────

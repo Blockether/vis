@@ -60,6 +60,7 @@
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.commandline  :as commandline]
    [com.blockether.vis.internal.config       :as config]
+   [com.blockether.vis.internal.doctor       :as doctor]
    [com.blockether.vis.internal.env          :as env]
    [com.blockether.vis.internal.error        :as error]
    [com.blockether.vis.internal.extension    :as extension]
@@ -146,6 +147,7 @@
 (def find-named           commandline/find-named)
 (def parse-args           commandline/parse-args)
 (def validate-args        commandline/validate-args)
+(def unknown-flags        commandline/unknown-flags)
 (def pad-right            commandline/pad-right)
 (def pad-left             commandline/pad-left)
 (def render-command       commandline/render-command)
@@ -261,6 +263,20 @@
 (def try-rescue-parse-error              extension/try-rescue-parse-error)
 (def discover-extensions!                extension/discover-extensions!)
 (def rediscover!                         manifest/rediscover!)
+
+;; =============================================================================
+;; Doctor protocol
+;;
+;; Cross-cutting diagnostic surface. Every extension can declare
+;; `:ext/doctor-checks` (vec of `{:check/id :check/name :check/description
+;; :check/run-fn}`); `vis doctor` aggregates them all into a level-aware
+;; (info / warn / error) report with 0 / 1 / 2 exit code by max level.
+;; See plan §1 Q19 + §10.
+;; =============================================================================
+(def run-doctor-checks    doctor/run-checks)
+(def doctor-exit-code     doctor/exit-code)
+(def doctor-format-output doctor/format-output)
+(def doctor-startup-hint  doctor/startup-hint-line)
 
 ;; =============================================================================
 ;; Configuration / paths / logging

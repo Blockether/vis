@@ -3,6 +3,7 @@
    [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
+   [com.blockether.vis.ext.foundation.markdown :as md]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -1125,3 +1126,170 @@
       (let [in  ["plain prose" "" "more prose" "" "## heading"]
             out (coalesce-loose-list-items in)]
         (expect (= in out))))))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; md/join inline-bold inside a bullet — the `Let / me / dig / deeper`
+;; regression
+;;
+;; Faithful reconstruction of the FIRST `(answer …)` block in conversation
+;; eeaf9651-06c7-4dda-9e97-877fcef06337, query 363de6c6-…, position 1.
+;; The agent built a bullet's body via `md/join`, which inserts `\n\n`
+;; between every part. With the naive bullet-coalesce that earlier
+;; treated every `**...**`-starting line as a structural break, the
+;; bullet rendered as ONE bullet header + a ladder of one-word
+;; paragraphs flush-left:
+;;
+;;     • Turn 1 — "system prompt copy" prune:
+;;
+;;     38 failures across iterations 2–7. ...
+;;
+;;     reader boundary split
+;;
+;;     — a multi-line form got fragmented into bare symbols (
+;;
+;;     Let
+;;
+;;     ,
+;;
+;;     me
+;;
+;;     ,
+;;
+;;     dig
+;;     ...
+;;
+;; The fix in `coalesce-loose-list-items`:
+;;   - Pure `**span**` lines (no trailing prose after the closing `**`)
+;;     stay CONTINUATIONS of the bullet — they're an md/join artefact,
+;;     the bold text is meant to flow inline inside the sentence.
+;;   - `**Label:** value` lines (bold prefix + trailing content) STILL
+;;     close the list — those are real top-level summary paragraphs.
+;;
+;; Below: build the same source with `md/*` helpers and assert the
+;; bubble renders as ONE flowing bullet with every code-span / bold
+;; span inline.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe md-join-bullet-inline-regression-test
+  (describe "md/join-built bullets render as flowing prose, not a paragraph ladder"
+    (it "reconstruct: turn-1 bullet from conversation eeaf9651-…"
+      (let [;; ── exact md/join shape used by the live answer ─────────────
+            first-bullet
+            (md/join (md/bold "Turn 1 — \"system prompt copy\" prune:")
+              " 38 failures across iterations 2–7. Iter 2+4: wrong file paths ("
+              (md/code "src/com/blockether/vis/tui")
+              ", "
+              (md/code "db.clj")
+              " not found). Iter 7: catastrophic "
+              (md/bold "reader boundary split")
+              " — a multi-line form got fragmented into bare symbols ("
+              (md/code "Let")
+              ", "
+              (md/code "me")
+              ", "
+              (md/code "dig")
+              ", "
+              (md/code "deeper")
+              ", "
+              (md/code "what")
+              ", etc.) — 28 unresolved-symbol errors in a single iteration. The agent was in a loop emitting prose as code tokens.")
+
+            second-bullet
+            (md/join (md/bold "Turn 3+ — footer % left removal:")
+              " 2 failed "
+              (md/code "z/zedit")
+              " calls (f3, f4) due to "
+              (md/code "\"Unmatched delimiter: ]\"")
+              " at line 148 — the file was left in a broken state by a prior "
+              (md/code "v/edit")
+              " that created a duplicate binding line. Had to be recovered with targeted "
+              (md/code "v/edit")
+              " strikes in a follow-up turn.")
+
+            doc (md/join (md/h3 "Root Cause Analysis")
+                  (md/ul [first-bullet second-bullet]))
+            bullets (bullet-bodies doc 80)]
+
+        ;; Two source bullets ⇒ exactly two rendered bullet items
+        ;; (the ` • ` line; continuations carry the indent prefix).
+        (let [openers (->> bullets
+                        (map strip-sentinels)
+                        (filter #(str/starts-with? % "  • "))
+                        vec)]
+          (expect (= 2 (count openers)))
+
+          ;; Bullet 1: bold header inline + every code span inline.
+          ;; The defining symptom of the bug was each `Let` / `me` /
+          ;; `dig` / `deeper` / `what` landing on its own paragraph;
+          ;; they must now appear in ONE bullet body.
+          (let [b1 (->> bullets
+                     (map strip-sentinels)
+                     (filter #(str/includes? % "Turn 1"))
+                     str/join)]
+            (expect (str/includes? b1 "Turn 1 — \"system prompt copy\" prune:"))
+            (expect (str/includes? b1 "38 failures"))
+            (expect (str/includes? b1 "wrong file paths (src/com/blockether/vis/tui, db.clj"))
+            (expect (str/includes? b1 "reader boundary split"))
+            ;; The headline regression: the five fragmented words must
+            ;; all be present inside the first bullet, comma-separated,
+            ;; in the original prose order.
+            (expect (str/includes? b1 "(Let, me, dig, deeper, what, etc.)"))
+            (expect (str/includes? b1 "28 unresolved-symbol errors")))
+
+          ;; Bullet 2: code span containing `:]` keeps the visible
+          ;; whitespace intact (the punctuation reflow must NOT
+          ;; tighten ` ]` inside the quoted error string).
+          (let [b2 (->> bullets
+                     (map strip-sentinels)
+                     (filter #(str/includes? % "Turn 3+"))
+                     str/join)]
+            (expect (str/includes? b2 "Turn 3+ — footer % left removal:"))
+            (expect (str/includes? b2 "z/zedit"))
+            (expect (str/includes? b2 "\"Unmatched delimiter: ]\""))
+            (expect (str/includes? b2 "v/edit"))))
+
+        ;; Negative assertion against the regression: NONE of the
+        ;; fragment words should show up as a flush-left plain
+        ;; paragraph (i.e. carry the empty `:plain` marker AND
+        ;; consist of just the word). Before the fix, the renderer
+        ;; emitted ~five rows like `MARKER_PLAIN + "Let"` etc.
+        (let [lines (md->lines doc 80 :answer)
+              one-word-paras (->> lines
+                               (map strip-sentinels)
+                               ;; non-bullet, short line containing
+                               ;; exactly one of the fragment words.
+                               (filter (fn [s]
+                                         (and (not (str/starts-with? s "  •"))
+                                           (not (str/starts-with? s "    "))
+                                           (#{"Let" "me" "dig" "deeper" "what"}
+                                            (str/trim s))))))]
+          (expect (zero? (count one-word-paras))))))
+
+    (it "top-level **Label:** value paragraphs still close the list"
+      ;; Counter-test for the relaxed rule. Even though `**Loop clean:**`
+      ;; starts with `**`, it has trailing content (` true`) — that's
+      ;; a real top-level paragraph, not an md/join artefact.
+      (let [src (str "- last bullet — paragraph about inspector\n"
+                  "\n"
+                  "**Loop clean:** true\n"
+                  "\n"
+                  "**No remaining source references.**")
+            lines (md->lines src 80 :answer)
+            bullets (bullet-bodies src 80)]
+        ;; ONE bullet (the original).
+        (expect (= 1 (count bullets)))
+        (let [b (strip-sentinels (first bullets))]
+          (expect (str/includes? b "last bullet"))
+          ;; `**Loop clean:**` must NOT have been folded into the
+          ;; bullet's body.
+          (expect (not (str/includes? b "Loop clean"))))
+        ;; The two bold paragraphs survive as bold lines — the
+        ;; first because it has trailing prose (`top-level-bold-
+        ;; paragraph-line?` true), the second because the list has
+        ;; already been closed by then.
+        (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
+                         (str/includes? % "Loop clean"))
+                  lines))
+        (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
+                         (str/includes? % "No remaining source references"))
+                  lines))))))

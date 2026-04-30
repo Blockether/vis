@@ -123,6 +123,61 @@
       (str "Missing required argument(s): "
         (str/join ", " (map :name missing))))))
 
+(def ^:private universal-help-flags #{"--help" "-h"})
+
+(defn unknown-flags
+  "Return a vector of `--flag` tokens in `raw-args` that are NOT declared
+   in `arg-specs`. Walks the args the same way `parse-args` does so that
+   a string-typed flag's VALUE (e.g. `bar` in `--out bar`) is never
+   misclassified as an unknown flag. Boolean flags don't consume their
+   next token. Universal `--help` / `-h` are always considered known.
+
+   Used by `dispatch!` to refuse unknown flags and surface the list of
+   accepted flags via `render-command`. Pure; no side effects.
+
+   Unknown flags are reported only by their leading token; we don't
+   know whether the user intended them to take a value, so the walker
+   conservatively advances by one token after each unknown."
+  [arg-specs raw-args]
+  (let [flags (into {} (map (fn [a] [(str "--" (:name a)) a]))
+                (filter #(= :flag (:kind %)) arg-specs))]
+    (loop [args    (seq raw-args)
+           unknown []]
+      (if-not args
+        unknown
+        (let [a    (first args)
+              more (next args)]
+          (cond
+            (not (flag-arg? a))
+            (recur more unknown)
+
+            (contains? universal-help-flags a)
+            (recur more unknown)
+
+            (contains? flags a)
+            (let [spec (get flags a)]
+              (if (= :boolean (:type spec))
+                (recur more unknown)
+                (recur (next more) unknown)))
+
+            :else
+            (recur more (conj unknown a))))))))
+
+(defn- format-unknown-flags-error
+  "Render the user-facing error string for one or more unknown flags.
+   Lists the accepted flag tokens (`--name TYPE` for typed flags,
+   `--name` for booleans) so the user can copy-paste the right one."
+  [arg-specs unknown]
+  (let [decl  (filter #(= :flag (:kind %)) arg-specs)
+        names (mapv #(str "--" (:name %)) decl)
+        head  (if (= 1 (count unknown))
+                (str "Unknown flag: " (first unknown))
+                (str "Unknown flag(s): " (str/join ", " unknown)))]
+    (str head
+      (when (seq names)
+        (str "\n\nAccepted flags: " (str/join ", " names)))
+      "\n\nAlso accepted: --help, -h.")))
+
 ;; =============================================================================
 ;; Help rendering
 ;;
@@ -356,12 +411,29 @@
           :help-text (render-command command path)}
 
          :else
-         (let [parsed (parse-args (:cmd/args command) residual)
-               err    (validate-args (:cmd/args command) parsed)]
-           (if err
-             (let [help (str err "\n\n" (render-command command path))]
+         ;; Strict-flag check fires only when the command actually
+         ;; declares flags. Commands without `:cmd/args` (or with only
+         ;; positionals) keep the loose, layer-your-own-flags posture
+         ;; — `vis auth <provider> --status` and similar bespoke
+         ;; handlers stay working without forcing every command to
+         ;; declare its full surface up front.
+         (let [arg-specs (:cmd/args command)
+               has-flags? (some #(= :flag (:kind %)) arg-specs)
+               unknown    (when has-flags? (unknown-flags arg-specs residual))]
+           (cond
+             (seq unknown)
+             (let [err  (format-unknown-flags-error arg-specs unknown)
+                   help (str err "\n\n" (render-command command path))]
                (when print-fn (print-fn help))
                {:status :error :command command :error err :help-text help})
-             {:status :ok :command command
-              :result ((:cmd/run-fn command) parsed residual)}))))
+
+             :else
+             (let [parsed (parse-args arg-specs residual)
+                   err    (validate-args arg-specs parsed)]
+               (if err
+                 (let [help (str err "\n\n" (render-command command path))]
+                   (when print-fn (print-fn help))
+                   {:status :error :command command :error err :help-text help})
+                 {:status :ok :command command
+                  :result ((:cmd/run-fn command) parsed residual)})))))))
      {:status :no-match :args args})))

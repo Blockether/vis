@@ -2506,6 +2506,31 @@
 (defn- list-marker-line? [^String line]
   (boolean (re-matches list-marker-line-re line)))
 
+(defn- top-level-bold-paragraph-line?
+  "True when a line opens with `**...**` AND has more content after
+   the closing `**`. Matches the shape of a top-level \"label: value\"
+   paragraph (`**Loop clean:** true`, `**Status:** done.`) that we
+   want to peel off the end of a preceding list.
+
+   Excluded by design: lines that are PURELY a `**...**` span and
+   nothing else (`**reader boundary split**`). Those are an artefact
+   of `md/join` separating an inline bold from its surrounding prose
+   with `\n\n`; the line is meant to flow inline as part of the
+   bullet's body, not to start a fresh paragraph.
+
+   The two shapes are visually identical at the start (`**...`);
+   the trailing content after the closing `**` is what tells them
+   apart. `find-inline-close` would do the same check at parse time,
+   but here we only need a cheap structural sniff."
+  [^String t]
+  (and (str/starts-with? t "**")
+    (let [close-idx (str/index-of t "**" 2)]
+      (boolean
+        (and close-idx
+          ;; At least one non-whitespace char after the closing `**`.
+          (let [tail (subs t (+ (long close-idx) 2))]
+            (not (str/blank? tail))))))))
+
 (defn- structural-non-list-line?
   "Block-level elements that close an open list scope when they
    appear on their own line. We close on these so a heading or fence
@@ -2513,11 +2538,16 @@
    as a continuation paragraph. Mirrors the cases `markdown->lines`
    has dedicated branches for; keep the two in sync.
 
-   Bold openers (`**...`) at line start also count: they almost
-   always introduce a new top-level paragraph (`**Status:** done.`)
-   rather than continuing a previous bullet's body. Without this
-   the closing summary lines `**Loop clean:** true` get sucked
-   into the last bullet of a preceding list."
+   Bold paragraphs are split into two cases by
+   `top-level-bold-paragraph-line?`:
+     - `**Status:** done.` (label + value) — closes the list, the
+       summary lines that authors put after a list never want to
+       fold INTO the last bullet.
+     - `**word**` alone (`md/join` artefact) — stays a continuation,
+       so the bullet that contains a flowing sentence with embedded
+       bold spans renders as one wrapped bullet, not as the bullet
+       header followed by an avalanche of one-word paragraphs (the
+       `Let / me / dig / deeper` regression)."
   [^String line]
   (let [t (str/trim line)]
     (or (str/starts-with? t "```")               ;; code fence
@@ -2527,7 +2557,7 @@
       (re-matches #"^\|.*\|$" t)                ;; pipe-table row
       (re-matches #"^</?details(\s[^>]*)?>$" t) ;; details / /details
       (re-matches #"^<summary>.*</summary>$" t) ;; summary tag
-      (str/starts-with? t "**"))))               ;; bold paragraph
+      (top-level-bold-paragraph-line? t))))      ;; **prefix:** value
 
 (defn- coalesce-loose-list-items
   "Pre-pass over input lines that collapses multi-paragraph list
@@ -2601,15 +2631,20 @@
           ;; fragmentation left orphaned: ill-formed input often
           ;; has `(\n\nfoo\n\n,\n\nbar\n\n)` which would otherwise
           ;; emerge as `( foo , bar )`. The replacements collapse
-          ;; ` ,` / ` .` / ` ;` / ` :` / ` )` / ` ]` and `( ` / `[ `
-          ;; back to their natural prose forms.
+          ;; ` ,` / ` .` / ` ;` / ` :` / ` )` and `( ` back to their
+          ;; natural prose forms.
+          ;;
+          ;; `[` / `]` are intentionally NOT reflowed: in real prose
+          ;; they almost always appear inside quoted text or code
+          ;; spans (`\"Unmatched delimiter: ]\"`). Tightening ` ]` to
+          ;; `]` there would mangle the user-visible payload.
           current
           (let [cont (str/trim line)
                 joined (if (str/blank? cont)
                          current
                          (-> (str (str/trimr current) " " cont)
-                           (str/replace #" +([,;:.\)\]])" "$1")
-                           (str/replace #"([\(\[]) +" "$1")))]
+                           (str/replace #" +([,;:.\)])" "$1")
+                           (str/replace #"(\() +" "$1")))]
             (recur rst joined 0 acc))
 
           ;; Idle, see a list marker → enter list scope.

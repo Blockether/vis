@@ -49,7 +49,7 @@ list it inside an extension's `:ext/channels` slot:
      [{:channel/id        :tui                                      ;; required, keyword identity
        :channel/cmd       "tui"                                     ;; required, sub-command name under `vis channels`
        :channel/doc       "Interactive terminal UI."                ;; required, one-line summary
-       :channel/usage     "vis tui [--conversation-id ID|--resume]" ;; optional, shown in help
+       :channel/usage     "vis channels tui [--conversation-id ID|--resume]" ;; optional, shown in help
        :channel/owns-tty? true                                      ;; optional, see below
        :channel/main-fn   #'channel-main}]}))                       ;; required, IFn
 ```

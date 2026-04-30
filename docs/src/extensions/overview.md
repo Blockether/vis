@@ -334,7 +334,7 @@ full examples of each form.
      :ext/channels  [{:channel/id        :tui
                       :channel/cmd       "tui"
                       :channel/doc       "Interactive terminal UI."
-                      :channel/usage     "vis tui [--conversation-id ID | --resume]"
+                      :channel/usage     "vis channels tui [--conversation-id ID | --resume]"
                       :channel/owns-tty? true
                       :channel/main-fn   #'channel-main}]}))
 ```

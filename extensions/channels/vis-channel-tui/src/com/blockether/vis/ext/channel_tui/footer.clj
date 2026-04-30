@@ -29,8 +29,7 @@
    `embed-in-bar`, which forced single-color rendering and was the
    reason run-state had to live inside the assistant bubble; this
    namespace replaces that whole path."
-  (:require [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.core :as lp]
+  (:require [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [java.util Locale]))
@@ -62,23 +61,6 @@
   (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
     (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
 
-(defn- last-assistant-tokens
-  "Token map `{:input n :output n}` of the most recent finalized assistant
-   message, or nil. Used to estimate next-query context fill from a real
-   measurement instead of the chars/4 heuristic."
-  [messages]
-  (some->> (reverse messages)
-    (some (fn [m] (when (and (= :assistant (:role m)) (:tokens m)) (:tokens m))))))
-
-(defn- estimate-next-context-chars
-  "Crude pre-tokenizer estimate: total chars across all chat messages so
-   far. Off by 30-50% on first turn vs real tokenization — we mark the
-   resulting % with a leading `~` so the user knows it's an estimate."
-  ^long [messages]
-  (long (reduce + 0
-          (keep (fn [m] (let [tx (:text m)] (when (string? tx) (count tx))))
-            messages))))
-
 (defn- session-cost
   "Cumulative session cost in USD across all assistant turns, or nil
    when no turns carried `:cost`. Vis already tracks `:total-cost` per
@@ -90,36 +72,6 @@
                           acc))
                 0.0 messages)]
     (when (pos? total) total)))
-
-(defn- ctx-left-info
-  "{:pct long, :estimated? bool} or nil. `pct` is **% left**, not used:
-   97 means '97% of context still free', the universal fuel-gauge framing
-   Codex/Claude Code converged on. `:estimated?` true when the value
-   came from chars/4, false when from a real prior-turn :input count."
-  [messages model-name]
-  (when-let [ctx-max (and model-name
-                       (try (svar-router/context-limit model-name)
-                         (catch Throwable _ nil)))]
-    (when (pos? ctx-max)
-      (let [last-tok (last-assistant-tokens messages)
-            actual?  (some? (:input last-tok))
-            used     (or (:input last-tok)
-                       (let [chars (estimate-next-context-chars messages)]
-                         (when (pos? chars) (long (/ chars 4)))))]
-        (when used
-          (let [used    (min ctx-max used)
-                left    (- ctx-max used)
-                pct     (long (Math/round (* 100.0 (/ (double left) (double ctx-max)))))]
-            {:pct (max 0 (min 100 pct))
-             :estimated? (not actual?)}))))))
-
-(defn- ctx-color
-  "Color for the ctx-left segment. Less left → hotter color."
-  [pct]
-  (cond
-    (<= pct 10) t/footer-error-fg
-    (<= pct 30) t/footer-warning-fg
-    :else       t/footer-fg-muted))
 
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 
@@ -145,7 +97,7 @@
                         (str (name provider) "/" model)
                         model)
         reasoning? (boolean (:reasoning? info))
-        cost-str   (format-cost (session-cost messages))]        cost-str   (format-cost (session-cost messages))]
+        cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       model-display
