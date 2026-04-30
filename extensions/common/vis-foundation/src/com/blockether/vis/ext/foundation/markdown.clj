@@ -119,9 +119,13 @@
 
    Glued concat -> use `(str …)`; md/p adds whitespace, never markdown."
   ^String [& parts]
-  (->> (expand-parts parts)
-    (mapv ->str)
-    (str/join " ")))
+  (let [joined (str/join " " (keep (fn [p] (when-not (str/blank? p) (str/trim p)))
+                               (mapv ->str (expand-parts parts))))]
+    (loop [s joined]
+      (let [next (str/replace s "  " " ")]
+        (if (str/includes? next "  ")
+          (recur next)
+          next)))))
 
 ;; Inline emphasis / spans — every helper variadic for the same
 ;; reason headings are: the LLM naturally composes (md/bold "foo "

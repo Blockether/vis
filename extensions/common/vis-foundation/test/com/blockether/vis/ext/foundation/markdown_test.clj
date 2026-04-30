@@ -135,6 +135,12 @@
     (expect (= "a b c"     (md/p (map identity ["a" "b" "c"]))))
     (expect (= "head a b"  (md/p "head" (map str ["a" "b"])))))
 
+  (it "p normalizes double spaces from trailing/leading whitespace in parts"
+    (expect (= "a b c" (md/p "a " " b " " c")))
+    (expect (= "a b c" (md/p "a  " "  b" "c")))
+    (expect (= "a b c" (md/p "a  b" "c")))
+    (expect (= "foo `bar`" (md/p "foo " (md/code "bar")))))
+
   (it "p with no args yields the empty string"
     (expect (= "" (md/p))))
 
