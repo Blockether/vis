@@ -32,10 +32,10 @@ Everything else is optional (with sensible defaults applied by the
 
 Two conditional rules apply on top of the spec:
 
-- `:ext/group` is required when `:ext/symbols` is non-empty (enforced
-  by `group-required-when-symbols?`). For pure non-symbol extensions
-  (channels-only / providers-only) the `extension` builder
-  auto-derives `:ext/group` — see the table row below.
+- `:ext/kind` is required when `:ext/symbols` is non-empty (enforced
+  by `kind-required-when-symbols?`). For pure non-symbol extensions
+  (channels-only / providers-only / persistence-only) the `extension`
+  builder auto-derives `:ext/kind` — see the table row below.
 - `:ext/ns-alias` is required when `:ext/symbols` is non-empty
   (enforced by `ns-alias-required-when-symbols?`).
 
@@ -43,7 +43,7 @@ Two conditional rules apply on top of the spec:
 |--------------------------|-----------------|----------------------|-------------|
 | `:ext/namespace`         | ✓              | —                    | Fully qualified symbol, e.g. `'com.blockether.vis.ext.foundation.editing.core`, `'com.acme.ext.git`. Also the dedup key in the global registry. |
 | `:ext/doc`               | ✓              | —                    | Extension-level description. |
-| `:ext/group`             | conditional     | auto                 | Top-level group used for prompt rendering AND as the bucket label in `vis extensions list`. **Required when `:ext/symbols` is non-empty.** Auto-derived for the categorical cases when not set: extensions contributing `:ext/providers` get `"providers"`, extensions contributing `:ext/channels` get `"channels"`. Explicit `:ext/group` always wins. |
+| `:ext/kind`              | conditional     | auto                 | Top-level *kind* of surface this extension contributes — used for prompt rendering AND as the section heading in `vis extensions list`. **Required when `:ext/symbols` is non-empty.** Auto-derived for the categorical cases when not set: extensions contributing `:ext/providers` get `"providers"`, `:ext/channels` get `"channels"`, `:ext/persistance` get `"persistance"`. Explicit `:ext/kind` always wins. |
 | `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] → bool)` — when falsy, all symbols are unbound and `:ext/nudge-fn` is skipped. |
 | `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt. Strings are normalized to `(constantly s)`. |
 | `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)). |
@@ -53,7 +53,7 @@ Two conditional rules apply on top of the spec:
 | `:ext/author`            | ✗              | —                    | Author / creator of the extension itself — the entity that wrote the code. e.g. `"Blockether"`. |
 | `:ext/owner`             | ✗              | —                    | Owner of the *package* / distribution that ships this extension. Distinct from `:ext/author`: a Blockether-authored extension may be vendored by another distribution. Every extension bundled in this repo declares `:ext/owner "vis"`. Surfaces as the `Owner` column in `vis extensions list`. |
 | `:ext/license`           | ✗              | —                    | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"`. |
-| `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/group` and `:ext/ns-alias` become required. |
+| `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/kind` and `:ext/ns-alias` become required. |
 | `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol → Class}` — Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
 | `:ext/imports`           | ✗              | `{}`                  | `{short-symbol → fq-symbol}` — short-name imports for sandbox interop (`(LocalDate/now)` style). |
 | `:ext/ns-alias`          | conditional     | —                    | `{:ns 'vis.ext.tools :alias 'vis}` — **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(vis/cat …)` — bare `(cat …)` does not resolve. |
@@ -259,7 +259,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/author        "Blockether"
      :ext/owner         "vis"
      :ext/license       "Apache-2.0"
-     :ext/group         "knowledge"
+     :ext/kind          "knowledge"
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
      :ext/requires      ['com.blockether.vis.ext.foundation.editing.core]
      :ext/prompt        "Prefer narrow searches before broad scans."

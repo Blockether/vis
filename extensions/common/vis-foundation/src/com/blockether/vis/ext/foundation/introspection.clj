@@ -792,13 +792,13 @@
              :symbols   (mapv :ext.symbol/sym (:ext/symbols extension))
              :docs      (or doc-list [])}
       alias                    (assoc :alias alias)
-      (:ext/group extension)   (assoc :group   (:ext/group extension))
+      (:ext/kind extension)    (assoc :kind    (:ext/kind extension))
       (:ext/version extension) (assoc :version (:ext/version extension))
       (:ext/doc extension)     (assoc :doc     (:ext/doc extension)))))
 
 (defn- foundation-extensions
   "Catalog every loaded extension as data. Returns a vector of
-   `{:namespace :alias :group :version :doc :symbols :docs}` maps.
+   `{:namespace :alias :kind :version :doc :symbols :docs}` maps.
    `:docs` is a vector of `{:name :description}` descriptors for every
    doc the extension declares."
   [_env]
@@ -1022,7 +1022,7 @@
 (def extensions-symbol
   (sdk/symbol 'extensions foundation-extensions
     {:doc       (str "Catalog of every loaded extension: "
-                  "[{:namespace :alias :group :version :doc :symbols "
+                  "[{:namespace :alias :kind :version :doc :symbols "
                   ":docs} …]. `:docs` is a vector of {:name :description} "
                   "descriptors for every doc the extension declares. "
                   "Use this to discover what surfaces are available "

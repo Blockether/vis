@@ -251,7 +251,7 @@ the turn still runs.
   (sdk/extension
     {:ext/namespace 'com.acme.ext.search
      :ext/doc       "Document search"
-     :ext/group     "knowledge"
+     :ext/kind      "knowledge"
      :ext/ns-alias  {:ns 'vis.ext.search :alias 'search}
      :ext/prompt    "Prefer search before manual file scans."
      :ext/symbols   [find-symbol]}))
@@ -285,7 +285,7 @@ Real in-tree examples — every package below ships exactly one
     {:ext/namespace 'com.blockether.vis.ext.foundation.editing.core
      :ext/doc       "Common Vis operations: cat, ls, rg, patch."
      :ext/version   "0.4.0"
-     :ext/group     "filesystem"
+     :ext/kind      "filesystem"
      :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
      :ext/symbols   all-symbols
      :ext/prompt    combined-prompt}))
@@ -384,7 +384,7 @@ an extension that ships SCI tools, a CLI command, AND a channel:
   (sdk/extension
     {:ext/namespace 'com.acme.ext.git
      :ext/doc       "Git integration: SCI tools + CLI + a web-hook channel."
-     :ext/group     "vcs"
+     :ext/kind      "vcs"
      :ext/ns-alias  {:ns 'vis.ext.git :alias 'git}
      :ext/symbols   [git-status-sym git-blame-sym]
      :ext/cli       [{:cmd/name   "blame"

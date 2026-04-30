@@ -52,7 +52,7 @@
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.vis :alias 'vis}
-     :ext/group     "foundation"
+     :ext/kind      "foundation"
      :ext/prompt    combined-prompt
      :ext/symbols   (vec (concat introspection/all-symbols
                            editing/editing-symbols
