@@ -162,6 +162,15 @@
                   :input-history []
                   :input-history-index nil
                   :input-history-draft nil
+                  ;; Pi-style paste registry. Each multi-line / large
+                  ;; clipboard payload lands here keyed by an auto-
+                  ;; incrementing id; the input buffer carries a
+                  ;; placeholder token `[Pasted #N: …]` instead of the
+                  ;; raw text. Send-time substitution uses this map
+                  ;; to materialise the full content before the
+                  ;; message reaches the agent. Cleared on send.
+                  :pastes     {}
+                  :paste-counter 0
                   :loading?   false
                   :cancel-token nil
                   :cancelling? false
@@ -293,7 +302,31 @@
     (assoc db
       :input (input/empty-input)
       :input-history-index nil
-      :input-history-draft nil)))
+      :input-history-draft nil
+      ;; A new empty input has no placeholder tokens, so the paste
+      ;; registry is dead state. Clearing it here keeps memory
+      ;; bounded across long sessions — every send + every history
+      ;; reset drops orphans.
+      :pastes {}
+      :paste-counter 0)))
+
+(reg-event-db :add-paste
+  ;; Stashes a clipboard payload in the registry, returns the new
+  ;; id (Integer) via a side-channel atom that the screen loop reads
+  ;; right after dispatch — see `:paste-counter` increment below.
+  (fn [db [_ content]]
+    (let [next-id (inc (or (:paste-counter db) 0))]
+      (-> db
+        (assoc :paste-counter next-id)
+        (assoc-in [:pastes next-id] {:id next-id :content content})))))
+
+(reg-event-db :remove-paste
+  ;; Drop a single paste entry by id. Used when the user backspaces
+  ;; over the closing `]` of a placeholder — the screen loop deletes
+  ;; the token from the input buffer AND drops the matching content
+  ;; here so memory tracks what the user can still see.
+  (fn [db [_ id]]
+    (update db :pastes dissoc id)))
 
 (reg-event-db :set-scroll
   (fn [db [_ scroll]]
@@ -332,14 +365,23 @@
         (assoc db :messages-scroll (max 0 (min max-scroll new-scroll)))))))
 
 (reg-event-fx :send-message
+  ;; `text` is the input-buffer string — it carries `[Pasted #N: …]`
+  ;; placeholder tokens for any large clipboard payloads the user
+  ;; pasted this turn. Substitute every token with its content from
+  ;; the `:pastes` registry BEFORE the message reaches either the
+  ;; chat history or the agent: the chat shows the full materialised
+  ;; text (so re-reading the conversation later doesn't show a token
+  ;; with no referent), and the agent sees what the user actually
+  ;; meant to paste.
   (fn [db [_ text]]
-    (let [token (vis/cancellation-token)]
+    (let [expanded (input/expand-paste-placeholders text (:pastes db))
+          token    (vis/cancellation-token)]
       {:db (-> db
-             (update :messages conj (chat/user-message text))
+             (update :messages conj (chat/user-message expanded))
              (update :messages conj (chat/assistant-message "Sending request to provider…"))
              (update :input-history (fn [xs]
                                       (let [xs (vec (or xs []))]
-                                        (if (= text (last xs)) xs (conj xs text)))))
+                                        (if (= expanded (last xs)) xs (conj xs expanded)))))
              (assoc :messages-scroll nil :loading? true
                :cancel-token token
                :cancelling? false
@@ -347,7 +389,7 @@
                :query-start-ms (System/currentTimeMillis)
                :input-history-index nil
                :input-history-draft nil))
-       :fx [[:rlm-query (:conversation db) text token]]})))
+       :fx [[:rlm-query (:conversation db) expanded token]]})))
 
 (reg-event-fx :cancel-query
   (fn [db _]

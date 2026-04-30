@@ -296,28 +296,34 @@
 ;; Lists
 ;; =============================================================================
 
+(defn- normalize-list-items
+  "Variadic helper: if the caller passed exactly one sequential arg,
+   unwrap it; otherwise treat `items` itself as the list. Then drop
+   nils so `(md/ul nil)`, `(md/ul [])`, `(md/ul nil nil)` all yield
+   an empty seq. Returning a SEQ of plain values — callers map their
+   own per-item formatting on top."
+  [items]
+  (let [unwrapped (if (and (= 1 (count items)) (sequential? (first items)))
+                    (first items)
+                    items)]
+    (remove nil? unwrapped)))
+
 (defn ul
   "Unordered list. Accepts a single seq or variadic args.
    (ul [\"a\" \"b\"]) and (ul \"a\" \"b\") both work.
    One `- item` per element, newline-joined, no trailing newline."
   [& items]
-  (let [items (if (and (= 1 (count items)) (sequential? (first items)))
-                (first items)
-                items)]
-    (->> (or items [])
-      (map #(str "- " (->str %)))
-      (str/join "\n"))))
+  (->> (normalize-list-items items)
+    (map #(str "- " (->str %)))
+    (str/join "\n")))
 
 (defn ol
   "Ordered list, 1-based numbering. Accepts a single seq or variadic args.
    (ol [\"a\" \"b\"]) and (ol \"a\" \"b\") both work."
   [& items]
-  (let [items (if (and (= 1 (count items)) (sequential? (first items)))
-                (first items)
-                items)]
-    (->> (or items [])
-      (map-indexed (fn [i x] (str (inc i) ". " (->str x))))
-      (str/join "\n"))))
+  (->> (normalize-list-items items)
+    (map-indexed (fn [i x] (str (inc i) ". " (->str x))))
+    (str/join "\n")))
 
 (defn checklist
   "GitHub task list. Accepts a single seq or variadic args.
@@ -325,17 +331,14 @@
    (checklist [[\"a\" true] [\"b\" false]]) and
    (checklist [\"a\" true] [\"b\" false]) both work."
   [& items]
-  (let [items (if (and (= 1 (count items)) (sequential? (first items)))
-                (first items)
-                items)]
-    (->> (or items [])
-      (map (fn [it]
-             (let [[t d?] (cond
-                            (map? it)        [(:text it) (:done? it)]
-                            (sequential? it) [(first it) (second it)]
-                            :else            [it false])]
-               (str "- [" (if d? "x" " ") "] " (->str t)))))
-      (str/join "\n"))))
+  (->> (normalize-list-items items)
+    (map (fn [it]
+           (let [[t d?] (cond
+                          (map? it)        [(:text it) (:done? it)]
+                          (sequential? it) [(first it) (second it)]
+                          :else            [it false])]
+             (str "- [" (if d? "x" " ") "] " (->str t)))))
+    (str/join "\n")))
 
 ;; =============================================================================
 ;; Tables
