@@ -100,10 +100,10 @@
       (assoc :failure-count (count (filter :error blocks))))))
 
 (defn- build-turn
-  "Pure projection: one query_soul row + its iterations → the
+  "Pure projection: one conversation_turn_soul row + its iterations → the
    turn-shaped data map the public `transcript` returns."
   [db-info query]
-  (let [raw-iters (try (vis/db-list-query-iterations db-info (:id query))
+  (let [raw-iters (try (vis/db-list-conversation-turn-iterations db-info (:id query))
                     (catch Throwable _ []))
         iters     (mapv (partial enrich-iteration db-info) raw-iters)
         totals    (iteration-rollup iters)
@@ -150,7 +150,7 @@
   [db-info conversation-id]
   (when-let [conv (try (vis/db-get-conversation db-info conversation-id)
                     (catch Throwable _ nil))]
-    (let [queries (try (vis/db-list-conversation-queries db-info conversation-id)
+    (let [queries (try (vis/db-list-conversation-turns db-info conversation-id)
                     (catch Throwable _ []))
           turns   (mapv (partial build-turn db-info) queries)
           totals  (conversation-totals turns)]
@@ -359,7 +359,7 @@
 
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted on
-   `query_state.metadata.answer`. Rendered after every iteration so
+   `conversation_turn_state.metadata.answer`. Rendered after every iteration so
    the reader sees the trajectory that led to it. nil/blank → nothing
    emitted."
   [answer]

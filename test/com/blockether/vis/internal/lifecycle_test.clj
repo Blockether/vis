@@ -110,7 +110,7 @@
   (it "passes the payload through verbatim besides the :phase stamp"
     (let [seen (atom nil)
           f    (fn [p] (reset! seen p))
-          payload {:conversation-id "c1" :query-id "q1" :iteration 3
+          payload {:conversation-id "c1" :conversation-turn-id "q1" :iteration 3
                    :status :success :cost-usd 0.0042
                    :tokens {:input 100 :output 20}}]
       (lc/emit! (lc/compose-listeners {:on-iteration-end f} [])

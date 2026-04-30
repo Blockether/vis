@@ -139,7 +139,7 @@
    take the loop down or starve later listeners.
 
    `payload` is always a map. The loop guarantees at least
-   `:phase` (the keyword), `:conversation-id`, and `:query-id`
+   `:phase` (the keyword), `:conversation-id`, and `:conversation-turn-id`
    are present; phase-specific extras (`:iteration`, `:status`,
    `:tokens`, `:cost-usd`, etc.) are documented per call site in
    `internal.loop` and `docs/src/extensions/lifecycle.md`."

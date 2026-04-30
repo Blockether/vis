@@ -79,7 +79,7 @@
    suffix. The product concept is *turn*; everywhere this id is
    surfaced to the model (e.g. `(v/turn)` results, the
    `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
-   SCI-visible `TURN_QUERY_ID` SYSTEM var so meta-fns can filter
+   SCI-visible `TURN_CONVERSATION_TURN_ID` SYSTEM var so meta-fns can filter
    it without round-tripping through SCI."
   [env]
   (some-> (:current-query-id-atom env) deref))
@@ -87,7 +87,7 @@
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
    or any object whose `str` is the canonical UUID form. Used to
-   match `TURN_QUERY_ID` against a turn's `:id` regardless of
+   match `TURN_CONVERSATION_TURN_ID` against a turn's `:id` regardless of
    whether the persistence layer returned a UUID or a string."
   [a b]
   (and a b (= (str a) (str b))))
@@ -96,7 +96,7 @@
   "Fetch the iteration rows for `query-id`; returns [] on any failure."
   [db-info query-id]
   (try
-    (vis/db-list-query-iterations db-info query-id)
+    (vis/db-list-conversation-turn-iterations db-info query-id)
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@
 
 (defn- query-cost-summary
   "Pull the token / cost / provider / model map persisted on
-   `query_state.metadata` (with `llm_root_provider` /
+   `conversation_turn_state.metadata` (with `llm_root_provider` /
    `llm_root_model` as the canonical typed columns). Returns a map
    with the :input-tokens / :output-tokens / :total-cost / :provider
    / :model / :provider-model keys when present, or an empty map.
@@ -325,7 +325,7 @@
 
 (defn- latest-query [db-info conversation-id]
   (when (and db-info conversation-id)
-    (last (try (vis/db-list-conversation-queries db-info conversation-id)
+    (last (try (vis/db-list-conversation-turns db-info conversation-id)
             (catch Throwable _ [])))))
 
 (defn- turn-snapshot
@@ -361,7 +361,7 @@
   (when (and db-info conversation-id)
     (try
       (when-let [conversation (vis/db-get-conversation db-info conversation-id)]
-        (let [queries (vis/db-list-conversation-queries db-info conversation-id)
+        (let [queries (vis/db-list-conversation-turns db-info conversation-id)
               turns (mapv (fn [query]
                             (cond-> {:id (:id query)
                                      :outcome (or (:prior-outcome query)
@@ -395,7 +395,7 @@
   (turn-snapshot env))
 
 (defn- foundation-conversation
-  "Snapshot for a conversation. The in-flight turn (= current `TURN_QUERY_ID`)
+  "Snapshot for a conversation. The in-flight turn (= current `TURN_CONVERSATION_TURN_ID`)
    is automatically excluded from `:turns` because its `:iteration-count` /
    `:total-cost` haven't been finalized yet — listing it would render
    as `null | $null` and confuse downstream summaries. The excluded id
@@ -440,7 +440,7 @@
      (try
        (mapv (fn [conversation]
                (let [conversation-id (:id conversation)
-                     queries (try (vis/db-list-conversation-queries (:db-info env) conversation-id)
+                     queries (try (vis/db-list-conversation-turns (:db-info env) conversation-id)
                                (catch Throwable _ []))]
                  (cond-> {:id          conversation-id
                           :channel     (:channel conversation)
@@ -501,7 +501,7 @@
   ([env pattern conversation-id]
    (if (and (:db-info env) conversation-id)
      (let [pattern (->pattern pattern)
-           queries (try (vis/db-list-conversation-queries (:db-info env) conversation-id)
+           queries (try (vis/db-list-conversation-turns (:db-info env) conversation-id)
                      (catch Throwable _ []))]
        (vec
          (mapcat (fn [query]
@@ -533,19 +533,19 @@
      [])))
 
 (defn- meta-query-retries
-  "List every `query_state` row (= every retry version) for the query
+  "List every `conversation_turn_state` row (= every retry version) for the query
    soul behind `query-id`, oldest version first. Each row maps to
    `{:state-id :version :forked-from-query-state-id :status :prior-outcome
      :provider :model :created-at :iteration-count}`. Version 0 with
    `:forked-from-query-state-id nil` is the original run; any higher
-   version is a retry. `query-id` is a `query_soul` UUID — the same id
+   version is a retry. `query-id` is a `conversation_turn_soul` UUID — the same id
    surfaced as `:turn-id` by `v/find-attempts`, `:id` by `v/turn`,
    or `:turns[].id` by `v/conversation`. Returns `[]` (never nil)
    when the query is unknown or the env is missing handles."
   [env query-id]
   (if (and (:db-info env) query-id)
     (try
-      (vec (vis/db-list-query-states (:db-info env) query-id))
+      (vec (vis/db-list-conversation-turn-states (:db-info env) query-id))
       (catch Throwable _ []))
     []))
 
@@ -583,7 +583,7 @@
                      (mapv #(assoc % :turn-id (:id query)
                               :goal (:text query))
                        (failures-from-iterations (:db-info env) iterations))))
-           (vis/db-list-conversation-queries (:db-info env) conversation-id)))
+           (vis/db-list-conversation-turns (:db-info env) conversation-id)))
        (catch Throwable _ []))
      [])))
 
@@ -876,7 +876,7 @@
                   "(e.g. `\"openai/gpt-4o\"`); the raw `:provider` and `:model` "
                   "are kept as separate canonical keys. Default = current "
                   "conversation; pass an id to inspect any other. "
-                  "The in-flight turn (= `TURN_QUERY_ID`) is auto-excluded "
+                  "The in-flight turn (= `TURN_CONVERSATION_TURN_ID`) is auto-excluded "
                   "from `:turns` because its `:iteration-count` / `:total-cost` are "
                   "not finalized yet; the excluded id is returned as "
                   "`:in-flight-turn-id` so callers can opt into seeing it.")
@@ -942,13 +942,13 @@
 
 (def query-retries-symbol
   (vis/symbol 'query-retries meta-query-retries
-    {:doc       (str "Vector of every query_state row (one per retry version) "
+    {:doc       (str "Vector of every conversation_turn_state row (one per retry version) "
                   "for the soul behind `query-id`, oldest first: "
                   "[{:state-id :version :forked-from-query-state-id :status "
                   ":prior-outcome :provider :model :created-at :iteration-count} …]. "
                   "Version 0 = the original run; higher versions are retries "
                   "with :forked-from-query-state-id pointing at the previous :state-id. "
-                  "`query-id` = the query_soul UUID surfaced as :turn-id by "
+                  "`query-id` = the conversation_turn_soul UUID surfaced as :turn-id by "
                   "find-attempts / :id by (v/turn) / :turns[].id by (v/conversation). "
                   "Returns [] (never nil) when the query has no rows.")
      :arglists  '([query-id])
@@ -1108,10 +1108,10 @@
 (def introspection-prompt
   (str "`v/` introspection (READ-ONLY; returns maps/vecs; errors -> nil/[]):\n"
     "  (v/turn)                       in-flight turn snapshot {:id :goal :status :attempts :errors :failures :iteration :cost :elapsed-ms}\n"
-    "  (v/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= TURN_QUERY_ID).\n"
+    "  (v/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= TURN_CONVERSATION_TURN_ID).\n"
     "  (v/conversations channel?)     list conversations\n"
     "  (v/conversation-forks cid?)    list every conversation_state row (trunk + forks)\n"
-    "  (v/query-retries qid)          list every query_state row (original + retries)\n"
+    "  (v/query-retries qid)          list every conversation_turn_state row (original + retries)\n"
     "  (v/var-history 'sym)           prior versions of a SCI def\n"
     "  (v/find-attempts pat cid?)     grep prior :code attempts (current turn or one conversation)\n"
     "  (v/find-attempts-everywhere pat) grep :code across EVERY conversation in DB (heavy)\n"

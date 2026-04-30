@@ -5,8 +5,8 @@
 --
 --   conversation_soul (identity)
 --     └─ conversation_state (branch/fork)
---          ├─ query_soul (user ask identity, branch-local)
---          │    └─ query_state (one run/retry)
+--          ├─ conversation_turn_soul (user ask identity, branch-local)
+--          │    └─ conversation_turn_state (one run/retry)
 --          │         └─ iteration (one LLM round-trip)
 --          │              │
 --          │              ├─ iteration.blocks BLOB
@@ -21,17 +21,17 @@
 --               └─ expression_dependency (var dependency graph, soul-level)
 --
 -- Flow per turn:
---   user ask -> query_soul/query_state -> iterations
+--   user ask -> conversation_turn_soul/conversation_turn_state -> iterations
 --     each iteration writes its full block log inline into
 --     iteration.blocks plus one expression_soul + expression_state
 --     row per `(def …)` it executed
---   -> query_state done/error -> next turn (or branch/fork to new conversation_state)
+--   -> conversation_turn_state done/error -> next turn (or branch/fork to new conversation_state)
 --
 -- Fork flow:
 --   conversation_state(v1)
 --        └─ fork -> conversation_state(v2, parent_state_id=v1)
 --
---   Each fork keeps isolated branch-local query_soul + expression_soul identity.
+--   Each fork keeps isolated branch-local conversation_turn_soul + expression_soul identity.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -75,28 +75,29 @@ CREATE INDEX idx_conv_state_parent
 -- =============================================================================
 -- Query soul — immutable identity of a user ask, branch-local.
 -- =============================================================================
-CREATE TABLE query_soul (
+CREATE TABLE conversation_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
   title                  TEXT,
-  query                  TEXT,
+  turn_text              TEXT,
   metadata               TEXT,             -- JSON-encoded object/string
   created_at             INTEGER NOT NULL
 );
 
-CREATE INDEX idx_query_soul_state
-  ON query_soul(conversation_state_id, created_at);
+CREATE INDEX idx_conversation_turn_soul_state
+  ON conversation_turn_soul(conversation_state_id, created_at);
 
 -- =============================================================================
--- Query state — one run of query_soul. Retry = new state version.
+-- Conversation turn state — one run of conversation_turn_soul.
+-- Retry = new state version.
 -- =============================================================================
-CREATE TABLE query_state (
+CREATE TABLE conversation_turn_state (
   id                           TEXT PRIMARY KEY NOT NULL,
-  query_soul_id                TEXT NOT NULL
-                               REFERENCES query_soul(id) ON DELETE CASCADE,
-  forked_from_query_state_id   TEXT
-                               REFERENCES query_state(id) ON DELETE SET NULL,
+  conversation_turn_soul_id                TEXT NOT NULL
+                               REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
+  forked_from_conversation_turn_state_id   TEXT
+                               REFERENCES conversation_turn_state(id) ON DELETE SET NULL,
   version                      INTEGER NOT NULL CHECK (version >= 0),
   llm_root_provider            TEXT,    -- provider id (e.g. 'openai', 'github-copilot')
   llm_root_model               TEXT,
@@ -106,7 +107,7 @@ CREATE TABLE query_state (
   status                       TEXT NOT NULL
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
   metadata                     TEXT,        -- JSON-encoded object/string
-  -- Per-query final outcome, derived at query end. Lets the next turn's
+  -- Per-turn final outcome, derived at turn end. Lets the next turn's
   -- handover digest say "previous turn complete | abandoned | cancelled
   -- | error" without scanning every iteration. Set by the iteration
   -- loop on the terminal iteration and by
@@ -117,22 +118,22 @@ CREATE TABLE query_state (
                                                         'cancelled', 'error')),
   created_at                   INTEGER NOT NULL,
 
-  UNIQUE (query_soul_id, version)
+  UNIQUE (conversation_turn_soul_id, version)
 );
 
-CREATE INDEX idx_query_state_soul
-  ON query_state(query_soul_id, version);
+CREATE INDEX idx_conversation_turn_state_soul
+  ON conversation_turn_state(conversation_turn_soul_id, version);
 
-CREATE INDEX idx_query_state_forked_from
-  ON query_state(forked_from_query_state_id);
+CREATE INDEX idx_conversation_turn_state_forked_from
+  ON conversation_turn_state(forked_from_conversation_turn_state_id);
 
 -- =============================================================================
--- Iteration — one LLM round-trip within a query_state.
+-- Iteration — one LLM round-trip within a conversation_turn_state.
 -- =============================================================================
 CREATE TABLE iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
-  query_state_id                  TEXT NOT NULL
-                                  REFERENCES query_state(id) ON DELETE CASCADE,
+  conversation_turn_state_id                  TEXT NOT NULL
+                                  REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
   position                        INTEGER NOT NULL CHECK (position >= 0),
 
   status                          TEXT NOT NULL
@@ -213,14 +214,14 @@ CREATE TABLE iteration (
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,
 
-  UNIQUE (query_state_id, position)
+  UNIQUE (conversation_turn_state_id, position)
 );
 
-CREATE INDEX idx_iteration_query_state
-  ON iteration(query_state_id, position);
+CREATE INDEX idx_iteration_conversation_turn_state
+  ON iteration(conversation_turn_state_id, position);
 
-CREATE INDEX idx_iteration_query_state_created
-  ON iteration(query_state_id, created_at);
+CREATE INDEX idx_iteration_conversation_turn_state_created
+  ON iteration(conversation_turn_state_id, created_at);
 
 -- =============================================================================
 -- Expression soul — identity for var bindings (and reserved literal
@@ -429,10 +430,10 @@ CREATE TABLE log (
                          REFERENCES conversation_soul(id) ON DELETE CASCADE,
   conversation_state_id  TEXT
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
-  query_soul_id          TEXT
-                         REFERENCES query_soul(id) ON DELETE CASCADE,
-  query_state_id         TEXT
-                         REFERENCES query_state(id) ON DELETE CASCADE,
+  conversation_turn_soul_id          TEXT
+                         REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
+  conversation_turn_state_id         TEXT
+                         REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
   iteration_id           TEXT
                          REFERENCES iteration(id) ON DELETE CASCADE,
   expression_soul_id     TEXT
@@ -460,13 +461,13 @@ CREATE INDEX idx_log_conv_state
   ON log(conversation_state_id, created_at)
   WHERE conversation_state_id IS NOT NULL;
 
-CREATE INDEX idx_log_query_soul
-  ON log(query_soul_id, created_at)
-  WHERE query_soul_id IS NOT NULL;
+CREATE INDEX idx_log_conversation_turn_soul
+  ON log(conversation_turn_soul_id, created_at)
+  WHERE conversation_turn_soul_id IS NOT NULL;
 
-CREATE INDEX idx_log_query_state
-  ON log(query_state_id, created_at)
-  WHERE query_state_id IS NOT NULL;
+CREATE INDEX idx_log_conversation_turn_state
+  ON log(conversation_turn_state_id, created_at)
+  WHERE conversation_turn_state_id IS NOT NULL;
 
 CREATE INDEX idx_log_iteration
   ON log(iteration_id, created_at)
@@ -481,7 +482,7 @@ CREATE INDEX idx_log_expression_state
   WHERE expression_state_id IS NOT NULL;
 
 -- =============================================================================
--- FTS5 — full-text search over query text + expression state expr snapshots.
+-- FTS5 — full-text search over turn text + expression state expr snapshots.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,
@@ -492,21 +493,21 @@ CREATE VIRTUAL TABLE search USING fts5(
 );
 
 -- Query soul indexing
-CREATE TRIGGER trg_query_soul_ai AFTER INSERT ON query_soul BEGIN
+CREATE TRIGGER trg_conversation_turn_soul_ai AFTER INSERT ON conversation_turn_soul BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'query_soul', new.id, 'query', new.query
-    WHERE new.query IS NOT NULL AND new.query <> '';
+    SELECT 'conversation_turn_soul', new.id, 'turn_text', new.turn_text
+    WHERE new.turn_text IS NOT NULL AND new.turn_text <> '';
 END;
 
-CREATE TRIGGER trg_query_soul_au AFTER UPDATE ON query_soul BEGIN
-  DELETE FROM search WHERE owner_table='query_soul' AND owner_id=old.id;
+CREATE TRIGGER trg_conversation_turn_soul_au AFTER UPDATE ON conversation_turn_soul BEGIN
+  DELETE FROM search WHERE owner_table='conversation_turn_soul' AND owner_id=old.id;
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'query_soul', new.id, 'query', new.query
-    WHERE new.query IS NOT NULL AND new.query <> '';
+    SELECT 'conversation_turn_soul', new.id, 'turn_text', new.turn_text
+    WHERE new.turn_text IS NOT NULL AND new.turn_text <> '';
 END;
 
-CREATE TRIGGER trg_query_soul_ad AFTER DELETE ON query_soul BEGIN
-  DELETE FROM search WHERE owner_table='query_soul' AND owner_id=old.id;
+CREATE TRIGGER trg_conversation_turn_soul_ad AFTER DELETE ON conversation_turn_soul BEGIN
+  DELETE FROM search WHERE owner_table='conversation_turn_soul' AND owner_id=old.id;
 END;
 
 -- Expression state indexing

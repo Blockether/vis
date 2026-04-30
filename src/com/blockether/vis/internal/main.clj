@@ -75,7 +75,7 @@
              :event event
              :data  data}
       (:conversation-soul-id ctx) (assoc :conversation-soul-id (:conversation-soul-id ctx))
-      (:query-id ctx)             (assoc :query-soul-id (:query-id ctx))
+      (:conversation-turn-id ctx)             (assoc :query-soul-id (:conversation-turn-id ctx))
       (:iteration-id ctx)         (assoc :iteration-id (:iteration-id ctx)))))
 
 ;; =============================================================================
@@ -706,7 +706,7 @@
     (if (empty? convs)
       (stdout! (str "No " channel " conversations found."))
       (let [rows (mapv (fn [c]
-                         (let [queries (persistance/db-list-conversation-queries d (:id c))
+                         (let [queries (persistance/db-list-conversation-turns d (:id c))
                                turns   (count queries)
                                last-q  (last queries)]
                            {:id        (str (:id c))
@@ -1002,7 +1002,7 @@
              (tel/handler:console))
         (catch Throwable _ nil)))
     ;; Persistence handler: scopes signals to the right DB rows via
-    ;; `:db-info` / `:conversation-soul-id` / `:query-id` /
+    ;; `:db-info` / `:conversation-soul-id` / `:conversation-turn-id` /
     ;; `:iteration-id` carried in telemere `*ctx*`. Wrapped because
     ;; the persistence facade is loaded lazily; if no backend has
     ;; registered yet, the handler will silently drop signals until

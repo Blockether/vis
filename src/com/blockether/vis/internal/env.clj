@@ -684,7 +684,7 @@
 ;;
 ;;   TURN_*         frozen at turn start, immutable for the whole turn
 ;;     TURN_USER_REQUEST           user's current message text (string)
-;;     TURN_QUERY_ID               UUID of THIS in-flight turn (== query soul)
+;;     TURN_CONVERSATION_TURN_ID               UUID of THIS in-flight turn (== query soul)
 ;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under
 ;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
 ;;                                 turn start (the row this query was attached
@@ -750,7 +750,7 @@
    activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
    TURN_ACCESSIBLE_SKILLS (discoverable, lazy-load on demand)."
   '#{TURN_USER_REQUEST
-     TURN_QUERY_ID
+     TURN_CONVERSATION_TURN_ID
      TURN_CONVERSATION_SOUL_ID
      TURN_CONVERSATION_STATE_ID
      TURN_SYSTEM_PROMPT

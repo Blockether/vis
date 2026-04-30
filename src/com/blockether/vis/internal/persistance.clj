@@ -249,12 +249,12 @@
 (defdelegate db-latest-conversation-state-id     [db-info conversation-id])
 
 ;; --- Query lifecycle ---
-(defdelegate db-store-query!                  [db-info opts])
-(defdelegate db-update-query!                 [db-info query-id opts])
-(defdelegate db-list-queries-by-status     [db-info status])
-(defdelegate db-list-conversation-queries  [db-info conversation-ref])
-(defdelegate db-retry-query!                  [db-info query-soul-id opts])
-(defdelegate db-list-query-states             [db-info query-id])
+(defdelegate db-store-conversation-turn!                  [db-info opts])
+(defdelegate db-update-conversation-turn!                 [db-info conversation-turn-id opts])
+(defdelegate db-list-conversation-turns-by-status     [db-info status])
+(defdelegate db-list-conversation-turns  [db-info conversation-ref])
+(defdelegate db-retry-conversation-turn!                  [db-info conversation-turn-soul-id opts])
+(defdelegate db-list-conversation-turn-states             [db-info conversation-turn-id])
 
 ;; --- Iteration lifecycle ---
 (defn db-store-iteration!
@@ -264,11 +264,11 @@
   [db-info opts]
   (when-not (map? opts)
     (throw (ex-info "db-store-iteration! opts must be a map" {:got (type opts)})))
-  (when-not (:query-id opts)
-    (throw (ex-info "db-store-iteration! requires :query-id" {:opts (keys opts)})))
+  (when-not (:conversation-turn-id opts)
+    (throw (ex-info "db-store-iteration! requires :conversation-turn-id" {:opts (keys opts)})))
   ((deref (resolve-impl db-info 'db-store-iteration!)) db-info opts))
 
-(defdelegate db-list-query-iterations     [db-info query-ref])
+(defdelegate db-list-conversation-turn-iterations     [db-info conversation-turn-ref])
 (defdelegate db-list-iteration-vars       [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
@@ -401,11 +401,11 @@
    next turn's handover digest renders the right outcome instead of
    guessing. Returns the number of queries swept."
   [db-info]
-  (let [orphans (try (db-list-queries-by-status db-info :running)
+  (let [orphans (try (db-list-conversation-turns-by-status db-info :running)
                   (catch Exception _ []))]
     (doseq [{:keys [id iteration-count duration-ms]} orphans]
       (try
-        (db-update-query! db-info id
+        (db-update-conversation-turn! db-info id
           {:answer          ORPHAN_INTERRUPTED_ANSWER
            :iteration-count (or iteration-count 0)
            :duration-ms     (or duration-ms 0)

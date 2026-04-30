@@ -10,7 +10,7 @@
 
    Tables (V1__schema.sql):
      conversation_soul, conversation_state,
-     query_soul, query_state,
+     conversation_turn_soul, conversation_turn_state,
      iteration,
      expression_soul, expression_state, expression_dependency,
      log
@@ -251,8 +251,8 @@
                   (:data entry)                  (assoc :data (:data entry))
                   (:conversation-soul-id entry)  (assoc :conversation_soul_id (->id (:conversation-soul-id entry)))
                   (:conversation-state-id entry) (assoc :conversation_state_id (->id (:conversation-state-id entry)))
-                  (:query-soul-id entry)         (assoc :query_soul_id (->id (:query-soul-id entry)))
-                  (:query-state-id entry)        (assoc :query_state_id (->id (:query-state-id entry)))
+                  (:conversation-turn-soul-id entry)         (assoc :conversation_turn_soul_id (->id (:conversation-turn-soul-id entry)))
+                  (:conversation-turn-state-id entry)        (assoc :conversation_turn_state_id (->id (:conversation-turn-state-id entry)))
                   (:iteration-id entry)          (assoc :iteration_id (->id (:iteration-id entry)))
                   (:expression-soul-id entry)    (assoc :expression_soul_id (->id (:expression-soul-id entry)))
                   (:expression-state-id entry)   (assoc :expression_state_id (->id (:expression-state-id entry))))]})))
@@ -419,7 +419,7 @@
    whose `:parent-state-id` points at another `:state-id` in the same vector;
    group-by `:parent-state-id` to walk the tree.
 
-   `:query-count` is the number of `query_soul` rows hanging off that specific
+   `:query-count` is the number of `conversation_turn_soul` rows hanging off that specific
    state — cheap to compute, useful when triaging which branch is active.
 
    Returns `[]` (never nil) when the conversation is unknown or the env has no
@@ -431,8 +431,8 @@
                  {:select [:cs.id :cs.version :cs.parent_state_id :cs.title
                            :cs.metadata :cs.created_at
                            [{:select [[[:count :*]]]
-                             :from   :query_soul
-                             :where  [:= :query_soul.conversation_state_id :cs.id]}
+                             :from   :conversation_turn_soul
+                             :where  [:= :conversation_turn_soul.conversation_state_id :cs.id]}
                             :query_count]]
                   :from   [[:conversation_state :cs]]
                   :where  [:= :cs.conversation_soul_id soul-id-s]
@@ -451,39 +451,39 @@
         rows))
     []))
 
-(defn db-list-query-states
-  "List every `query_state` row (i.e. every retry version) for the soul behind
-   `query-id`, oldest version first. Each row maps to
-   `{:state-id :version :forked-from-query-state-id :status :prior-outcome
+(defn db-list-conversation-turn-states
+  "List every `conversation_turn_state` row (i.e. every retry version) for the soul behind
+   `conversation-turn-id`, oldest version first. Each row maps to
+   `{:state-id :version :forked-from-conversation-turn-state-id :status :prior-outcome
      :provider :model :created-at :iteration-count}`.
 
-   Version 0 with `:forked-from-query-state-id nil` is the original run; any
-   higher version is a retry, with `:forked-from-query-state-id` pointing at
+   Version 0 with `:forked-from-conversation-turn-state-id nil` is the original run; any
+   higher version is a retry, with `:forked-from-conversation-turn-state-id` pointing at
    the previous `:state-id`. `:iteration-count` is the number of `iteration`
    rows attached to that specific state — retries get their own iteration
    trace.
 
    Returns `[]` (never nil) when the query is unknown or the env has no
    datasource."
-  [db-info query-id]
-  (if (and (ds db-info) query-id)
-    (let [soul-id-s (->ref query-id)
+  [db-info conversation-turn-id]
+  (if (and (ds db-info) conversation-turn-id)
+    (let [soul-id-s (->ref conversation-turn-id)
           rows (query! db-info
-                 {:select [:qst.id :qst.version :qst.forked_from_query_state_id
+                 {:select [:qst.id :qst.version :qst.forked_from_conversation_turn_state_id
                            :qst.status :qst.prior_outcome
                            :qst.llm_root_provider :qst.llm_root_model
                            :qst.created_at
                            [{:select [[[:count :*]]]
                              :from   :iteration
-                             :where  [:= :iteration.query_state_id :qst.id]}
+                             :where  [:= :iteration.conversation_turn_state_id :qst.id]}
                             :iteration_count]]
-                  :from   [[:query_state :qst]]
-                  :where  [:= :qst.query_soul_id soul-id-s]
+                  :from   [[:conversation_turn_state :qst]]
+                  :where  [:= :qst.conversation_turn_soul_id soul-id-s]
                   :order-by [[:qst.version :asc]]})]
       (mapv (fn [row]
               (cond-> {:state-id                    (->uuid (:id row))
                        :version                     (:version row)
-                       :forked-from-query-state-id  (some-> (:forked_from_query_state_id row) ->uuid)
+                       :forked-from-conversation-turn-state-id  (some-> (:forked_from_conversation_turn_state_id row) ->uuid)
                        :status                      (->kw-back (:status row))
                        :created-at                  (->date (:created_at row))
                        :iteration-count             (or (:iteration_count row) 0)}
@@ -530,12 +530,12 @@
       (:id (latest-state-for db-info soul-id-s)))))
 
 ;; =============================================================================
-;; Query — query_soul + query_state
+;; Query — conversation_turn_soul + conversation_turn_state
 ;; =============================================================================
 
-(defn db-store-query!
-  "Create query_soul + initial query_state (version 0).
-   Returns the query-soul UUID."
+(defn db-store-conversation-turn!
+  "Create conversation_turn_soul + initial conversation_turn_state (version 0).
+   Returns the conversation-turn-soul UUID."
   [db-info {:keys [parent-conversation-id query messages status]}]
   (when (ds db-info)
     (let [soul-id  (UUID/randomUUID)
@@ -544,49 +544,49 @@
           state-id-s (latest-state-id db-info parent-conversation-id)
           q        (or query "")]
       (execute! db-info
-        {:insert-into :query_soul
+        {:insert-into :conversation_turn_soul
          :values [{:id                    (str soul-id)
                    :conversation_state_id state-id-s
                    :title                 (subs q 0 (min (count q) 100))
-                   :query                 q
+                   :turn_text             q
                    :created_at            now}]})
       (execute! db-info
-        {:insert-into :query_state
+        {:insert-into :conversation_turn_state
          :values [{:id            (str state-id)
-                   :query_soul_id (str soul-id)
+                   :conversation_turn_soul_id (str soul-id)
                    :version       0
                    :status        (normalize-status (or status :running))
                    :metadata      (->json (when messages {:messages messages}))
                    :created_at    now}]})
       soul-id)))
 
-(defn- latest-query-state [db-info query-soul-id-s]
+(defn- latest-conversation-turn-state [db-info conversation-turn-soul-id-s]
   (query-one! db-info
     {:select [:*]
-     :from   :query_state
+     :from   :conversation_turn_state
      :where  [:and
-              [:= :query_soul_id query-soul-id-s]
+              [:= :conversation_turn_soul_id conversation-turn-soul-id-s]
               [:= :version
                {:select [[[:max :version]]]
-                :from   :query_state
-                :where  [:= :query_soul_id query-soul-id-s]}]]}))
+                :from   :conversation_turn_state
+                :where  [:= :conversation_turn_soul_id conversation-turn-soul-id-s]}]]}))
 
-(defn db-retry-query!
-  "Create a new query_state (version N+1) for an existing query_soul.
+(defn db-retry-conversation-turn!
+  "Create a new conversation_turn_state (version N+1) for an existing conversation_turn_soul.
    Used when re-running a query with a different provider/model or settings.
-   Returns the new query-state UUID."
-  [db-info query-soul-id {:keys [status provider model]}]
+   Returns the new conversation-turn-state UUID."
+  [db-info conversation-turn-soul-id {:keys [status provider model]}]
   (when (ds db-info)
-    (let [soul-id-s (->ref query-soul-id)
-          current   (latest-query-state db-info soul-id-s)
+    (let [soul-id-s (->ref conversation-turn-soul-id)
+          current   (latest-conversation-turn-state db-info soul-id-s)
           new-id    (UUID/randomUUID)
           now       (now-ms)]
       (when current
         (execute! db-info
-          {:insert-into :query_state
+          {:insert-into :conversation_turn_state
            :values [(cond-> {:id                         (str new-id)
-                             :query_soul_id              soul-id-s
-                             :forked_from_query_state_id (:id current)
+                             :conversation_turn_soul_id              soul-id-s
+                             :forked_from_conversation_turn_state_id (:id current)
                              :version                    (inc (:version current))
                              :status                     (normalize-status (or status :running))
                              :llm_root_model             model
@@ -594,22 +594,22 @@
                       provider (assoc :llm_root_provider (name (->kw provider))))]})
         new-id))))
 
-(defn db-update-query!
-  "Update the latest query_state with final outcome.
+(defn db-update-conversation-turn!
+  "Update the latest conversation_turn_state with final outcome.
 
    When `:prior-outcome` is provided (one of `:complete`,
    `:abandoned`, `:cancelled`, `:error`), it lands in the dedicated
    `prior_outcome` column so the next turn's handover digest can read
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
-  [db-info query-id {:keys [answer iteration-count duration-ms
-                            status tokens cost prior-outcome]}]
-  (when (and (ds db-info) query-id)
-    (let [soul-id-s (->ref query-id)
-          state     (latest-query-state db-info soul-id-s)]
+  [db-info conversation-turn-id {:keys [answer iteration-count duration-ms
+                                        status tokens cost prior-outcome]}]
+  (when (and (ds db-info) conversation-turn-id)
+    (let [soul-id-s (->ref conversation-turn-id)
+          state     (latest-conversation-turn-state db-info soul-id-s)]
       (when state
         (execute! db-info
-          {:update :query_state
+          {:update :conversation_turn_state
            :set    (cond-> {:status (normalize-status (or status :done))
                             :metadata (->json
                                         (merge (<-json (:metadata state))
@@ -710,25 +710,25 @@
    rows. The iteration's full code-block log is written inline as a
    Nippy blob in `iteration.blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
-  [db-info {:keys [query-id blocks thinking answer answer-form-idx duration-ms vars error metadata
+  [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
                    llm-messages llm-provider llm-model tokens cost-usd]}]
   (when (ds db-info)
     (let [iteration-id   (UUID/randomUUID)
           iteration-id-s (str iteration-id)
           now       (now-ms)
-          query-soul-id-s (when query-id (->ref query-id))
-          ;; Need query_state_id (iteration FK points to query_state)
-          query-state (when query-soul-id-s
-                        (latest-query-state db-info query-soul-id-s))
-          query-state-id-s (:id query-state)
+          conversation-turn-soul-id-s (when conversation-turn-id (->ref conversation-turn-id))
+          ;; Need conversation_turn_state_id (iteration FK points to conversation_turn_state)
+          conversation-turn-state (when conversation-turn-soul-id-s
+                                    (latest-conversation-turn-state db-info conversation-turn-soul-id-s))
+          conversation-turn-state-id-s (:id conversation-turn-state)
           ;; Need conversation_state_id for expression_soul
-          conversation-state-id (when query-state
+          conversation-state-id (when conversation-turn-state
                                   (:conversation_state_id
                                    (query-one! db-info
                                      {:select [:conversation_state_id]
-                                      :from   :query_soul
-                                      :where  [:= :id query-soul-id-s]})))
-          ;; Compute position (0-indexed within this query_state)
+                                      :from   :conversation_turn_soul
+                                      :where  [:= :id conversation-turn-soul-id-s]})))
+          ;; Compute position (0-indexed within this conversation_turn_state)
           ;; Next position is `MAX(position)+1` (monotonic and survives
           ;; row deletions), aliased as `:next_position` so the SQL
           ;; column name and the Clojure key line up. HoneySQL renders
@@ -736,14 +736,14 @@
           ;; `as-unqualified-lower-maps` returns `:row_count` in the
           ;; row map; reading via `:row-count` (with hyphen) was always
           ;; `nil` and pinned every iteration to position 0, which
-          ;; collided with the `UNIQUE (query_state_id, position)`
+          ;; collided with the `UNIQUE (conversation_turn_state_id, position)`
           ;; constraint on the second iteration of every query.
           position  (or (:next_position
                          (query-one! db-info
                            {:select [[[:coalesce [:+ [:max :position] 1] 0]
                                       :next_position]]
                             :from   :iteration
-                            :where  [:= :query_state_id query-state-id-s]}))
+                            :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
                       0)]
       ;; 1. Iteration row — includes the full block log inline as
       ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Replaces
@@ -753,7 +753,7 @@
         (execute! db-info
           {:insert-into :iteration
            :values [(cond-> {:id                   iteration-id-s
-                             :query_state_id       query-state-id-s
+                             :conversation_turn_state_id       conversation-turn-state-id-s
                              :position             position
                              :status               (normalize-status (cond answer :done error :error :else :done))
                              :llm_system_prompt    (when (seq llm-messages)
@@ -839,7 +839,7 @@
     (cond-> {:id                    (->uuid (:soul_id row))
              :type                  :query
              :conversation-state-id (->uuid (:conversation_state_id row))
-             :text                  (:query row)
+             :text                  (:turn_text row)
              :status                (->kw-back (:status row))
              :created-at            (->date (:soul_created_at row))}
       (:title row)              (assoc :name (:title row))
@@ -854,26 +854,26 @@
       (:cached-tokens state-meta)    (assoc :cached-tokens (:cached-tokens state-meta))
       (:total-cost state-meta)       (assoc :total-cost (:total-cost state-meta)))))
 
-(defn- query-soul+state-query
-  "HoneySQL fragment joining query_soul + latest query_state."
+(defn- conversation-turn-soul+state-query
+  "HoneySQL fragment joining conversation_turn_soul + latest conversation_turn_state."
   [where-clause]
-  {:select [:qs.id :qs.conversation_state_id :qs.title :qs.query
+  {:select [:qs.id :qs.conversation_state_id :qs.title :qs.turn_text
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status :qst.metadata [:qst.metadata :state_metadata]
             :qst.llm_root_provider :qst.llm_root_model]
-   :from   [[:query_soul :qs]]
-   :join   [[:query_state :qst] [:= :qst.query_soul_id :qs.id]]
+   :from   [[:conversation_turn_soul :qs]]
+   :join   [[:conversation_turn_state :qst] [:= :qst.conversation_turn_soul_id :qs.id]]
    :where  [:and
             where-clause
             [:= :qst.version
              {:select [[[:max :version]]]
-              :from   [[:query_state :qst2]]
-              :where  [:= :qst2.query_soul_id :qs.id]}]]})
+              :from   [[:conversation_turn_state :qst2]]
+              :where  [:= :qst2.conversation_turn_soul_id :qs.id]}]]})
 
-(defn db-list-queries-by-status [db-info status]
+(defn db-list-conversation-turns-by-status [db-info status]
   (if (ds db-info)
     (mapv row->query
-      (query! db-info (query-soul+state-query [:= :qst.status (normalize-status status)])))
+      (query! db-info (conversation-turn-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
 
 (defn- attach-prior-outcome [row->qmap]
@@ -883,13 +883,13 @@
     (cond-> (row->qmap row)
       (:prior_outcome row) (assoc :prior-outcome (keyword (:prior_outcome row))))))
 
-(defn db-list-conversation-queries [db-info conversation-id]
+(defn db-list-conversation-turns [db-info conversation-id]
   (if (and (ds db-info) conversation-id)
     (let [state-id-s (latest-state-id db-info conversation-id)]
       (when state-id-s
         (mapv (attach-prior-outcome row->query)
           (query! db-info
-            (-> (query-soul+state-query [:= :qs.conversation_state_id state-id-s])
+            (-> (conversation-turn-soul+state-query [:= :qs.conversation_state_id state-id-s])
               (update :select conj :qst.prior_outcome)
               (assoc :order-by [[:qs.created_at :asc]]))))))
     []))
@@ -928,15 +928,15 @@
     ;; :var-history-recall-count plus per-iteration extension info.
     (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))
 
-(defn db-list-query-iterations [db-info query-id]
-  (if (and (ds db-info) query-id)
-    (let [soul-id-s (->ref query-id)
-          state     (latest-query-state db-info soul-id-s)]
+(defn db-list-conversation-turn-iterations [db-info conversation-turn-id]
+  (if (and (ds db-info) conversation-turn-id)
+    (let [soul-id-s (->ref conversation-turn-id)
+          state     (latest-conversation-turn-state db-info soul-id-s)]
       (when state
         (mapv row->iteration
           (query! db-info
             {:select [:*] :from :iteration
-             :where [:= :query_state_id (:id state)]
+             :where [:= :conversation_turn_state_id (:id state)]
              :order-by [[:position :asc]]}))))
     []))
 
@@ -990,15 +990,15 @@
                    {:value      (<-blob (:result r))
                     :code       (:expr r)
                     :version    (:version r)
-                    :query-id   (->uuid (:query_soul_id r))
+                    :conversation-turn-id   (->uuid (:conversation_turn_soul_id r))
                     :created-at (->date (:created_at r))}]))
            (query! db-info
              {:select [:es.name :est.result :est.expr :est.version :est.created_at
-                       :qst.query_soul_id]
+                       :qst.conversation_turn_soul_id]
               :from   [[:expression_soul :es]]
               :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
                        [:iteration :it]         [:= :it.id :est.iteration_id]
-                       [:query_state :qst]      [:= :qst.id :it.query_state_id]]
+                       [:conversation_turn_state :qst]      [:= :qst.id :it.conversation_turn_state_id]]
               :where  [:and
                        [:= :es.conversation_state_id state-id-s]
                        [:= :es.kind "var"]
@@ -1029,14 +1029,14 @@
     []))
 
 (defn db-query-history [db-info conversation-id]
-  (let [queries (db-list-conversation-queries db-info conversation-id)]
+  (let [queries (db-list-conversation-turns db-info conversation-id)]
     (mapv (fn [idx query]
             (let [qref       (:id query)
-                  iteration-count (count (db-list-query-iterations db-info qref))
+                  iteration-count (count (db-list-conversation-turn-iterations db-info qref))
                   answer-raw (or (:answer query) "")
                   answer-preview (subs answer-raw 0 (min (count answer-raw) 160))]
               {:query-pos       idx
-               :query-id        (:id query)
+               :conversation-turn-id        (:id query)
                :created-at      (:created-at query)
                :query           (:text query)
                :status          (:status query)

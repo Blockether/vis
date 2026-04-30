@@ -47,7 +47,7 @@
   [conversation-id]
   (try
     (let [d       (vis/db-info)
-          queries (vis/db-list-conversation-queries d conversation-id)]
+          queries (vis/db-list-conversation-turns d conversation-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:text q) "") (or (:created-at q) (java.util.Date.)))
@@ -67,7 +67,7 @@
                         ;; same way live ones do — just the answer
                         ;; text below the iteration trace, never the
                         ;; `(answer "…")` call as code above it.
-                        query-iterations (vis/db-list-query-iterations d (:id q))
+                        query-iterations (vis/db-list-conversation-turn-iterations d (:id q))
                         last-iteration-id (some-> (last query-iterations) :id)
                         produced-answer? (and (some? answer)
                                            (not (str/blank? (str answer))))
@@ -104,7 +104,7 @@
                         ;; on bare terminal-bg, no bubble-wide fill.
                         cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message (or answer "") (or (:created-at q) (java.util.Date.)))
-                                            true       (assoc :query-id (:id q))
+                                            true       (assoc :conversation-turn-id (:id q))
                                             (seq trace) (assoc :trace trace :raw-answer (or answer ""))
                                             model  (assoc :model model)
                                             iteration-count (assoc :iteration-count iteration-count)
@@ -188,7 +188,7 @@
        (cond-> {:answer          (if (string? answer) answer (pr-str answer))
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)
-                :query-id        (:query-id result)}
+                :conversation-turn-id        (:conversation-turn-id result)}
          model      (assoc :model model)
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)

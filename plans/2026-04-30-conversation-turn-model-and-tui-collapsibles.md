@@ -54,9 +54,9 @@ Files:
 - update docs/comments/tests that still mention query-era table names
 
 Core changes:
-- `query_soul` -> `conversation_turn_soul`
-- `query_state` -> `conversation_turn_state`
-- `iteration.query_state_id` -> `iteration.conversation_turn_state_id`
+- `conversation_turn_soul` -> `conversation_turn_soul`
+- `conversation_turn_state` -> `conversation_turn_state`
+- `iteration.conversation_turn_state_id` -> `iteration.conversation_turn_state_id`
 - log FK columns/indexes and FTS trigger sources renamed accordingly
 
 Acceptance:
@@ -72,11 +72,11 @@ Files:
 - `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`
 
 Representative function renames:
-- `db-store-query!` -> `db-store-conversation-turn!`
-- `db-update-query!` -> `db-update-conversation-turn!`
-- `db-retry-query!` -> `db-retry-conversation-turn!`
-- `db-list-conversation-queries` -> `db-list-conversation-turns`
-- `db-list-query-iterations` -> `db-list-conversation-turn-iterations`
+- `db-store-conversation-turn!` -> `db-store-conversation-turn!`
+- `db-update-conversation-turn!` -> `db-update-conversation-turn!`
+- `db-retry-conversation-turn!` -> `db-retry-conversation-turn!`
+- `db-list-conversation-turns` -> `db-list-conversation-turns`
+- `db-list-conversation-turn-iterations` -> `db-list-conversation-turn-iterations`
 
 Acceptance:
 - No public/backend API still exposing query vocabulary.
@@ -95,7 +95,7 @@ Files (minimum):
 - `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/state.clj`
 
 Contract updates:
-- payload key `:query-id` -> `:conversation-turn-id`
+- payload key `:conversation-turn-id` -> `:conversation-turn-id`
 - env/query naming -> turn/next-turn naming
 - prompt/system-var naming updates where required
 

@@ -776,7 +776,7 @@
                                         :iteration iteration
                                         :thinking  (some-> reasoning str)
                                         :done?     (boolean done?)}))))
-          ask-result (binding [svar-llm/*log-context* {:query-id (:environment-id environment) :iteration iteration}]
+          ask-result (binding [svar-llm/*log-context* {:conversation-turn-id (:environment-id environment) :iteration iteration}]
                        (svar/ask-code! (:router environment)
                          (cond-> {:lang     "clojure"
                                   :messages messages
@@ -1204,7 +1204,7 @@
    `(v/var-history 'X)` then returns ONE row per iteration
    for each X, even when the value is unchanged or blank.
 
-   Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_QUERY_ID,
+   Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_CONVERSATION_TURN_ID,
    TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
    TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS) repeat verbatim across
    iterations of the same turn — that is the intentional contract:
@@ -1226,7 +1226,7 @@
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
       (stamp "TURN_USER_REQUEST"            (or query ""))
-      (stamp "TURN_QUERY_ID"                (or turn-query-id ""))
+      (stamp "TURN_CONVERSATION_TURN_ID"                (or turn-query-id ""))
       (stamp "TURN_CONVERSATION_SOUL_ID"    (or conversation-soul-id ""))
       (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
       (stamp "TURN_SYSTEM_PROMPT"           (or system-prompt ""))
@@ -1357,7 +1357,7 @@
         ;; Per-turn payload skeleton — phase + iteration extras get
         ;; merged on at every emit site.
         turn-base-payload    {:conversation-id (:conversation-id environment)
-                              :query-id        query-id
+                              :conversation-turn-id        query-id
                               :goal            query
                               :model           effective-model
                               :provider        (some-> (resolve-effective-model (:router environment)) :provider)}
@@ -1403,7 +1403,7 @@
     ;; `update-title-system-var!`.
     ;; -----------------------------------------------------------------
     (env/bind-and-bump! environment 'TURN_USER_REQUEST query)
-    (env/bind-and-bump! environment 'TURN_QUERY_ID query-id)
+    (env/bind-and-bump! environment 'TURN_CONVERSATION_TURN_ID query-id)
     (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
       (:conversation-id environment))
     (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID
@@ -1446,10 +1446,10 @@
           (try
             (when-let [conv-id (:conversation-id environment)]
               (let [d (:db-info environment)
-                    queries (persistance/db-list-conversation-queries d conv-id)
+                    queries (persistance/db-list-conversation-turns d conv-id)
                     iters (->> queries
                             (mapcat (fn [q]
-                                      (try (persistance/db-list-query-iterations d (:id q))
+                                      (try (persistance/db-list-conversation-turn-iterations d (:id q))
                                         (catch Throwable _ []))))
                             (sort-by :created-at)
                             (take-last prompt/JOURNAL_KEEP_ITERS)
@@ -1606,7 +1606,7 @@
                                               (:reasoning (:data iteration-error-data)))
                             err-iteration-id (persistance/db-store-iteration! (:db-info environment)
                                                (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                                 (cond-> {:query-id query-id :vars [] :blocks nil
+                                                 (cond-> {:conversation-turn-id query-id :vars [] :blocks nil
                                                           :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
                                                           :llm-messages effective-messages
                                                           :llm-provider (:provider resolved-model)
@@ -1700,7 +1700,7 @@
                                            :conversation-metadata conversation-metadata})
                           iteration-id (persistance/db-store-iteration! (:db-info environment)
                                          (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                           (cond-> {:query-id query-id :blocks blocks :vars vars-snapshot
+                                           (cond-> {:conversation-turn-id query-id :blocks blocks :vars vars-snapshot
                                                     :thinking thinking
                                                     :answer (when final-result (answer-str (:answer final-result)))
                                                     :answer-form-idx (when final-result (:answer-form-idx final-result))
@@ -1836,21 +1836,21 @@
 
    Derives `:prior-outcome` (one of `:complete`,
    `:abandoned`, `:cancelled`, `:error`) from the loop result and
-   persists it on the `query_state` row. The next turn's
+   persists it on the `conversation_turn_state` row. The next turn's
    `<system_state>` digest reads it."
   [env query loop-opts]
   (when-not (map? env)
     (throw (ex-info "run-query! requires an env map" {:got (type env)})))
   (when (clojure.string/blank? query)
     (throw (ex-info "run-query! requires a non-blank query string" {:got query})))
-  (let [query-id (persistance/db-store-query! (:db-info env)
+  (let [query-id (persistance/db-store-conversation-turn! (:db-info env)
                    {:parent-conversation-id (:conversation-id env)
                     :query query
                     :messages nil
                     :status :running})
-        result (iteration-loop env query (assoc loop-opts :query-id query-id))
+        result (iteration-loop env query (assoc loop-opts :conversation-turn-id query-id))
         prior-outcome (->prior-outcome result)
-        _ (persistance/db-update-query! (:db-info env) query-id
+        _ (persistance/db-update-conversation-turn! (:db-info env) query-id
             {:answer          (:answer result)
              :iteration-count (:iteration-count result)
              :duration-ms     (:duration-ms result)
@@ -1858,7 +1858,7 @@
              :tokens          (:tokens result)
              :cost            (:cost result)
              :prior-outcome   prior-outcome})]
-    (assoc result :query-id query-id :prior-outcome prior-outcome)))
+    (assoc result :conversation-turn-id query-id :prior-outcome prior-outcome)))
 
 ;; -----------------------------------------------------------------------------
 ;; Prepare query context
@@ -1985,7 +1985,7 @@
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
                              routing (assoc :routing routing)))
-        query-id         (:query-id iteration-result)
+        query-id         (:conversation-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result
         total-tokens-atom (atom (or iteration-tokens {}))
@@ -2002,7 +2002,7 @@
                                   (merge-with + (select-keys acc [:input-cost :output-cost :total-cost])
                                     (select-keys extra-cost [:input-cost :output-cost :total-cost]))))))]
     {:iteration-result  iteration-result
-     :query-id         query-id
+     :conversation-turn-id         query-id
      :total-tokens-atom total-tokens-atom
      :total-cost-atom   total-cost-atom
      :merge-cost!       merge-cost!}))
@@ -2036,7 +2036,7 @@
           {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
-            (persistance/db-update-query! db-info query-id
+            (persistance/db-update-conversation-turn! db-info query-id
               {:answer          fallback-answer
                :iteration-count iteration-count
                :duration-ms     duration-ms
@@ -2061,7 +2061,7 @@
           {:duration-ms duration-ms :iteration-count iteration-count
            :cost (str (:total-cost cost-with-model))})
         (try
-          (persistance/db-update-query! db-info query-id
+          (persistance/db-update-conversation-turn! db-info query-id
             {:answer          answer
              :iteration-count iteration-count
              :duration-ms     duration-ms
@@ -2153,7 +2153,7 @@
                (if status
                  (finalize-query-result
                    ctx
-                   {:query-id          query-id
+                   {:conversation-turn-id          query-id
                     :start-time        start-time
                     :iteration-count   iteration-count
                     :status            status
@@ -2165,7 +2165,7 @@
                     :total-cost-atom   total-cost-atom})
                  (finalize-query-result
                    ctx
-                   {:query-id          query-id
+                   {:conversation-turn-id          query-id
                     :start-time        start-time
                     :iteration-count   iteration-count
                     :trace             trace
@@ -2276,7 +2276,7 @@
    - `sandbox-map`      — SCI sandbox namespace map {symbol → value-or-var}
    - `initial-ns-keys`  — set of symbols that are built-in tools/helpers
    - `var-registry`     — result of `db-latest-var-registry`:
-                          {symbol → {:query-id ... :value ... :code ...}}
+                          {symbol → {:conversation-turn-id ... :value ... :code ...}}
    - `recent-query-ids` — set of query UUIDs for the last N queries
 
    Returns: set of symbols to forget."
@@ -2289,7 +2289,7 @@
                 doc (:doc (meta v))
                 has-doc? (and doc (not (str/blank? doc)))
                 reg-entry (get var-registry sym)
-                defining-query-id (:query-id reg-entry)]
+                defining-query-id (:conversation-turn-id reg-entry)]
             (and
               (not (contains? initial-ns-keys sym))
               (not (env/system-var-sym? sym))
@@ -2308,7 +2308,7 @@
   (when (and db-info conversation-id sci-ctx)
     (try
       (let [all-queries  (sort-by :created-at
-                           (persistance/db-list-conversation-queries db-info conversation-id))
+                           (persistance/db-list-conversation-turns db-info conversation-id))
             recent-ids   (into #{} (map :id) (take-last AUTO_FORGET_STALE_QUERIES all-queries))
             var-registry (persistance/db-latest-var-registry db-info conversation-id)
             sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
