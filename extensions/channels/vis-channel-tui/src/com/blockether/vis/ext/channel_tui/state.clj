@@ -5,7 +5,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
-            [com.blockether.vis.ext.channel-tui.render :as render]))
+            [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -176,6 +177,7 @@
                   :cancelling? false
                   :progress   nil
                   :settings   (load-persisted-settings)
+                  :detail-expansions {}
                   :dialog-open? false
                   ;; Render thread coordination — see render-monitor docstring.
                   :render-version 0
@@ -222,6 +224,18 @@
     ;; render-version (see no-render-bump-events).
     (assoc db :layout layout)))
 
+(reg-event-db :toggle-detail
+  (fn [db [_ conversation-id node-id]]
+    (render/invalidate-cache!)
+    (virtual/invalidate-heights!)
+    (let [k [(str conversation-id) (str node-id)]]
+      (update db :detail-expansions
+        (fn [m]
+          (let [expanded? (true? (get m k false))]
+            (if expanded?
+              (dissoc m k)
+              (assoc (or m {}) k true))))))))
+
 (reg-event-db :bump-render-version
   (fn [db _]
     ;; No-op state mutator. The dispatcher itself bumps
@@ -246,7 +260,8 @@
         :messages (or history [])
         :input-history user-history
         :input-history-index nil
-        :input-history-draft nil))))
+        :input-history-draft nil
+        :detail-expansions {}))))
 
 (reg-event-db :set-title
   (fn [db [_ title]]

@@ -177,6 +177,36 @@
       :else                 db-spec)
     :else db-spec))
 
+(declare causal-chain)
+
+(def ^:private migration-checksum-mismatch-user-message
+  (str "Database schema mismatch: local migrations changed since this database was created. "
+    "If you do not need old local conversations, remove ~/.vis/vis.mdb and restart Vis. "
+    "If you need to keep it, run Flyway repair on that database first."))
+
+(defn- migration-checksum-mismatch?
+  "True when any throwable in the causal chain looks like Flyway's
+   migration checksum validation failure."
+  [^Throwable e]
+  (boolean
+    (some (fn [^Throwable t]
+            (let [^String m (or (ex-message t) "")]
+              (or (.contains m "Migration checksum mismatch")
+                (.contains m "Migrations have failed validation"))))
+      (causal-chain e))))
+
+(defn- maybe-wrap-db-open-error
+  "Normalize known persistence bootstrap failures into caller-facing
+   user errors. Unknown failures pass through unchanged so fatal
+   startup behavior remains unchanged."
+  [^Throwable e]
+  (if (migration-checksum-mismatch? e)
+    (ex-info migration-checksum-mismatch-user-message
+      {:vis/user-error true
+       :type           :vis/db-migration-checksum-mismatch}
+      e)
+    e))
+
 ;; =============================================================================
 ;; Connection lifecycle
 ;; =============================================================================
@@ -200,16 +230,19 @@
    any backend-providing namespaces from the classpath."
   [db-spec]
   (manifest/scan-extensions!)
-  (let [normalized (normalize-spec db-spec)
-        bid        (pick-backend-id (if (map? normalized)
-                                      normalized
-                                      {:backend (pick-backend-id {})}))
-        f          @(resolve-impl {:backend bid} 'db-open!)
-        store      (f normalized)]
-    (cond
-      (nil? store) nil
-      (map? store) (assoc store :backend bid)
-      :else        store)))
+  (try
+    (let [normalized (normalize-spec db-spec)
+          bid        (pick-backend-id (if (map? normalized)
+                                        normalized
+                                        {:backend (pick-backend-id {})}))
+          f          @(resolve-impl {:backend bid} 'db-open!)
+          store      (f normalized)]
+      (cond
+        (nil? store) nil
+        (map? store) (assoc store :backend bid)
+        :else        store))
+    (catch Throwable e
+      (throw (maybe-wrap-db-open-error e)))))
 
 (defn db-dispose-connection! [store]
   (when store

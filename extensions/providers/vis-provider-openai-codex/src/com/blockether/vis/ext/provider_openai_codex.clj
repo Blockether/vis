@@ -386,7 +386,7 @@
            (print! "")
            (print! "  OpenAI Codex authentication")
            (print! "  ─────────────────────────────")
-           (print! (str "  Open this URL if your browser does not open automatically:"))
+           (print! "  Open this URL if your browser does not open automatically:")
            (print! (str "  " url))
            (print! "")
            (if (open-browser! url)

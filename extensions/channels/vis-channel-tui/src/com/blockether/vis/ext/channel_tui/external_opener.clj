@@ -262,7 +262,7 @@
                       (recur (next chain))))
                   {:status :spawn-failed :command argv :scheme (:scheme resolved)
                    :target target
-                   :error (str "No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed.")}))
+                   :error "No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed."}))
 
               :else
               {:status :spawn-failed :command argv :scheme (:scheme resolved)
