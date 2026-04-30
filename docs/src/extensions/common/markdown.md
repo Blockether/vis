@@ -4,25 +4,24 @@ Package: `com.blockether/vis-foundation`. Source:
 [`extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj`](https://github.com/blockether/vis/blob/main/extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj).
 SCI alias: `md/`.
 
-The agent's only supported way to construct an answer body is the
-`md/` surface. There is **no Mustache layer**, no template language,
-no `{{var}}` interpolation: every fn here is a pure string builder.
-Whatever `(answer (md/join …))` produces *is* the answer markdown
-verbatim, with no post-processing pass.
+`md/` is the only supported way the agent constructs an answer body.
+No Mustache, no template language, no `{{var}}` interpolation —
+every fn is a pure string builder. Whatever `(answer (md/join …))`
+produces *is* the answer markdown verbatim, no post-processing.
 
-Why a programmatic surface instead of a templating layer:
+Why programmatic over templating:
 
 - **Composable.** `(md/join (md/h1 …) (md/p …) (md/table …))` is a
-  Clojure expression — `let`, `for`, `cond`, `into`, all the
-  iteration tools the model already uses for data work continue to
-  work for output construction.
-- **No new failure modes.** Templating layers fail by silent
-  variable-misses, by quoting bugs, by HTML-vs-Markdown escaping
-  surprises. Plain `str` concatenation has none of those.
+  Clojure expression. `let`, `for`, `cond`, `into` — every
+  iteration tool the model already uses for data work works for
+  output too.
+- **No new failure modes.** Templating fails by silent variable
+  miss, quoting bug, HTML-vs-Markdown escape surprise. Plain `str`
+  has none of those.
 - **Channel-aware citations.** `md/link`, `md/image`, `md/file-link`,
   `md/anchor` produce hyperlinks the TUI / web / Telegram channels
-  can render as clickable jumps. Hand-rolled `[…](…)` strings drift
-  out of sync with channel conventions; the helpers stay aligned.
+  render as clickable jumps. Hand-rolled `[…](…)` drifts out of
+  sync; the helpers stay aligned.
 
 ## Usage
 
@@ -39,12 +38,11 @@ Why a programmatic surface instead of a templating layer:
     (md/code-block "(println :done)" "clojure")))
 ```
 
-Block fns **return text without a trailing newline**. Compose with
-`(md/join …)` (blank-line between blocks) or `(md/lines …)` (single
-newline between lines), then hand the final string to
-`(answer …)` from the iteration loop. See
-[Iteration flow](../../architecture/iteration-flow.md) for how
-`(answer …)` interacts with the rest of the loop.
+Block fns **return text without a trailing newline**. Stitch with
+`(md/join …)` (blank line between blocks) or `(md/lines …)` (single
+newline between lines), then hand the final string to `(answer …)`.
+See [Iteration flow](../../architecture/iteration-flow.md) for how
+`(answer …)` interacts with the loop.
 
 ## Surface
 
@@ -73,12 +71,12 @@ newline between lines), then hand the final string to
 
 ### Hyperlinks, images, citations
 
-This is the section the model should reach for whenever an answer
-references something the user can click.
+Reach for this section whenever an answer references something the
+user can click.
 
 ```clojure
 (md/link text url)             ; [text](url)
-(md/link text url title)       ; [text](url "title")  — tooltip on hover
+(md/link text url title)       ; [text](url "title")  — hover tooltip
 
 (md/image alt url)             ; ![alt](url)
 (md/image alt url title)       ; ![alt](url "title")
@@ -86,29 +84,27 @@ references something the user can click.
 (md/file-link path)            ; [src/foo.clj](src/foo.clj)
 (md/file-link path line)       ; [src/foo.clj:142](src/foo.clj#L142)
 
-(md/anchor text)               ; auto-slugifies — [Patch report](#patch-report)
-(md/anchor text slug)          ; explicit slug   — [Jump](#summary)
+(md/anchor text)               ; auto-slug — [Patch report](#patch-report)
+(md/anchor text slug)          ; explicit slug — [Jump](#summary)
 ```
 
 Conventions:
 
-- **Always cite source code via `md/file-link`.** The 2-arg form
-  embeds a `#Lline` anchor so a TUI / web channel can resolve the
-  click to that exact line. Hand-rolling `(str "[" path ":" line
-  "](" path "#L" line ")")` produces the same output today and
-  drifts the moment the channel layer adds (e.g.) a `?branch=main`
-  query suffix.
-- **`md/link` and `md/image` share the same 3-arg shape.** The
-  third arg is the tooltip / `title` attribute. It is escaped so
-  embedded `"` survives.
-- **`md/anchor` is for in-document jumps**, e.g. linking to a
-  later section of the same answer.
+- **Cite source code via `md/file-link`.** 2-arg embeds a `#Lline`
+  anchor so the channel resolves the click to that exact line.
+  Hand-rolling `(str "[" path ":" line "](" path "#L" line ")")`
+  matches today and drifts the moment the channel layer adds (e.g.)
+  a `?branch=main` suffix.
+- **`md/link` and `md/image` share the 3-arg shape.** Third arg =
+  tooltip / `title` attr. Embedded `"` is escaped.
+- **`md/anchor`** is for in-document jumps — linking to a later
+  section of the same answer.
 
 ## Clicking links in the TUI
 
 The Lanterna TUI renders every `md/link` / `md/image` /
 `md/file-link` reference in the assistant’s answer as a one-row
-clickable chrome strip at the bottom of the bubble:
+clickable strip at the bottom of the bubble:
 
 ```text
   📷 diagram → ./flow.png
@@ -116,53 +112,52 @@ clickable chrome strip at the bottom of the bubble:
   📄 src/loop.clj:142
 ```
 
-Hover the row — the band lights up in pale blue. Click it — the
-URL gets handed to the host OS’s opener (`open` on macOS,
-`xdg-open` / `gio open` / `kde-open` / `gnome-open` chain on
-Linux/BSD, `cmd /c start "" …` on Windows). The opener runs in a
-side thread so a slow desktop helper never freezes the redraw
-loop.
+Hover the row → band lights pale blue. Click → URL goes to the host
+OS opener (`open` on macOS; `xdg-open` / `gio open` / `kde-open` /
+`gnome-open` chain on Linux/BSD; `cmd /c start "" …` on Windows).
+Opener runs side-thread so a slow desktop helper never freezes the
+redraw loop.
 
 What is and isn’t clickable:
 
 - `http://`, `https://`, `file://` URLs that resolve under
-  `(fs/cwd)`, and bare relative paths (`src/foo.clj`,
-  `./diagram.png`) are clickable.
-- `javascript:`, `data:`, `mailto:`, `ssh:`, etc. — anything not
-  on the whitelist — paint with a 🚫 marker and refuse to open.
-- `..`-traversal that escapes the working directory paints with
-  the same blocked marker. Same guard the editing tools enforce.
-- Anchor-only links (`[text](#section)`) are dropped: there’s no
-  in-document anchor to jump to in a chat surface.
+  `(fs/cwd)`, plus bare relative paths (`src/foo.clj`,
+  `./diagram.png`) — clickable.
+- `javascript:`, `data:`, `mailto:`, `ssh:`, etc. — anything not on
+  the whitelist — paint with 🚫 and refuse to open.
+- `..`-traversal escaping the working dir — same blocked marker.
+  Same guard the editing tools enforce.
+- Anchor-only links (`[text](#section)`) — dropped: no in-document
+  anchor to jump to in a chat surface.
 
 ### Terminal compatibility
 
 Mouse capture relies on the terminal forwarding mouse-mode escape
-sequences. Modern terminals work out of the box; the one common
-catch on macOS:
+sequences. Modern terminals work out of the box; common macOS
+catch:
 
 - **Terminal.app**: enable **View → Send Mouse Events** (or use
-  iTerm2 / WezTerm / Ghostty / Alacritty / kitty, all of which
-  pass clicks by default).
-- **tmux** users: `set -g mouse on` in `.tmux.conf`.
-- **SSH sessions**: works as long as the local terminal honours
-  mouse mode — the escapes pass through SSH transparently.
+  iTerm2 / WezTerm / Ghostty / Alacritty / kitty — all pass clicks
+  by default).
+- **tmux**: `set -g mouse on` in `.tmux.conf`.
+- **SSH**: works as long as the local terminal honours mouse mode —
+  escapes pass through transparently.
 
-If the host terminal silently drops the mouse-mode escape, the
-chrome rows still paint but stay inert. There is no keyboard
-fallback by design — the click affordance IS the picker.
+If the host terminal silently drops mouse-mode escapes, chrome rows
+still paint but stay inert. No keyboard fallback by design — the
+click affordance IS the picker.
 
 ### Block elements
 
 | Form | Output |
 |------|--------|
-| `(md/p "text")`                 | `text` (paragraph; nil → `""`) |
-| `(md/code-block "code")`        | unfenced \`\`\` block |
-| `(md/code-block "code" "lang")` | \`\`\`lang fenced block |
-| `(md/blockquote "a\nb")`        | `> a\n> b` |
-| `md/hr`                         | `---` (constant) |
-| `md/br`                         | `"  "` — CommonMark trailing-spaces line break |
-| `(md/details "summary" "body")` | GitHub-style collapsible block |
+| `(md/p …parts)`                | parts space-joined; nil dropped; seqs spliced |
+| `(md/code-block "code")`       | unfenced \`\`\` block |
+| `(md/code-block "code" "lang")`| \`\`\`lang fenced block |
+| `(md/blockquote "a\nb")`       | `> a\n> b` |
+| `md/hr`                        | `---` (constant) |
+| `md/br`                        | `"  "` — CommonMark trailing-spaces line break |
+| `(md/details …parts)`          | GitHub-style collapsible block (variadic) |
 
 ### Lists
 
@@ -198,9 +193,9 @@ fallback by design — the click affordance IS the picker.
 ;; | loop.clj | 30 |
 ```
 
-Optional `{:align [...]}` opt vec lets you override per-column
-alignment; values are `:left`, `:center`, `:right`, or `:default`.
-Pipes and embedded newlines in cells are escaped automatically.
+Optional `{:align [...]}` opt vec overrides per-column alignment;
+values: `:left`, `:center`, `:right`, `:default`. Pipes and embedded
+newlines in cells are escaped automatically.
 
 ```clojure
 (md/table ["k" "v"] [["x" 1]] {:align [:left :right]})
@@ -213,7 +208,7 @@ Pipes and embedded newlines in cells are escaped automatically.
 | `(md/join …blocks)` | `\n\n` (blank line)   | yes |
 | `(md/lines …lines)` | `\n` (single newline) | yes |
 | `(md/section title body)`         | heading + blank line + body | level 2 default |
-| `(md/section level title body)`   | same, custom heading level  | n/a |
+| `(md/section level title body)`   | same, custom level          | n/a |
 
 `(md/escape s)` backslash-escapes every CommonMark special character
 in `s` so the string renders as literal text — useful when echoing
@@ -222,7 +217,7 @@ user input back into the answer.
 ## Discovery from inside the agent
 
 Every `md/` symbol is registered through the standard extension
-machinery, so the model can introspect the surface itself:
+machinery, so the model can introspect the surface:
 
 ```clojure
 (vis/extensions)                            ; -> includes :md
@@ -236,26 +231,25 @@ machinery.
 ## Why no Mustache
 
 The previous answer-rendering layer ran every assistant message
-through a `jmustache` pass with the SCI sandbox's locals as the
-context map. Three things made that wrong:
+through `jmustache` with the SCI sandbox's locals as the context
+map. Three things made it wrong:
 
-1. **Schema drift.** The model would compute a value, bind it to
-   `(def …)`, then reference it from `{{name}}`. Whether the model
-   used `{{name}}` vs `{{ name }}` vs `{{ #section }}` vs raw
-   string interpolation depended on which model and which prompt
-   variant — answer rendering would silently produce different
-   output across providers for the same code.
-2. **Hidden failure modes.** A typo in `{{undefined-var}}` raised
-   a strict-mode error from inside the renderer, surfacing as
-   "iteration failed" rather than "your final-answer template
-   referenced an unbound name".
-3. **Redundant.** `(answer …)` is a real Clojure call; the argument
-   passes through `str`. The model can already use `clojure.string`,
-   `format`, `pr-str`, `let` — every interpolation primitive — to
-   build the answer body. A templating layer was a second way to do
-   the same thing, only worse.
+1. **Schema drift.** Model computes a value, binds it via `(def …)`,
+   references it from `{{name}}`. `{{name}}` vs `{{ name }}` vs
+   `{{ #section }}` vs raw string interpolation depended on which
+   model + which prompt variant — same code, different answer
+   markup across providers.
+2. **Hidden failure modes.** Typo in `{{undefined-var}}` → strict-
+   mode error from inside the renderer, surfacing as "iteration
+   failed" rather than "your final-answer template referenced an
+   unbound name".
+3. **Redundant.** `(answer …)` is a real Clojure call; arg passes
+   through `str`. The model already has `clojure.string`, `format`,
+   `pr-str`, `let` — every interpolation primitive — for building
+   the answer body. Templating was a second way to do the same
+   thing, only worse.
 
 `md/` replaces all of that with one rule: build the answer string
 yourself, in Clojure, using these helpers. See [Iteration
 flow](../../architecture/iteration-flow.md#answer-protocol) for the
-end-to-end shape of the new path.
+end-to-end shape.
