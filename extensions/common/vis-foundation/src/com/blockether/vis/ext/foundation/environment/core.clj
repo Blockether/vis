@@ -23,7 +23,7 @@
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls and explicitly by `(refresh!)`."
   (:require
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.environment.git :as git]
    [com.blockether.vis.ext.foundation.environment.host :as host]
    [com.blockether.vis.ext.foundation.environment.languages :as languages]
@@ -104,41 +104,41 @@
 ;; ---------------------------------------------------------------------------
 
 (def snapshot-symbol
-  (sdk/symbol 'snapshot snapshot
+  (vis/symbol 'snapshot snapshot
     {:doc      "Full environment snapshot as a map: {:host :git :languages :monorepo}. Cached per cwd."
      :arglists '([])
      :examples ["(v/snapshot)"
                 "(get-in (v/snapshot) [:git :branch])"]}))
 
 (def git-symbol
-  (sdk/symbol 'git #(:git (snapshot))
+  (vis/symbol 'git #(:git (snapshot))
     {:doc      "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts."
      :arglists '([])
      :examples ["(v/git)"
                 "(:branch (v/git))"]}))
 
 (def languages-symbol
-  (sdk/symbol 'languages #(:languages (snapshot))
+  (vis/symbol 'languages #(:languages (snapshot))
     {:doc      "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc."
      :arglists '([])
      :examples ["(v/languages)"
                 "(:primary (v/languages))"]}))
 
 (def monorepo-symbol
-  (sdk/symbol 'monorepo #(:monorepo (snapshot))
+  (vis/symbol 'monorepo #(:monorepo (snapshot))
     {:doc      "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos."
      :arglists '([])
      :examples ["(v/monorepo)"
                 "(:shape (v/monorepo))"]}))
 
 (def refresh!-symbol
-  (sdk/symbol 'refresh! refresh!
+  (vis/symbol 'refresh! refresh!
     {:doc      "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.)."
      :arglists '([])
      :examples ["(v/refresh!)"]}))
 
 (def render-symbol
-  (sdk/symbol 'render #(render/render (snapshot))
+  (vis/symbol 'render #(render/render (snapshot))
     {:doc      "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
      :arglists '([])
      :examples ["(println (v/render))"]}))

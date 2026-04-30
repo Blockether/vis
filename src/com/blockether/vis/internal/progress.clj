@@ -113,21 +113,26 @@
     (into (subvec v 0 idx) (subvec v (inc idx)))
     v))
 
-(defn- elide-answer-form-slot
-  "Remove the answer-bearing form's slot from every parallel vector
-   in `entry`. Indices in the remaining slots shift down by one,
-   which is fine — the channel re-numbers `code 1`, `code 2`, … in
-   display order, and the model never reads its OWN answer-form's
-   iN.K reference back from the next iteration's prompt."
-  [entry idx]
-  (-> entry
-    (update :code      drop-slot idx)
-    (update :comments  drop-slot idx)
-    (update :results   drop-slot idx)
-    (update :stdouts   drop-slot idx)
-    (update :stderrs   drop-slot idx)
-    (update :durations drop-slot idx)
-    (update :successes drop-slot idx)))
+(defn- elide-form-slots
+  "Remove form slots at the given indices from every parallel vector
+   in `entry`. Indices shift down, which is fine — the channel
+   re-numbers in display order. Used to elide both the `(answer …)`
+   form and any form that returned `:vis/silent` (side-effect
+   primitives like `conversation-title` that shouldn't appear in
+   the code trace)."
+  [entry idx-set]
+  (reduce
+    (fn [e idx]
+      (-> e
+        (update :code      drop-slot idx)
+        (update :comments  drop-slot idx)
+        (update :results   drop-slot idx)
+        (update :stdouts   drop-slot idx)
+        (update :stderrs   drop-slot idx)
+        (update :durations drop-slot idx)
+        (update :successes drop-slot idx)))
+    entry
+    (sort > idx-set)))
 
 (defn- update-entry
   "Apply a single chunk to its iteration's timeline entry. Dispatches
@@ -145,13 +150,15 @@
     (let [base (assoc entry
                  :thinking (or (:thinking chunk) (:thinking entry))
                  :final    (:final chunk)
-                 :done?    (boolean (:done? chunk)))]
-      ;; When the iteration produced a final answer, the form that
-      ;; called `(answer …)` is identified by `:answer-form-idx`.
-      ;; Drop that slot so the channel renders just the answer
-      ;; text, never the answer call's code.
-      (if (and (:final chunk) (some? (:answer-form-idx chunk)))
-        (elide-answer-form-slot base (:answer-form-idx chunk))
+                 :done?    (boolean (:done? chunk)))
+          ;; Collect all form indices to elide: the answer-bearing
+          ;; form (if present) and any forms that returned :vis/silent.
+          answer-idx   (when (:final chunk) (:answer-form-idx chunk))
+          silent-idxs  (or (:silent-form-idxs chunk) #{})
+          elide-idxs   (cond-> silent-idxs
+                         (some? answer-idx) (conj answer-idx))]
+      (if (seq elide-idxs)
+        (elide-form-slots base elide-idxs)
         base))
 
     :iteration-error

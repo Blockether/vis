@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.external-opener :as opener]
@@ -357,7 +357,7 @@
    listing the most recent :tui conversations so the user has
    something to copy-paste."
   [cid]
-  (let [available (try (vec (take 10 (sdk/by-channel :tui)))
+  (let [available (try (vec (take 10 (vis/by-channel :tui)))
                     (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
@@ -378,7 +378,7 @@
    only consumer instead of in vis-runtime or vis-cli."
   [conversation-id]
   (let [hook (Thread. (fn []
-                        (let [^java.io.PrintStream out sdk/original-stdout]
+                        (let [^java.io.PrintStream out vis/original-stdout]
                           (.println out "")
                           (.println out (str "  vis channels tui --conversation-id " conversation-id))
                           (.println out "")
@@ -408,11 +408,11 @@
    long-running TUI sessions should not leak entries in the global
    `title-listeners` registry across hot reloads."
   [conversation-id]
-  (let [listener (sdk/add-title-listener! conversation-id
+  (let [listener (vis/add-title-listener! conversation-id
                    (fn [new-title]
                      (state/dispatch [:set-title (or new-title "")])))]
     (register-shutdown-hook!
-      #(sdk/remove-title-listener! conversation-id listener))
+      #(vis/remove-title-listener! conversation-id listener))
     listener))
 
 (defn run-chat!
@@ -434,11 +434,20 @@
                                          :id             cid}))))]
      (state/init!)
 
+  ;; Subscribe to host notifications so any (vis/notify! …) push
+  ;; — from anywhere: this channel's click handler, an extension,
+  ;; the iteration loop — wakes the render thread immediately. The
+  ;; header band reads `(vis/notifications)` on every paint, so we
+  ;; only need a render bump here; no app-db copy.
+     (vis/watch-notifications! :tui-screen
+       (fn [_snapshot]
+         (state/dispatch [:bump-render-version])))
+
   ;; Load persisted config
-     (when-let [c (sdk/load-config)]
+     (when-let [c (vis/load-config)]
        (state/dispatch [:set-config c]))
 
-     (let [terminal (UnixTerminal. @sdk/tty-in @sdk/tty-out (Charset/defaultCharset))
+     (let [terminal (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset))
            _        (input/register-custom-patterns! terminal)
            ;; Enable mouse capture: scrollbar drag, wheel scroll,
            ;; AND click-to-open + hover-highlight on link/image
@@ -471,7 +480,7 @@
       ;; Sweep orphaned running queries from previous crashes so the
       ;; rebuilt history shows resolved rows only — no raw query text
       ;; from a half-completed turn.
-         (try (sdk/db-sweep-orphaned-running-queries!) (catch Throwable _ nil))
+         (try (vis/db-sweep-orphaned-running-queries!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
       ;; The --conversation-id case was already validated above (before
@@ -482,7 +491,7 @@
                    resumed-from-flag
                    (if (:resume opts)
                   ;; --resume: pick up the latest :tui conversation
-                     (if-let [latest (first (sdk/by-channel :tui))]
+                     (if-let [latest (first (vis/by-channel :tui))]
                        (or (chat/resume-conversation (:id latest))
                          (chat/make-conversation config))
                        (chat/make-conversation config))
@@ -490,7 +499,7 @@
               ;; Set title from DB when present — the DB row is the source of truth.
               ;; Synthesizing from messages stays out of the TUI; auto-title runs
               ;; from the runtime loop after the first turn completes.
-                 conversation-info (when-let [c (sdk/by-id id)] c)
+                 conversation-info (when-let [c (vis/by-id id)] c)
                  title     (when-let [t (some-> conversation-info :title)]
                              (when-not (str/blank? t) t))]
              (state/dispatch [:init-conversation {:id id} history])
@@ -635,24 +644,22 @@
                      (= atype MouseActionType/CLICK_DOWN)
                      (do (when-let [hit (cr/lookup mx my)]
                            (case (:kind hit)
-                             ;; Header copy-id glyph: drop the full
-                             ;; UUID onto the system clipboard, then
-                             ;; flash a "✓ Copied!" feedback in the
-                             ;; header band for ~1.5s. The flash is
-                             ;; an app-db `:header-flash` map; a
-                             ;; timer future dispatches the clear
-                             ;; event after the deadline so the
-                             ;; band repaints back to id+glyph.
+                             ;; Header copy-id affordance: drop the
+                             ;; FULL UUID onto the system clipboard,
+                             ;; then push a host notification — the
+                             ;; header band's LEFT slot subscribes to
+                             ;; `vis.core/notifications` and surfaces
+                             ;; `✓ Copied conversation ID` for ~1.5s
+                             ;; before the entry expires. No
+                             ;; TUI-specific flash state; the
+                             ;; cross-channel notifications system
+                             ;; carries the feedback.
                              :copy-id
-                             (let [text (:text hit)
-                                   until (+ (System/currentTimeMillis) 1500)]
+                             (let [text (:text hit)]
                                (future
                                  (try (input/clipboard-copy! text)
-                                   (state/dispatch
-                                     [:header-flash-set
-                                      {:text "✓ Copied!" :until until}])
-                                   (Thread/sleep 1600)
-                                   (state/dispatch [:header-flash-clear])
+                                   (vis/notify! "✓ Copied conversation ID"
+                                     :level :success :ttl-ms 1500)
                                    (catch Throwable _ nil))))
 
                              ;; Default (markdown link / image /
@@ -691,7 +698,7 @@
                                ;; One-shot "give me the whole
                                ;; conversation as Markdown on the
                                ;; clipboard". Goes through the host
-                               ;; helper `sdk/conversation->markdown`
+                               ;; helper `vis/conversation->markdown`
                                ;; so every channel renders the same
                                ;; projection. We surface a viewer
                                ;; dialog with the result so the user
@@ -701,10 +708,10 @@
                                ;; on a remote / SSH session).
                                (with-dialog-lock
                                  #(let [conversation-id (get-in @state/app-db [:conversation :id])
-                                        env             (when conversation-id (sdk/env-for conversation-id))
+                                        env             (when conversation-id (vis/env-for conversation-id))
                                         markdown        (when (and env conversation-id)
                                                           (try
-                                                            (sdk/conversation->markdown
+                                                            (vis/conversation->markdown
                                                               (:db-info env) conversation-id)
                                                             (catch Throwable t
                                                               (str "Markdown export failed: "
@@ -733,7 +740,7 @@
                                (with-dialog-lock
                                  #(let [conversation-id (get-in @state/app-db [:conversation :id])
                                         prompt  (if conversation-id
-                                                  (or (sdk/effective-system-prompt conversation-id)
+                                                  (or (vis/effective-system-prompt conversation-id)
                                                     "(no system prompt)")
                                                   "(no conversation)")]
                                     (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
@@ -791,6 +798,11 @@
 
                        :continue (recur))))))))
          (finally
+        ;; Drop the notifications watcher so the next TUI session
+        ;; doesn't accumulate stale hooks (the screen is short-lived
+        ;; relative to the JVM — leaving stale watchers around would
+        ;; eventually hold references to dead atoms).
+           (try (vis/unwatch-notifications! :tui-screen) (catch Throwable _ nil))
         ;; Tell the render thread to exit and wake it so the wait
         ;; finishes immediately. Daemon thread, so the join is
         ;; optional — doing it anyway lets the final paint (or the
@@ -842,14 +854,14 @@
 
 (defn channel-main
   "Channel entry point: full TUI bootstrap. Performs the stdout/stderr
-   redirect, runs `sdk/init!`, then hands off to `run-chat!`. Errors
+   redirect, runs `vis/init!`, then hands off to `run-chat!`. Errors
    surface on the original terminal and the log file.
 
    Invoked by `com.blockether.vis.core` dispatch — not called from
    vis-runtime directly."
   [args]
   (redirect-stdio-to-log!)
-  (sdk/init!)
+  (vis/init!)
   (let [exit-code (atom 0)]
     (try
       (run-chat! (parse-args args))
@@ -859,22 +871,22 @@
           ;; conversation id, etc. Print the message clean and let the
           ;; process exit non-zero — no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
-          (do (.println ^java.io.PrintStream sdk/original-stdout (str "vis: " (.getMessage t)))
+          (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: " (.getMessage t)))
             (reset! exit-code 2))
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
-          (do (.println ^java.io.PrintStream sdk/original-stdout (str "vis: fatal error — " (.getMessage t)))
-            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @sdk/tty-out true))
+          (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: fatal error — " (.getMessage t)))
+            (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @vis/tty-out true))
             (throw t))))
       (finally
-        (sdk/shutdown!)))
+        (vis/shutdown!)))
     (when (pos? @exit-code)
       (System/exit @exit-code))))
 
 ;;; ── Channel registration (auto-discovered via META-INF/vis-extension/vis.edn) ──
 
-(sdk/register-extension!
-  (sdk/extension
+(vis/register-extension!
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
      :ext/doc       "Lanterna-based terminal UI channel."
      :ext/version   "0.3.0"

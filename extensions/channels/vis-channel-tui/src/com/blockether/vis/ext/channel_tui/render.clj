@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -681,7 +681,7 @@
                     cancelled? t/dialog-hint
                     user?      t/user-role-fg
                     :else      t/ai-role-fg)
-        time-str   (sdk/format-date timestamp)
+        time-str   (vis/format-date timestamp)
         ;; Below-message meta (assistant only): "blockether/glm-5.1 ·
         ;; 1 iter · ↑11461 · ↓35 · ~$0.006954 · 4.9s". Same surface
         ;; form `format-meta-line` produces for the CLI bracket and
@@ -694,7 +694,7 @@
         ;; attribute and "0 iters / no model" reads as clutter under
         ;; a "Cancelled" placeholder.
         meta-str   (when (and (not user?) (not cancelled?))
-                     (let [line (sdk/format-meta-line
+                     (let [line (vis/format-meta-line
                                   {:iteration-count iteration-count
                                    :duration-ms duration-ms
                                    :tokens tokens
@@ -1792,7 +1792,7 @@
                 err-message      (or (:message error) (str (:type error)) "unknown error")
                 raw              (some-> (get-in error [:data :raw-data]) str str/trim)
                 recv             (get-in error [:data :received-type])
-                err-message-wrapped (wrap-text (sdk/format-error err-message) fill-w)
+                err-message-wrapped (wrap-text (vis/format-error err-message) fill-w)
                 err-message-rows    (mapv #(str err-result-marker %) err-message-wrapped)
                 raw-rows     (when (and raw (not (str/blank? raw)))
                                (let [hdr (str "provider returned"
@@ -1826,7 +1826,7 @@
                       has-status? (some? success?)
                       is-error?   (and has-status? (not success?))
                       duration-ms  (when durations (get durations idx))
-                      duration-str (sdk/format-duration duration-ms)
+                      duration-str (vis/format-duration duration-ms)
                       ;; Right-aligned superscript code label with right padding
                       expr-label  (label-text "code" (inc idx))
                       expr-hdr    (let [pl (max 0 (- fill-w (count expr-label) 1))]
@@ -1863,7 +1863,7 @@
                       ;; the whole zone by 2 cols, matching the
                       ;; user-question and final-answer text columns.
                       code-text   (str/trim (or form ""))
-                      formatted   (sdk/format-clojure code-text fill-w)
+                      formatted   (vis/format-clojure code-text fill-w)
                       code-lines  (str/split-lines formatted)
                       c-lines     (mapv #(str c-marker %) code-lines)
                       ;; Result
@@ -2012,7 +2012,7 @@
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          elapsed-ms       (when query-start-ms
                             (max 0 (- now-ms (long query-start-ms))))
-         elapsed-str      (or (sdk/format-duration elapsed-ms) "0ms")
+         elapsed-str      (or (vis/format-duration elapsed-ms) "0ms")
          spinner-line     (str (spinner-frame now-ms) "  "
                             (progress-phase iterations cancelling?) "…  "
                             elapsed-str "  ·  Esc to cancel")

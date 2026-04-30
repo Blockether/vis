@@ -8,7 +8,7 @@
    been removed: explicit beats clever.)"
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -108,13 +108,13 @@
 
 (defn- select-provider-model!
   [^TerminalScreen screen provider]
-  (let [defaults (->> (map sdk/model-name (:models provider))
-                   (concat (:default-models (sdk/provider-template (:id provider)))
+  (let [defaults (->> (map vis/model-name (:models provider))
+                   (concat (:default-models (vis/provider-template (:id provider)))
                      (:default-models provider))
                    (remove nil?)
                    distinct
                    vec)]
-    (select-model! screen (sdk/provider-base-url provider) (:api-key provider) defaults)))
+    (select-model! screen (vis/provider-base-url provider) (:api-key provider) defaults)))
 
 ;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
 
@@ -168,7 +168,7 @@
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
   [^TerminalScreen screen existing-ids]
-  (let [available (vec (remove #(contains? existing-ids (:id %)) (sdk/provider-presets)))]
+  (let [available (vec (remove #(contains? existing-ids (:id %)) (vis/provider-presets)))]
     (if (empty? available)
       (do (dlg/confirm-dialog! screen "Add Provider" "All providers already configured.") nil)
       (when-let [preset (dlg/select-dialog! screen "Add Provider" available)]
@@ -238,9 +238,9 @@
   (let [text-w  (max 0 (- inner-w 2))
         text-x  (+ left 2)
         pri     (priority-label idx)
-        host    (url-host (or (sdk/provider-base-url provider) ""))
+        host    (url-host (or (vis/provider-base-url provider) ""))
         ok?     (some? (:api-key provider))
-        label   (sdk/display-label (:id provider))
+        label   (vis/display-label (:id provider))
         models  (or (:models provider) [])
         model-count (count (or models []))
         root-name   (or (:name (first models)) "—")
@@ -352,16 +352,16 @@
 
 (defn- show-model-manager!
   [^TerminalScreen screen provider]
-  (let [base-url (sdk/provider-base-url provider)
+  (let [base-url (vis/provider-base-url provider)
         api-key  (:api-key provider)
         models   (atom (->> (:models provider)
-                         (keep sdk/->svar-model)
+                         (keep vis/->svar-model)
                          vec))
         selected (atom 0)]
     ;; If still empty after init, prompt for a model
     (when (empty? @models)
       (if-let [model-name (select-model! screen base-url api-key
-                            (:default-models (sdk/provider-template (:id provider))))]
+                            (:default-models (vis/provider-template (:id provider))))]
         (swap! models conj {:name model-name})
         ;; User cancelled — return nil (no changes)
         (reset! models [])))
@@ -380,7 +380,7 @@
               ;; popup" look. Wiping `0 0 cols rows` to terminal-bg every
               ;; frame is what made the chat disappear behind the
               ;; provider dialogs.
-              title   (str (sdk/display-label (:id provider)) " Models")
+              title   (str (vis/display-label (:id provider)) " Models")
               bounds  (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
               {:keys [left inner-w]} bounds
               {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
@@ -436,15 +436,15 @@
                       (= c \a)
                       (do
                         (when-let [model-name (select-model! screen
-                                                (sdk/provider-base-url provider)
+                                                (vis/provider-base-url provider)
                                                 (:api-key provider)
-                                                (->> (concat (map sdk/model-name @models)
-                                                       (:default-models (sdk/provider-template (:id provider)))
+                                                (->> (concat (map vis/model-name @models)
+                                                       (:default-models (vis/provider-template (:id provider)))
                                                        (:default-models provider))
                                                   (remove nil?)
                                                   distinct
                                                   vec))]
-                          (when-not (some #(= model-name (sdk/model-name %)) @models)
+                          (when-not (some #(= model-name (vis/model-name %)) @models)
                             (swap! models conj {:name model-name})
                             (reset! selected (dec (count @models)))))
                         (recur))
@@ -479,7 +479,7 @@
   [provider]
   (if (:base-url provider)
     provider
-    (if-let [resolved-base-url (:base-url (sdk/provider-template (:id provider)))]
+    (if-let [resolved-base-url (:base-url (vis/provider-template (:id provider)))]
       (assoc provider :base-url resolved-base-url)
       provider)))
 
@@ -490,7 +490,7 @@
   ([^TerminalScreen screen]
    (show-provider-dialog! screen nil))
   ([^TerminalScreen screen current-config]
-   (let [seed      (or current-config (sdk/load-config) {:providers []})
+   (let [seed      (or current-config (vis/load-config) {:providers []})
          items     (atom (vec (or (:providers seed) [])))
          selected  (atom 0)]
      (loop []
@@ -540,9 +540,9 @@
                  (= ktype KeyType/Escape)
                  (let [cfg {:providers (->> @items
                                          (map ensure-base-url)
-                                         (map sdk/->svar-provider)
+                                         (map vis/->svar-provider)
                                          vec)}]
-                   (sdk/save-config! cfg)
+                   (vis/save-config! cfg)
                    cfg)
 
                    ;; ↑/↓ navigate, Alt+↑/↓ reorder
@@ -590,7 +590,7 @@
                        (when (and (pos? total)
                                (dlg/confirm-dialog! screen
                                  "Remove"
-                                 [(str "Remove " (sdk/display-label (:id (nth @items @selected))) "?")]))
+                                 [(str "Remove " (vis/display-label (:id (nth @items @selected))) "?")]))
                          (swap! items #(vec (concat (subvec % 0 @selected)
                                               (subvec % (inc @selected)))))
                          (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items))))))

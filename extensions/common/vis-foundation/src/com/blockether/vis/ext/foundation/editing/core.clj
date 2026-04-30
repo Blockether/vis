@@ -32,7 +32,7 @@
    [babashka.fs :as fs]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as sdk])
+   [com.blockether.vis.core :as vis])
   (:import
    (com.google.re2j Pattern)
    (java.io File)
@@ -434,7 +434,7 @@
 ;; =============================================================================
 
 (def cat-symbol
-  (sdk/symbol 'cat read-file
+  (vis/symbol 'cat read-file
     {:doc (str "Read a file slice as pure structured data: "
             "{:path :offset :total-lines :truncated-by :lines}. "
             ":lines is a vec of raw line strings (no line-number "
@@ -449,14 +449,14 @@
                 "(str/join \"\\n\" (:lines (v/cat \"src/main.clj\")))"]}))
 
 (def ls-symbol
-  (sdk/symbol 'ls list-files
+  (vis/symbol 'ls list-files
     {:doc "List a directory tree. opts {:depth :hidden? :respect-gitignore?}."
      :arglists '([path] [path opts])
      :examples ["(v/ls \".\")"
                 "(v/ls \"src\" {:depth 3})"]}))
 
 (def rg-symbol
-  (sdk/symbol 'rg grep-files
+  (vis/symbol 'rg grep-files
     {:doc (str "Search files for any of N literal substrings (OR'd). "
             "`patterns` is a non-empty vector of strings; each element "
             "is matched LITERALLY (no regex). `path` is the search root. "
@@ -469,14 +469,14 @@
                 "(v/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
 
 (def edit-symbol
-  (sdk/symbol 'edit edit-file
+  (vis/symbol 'edit edit-file
     {:doc "Replace the FIRST occurrence of `search` with `replace` in `path`. Throws if `search` is missing or non-unique. Pass {:line N} as a 4th arg to pick the occurrence on or after line N when context-anchoring is hard."
      :arglists '([path search replace] [path search replace opts])
      :examples ["(v/edit \"src/main.clj\" \"(def OLD 1)\" \"(def NEW 2)\")"
                 "(v/edit \"src/main.clj\" \"foo\" \"bar\" {:line 142})"]}))
 
 (def write-symbol
-  (sdk/symbol 'write write-file
+  (vis/symbol 'write write-file
     {:doc "Overwrite or create a file with the given content. Creates parent directories as needed."
      :arglists '([path content])
      :examples ["(v/write \"new.txt\" \"hello\")"]}))

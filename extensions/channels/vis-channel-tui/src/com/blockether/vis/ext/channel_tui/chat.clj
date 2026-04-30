@@ -6,7 +6,7 @@
    Conversation data is persisted in `~/.vis/vis.mdb` so you can come
    back to it."
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.core :as vis]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -46,8 +46,8 @@
    Assistant messages include the code execution trace from all iterations."
   [conversation-id]
   (try
-    (let [d       (sdk/db-info)
-          queries (sdk/db-list-conversation-queries d conversation-id)]
+    (let [d       (vis/db-info)
+          queries (vis/db-list-conversation-queries d conversation-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:text q) "") (or (:created-at q) (java.util.Date.)))
@@ -67,13 +67,13 @@
                         ;; same way live ones do — just the answer
                         ;; text below the iteration trace, never the
                         ;; `(answer "…")` call as code above it.
-                        query-iterations (sdk/db-list-query-iterations d (:id q))
+                        query-iterations (vis/db-list-query-iterations d (:id q))
                         last-iteration-id (some-> (last query-iterations) :id)
                         produced-answer? (and (some? answer)
                                            (not (str/blank? (str answer))))
                         trace (into []
                                 (map (fn [it]
-                                       (let [all-exprs   (sdk/db-list-iteration-blocks d (:id it))
+                                       (let [all-exprs   (vis/db-list-iteration-blocks d (:id it))
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
@@ -81,7 +81,7 @@
                                                            answer-here? butlast)
                                              result-strs (mapv (fn [{:keys [result error]}]
                                                                  (if error
-                                                                   (sdk/format-error error)
+                                                                   (vis/format-error error)
                                                                    (pr-str result)))
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
@@ -123,7 +123,7 @@
 (defn make-conversation
   "Create a fresh `:tui` conversation. Returns `{:id conversation-id :history []}`."
   [_provider-config]
-  (let [{:keys [id]} (sdk/create! :tui)]
+  (let [{:keys [id]} (vis/create! :tui)]
     {:id id :history []}))
 
 (defn- resolve-resume-id
@@ -132,8 +132,8 @@
   [conversation-id]
   (let [cid (some-> conversation-id str str/trim)]
     (when (seq cid)
-      (or (some-> (sdk/by-id cid) :id str)
-        (let [matches (->> (sdk/by-channel :tui)
+      (or (some-> (vis/by-id cid) :id str)
+        (let [matches (->> (vis/by-channel :tui)
                         (map :id)
                         (filter #(str/starts-with? (str %) cid))
                         vec)]
@@ -146,7 +146,7 @@
    Returns `{:id conversation-id :history [...]}` with persisted messages."
   [conversation-id]
   (when-let [resolved-id (resolve-resume-id conversation-id)]
-    (when-let [conversation (sdk/by-id resolved-id)]
+    (when-let [conversation (vis/by-id resolved-id)]
       {:id (str (:id conversation)) :history (rebuild-history (str (:id conversation)))})))
 
 (defn query!
@@ -171,7 +171,7 @@
      (let [send-opts (cond-> {}
                        on-chunk    (assoc :hooks {:on-chunk on-chunk})
                        cancel-atom (assoc :cancel-atom cancel-atom))
-           result (sdk/send! id text send-opts)
+           result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; Plain text — the bubble renderer dims it via the
            ;; `:status :cancelled` field we propagate below, NOT via
@@ -200,7 +200,7 @@
      ;; wrapper that hides one in its cause chain — surface those as
      ;; a clean cancelled answer, not a generic error.
      (catch Exception e
-       (if (sdk/cancellation? e)
+       (if (vis/cancellation? e)
          (do (.interrupt (Thread/currentThread))
            {:answer "Cancelled by user." :iteration-count 0 :status :cancelled})
          (do
@@ -212,11 +212,11 @@
            (t/log! {:level :error :id ::query-failed
                     :data  (exception->log-data e)
                     :msg   (str "Query failed: " (ex-message e))})
-           {:error (sdk/db-error->user-message e)}))))))
+           {:error (vis/db-error->user-message e)}))))))
 
 (defn dispose!
   "Release the TUI's env handle. Conversation data stays in
    `~/.vis/vis.mdb` so other consumers of the `:tui` channel
    (e.g. `vis conversations tui`, future inspectors) still see it."
   [{:keys [id]}]
-  (when id (sdk/close! id)))
+  (when id (vis/close! id)))

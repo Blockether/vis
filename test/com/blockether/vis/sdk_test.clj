@@ -10,7 +10,7 @@
    [clojure.java.io :as io]
    [clojure.java.shell :as sh]
    [clojure.string :as str]
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [lazytest.core :refer [defdescribe expect it throws?]]
    [sci.core :as sci]))
 
@@ -21,12 +21,12 @@
 ;; ─────────────────────────────────────────────────────────────────────────
 
 (def cat-symbol
-  (sdk/symbol 'cat (fn [& _] nil)
+  (vis/symbol 'cat (fn [& _] nil)
     {:doc "Read a file preview."
      :arglists '([path] [path offset limit])}))
 
 (def retries-value
-  (sdk/value 'max-retries 3
+  (vis/value 'max-retries 3
     {:doc "Maximum retry attempts."}))
 
 (defdescribe extension-prompt-rendering-test
@@ -38,7 +38,7 @@
            "- v/max-retries — Maximum retry attempts.\n"
            "RULES:\n"
            "- Discover paths first.")
-        (sdk/render-prompt
+        (vis/render-prompt
           {:ext/doc "Filesystem tools"
            :ext/ns-alias {:ns 'vis.ext.tools :alias 'v}
            :ext/symbols [cat-symbol retries-value]
@@ -48,19 +48,19 @@
 (defdescribe extension-builder-test
 
   (it "extension/symbol validates docstring + arglists"
-    (let [s (sdk/symbol 'cat (fn [& _] nil)
+    (let [s (vis/symbol 'cat (fn [& _] nil)
               {:doc "Read a file." :arglists '([path])})]
       (expect (= 'cat (:ext.symbol/sym s)))
       (expect (= "Read a file." (:ext.symbol/doc s)))
       (expect (= ["(cat path)"] (:ext.symbol/examples s)))))
 
   (it "extension/value carries doc + value"
-    (let [v (sdk/value 'cap 42 {:doc "Cap."})]
+    (let [v (vis/value 'cap 42 {:doc "Cap."})]
       (expect (= 42 (:ext.symbol/val v)))
       (expect (= "Cap." (:ext.symbol/doc v)))))
 
   (it "extension/extension fills :ext/activation-fn + :ext/classes defaults"
-    (let [e (sdk/extension
+    (let [e (vis/extension
               {:ext/namespace 'com.acme.ext.fs
                :ext/doc       "Filesystem tools"
                :ext/kind      "filesystem"
@@ -85,7 +85,7 @@
 
 #_(defn- sym-with-parse-rescue
     [sym-name hook]
-    (sdk/symbol sym-name (fn [& _] nil)
+    (vis/symbol sym-name (fn [& _] nil)
       {:doc "fixture"
        :arglists '([])
        :on-parse-error-fn hook}))
@@ -93,7 +93,7 @@
 #_(defn- ext-with-syms
     ([ns-sym alias-sym syms] (ext-with-syms ns-sym alias-sym syms nil))
     ([ns-sym alias-sym syms ext-hook]
-     (sdk/extension
+     (vis/extension
        (cond-> {:ext/namespace ns-sym
                 :ext/doc       "fixture"
                 :ext/kind      "filesystem"
@@ -112,25 +112,25 @@
             ext  (ext-with-syms 'ns-a 'v [grep])]
       ;; Code mentions `v/rg` — hook fires.
         (expect (= "(v/rg \"Y\")"
-                  (sdk/try-rescue-parse-error [ext] "(v/rg \"X\")" "err" {})))
+                  (vis/try-rescue-parse-error [ext] "(v/rg \"X\")" "err" {})))
       ;; Code does NOT mention rg — hook is skipped.
         (expect (nil?
-                  (sdk/try-rescue-parse-error [ext] "(other-tool \"X\")" "err" {})))))
+                  (vis/try-rescue-parse-error [ext] "(other-tool \"X\")" "err" {})))))
 
     (it "matches both bare and ns-aliased call forms"
       (let [grep (sym-with-parse-rescue 'rg (fn [_] "REPAIRED"))
             ext  (ext-with-syms 'ns 'v [grep])]
         (expect (= "REPAIRED"
-                  (sdk/try-rescue-parse-error [ext] "(rg \"x\")" "err" {})))
+                  (vis/try-rescue-parse-error [ext] "(rg \"x\")" "err" {})))
         (expect (= "REPAIRED"
-                  (sdk/try-rescue-parse-error [ext] "(v/rg \"x\")" "err" {})))))
+                  (vis/try-rescue-parse-error [ext] "(v/rg \"x\")" "err" {})))))
 
     (it "walks every matching symbol; first non-nil rewrite wins"
       (let [a (sym-with-parse-rescue 'foo (fn [_] nil))
             b (sym-with-parse-rescue 'foo (fn [_] "FIRST-WIN"))
             c (sym-with-parse-rescue 'foo (fn [_] (throw (ex-info "never reached" {}))))]
         (expect (= "FIRST-WIN"
-                  (sdk/try-rescue-parse-error
+                  (vis/try-rescue-parse-error
                     [(ext-with-syms 'na 'a [a b c])]
                     "(a/foo)" "err" {})))))
 
@@ -138,7 +138,7 @@
       (let [boom (sym-with-parse-rescue 'foo (fn [_] (throw (RuntimeException. "boom"))))
             good (sym-with-parse-rescue 'foo (fn [_] "REPAIRED"))]
         (expect (= "REPAIRED"
-                  (sdk/try-rescue-parse-error
+                  (vis/try-rescue-parse-error
                     [(ext-with-syms 'na 'a [boom good])]
                     "(a/foo)" "err" {})))))
 
@@ -147,20 +147,20 @@
             ext  (ext-with-syms 'ns 'v [grep] (fn [_] "FROM-EXT"))]
       ;; No mention of rg — symbol hook skipped — ext hook fires.
         (expect (= "FROM-EXT"
-                  (sdk/try-rescue-parse-error [ext] "(unrelated)" "err" {})))))
+                  (vis/try-rescue-parse-error [ext] "(unrelated)" "err" {})))))
 
     (it "prefers SYMBOL-level rescue over the extension-level fallback"
       (let [grep (sym-with-parse-rescue 'rg (fn [_] "FROM-SYM"))
             ext  (ext-with-syms 'ns 'v [grep] (fn [_] "FROM-EXT"))]
         (expect (= "FROM-SYM"
-                  (sdk/try-rescue-parse-error [ext] "(v/rg \"x\")" "err" {})))))
+                  (vis/try-rescue-parse-error [ext] "(v/rg \"x\")" "err" {})))))
 
     (it "passes :code, :error, :sym, :environment to symbol hooks"
       (let [seen (atom nil)
             grep (sym-with-parse-rescue 'rg
                    (fn [ctx] (reset! seen ctx) nil))
             ext  (ext-with-syms 'ns 'v [grep])]
-        (sdk/try-rescue-parse-error [ext] "(v/rg)" "the-err" {:env :sentinel})
+        (vis/try-rescue-parse-error [ext] "(v/rg)" "the-err" {:env :sentinel})
         (expect (= {:code        "(v/rg)"
                     :error       "the-err"
                     :sym         'rg
@@ -168,8 +168,8 @@
                   @seen))))
 
     (it "is a no-op on an empty extension list"
-      (expect (nil? (sdk/try-rescue-parse-error [] "x" "e" {})))
-      (expect (nil? (sdk/try-rescue-parse-error nil "x" "e" {})))))
+      (expect (nil? (vis/try-rescue-parse-error [] "x" "e" {})))
+      (expect (nil? (vis/try-rescue-parse-error nil "x" "e" {})))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; From extension_api_test.clj
@@ -183,22 +183,22 @@
 
   (it "assembles ONLY the author-supplied :ext/prompt under the alias header"
     ;; New contract (see
-    ;; `com.blockether.vis.internal.sdk/render-extension-prompt-block`):
+    ;; `com.blockether.vis.internal.vis/render-extension-prompt-block`):
     ;; the runtime no longer auto-canonicalizes `:ext/symbols` into prompt
     ;; lines. Whatever lands in the prompt is whatever `:ext/prompt`
     ;; returns — plus the namespace-alias header. Sandbox bindings remain
     ;; callable from `:code` whether advertised or not. Authors who want
-    ;; the old auto-render behavior call `sdk/render-prompt` from inside
+    ;; the old auto-render behavior call `vis/render-prompt` from inside
     ;; their own `:ext/prompt` fn (covered by `render-prompt-test`).
-    (let [environment {:extensions (atom [(sdk/extension
+    (let [environment {:extensions (atom [(vis/extension
                                             {:ext/namespace 'com.acme.ext.fs
                                              :ext/doc       "Filesystem tools"
                                              :ext/kind      "filesystem"
                                              :ext/ns-alias  {:ns 'vis.ext.tools :alias 'v}
                                              :ext/prompt    "RULES:\n- Discover paths first."
                                              :ext/symbols   [cat-symbol retries-value]})])}
-          active-exts   (sdk/active-extensions environment)
-          system-prompt (sdk/assemble-system-prompt environment
+          active-exts   (vis/active-extensions environment)
+          system-prompt (vis/assemble-system-prompt environment
                           {:active-extensions active-exts})]
       ;; Header IS present (alias → namespace marker still added).
       (expect (str/includes? system-prompt "[namespace: v → vis.ext.tools]"))
@@ -206,7 +206,7 @@
       (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))
       ;; Auto-canonical render is GONE — no symbol lines, no `:ext/doc`
       ;; heading-as-prompt-text. Author can still emit those by calling
-      ;; `sdk/render-prompt` from inside `:ext/prompt`, but the runtime
+      ;; `vis/render-prompt` from inside `:ext/prompt`, but the runtime
       ;; doesn't do it for them anymore.
       (expect (not (str/includes? system-prompt "Filesystem tools (use v/ prefix)")))
       (expect (not (str/includes? system-prompt "- (v/cat path)")))
@@ -224,17 +224,17 @@
 
 (defdescribe spec-test
   (it "command/build validates required keys"
-    (let [c (sdk/command {:cmd/name "run" :cmd/doc "Run something."})]
+    (let [c (vis/command {:cmd/name "run" :cmd/doc "Run something."})]
       (expect (= "run" (:cmd/name c)))))
 
   (it "command/build throws on missing :cmd/name"
-    (expect (throws? Throwable #(sdk/command {:cmd/doc "no name"}))))
+    (expect (throws? Throwable #(vis/command {:cmd/doc "no name"}))))
 
   (it "command/build throws on missing :cmd/doc"
-    (expect (throws? Throwable #(sdk/command {:cmd/name "x"})))))
+    (expect (throws? Throwable #(vis/command {:cmd/name "x"})))))
 
 (defdescribe subcommand-resolution-test
-  (let [root (sdk/command
+  (let [root (vis/command
                {:cmd/name "vis"
                 :cmd/doc  "root"
                 :cmd/subcommands
@@ -249,14 +249,14 @@
 
     (it "find-leaf walks one level deep"
       (let [{:keys [command path residual]}
-            (sdk/find-leaf root ["vis" "run" "--foo" "bar"])]
+            (vis/find-leaf root ["vis" "run" "--foo" "bar"])]
         (expect (= "run" (:cmd/name command)))
         (expect (= ["vis" "run"] path))
         (expect (= ["--foo" "bar"] residual))))
 
     (it "find-leaf walks dynamic subcommands"
       (let [{:keys [command path residual]}
-            (sdk/find-leaf root ["vis" "channel" "tui" "--resume"])]
+            (vis/find-leaf root ["vis" "channel" "tui" "--resume"])]
         (expect (= "tui" (:cmd/name command)))
         (expect (true? (:cmd/owns-tty? command)))
         (expect (= ["vis" "channel" "tui"] path))
@@ -264,26 +264,26 @@
 
     (it "find-leaf returns parent when next token doesn't match a child"
       (let [{:keys [command residual]}
-            (sdk/find-leaf root ["vis" "channel" "nope"])]
+            (vis/find-leaf root ["vis" "channel" "nope"])]
         (expect (= "channel" (:cmd/name command)))
         (expect (= ["nope"] residual))))
 
     (it "dispatch! invokes leaf run-fn and returns :ok"
-      (let [r (sdk/dispatch! root ["vis" "run"] {:print-fn (constantly nil)})]
+      (let [r (vis/dispatch! root ["vis" "run"] {:print-fn (constantly nil)})]
         (expect (= :ok (:status r)))
         (expect (= :ran-run (:result r)))))
 
     (it "dispatch! renders help when leaf has no run-fn but has subcommands"
-      (let [r (sdk/dispatch! root ["vis" "channel"] {:print-fn (constantly nil)})]
+      (let [r (vis/dispatch! root ["vis" "channel"] {:print-fn (constantly nil)})]
         (expect (= :help (:status r)))
         (expect (re-find #"tui channel" (:help-text r)))))
 
     (it "dispatch! renders help on --help in the residual"
-      (let [r (sdk/dispatch! root ["vis" "run" "--help"] {:print-fn (constantly nil)})]
+      (let [r (vis/dispatch! root ["vis" "run" "--help"] {:print-fn (constantly nil)})]
         (expect (= :help (:status r)))))
 
     (it "dispatch! returns :no-match when even the root name doesn't match"
-      (let [r (sdk/dispatch! root ["NOT-VIS"] {:print-fn (constantly nil)})]
+      (let [r (vis/dispatch! root ["NOT-VIS"] {:print-fn (constantly nil)})]
         (expect (= :no-match (:status r)))))))
 
 (defdescribe arg-parsing-test
@@ -292,7 +292,7 @@
                  {:name "count" :kind :positional :type :int}
                  {:name "verbose" :kind :flag :type :boolean}
                  {:name "out"     :kind :flag :type :string}]
-          parsed (sdk/parse-args specs ["src/foo.clj" "5" "--verbose" "--out" "/tmp/x"])]
+          parsed (vis/parse-args specs ["src/foo.clj" "5" "--verbose" "--out" "/tmp/x"])]
       (expect (= "src/foo.clj" (parsed "path")))
       (expect (= 5            (parsed "count")))
       (expect (= true         (parsed "verbose")))
@@ -300,12 +300,12 @@
 
   (it "int-typed flag is coerced from string to long"
     (let [specs [{:name "depth" :kind :flag :type :int}]]
-      (expect (= 7 (get (sdk/parse-args specs ["--depth" "7"]) "depth")))))
+      (expect (= 7 (get (vis/parse-args specs ["--depth" "7"]) "depth")))))
 
   (it "boolean flag needs no value and never consumes the next token"
     (let [specs [{:name "verbose" :kind :flag :type :boolean}
                  {:name "path"    :kind :positional :type :string}]
-          parsed (sdk/parse-args specs ["--verbose" "src/foo.clj"])]
+          parsed (vis/parse-args specs ["--verbose" "src/foo.clj"])]
       (expect (= true (parsed "verbose")))
       (expect (= "src/foo.clj" (parsed "path")))))
 
@@ -313,22 +313,22 @@
     (let [specs [{:name "path"  :kind :positional :type :string}
                  {:name "count" :kind :positional :type :int}
                  {:name "out"   :kind :flag :type :string}]
-          parsed (sdk/parse-args specs ["./x" "--out" "/tmp" "3"])]
+          parsed (vis/parse-args specs ["./x" "--out" "/tmp" "3"])]
       (expect (= "./x" (parsed "path")))
       (expect (= 3 (parsed "count")))
       (expect (= "/tmp" (parsed "out")))))
 
   (it "validate-args returns nil when all required present"
     (let [specs [{:name "p" :kind :positional :required true}]]
-      (expect (nil? (sdk/validate-args specs {"p" "ok"})))))
+      (expect (nil? (vis/validate-args specs {"p" "ok"})))))
 
   (it "validate-args reports missing required args"
     (let [specs [{:name "p" :kind :positional :required true}
                  {:name "q" :kind :positional :required true}]]
-      (expect (re-find #"Missing.*p.*q" (sdk/validate-args specs {})))))
+      (expect (re-find #"Missing.*p.*q" (vis/validate-args specs {})))))
 
   (it "unknown flags are silently dropped"
-    (expect (= {} (sdk/parse-args [] ["--whatever" "value"])))))
+    (expect (= {} (vis/parse-args [] ["--whatever" "value"])))))
 
 (defdescribe registered-command-with-args-test
   ;; End-to-end: registered command → mounted into a parent → dispatched
@@ -338,7 +338,7 @@
     (it "dispatches a registered command with positional + flag + type coercion"
       (clear-registry!)
       (reset! captured nil)
-      (sdk/register-cmd!
+      (vis/register-cmd!
         {:cmd/name "deploy"
          :cmd/doc  "deploy something"
          :cmd/args [{:name "path"    :kind :positional :type :string :required true}
@@ -347,10 +347,10 @@
                     {:name "out"     :kind :flag       :type :string}
                     {:name "depth"   :kind :flag       :type :int}]
          :cmd/run-fn (fn [parsed _residual] (reset! captured parsed))})
-      (let [root (sdk/command
+      (let [root (vis/command
                    {:cmd/name "vis" :cmd/doc "root"
-                    :cmd/subcommands #(sdk/registered-under [])})
-            r    (sdk/dispatch! root
+                    :cmd/subcommands #(vis/registered-under [])})
+            r    (vis/dispatch! root
                    ["vis" "deploy" "./src" "5" "--verbose" "--out" "/tmp" "--depth" "3"]
                    {:print-fn (constantly nil)})]
         (expect (= :ok (:status r)))
@@ -360,28 +360,28 @@
 
     (it "missing required positional surfaces a validation error"
       (clear-registry!)
-      (sdk/register-cmd!
+      (vis/register-cmd!
         {:cmd/name "deploy"
          :cmd/doc  "deploy"
          :cmd/args [{:name "path" :kind :positional :type :string :required true}]
          :cmd/run-fn (fn [_ _] :should-not-run)})
-      (let [root (sdk/command
+      (let [root (vis/command
                    {:cmd/name "vis" :cmd/doc "root"
-                    :cmd/subcommands #(sdk/registered-under [])})
-            r    (sdk/dispatch! root ["vis" "deploy"]
+                    :cmd/subcommands #(vis/registered-under [])})
+            r    (vis/dispatch! root ["vis" "deploy"]
                    {:print-fn (constantly nil)})]
         (expect (= :error (:status r)))
         (expect (re-find #"Missing required.*path" (:error r)))))
 
     (it "render-command for a registered command lists ARGUMENTS + FLAGS sections"
       (clear-registry!)
-      (let [c (sdk/register-cmd!
+      (let [c (vis/register-cmd!
                 {:cmd/name "deploy"
                  :cmd/doc  "deploy"
                  :cmd/args [{:name "path"    :kind :positional :type :string :required true :doc "Source path."}
                             {:name "verbose" :kind :flag :type :boolean :doc "Chatty."}]
                  :cmd/run-fn (fn [_ _] nil)})
-            out (sdk/render-command c ["vis" "deploy"])]
+            out (vis/render-command c ["vis" "deploy"])]
         (expect (re-find #"ARGUMENTS" out))
         (expect (re-find #"<path>\s+Source path\." out))
         (expect (re-find #"FLAGS" out))
@@ -390,55 +390,55 @@
 (defdescribe registry-test
   (it "register-cmd! validates and stores by [parent name]"
     (clear-registry!)
-    (sdk/register-cmd! {:cmd/name "alpha" :cmd/doc "a"})
-    (sdk/register-cmd! {:cmd/name "beta" :cmd/parent ["ext"] :cmd/doc "b"})
-    (expect (= 2 (count (sdk/registered-commands)))))
+    (vis/register-cmd! {:cmd/name "alpha" :cmd/doc "a"})
+    (vis/register-cmd! {:cmd/name "beta" :cmd/parent ["ext"] :cmd/doc "b"})
+    (expect (= 2 (count (vis/registered-commands)))))
 
   (it "register-cmd! is idempotent on [parent name]"
     (clear-registry!)
-    (sdk/register-cmd! {:cmd/name "alpha" :cmd/doc "v1"})
-    (sdk/register-cmd! {:cmd/name "alpha" :cmd/doc "v2"})
-    (expect (= 1 (count (sdk/registered-commands))))
-    (expect (= "v2" (:cmd/doc (first (sdk/registered-commands))))))
+    (vis/register-cmd! {:cmd/name "alpha" :cmd/doc "v1"})
+    (vis/register-cmd! {:cmd/name "alpha" :cmd/doc "v2"})
+    (expect (= 1 (count (vis/registered-commands))))
+    (expect (= "v2" (:cmd/doc (first (vis/registered-commands))))))
 
   (it "registered-under returns only commands for the given parent"
     (clear-registry!)
-    (sdk/register-cmd! {:cmd/name "top"  :cmd/doc "top"})
-    (sdk/register-cmd! {:cmd/name "e1" :cmd/parent ["ext"]     :cmd/doc "e1"})
-    (sdk/register-cmd! {:cmd/name "e2" :cmd/parent ["ext"]     :cmd/doc "e2"})
-    (sdk/register-cmd! {:cmd/name "c1" :cmd/parent ["channel"] :cmd/doc "c1"})
-    (expect (= ["top"]      (mapv :cmd/name (sdk/registered-under []))))
-    (expect (= ["e1" "e2"]  (mapv :cmd/name (sdk/registered-under ["ext"]))))
-    (expect (= ["c1"]       (mapv :cmd/name (sdk/registered-under ["channel"])))))
+    (vis/register-cmd! {:cmd/name "top"  :cmd/doc "top"})
+    (vis/register-cmd! {:cmd/name "e1" :cmd/parent ["ext"]     :cmd/doc "e1"})
+    (vis/register-cmd! {:cmd/name "e2" :cmd/parent ["ext"]     :cmd/doc "e2"})
+    (vis/register-cmd! {:cmd/name "c1" :cmd/parent ["channel"] :cmd/doc "c1"})
+    (expect (= ["top"]      (mapv :cmd/name (vis/registered-under []))))
+    (expect (= ["e1" "e2"]  (mapv :cmd/name (vis/registered-under ["ext"]))))
+    (expect (= ["c1"]       (mapv :cmd/name (vis/registered-under ["channel"])))))
 
   (it "deregister-cmd! removes the entry by parent + name"
     (clear-registry!)
-    (sdk/register-cmd! {:cmd/name "x" :cmd/parent ["ext"] :cmd/doc "d"})
-    (sdk/deregister-cmd! ["ext"] "x")
-    (expect (empty? (sdk/registered-commands))))
+    (vis/register-cmd! {:cmd/name "x" :cmd/parent ["ext"] :cmd/doc "d"})
+    (vis/deregister-cmd! ["ext"] "x")
+    (expect (empty? (vis/registered-commands))))
 
   (it "a registered command can be mounted into a parent via :cmd/subcommands fn"
     (clear-registry!)
-    (sdk/register-cmd!
+    (vis/register-cmd!
       {:cmd/name "git-status" :cmd/parent ["ext"] :cmd/doc "git status"
        :cmd/run-fn (fn [_ _] :ran)})
-    (let [parent (sdk/command
+    (let [parent (vis/command
                    {:cmd/name "ext" :cmd/doc "ext parent"
-                    :cmd/subcommands #(sdk/registered-under ["ext"])})
-          r      (sdk/dispatch! parent ["ext" "git-status"]
+                    :cmd/subcommands #(vis/registered-under ["ext"])})
+          r      (vis/dispatch! parent ["ext" "git-status"]
                    {:print-fn (constantly nil)})]
       (expect (= :ok (:status r)))
       (expect (= :ran (:result r))))))
 
 (defdescribe help-rendering-test
   (it "render-tree lists every immediate subcommand under a COMMANDS section"
-    (let [root (sdk/command
+    (let [root (vis/command
                  {:cmd/name "vis"
                   :cmd/doc  "test root"
                   :cmd/subcommands
                   [{:cmd/name "alpha" :cmd/doc "alpha doc"}
                    {:cmd/name "beta"  :cmd/doc "beta doc"}]})
-          out  (sdk/render-tree root)]
+          out  (vis/render-tree root)]
       (expect (re-find #"COMMANDS" out))
       (expect (re-find #"alpha\s+alpha doc" out))
       (expect (re-find #"beta\s+beta doc"  out))
@@ -446,14 +446,14 @@
       (expect (re-find #"vis <command> --help" out))))
 
   (it "render-command emits USAGE / DESCRIPTION / FLAGS sections"
-    (let [c (sdk/command
+    (let [c (vis/command
               {:cmd/name  "run"
                :cmd/doc   "run something"
                :cmd/usage "vis run [FLAGS]"
                :cmd/args  [{:name "verbose" :kind :flag :type :boolean :doc "noisy"}
                            {:name "model"   :kind :flag :type :string  :doc "override model"}]
                :cmd/examples ["vis run --model gpt-4o"]})
-          out (sdk/render-command c ["vis" "run"])]
+          out (vis/render-command c ["vis" "run"])]
       (expect (re-find #"USAGE\n  vis run \[FLAGS\]" out))
       (expect (re-find #"DESCRIPTION" out))
       (expect (re-find #"FLAGS" out))
@@ -465,13 +465,13 @@
       (expect (re-find #"vis run --model gpt-4o" out))))
 
   (it "render-command lists subcommands when the command has children"
-    (let [c (sdk/command
+    (let [c (vis/command
               {:cmd/name "channel"
                :cmd/doc  "channel parent"
                :cmd/subcommands
                [{:cmd/name "tui"      :cmd/doc "interactive UI"}
                 {:cmd/name "telegram" :cmd/doc "telegram bot"}]})
-          out (sdk/render-command c ["vis" "channel"])]
+          out (vis/render-command c ["vis" "channel"])]
       (expect (re-find #"SUBCOMMANDS" out))
       (expect (re-find #"tui\s+interactive UI" out))
       (expect (re-find #"telegram\s+telegram bot" out)))))
@@ -482,22 +482,22 @@
 
 (defdescribe error-formatting-test
   (it "adds the standard ERROR prefix"
-    (expect (= "ERROR: Boom" (sdk/format-error "Boom"))))
+    (expect (= "ERROR: Boom" (vis/format-error "Boom"))))
 
   (it "keeps already-prefixed messages stable"
-    (expect (= "ERROR: Boom" (sdk/format-error "ERROR: Boom"))))
+    (expect (= "ERROR: Boom" (vis/format-error "ERROR: Boom"))))
 
   (it "normalizes throwable values"
-    (expect (= "ERROR: Broken" (sdk/format-error (ex-info "Broken" {})))))
+    (expect (= "ERROR: Broken" (vis/format-error (ex-info "Broken" {})))))
 
   (it "formats map errors using :message first"
     (expect (= "ERROR: Missing field"
-              (sdk/format-error {:message "Missing field" :type :vis/missing-field}))))
+              (vis/format-error {:message "Missing field" :type :vis/missing-field}))))
 
   #_(it "formats final-answer code-error messages"
     ;; The only :answer-related validation message left after the
     ;; finalize collapse: when :code blocks fail mid-finalize.
-      (let [message (sdk/final-answer-code-error-message
+      (let [message (vis/final-answer-code-error-message
                       (ex-info "div by zero" {}))]
         (expect (re-find #"code execution failed" message))
         (expect (re-find #"div by zero" message)))))
@@ -518,27 +518,27 @@
                  {:result nil :error nil}                ;; idx 2 ok (called answer here)
                  {:result nil :error "trailing boom"}]]  ;; idx 3 errored
     (it "returns nil when the answer-form itself ran cleanly (sibling errors stay outside the gate)"
-      (expect (nil? (sdk/answer-form-error results 2))))
+      (expect (nil? (vis/answer-form-error results 2))))
 
     (it "returns the answer-form's own error when that form errored"
-      (expect (= "sibling boom" (sdk/answer-form-error results 1))))
+      (expect (= "sibling boom" (vis/answer-form-error results 1))))
 
     (it "returns the trailing form's error when answer was the last block"
-      (expect (= "trailing boom" (sdk/answer-form-error results 3))))
+      (expect (= "trailing boom" (vis/answer-form-error results 3))))
 
     (it "returns nil when form-idx is missing (legacy / pre-Option-C payload)"
-      (expect (nil? (sdk/answer-form-error results nil))))
+      (expect (nil? (vis/answer-form-error results nil))))
 
     (it "returns nil for out-of-bounds form-idx (defensive against shape drift)"
-      (expect (nil? (sdk/answer-form-error results 99)))
-      (expect (nil? (sdk/answer-form-error results -1))))
+      (expect (nil? (vis/answer-form-error results 99)))
+      (expect (nil? (vis/answer-form-error results -1))))
 
     (it "rejects non-integer form-idx as nil"
-      (expect (nil? (sdk/answer-form-error results :two)))
-      (expect (nil? (sdk/answer-form-error results "2"))))
+      (expect (nil? (vis/answer-form-error results :two)))
+      (expect (nil? (vis/answer-form-error results "2"))))
 
     (it "empty block-results never matches"
-      (expect (nil? (sdk/answer-form-error [] 0))))))
+      (expect (nil? (vis/answer-form-error [] 0))))))
 
 ;; -----------------------------------------------------------------------------
 ;; answer-position — rule b' (\"answer is the last form, or the only form\")
@@ -553,30 +553,30 @@
 
 (defdescribe answer-position-rule-test
   (it "single top-level form, answer in form 0 — NOT a violation (form 0 == last)"
-    (expect (false? (sdk/answer-position-violation? 0 1))))
+    (expect (false? (vis/answer-position-violation? 0 1))))
 
   (it "two forms, answer in last (form 1) — NOT a violation"
-    (expect (false? (sdk/answer-position-violation? 1 2))))
+    (expect (false? (vis/answer-position-violation? 1 2))))
 
   (it "five forms, answer in last (form 4) — NOT a violation"
-    (expect (false? (sdk/answer-position-violation? 4 5))))
+    (expect (false? (vis/answer-position-violation? 4 5))))
 
   (it "two forms, answer in first (form 0) — violation (trailing work after answer)"
-    (expect (true? (sdk/answer-position-violation? 0 2))))
+    (expect (true? (vis/answer-position-violation? 0 2))))
 
   (it "five forms, answer in middle (form 2) — violation"
-    (expect (true? (sdk/answer-position-violation? 2 5))))
+    (expect (true? (vis/answer-position-violation? 2 5))))
 
   (it "nil form-idx (no answer fired) — never a violation"
-    (expect (false? (sdk/answer-position-violation? nil 3)))
-    (expect (false? (sdk/answer-position-violation? nil 0))))
+    (expect (false? (vis/answer-position-violation? nil 3)))
+    (expect (false? (vis/answer-position-violation? nil 0))))
 
   (it "non-integer form-idx — not a violation (defensive against shape drift)"
-    (expect (false? (sdk/answer-position-violation? :one 3)))
-    (expect (false? (sdk/answer-position-violation? "1" 3))))
+    (expect (false? (vis/answer-position-violation? :one 3)))
+    (expect (false? (vis/answer-position-violation? "1" 3))))
 
   (it "position error message names the actual + required form numbers (1-based)"
-    (let [msg (sdk/answer-position-error-message 0 3)]
+    (let [msg (vis/answer-position-error-message 0 3)]
       (expect (string? msg))
       ;; 0-based form-idx 0, 1-based 1, total 3, last 3.
       (expect (re-find #"3 top-level forms" msg))
@@ -604,7 +604,7 @@
 
 (defdescribe progress-tracker-test
   (it ":form-result chunks fill parallel vectors at :form-idx"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(def x 1)" :result 1 :stdout "" :stderr ""
                  :execution-time-ms 5 :error nil})
@@ -620,7 +620,7 @@
           (expect (= [true true] (:successes entry)))))))
 
   (it "out-of-order :form-result chunks pad with nil"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       ;; Form 2 arrives before form 0 / 1 — tracker pads.
       (on-chunk {:phase :form-result :iteration 0 :form-idx 2
                  :code "(def z 3)" :result 3 :stdout "" :stderr ""
@@ -632,12 +632,12 @@
         (expect (= "(def z 3)" (nth code 2))))))
 
   (it ":reasoning chunks update :thinking"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking…"})
       (expect (= "thinking…" (:thinking (first (get-timeline)))))))
 
   (it ":form-result with :error formats the error string into :results"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(boom)" :result nil :stdout "" :stderr ""
                  :execution-time-ms 0 :error "divide by zero"})
@@ -646,7 +646,7 @@
         (expect (re-find #"ERROR:" (first (:results entry)))))))
 
   (it ":iteration-final with :final + :answer-form-idx ELIDES that slot"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(def hits 12)" :result 12 :stdout "" :stderr ""
                  :execution-time-ms 1 :error nil})
@@ -669,7 +669,7 @@
         (expect (= "12 hits across 3 files" (-> entry :final :answer))))))
 
   (it ":iteration-final without :final keeps every slot (non-terminal iter)"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(v/cat \"x\")" :result {:lines []} :stdout "" :stderr ""
                  :execution-time-ms 1 :error nil})
@@ -687,7 +687,7 @@
     ;; carrying `:error <validation-error>`. The tracker MUST
     ;; overwrite the slot so the TUI surfaces the rejection instead
     ;; of the original success.
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       ;; iteration had three forms; (answer …) fired from form 1 (mid-
       ;; iteration), violating rule b'. Forms 0 and 2 ran clean.
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
@@ -717,7 +717,7 @@
         (expect (= "2" (str (nth (:results entry) 2)))))))
 
   (it ":iteration-error sets :error and :done? true"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :iteration-error :iteration 0
                  :thinking "about to call LLM…"
                  :error {:type :provider/timeout :message "timed out"}
@@ -728,7 +728,7 @@
         (expect (= "about to call LLM…" (:thinking entry))))))
 
   (it "unknown :phase passes through unchanged (forward-compat)"
-    (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(+ 1 1)" :result 2 :stdout "" :stderr ""
                  :execution-time-ms 1 :error nil})
@@ -738,7 +738,7 @@
 
   (it "on-update fires per chunk with the latest timeline"
     (let [updates (atom [])
-          {:keys [on-chunk]} (sdk/make-progress-tracker
+          {:keys [on-chunk]} (vis/make-progress-tracker
                                {:on-update (fn [tl _chunk]
                                              (swap! updates conj (count tl)))})]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
@@ -762,7 +762,7 @@
    without booting the full router / DB / channel stack: an
    `:extensions` atom + a fresh SCI context."
   []
-  (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (sdk/create-sci-context nil)]
+  (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)]
     {:sci-ctx         sci-ctx
      :sandbox-ns      sandbox-ns
      :initial-ns-keys initial-ns-keys
@@ -777,30 +777,30 @@
 (defdescribe shared-alias-merge-test
   (it "two exts under the same alias coexist; bindings merge"
     (let [env (bare-env-for-install-test)
-          ext-a (sdk/extension
+          ext-a (vis/extension
                   {:ext/namespace 'test.merge.a
                    :ext/doc       "Test ext A"
                    :ext/version   "0.0.1"
                    :ext/kind      "shared-test"
                    :ext/ns-alias  {:ns 'test.shared.ns :alias 'shared}
-                   :ext/symbols   [(sdk/symbol 'a-fn (constantly :from-a)
+                   :ext/symbols   [(vis/symbol 'a-fn (constantly :from-a)
                                      {:doc "A" :arglists '([])})
-                                   (sdk/symbol 'shared-fn (constantly :a-version)
+                                   (vis/symbol 'shared-fn (constantly :a-version)
                                      {:doc "shared" :arglists '([])})]})
-          ext-b (sdk/extension
+          ext-b (vis/extension
                   {:ext/namespace 'test.merge.b
                    :ext/doc       "Test ext B"
                    :ext/version   "0.0.1"
                    :ext/kind      "shared-test"
                    :ext/ns-alias  {:ns 'test.shared.ns :alias 'shared}
-                   :ext/symbols   [(sdk/symbol 'b-fn (constantly :from-b)
+                   :ext/symbols   [(vis/symbol 'b-fn (constantly :from-b)
                                      {:doc "B" :arglists '([])})
                                    ;; Collides with ext-a's shared-fn
                                    ;; — last-write-wins.
-                                   (sdk/symbol 'shared-fn (constantly :b-version)
+                                   (vis/symbol 'shared-fn (constantly :b-version)
                                      {:doc "shared" :arglists '([])})]})]
-      (sdk/install-extension! env ext-a)
-      (sdk/install-extension! env ext-b)
+      (vis/install-extension! env ext-a)
+      (vis/install-extension! env ext-b)
       (let [bound (ns-keys-in-sci (:sci-ctx env) 'test.shared.ns)]
         ;; Both extensions' unique symbols live under the same ns.
         (expect (contains? bound 'a-fn))
@@ -815,24 +815,24 @@
     ;; Pre-existing contract — pin it so the merge change doesn't
     ;; accidentally break re-install hot-swap semantics.
     (let [env (bare-env-for-install-test)
-          ext-v1 (sdk/extension
+          ext-v1 (vis/extension
                    {:ext/namespace 'test.replace.x
                     :ext/doc       "v1"
                     :ext/version   "0.0.1"
                     :ext/kind      "replace-test"
                     :ext/ns-alias  {:ns 'test.replace.ns :alias 'replace-test}
-                    :ext/symbols   [(sdk/symbol 'reg (constantly :v1)
+                    :ext/symbols   [(vis/symbol 'reg (constantly :v1)
                                       {:doc "reg" :arglists '([])})]})
-          ext-v2 (sdk/extension
+          ext-v2 (vis/extension
                    {:ext/namespace 'test.replace.x  ;; same namespace
                     :ext/doc       "v2"
                     :ext/version   "0.0.2"
                     :ext/kind      "replace-test"
                     :ext/ns-alias  {:ns 'test.replace.ns :alias 'replace-test}
-                    :ext/symbols   [(sdk/symbol 'reg (constantly :v2)
+                    :ext/symbols   [(vis/symbol 'reg (constantly :v2)
                                       {:doc "reg" :arglists '([])})]})]
-      (sdk/install-extension! env ext-v1)
-      (sdk/install-extension! env ext-v2)
+      (vis/install-extension! env ext-v1)
+      (vis/install-extension! env ext-v2)
       ;; Only ONE entry in :extensions atom for that namespace.
       (expect (= 1 (count (filter #(= 'test.replace.x (:ext/namespace %))
                             @(:extensions env))))))))
@@ -849,12 +849,12 @@
 
 (defdescribe parinfer-rebalance-test
   (it "returns nil for source that already parses (no repair needed)"
-    (expect (nil? (sdk/parinfer-rebalance "(def x 1)")))
-    (expect (nil? (sdk/parinfer-rebalance "(def x 1)\n(def y 2)"))))
+    (expect (nil? (vis/parinfer-rebalance "(def x 1)")))
+    (expect (nil? (vis/parinfer-rebalance "(def x 1)\n(def y 2)"))))
 
   (it "Case A: extra `)` matching `{` — parinfer drops the stray close"
     (let [src "(def m {:a 1\n         :b 2)})"
-          fixed (sdk/parinfer-rebalance src)]
+          fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))
       (expect (not= src fixed))))
 
@@ -864,12 +864,12 @@
     ;; (Semantics may shift slightly from what the model meant; the
     ;; goal is \"parses cleanly\" not \"reads model's mind\".)
     (let [src "(def x (let [y 1]\n  (str y])"
-          fixed (sdk/parinfer-rebalance src)]
+          fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))))
 
   (it "Case C: missing `)` (EOF) — parinfer auto-closes by indent stack"
     (let [src "(def x (let [y 1]\n  y)"
-          fixed (sdk/parinfer-rebalance src)]
+          fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))
       (expect (not= src fixed))))
 
@@ -878,29 +878,29 @@
     ;; rebalance produces something edamame rejects. Pin that we
     ;; return nil rather than a bogus \"repaired\" string.
     (let [src "(do \"unterminated"]
-      (expect (nil? (sdk/parinfer-rebalance src))))))
+      (expect (nil? (vis/parinfer-rebalance src))))))
 
 (defdescribe split-top-level-forms-repair-test
   (it "raw clean source: forms NOT marked :repaired?"
-    (let [[forms err] (sdk/split-top-level-forms "(def x 1) (def y 2)")]
+    (let [[forms err] (vis/split-top-level-forms "(def x 1) (def y 2)")]
       (expect (nil? err))
       (expect (= 2 (count forms)))
       (expect (every? #(not (:repaired? %)) forms))))
 
   (it "Case A repair: extra `)` matching `{` — parinfer fixes, forms tagged :repaired?"
     (let [src "(def m {:a 1\n         :b 2)})"
-          [forms err] (sdk/split-top-level-forms src)]
+          [forms err] (vis/split-top-level-forms src)]
       (expect (nil? err))
       (expect (every? :repaired? forms))))
 
   (it "Case C repair: missing `)` — parinfer fixes, forms tagged :repaired?"
     (let [src "(def x (let [y 1]\n  y)"
-          [forms err] (sdk/split-top-level-forms src)]
+          [forms err] (vis/split-top-level-forms src)]
       (expect (nil? err))
       (expect (every? :repaired? forms))))
 
   (it "unrepairable garbage — returns [nil parse-error] for the rescue chain"
-    (let [[forms err] (sdk/split-top-level-forms "(do \"unterminated")]
+    (let [[forms err] (vis/split-top-level-forms "(do \"unterminated")]
       (expect (nil? forms))
       (expect (string? err))
       ;; Must surface SOMETHING actionable; exact message is edamame's.
@@ -909,14 +909,14 @@
 (defdescribe comment-glue-test
   (it "leading `;;` lands in :comment, code stays in :expr"
     (let [src ";; this is x\n(def x 1)"
-          [forms _] (sdk/split-top-level-forms src)]
+          [forms _] (vis/split-top-level-forms src)]
       (expect (= 1 (count forms)))
       (expect (= "(def x 1)"     (:expr    (first forms))))
       (expect (= ";; this is x"  (:comment (first forms))))))
 
   (it "comment between two forms glues to the SECOND form's :comment"
     (let [src "(def x 1)\n;; about y\n(def y 2)"
-          [forms _] (sdk/split-top-level-forms src)]
+          [forms _] (vis/split-top-level-forms src)]
       (expect (= 2 (count forms)))
       (expect (= "(def x 1)" (:expr (first forms))))
       (expect (not (contains? (first forms) :comment)))
@@ -925,7 +925,7 @@
 
   (it "multiple consecutive comment lines collect in :comment"
     (let [src ";; line 1\n;; line 2\n;; line 3\n(def z 3)"
-          [forms _] (sdk/split-top-level-forms src)]
+          [forms _] (vis/split-top-level-forms src)]
       (expect (= 1 (count forms)))
       (expect (= "(def z 3)" (:expr (first forms))))
       (let [c (:comment (first forms))]
@@ -934,13 +934,13 @@
         (expect (str/includes? c ";; line 3")))))
 
   (it "comment-only source produces empty forms vec (no error)"
-    (let [[forms err] (sdk/split-top-level-forms ";; just a note\n;; nothing else\n")]
+    (let [[forms err] (vis/split-top-level-forms ";; just a note\n;; nothing else\n")]
       (expect (nil? err))
       (expect (= [] forms))))
 
   (it "`#_(...)` discard joins the leading-comment block in :comment"
     (let [src ";; what\n#_(legacy-call)\n(def x 1)"
-          [forms _] (sdk/split-top-level-forms src)]
+          [forms _] (vis/split-top-level-forms src)]
       (expect (= 1 (count forms)))
       (expect (= "(def x 1)" (:expr (first forms))))
       (let [c (:comment (first forms))]
@@ -949,7 +949,7 @@
 
   (it "comment glue survives a parinfer repair (Case C with leading comment)"
     (let [src ";; missing close\n(def x (let [y 1]\n  y)"
-          [forms _] (sdk/split-top-level-forms src)]
+          [forms _] (vis/split-top-level-forms src)]
       (expect (= 1 (count forms)))
       (expect (str/starts-with? (:expr (first forms)) "(def x"))
       (expect (= ";; missing close" (:comment (first forms))))
@@ -972,7 +972,7 @@
    to empty, so every key in the sandbox is treated as a user var."
   ([sandbox] (index sandbox #{}))
   ([sandbox initial-ns-keys]
-   (sdk/build-var-index nil initial-ns-keys sandbox nil nil nil)))
+   (vis/build-var-index nil initial-ns-keys sandbox nil nil nil)))
 
 ;; -----------------------------------------------------------------------------
 ;; Inline scalars
@@ -1151,30 +1151,30 @@
 
 (defdescribe extract-defining-name-test
   (it "extracts var name from (def NAME val)"
-    (expect (= 'foo (sdk/extract-defining-name "(def foo 42)"))))
+    (expect (= 'foo (vis/extract-defining-name "(def foo 42)"))))
 
   (it "extracts var name from (defn NAME [args] body)"
-    (expect (= 'my-fn (sdk/extract-defining-name "(defn my-fn [x] (inc x))"))))
+    (expect (= 'my-fn (vis/extract-defining-name "(defn my-fn [x] (inc x))"))))
 
   (it "extracts var name from (defn- NAME [args] body)"
-    (expect (= 'private-fn (sdk/extract-defining-name "(defn- private-fn [] 1)"))))
+    (expect (= 'private-fn (vis/extract-defining-name "(defn- private-fn [] 1)"))))
 
   (it "extracts var name from (defmacro NAME [args] body)"
-    (expect (= 'my-macro (sdk/extract-defining-name "(defmacro my-macro [x] `(inc ~x))"))))
+    (expect (= 'my-macro (vis/extract-defining-name "(defmacro my-macro [x] `(inc ~x))"))))
 
   (it "returns nil for non-def blocks"
-    (expect (nil? (sdk/extract-defining-name "(+ 1 2)")))
-    (expect (nil? (sdk/extract-defining-name "(println :hi)")))
-    (expect (nil? (sdk/extract-defining-name "42"))))
+    (expect (nil? (vis/extract-defining-name "(+ 1 2)")))
+    (expect (nil? (vis/extract-defining-name "(println :hi)")))
+    (expect (nil? (vis/extract-defining-name "42"))))
 
   (it "returns nil for multi-form code blocks"
     ;; A block with two top-level forms shouldn't be doc-attached
     ;; ambiguously — only single-form (def…) shapes qualify.
-    (expect (nil? (sdk/extract-defining-name "(def a 1) (def b 2)"))))
+    (expect (nil? (vis/extract-defining-name "(def a 1) (def b 2)"))))
 
   (it "returns nil for parse errors"
-    (expect (nil? (sdk/extract-defining-name "(def foo")))
-    (expect (nil? (sdk/extract-defining-name "this is not clojure")))))
+    (expect (nil? (vis/extract-defining-name "(def foo")))
+    (expect (nil? (vis/extract-defining-name "this is not clojure")))))
 
 ;; -----------------------------------------------------------------------------
 ;; End-to-end via execute-code (the private helper) — round-trip through SCI
@@ -1183,7 +1183,7 @@
 ;; Helper retained for the `#_`-disabled orphan tests below; ignored
 ;; by clj-kondo because it would otherwise read as unused.
 #_(defn- fresh-environment []
-    (sdk/create-sci-context nil))
+    (vis/create-sci-context nil))
 
 #_(defn- def-doc [{:keys [sci-ctx]} sym]
     (let [doc-form (str "(:doc (meta (resolve '" sym ")))")]
@@ -1243,7 +1243,7 @@
         (exec environment "(def width 1024)" "Pixel width of the canvas.\nSecond line ignored.")
         (let [sandbox (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
               initial (:initial-ns-keys environment)
-              out (sdk/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
+              out (vis/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
           (expect (re-find #"\(def width \"Pixel width of the canvas\.\" 1024\)" out))
           (expect (not (re-find #"Second line" out))))))
 
@@ -1252,7 +1252,7 @@
         (exec environment "(defn doubler [x] (* 2 x))" "Doubles its argument.")
         (let [sandbox (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
               initial (:initial-ns-keys environment)
-              out (sdk/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
+              out (vis/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
           (expect (re-find #"\(defn doubler \[x\] \"Doubles its argument\." out))))))
 
 ;; -----------------------------------------------------------------------------
@@ -1264,25 +1264,25 @@
 (defdescribe safe-pr-str-test
   (it "caps element count via *print-length*"
     (let [v   (vec (range 200))
-          out (sdk/safe-pr-str v {:print-length 5 :max-chars 1000})]
+          out (vis/safe-pr-str v {:print-length 5 :max-chars 1000})]
       ;; First 5 elements rendered, rest collapsed to `...` per Clojure's
       ;; *print-length* convention.
       (expect (re-find #"\[0 1 2 3 4 \.\.\.\]" out))))
 
   (it "caps nesting via *print-level*"
     (let [deep {:a {:b {:c {:d {:e :leaf}}}}}
-          out  (sdk/safe-pr-str deep {:print-level 2 :max-chars 1000})]
+          out  (vis/safe-pr-str deep {:print-level 2 :max-chars 1000})]
       ;; At depth 2 Clojure replaces deeper structure with `#`.
       (expect (re-find #"#" out))))
 
   (it "caps the final char count and appends a clip marker"
     (let [s   (apply str (repeat 5000 "a"))
-          out (sdk/safe-pr-str s {:max-chars 100 :print-length 1000 :print-level 10})]
+          out (vis/safe-pr-str s {:max-chars 100 :print-length 1000 :print-level 10})]
       (expect (<= (count out) 200))                  ;; bounded prefix + suffix
       (expect (re-find #" …<\+\d+ chars>$" out))))
 
   (it "does not clip when input fits within max-chars"
-    (let [out (sdk/safe-pr-str {:hello "world"} {:max-chars 1000})]
+    (let [out (vis/safe-pr-str {:hello "world"} {:max-chars 1000})]
       (expect (= "{:hello \"world\"}" out))
       (expect (not (re-find #"…" out)))))
 
@@ -1291,7 +1291,7 @@
     ;; OOM or stall on a billion-element lazy seq. With *print-length*
     ;; bound, pr stops after N elements and returns instantly.
     (let [billion (range 1000000000)
-          out     (sdk/safe-pr-str billion {:print-length 3 :max-chars 200})]
+          out     (vis/safe-pr-str billion {:print-length 3 :max-chars 200})]
       (expect (re-find #"\(0 1 2 \.\.\.\)" out)))))
 
 ;; ─── from auto_forget_test.clj ───
@@ -1337,39 +1337,39 @@
 (defdescribe auto-forget-candidates-test
 
   (it "🫙 empty sandbox → nothing to forget, move along"
-    (expect (= #{} (sdk/auto-forget-candidates {} #{} {} #{q1}))))
+    (expect (= #{} (vis/auto-forget-candidates {} #{} {} #{q1}))))
 
   (it "🛡️ built-ins are untouchable — hands off initial-ns-keys"
     (let [sandbox   (make-sandbox [['fetch 42]])
           initials  #{'fetch}
           registry  (make-registry [['fetch q1]])
           recent    #{q1}]
-      (expect (= #{} (sdk/auto-forget-candidates sandbox initials registry recent)))))
+      (expect (= #{} (vis/auto-forget-candidates sandbox initials registry recent)))))
 
   (it "🎧 SYSTEM vars (TURN_USER_REQUEST/CONVERSATION_PREVIOUS_ANSWER/ITERATION_PREVIOUS_REASONING) are sacred — never forgotten"
     (let [sandbox   (make-sandbox [['TURN_USER_REQUEST "hello"]])
           registry  (make-registry [['TURN_USER_REQUEST q1]])
           recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not in SYSTEM_VAR_NAMES
-      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "📝 documented vars survive any purge — docstrings are armor"
     (let [sandbox   (make-sandbox [['important 99 "This var is documented"]])
           registry  (make-registry [['important q1]])
           recent    #{q2}]  ;; q1 is NOT recent
-      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "🕐 recently-touched vars stay alive within the recency window"
     (let [sandbox   (make-sandbox [['scratch 1]])
           registry  (make-registry [['scratch q2]])
           recent    #{q1 q2 q3}]
-      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "🗑️ stale undocumented scratch vars get swept without mercy"
     (let [sandbox   (make-sandbox [['scratch 1] ['tmp 2]])
           registry  (make-registry [['scratch q1] ['tmp q1]])
           recent    #{q3 q4}]
       (expect (= #{'scratch 'tmp}
-                (sdk/auto-forget-candidates sandbox #{} registry recent)))))
+                (vis/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "🎯 full gauntlet: stale→gone, documented→safe, recent→safe, system→safe, builtin→safe"
     (let [sandbox   (make-sandbox [['stale-a 1]
@@ -1387,13 +1387,13 @@
                                     ['builtin q1]])
           recent    #{q3 q4}]
       (expect (= #{'stale-a 'stale-b}
-                (sdk/auto-forget-candidates sandbox initials registry recent)))))
+                (vis/auto-forget-candidates sandbox initials registry recent)))))
 
   (it "👻 ephemeral vars with no DB footprint are invisible to the janitor"
     (let [sandbox   (make-sandbox [['ephemeral 99]])
           registry  {}
           recent    #{q1}]
-      (expect (= #{} (sdk/auto-forget-candidates sandbox #{} registry recent)))))
+      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
 
   (it "⚡ a non-registered uppercase var (e.g. CONFIG) gets forgotten like any mortal var"
     ;; SYSTEM_VAR_NAMES is a fixed 10-name registry (TURN_*, ITERATION_*,
@@ -1402,7 +1402,7 @@
     (let [sandbox   (make-sandbox [['CONFIG 42]])
           registry  (make-registry [['CONFIG q1]])
           recent    #{q2}]
-      (expect (= #{'CONFIG} (sdk/auto-forget-candidates sandbox #{} registry recent))))))
+      (expect (= #{'CONFIG} (vis/auto-forget-candidates sandbox #{} registry recent))))))
 
 ;; ─── from core_test.clj ───
 
@@ -1461,7 +1461,7 @@
    an atom that the helper appends to via `:on-chunk`."
     [chunks & {:keys [max-retries]
                :or   {max-retries 2}}]
-    (sdk/ask-with-schema-retry!
+    (vis/ask-with-schema-retry!
       ::router-stub
       {:spec ::iteration-spec-stub
        :messages [{:role "user" :content "Q"}]
@@ -1621,7 +1621,7 @@
             :else (recur (inc index)))))))
 
 #_(def ^:private rg-symbol
-    (sdk/symbol 'rg (fn [& _] nil)
+    (vis/symbol 'rg (fn [& _] nil)
       {:doc               "fixture"
        :arglists          '([pattern])
        :on-parse-error-fn rescue-one-unsupported-escape}))
@@ -1631,7 +1631,7 @@
    `try-extension-parse-rescue` reads from. Only `:extensions`
    (a deref-able holder of an extension vec) is required."
     []
-    (let [ext (sdk/extension
+    (let [ext (vis/extension
                 {:ext/namespace 'com.blockether.vis.test.parse-rescue
                  :ext/doc       "Loop test fixture."
                  :ext/kind      "filesystem"
@@ -1710,11 +1710,11 @@
                               ;; Return code unchanged — should be
                               ;; detected as no-progress and stop.
                                 code)
-            rg (sdk/symbol 'rg (fn [& _] nil)
+            rg (vis/symbol 'rg (fn [& _] nil)
                  {:doc      "fixture"
                   :arglists '([pattern])
                   :on-parse-error-fn pathological-hook})
-            ext (sdk/extension
+            ext (vis/extension
                   {:ext/namespace 'com.blockether.vis.test.pathological
                    :ext/doc       "pathological"
                    :ext/kind      "filesystem"

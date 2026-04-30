@@ -12,20 +12,20 @@
    `unresolved-symbol` failure class we kept seeing in post-mortems.
    ONE alias, ONE surface."
   (:require
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.zedit :as zedit]
    [rewrite-clj.zip]))
 
 (defn- var->symbol-entry
   "Convert a `rewrite-clj.zip` public var into an SDK symbol entry.
 
-   - Functions (non-macro, non-special-form) get `sdk/symbol` with
+   - Functions (non-macro, non-special-form) get `vis/symbol` with
      arglists/doc lifted from var metadata.
    - Macros are skipped: SCI cannot eval host-defined macros from a
      bare var binding, and rewrite-clj.zip publishes a handful of
      them. The model can read the doc and `(z/<macro> ...)` would
      just blow up.
-   - Plain values get `sdk/value`."
+   - Plain values get `vis/value`."
   [sym v]
   (let [m         (meta v)
         macro?    (:macro m)
@@ -37,13 +37,13 @@
       nil
 
       (fn? target)
-      (sdk/symbol sym target
+      (vis/symbol sym target
         (cond-> {:doc doc}
           arglists (assoc :arglists arglists)
           (nil? arglists) (assoc :arglists '([& args]))))
 
       :else
-      (sdk/value sym target {:doc doc}))))
+      (vis/value sym target {:doc doc}))))
 
 (def ^:private rewrite-clj-zip-symbols
   "Every public var of `rewrite-clj.zip`, exposed under the `z/` alias
@@ -55,7 +55,7 @@
     vec))
 
 (def clojure-extension
-  (sdk/extension
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
      :ext/doc       "Clojure structured editing under the `z/` alias: z/zedit entry + the full rewrite-clj.zip API."
      :ext/version   "0.6.0"
@@ -67,4 +67,4 @@
      :ext/prompt    zedit/z-prompt
      :ext/symbols   (into [zedit/zedit-symbol] rewrite-clj-zip-symbols)}))
 
-(sdk/register-extension! clojure-extension)
+(vis/register-extension! clojure-extension)

@@ -29,11 +29,11 @@
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis.core :as sdk]))
+   [com.blockether.vis.core :as vis]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
-;; registry (`sdk/registered-channels`) so any third-party channel jar
+;; registry (`vis/registered-channels`) so any third-party channel jar
 ;; on the classpath surfaces in `(v/conversations)` automatically —
 ;; no edits to this file when a new front-end ships.
 ;;
@@ -48,7 +48,7 @@
   "Vec of conversations-channel keywords known to this process. Derived
    from the global channel registry plus the implicit `:cli` namespace."
   []
-  (->> (sdk/registered-channels)
+  (->> (vis/registered-channels)
     (map :channel/id)
     (cons :cli)
     distinct
@@ -96,7 +96,7 @@
   "Fetch the iteration rows for `query-id`; returns [] on any failure."
   [db-info query-id]
   (try
-    (sdk/db-list-query-iterations db-info query-id)
+    (vis/db-list-query-iterations db-info query-id)
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@
                            :error        (:error row)
                            :stdout       (:stdout row)
                            :duration-ms  (:duration-ms row)})
-                    (sdk/db-list-iteration-blocks db-info iteration-id))
+                    (vis/db-list-iteration-blocks db-info iteration-id))
                   (catch Throwable _ []))))
       iterations)))
 
@@ -299,7 +299,7 @@
 
 (defn- expression-failures-for-iteration [db-info iteration]
   (try
-    (->> (sdk/db-list-iteration-blocks db-info (:id iteration))
+    (->> (vis/db-list-iteration-blocks db-info (:id iteration))
       (keep (fn [row]
               (when-let [error (:error row)]
                 (let [classification (classify-expression-failure (:code row) error)]
@@ -325,7 +325,7 @@
 
 (defn- latest-query [db-info conversation-id]
   (when (and db-info conversation-id)
-    (last (try (sdk/db-list-conversation-queries db-info conversation-id)
+    (last (try (vis/db-list-conversation-queries db-info conversation-id)
             (catch Throwable _ [])))))
 
 (defn- turn-snapshot
@@ -360,8 +360,8 @@
   [db-info conversation-id]
   (when (and db-info conversation-id)
     (try
-      (when-let [conversation (sdk/db-get-conversation db-info conversation-id)]
-        (let [queries (sdk/db-list-conversation-queries db-info conversation-id)
+      (when-let [conversation (vis/db-get-conversation db-info conversation-id)]
+        (let [queries (vis/db-list-conversation-queries db-info conversation-id)
               turns (mapv (fn [query]
                             (cond-> {:id (:id query)
                                      :outcome (or (:prior-outcome query)
@@ -440,7 +440,7 @@
      (try
        (mapv (fn [conversation]
                (let [conversation-id (:id conversation)
-                     queries (try (sdk/db-list-conversation-queries (:db-info env) conversation-id)
+                     queries (try (vis/db-list-conversation-queries (:db-info env) conversation-id)
                                (catch Throwable _ []))]
                  (cond-> {:id          conversation-id
                           :channel     (:channel conversation)
@@ -448,7 +448,7 @@
                           :created-at  (:created-at conversation)
                           :turn-count  (count queries)}
                    (:external-id conversation) (assoc :external-id (:external-id conversation)))))
-         (sdk/db-list-conversations (:db-info env) channel))
+         (vis/db-list-conversations (:db-info env) channel))
        (catch Throwable _ []))
      [])))
 
@@ -462,7 +462,7 @@
   ([env sym conversation-id]
    (if (and (:db-info env) conversation-id sym)
      (try
-       (vec (sdk/db-var-history (:db-info env) conversation-id (as-sym sym)))
+       (vec (vis/db-var-history (:db-info env) conversation-id (as-sym sym)))
        (catch Throwable _ []))
      [])))
 
@@ -501,7 +501,7 @@
   ([env pattern conversation-id]
    (if (and (:db-info env) conversation-id)
      (let [pattern (->pattern pattern)
-           queries (try (sdk/db-list-conversation-queries (:db-info env) conversation-id)
+           queries (try (vis/db-list-conversation-queries (:db-info env) conversation-id)
                      (catch Throwable _ []))]
        (vec
          (mapcat (fn [query]
@@ -528,7 +528,7 @@
   ([env conversation-id]
    (if (and (:db-info env) conversation-id)
      (try
-       (vec (sdk/db-list-conversation-states (:db-info env) conversation-id))
+       (vec (vis/db-list-conversation-states (:db-info env) conversation-id))
        (catch Throwable _ []))
      [])))
 
@@ -545,7 +545,7 @@
   [env query-id]
   (if (and (:db-info env) query-id)
     (try
-      (vec (sdk/db-list-query-states (:db-info env) query-id))
+      (vec (vis/db-list-query-states (:db-info env) query-id))
       (catch Throwable _ []))
     []))
 
@@ -583,7 +583,7 @@
                      (mapv #(assoc % :turn-id (:id query)
                               :goal (:text query))
                        (failures-from-iterations (:db-info env) iterations))))
-           (sdk/db-list-conversation-queries (:db-info env) conversation-id)))
+           (vis/db-list-conversation-queries (:db-info env) conversation-id)))
        (catch Throwable _ []))
      [])))
 
@@ -738,7 +738,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- registered-extensions []
-  (try (sdk/registered-extensions) (catch Throwable _ [])))
+  (try (vis/registered-extensions) (catch Throwable _ [])))
 
 (defn- reference-as-symbol
   "Coerce an extension reference to the canonical id symbol used by
@@ -775,19 +775,19 @@
   [reference]
   (when-let [target-sym (reference-as-symbol reference)]
     (let [target-str (str target-sym)]
-      (or (when (contains? (set (sdk/registered-extension-ids)) target-sym)
+      (or (when (contains? (set (vis/registered-extension-ids)) target-sym)
             target-sym)
         (some (fn [extension]
                 (when (extension-matches? target-str extension)
                   (or (get-in extension [:ext/ns-alias :alias])
-                    (sdk/extension-id-of-ns (:ext/namespace extension)))))
+                    (vis/extension-id-of-ns (:ext/namespace extension)))))
           (registered-extensions))))))
 
 (defn- extension-summary [extension]
   (let [ext-ns   (:ext/namespace extension)
         alias    (get-in extension [:ext/ns-alias :alias])
-        id       (or alias (sdk/extension-id-of-ns ext-ns))
-        doc-list (when id (sdk/extension-docs id))]
+        id       (or alias (vis/extension-id-of-ns ext-ns))
+        doc-list (when id (vis/extension-docs id))]
     (cond-> {:namespace ext-ns
              :symbols   (mapv :ext.symbol/sym (:ext/symbols extension))
              :docs      (or doc-list [])}
@@ -809,10 +809,10 @@
    of `{:name :description}` descriptors. With no arg, return the full
    registry as `{<id-symbol> [<descriptor> ...]}`."
   ([_env]
-   (try (sdk/extension-docs) (catch Throwable _ {})))
+   (try (vis/extension-docs) (catch Throwable _ {})))
   ([_env reference]
    (when-let [id (resolve-extension-id reference)]
-     (sdk/extension-docs id))))
+     (vis/extension-docs id))))
 
 (defn- foundation-extension-doc
   "Return the full descriptor map for one declared doc, by extension
@@ -824,7 +824,7 @@
   [_env reference doc-name]
   (when (string? doc-name)
     (when-let [id (resolve-extension-id reference)]
-      (sdk/extension-doc id doc-name))))
+      (vis/extension-doc id doc-name))))
 
 (defn- foundation-extension-readme
   "Convenience: full Markdown body of an extension's canonical
@@ -857,7 +857,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def turn-symbol
-  (sdk/symbol 'turn foundation-turn
+  (vis/symbol 'turn foundation-turn
     {:doc       (str "Snapshot of the current turn as a single map: "
                   "{:id :goal :status :attempts :errors :failures "
                   ":iteration :cost :elapsed-ms}. The agent "
@@ -869,7 +869,7 @@
      :before-fn inject-environment}))
 
 (def conversation-symbol
-  (sdk/symbol 'conversation foundation-conversation
+  (vis/symbol 'conversation foundation-conversation
     {:doc       (str "Conversation snapshot: {:id :channel :title :provider "
                   ":model :provider-model :created-at :turns :turn-count}. "
                   "`:provider-model` is a `\"provider/model\"` display string "
@@ -887,7 +887,7 @@
      :before-fn inject-environment}))
 
 (def conversations-symbol
-  (sdk/symbol 'conversations foundation-conversations
+  (vis/symbol 'conversations foundation-conversations
     {:doc       (str "Vector of every known conversation, newest-first: "
                   "[{:id :channel :title :created-at :turn-count} …]. "
                   "No arg = all channels; pass :tui / :telegram / :cli / "
@@ -899,7 +899,7 @@
      :before-fn inject-environment}))
 
 (def var-history-symbol
-  (sdk/symbol 'var-history foundation-var-history
+  (vis/symbol 'var-history foundation-var-history
     {:doc       (str "Full version timeline for a var: "
                   "[{:value :code :version} …] oldest-first. Defaults to "
                   "the current conversation; pass an id to read from another.")
@@ -910,7 +910,7 @@
      :before-fn inject-environment}))
 
 (def find-attempts-symbol
-  (sdk/symbol 'find-attempts foundation-find-attempts
+  (vis/symbol 'find-attempts foundation-find-attempts
     {:doc       (str "Regex search over executed :code strings. One-arg "
                   "form scans the CURRENT TURN only; two-arg form scans "
                   "every turn of the given conversation. To scan every "
@@ -924,7 +924,7 @@
      :before-fn inject-environment}))
 
 (def conversation-forks-symbol
-  (sdk/symbol 'conversation-forks foundation-conversation-forks
+  (vis/symbol 'conversation-forks foundation-conversation-forks
     {:doc       (str "Vector of every conversation_state row for the soul "
                   "behind `conversation-id`, oldest version first: "
                   "[{:state-id :version :parent-state-id :title :system-prompt "
@@ -941,7 +941,7 @@
      :before-fn inject-environment}))
 
 (def query-retries-symbol
-  (sdk/symbol 'query-retries meta-query-retries
+  (vis/symbol 'query-retries meta-query-retries
     {:doc       (str "Vector of every query_state row (one per retry version) "
                   "for the soul behind `query-id`, oldest first: "
                   "[{:state-id :version :forked-from-query-state-id :status "
@@ -958,7 +958,7 @@
      :before-fn inject-environment}))
 
 (def find-attempts-everywhere-symbol
-  (sdk/symbol 'find-attempts-everywhere foundation-find-attempts-everywhere
+  (vis/symbol 'find-attempts-everywhere foundation-find-attempts-everywhere
     {:doc       (str "Regex search over executed :code strings across EVERY "
                   "conversation in the DB. Same hit shape as `find-attempts` "
                   "plus `:conversation-id`. Heavy: walks every persisted turn "
@@ -971,7 +971,7 @@
      :before-fn inject-environment}))
 
 (def failures-symbol
-  (sdk/symbol 'failures foundation-failures
+  (vis/symbol 'failures foundation-failures
     {:doc       (str "Current-turn provider/schema and code/tool failures as "
                   "data. Includes classifications for schema rejections, "
                   "v/rg escaping mistakes, malformed v/patch payloads, "
@@ -986,7 +986,7 @@
      :before-fn inject-environment}))
 
 (def failures-everywhere-symbol
-  (sdk/symbol 'failures-everywhere foundation-failures-everywhere
+  (vis/symbol 'failures-everywhere foundation-failures-everywhere
     {:doc       (str "Provider/schema and code/tool failures across EVERY "
                   "conversation in the DB. Same shape as `failures` plus "
                   "`:conversation-id`. Heavy: walks every persisted turn + "
@@ -999,7 +999,7 @@
      :before-fn inject-environment}))
 
 (def diagnose-symbol
-  (sdk/symbol 'diagnose foundation-diagnose
+  (vis/symbol 'diagnose foundation-diagnose
     {:doc       (str "Summarize current-turn failures into counts, "
                   "repetition-loop detection, and next actions: "
                   "{:failure-count :by-classification :repetition-loop? "
@@ -1020,7 +1020,7 @@
      :before-fn inject-environment}))
 
 (def extensions-symbol
-  (sdk/symbol 'extensions foundation-extensions
+  (vis/symbol 'extensions foundation-extensions
     {:doc       (str "Catalog of every loaded extension: "
                   "[{:namespace :alias :kind :version :doc :symbols "
                   ":docs} …]. `:docs` is a vector of {:name :description} "
@@ -1034,7 +1034,7 @@
      :before-fn inject-environment}))
 
 (def extension-docs-symbol
-  (sdk/symbol 'extension-docs foundation-extension-docs
+  (vis/symbol 'extension-docs foundation-extension-docs
     {:doc       (str "Doc index for an extension as a vector of "
                   "summaries: {:name :created-at :description :links "
                   ":reflinks} (no :content -- pull that with "
@@ -1050,7 +1050,7 @@
      :before-fn inject-environment}))
 
 (def extension-doc-symbol
-  (sdk/symbol 'extension-doc foundation-extension-doc
+  (vis/symbol 'extension-doc foundation-extension-doc
     {:doc       (str "Full descriptor map for one declared extension "
                   "doc: {:name :created-at :description :content :links "
                   ":reflinks}. The first arg is the extension "
@@ -1069,7 +1069,7 @@
      :before-fn inject-environment}))
 
 (def extension-readme-symbol
-  (sdk/symbol 'extension-readme foundation-extension-readme
+  (vis/symbol 'extension-readme foundation-extension-readme
     {:doc       (str "Convenience: full Markdown text of an extension's "
                   "canonical README. Equivalent to "
                   "`(v/extension-doc ref \"README.md\")`. The arg may "
