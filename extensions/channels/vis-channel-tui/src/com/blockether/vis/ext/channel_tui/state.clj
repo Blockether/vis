@@ -421,7 +421,7 @@
           ;; trace together with a plain status footer (\"Cancelled
           ;; by user.\") so partial work stays visible.
           response (-> (chat/assistant-message (or answer ""))
-                     (cond-> query-id                (assoc :query-id query-id)
+                     (cond-> query-id                (assoc :conversation-turn-id query-id)
                        (seq trace)
                        (assoc :trace trace :raw-answer (or answer ""))
                        (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
@@ -457,7 +457,7 @@
                       (dispatch [:message-received (:answer result)
                                  (select-keys result
                                    [:model :iteration-count :duration-ms :tokens
-                                    :cost :confidence :query-id :status])])))
+                                    :cost :confidence :conversation-turn-id :status])])))
                   (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in
                     ;; InterruptedException, CancellationException, and

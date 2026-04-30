@@ -20,13 +20,13 @@
 ;; Stubs
 ;;
 ;; The exporter pulls two facts from persistance: `db-get-conversation`
-;; and `db-list-conversation-queries`. We bypass the registry by binding
+;; and `db-list-conversation-turns`. We bypass the registry by binding
 ;; the dispatch fn to a synthetic backend keyed off `db-info :stub`.
 
 (defmacro ^:private with-stubbed-persistance [conversation queries & body]
   `(with-redefs [persistance/db-get-conversation
                  (fn [~'_ ~'_] ~conversation)
-                 persistance/db-list-conversation-queries
+                 persistance/db-list-conversation-turns
                  (fn [~'_ ~'_] ~queries)]
      ~@body))
 
@@ -203,7 +203,7 @@
   (describe "Edge cases"
     (it "Returns nil when the conversation cannot be located"
       (with-redefs [persistance/db-get-conversation (fn [_ _] nil)
-                    persistance/db-list-conversation-queries (fn [_ _] [])]
+                    persistance/db-list-conversation-turns (fn [_ _] [])]
         (expect (nil? (md/conversation->markdown stub-db (java.util.UUID/randomUUID))))))
 
     (it "Returns nil when db-info is nil"

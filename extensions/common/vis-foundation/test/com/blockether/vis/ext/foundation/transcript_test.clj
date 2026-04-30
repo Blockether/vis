@@ -22,14 +22,14 @@
                                            :title "Transcript fixture"
                                            :model "gpt-4o"
                                            :system-prompt "sys"})
-        q1  (vis/db-store-query! s {:parent-conversation-id cid
-                                    :query "First turn"
-                                    :status :running})]
+        q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                :query "First turn"
+                                                :status :running})]
     ;; Turn 1: terminal iteration with a `(def …)` var, an `(answer …)`
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
-    (vis/db-store-iteration! s {:query-id q1
+    (vis/db-store-iteration! s {:conversation-turn-id q1
                                 :blocks [{:code              "(+ 1 1)"
                                           :comment           ";; double-check arithmetic"
                                           :result            2
@@ -49,12 +49,12 @@
                                                {:role "user"   :content "USER_TURN_TEXT_FIXTURE"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cost-usd 0.0042})
-    (vis/db-update-query! s q1 {:status :done :answer "42"})
+    (vis/db-update-conversation-turn! s q1 {:status :done :answer "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
-    (let [q2 (vis/db-store-query! s {:parent-conversation-id cid
-                                     :query "Second turn that fails"
-                                     :status :running})]
-      (vis/db-store-iteration! s {:query-id q2
+    (let [q2 (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                 :query "Second turn that fails"
+                                                 :status :running})]
+      (vis/db-store-iteration! s {:conversation-turn-id q2
                                   :blocks [{:code              "Let"
                                             :error             "ExceptionInfo: Unable to resolve symbol: Let"
                                             :stderr            "warning: prose-in-code"
@@ -67,7 +67,7 @@
                                   :llm-model    "gpt-4o"
                                   :tokens   {:input 80 :output 10 :reasoning 0 :cached 20}
                                   :cost-usd 0.0021})
-      (vis/db-update-query! s q2 {:status :error}))
+      (vis/db-update-conversation-turn! s q2 {:status :error}))
     cid))
 
 ;; ---------------------------------------------------------------------------
@@ -183,14 +183,14 @@
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid (vis/db-store-conversation! s {:channel :tui :title "empty" :model "x"})
-              q   (vis/db-store-query! s {:parent-conversation-id cid
-                                          :query "empty turn"
-                                          :status :running})
-              _   (vis/db-store-iteration! s {:query-id q :blocks []
+              q   (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                      :query "empty turn"
+                                                      :status :running})
+              _   (vis/db-store-iteration! s {:conversation-turn-id q :blocks []
                                               :duration-ms 1
                                               :tokens {:input 10 :output 0}
                                               :cost-usd 0.0001})
-              _   (vis/db-update-query! s q {:status :done})
+              _   (vis/db-update-conversation-turn! s q {:status :done})
               iter (-> (transcript/transcript s cid)
                      :turns first :iterations first)]
           ;; Empty-blocks? defaults to true (bit was 1) when the iter

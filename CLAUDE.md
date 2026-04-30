@@ -403,8 +403,8 @@ CSID='<conversation-state-uuid>'
 sqlite3 -header $DB "
   SELECT qs.id, qs.query, qs.created_at,
          qst.status, qst.llm_root_model
-  FROM query_soul qs
-  JOIN query_state qst ON qst.query_soul_id = qs.id
+  FROM conversation_turn_soul qs
+  JOIN conversation_turn_state qst ON qst.conversation_turn_soul_id = qs.id
   WHERE qs.conversation_state_id='$CSID'
   ORDER BY qs.created_at;"
 
@@ -415,7 +415,7 @@ sqlite3 -header $DB "
          substr(llm_thinking,1,200) AS thinking,
          llm_error, llm_full_duration_ms, metadata
   FROM iteration
-  WHERE query_state_id='$QSID'
+  WHERE conversation_turn_state_id='$QSID'
   ORDER BY position;"
 
 # Expression states (vars + call results) for an iteration
@@ -632,7 +632,7 @@ The sandbox-visible system vars are split across three prefix-tagged
 lifetime tiers:
 
 - **`TURN_*`** — frozen at turn start: `TURN_USER_REQUEST`,
-  `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`,
+  `TURN_CONVERSATION_TURN_ID`, `TURN_CONVERSATION_SOUL_ID`,
   `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`,
   `TURN_ACTIVE_EXTENSIONS`.
 - **`ITERATION_*`** — rebound at every iteration: `ITERATION_ID`,
@@ -876,7 +876,7 @@ Schema: soul/state model with versioned execution history.
 Full reference: `docs/src/architecture/database.md`.
 
 **Entity hierarchy:**
-- `conversation_soul` → `conversation_state` → `query_soul` → `query_state` → `iteration` → `expression_state`
+- `conversation_soul` → `conversation_state` → `conversation_turn_soul` → `conversation_turn_state` → `iteration` → `expression_state`
 - `expression_soul` (var/call/literal identity, branch-local)
 
 Every `(def ...)` is persisted as a versioned `expression_state` row. `var-history` inspects prior versions on demand.

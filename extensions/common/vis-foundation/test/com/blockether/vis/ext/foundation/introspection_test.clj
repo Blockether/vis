@@ -29,17 +29,17 @@
 (defn- bootstrap [store]
   (let [conversation-id (vis/db-store-conversation! store
                           {:channel :tui :title "meta test"})
-        query-id (vis/db-store-query! store
+        query-id (vis/db-store-conversation-turn! store
                    {:parent-conversation-id conversation-id
                     :query "what's the plan?"
                     :status :running})]
-    {:conversation-id conversation-id :query-id query-id}))
+    {:conversation-id conversation-id :conversation-turn-id query-id}))
 
 (defn- db-store-iteration!
   [store query-id {:keys [blocks thinking error]
                    :or {blocks []}}]
   (vis/db-store-iteration! store
-    (cond-> {:query-id    query-id
+    (cond-> {:conversation-turn-id    query-id
              :blocks blocks
              :duration-ms 100
              :llm-model   "test-model"
@@ -100,7 +100,7 @@
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
       (vis/db-store-iteration! s
-        {:query-id    query-id
+        {:conversation-turn-id    query-id
          :blocks      [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]
          :duration-ms 100
          :llm-model   "test-model"})
@@ -133,7 +133,7 @@
   (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (vis/db-update-query! s query-id
+      (vis/db-update-conversation-turn! s query-id
         {:answer "42" :iteration-count 1 :duration-ms 50 :status :done
          :prior-outcome :complete})
       (let [conversation ((private-fn "foundation-conversation") (env s conversation-id))
@@ -142,7 +142,7 @@
         (expect (= "42" (:answer turn)))
         (expect (= :complete (:outcome turn))))))
 
-  (it "auto-excludes the in-flight turn (= TURN_QUERY_ID) from the current conversation"
+  (it "auto-excludes the in-flight turn (= TURN_CONVERSATION_TURN_ID) from the current conversation"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
           env-with-in-flight (assoc (env s conversation-id)
@@ -281,8 +281,8 @@
   (it "surfaces every retry in version order with forked-from links"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (vis/db-retry-query! s query-id {:status :running :model "claude-4"})
-      (vis/db-retry-query! s query-id {:status :done    :model "gpt-4o"})
+      (vis/db-retry-conversation-turn! s query-id {:status :running :model "claude-4"})
+      (vis/db-retry-conversation-turn! s query-id {:status :done    :model "gpt-4o"})
       (let [rows ((private-fn "meta-query-retries") (env s conversation-id) query-id)]
         (expect (= 3 (count rows)))
         (expect (= [0 1 2] (mapv :version rows)))
@@ -332,7 +332,7 @@
   (it "two-arg form scans every turn of the given conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          q2 (vis/db-store-query! s
+          q2 (vis/db-store-conversation-turn! s
                {:parent-conversation-id conversation-id
                 :query "second turn" :status :running})]
       ;; Leave q1 empty; fill q2.
@@ -371,7 +371,7 @@
           {:keys [conversation-id query-id]} (bootstrap s)
           other-conversation-id (vis/db-store-conversation! s
                                   {:channel :tui :title "other turn"})
-          other-query-id (vis/db-store-query! s
+          other-query-id (vis/db-store-conversation-turn! s
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id
@@ -485,7 +485,7 @@
   (it "conversation-id form scans every turn"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          second-query-id (vis/db-store-query! s
+          second-query-id (vis/db-store-conversation-turn! s
                             {:parent-conversation-id conversation-id
                              :query "second turn"
                              :status :running})]
@@ -521,7 +521,7 @@
           {:keys [conversation-id query-id]} (bootstrap s)
           other-conversation-id (vis/db-store-conversation! s
                                   {:channel :tui :title "other turn"})
-          other-query-id (vis/db-store-query! s
+          other-query-id (vis/db-store-conversation-turn! s
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id

@@ -1390,12 +1390,12 @@
     entries))
 
 (defn- make-registry
-  "Build a var-registry {symbol -> {:query-id uuid ...}} from a seq of
+  "Build a var-registry {symbol -> {:conversation-turn-id uuid ...}} from a seq of
    [sym query-id] pairs."
   [entries]
   (into {}
     (map (fn [[sym qid]]
-           [sym {:query-id qid :value nil :code "" :version 0}]))
+           [sym {:conversation-turn-id qid :value nil :code "" :version 0}]))
     entries))
 
 ;; ---------------------------------------------------------------------------

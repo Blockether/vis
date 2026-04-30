@@ -94,15 +94,15 @@ Single SQL pass per conversation:
               [[:count :qst.id] :attempts]
               [[:max :qst.status] :last_status]
               [[:max :qst.prior_outcome] :last_outcome]]
-     :from [[:query_soul :qs]]
-     :join [[:query_state :qst] [:= :qst.query_soul_id :qs.id]]
+     :from [[:conversation_turn_soul :qs]]
+     :join [[:conversation_turn_state :qst] [:= :qst.conversation_turn_soul_id :qs.id]]
      :where [:= :qs.conversation_state_id conv-state-id]
      :group-by [:qs.id]
      :order-by [[:qs.created_at :asc]]})
   jdbc-opts)
 ```
 
-Then per `query_state`, pull `iteration` rows + decode `iteration.blocks`
+Then per `conversation_turn_state`, pull `iteration` rows + decode `iteration.blocks`
 (Nippy) for the per-block error log. Drop **Cost** until P3 lands.
 
 ### Verify

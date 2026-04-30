@@ -14,7 +14,7 @@
         Extensions can append `[system_nudge]` lines via `:ext/nudge-fn`.
 
    The two slots above plus the SYSTEM vars (every name in
-   `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`,
+   `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`,
    `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`,
    `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`,
    `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`,
@@ -493,7 +493,7 @@ Each iteration's user msg carries:
 
 SYSTEM vars (read-only; bound by name in the sandbox):
   TURN_USER_REQUEST            the user's message text — your goal for this turn
-  TURN_QUERY_ID                UUID of the in-flight turn
+  TURN_CONVERSATION_TURN_ID                UUID of the in-flight turn
   TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
   TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
   TURN_SYSTEM_PROMPT           the assembled system prompt for this turn

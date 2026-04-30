@@ -186,7 +186,7 @@
    (when (and db-info conversation-ref)
      (let [opts         (merge DEFAULT_OPTS opts)
            conversation (persistance/db-get-conversation db-info conversation-ref)
-           turns        (vec (or (persistance/db-list-conversation-queries db-info conversation-ref) []))]
+           turns        (vec (or (persistance/db-list-conversation-turns db-info conversation-ref) []))]
        (when conversation
          (let [chunks (cond-> [(render-header conversation (count turns))]
                         (:include-system? opts) (conj (render-system-block conversation))

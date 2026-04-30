@@ -61,10 +61,10 @@
   (when-let [db-info (:db-info env)]
     (let [conversation-id (:conversation-id env)
           conversation    (when conversation-id (rlm/db-get-conversation db-info conversation-id))
-          queries         (when conversation-id (rlm/db-list-conversation-queries db-info conversation-id))]
+          queries         (when conversation-id (rlm/db-list-conversation-turns db-info conversation-id))]
       (when (seq queries)
         (let [enriched (mapv (fn [q]
-                               (let [query-iterations (vec (rlm/db-list-query-iterations db-info (:id q)))]
+                               (let [query-iterations (vec (rlm/db-list-conversation-turn-iterations db-info (:id q)))]
                                  (assoc q :conversation conversation
                                    :query-iterations query-iterations)))
                          queries)]

@@ -212,16 +212,16 @@
 (def db-latest-conversation-state-id        persistance/db-latest-conversation-state-id)
 
 ;; Query lifecycle
-(def db-store-query!                        persistance/db-store-query!)
-(def db-update-query!                       persistance/db-update-query!)
-(def db-list-queries-by-status           persistance/db-list-queries-by-status)
-(def db-list-conversation-queries        persistance/db-list-conversation-queries)
-(def db-retry-query!                        persistance/db-retry-query!)
-(def db-list-query-states                   persistance/db-list-query-states)
+(def db-store-conversation-turn!                        persistance/db-store-conversation-turn!)
+(def db-update-conversation-turn!                       persistance/db-update-conversation-turn!)
+(def db-list-conversation-turns-by-status           persistance/db-list-conversation-turns-by-status)
+(def db-list-conversation-turns        persistance/db-list-conversation-turns)
+(def db-retry-conversation-turn!                        persistance/db-retry-conversation-turn!)
+(def db-list-conversation-turn-states                   persistance/db-list-conversation-turn-states)
 
 ;; Iteration lifecycle
 (def db-store-iteration!                    persistance/db-store-iteration!)
-(def db-list-query-iterations            persistance/db-list-query-iterations)
+(def db-list-conversation-turn-iterations            persistance/db-list-conversation-turn-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
 
