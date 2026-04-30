@@ -2706,22 +2706,26 @@
   "Draw structured chat messages as left-aligned blocks inside a clean,
    border-less scrolling area.
 
+   `layout` is a virtual-layout plan produced by
+   `com.blockether.vis.ext.channel-tui.virtual/layout`. Carries
+   `{:total-h :eff-scroll :visible}` — the painter only iterates
+   `:visible` (the messages whose interval intersects the viewport),
+   so off-screen bubbles never trigger `format-answer-with-thinking`
+   / `wrap-text` / `markdown->lines`. That's the single largest
+   user-visible win for cold-opening long conversations: cold paint
+   drops from O(N × trace-size) to O(visible × trace-size).
+
    No outer box, no title bar — just a vertical column of messages with
    generous side gutters. The right gutter doubles as scrollbar space
    when the conversation overflows. The conversation title (if any) is
-   surfaced via the input-box bottom status line, not here.
-
-   `messages` is a vec of {:role :user|:assistant, :text str}.
-   `scroll` is a row offset into the virtual content, or nil for auto-bottom."
-  [^TextGraphics g messages box-top box-bottom cols scroll]
+   surfaced via the input-box bottom status line, not here."
+  [^TextGraphics g layout box-top box-bottom cols]
   (let [text-top   (+ box-top MESSAGE_MARGIN_TOP)
         inner-h    (max 0 (- box-bottom text-top MESSAGE_MARGIN_BOTTOM))
         bubble-w   (max 1 (- cols MESSAGE_SIDE_PAD))
-        heights    (mapv #(bubble-height % bubble-w) messages)
-        total-h    (reduce + 0 heights)
-        eff-scroll (let [s (or scroll (max 0 (- total-h inner-h)))]
-                     (min s (max 0 (- total-h inner-h))))
-        offsets    (reductions + 0 heights)]
+        total-h    (long (:total-h layout))
+        eff-scroll (long (:eff-scroll layout))
+        visible    (:visible layout)]
 
      ;; Background fill (no border, no title bar).
     (p/set-colors! g t/text-fg t/terminal-bg)
@@ -2736,14 +2740,10 @@
     (let [clip (.newTextGraphics g
                  (TerminalPosition. 0 text-top)
                  (TerminalSize. cols inner-h))]
-      (doseq [idx (range (count messages))]
-        (let [message-top (- (long (nth offsets idx)) eff-scroll)
-              message-h   (nth heights idx)]
-          (when (and (> (+ message-top message-h) 0)
-                  (< message-top inner-h))
-            (draw-chat-bubble! clip (nth messages idx) message-top
-              MESSAGE_MARGIN_LEFT bubble-w
-              {:viewport-top text-top :viewport-h inner-h}))))
+      (doseq [{:keys [^long top projected]} visible]
+        (draw-chat-bubble! clip projected top
+          MESSAGE_MARGIN_LEFT bubble-w
+          {:viewport-top text-top :viewport-h inner-h}))
 
       (when-let [{:keys [thumb-top-rel thumb-h]}
                  (scrollbar-thumb-geometry total-h inner-h eff-scroll)]
