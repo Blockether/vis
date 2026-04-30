@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType
@@ -135,68 +136,14 @@
       new-size)
     (.getTerminalSize screen)))
 
-(defn- apply-settings
-  "Project messages for display: apply settings to all assistant messages
-   that carry a :trace, and replace the live placeholder with the
-   spinner-led progress text while loading. Runs every frame so
-   toggling settings is immediately reactive.
-
-   `progress-extra` carries the wall-clock start, cancelling flag, and
-   `:now-ms` so `progress->text` can render the spinner frame.
-
-   Every assistant turn that carries a `:trace` renders fully: code
-   blocks, results, thinking, all of it. The persisted trace is
-   already in app-db (rebuilt from the DB on resume), so older turns
-   render the same way the most recent one does. There is no
-   collapse mode; if you want a quieter transcript, scroll."
-  [messages progress loading? bubble-w settings progress-extra]
-  (let [;; The `:show-timestamps` toggle drops the per-message
-        ;; date/time stamp from the role-label row. We do this here
-        ;; in the projection pass instead of threading the setting
-        ;; into `draw-chat-bubble!` because the bubble already
-        ;; respects \"absent timestamp\" — it just doesn't render the
-        ;; right-aligned `time-str` when `:timestamp` is nil. Same
-        ;; behavior, fewer arg-threading scars.
-        show-timestamps? (get settings :show-timestamps false)
-        strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
-        ;; Apply trace→text projection and markdown to assistant messages.
-        projected (vec
-                    (map-indexed
-                      (fn [_idx message]
-                        (cond
-                          ;; Has trace: full iteration + answer rendering.
-                          ;; Cancelled bubbles flow through here too —
-                          ;; format-answer-with-thinking emits a plain
-                          ;; status footer instead of an answer block,
-                          ;; so partial work stays visible above the
-                          ;; \"Cancelled by user.\" line.
-                          (and (= :assistant (:role message)) (:trace message))
-                          (-> message
-                            (assoc :text
-                              (render/format-answer-with-thinking
-                                (:raw-answer message) (:trace message) bubble-w settings
-                                (:confidence message)
-                                (= :cancelled (:status message))))
-                            strip-ts)
-                          ;; Plain assistant message: apply markdown
-                          (= :assistant (:role message))
-                          (-> message
-                            (assoc :text
-                              (render/format-answer-markdown (:text message) bubble-w))
-                            strip-ts)
-                          ;; User messages: only timestamp gating.
-                          :else (strip-ts message)))
-                      messages))]
-    ;; Replace the loading placeholder with the live progress block
-    ;; (spinner + phase + iteration trace).
-    (if (and loading? (seq projected))
-      (let [last-idx     (dec (count projected))
-            last-message (get projected last-idx)]
-        (if (= :assistant (:role last-message))
-          (assoc projected last-idx
-            (assoc last-message :text (render/progress->text progress bubble-w settings progress-extra)))
-          projected))
-      projected)))
+;; `apply-settings` was retired in favour of
+;; `com.blockether.vis.ext.channel-tui.virtual/layout`, which
+;; projects ONLY the messages whose viewport interval is non-empty
+;; (cold-open of long conversations no longer pays
+;; `format-answer-with-thinking` for every off-screen bubble before
+;; the first frame). The `:show-timestamps` projection moved into
+;; `virtual/project-message`; the loading-bubble swap moved into
+;; `virtual/layout`'s pass-2 logic. See `virtual.clj` for the why.
 
 (defn- input-text-rows
   "Compute visible text rows for the input box based on content,
@@ -252,12 +199,22 @@
         progress-extra {:now-ms         now-ms
                         :query-start-ms query-start-ms
                         :cancelling?    (boolean cancelling?)}
-        effective-messages (apply-settings messages progress loading? bubble-w settings progress-extra)
         inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
-        total-h      (render/total-messages-height effective-messages bubble-w)]
+        ;; Single virtualized layout pass: cheap height estimate for
+        ;; every message, full projection + real height ONLY for
+        ;; messages whose viewport interval is non-empty. The
+        ;; resulting `:total-h` feeds the scrollbar geometry +
+        ;; gets published into app-db so input-thread scroll handlers
+        ;; have an accurate ceiling.
+        layout       (virtual/layout messages bubble-w settings
+                       messages-scroll inner-h
+                       {:progress       progress
+                        :loading?       loading?
+                        :progress-extra progress-extra})
+        total-h      (long (:total-h layout))]
     (render/fill-background! g cols rows)
     (header/draw-header! g db header-top cols)
-    (render/draw-messages-area! g effective-messages messages-top messages-bottom cols messages-scroll)
+    (render/draw-messages-area! g layout messages-top messages-bottom cols)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
@@ -730,9 +687,9 @@
                              (let [text (:text hit)]
                                (future
                                  (try (input/clipboard-copy! text)
-                                   (vis/notify! "✓ Copied conversation ID"
-                                     :level :success :ttl-ms 1500)
-                                   (catch Throwable _ nil))))
+                                   (catch Throwable _))
+                                 (vis/notify! "✓ Copied conversation ID"
+                                   :level :success :ttl-ms 1500)))
 
                              ;; Default (markdown link / image /
                              ;; file-link chrome): hand the URL to

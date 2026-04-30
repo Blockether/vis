@@ -180,7 +180,7 @@
     (let [clipboard (.getSystemClipboard (Toolkit/getDefaultToolkit))
           selection (StringSelection. text)]
       (.setContents clipboard selection nil))
-    (catch Exception _ nil)))
+    (catch Throwable _ nil)))
 
 ;;; ── Input buffer state ─────────────────────────────────────────────────────
 

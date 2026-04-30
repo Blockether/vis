@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          d8d6a0a1 [copy]
+       ✓ Copied!                 Conversation title          d8d6a0a1 📋
        (notification banner)     (or fallback placeholder)   (id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -18,9 +18,9 @@
      the row never looks broken on a fresh run.
    - RIGHT: short conversation id (first 8 chars of the UUID, the
      same convention `vis conversations` uses) + a clickable
-     `[copy]` affordance that drops the FULL UUID onto the system
+     📋 affordance that drops the FULL UUID onto the system
      clipboard. The click target covers the id label and the
-     `[copy]` text so the user has a forgiving target. Visual
+     📋 glyph so the user has a forgiving target. Visual
      feedback is the LEFT-slot `✓ Copied!` notification — same
      mechanism every other cross-channel signal flows through.
 
@@ -58,10 +58,10 @@
   "Untitled conversation")
 
 (def ^:private copy-affordance
-  "Plain-text affordance painted right of the short-id. ASCII-only
-   so it renders identically across every terminal font; no glyph
-   roulette."
-  "[copy]")
+  "Glyph painted right of the short-id. Clipboard emoji — widely
+   supported in modern terminal fonts and instantly recognisable
+   as a copy action."
+  "📋")
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -107,7 +107,7 @@
   (p/clear-styles! g))
 
 (defn- right-block-text
-  "Compose the right-side text: \"4b1ed602 [copy]\" when a conversation
+  "Compose the right-side text: \"4b1ed602 📋\" when a conversation
    id exists, otherwise empty. Single place that knows the layout
    so `draw-header!` can stay focused on placement math."
   [id-short]
@@ -128,7 +128,7 @@
    stays readable.
 
    Side effect: registers ONE click region for the right-block
-   covering both the id label AND the `[copy]` affordance, so the
+   covering both the id label AND the 📋 affordance, so the
    click target is forgiving. The screen mouse handler (in
    `screen.clj`) recognises `:kind :copy-id` and drops the FULL
    UUID onto the system clipboard, then pushes a host notification
@@ -140,7 +140,7 @@
         id-short     (short-id (:conversation db))
         full-uuid    (full-id  (:conversation db))
         right-text   (right-block-text id-short)
-        right-w      (count right-text)
+        right-w      (p/display-width right-text)
         right-col    (when (pos? right-w) (max 0 (- cols edge-pad right-w)))
         notif        (latest-notification)
         notif-text   (some-> notif :text)
@@ -204,17 +204,29 @@
       (p/clear-styles! g))
 
     ;; RIGHT — id + copy affordance + click region.
+    ;; Visual hover feedback: when the copy region is hovered the
+    ;; affordance brightens and gains BOLD so it's obvious it's
+    ;; clickable. Terminal emulators don't allow applications to
+    ;; control the mouse cursor shape, so this is the strongest
+    ;; affordance we can offer.
     (when (pos? right-w)
-      (p/clear-styles! g)
-      (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-      (p/put-str! g right-col content-row right-text)
-      (p/clear-styles! g)
-      (when full-uuid
-        (cr/register!
-          {:bounds   {:row content-row :col right-col :width right-w}
-           :kind     :copy-id
-           :text     full-uuid
-           :enabled? true})))
+      (let [hovered-region (cr/hovered)
+            copy-hovered?  (and hovered-region
+                             (= :copy-id (:kind hovered-region))
+                             (= content-row (get-in hovered-region [:bounds :row])))]
+        (p/clear-styles! g)
+        (if copy-hovered?
+          (do (p/set-colors! g t/footer-fg-strong t/terminal-bg)
+            (p/enable! g p/BOLD))
+          (p/set-colors! g t/footer-fg-muted t/terminal-bg))
+        (p/put-str! g right-col content-row right-text)
+        (p/clear-styles! g)
+        (when full-uuid
+          (cr/register!
+            {:bounds   {:row content-row :col right-col :width right-w}
+             :kind     :copy-id
+             :text     full-uuid
+             :enabled? true}))))
 
     (draw-rule! g bottom-row cols)
 
