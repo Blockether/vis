@@ -10,6 +10,8 @@
 ;; ─── from render_test.clj ───
 
 (def ^:private md->lines @#'render/markdown->lines)
+(def ^:private format-iteration-entry @#'render/format-iteration-entry)
+(def ^:private message->markdown @#'render/message->markdown)
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -116,6 +118,27 @@
         (expect (= [p/MARKER_MD_H1 p/MARKER_MD_H2 p/MARKER_MD_H3
                     p/MARKER_MD_H3 p/MARKER_MD_H3 p/MARKER_MD_H3]
                   (mapv marker-of lines)))))))
+
+(defdescribe iteration-live-ordering-test
+  (describe "ordered live progress events"
+    (it "renders reasoning / code / reasoning in event order"
+      (let [lines (format-iteration-entry
+                    {:thinking  "alpha\nbeta"
+                     :events    [{:type :thinking :thinking "alpha"}
+                                 {:type :form-result :form-idx 0}
+                                 {:type :thinking :thinking "\nbeta"}]
+                     :code      ["(+ 1 1)"]
+                     :comments  []
+                     :results   ["2"]
+                     :stdouts   []
+                     :stderrs   []
+                     :durations [1]
+                     :successes [true]
+                     :error     nil}
+                    60 1 {:show-header? true})
+            body  (str/join "\n" (map body-of lines))]
+        (expect (< (.indexOf body "alpha") (.indexOf body "(+ 1 1)")))
+        (expect (< (.indexOf body "(+ 1 1)") (.lastIndexOf body "beta")))))))
 
 (defdescribe markdown-headings-thinking-mode-test
   (describe "Thinking-mode headings use the thinking marker bundle"
@@ -1376,3 +1399,13 @@
         (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
                          (str/includes? % "No remaining source references"))
                   lines))))))
+
+(defdescribe message-copy-markdown-test
+  (it "copies explicit markdown when present"
+    (expect (= "**bold**" (message->markdown {:text "plain" :markdown "**bold**"}))))
+
+  (it "falls back to message text"
+    (expect (= "plain" (message->markdown {:text "plain"}))))
+
+  (it "uses an empty string for missing payloads"
+    (expect (= "" (message->markdown {})))))

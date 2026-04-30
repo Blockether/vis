@@ -42,6 +42,8 @@
 
      {:iteration N
       :thinking  str-or-nil
+      :events    [{:type :thinking :thinking str}
+                  {:type :form-result :form-idx int} ...]
       :code      [str ...]            ;; per-form, idx-aligned
       :results   [str-or-formatted-error ...]
       :stdouts   [str ...]
@@ -50,14 +52,20 @@
       :successes [bool ...]
       :error     nil-or-iteration-error
       :final     nil-or-{:answer :iteration-count :status}
-      :done?     bool}"
+      :done?     bool}
+
+   `:events` preserves the live stream order so channels can render
+   reasoning / code / reasoning / code instead of flattening all
+   thinking above all code."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.prompt :as prompt]))
 
 (defn- empty-iteration-entry [iteration]
   {:iteration iteration
    :thinking  nil
+   :events    []
    :code      []
    :comments  []
    :results   []
@@ -85,6 +93,41 @@
     (error/format-error (:error chunk))
     (prompt/safe-pr-str (:result chunk))))
 
+(defn- write-thinking-event [events prev-thinking new-thinking]
+  (let [events       (vec (or events []))
+        prev-text    (or prev-thinking "")
+        current-text (or new-thinking "")]
+    (cond
+      (str/blank? current-text)
+      events
+
+      (and (not (str/blank? prev-text))
+        (str/starts-with? current-text prev-text))
+      (let [delta (subs current-text (count prev-text))]
+        (if (str/blank? delta)
+          events
+          (if (= :thinking (:type (peek events)))
+            (update events (dec (count events)) update :thinking #(str (or % "") delta))
+            (conj events {:type :thinking :thinking delta}))))
+
+      (= :thinking (:type (peek events)))
+      (assoc events (dec (count events)) {:type :thinking :thinking current-text})
+
+      :else
+      (conj events {:type :thinking :thinking current-text}))))
+
+(defn- write-form-event [events form-idx]
+  (let [events (vec (or events []))
+        event  {:type :form-result :form-idx form-idx}
+        hit    (first (keep-indexed (fn [idx e]
+                                      (when (and (= :form-result (:type e))
+                                              (= form-idx (:form-idx e)))
+                                        idx))
+                        events))]
+    (if (some? hit)
+      (assoc events hit event)
+      (conj events event))))
+
 (defn- write-form-slot
   "Per-form chunks land at `:form-idx`. Pad parallel vectors with
    nils up to that index, then assoc the chunk's data. This
@@ -94,6 +137,7 @@
   (let [idx (:form-idx chunk)
         need (inc idx)]
     (-> entry
+      (update :events write-form-event idx)
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
       (update :results   #(assoc (pad-to % need) idx (format-form-result chunk)))
@@ -113,6 +157,14 @@
     (into (subvec v 0 idx) (subvec v (inc idx)))
     v))
 
+(defn- drop-form-events [events idx-set]
+  (if (seq idx-set)
+    (into []
+      (remove #(and (= :form-result (:type %))
+                 (contains? idx-set (:form-idx %))))
+      events)
+    events))
+
 (defn- elide-form-slots
   "Remove form slots at the given indices from every parallel vector
    in `entry`. Indices shift down, which is fine — the channel
@@ -131,7 +183,7 @@
         (update :stderrs   drop-slot idx)
         (update :durations drop-slot idx)
         (update :successes drop-slot idx)))
-    entry
+    (update entry :events drop-form-events idx-set)
     (sort > idx-set)))
 
 (defn- update-entry
@@ -141,7 +193,10 @@
   [entry chunk]
   (case (:phase chunk)
     :reasoning
-    (assoc entry :thinking (or (:thinking chunk) (:thinking entry)))
+    (let [next-thinking (or (:thinking chunk) (:thinking entry))]
+      (-> entry
+        (update :events write-thinking-event (:thinking entry) next-thinking)
+        (assoc :thinking next-thinking)))
 
     :form-result
     (write-form-slot entry chunk)

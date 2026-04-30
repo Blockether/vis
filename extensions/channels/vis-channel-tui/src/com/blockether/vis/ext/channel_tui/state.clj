@@ -108,26 +108,58 @@
 ;;  :dialog-open? false}         ;; dialog singleton guard
 ;;
 
+(defn- normalize-reasoning-level
+  "Canonical reasoning level for persisted TUI settings.
+
+   Accepts the native UI vocabulary (`:quick/:balanced/:deep`) plus the
+   low/medium/high aliases the shared query engine already accepts.
+   Unknown values fall back to `:balanced` so a hand-edited config never
+   wedges the TUI into an invalid state."
+  [v]
+  (case (cond
+          (keyword? v) v
+          (string? v)  (keyword (str/lower-case (str/trim v)))
+          :else        nil)
+    :low      :quick
+    :medium   :balanced
+    :high     :deep
+    :quick    :quick
+    :balanced :balanced
+    :deep     :deep
+    :balanced))
+
+(defn- normalize-settings
+  [settings]
+  (-> settings
+    (update :reasoning-level normalize-reasoning-level)
+    (update :show-thinking boolean)
+    (update :show-iterations boolean)
+    (update :show-timestamps boolean)))
+
 (def default-settings
-  "Per-user TUI display toggles. Persisted to `~/.vis/config.edn`
-   under `:tui-settings`. The keys come in two families:
+  "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
+   `:tui-settings`.
 
      show-thinking / show-iterations  — high-signal content controls.
          Default ON because new users want to SEE the agent reasoning;
          power users turn them off when they want a clean transcript.
 
-     show-timestamps — chrome control. Default OFF because timestamps
-         duplicate info already on screen. Users opt back in via
+     reasoning-level — base model thinking depth for reasoning-capable
+         models. Default `:balanced`; users can cycle it via
          Ctrl+K → Toggles.
+
+     show-timestamps — chrome control. Default OFF because timestamps
+         duplicate info already on screen.
 
    The previous `:show-iteration-headers` and `:show-final-answer-header`
    toggles were removed: the ITERATION N / CODE N / STDOUT / ERROR /
    FINAL ANSWER superscripts they controlled have been deleted from
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
-  {:show-thinking             true
-   :show-iterations           true
-   :show-timestamps           false})
+  {:show-thinking   true
+   :show-iterations true
+   :reasoning-level :balanced
+   :show-timestamps false})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over
@@ -137,8 +169,9 @@
   []
   (let [raw (try (vis/load-config-raw) (catch Throwable _ nil))
         saved (when (map? raw) (:tui-settings raw))]
-    (merge default-settings (when (map? saved)
-                              (select-keys saved (keys default-settings))))))
+    (normalize-settings
+      (merge default-settings (when (map? saved)
+                                (select-keys saved (keys default-settings)))))))
 
 (defn- persist-settings!
   "Write `settings` back into `~/.vis/config.edn` under
@@ -214,7 +247,7 @@
     ;; never happens. Drop them now so memory stays bounded across
     ;; many toggles.
     (render/invalidate-cache!)
-    (let [merged (merge (:settings db) new-settings)]
+    (let [merged (normalize-settings (merge (:settings db) new-settings))]
       (persist-settings! merged)
       (assoc db :settings merged))))
 
@@ -404,7 +437,8 @@
                :query-start-ms (System/currentTimeMillis)
                :input-history-index nil
                :input-history-draft nil))
-       :fx [[:rlm-query (:conversation db) expanded token]]})))
+       :fx [[:rlm-query (:conversation db) expanded token
+             (get-in db [:settings :reasoning-level])]]})))
 
 (reg-event-fx :cancel-query
   (fn [db _]
@@ -456,7 +490,7 @@
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
 (reg-fx :rlm-query
-  (fn [conversation text token]
+  (fn [conversation text token reasoning-level]
     (let [fut (future
                 (try
                   (let [{:keys [on-chunk]}
@@ -465,8 +499,9 @@
                                         (try (dispatch [:set-progress-iterations timeline])
                                           (catch Throwable _ nil)))})
                         result (chat/query! conversation text
-                                 {:on-chunk    on-chunk
-                                  :cancel-atom (vis/cancellation-atom token)})]
+                                 {:on-chunk          on-chunk
+                                  :cancel-atom       (vis/cancellation-atom token)
+                                  :reasoning-default reasoning-level})]
                     (if (:error result)
                       (dispatch [:message-received (vis/format-error (:error result))])
                       (dispatch [:message-received (:answer result)

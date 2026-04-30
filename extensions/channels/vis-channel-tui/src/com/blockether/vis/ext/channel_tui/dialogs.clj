@@ -468,88 +468,100 @@
 
 ;;; ── Settings dialog ─────────────────────────────────────────────────────────
 
+(def ^:private reasoning-choice-order
+  [:quick :balanced :deep])
+
+(defn- settings-option-label
+  [{:keys [key label type choices]} values]
+  (case type
+    :choice (str label ": " (name (or (get values key) (first choices))))
+    label))
+
+(defn- cycle-choice
+  [choices current]
+  (let [choices (vec choices)
+        idx     (.indexOf ^java.util.List choices current)]
+    (nth choices (mod (inc (if (neg? idx) 0 idx)) (count choices)))))
+
+(defn- apply-settings-option
+  [values {:keys [key type choices]}]
+  (case type
+    :choice (update values key #(cycle-choice choices %))
+    (update values key not)))
+
 (defn settings-dialog!
-  "Show a settings dialog with toggleable options as a 3-column table:
-   checkbox, label, description. The description column tells the
-   user what each toggle actually does — important because some of
-   them control subtle chrome (right-aligned superscripts) that
-   aren't obvious from the label alone.
+  "Show a settings dialog with configurable rows as a 3-column table:
+   state marker, label, description.
 
-   `settings` is a map of toggle keys to booleans (see
-   `state/default-settings`). Returns the updated settings map, or
-   nil on Esc.
+   Toggle rows render `[✓]` / `[ ]`. Choice rows render `[→]` and cycle
+   through their allowed values with Space or Enter.
 
-   The toggle list is the canonical user-controlled chrome surface.
-   Adding a new toggle here + adding the matching key+default in
-   `state/default-settings` is the only thing required to expose a
-   new on/off knob — persistence and merge are handled centrally."
+   `settings` is the persisted TUI settings map (see
+   `state/default-settings`). Esc closes the dialog and returns the
+   current settings map."
   [^TerminalScreen screen settings]
   (let [options [{:key :show-thinking
+                  :type :toggle
                   :label "Show thinking / reasoning"
                   :description "LLM's chain-of-thought reasoning above each iteration"}
                  {:key :show-iterations
+                  :type :toggle
                   :label "Show full execution trace"
                   :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
+                 {:key :reasoning-level
+                  :type :choice
+                  :choices reasoning-choice-order
+                  :label "Reasoning effort"
+                  :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}
                  {:key :show-timestamps
+                  :type :toggle
                   :label "Show per-message timestamps"
                   :description "Date+time next to every 'You' / 'Vis' label"}]
         n        (count options)
         selected (atom 0)
         values   (atom (or settings {}))
-        ;; Three-column layout:
-        ;;   col 1: \"[✓] \" or \"[ ] \"   (4 chars, fixed)
-        ;;   col 2: label text                (label-w, computed from longest label)
-        ;;   col 3: description text          (rest of inner-w, ellipsized if needed)
-        ;; Plus 2-col gap between label and description so the eye
-        ;; doesn't smudge the two columns together.
-        check-w  4   ;; \"[x] \"
+        check-w  4
         gap      "  "
-        gap-w    (count gap)
-        label-w  (apply max (map (comp count :label) options))]
+        gap-w    (count gap)]
     (loop []
-      (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols   (.getColumns size)
-            rows   (.getRows size)
-            g      (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Settings" n)
+      (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols    (.getColumns size)
+            rows    (.getRows size)
+            g       (.newTextGraphics screen)
+            bounds  (draw-dialog-chrome! g cols rows "Settings" n)
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds n)
-            ;; Pad description to fill remaining space; ellipsize if
-            ;; the dialog is narrower than the natural content width.
+            labels   (mapv #(settings-option-label % @values) options)
+            label-w  (apply max (map count labels))
             actual-desc-w (max 1 (- inner-w 2 check-w label-w gap-w))]
 
         (dotimes [i n]
-          (let [{:keys [key label description]} (nth options i)
-                row       (+ content-top i)
-                checked?  (get @values key true)
-                sel?      (= i @selected)
-                mark      (if checked? "✓" " ")
-                checkbox  (str "[" mark "] ")
-                label-pad (str label
-                            (apply str (repeat (max 0 (- label-w (count label))) \space)))
+          (let [{:keys [key type description]} (nth options i)
+                row        (+ content-top i)
+                label      (nth labels i)
+                selected?  (= i @selected)
+                state-mark (case type
+                             :choice "[→] "
+                             (if (get @values key true) "[✓] " "[ ] "))
+                label-pad  (str label
+                             (apply str (repeat (max 0 (- label-w (count label))) \space)))
                 desc-trunc (if (<= (count description) actual-desc-w)
                              description
                              (str (subs description 0 (max 0 (dec actual-desc-w))) "…"))]
             (when (< row (+ content-top content-h))
-              ;; Selected row uses inverted (title-bg) background; the
-              ;; description block stays muted on a normal row to make
-              ;; the label the dominant signal.
-              (if sel?
+              (if selected?
                 (do (p/set-colors! g t/dialog-bg t/dialog-title-bg)
                   (p/fill-rect! g (inc left) row inner-w 1)
                   (p/put-str! g (+ left 2) row
-                    (str checkbox label-pad gap desc-trunc)))
+                    (str state-mark label-pad gap desc-trunc)))
                 (do
-                  ;; Background fill (single color across the row).
                   (p/set-colors! g t/dialog-fg t/dialog-bg)
                   (p/fill-rect! g (inc left) row inner-w 1)
-                  ;; Checkbox + label in normal text color.
-                  (p/put-str! g (+ left 2) row (str checkbox label-pad))
-                  ;; Description in muted hint color.
+                  (p/put-str! g (+ left 2) row (str state-mark label-pad))
                   (p/set-colors! g t/dialog-hint t/dialog-bg)
                   (p/put-str! g (+ left 2 check-w label-w gap-w) row desc-trunc))))))
 
-        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Space" "toggle"] ["Esc" "done"]])
+        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Space/Enter" "toggle/cycle"] ["Esc" "done"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -569,14 +581,12 @@
               KeyType/Character
               (let [c (.getCharacter key)]
                 (if (= c \space)
-                  (let [k (:key (nth options @selected))]
-                    (swap! values update k not)
+                  (do (swap! values apply-settings-option (nth options @selected))
                     (recur))
                   (recur)))
 
               KeyType/Enter
-              (let [k (:key (nth options @selected))]
-                (swap! values update k not)
+              (do (swap! values apply-settings-option (nth options @selected))
                 (recur))
 
               (recur))))))))
