@@ -168,7 +168,8 @@
 
   (it "hr / br are constants"
     (expect (= "---" md/hr))
-    (expect (= "  "  md/br)))
+    (expect (= "  "  (str md/br)))
+    (expect (= "  "  (md/br))))
 
   (it "details wraps body"
     ;; Updated for the variadic-only API: a disclosure label is

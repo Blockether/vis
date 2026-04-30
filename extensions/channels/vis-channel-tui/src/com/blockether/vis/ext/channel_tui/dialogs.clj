@@ -314,8 +314,9 @@
   "Show a text input dialog. Returns string or nil on Esc.
    Options: :mask char (e.g. \\* for passwords), :initial string."
   [^TerminalScreen screen title label & {:keys [mask initial] :or {initial ""}}]
-  (let [text   (atom (vec initial))
-        cursor (atom (count initial))]
+  (let [text         (atom (vec initial))
+        cursor       (atom (count initial))
+        paste-buffer (volatile! nil)]
     (loop []
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
@@ -341,25 +342,59 @@
 
         (let [key (.readInput screen)]
           (when key
-            (condp = (.getKeyType key)
-              KeyType/Escape nil
-              KeyType/Enter  (apply str @text)
+            (cond
+              ;; ── Bracketed paste ──────────────────────────────
+              ;; Three-state machine matching the main input loop.
+              ;; START → open buffer; END → flush into text.
+              ;; Prevents PUA marker chars (\uE200, \uE201) from
+              ;; leaking into the dialog value — they break HTTP
+              ;; Authorization headers when pasted API keys carry
+              ;; them into the Bearer token.
+              (input/paste-start? key)
+              (do (vreset! paste-buffer (StringBuilder.))
+                  (recur))
 
-              KeyType/Character
-              (let [c (.getCharacter key)]
-                (swap! text #(into (subvec % 0 @cursor) (cons c (subvec % @cursor))))
-                (swap! cursor inc)
+              (input/paste-end? key)
+              (let [^StringBuilder sb @paste-buffer]
+                (when sb
+                  (let [payload (.toString sb)
+                        chars   (vec payload)]
+                    (vreset! paste-buffer nil)
+                    (when-not (.isEmpty payload)
+                      (swap! text
+                        (fn [t]
+                          (into (subvec t 0 @cursor)
+                            (concat chars (subvec t @cursor)))))
+                      (swap! cursor + (count chars)))))
                 (recur))
 
-              KeyType/Backspace
-              (do (when (pos? @cursor)
-                    (swap! text #(into (subvec % 0 (dec @cursor)) (subvec % @cursor)))
-                    (swap! cursor dec))
-                (recur))
+              ;; Accumulate chars into the paste buffer while open.
+              (some? @paste-buffer)
+              (do (when-let [ch (input/keystroke->paste-char key)]
+                    (.append ^StringBuilder @paste-buffer ch))
+                  (recur))
 
-              KeyType/ArrowLeft  (do (swap! cursor #(max 0 (dec %))) (recur))
-              KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc %))) (recur))
-              (recur))))))))
+              ;; ── Regular key dispatch ─────────────────────────
+              :else
+              (condp = (.getKeyType key)
+                KeyType/Escape nil
+                KeyType/Enter  (str/trim (apply str @text))
+
+                KeyType/Character
+                (let [c (.getCharacter key)]
+                  (swap! text #(into (subvec % 0 @cursor) (cons c (subvec % @cursor))))
+                  (swap! cursor inc)
+                  (recur))
+
+                KeyType/Backspace
+                (do (when (pos? @cursor)
+                      (swap! text #(into (subvec % 0 (dec @cursor)) (subvec % @cursor)))
+                      (swap! cursor dec))
+                  (recur))
+
+                KeyType/ArrowLeft  (do (swap! cursor #(max 0 (dec %))) (recur))
+                KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc %))) (recur))
+                (recur)))))))))
 
 ;;; ── Confirm dialog ──────────────────────────────────────────────────────────
 
