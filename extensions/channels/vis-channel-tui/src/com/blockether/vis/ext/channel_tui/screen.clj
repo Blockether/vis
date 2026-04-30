@@ -12,7 +12,8 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg])
   (:import [com.googlecode.lanterna TerminalPosition]
-           [com.googlecode.lanterna.input MouseAction MouseActionType]
+           [com.googlecode.lanterna.input KeyStroke KeyType
+            MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
@@ -534,7 +535,23 @@
          ;; Wheel scroll, keyboard PageUp/PageDown and arrows remain
          ;; the supported ways to move the viewport without grabbing
          ;; the thumb.
-         (let [scrollbar-drag-offset (volatile! nil)]
+         ;; Bracketed-paste mode is opt-in per terminal. Send the
+         ;; `ESC[?2004h` enable sequence right after the screen is
+         ;; up so xterm-class terminals (Apple Terminal, iTerm,
+         ;; Alacritty, kitty, gnome-terminal, mintty, vscode) wrap
+         ;; subsequent pastes in `ESC[200~ … ESC[201~`. Disabling
+         ;; happens in the outer `finally` block, so a crashed TUI
+         ;; can't leave the user's shell stuck with bracketing on.
+         (input/enable-bracketed-paste! @vis/tty-out)
+         (let [scrollbar-drag-offset (volatile! nil)
+               ;; `paste-buffer` accumulates every keystroke received
+               ;; between `paste-start?` and `paste-end?`. We treat
+               ;; the whole block as one paste — newlines included —
+               ;; so a multi-line clipboard payload doesn't fire
+               ;; `KeyType/Enter` -> send mid-paste. The buffer is
+               ;; kept in a StringBuilder so accumulation stays
+               ;; allocation-cheap even for kilobyte pastes.
+               paste-buffer          (volatile! nil)]
            (loop []
            ;; Layout fields are populated by the render thread after
            ;; the first paint. Until then, scroll handlers fall back
@@ -550,6 +567,61 @@
                    key     (.pollInput screen)]
                (cond
                  (nil? key) (do (Thread/sleep 16) (recur))
+
+               ;; ── Bracketed paste ───────────────────────────────────────────────────
+               ;; Three-state machine sitting BEFORE the regular
+               ;; key dispatch:
+               ;;
+               ;;   START arrives  -> open a new StringBuilder,
+               ;;                     swallow the key.
+               ;;   any key while open -> append its char into the
+               ;;                     buffer, swallow.
+               ;;   END arrives    -> flush the buffered text into
+               ;;                     the input via `paste-text`,
+               ;;                     close the buffer.
+               ;;
+               ;; While buffering, mouse events still go through the
+               ;; normal path above (mouse can't appear mid-paste in
+               ;; practice, but the pattern is safer than blocking).
+                 (input/paste-start? key)
+                 (do (vreset! paste-buffer (StringBuilder.))
+                   (recur))
+
+                 (input/paste-end? key)
+                 (let [^StringBuilder sb @paste-buffer]
+                   (when sb
+                     (let [text (.toString sb)]
+                       (vreset! paste-buffer nil)
+                       (when-not (.isEmpty text)
+                         (if (input/use-placeholder? text)
+                           ;; Pi-style: stash the payload, insert a
+                           ;; one-line `[Pasted #N: …]` placeholder.
+                           ;; The send path expands every active
+                           ;; placeholder back into its content via
+                           ;; `expand-paste-placeholders`. Reading
+                           ;; the new id back out of the atom right
+                           ;; after the dispatch is safe: every db
+                           ;; event handler runs on the dispatching
+                           ;; thread, so the swap is already visible.
+                           (do (state/dispatch [:add-paste text])
+                             (let [{:keys [paste-counter pastes]} @state/app-db
+                                   entry  (get pastes paste-counter)
+                                   token  (input/format-paste-placeholder entry)
+                                   db'    @state/app-db]
+                               (state/dispatch
+                                 [:update-input
+                                  (input/paste-text (:input db') token)])))
+                           ;; Short single-line paste: inline,
+                           ;; matches the natural feel of
+                           ;; `git rev-parse HEAD`-style copies.
+                           (state/dispatch
+                             [:update-input (input/paste-text (:input db) text)])))))
+                   (recur))
+
+                 (some? @paste-buffer)
+                 (do (when-let [ch (input/keystroke->paste-char key)]
+                       (.append ^StringBuilder @paste-buffer ^String ch))
+                   (recur))
 
                ;; Mouse events: scrollbar grab/drag + wheel scroll.
                ;; Bypass `input/handle-key` entirely — those events
@@ -680,6 +752,25 @@
                      ;; lossy on long conversations.
                      :else (recur)))
 
+                 ;; Pi-style placeholder smart-delete: a single
+                 ;; Backspace right after the closing `]` of a
+                 ;; `[Pasted #N: …]` token nukes the WHOLE token in
+                 ;; one keystroke, and drops the matching entry from
+                 ;; `:pastes` so memory tracks what the user can
+                 ;; still see in their input. Without this, the user
+                 ;; would have to mash Backspace 27+ times to remove
+                 ;; one placeholder — the visual unit-of-edit is the
+                 ;; whole token, not its individual characters.
+                 (and (instance? KeyStroke key)
+                   (= KeyType/Backspace (.getKeyType ^KeyStroke key))
+                   (input/placeholder-id-before-cursor (:input db)))
+                 (let [paste-id (input/placeholder-id-before-cursor (:input db))]
+                   (state/dispatch
+                     [:update-input (input/delete-placeholder-backward (:input db))])
+                   (when paste-id
+                     (state/dispatch [:remove-paste paste-id]))
+                   (recur))
+
                  :else
                  (let [{:keys [action state]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
@@ -798,6 +889,12 @@
 
                        :continue (recur))))))))
          (finally
+        ;; Tell the terminal to stop wrapping pastes. Always before
+        ;; tear-down so a crash leaves the user's shell in a clean
+        ;; state — a half-disabled bracketed-paste mode would make
+        ;; every subsequent shell paste arrive with stray
+        ;; `ESC[200~`/`ESC[201~` literals.
+           (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
         ;; Drop the notifications watcher so the next TUI session
         ;; doesn't accumulate stale hooks (the screen is short-lived
         ;; relative to the JVM — leaving stale watchers around would

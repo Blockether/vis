@@ -44,7 +44,7 @@
 
 (def ^:private default-grep-limit 200)
 (def ^:private default-read-char-limit 6000)
-(def ^:private default-list-depth 2)
+(def ^:private default-list-depth 5)
 
 ;; =============================================================================
 ;; Path safety
