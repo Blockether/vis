@@ -49,6 +49,7 @@
      :ext/doc       "Foundation extension. ONE alias (`vis/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg / edit / write), and environment awareness (snapshot / git / languages / monorepo). Owns the `<environment>` block in the system prompt."
      :ext/version   "0.7.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.vis :alias 'vis}
      :ext/group     "foundation"

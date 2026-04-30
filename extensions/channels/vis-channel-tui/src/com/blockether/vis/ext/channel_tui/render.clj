@@ -275,19 +275,9 @@
    (rule + pad + line + pad + rule) when three is the right minimum."
   0)
 (def ^:private input-pad-x
-  "Internal horizontal padding (cols left/right of text). Set to 0:
-   text + cursor sit flush against the column-0 edge of the terminal
-   so the typing zone uses the full width and the eye tracks the
-   prompt straight from the left margin.
+  "Horizontal padding (cols left/right of text inside the input box)."
 
-   The earlier value (3) left typed text one column further in than
-   the input box's top/bottom rules (which are inset by
-   `INPUT_BORDER_HORIZONTAL_PAD` = 2). The visual gap read as
-   asymmetric chrome — 'why is the text indented past where the
-   rule starts?'. Zeroing the pad puts text at col 0; rules stay
-   inset by 2 (purely cosmetic underline / overline that doesn't
-   fight the typing zone for horizontal real estate)."
-  0)
+  2)
 
 (defn input-text-w
   "Visible text width (in columns) inside the input box for a given
@@ -1511,6 +1501,12 @@
    Empty spans (`****`, `__`, `~~~~`) and orphan openers fall through
    as literal text — also matches GitHub behaviour for the same input.
 
+   Link and image markup (`[text](url)`, `![alt](url)`) is stripped
+   in a pre-pass BEFORE tokenisation: only the anchor text survives
+   into the sentinel stream. The clickable affordance lives in the
+   link-chrome strip painted below the prose, so duplicating the URL
+   inline would show the same information twice.
+
    What this is NOT: a full CommonMark parser. We DO honour CommonMark's
    intra-word underscore rule (`VAR_NAME_HERE` is left alone — `_` /
    `__` cannot open when preceded by a word char, cannot close when
@@ -1524,7 +1520,12 @@
   ^String [^String s]
   (if (or (nil? s) (zero? (.length s)))
     (or s "")
-    (let [n  (.length s)
+    (let [s (-> s
+                (str/replace
+                  #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
+                  (fn [[_ image? text]]
+                    (if image? "" text))))
+          n  (.length s)
           sb (StringBuilder.)
           ;; Each token entry: [opener, closer, ON-sentinel, OFF-sentinel,
           ;;                    recurse-into-content?].

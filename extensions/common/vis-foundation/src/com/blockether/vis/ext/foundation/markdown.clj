@@ -571,6 +571,7 @@
      :ext/doc       "Markdown under SCI alias `md/`. Headings, inline emphasis, lists, tables, code blocks, joiners. Pure string builders for the (answer …) argument."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.md :alias 'md}
      :ext/group     "foundation"

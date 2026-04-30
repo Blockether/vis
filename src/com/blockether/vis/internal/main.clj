@@ -123,15 +123,45 @@
 
 ;;; ── Extension introspection ─────────────────────────────────────────────
 
+(def ^:private ^String ext-ns-prefix "com.blockether.vis.ext.")
+
+(defn- short-ext-ns
+  "Render an extension namespace symbol with the `v/` prefix instead of
+   the canonical `com.blockether.vis.ext.` package, so the table column
+   stays narrow:
+
+     com.blockether.vis.ext.foundation.core      → v/foundation.core
+     com.blockether.vis.ext.provider-github-copilot → v/provider-github-copilot
+
+   Anything that doesn't start with the canonical prefix is returned
+   unchanged."
+  [ns-sym]
+  (let [s (str ns-sym)]
+    (if (str/starts-with? s ext-ns-prefix)
+      (str "v/" (subs s (count ext-ns-prefix)))
+      s)))
+
 (defn list-extensions
-  "Return all registered extensions with their metadata (table rows)."
+  "Return all registered extensions with their metadata (table rows).
+
+   `:namespace` is shortened with the `v/` prefix (see
+   `short-ext-ns`). `:subgroup` carries the provider label when the
+   extension contributes one or more LLM providers — it's blank for
+   everything else. `:group` carries the categorical bucket
+   (`providers`, `channels`, `foundation`, …) used to render the table
+   in grouped sections."
   []
   (mapv (fn [e]
-          {:namespace (str (:ext/namespace e))
-           :doc       (:ext/doc e)
-           :group     (:ext/group e)
-           :version   (or (:ext/version e) "—")
-           :cli-cmds  (str/join ", " (map :cmd/name (or (:ext/cli e) [])))})
+          (let [provider-labels (->> (:ext/providers e)
+                                  (keep :provider/label)
+                                  (str/join ", "))]
+            {:namespace (short-ext-ns (:ext/namespace e))
+             :doc       (:ext/doc e)
+             :group     (or (:ext/group e) "uncategorized")
+             :subgroup  provider-labels
+             :owner     (or (:ext/owner e) "—")
+             :version   (or (:ext/version e) "—")
+             :cli-cmds  (str/join ", " (map :cmd/name (or (:ext/cli e) [])))}))
     (extension/registered-extensions)))
 
 (defn find-extension-cmd
@@ -417,21 +447,51 @@
   (.println ^java.io.PrintStream config/original-stdout s)
   (.flush ^java.io.PrintStream config/original-stdout))
 
-(defn- truncate-str [s max-len]
+(defn- wrap-str
+  "Word-wrap `s` into a vector of lines, each ≤ `width` chars. Splits on
+   whitespace; tokens longer than `width` are hard-broken so a single
+   long URL or symbol can't blow the column out."
+  [s width]
   (let [s (str s)]
-    (if (> (count s) max-len)
-      (str (subs s 0 (- max-len 1)) "…")
-      s)))
+    (cond
+      (str/blank? s)            [""]
+      (<= (count s) width)      [s]
+      :else
+      (let [tokens (str/split s #"\s+")]
+        (loop [tokens tokens
+               line   ""
+               lines  []]
+          (if-let [tok (first tokens)]
+            (cond
+              ;; token longer than the column → hard-split it
+              (> (count tok) width)
+              (let [head (subs tok 0 width)
+                    tail (subs tok width)
+                    lines' (cond-> lines (seq line) (conj line))]
+                (recur (cons tail (rest tokens)) head lines'))
+
+              ;; fits on the current line
+              (or (str/blank? line)
+                (<= (+ (count line) 1 (count tok)) width))
+              (recur (rest tokens)
+                (if (str/blank? line) tok (str line " " tok))
+                lines)
+
+              ;; doesn't fit → push current line, start a new one
+              :else
+              (recur (rest tokens) tok (conj lines line)))
+            (cond-> lines (seq line) (conj line))))))))
 
 (defn- print-table!
   "Print a formatted table to stdout!.
-   `cols` is `[{:key :k :label \"L\" :width N :align :left|:right}]`."
+   `cols` is `[{:key :k :label \"L\" :width N :align :left|:right}]`.
+   Cells are word-wrapped (not truncated) so long descriptions stay
+   visible across multiple physical lines."
   [cols rows]
-  (let [pad   (fn [v {:keys [width align]}]
-                (let [s (truncate-str (str v) width)]
-                  (if (= align :right)
-                    (commandline/pad-left s width)
-                    (commandline/pad-right s width))))
+  (let [align-line (fn [s {:keys [width align]}]
+                     (if (= align :right)
+                       (commandline/pad-left s width)
+                       (commandline/pad-right s width)))
         sep    (str "─" (str/join "─┼─"
                           (map #(apply str (repeat (:width %) \─)) cols)) "─")
         header (str " " (str/join " │ "
@@ -439,8 +499,29 @@
     (stdout! header)
     (stdout! sep)
     (doseq [row rows]
-      (stdout! (str " " (str/join " │ "
-                          (map #(pad (get row (:key %)) %) cols)) " ")))))
+      (let [wrapped   (mapv (fn [c]
+                              (wrap-str (get row (:key c)) (:width c)))
+                        cols)
+            row-lines (apply max 1 (map count wrapped))]
+        (dotimes [i row-lines]
+          (stdout!
+            (str " "
+              (str/join " │ "
+                (map (fn [lines col]
+                       (align-line (or (nth lines i nil) "") col))
+                  wrapped cols))
+              " ")))))))
+
+(defn- print-section-heading!
+  "Render a section heading line for a grouped table — used when
+   `vis extensions list` breaks the rows into per-`:ext/group`
+   sub-tables. `width` is the total visible width of the surrounding
+   table so the rule under the label spans the same column run."
+  [label width]
+  (let [label-str (str " " label " ")
+        rule-len  (max 4 (- width (count label-str) 2))]
+    (stdout! "")
+    (stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
 
 ;;; ── `vis run` — handler + bespoke arg parser ────────────────────────────
 
@@ -681,19 +762,35 @@
 
 ;;; ── `vis extensions` ────────────────────────────────────────────────────
 
+(def ^:private extensions-table-cols
+  [{:key :namespace :label "Namespace"   :width 28 :align :left}
+   {:key :subgroup  :label "Subgroup"    :width 18 :align :left}
+   {:key :owner     :label "Owner"       :width  8 :align :left}
+   {:key :doc       :label "Description" :width 36 :align :left}
+   {:key :version   :label "Version"     :width 10 :align :left}
+   {:key :cli-cmds  :label "CLI"         :width 16 :align :left}])
+
+(defn- extensions-table-width
+  "Visible width of the rendered table (sum of column widths +
+   separators + leading/trailing pad), used to size group-section
+   rules so they line up with the header rule."
+  [cols]
+  (+ 2                                                  ; outer pads
+    (reduce + (map :width cols))
+    (* 3 (dec (count cols)))))                          ; " │ " between cols
+
 (defn- cli-extensions! [_parsed _residual]
   (config/init-cli!)
-  (let [exts (list-extensions)]
+  (let [exts  (list-extensions)
+        cols  extensions-table-cols
+        width (extensions-table-width cols)]
     (if (empty? exts)
       (stdout! "No extensions registered.")
       (do (stdout! "\n  Extensions\n")
-        (print-table!
-          [{:key :namespace :label "Namespace"   :width 24 :align :left}
-           {:key :doc       :label "Description" :width 40 :align :left}
-           {:key :group     :label "Group"       :width 14 :align :left}
-           {:key :version   :label "Version"     :width 10 :align :left}
-           {:key :cli-cmds  :label "CLI"         :width 20 :align :left}]
-          exts)
+        (doseq [[group rows] (sort-by key (group-by :group exts))]
+          (print-section-heading! group width)
+          (print-table! cols
+            (sort-by (juxt :subgroup :namespace) rows)))
         (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 

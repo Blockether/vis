@@ -853,6 +853,7 @@
      :ext/doc       "Lanterna-based terminal UI channel."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/channels  [{:channel/id        :tui
                       :channel/cmd       "tui"

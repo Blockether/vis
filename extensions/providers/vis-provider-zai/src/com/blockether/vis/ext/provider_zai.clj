@@ -296,5 +296,6 @@
      :ext/doc       "Z.ai (ZhipuAI) static-API-key provider — covers both the coding-plan and pay-as-you-go endpoints in one extension."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/providers (mapv provider-entry (keys PLANS))}))

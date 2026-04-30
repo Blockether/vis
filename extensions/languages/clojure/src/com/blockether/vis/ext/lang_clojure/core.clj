@@ -60,6 +60,7 @@
      :ext/doc       "Clojure structured editing under the `z/` alias: z/zedit entry + the full rewrite-clj.zip API."
      :ext/version   "0.6.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/group     "languages"
