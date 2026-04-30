@@ -11,7 +11,8 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
-            [com.blockether.vis.ext.channel-tui.dialogs :as dlg])
+            [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType
             MouseAction MouseActionType]
@@ -533,7 +534,29 @@
          ;; happens in the outer `finally` block, so a crashed TUI
          ;; can't leave the user's shell stuck with bracketing on.
          (input/enable-bracketed-paste! @vis/tty-out)
+         ;; SGR mouse mode (1006). Lanterna's `setMouseCaptureMode`
+         ;; above already enabled legacy 1003, but its parser only
+         ;; understands the X10 binary encoding — which corrupts
+         ;; coordinates the moment `col + 32` exceeds 0x7F (i.e.
+         ;; col >= 96), because the JVM UTF-8 decoder replaces the
+         ;; high byte with U+FFFD. SGR sends the same payload as
+         ;; pure ASCII text, so wide terminals (the copy-id glyph
+         ;; lives near the right edge!) survive intact. The custom
+         ;; pattern registered above turns SGR sequences into
+         ;; `MouseAction` instances with correct integer mx/my.
+         (input/enable-sgr-mouse! @vis/tty-out)
          (let [scrollbar-drag-offset (volatile! nil)
+               ;; `click-action-fired?` is set to true when the
+               ;; CLICK_DOWN branch already handled a click region
+               ;; (copy / link / image). The CLICK_RELEASE branch
+               ;; reads it to decide whether to fire the fallback
+               ;; release-only path — needed for terminals that
+               ;; deliver clicks as a single CLICK_RELEASE event
+               ;; (X10-style mouse mode, some SSH-tunnelled
+               ;; setups). Without this guard a normal
+               ;; DOWN+RELEASE pair would double-fire (open the
+               ;; link twice, copy twice).
+               click-action-fired?   (volatile! false)
                ;; `paste-buffer` accumulates every keystroke received
                ;; between `paste-start?` and `paste-end?`. We treat
                ;; the whole block as one paste — newlines included —
@@ -570,9 +593,13 @@
                ;;                     the input via `paste-text`,
                ;;                     close the buffer.
                ;;
-               ;; While buffering, mouse events still go through the
-               ;; normal path above (mouse can't appear mid-paste in
-               ;; practice, but the pattern is safer than blocking).
+               ;; Mouse events are excluded from the paste
+               ;; state machine below — they take a separate cond
+               ;; branch that fires BEFORE this one (see the
+               ;; `(instance? MouseAction key)` clause). A stuck
+               ;; paste buffer therefore can't silently swallow
+               ;; clicks on the header copy affordance or the
+               ;; scrollbar.
                  (input/paste-start? key)
                  (do (vreset! paste-buffer (StringBuilder.))
                    (recur))
@@ -608,21 +635,48 @@
                              [:update-input (input/paste-text (:input db) text)])))))
                    (recur))
 
-                 (some? @paste-buffer)
-                 (do (when-let [ch (input/keystroke->paste-char key)]
-                       (.append ^StringBuilder @paste-buffer ^String ch))
-                   (recur))
-
                ;; Mouse events: scrollbar grab/drag + wheel scroll.
                ;; Bypass `input/handle-key` entirely — those events
                ;; need access to the layout published by the render
-               ;; thread, which `handle-key` doesn't see.
+               ;; thread, which `handle-key` doesn't see. Placed
+               ;; BEFORE the paste-buffer clause so a stuck paste
+               ;; bracket can't silently swallow mouse events (mouse
+               ;; and paste are physically disjoint channels —
+               ;; nothing in this branch can mutate paste state).
                  (instance? MouseAction key)
                  (let [^MouseAction ma key
                        atype     (.getActionType ma)
                        pos       (.getPosition ma)
                        mx        (.getColumn pos)
                        my        (.getRow pos)
+                       _         (when-not (or (= atype MouseActionType/MOVE)
+                                             (= atype MouseActionType/DRAG))
+                                   ;; MOVE/DRAG fire dozens of times
+                                   ;; per second — logging them would
+                                   ;; flood the file. Every other
+                                   ;; mouse event (CLICK_DOWN,
+                                   ;; CLICK_RELEASE, SCROLL_UP/DOWN)
+                                   ;; is rare and worth recording so
+                                   ;; \"my click does nothing\" reports
+                                   ;; can be diagnosed against the
+                                   ;; log: `tail ~/.vis/vis.log` shows
+                                   ;; the cursor coords + hit-test
+                                   ;; result for every received event.
+                                   (try
+                                     (let [hit-kind (some-> (cr/lookup mx my) :kind)]
+                                       (tel/log!
+                                         {:level :info
+                                          :id    ::mouse-event
+                                          :data  {:type   (str atype)
+                                                  :mx     mx
+                                                  :my     my
+                                                  :cols   cols
+                                                  :hit    hit-kind}
+                                          :msg   (str "tui mouse " atype
+                                                   " at (" mx "," my ")"
+                                                   " cols=" cols
+                                                   " hit=" hit-kind)}))
+                                     (catch Throwable _ nil)))
                        bar-top   (+ messages-top render/MESSAGE_MARGIN_TOP)
                        ;; Single source of truth for thumb geometry
                        ;; lives in `render/scrollbar-thumb-geometry`,
@@ -706,8 +760,35 @@
                             bar-top inner-h total-h inner-h])
                        (recur))
 
+                     ;; CLICK_RELEASE — ends a drag, and serves as
+                     ;; a FALLBACK click trigger for terminals that
+                     ;; deliver clicks as a single CLICK_RELEASE
+                     ;; (X10 mouse mode, some SSH-tunnelled
+                     ;; sessions) instead of the standard
+                     ;; CLICK_DOWN/CLICK_RELEASE pair. The fallback
+                     ;; is gated on (a) no drag in progress, and
+                     ;; (b) the corresponding CLICK_DOWN didn't
+                     ;; already handle the same region — otherwise
+                     ;; a normal terminal would double-fire (copy
+                     ;; the id twice, open the link twice).
                      (= atype MouseActionType/CLICK_RELEASE)
-                     (do (vreset! scrollbar-drag-offset nil)
+                     (let [was-dragging?    (some? @scrollbar-drag-offset)
+                           already-handled? @click-action-fired?]
+                       (vreset! scrollbar-drag-offset nil)
+                       (vreset! click-action-fired? false)
+                       (when (and (not was-dragging?) (not already-handled?))
+                         (when-let [hit (cr/lookup mx my)]
+                           (case (:kind hit)
+                             :copy-id
+                             (let [text (:text hit)]
+                               (future
+                                 (try (input/clipboard-copy! text)
+                                   (catch Throwable _)))
+                               (vis/notify! "✓ Copied conversation ID"
+                                 :level :success :ttl-ms 1500))
+                             (future
+                               (try (opener/open! (:url hit))
+                                 (catch Throwable _ nil))))))
                        (recur))
 
                      ;; MOVE — hover. We want the chat link-chrome
@@ -732,6 +813,10 @@
                      ;; freeze the input loop's redraw cadence.
                      (= atype MouseActionType/CLICK_DOWN)
                      (do (when-let [hit (cr/lookup mx my)]
+                           ;; Tell the matching CLICK_RELEASE in
+                           ;; the same gesture pair to skip the
+                           ;; fallback fire — we just handled it.
+                           (vreset! click-action-fired? true)
                            (case (:kind hit)
                              ;; Header copy-id affordance: drop the
                              ;; FULL UUID onto the system clipboard,
@@ -761,13 +846,21 @@
                                  (catch Throwable _ nil)))))
                        (recur))
 
-                     ;; Every other click — track above/below the
-                     ;; thumb, the rest of the messages area, the
-                     ;; input box, headers, footers — is ignored.
-                     ;; No "click-on-track jumps the thumb here" page
-                     ;; behaviour; users found that surprising and
-                     ;; lossy on long conversations.
+                     ;; Every other click — inside the input box,
+                     ;; on the footer, etc. — falls through here.
+                     ;; The scrollbar branch above already covers
+                     ;; the right-gutter \"click on track to jump\";
+                     ;; this `:else` is effectively the no-op tail.
                      :else (recur)))
+
+               ;; Paste-buffer accumulator runs AFTER the mouse
+               ;; branch so a stuck paste bracket can't swallow
+               ;; clicks. The buffer only collects character-bearing
+               ;; KeyStrokes; a MouseAction would have matched above.
+                 (some? @paste-buffer)
+                 (do (when-let [ch (input/keystroke->paste-char key)]
+                       (.append ^StringBuilder @paste-buffer ^String ch))
+                   (recur))
 
                  ;; Pi-style placeholder smart-delete: a single
                  ;; Backspace right after the closing `]` of a
@@ -912,6 +1005,11 @@
         ;; every subsequent shell paste arrive with stray
         ;; `ESC[200~`/`ESC[201~` literals.
            (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
+        ;; Reverse the SGR mouse-mode enable from boot. Same
+        ;; rationale as the bracketed-paste disable above: a
+        ;; crashed TUI must not leave the user's shell receiving
+        ;; raw `ESC[<...M` sequences from every later mouse click.
+           (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
         ;; Drop the notifications watcher so the next TUI session
         ;; doesn't accumulate stale hooks (the screen is short-lived
         ;; relative to the JVM — leaving stale watchers around would

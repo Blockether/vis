@@ -502,6 +502,7 @@
 (def ^:private md-table-row-marker  p/MARKER_MD_TABLE_ROW)
 (def ^:private md-quote-marker      p/MARKER_MD_QUOTE)
 (def ^:private md-hr-marker         p/MARKER_MD_HR)
+(def ^:private md-summary-marker    p/MARKER_MD_SUMMARY)
 
 (def ^:private th-md-h1-marker         p/MARKER_TH_MD_H1)
 (def ^:private th-md-h2-marker         p/MARKER_TH_MD_H2)
@@ -514,6 +515,7 @@
 (def ^:private th-md-table-row-marker  p/MARKER_TH_MD_TABLE_ROW)
 (def ^:private th-md-quote-marker      p/MARKER_TH_MD_QUOTE)
 (def ^:private th-md-hr-marker         p/MARKER_TH_MD_HR)
+(def ^:private th-md-summary-marker    p/MARKER_TH_MD_SUMMARY)
 
 (def ^:private md-marker-sets
   "Per-mode marker bundle. Selected by `markdown->lines` mode arg.
@@ -524,11 +526,13 @@
               :bold md-bold-marker :code md-code-marker
               :bullet md-bullet-marker :quote md-quote-marker :hr md-hr-marker
               :thead md-table-head-marker :tsep md-table-sep-marker :trow md-table-row-marker
+              :summary md-summary-marker
               :plain ""}
    :thinking {:h1 th-md-h1-marker :h2 th-md-h2-marker :h3 th-md-h3-marker
               :bold th-md-bold-marker :code th-md-code-marker
               :bullet th-md-bullet-marker :quote th-md-quote-marker :hr th-md-hr-marker
               :thead th-md-table-head-marker :tsep th-md-table-sep-marker :trow th-md-table-row-marker
+              :summary th-md-summary-marker
               :plain thinking-marker}})
 
 (defn- warning-message? [text]
@@ -838,18 +842,18 @@
                 ;; Right-aligned labels in `format-iteration-entry` write at
                 ;; `x` and inherit `content-w`, so they still sit inset from
                 ;; the right edge by h-pad even though the bg fills past them.
-                x   (+ bx h-pad) y (+ btop i)
-                iw  bubble-w
-                fbx bx]
+                    x   (+ bx h-pad) y (+ btop i)
+                    iw  bubble-w
+                    fbx bx]
             ;; Pre-fill answer zone bg so ALL line types get it
-            (when in-answer?
-              (p/set-bg! g t/answer-bg)
-              (p/fill-rect! g fbx y iw 1))
-            (cond
+                (when in-answer?
+                  (p/set-bg! g t/answer-bg)
+                  (p/fill-rect! g fbx y iw 1))
+                (cond
               ;; ── Iteration header — right-aligned, subtle ──
-              (str/starts-with? line iteration-hdr-marker)
-              (do (p/set-colors! g t/iteration-header-fg bg-color)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line iteration-hdr-marker)
+                  (do (p/set-colors! g t/iteration-header-fg bg-color)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Thinking — dimmed bg, italic ──
               ;; Inline span sentinels (**bold** etc.) embedded in
@@ -858,102 +862,102 @@
               ;; SGR/BOLD per terminal SGR rules, so a bolded word
               ;; inside thinking renders as bold-italic, not as plain
               ;; bold (which would visually escape the thinking zone).
-              (str/starts-with? line thinking-marker)
-              (let [raw (subs line 1)]
-                (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/ITALIC]
-                  (p/paint-styled-line! g x y raw
-                    t/dialog-hint t/iteration-header-bg
-                    t/code-block-fg t/code-block-bg)))
+                  (str/starts-with? line thinking-marker)
+                  (let [raw (subs line 1)]
+                    (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/paint-styled-line! g x y raw
+                        t/dialog-hint t/iteration-header-bg
+                        t/code-block-fg t/code-block-bg)))
 
               ;; ── Code (success) — neutral code bg, green ✓ suffix ──
-              (str/starts-with? line code-ok-marker)
-              (let [raw (subs line 1)]
-                (p/set-colors! g t/code-block-fg t/code-block-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y raw)
-                (when-let [ci (str/index-of raw "✓")]
-                  (p/set-colors! g t/code-success-fg t/code-block-bg)
-                  (p/put-str! g (+ x ci) y (subs raw ci))))
+                  (str/starts-with? line code-ok-marker)
+                  (let [raw (subs line 1)]
+                    (p/set-colors! g t/code-block-fg t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y raw)
+                    (when-let [ci (str/index-of raw "✓")]
+                      (p/set-colors! g t/code-success-fg t/code-block-bg)
+                      (p/put-str! g (+ x ci) y (subs raw ci))))
 
               ;; ── Code (error) — light red bg, red ✗ suffix ──
-              (str/starts-with? line code-err-marker)
-              (let [raw (subs line 1)]
-                (p/set-colors! g t/code-block-fg t/code-err-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y raw)
-                (when-let [ci (str/index-of raw "✗")]
-                  (p/set-colors! g t/code-error-fg t/code-err-bg)
-                  (p/put-str! g (+ x ci) y (subs raw ci))))
+                  (str/starts-with? line code-err-marker)
+                  (let [raw (subs line 1)]
+                    (p/set-colors! g t/code-block-fg t/code-err-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y raw)
+                    (when-let [ci (str/index-of raw "✗")]
+                      (p/set-colors! g t/code-error-fg t/code-err-bg)
+                      (p/put-str! g (+ x ci) y (subs raw ci))))
 
               ;; ── Code (streaming, no status yet) — neutral gray bg ──
-              (str/starts-with? line code-marker)
-              (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line code-marker)
+                  (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Duration annotation ──
-              (str/starts-with? line duration-marker)
-              (do (p/set-colors! g t/code-duration-fg iteration-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line duration-marker)
+                  (do (p/set-colors! g t/code-duration-fg iteration-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Result (success) — dim on code bg ──
-              (str/starts-with? line result-marker)
-              (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line result-marker)
+                  (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Result (error) — red on light red bg ──
-              (str/starts-with? line err-result-marker)
-              (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line err-result-marker)
+                  (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Stdout text — distinct stdout bg, italic ──
-              (str/starts-with? line stdout-marker)
-              (do (p/set-colors! g t/stdout-fg t/stdout-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (str/starts-with? line stdout-marker)
+                  (do (p/set-colors! g t/stdout-fg t/stdout-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/put-str! g x y (subs line 1))))
 
               ;; ── Stdout separator (dashes) ──
-              (str/starts-with? line stdout-sep-marker)
-              (do (p/set-colors! g t/stdout-sep-fg t/stdout-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line stdout-sep-marker)
+                  (do (p/set-colors! g t/stdout-sep-fg t/stdout-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Stdout padding ──
-              (str/starts-with? line stdout-pad-marker)
-              (do (p/set-bg! g t/stdout-bg)
-                (p/fill-rect! g fbx y iw 1))
+                  (str/starts-with? line stdout-pad-marker)
+                  (do (p/set-bg! g t/stdout-bg)
+                    (p/fill-rect! g fbx y iw 1))
 
               ;; ── Code block padding (success) ──
-              (str/starts-with? line code-pad-marker)
-              (do (p/set-bg! g t/code-block-bg)
-                (p/fill-rect! g fbx y iw 1))
+                  (str/starts-with? line code-pad-marker)
+                  (do (p/set-bg! g t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1))
 
               ;; ── Code block padding (error) ──
-              (str/starts-with? line code-err-pad-marker)
-              (do (p/set-bg! g t/code-err-bg)
-                (p/fill-rect! g fbx y iw 1))
+                  (str/starts-with? line code-err-pad-marker)
+                  (do (p/set-bg! g t/code-err-bg)
+                    (p/fill-rect! g fbx y iw 1))
 
               ;; ── Iteration zone padding (margin between blocks) ──
-              (str/starts-with? line iteration-pad-marker)
-              (do (p/set-bg! g bg-color)
-                (p/fill-rect! g fbx y iw 1))
+                  (str/starts-with? line iteration-pad-marker)
+                  (do (p/set-bg! g bg-color)
+                    (p/fill-rect! g fbx y iw 1))
 
               ;; ── Answer separator — bold horizontal rule between iterations and answer ──
-              (str/starts-with? line answer-sep-marker)
-              (do (p/set-colors! g t/answer-sep-fg bg-color)
-                (p/styled g [p/BOLD]
-                  (p/put-str! g fbx y (repeat-str \u2500 iw))))
+                  (str/starts-with? line answer-sep-marker)
+                  (do (p/set-colors! g t/answer-sep-fg bg-color)
+                    (p/styled g [p/BOLD]
+                      (p/put-str! g fbx y (repeat-str \u2500 iw))))
 
               ;; ── Answer header — right-aligned superscript on bubble bg ──
-              (str/starts-with? line answer-hdr-marker)
-              (do (p/set-colors! g t/iteration-header-fg bg-color)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line answer-hdr-marker)
+                  (do (p/set-colors! g t/iteration-header-fg bg-color)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Answer-mode markdown headings (gold gradient) ──
               ;;
@@ -973,51 +977,68 @@
               ;; remain the BASE style; inline spans STACK on top
               ;; (e.g. `## **plain** *and italic*` keeps the gold +
               ;; bold base, plus italic on the second word).
-              (str/starts-with? line md-h1-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g t/md-h1-fg lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/md-h1-fg lbg t/code-block-fg t/code-block-bg)))
+                  (str/starts-with? line md-h1-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g t/md-h1-fg lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/md-h1-fg lbg t/code-block-fg t/code-block-bg)))
 
-              (str/starts-with? line md-h2-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g t/md-h2-fg lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/md-h2-fg lbg t/code-block-fg t/code-block-bg)))
+                  (str/starts-with? line md-h2-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g t/md-h2-fg lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/md-h2-fg lbg t/code-block-fg t/code-block-bg)))
 
-              (str/starts-with? line md-h3-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g t/md-h3-fg lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/md-h3-fg lbg t/code-block-fg t/code-block-bg)))
+                  (str/starts-with? line md-h3-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g t/md-h3-fg lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/md-h3-fg lbg t/code-block-fg t/code-block-bg)))
 
-              (str/starts-with? line md-bold-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g fg-color lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    fg-color lbg t/code-block-fg t/code-block-bg)))
+                  (str/starts-with? line md-bold-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g fg-color lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        fg-color lbg t/code-block-fg t/code-block-bg)))
 
-              (str/starts-with? line md-code-marker)
-              (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  ;; <summary> disclosure label — lavender band that
+                  ;; spans the full bubble inner-width. Bold + violet
+                  ;; foreground reads as a section heading; the bg
+                  ;; tint is unique among answer-zone tints (code is
+                  ;; blue-gray, warning is amber, answer is white) so
+                  ;; the user can locate disclosure regions at a
+                  ;; glance even with no click affordance. The fill
+                  ;; covers `iw` so the band extends to the bubble's
+                  ;; right edge, not just the text width.
+                  (str/starts-with? line md-summary-marker)
+                  (do (p/set-colors! g t/md-summary-fg t/md-summary-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/md-summary-fg t/md-summary-bg
+                        t/code-block-fg t/code-block-bg)))
+
+                  (str/starts-with? line md-code-marker)
+                  (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; Bullet items: same inline-span treatment as plain text.
               ;; `- **bold** thing` should bold the word.
-              (str/starts-with? line md-bullet-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g fg-color lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/paint-styled-line! g x y (subs line 1)
-                  fg-color lbg t/code-block-fg t/code-block-bg))
+                  (str/starts-with? line md-bullet-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g fg-color lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/paint-styled-line! g x y (subs line 1)
+                      fg-color lbg t/code-block-fg t/code-block-bg))
 
               ;; Blockquote: italic + dim base, inline spans honoured
               ;; on top. Was the user-visible bug — `> **Lącznie:**`
@@ -1025,19 +1046,19 @@
               ;; quote painter used raw put-str! and the quote branch
               ;; in markdown->lines didn't run markdown->inline. Both
               ;; halves now fixed; this is the painter half.
-              (str/starts-with? line md-quote-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g t/dialog-hint lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/dialog-hint lbg t/code-block-fg t/code-block-bg)))
+                  (str/starts-with? line md-quote-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g t/dialog-hint lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/dialog-hint lbg t/code-block-fg t/code-block-bg)))
 
-              (str/starts-with? line md-hr-marker)
-              (let [lbg (if in-answer? t/answer-bg bg-color)]
-                (p/set-colors! g t/answer-sep-fg lbg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line md-hr-marker)
+                  (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (p/set-colors! g t/answer-sep-fg lbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Markdown table (answer) ── grid blends into surrounding zone
               ;; Chrome (│┌─┐├┼┤└┴┘─) stays in muted `code-border-fg`,
@@ -1051,24 +1072,24 @@
               ;; complaint that triggered this: tables in the answer
               ;; zone used to break the answer's blue band with a
               ;; different gray, looking like an alien element.
-              (or (str/starts-with? line md-table-head-marker)
-                (str/starts-with? line md-table-sep-marker)
-                (str/starts-with? line md-table-row-marker))
-              (let [stripped (subs line 1)
-                    head?    (str/starts-with? line md-table-head-marker)
-                    border?  (str/starts-with? line md-table-sep-marker)
-                    tbg      (if in-answer? t/answer-bg t/code-block-bg)
-                    tfg      (if in-answer? t/answer-fg  t/code-block-fg)]
-                (p/clear-styles! g)
-                (p/set-colors! g t/code-border-fg tbg)
-                (p/fill-rect! g fbx y iw 1)
-                (if border?
+                  (or (str/starts-with? line md-table-head-marker)
+                    (str/starts-with? line md-table-sep-marker)
+                    (str/starts-with? line md-table-row-marker))
+                  (let [stripped (subs line 1)
+                        head?    (str/starts-with? line md-table-head-marker)
+                        border?  (str/starts-with? line md-table-sep-marker)
+                        tbg      (if in-answer? t/answer-bg t/code-block-bg)
+                        tfg      (if in-answer? t/answer-fg  t/code-block-fg)]
+                    (p/clear-styles! g)
+                    (p/set-colors! g t/code-border-fg tbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (if border?
                   ;; Pure box-drawing line — single muted paint.
-                  (p/put-str! g x y stripped)
+                      (p/put-str! g x y stripped)
                   ;; Header / body data row — dual-color split.
-                  (paint-table-data-line! g x y stripped
-                    tfg t/code-border-fg tbg
-                    (when head? [p/BOLD]))))
+                      (paint-table-data-line! g x y stripped
+                        tfg t/code-border-fg tbg
+                        (when head? [p/BOLD]))))
 
               ;; ── Thinking-mode markdown headings ── dim italic on iteration bg
               ;;
@@ -1083,67 +1104,82 @@
               ;; Fenced code (th-md-code-marker) is the one exception:
               ;; its body is intentionally NOT inline-tokenised, so a
               ;; raw put-str! is correct there.
-              (str/starts-with? line th-md-h1-marker)
-              (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/iteration-header-fg t/iteration-header-bg
-                    t/code-result-fg t/code-block-bg)))
+                  (str/starts-with? line th-md-h1-marker)
+                  (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/iteration-header-fg t/iteration-header-bg
+                        t/code-result-fg t/code-block-bg)))
 
-              (str/starts-with? line th-md-h2-marker)
-              (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/iteration-header-fg t/iteration-header-bg
-                    t/code-result-fg t/code-block-bg)))
+                  (str/starts-with? line th-md-h2-marker)
+                  (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/iteration-header-fg t/iteration-header-bg
+                        t/code-result-fg t/code-block-bg)))
 
-              (str/starts-with? line th-md-h3-marker)
-              (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/dialog-hint t/iteration-header-bg
-                    t/code-result-fg t/code-block-bg)))
+                  (str/starts-with? line th-md-h3-marker)
+                  (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/dialog-hint t/iteration-header-bg
+                        t/code-result-fg t/code-block-bg)))
 
-              (str/starts-with? line th-md-bold-marker)
-              (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/BOLD p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/dialog-hint t/iteration-header-bg
-                    t/code-result-fg t/code-block-bg)))
+                  (str/starts-with? line th-md-bold-marker)
+                  (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/dialog-hint t/iteration-header-bg
+                        t/code-result-fg t/code-block-bg)))
+
+                  ;; <summary> disclosure label inside the thinking
+                  ;; zone. Same lavender-family band as the answer
+                  ;; mode but darker / desaturated so it stays inside
+                  ;; the dim reasoning region instead of stealing the
+                  ;; eye like the answer-mode band would. Italic
+                  ;; matches every other thinking-mode marker so the
+                  ;; whole reasoning block reads as one cohesive zone.
+                  (str/starts-with? line th-md-summary-marker)
+                  (do (p/set-colors! g t/th-md-summary-fg t/th-md-summary-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/BOLD p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/th-md-summary-fg t/th-md-summary-bg
+                        t/code-result-fg t/code-block-bg)))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
               ;; No sentinels in code-block bodies (markdown->lines does
               ;; NOT recurse into fenced code), so a raw put-str! is fine.
-              (str/starts-with? line th-md-code-marker)
-              (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/ITALIC]
-                  (p/put-str! g x y (subs line 1))))
+                  (str/starts-with? line th-md-code-marker)
+                  (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/put-str! g x y (subs line 1))))
 
-              (str/starts-with? line th-md-bullet-marker)
-              (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/dialog-hint t/iteration-header-bg
-                    t/code-result-fg t/code-block-bg)))
+                  (str/starts-with? line th-md-bullet-marker)
+                  (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/dialog-hint t/iteration-header-bg
+                        t/code-result-fg t/code-block-bg)))
 
-              (str/starts-with? line th-md-quote-marker)
-              (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/styled g [p/ITALIC]
-                  (p/paint-styled-line! g x y (subs line 1)
-                    t/dialog-hint t/iteration-header-bg
-                    t/code-result-fg t/code-block-bg)))
+                  (str/starts-with? line th-md-quote-marker)
+                  (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/dialog-hint t/iteration-header-bg
+                        t/code-result-fg t/code-block-bg)))
 
-              (str/starts-with? line th-md-hr-marker)
-              (do (p/set-colors! g t/answer-sep-fg t/iteration-header-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line th-md-hr-marker)
+                  (do (p/set-colors! g t/answer-sep-fg t/iteration-header-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Markdown table (thinking) ── grid blends into thinking zone
               ;; Same dual-color treatment as the answer-mode table,
@@ -1154,71 +1190,71 @@
               ;; `iteration-header-bg` so the table merges into the
               ;; surrounding thinking block instead of breaking it
               ;; with a different shade.
-              (or (str/starts-with? line th-md-table-head-marker)
-                (str/starts-with? line th-md-table-sep-marker)
-                (str/starts-with? line th-md-table-row-marker))
-              (let [stripped (subs line 1)
-                    head?    (str/starts-with? line th-md-table-head-marker)
-                    border?  (str/starts-with? line th-md-table-sep-marker)
-                    tbg      t/iteration-header-bg]
-                (p/clear-styles! g)
-                (p/set-colors! g t/code-border-fg tbg)
-                (p/fill-rect! g fbx y iw 1)
-                (if border?
-                  (p/put-str! g x y stripped)
-                  (paint-table-data-line! g x y stripped
-                    t/code-result-fg t/code-border-fg tbg
-                    (cond
-                      head? [p/BOLD p/ITALIC]
-                      :else [p/ITALIC]))))
+                  (or (str/starts-with? line th-md-table-head-marker)
+                    (str/starts-with? line th-md-table-sep-marker)
+                    (str/starts-with? line th-md-table-row-marker))
+                  (let [stripped (subs line 1)
+                        head?    (str/starts-with? line th-md-table-head-marker)
+                        border?  (str/starts-with? line th-md-table-sep-marker)
+                        tbg      t/iteration-header-bg]
+                    (p/clear-styles! g)
+                    (p/set-colors! g t/code-border-fg tbg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (if border?
+                      (p/put-str! g x y stripped)
+                      (paint-table-data-line! g x y stripped
+                        t/code-result-fg t/code-border-fg tbg
+                        (cond
+                          head? [p/BOLD p/ITALIC]
+                          :else [p/ITALIC]))))
 
               ;; ── Legacy separator — dim ──
-              (str/starts-with? line sep-marker)
-              (do (p/set-colors! g t/dialog-hint bg-color)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line sep-marker)
+                  (do (p/set-colors! g t/dialog-hint bg-color)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Answer text — answer bg ──
-              (str/starts-with? line answer-txt-marker)
-              (do (p/set-colors! g t/answer-fg t/answer-bg)
-                (p/fill-rect! g fbx y iw 1)
-                (p/put-str! g x y (subs line 1)))
+                  (str/starts-with? line answer-txt-marker)
+                  (do (p/set-colors! g t/answer-fg t/answer-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/put-str! g x y (subs line 1)))
 
               ;; ── Answer padding ──
-              (str/starts-with? line answer-pad-marker)
-              (do (p/set-bg! g t/answer-bg)
-                (p/fill-rect! g fbx y iw 1))
+                  (str/starts-with? line answer-pad-marker)
+                  (do (p/set-bg! g t/answer-bg)
+                    (p/fill-rect! g fbx y iw 1))
 
               ;; ── Plain text — answer bg if in answer zone, else bubble bg ──
               ;; Cancelled status messages render in muted italic on
               ;; terminal bg (no fill) so the line reads as a system
               ;; note, not as something the model said.
-              :else
+                  :else
               ;; Cancelled bubbles never enter the answer zone — the
               ;; status footer ("Cancelled by user.") renders flat on
               ;; terminal-bg, no answer-bg fill underneath, even if a
               ;; structural answer marker sits earlier in the trailer.
-              (let [in-answer-zone? (and in-answer? (not cancelled?))
-                    line-bg (if in-answer-zone? t/answer-bg bg-color)
-                    line-fg (if in-answer-zone? t/answer-fg fg-color)]
-                (when in-answer-zone?
-                  (p/set-bg! g line-bg)
-                  (p/fill-rect! g fbx y iw 1))
-                (p/set-colors! g line-fg line-bg)
-                (if cancelled?
+                  (let [in-answer-zone? (and in-answer? (not cancelled?))
+                        line-bg (if in-answer-zone? t/answer-bg bg-color)
+                        line-fg (if in-answer-zone? t/answer-fg fg-color)]
+                    (when in-answer-zone?
+                      (p/set-bg! g line-bg)
+                      (p/fill-rect! g fbx y iw 1))
+                    (p/set-colors! g line-fg line-bg)
+                    (if cancelled?
                   ;; Cancelled / system status messages: render as a
                   ;; muted italic block. Inline markdown spans are
                   ;; intentionally NOT honoured here — a system note
                   ;; saying "Cancelled by user" should stay flat,
                   ;; never bold.
-                  (p/styled g [p/ITALIC] (p/put-str! g x y line))
+                      (p/styled g [p/ITALIC] (p/put-str! g x y line))
                   ;; Plain assistant prose: walk the line, switch SGR
                   ;; on each inline sentinel pair. paint-styled-line!
                   ;; falls back to a single put-str! when no sentinels
                   ;; are present, so this is free for ASCII-only text.
-                  (p/paint-styled-line! g x y line
-                    line-fg line-bg
-                    t/code-block-fg t/code-block-bg)))))
-            (recur (inc i))))))
+                      (p/paint-styled-line! g x y line
+                        line-fg line-bg
+                        t/code-block-fg t/code-block-bg)))))
+              (recur (inc i))))))
 
       ;; Below-content link-chrome strip.
       ;;
@@ -2542,14 +2578,22 @@
                (re-matches #"^\s*</?details(\s[^>]*)?>\s*$" line)
                (recur rst false acc)
 
-               ;; <summary>label</summary> on its own line —
-               ;; the disclosure heading inside a <details> block.
-               ;; Painted with the `:bold` marker (same style real
-               ;; bold lines get) and prefixed with a `▾` triangle
-               ;; so the user reads it as an expanded disclosure
-               ;; section. Inner content runs through
-               ;; `markdown->inline` so `<summary>**Logs**</summary>`
-               ;; keeps the inner bold + ` `code` ` etc.
+               ;; <summary>label</summary> on its own line — the
+               ;; disclosure heading inside a <details> block.
+               ;; Carries its own `:summary` marker (separate from
+               ;; `:bold`) so the painter can paint it as a tinted
+               ;; band: `md-summary-bg` lavender wash full-width,
+               ;; `md-summary-fg` violet text, BOLD weight, prefixed
+               ;; with `▾ ` so the user reads it as an expanded
+               ;; disclosure section. The band makes the whole
+               ;; <details> region pop out of the surrounding prose
+               ;; without needing real click-to-collapse plumbing.
+               ;;
+               ;; Inner content runs through `markdown->inline` so
+               ;; `<summary>**Logs**</summary>` keeps the inner bold,
+               ;; ` `code` `, etc. — the painter strips inline
+               ;; sentinels into per-char SGR overlays exactly the
+               ;; way it does for real bold-line markers.
                (re-matches #"^\s*<summary>.*</summary>\s*$" line)
                (let [[_ inner] (re-matches #"^\s*<summary>(.*)</summary>\s*$" line)
                      decorated (markdown->inline (or inner ""))
@@ -2557,8 +2601,8 @@
                      wrap-w    (max 1 (- max-w (count prefix)))]
                  (recur rst false
                    (into acc
-                     (into [(str (:bold m) prefix (first (wrap-text decorated wrap-w)))]
-                       (mapv #(str (:bold m) "  " %)
+                     (into [(str (:summary m) prefix (first (wrap-text decorated wrap-w)))]
+                       (mapv #(str (:summary m) "  " %)
                          (rest (wrap-text decorated wrap-w)))))))
 
                ;; Heading 3 — and H4/H5/H6 collapsed onto the H3

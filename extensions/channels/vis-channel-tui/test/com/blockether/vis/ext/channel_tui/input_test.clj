@@ -202,3 +202,102 @@
       (expect (= ["hi  !"] (:lines deleted)))
       ;; Cursor lands at the start of where the token used to be.
       (expect (= 3 (:ccol deleted))))))
+
+(defdescribe clipboard-copy-test
+  (it "clipboard-copy! returns a boolean (smoke)"
+    ;; We can't reliably test that the SYSTEM clipboard now contains
+    ;; the bytes — that would require either AWT to be available or
+    ;; a `pbcopy`/`xclip` helper on $PATH on the CI box. The contract
+    ;; we DO guarantee is that the function returns truthy on success
+    ;; and falsy on total failure, never throws, and never blocks
+    ;; longer than the per-helper 1s cap.
+    (let [r (input/clipboard-copy! "vis-clip-test")]
+      (expect (or (true? r) (false? r) (nil? r)))))
+
+  (it "clipboard-copy! never throws on weird input"
+    (expect (some? (input/clipboard-copy! "")))
+    (expect (some? (input/clipboard-copy! "line1\nline2\nline3")))
+    (expect (some? (input/clipboard-copy! "tab\there\u00e9 \u4e2d\u6587")))))
+
+(defn- mk-chars [^String s]
+  ;; Helper: java.util.List<Character> from a String, the shape
+  ;; Lanterna feeds CharacterPattern.match. Renamed from `chars`
+  ;; to dodge the `clojure.core/chars` shadow warning.
+  (let [v (java.util.ArrayList.)]
+    (doseq [c s] (.add v (Character. ^char c)))
+    v))
+
+(defn- sgr [button col row final-ch]
+  (str "\u001B[<" button ";" col ";" row final-ch))
+
+(defdescribe sgr-mouse-pattern-test
+  (it "NOT_YET on empty / partial prefixes"
+    (let [m (.match input/sgr-mouse-pattern (mk-chars ""))]
+      (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m)))
+    (let [m (.match input/sgr-mouse-pattern (mk-chars "\u001B"))]
+      (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m)))
+    (let [m (.match input/sgr-mouse-pattern (mk-chars "\u001B[<0;1"))]
+      (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m))))
+
+  (it "nil on shape violation (third byte is not '<')"
+    ;; Plain CSI sequences (no '<') belong to other patterns —
+    ;; sgr-mouse-pattern must reject them so Lanterna keeps trying.
+    (expect (nil? (.match input/sgr-mouse-pattern (mk-chars "\u001B[A")))))
+
+  (it "left-button press at column 50, row 1 decodes correctly"
+    (let [m (.match input/sgr-mouse-pattern (mk-chars (sgr 0 50 1 \M)))
+          ks (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (instance? com.googlecode.lanterna.input.MouseAction ks))
+      (let [^com.googlecode.lanterna.input.MouseAction ma ks
+            pos (.getPosition ma)]
+        (expect (= 49 (.getColumn pos)))      ; SGR is 1-based, ours is 0-based
+        (expect (= 0  (.getRow pos)))
+        (expect (= com.googlecode.lanterna.input.MouseActionType/CLICK_DOWN
+                  (.getActionType ma))))))
+
+  (it "left-button release uses lowercase 'm' as terminator"
+    (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 0 112 1 \m)))
+          ma ^com.googlecode.lanterna.input.MouseAction
+          (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (= com.googlecode.lanterna.input.MouseActionType/CLICK_RELEASE
+                (.getActionType ma)))
+      ;; Critically: column 112 (the copy-id range) decodes to 111,
+      ;; NOT to the broken 65500 the legacy parser produced.
+      (expect (= 111 (.getColumn (.getPosition ma))))))
+
+  (it "wheel-up button (64) maps to SCROLL_UP"
+    (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 64 10 5 \M)))
+          ma ^com.googlecode.lanterna.input.MouseAction
+          (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_UP
+                (.getActionType ma)))))
+
+  (it "wheel-down button (65) maps to SCROLL_DOWN"
+    (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
+          ma ^com.googlecode.lanterna.input.MouseAction
+          (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_DOWN
+                (.getActionType ma)))))
+
+  (it "drag with button held (32) maps to DRAG"
+    (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
+          ma ^com.googlecode.lanterna.input.MouseAction
+          (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (= com.googlecode.lanterna.input.MouseActionType/DRAG
+                (.getActionType ma)))))
+
+  (it "plain motion (35: bits=3 + drag bit) maps to MOVE"
+    (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 35 10 5 \M)))
+          ma ^com.googlecode.lanterna.input.MouseAction
+          (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (= com.googlecode.lanterna.input.MouseActionType/MOVE
+                (.getActionType ma)))))
+
+  (it "wide-column press at column 200 decodes faithfully"
+    ;; The whole point of switching to SGR: legacy X10 corrupted
+    ;; this case to mx=65500. SGR is ASCII text so col 200 stays 200.
+    (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 0 200 50 \M)))
+          ma ^com.googlecode.lanterna.input.MouseAction
+          (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+      (expect (= 199 (.getColumn (.getPosition ma))))
+      (expect (= 49  (.getRow    (.getPosition ma)))))))

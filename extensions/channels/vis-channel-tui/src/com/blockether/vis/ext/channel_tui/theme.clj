@@ -99,6 +99,26 @@
 (def md-h3-fg          (TextColor$RGB. 100 65 0))     ;; deep bronze — H3 is the most muted of the three
 (def confidence-fg     (TextColor$RGB. 140 140 140))  ;; muted confidence label
 
+;; <details><summary> disclosure label band. The TUI doesn't model
+;; click-to-collapse (yet), so the summary line carries the WHOLE
+;; visual weight of "this is a disclosure section" — it needs to
+;; read as a distinct band, not just a bold paragraph. Pale lavender
+;; was chosen because:
+;;   - it's far enough from `code-block-bg` (light blue-gray) and
+;;     `warning-bg` (soft yellow) that the eye doesn't confuse the
+;;     three zone tints;
+;;   - the saturation is low enough to sit quietly on white
+;;     assistant bg without screaming.
+;; WCAG ratio fg/bg ≈ 9.5 (AAA).
+(def md-summary-bg     (TextColor$RGB. 240 235 250))  ;; pale lavender band
+(def md-summary-fg     (TextColor$RGB. 70 40 130))    ;; deep violet — high-contrast text
+;; Thinking-mode summary keeps the iteration-header tint family so
+;; the disclosure stays inside the dim reasoning zone instead of
+;; popping out of it. Slightly cooler / darker than the surrounding
+;; iteration-header-bg so the band is still legible against it.
+(def th-md-summary-bg  (TextColor$RGB. 232 230 240))  ;; cool gray-lavender, one notch off iteration-header-bg
+(def th-md-summary-fg  (TextColor$RGB. 90 80 130))    ;; muted violet on the dim band
+
 ;; Clickable link / image / file-link chrome painted at the foot of
 ;; an assistant bubble. Three states:
 ;;

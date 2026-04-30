@@ -609,6 +609,7 @@
 (def MARKER_MD_TABLE_ROW  "\uE009") ;; markdown table data row (answer)
 (def MARKER_MD_QUOTE      "\uE00A") ;; markdown blockquote (answer)
 (def MARKER_MD_HR         "\uE00B") ;; markdown horizontal rule (answer)
+(def MARKER_MD_SUMMARY    "\uE00C") ;; markdown <summary> disclosure label (answer)
 
 (def MARKER_TH_MD_H1         "\uE021") ;; markdown heading 1 (thinking)
 (def MARKER_TH_MD_H2         "\uE022") ;; markdown heading 2 (thinking)
@@ -621,6 +622,7 @@
 (def MARKER_TH_MD_TABLE_ROW  "\uE029") ;; markdown table data row (thinking)
 (def MARKER_TH_MD_QUOTE      "\uE02A") ;; markdown blockquote (thinking)
 (def MARKER_TH_MD_HR         "\uE02B") ;; markdown horizontal rule (thinking)
+(def MARKER_TH_MD_SUMMARY    "\uE02C") ;; markdown <summary> disclosure label (thinking)
 
 ;; Inline span sentinels (\uE110…\uE117) live in their own section
 ;; near the top of this file because both the width math
