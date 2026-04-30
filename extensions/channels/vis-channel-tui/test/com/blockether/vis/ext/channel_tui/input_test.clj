@@ -88,6 +88,35 @@
 (defn- char-key [^Character ch]
   (KeyStroke. ch false false))
 
+(defn- ctrl-key [^Character ch]
+  (KeyStroke. ch true false))
+
+(defn- special-key [ktype]
+  (KeyStroke. ktype false false))
+
+(defdescribe handle-key-test
+  (it "Arrow Up/Down cycle input history"
+    (let [state (input/empty-input)]
+      (expect (= :history-up
+                (:action (input/handle-key (special-key KeyType/ArrowUp) state))))
+      (expect (= :history-down
+                (:action (input/handle-key (special-key KeyType/ArrowDown) state))))))
+
+  (it "Page Up/Down still scroll the transcript"
+    (let [state (input/empty-input)]
+      (expect (= :scroll-up
+                (:action (input/handle-key (special-key KeyType/PageUp) state))))
+      (expect (= :scroll-down
+                (:action (input/handle-key (special-key KeyType/PageDown) state))))))
+
+  (it "Ctrl+P and Ctrl+N are unbound and do not alter input text"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "keep"))]
+      (expect (= {:action :continue :state state}
+                (input/handle-key (ctrl-key (Character. \p)) state)))
+      (expect (= {:action :continue :state state}
+                (input/handle-key (ctrl-key (Character. \n)) state))))))
+
 (defdescribe bracketed-paste-helpers-test
   (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"
     (expect (input/paste-start? (char-key (Character. input/PASTE_START_CHAR))))

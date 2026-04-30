@@ -204,6 +204,20 @@
       ""
       (str "```" (or lang "") "\n" s "\n```\n"))))
 
+(defn- render-collapsible
+  "GitHub-flavored Markdown `<details>` block. Default-collapsed so
+   the file stays scannable; users (and viewers like mdBook / VS Code
+   / GitHub) expand on demand. The summary line shows what's inside +
+   its size so the reader knows whether to click. Empty `body` yields
+   the empty string so the block disappears entirely."
+  [summary body]
+  (let [s (str body)]
+    (if (str/blank? s)
+      ""
+      (str "<details><summary>" summary "</summary>\n\n"
+        s
+        "</details>\n\n"))))
+
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced stdout/stderr,
@@ -276,7 +290,44 @@
           vars))
       "\n\n")))
 
-(defn- render-iteration-section [iter]
+(defn- render-system-prompt
+  "Collapsible `<details>` block carrying the full assembled system
+   prompt for this iteration. `prev-system-prompt` is the system
+   prompt of the previous iteration in the same turn (nil on the
+   first iteration); when both match we render a tiny
+   \"unchanged from iteration N-1\" stub so a 16-iteration turn
+   doesn't carry 16 identical 8KB system-prompt copies inline."
+  [system-prompt prev-system-prompt prev-pos]
+  (when (not (str/blank? system-prompt))
+    (let [size  (count system-prompt)
+          same? (and prev-system-prompt (= system-prompt prev-system-prompt))]
+      (if same?
+        (render-collapsible
+          (str "System prompt (" size " chars, unchanged from iteration " prev-pos ")")
+          "_(identical to the previous iteration's system prompt)_\n")
+        (render-collapsible
+          (str "System prompt (" size " chars)")
+          (render-fenced "text" system-prompt))))))
+
+(defn- render-llm-messages
+  "Collapsible `<details>` block carrying the full LLM message
+   envelope for this iteration: every `[{:role :content}]` pair the
+   provider was called with. Each message renders as its own
+   `_role:_` fenced text block. Empty / nil envelope → no output."
+  [messages]
+  (when (seq messages)
+    (let [body (apply str
+                 (map (fn [{:keys [role content]}]
+                        (str "_" (or role "?") ":_\n"
+                          (render-fenced "text" (str content))
+                          "\n"))
+                   messages))]
+      (render-collapsible
+        (str "LLM messages (" (count messages) " messages, "
+          (reduce + 0 (map #(count (str (:content %))) messages)) " chars total)")
+        body))))
+
+(defn- render-iteration-section [iter prev-iter]
   (let [pos     (:position iter)
         status  (or (some-> (:status iter) name) "—")
         dur     (or (:duration-ms iter) 0)
@@ -292,6 +343,10 @@
       " (" in "/" out " tokens, " (format-cost-usd cost) ", " (long dur) "ms)\n\n"
       (render-thinking (:thinking iter))
       (render-iter-error (:error iter))
+      (render-system-prompt (:llm-system-prompt iter)
+        (:llm-system-prompt prev-iter)
+        (:position prev-iter))
+      (render-llm-messages (:llm-user-prompt iter))
       (render-vars (:vars iter))
       (cond
         (empty? blocks)
@@ -331,7 +386,10 @@
     "- **Failures:** " failure-count "\n"
     "- **Tokens (in/out):** " (format-tokens tokens) "\n"
     "- **Cost:** " (format-cost-usd cost-usd) "\n"
-    (apply str (map render-iteration-section iterations))
+    ;; Pair each iteration with the previous one in the same turn so
+    ;; the renderer can dedupe an unchanged system prompt instead of
+    ;; emitting the same 8 KB block 16 times.
+    (apply str (map render-iteration-section iterations (cons nil iterations)))
     (render-final-answer answer)
     "\n"))
 

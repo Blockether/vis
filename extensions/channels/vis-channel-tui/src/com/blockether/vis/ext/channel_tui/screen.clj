@@ -69,7 +69,7 @@
 ;;
 ;; Idle, input EMPTY    → show newline + history cycle + menu. The
 ;;                       empty box is the moment someone is deciding
-;;                       what to type, so we surface `Ctrl+P/N` for
+;;                       what to type, so we surface `↑↓` for
 ;;                       cycling through prior prompts and `Alt+Enter`
 ;;                       for multi-line composition right where the
 ;;                       eye lands.
@@ -79,9 +79,9 @@
 ;; Loading              → cancel + quit. Same as before.
 ;; Cancelling            → progress message + quit.
 ;;
-;; Removed from idle: `Enter send` (universally obvious), `↑↓ scroll`
-;; (intuitive in any text input).
-(def ^:private hint-idle-empty " Alt+Enter newline · Ctrl+P/N history · Ctrl+K menu ")
+;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
+;; remain available for transcript scrolling.
+(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+K menu ")
 (def ^:private hint-idle-typed " Ctrl+K menu ")
 (def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")

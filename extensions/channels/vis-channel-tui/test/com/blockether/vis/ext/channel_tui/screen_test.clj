@@ -6,11 +6,15 @@
    accept of unknown flags previously masked typos like
    `--conversations-id`."
   (:require
+   [com.blockether.vis.ext.channel-tui.input :as input]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
    [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private parse-args
   (deref #'screen/parse-args))
+
+(def ^:private current-hint
+  (deref #'screen/current-hint))
 
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
@@ -20,6 +24,12 @@
   (try (f) false
     (catch clojure.lang.ExceptionInfo e
       (true? (:vis/user-error (ex-data e))))))
+
+(defdescribe hint-test
+  (it "empty input advertises arrow-key history instead of removed Ctrl+P/N chords"
+    (let [hint (current-hint {:input (input/empty-input)})]
+      (expect (re-find #"↑↓ history" hint))
+      (expect (not (re-find #"Ctrl\+P/N" hint))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

@@ -157,3 +157,84 @@
       (let [ctx (fresh-ctx)]
         (expect (= 3 (eval-in ctx "(+ 1 2)")))
         (expect (= "vis" (eval-in ctx "(name :vis)")))))))
+
+(defdescribe catch-throwable-allows-getmessage-test
+  ;; Regression net for the d8aff512 conversation footgun:
+  ;; `(catch Exception e (.getMessage e))` blew up with
+  ;; "Method getMessage on class java.lang.NullPointerException not
+  ;; allowed!" because only `java.lang.Exception` was on SCI's
+  ;; `:classes` allow-list — SCI checks methods against the actual
+  ;; runtime class, and the thrown instance was an NPE / IAE / ISE.
+  ;; The model wrote idiomatic `(catch … (.getMessage e))` and
+  ;; got back gibberish for an entire iteration.
+  ;;
+  ;; Each `it` below exercises one common runtime-exception class.
+  ;; A regression that drops one of them from `:classes` /
+  ;; `:imports` lights up the matching test instead of bouncing the
+  ;; LLM through wasted iterations.
+  (describe "every common runtime exception's `.getMessage` is callable"
+    (it "NullPointerException — the original repro"
+      (let [ctx (fresh-ctx)]
+        (expect (= "oops" (eval-in ctx
+                            "(try (throw (NullPointerException. \"oops\"))
+                                  (catch Exception e (.getMessage e)))")))))
+
+    (it "IllegalArgumentException — `(into 5 [1])` etc."
+      (let [ctx (fresh-ctx)]
+        (expect (= "bad arg" (eval-in ctx
+                               "(try (throw (IllegalArgumentException. \"bad arg\"))
+                                     (catch Exception e (.getMessage e)))")))))
+
+    (it "IllegalStateException — typical clj transducer / atom violations"
+      (let [ctx (fresh-ctx)]
+        (expect (= "bad state" (eval-in ctx
+                                 "(try (throw (IllegalStateException. \"bad state\"))
+                                       (catch Exception e (.getMessage e)))")))))
+
+    (it "ClassCastException — type errors"
+      (let [ctx (fresh-ctx)]
+        (expect (= "cast" (eval-in ctx
+                            "(try (throw (ClassCastException. \"cast\"))
+                                  (catch Exception e (.getMessage e)))")))))
+
+    (it "ArithmeticException — divide by zero"
+      (let [ctx (fresh-ctx)]
+        ;; The model's most natural form: catch the runtime division
+        ;; error and surface its message. Pre-fix this threw
+        ;; "Method getMessage on class java.lang.ArithmeticException
+        ;; not allowed!".
+        (expect (string?
+                  (eval-in ctx
+                    "(try (/ 1 0)
+                          (catch Exception e (.getMessage e)))")))))
+
+    (it "NumberFormatException — bad parse"
+      (let [ctx (fresh-ctx)]
+        (expect (string?
+                  (eval-in ctx
+                    "(try (Long/parseLong \"NaN\")
+                          (catch Exception e (.getMessage e)))")))))
+
+    (it "`(catch Throwable t …)` short form resolves via :imports"
+      ;; Confirms that the import alias was added too — not just the
+      ;; FQN class entry. Without the import, `(catch Throwable t)`
+      ;; would throw "Could not resolve class: Throwable".
+      (let [ctx (fresh-ctx)]
+        (expect (= "x" (eval-in ctx
+                         "(try (throw (RuntimeException. \"x\"))
+                               (catch Throwable t (.getMessage t)))")))))
+
+    (it "`(catch NullPointerException e …)` short form resolves"
+      (let [ctx (fresh-ctx)]
+        (expect (= "npe" (eval-in ctx
+                           "(try (throw (NullPointerException. \"npe\"))
+                                 (catch NullPointerException e (.getMessage e)))")))))
+
+    (it "`.getClass` works on caught instances (model often inspects type)"
+      (let [ctx (fresh-ctx)]
+        ;; Returns the Class object; we just probe that the call
+        ;; doesn't throw "method not allowed".
+        (expect (some? (eval-in ctx
+                         "(try (throw (NullPointerException. \"x\"))
+                               (catch Exception e (.getClass e)))")))))))
+

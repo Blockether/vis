@@ -283,6 +283,13 @@
       (expect (str/ends-with? out "</details>")))))
 
 (defdescribe lists-test
+  (it "li renders a single list item"
+    (expect (= "- hello" (md/li "hello")))
+    (expect (= "- build `v1.2.3`" (md/li "build " (md/code "v1.2.3"))))
+    (expect (= "- a b c" (md/li "a" " " "b" " " "c")))
+    (expect (= "- " (md/li nil)))
+    (expect (= "- abc" (md/li ["a" "b" "c"]))))
+
   (it "ul renders one `- item` per entry"
     (expect (= "- a\n- b\n- c" (md/ul ["a" "b" "c"]))))
 
@@ -409,7 +416,7 @@
                   'p 'bold 'strong 'italic 'em 'bold-italic 'strike 'code 'kbd
                   'link 'image 'file-link 'anchor
                   'code-block 'blockquote 'quote 'hr 'br 'details 'summary
-                  'ul 'ol 'checklist
+                  'li 'ul 'ol 'checklist
                   'table
                   'join 'lines 'section 'escape}]
       (expect (= names syms))))

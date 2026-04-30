@@ -725,9 +725,9 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
-          ;; Ctrl+P / Ctrl+N — input history (Emacs-style)
-          (and ctrl (= c \p)) {:action :history-up :state state}
-          (and ctrl (= c \n)) {:action :history-down :state state}
+          ;; Unbound control chords are ignored instead of inserting their
+          ;; letter payload into the prompt.
+          ctrl {:action :continue :state state}
 
           :else {:action :continue :state (insert-char state c)}))
 
@@ -740,9 +740,9 @@
       KeyType/Backspace  {:action :continue :state (delete-backward state)}
       KeyType/ArrowLeft  {:action :continue :state (move-left state)}
       KeyType/ArrowRight {:action :continue :state (move-right state)}
-      ;; Arrow Up/Down — scroll messages
-      KeyType/ArrowUp    {:action :scroll-up :state state}
-      KeyType/ArrowDown  {:action :scroll-down :state state}
+      ;; Arrow Up/Down — input history
+      KeyType/ArrowUp    {:action :history-up :state state}
+      KeyType/ArrowDown  {:action :history-down :state state}
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 
