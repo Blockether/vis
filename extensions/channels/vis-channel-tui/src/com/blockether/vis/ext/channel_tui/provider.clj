@@ -165,6 +165,26 @@
           (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
           nil)))))
 
+(defn- codex-oauth-ready!
+  "OpenAI Codex uses the CLI/browser OAuth flow. The TUI does not own
+   stdin, so it does not run the manual-paste fallback here; it only
+   allows adding the provider after `vis auth openai-codex` has stored
+   credentials."
+  [^TerminalScreen screen]
+  (let [provider  (vis/provider-by-id :openai-codex)
+        detect-fn (:provider/detect-fn provider)]
+    (if (and detect-fn (detect-fn))
+      true
+      (do
+        (dlg/confirm-dialog! screen "OpenAI Codex"
+          ["OpenAI Codex needs browser OAuth first."
+           ""
+           "Run this in a terminal:"
+           "  vis auth openai-codex"
+           ""
+           "Then return here and add the provider."])
+        false))))
+
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
   [^TerminalScreen screen existing-ids]
@@ -175,20 +195,26 @@
         (let [pid        (:id preset)
               base-url   (:base-url preset)
               has-key?   (some? (:api-key preset))
-              ;; GitHub Copilot uses OAuth, not a static API key
-              oauth?     (= pid :github-copilot)
+              ;; OAuth providers store credentials outside config.
+              oauth?     (contains? #{:github-copilot :openai-codex} pid)
               ;; Ollama needs no key
               needs-key? (not (or has-key? oauth? (= pid :ollama)))
               api-key    (cond
                            has-key?   (:api-key preset)
-                           oauth?     (copilot-oauth-flow! screen)
+                           (= pid :github-copilot) (copilot-oauth-flow! screen)
+                           (= pid :openai-codex)   (when (codex-oauth-ready! screen) :oauth-ready)
                            needs-key? (let [raw (dlg/text-input-dialog! screen
                                                   (str (:label preset) " Setup")
                                                   "API Key:"
                                                   :mask \*)]
                                         (when-not (str/blank? raw) raw))
-                           :else      nil)]
-          (when (or (not needs-key?) api-key)
+                           :else      nil)
+              auth-ok?   (cond
+                           has-key?   true
+                           oauth?     (some? api-key)
+                           needs-key? (some? api-key)
+                           :else      true)]
+          (when auth-ok?
             (when-let [model (select-provider-model! screen (cond-> {:id (:id preset)
                                                                      :base-url base-url
                                                                      :default-models (:default-models preset)}

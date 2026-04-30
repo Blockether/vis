@@ -19,6 +19,7 @@
  {;; Classpath plug-ins. Drop the jar, drop the feature.
   com.blockether/vis-persistance-sqlite       {:local/root "extensions/persistance/vis-persistance-sqlite"}
   com.blockether/vis-provider-github-copilot  {:local/root "extensions/providers/vis-provider-github-copilot"}
+  com.blockether/vis-provider-openai-codex    {:local/root "extensions/providers/vis-provider-openai-codex"}
   com.blockether/vis-provider-zai             {:local/root "extensions/providers/vis-provider-zai"}
   com.blockether/vis-channel-telegram         {:local/root "extensions/channels/vis-channel-telegram"}
   com.blockether/vis-channel-tui              {:local/root "extensions/channels/vis-channel-tui"}
@@ -43,6 +44,7 @@
   ;;   zprint       — sandbox pretty-printer + format-clojure (sdk.clj).
   ;;   fast-edn     — sandbox-exposed EDN reader (env.clj).
   ;;   charred      — fast JSON for spec/router payloads + sandbox.
+  ;;   java.net.http / JDK HttpServer — OpenAI Codex OAuth provider.
   ;;
   ;; Extension-specific deps live in each extension's deps.edn:
   ;;   flyway-core              → vis-persistance-sqlite (migration runner)
@@ -79,10 +81,12 @@
   :test  {:extra-paths ["test"
                         "test/resources"
                         "extensions/persistance/vis-persistance-sqlite/test"
+                        "extensions/providers/vis-provider-openai-codex/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-foundation/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                         com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
+                        com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
                         com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
                         com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
                         ;; Microbenchmarks. Pulled into `:test` so a
@@ -97,6 +101,7 @@
           :main-opts   ["-m" "lazytest.main"
                         "--dir" "test"
                         "--dir" "extensions/persistance/vis-persistance-sqlite/test"
+                        "--dir" "extensions/providers/vis-provider-openai-codex/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/common/vis-foundation/test"]}
 
@@ -117,10 +122,12 @@
   :bench-micro
   {:extra-paths ["test"
                  "extensions/persistance/vis-persistance-sqlite/test"
+                 "extensions/providers/vis-provider-openai-codex/test"
                  "extensions/channels/vis-channel-tui/test"
                  "extensions/common/vis-foundation/test"]
    :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                  com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
+                 com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
                  com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
                  com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
                  criterium/criterium                        {:mvn/version "0.4.6"}}}

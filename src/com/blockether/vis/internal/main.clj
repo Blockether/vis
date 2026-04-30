@@ -785,12 +785,16 @@
    Concrete providers live in their own packages
    (`vis-provider-github-copilot`, future `vis-provider-anthropic`,
    …); vis-runtime never references them by namespace."
-  [_parsed residual]
+  [parsed residual]
   (config/init-cli!)
-  (let [provider-id (some-> (first residual) keyword)
-        flags       (set (rest residual))
-        provider    (when provider-id (registry/provider-by-id provider-id))
-        all         (registry/registered-providers)]
+  (let [provider-name (or (get parsed "provider")
+                        (first (remove #(str/starts-with? % "--") residual)))
+        provider-id   (some-> provider-name keyword)
+        flags         (set (rest residual))
+        status?       (or (true? (get parsed "status")) (contains? flags "--status"))
+        logout?       (or (true? (get parsed "logout")) (contains? flags "--logout"))
+        provider      (when provider-id (registry/provider-by-id provider-id))
+        all           (registry/registered-providers)]
     (cond
       (nil? provider-id)
       (do (stdout! "Usage: vis auth <provider> [--status | --logout]")
@@ -809,11 +813,11 @@
                      (str/join ", " (map (comp name :provider/id)
                                       (sort-by :provider/id all)))))))
 
-      (contains? flags "--status")
+      status?
       (when (:provider/status-fn provider)
         (print-auth-status! provider))
 
-      (contains? flags "--logout")
+      logout?
       (when-let [f (:provider/logout-fn provider)]
         (f)
         (stdout! (str "  Logged out of " (:provider/label provider) ". Tokens cleared.")))
@@ -897,9 +901,18 @@
          {:cmd/name  "auth"
           :cmd/doc   "Authenticate with an LLM provider."
           :cmd/usage "vis auth <provider> [--status | --logout]"
+          :cmd/args  [{:name "provider" :kind :positional :type :string
+                       :doc  "Provider id (for example: github-copilot or openai-codex)."}
+                      {:name "status" :kind :flag :type :boolean
+                       :doc  "Show current authentication state without logging in."}
+                      {:name "logout" :kind :flag :type :boolean
+                       :doc  "Clear saved credentials for the provider."}]
           :cmd/examples ["vis auth github-copilot"
                          "vis auth github-copilot --status"
-                         "vis auth github-copilot --logout"]
+                         "vis auth github-copilot --logout"
+                         "vis auth openai-codex"
+                         "vis auth openai-codex --status"
+                         "vis auth openai-codex --logout"]
           :cmd/run-fn cli-auth!}
 
          {:cmd/name  "conversations"

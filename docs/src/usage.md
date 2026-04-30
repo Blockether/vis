@@ -29,12 +29,13 @@ works with `vis` instead of `clojure -M:vis`.
 ## First-time auth
 
 Configure at least one LLM provider before the first turn. Vis
-ships with GitHub Copilot OAuth out of the box:
+ships with OAuth providers out of the box:
 
 ```bash
-vis auth github-copilot           # interactive device-flow auth
-vis auth github-copilot --status  # show whether tokens are present + valid
-vis auth github-copilot --logout  # forget tokens
+vis auth github-copilot           # GitHub device-flow auth
+vis auth openai-codex             # ChatGPT/Codex browser OAuth
+vis auth openai-codex --status    # show whether tokens are present + valid
+vis auth openai-codex --logout    # forget tokens
 ```
 
 Provider config + credentials live under `~/.vis/`:

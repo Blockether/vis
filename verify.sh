@@ -187,6 +187,7 @@ _graal_safety() {
                     com.blockether/vis-common-editing          {:local/root "extensions/common/vis-common-editing"}
                     com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                     com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}
+                    com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
                     com.blockether/vis-channel-telegram        {:local/root "extensions/channels/vis-channel-telegram"}
                     com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}}}' \
     -M -e '
