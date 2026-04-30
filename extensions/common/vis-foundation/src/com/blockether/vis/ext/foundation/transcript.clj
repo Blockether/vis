@@ -139,29 +139,68 @@
      :cost-usd   0.0}
     turns))
 
+(def ^:private transcript-known-channels
+  [:tui :telegram :cli])
+
+(defn- resolve-conversation-ref
+  "Resolve one transcript/conversation reference to the canonical UUID.
+
+   Accepted shapes:
+     - UUID           => returned only when it exists
+     - full UUID str  => parsed, then existence-checked
+     - unique prefix  => scanned across every channel and expanded
+
+   Returns nil on miss or ambiguous prefix. Unlike
+   `db-resolve-conversation-id`, this helper is existence-aware — a
+   well-formed but unknown UUID string must not masquerade as a real
+   conversation."
+  [db-info conversation-ref]
+  (letfn [(existing-id [id]
+            (when (and id (try (vis/db-get-conversation db-info id)
+                            (catch Throwable _ nil)))
+              id))]
+    (cond
+      (nil? conversation-ref) nil
+      (uuid? conversation-ref) (existing-id conversation-ref)
+      :else
+      (let [s (str conversation-ref)]
+        (or (existing-id (try (vis/db-resolve-conversation-id db-info s)
+                           (catch Throwable _ nil)))
+          (let [matches (->> transcript-known-channels
+                          (mapcat #(or (vis/db-list-conversations db-info %) []))
+                          (filter (fn [conversation]
+                                    (str/starts-with? (str (:id conversation)) s)))
+                          vec)]
+            (when (= 1 (count matches))
+              (:id (first matches)))))))))
+
 (defn transcript
   "Full conversation transcript as one Clojure data map. See ns
    docstring for the canonical shape. Returns nil when the
    conversation id does not resolve.
 
+   `conversation-id` accepts either the canonical UUID or an
+   unambiguous string prefix.
+
    Pure with respect to the database — no writes, no logging.
    `(:db-info env)` is the standard handle; the SCI-bound symbol
    variant uses the live env automatically."
   [db-info conversation-id]
-  (when-let [conv (try (vis/db-get-conversation db-info conversation-id)
-                    (catch Throwable _ nil))]
-    (let [queries (try (vis/db-list-conversation-turns db-info conversation-id)
-                    (catch Throwable _ []))
-          turns   (mapv (partial build-turn db-info) queries)
-          totals  (conversation-totals turns)]
-      {:conversation (cond-> {:id         conversation-id
-                              :title      (:title conv)
-                              :channel    (:channel conv)
-                              :model      (:model conv)
-                              :created-at (:created-at conv)}
-                       (:provider conv) (assoc :provider (:provider conv)))
-       :totals       totals
-       :turns        turns})))
+  (when-let [resolved-id (resolve-conversation-ref db-info conversation-id)]
+    (when-let [conv (try (vis/db-get-conversation db-info resolved-id)
+                      (catch Throwable _ nil))]
+      (let [queries (try (vis/db-list-conversation-turns db-info resolved-id)
+                      (catch Throwable _ []))
+            turns   (mapv (partial build-turn db-info) queries)
+            totals  (conversation-totals turns)]
+        {:conversation (cond-> {:id         resolved-id
+                                :title      (:title conv)
+                                :channel    (:channel conv)
+                                :model      (:model conv)
+                                :created-at (:created-at conv)}
+                         (:provider conv) (assoc :provider (:provider conv)))
+         :totals       totals
+         :turns        turns}))))
 
 ;; =============================================================================
 ;; Markdown renderer. Pure transformation over `transcript`'s data

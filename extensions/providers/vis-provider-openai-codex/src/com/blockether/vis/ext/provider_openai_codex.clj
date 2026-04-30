@@ -562,6 +562,35 @@
     (remove str/blank?)
     (str/join "\n")))
 
+(defn- reasoning-part-text [part]
+  (cond
+    (string? part)
+    (when-not (str/blank? part) part)
+
+    (map? part)
+    (some-> (or (:text part) (:delta part)) reasoning-part-text)
+
+    (sequential? part)
+    (let [s (->> part (keep reasoning-part-text) (str/join ""))]
+      (when-not (str/blank? s) s))
+
+    :else nil))
+
+(defn- response-reasoning-text [response]
+  (letfn [(item-text [item]
+            (let [content-text (some-> (:content item) reasoning-part-text)
+                  summary-text (some-> (:summary item) reasoning-part-text)]
+              (cond
+                (not (str/blank? (or content-text ""))) content-text
+                (not (str/blank? (or summary-text ""))) summary-text
+                :else nil)))]
+    (->> (:output response)
+      (keep (fn [item]
+              (when (= "reasoning" (:type item))
+                (item-text item))))
+      (remove str/blank?)
+      (str/join "\n\n"))))
+
 (defn- codex-error-message [event]
   (or (get-in event [:response :error :message])
     (get-in event [:error :message])
@@ -569,12 +598,15 @@
     (:code event)
     (json/write-json-str event)))
 
-(defn- maybe-emit-chunk! [on-chunk content reasoning usage]
-  (when on-chunk
-    (on-chunk {:content   (let [s (str content)] (when-not (str/blank? s) s))
-               :reasoning (let [s (str reasoning)] (when-not (str/blank? s) s))
-               :api-usage @usage
-               :done?     false})))
+(defn- maybe-emit-chunk!
+  ([on-chunk content reasoning usage]
+   (maybe-emit-chunk! on-chunk content reasoning usage false))
+  ([on-chunk content reasoning usage done?]
+   (when on-chunk
+     (on-chunk {:content   (let [s (str content)] (when-not (str/blank? s) s))
+                :reasoning (let [s (str reasoning)] (when-not (str/blank? s) s))
+                :api-usage @usage
+                :done?     (boolean done?)}))))
 
 (defn- process-codex-event! [event content reasoning usage completed-response on-chunk]
   (let [event-type (:type event)]
@@ -592,19 +624,33 @@
         (.append ^StringBuilder content (or (:delta event) ""))
         (maybe-emit-chunk! on-chunk content reasoning usage))
 
-      (contains? #{"response.reasoning_text.delta"
-                   "response.reasoning_summary_text.delta"} event-type)
+      (contains? #{"response.reasoning.delta"
+                   "response.reasoning.done"
+                   "response.reasoning_text.delta"
+                   "response.reasoning_text.done"
+                   "response.reasoning_summary.delta"
+                   "response.reasoning_summary.done"
+                   "response.reasoning_summary_text.delta"
+                   "response.reasoning_summary_text.done"} event-type)
       (do
-        (.append ^StringBuilder reasoning (or (:delta event) ""))
-        (maybe-emit-chunk! on-chunk content reasoning usage))
+        (when-let [delta-text (or (reasoning-part-text (:delta event))
+                                (reasoning-part-text (:text event)))]
+          (.append ^StringBuilder reasoning delta-text))
+        (maybe-emit-chunk! on-chunk content reasoning usage
+          (str/ends-with? event-type ".done")))
 
       (or (= "response.completed" event-type)
         (= "response.done" event-type)
         (= "response.incomplete" event-type))
-      (let [response (:response event)]
+      (let [response           (:response event)
+            fallback-reasoning (when (str/blank? (str reasoning))
+                                 (response-reasoning-text response))]
         (vreset! completed-response response)
         (when-let [u (:usage response)]
-          (vreset! usage (normalize-codex-usage u)))))))
+          (vreset! usage (normalize-codex-usage u)))
+        (when fallback-reasoning
+          (.append ^StringBuilder reasoning fallback-reasoning))
+        (maybe-emit-chunk! on-chunk content reasoning usage true)))))
 
 (defn- parse-codex-sse! [^InputStream stream content reasoning usage completed-response on-chunk]
   (letfn [(process-data! [data-lines]
@@ -680,12 +726,17 @@
             completed-response (volatile! nil)]
         (parse-codex-sse!
           (.body ^HttpResponse resp) content reasoning usage completed-response on-chunk)
-        (let [fallback-content (when-let [response @completed-response]
-                                 (response-output-text response))
-              content-text     (let [s (str content)]
-                                 (if (str/blank? s) fallback-content s))
-              reasoning-text   (let [s (str reasoning)]
-                                 (when-not (str/blank? s) s))]
+        (let [fallback-content   (when-let [response @completed-response]
+                                   (response-output-text response))
+              fallback-reasoning (when-let [response @completed-response]
+                                   (response-reasoning-text response))
+              content-text       (let [s (str content)]
+                                   (if (str/blank? s) fallback-content s))
+              reasoning-text     (let [s (str reasoning)]
+                                   (cond
+                                     (not (str/blank? s)) s
+                                     (not (str/blank? (or fallback-reasoning ""))) fallback-reasoning
+                                     :else nil))]
           {:content       (when-not (str/blank? content-text) content-text)
            :reasoning     reasoning-text
            :api-usage     @usage
