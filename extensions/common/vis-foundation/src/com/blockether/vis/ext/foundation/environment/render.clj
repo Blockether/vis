@@ -116,3 +116,83 @@
 
                 monorepo-line*   (conj (str "  monorepo: " monorepo-line*)))]
     (str (string/join "\n" (conj lines "</environment>")) "\n")))
+
+;; ---------------------------------------------------------------------------
+;; Project guidance + skills + scan-warnings blocks. Rendered
+;; alongside <environment> by the foundation aggregator's prompt fn.
+;; Each format-*-block is a pure fn from data → string-or-nil; the
+;; caller (environment-prompt) drops nil blocks (conditional render).
+;; ---------------------------------------------------------------------------
+
+(defn format-project-guidance-block
+  "Render the `<project-guidance>` block from an instructions map
+   shaped like `(agents/instructions)`. Returns the XML string when
+   `:found?` is true, nil otherwise. See plan Q3 + Q4."
+  [{:keys [found? source path content]}]
+  (when found?
+    (str "<project-guidance source=\"" (name source) "\""
+      " path=\"" path "\">\n"
+      content
+      (when-not (.endsWith ^String content "\n") "\n")
+      "</project-guidance>")))
+
+(def ^:const SKILLS_PROMPT_BUDGET_BYTES
+  "Total byte cap for the rendered <skills> block. Plan Q7: skills
+   alphabetized; full descriptions; `+ N more skills not shown
+   (prompt budget). Enumerate full list via (vis/skills).` marker
+   when truncated."
+  8192)
+
+(defn- skill-line
+  "One-line skill entry: `name [source]: description`."
+  [{:keys [name source description]}]
+  (str "  " name " [" (clojure.core/name (or source :unknown)) "]: " description))
+
+(defn format-skills-block
+  "Render the `<skills>` block. Skills come pre-sorted from
+   `(skills/list-all)` (alphabetical by `:name`). Honors
+   SKILLS_PROMPT_BUDGET_BYTES; remaining skills are dropped from the
+   prompt index but still callable via `(vis/skill ...)`.
+   Returns nil when the catalog is empty."
+  [skills]
+  (let [skills (vec skills)]
+    (when (seq skills)
+      (let [tail-line "  Load full body via (vis/skill \"name\"). Enumerate all via (vis/skills)."
+            header    (str "<skills count=\"" (count skills) "\">")
+            footer    "</skills>"
+            ;; Greedily fit lines under the byte budget. Each line ~UTF-8.
+            taken     (loop [acc []  used (+ (count header) 1 (count tail-line) 1 (count footer))
+                             remain skills]
+                        (if (empty? remain)
+                          [acc 0]
+                          (let [line  (skill-line (first remain))
+                                size  (inc (count line))]
+                            (if (and (seq acc) (> (+ used size) SKILLS_PROMPT_BUDGET_BYTES))
+                              [acc (count remain)]
+                              (recur (conj acc line) (+ used size) (rest remain))))))
+            [lines dropped] taken
+            trunc     (when (pos? dropped)
+                        (str "  + " dropped " more skills not shown (prompt budget). "
+                          "Enumerate full list via (vis/skills)."))
+            body      (->> (cond-> lines
+                             trunc (conj "" trunc)
+                             true  (conj "" tail-line))
+                        (string/join "\n"))]
+        (str header "\n" body "\n" footer)))))
+
+(defn- scan-warning-line
+  [{:keys [path reason]}]
+  (str "  " path ": " reason))
+
+(defn format-scan-warnings-block
+  "Render the `<scan-warnings>` block from a vec of warning maps
+   like `[{:source :reason :path}]`. Returns nil when warnings is
+   empty (conditional render — don't emit an empty block).
+   See plan Q10."
+  [warnings]
+  (when (seq warnings)
+    (let [header (str "<scan-warnings count=\"" (count warnings) "\">")
+          lines  (mapv scan-warning-line warnings)]
+      (str header "\n"
+        (string/join "\n" lines)
+        "\n</scan-warnings>"))))

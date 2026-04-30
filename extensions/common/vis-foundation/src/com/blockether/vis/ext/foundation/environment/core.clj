@@ -23,12 +23,15 @@
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls and explicitly by `(refresh!)`."
   (:require
+   [clojure.string :as string]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation.environment.agents :as agents]
    [com.blockether.vis.ext.foundation.environment.git :as git]
    [com.blockether.vis.ext.foundation.environment.host :as host]
    [com.blockether.vis.ext.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.foundation.environment.monorepo :as monorepo]
    [com.blockether.vis.ext.foundation.environment.render :as render]
+   [com.blockether.vis.ext.foundation.environment.skills :as skills]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -40,7 +43,12 @@
 ;; we memoize at the extension boundary.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private cache
+;; `defonce` so the atom survives a `(require :reload)` during an
+;; extension reload (per plan caveat: extensions holding mutable
+;; state across reload MUST use defonce). The cwd-keyed snapshot
+;; covers host/git/languages/monorepo only — agents + skills hold
+;; their own caches in their respective namespaces (plan Q8).
+(defonce ^:private cache
   (atom {:key nil :value nil}))
 
 (defn- canonical-cwd ^String []
@@ -93,10 +101,25 @@
         value))))
 
 (defn refresh!
-  "Invalidate the cached snapshot. Next call to `snapshot` will
-   recompute. Returns the freshly computed snapshot."
+  "Invalidate the cached snapshot AND cascade into the agents +
+   skills caches. Next call to `snapshot` (and `(vis/main-agent-instructions)`,
+   `(vis/skills)`) will recompute. Returns the freshly computed snapshot.
+
+   Cascade rationale: users editing `AGENTS.md` reach for
+   `(vis/refresh!)` (existing muscle memory). Without the cascade,
+   `<environment>` would refresh but `<project-guidance>` and
+   `<skills>` would stay stale until the explicit reload fns are
+   called. See plan caveat: `(vis/refresh!) cascades`."
   []
   (reset! cache {:key nil :value nil})
+  (try (agents/reload!)
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::agents-reload-failed
+                 :data  {:error (ex-message t)}})))
+  (try (skills/reload!)
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::skills-reload-failed
+                 :data  {:error (ex-message t)}})))
   (snapshot))
 
 ;; ---------------------------------------------------------------------------
@@ -143,9 +166,60 @@
      :arglists '([])
      :examples ["(println (v/render))"]}))
 
+;; ---------------------------------------------------------------------------
+;; Project guidance + skills + scan-warnings surface (plan §3).
+;; ---------------------------------------------------------------------------
+
+(def main-agent-instructions-symbol
+  (vis/symbol 'main-agent-instructions agents/instructions
+    {:doc      "Project guidance loaded from <repo>/AGENTS.md (or <repo>/CLAUDE.md fallback). Always returns a map. {:found? true :source :repo|:repo:claude-md-fallback :path \"...\" :bytes N :content \"...\" :truncated? bool :original-bytes N} OR {:found? false}."
+     :arglists '([])
+     :examples ["(v/main-agent-instructions)"
+                "(:content (v/main-agent-instructions))"]}))
+
+(def skills-symbol
+  (vis/symbol 'skills skills/list-all
+    {:doc      "Vec of installed skills, alphabetical by :name. Each entry: {:name :description :path :source :body :extra}. Sources: :repo (from <repo>/.agents/skills/) or :user-global (from ~/.agents/skills/). Repo wins silently on name collision."
+     :arglists '([])
+     :examples ["(v/skills)"
+                "(map :name (v/skills))"
+                "(filter #(= :repo (:source %)) (v/skills))"]}))
+
+(def skill-symbol
+  (vis/symbol 'skill skills/lookup
+    {:doc      "Look up one skill by name. Always returns a map. Present: {:found? true :name :description :path :source :body :extra}. Absent: {:found? false :name <queried>}."
+     :arglists '([skill-name])
+     :examples ["(v/skill \"diagnose\")"
+                "(:body (v/skill \"caveman\"))"]}))
+
+(defn- combined-scan-warnings []
+  (vec (concat (agents/scan-warnings) (skills/scan-warnings))))
+
+(def scan-warnings-symbol
+  (vis/symbol 'scan-warnings combined-scan-warnings
+    {:doc      "Vec of warnings detected scanning project guidance + skills frontmatter. Each entry: {:source :reason :path}. Empty vec when clean. Cleared on next reload after fixing the file."
+     :arglists '([])
+     :examples ["(v/scan-warnings)"
+                "(when (seq (v/scan-warnings)) :issues)"]}))
+
+(def reload-instructions!-symbol
+  (vis/symbol 'reload-instructions! agents/reload!
+    {:doc      "Re-scan AGENTS.md / CLAUDE.md from disk and update the cache. Returns the fresh map. Use after editing the file mid-session."
+     :arglists '([])
+     :examples ["(v/reload-instructions!)"]}))
+
+(def reload-skills!-symbol
+  (vis/symbol 'reload-skills! skills/reload!
+    {:doc      "Re-scan SKILL.md files from disk and update the cache. Returns {:scanned N :loaded M :dropped K :warnings [...]}. Use after editing skill files / installing new skills mid-session."
+     :arglists '([])
+     :examples ["(v/reload-skills!)"]}))
+
 (def environment-symbols
   [snapshot-symbol git-symbol languages-symbol monorepo-symbol
-   refresh!-symbol render-symbol])
+   refresh!-symbol render-symbol
+   main-agent-instructions-symbol skills-symbol skill-symbol
+   scan-warnings-symbol
+   reload-instructions!-symbol reload-skills!-symbol])
 
 (def ^:private FN_INDEX
   "One-line surface listing for the environment fns under the `v/`
@@ -155,15 +229,32 @@
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
   (str "`v/` environment fns: (v/snapshot) (v/git) (v/languages) "
-    "(v/monorepo) (v/render) (v/refresh!)"))
+    "(v/monorepo) (v/render) (v/refresh!)"
+    " | project-guidance + skills: (v/main-agent-instructions) (v/skills) (v/skill \"name\") (v/scan-warnings)"
+    " | reload: (v/reload-instructions!) (v/reload-skills!)"))
 
 (defn environment-prompt
-  "Renders the live `<environment>` block + a one-line surface listing
-   so the model knows the alias has callable fns. Called by the system-
-   prompt assembler each time the prompt is built."
+  "Renders the live foundation block: <project-guidance> (when
+   present) → <environment> → <scan-warnings> (when issues exist)
+   → <skills> (when populated) → FN_INDEX. Each XML block is
+   conditionally rendered; absent sources contribute nothing.
+   Called by the system-prompt assembler each time the prompt is
+   built."
   [_environment]
   (try
-    (str (render/render (snapshot)) "\n\n" FN_INDEX)
+    (let [pg-block       (render/format-project-guidance-block (agents/instructions))
+          env-block      (render/render (snapshot))
+          warnings       (combined-scan-warnings)
+          warnings-block (render/format-scan-warnings-block warnings)
+          skills-list    (skills/list-all)
+          skills-block   (render/format-skills-block skills-list)
+          parts          (cond-> []
+                           pg-block       (conj pg-block)
+                           true           (conj env-block)
+                           warnings-block (conj warnings-block)
+                           skills-block   (conj skills-block)
+                           true           (conj FN_INDEX))]
+      (string/join "\n\n" parts))
     (catch Throwable t
       (tel/log! {:level :error :id ::prompt-render-failed
                  :data  {:error (ex-message t)}})

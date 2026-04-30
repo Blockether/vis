@@ -36,7 +36,7 @@
                          watch-notifications!, unwatch-notifications!
      Iteration loop      query!, send!, create!, by-id, by-channel,
                          for-telegram-chat!, env-for, close!, close-all!,
-                         delete!, set-title!, effective-system-prompt,
+                         delete!, set-title!,
                          create-environment, dispose-environment!,
                          get-router, rebuild-router!, refresh-cached-routers!,
                          resolve-effective-model,
@@ -346,8 +346,6 @@
 (def add-title-listener!          lp/add-title-listener!)
 (def remove-title-listener!       lp/remove-title-listener!)
 (def env-for                      lp/env-for)
-(def effective-system-prompt-for-query lp/effective-system-prompt-for-query)
-(def effective-system-prompt      lp/effective-system-prompt)
 (def send!                        lp/send!)
 (def close!                       lp/close!)
 (def delete!                      lp/delete!)

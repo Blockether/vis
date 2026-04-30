@@ -881,3 +881,247 @@
       (let [s (chrome-of "[plain](https://example.com)")]
         (expect (str/includes? s " → "))
         (expect (str/includes? s "https://example.com"))))))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; Loose-bullet coalesce — multi-paragraph list items render as one bullet
+;;
+;; Poorly-formatted markdown (LLM output, hand-edited prose) often
+;; emits list items whose body has been fragmented across blank
+;; lines:
+;;
+;;     - `dialogs.clj`
+;;
+;;      — removed `:system-prompt` palette command entry
+;;     - `screen.clj`
+;;
+;;      — removed `:system-prompt` handler
+;;
+;; CommonMark spec-compliantly treats every fragment as its own
+;; loose paragraph: only `dialogs.clj` lands under the bullet
+;; marker, and `— removed …` shows up flush-left as if it weren't
+;; part of the bullet at all. The TUI bubble has nowhere to render
+;; that hierarchy correctly.
+;;
+;; `coalesce-loose-list-items` (the pre-pass) folds every fragment
+;; back into the bullet's text on a single line. Tests below pin
+;; the specific shapes the user reported.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(def ^:private coalesce-loose-list-items @#'render/coalesce-loose-list-items)
+
+(defn- bullet-bodies
+  "Return the visible body of every bullet line in a rendered output.
+   Matches `:answer` mode where the marker is `MARKER_MD_BULLET`."
+  [text bubble-w]
+  (->> (md->lines text bubble-w :answer)
+    (filter #(= p/MARKER_MD_BULLET (marker-of %)))
+    (mapv body-of)))
+
+(defn- strip-sentinels
+  "Drop inline-style sentinels (PUA U+E110..U+E2FF) so equality
+   assertions compare the visible text only."
+  [s]
+  (->> s
+    (remove #(<= 0xE110 (int %) 0xE2FF))
+    (apply str)))
+
+(defdescribe loose-bullet-coalesce-test
+  (describe "blank-line-fragmented bullets render as a single bullet line"
+    (it "joins one bullet's three paragraphs into one bullet body"
+      (let [src (str "- `dialogs.clj`\n"
+                  "\n"
+                  " — removed `:system-prompt` palette command entry")
+            bullets (bullet-bodies src 80)]
+        ;; Exactly ONE bullet, not three top-level paragraphs.
+        (expect (= 1 (count bullets)))
+        (let [body (strip-sentinels (first bullets))]
+          ;; The whole sentence reads as one line (modulo wrapping).
+          (expect (str/includes? body "dialogs.clj"))
+          (expect (str/includes? body "— removed"))
+          (expect (str/includes? body ":system-prompt"))
+          (expect (str/includes? body "palette command entry")))))
+
+    (it "two consecutive bullets each get a single-line body"
+      (let [src (str "- `dialogs.clj`\n"
+                  "\n"
+                  " — removed `:system-prompt` palette command entry\n"
+                  "- `screen.clj`\n"
+                  "\n"
+                  " — removed `:system-prompt` handler (viewer dialog)")
+            bullets (bullet-bodies src 80)]
+        (expect (= 2 (count bullets)))
+        (expect (str/includes? (strip-sentinels (nth bullets 0)) "dialogs.clj"))
+        (expect (str/includes? (strip-sentinels (nth bullets 0)) "palette command entry"))
+        (expect (str/includes? (strip-sentinels (nth bullets 1)) "screen.clj"))
+        (expect (str/includes? (strip-sentinels (nth bullets 1)) "viewer dialog"))))
+
+    (it "regression for the user's exact report — six fragmented bullets coalesce to six"
+      (let [src (str "## Pruned: System Prompt Copy / Inspector\n"
+                  "\n"
+                  "Removed the  `Inspect Latest System Prompt`  feature from TUI + core:\n"
+                  "\n"
+                  "- `dialogs.clj`\n"
+                  "\n"
+                  " — removed \n"
+                  "\n"
+                  "`:system-prompt`\n"
+                  "\n"
+                  " palette command entry\n"
+                  "- `screen.clj`\n"
+                  "\n"
+                  " — removed \n"
+                  "\n"
+                  "`:system-prompt`\n"
+                  "\n"
+                  " handler (viewer dialog)\n"
+                  "- `core.clj`\n"
+                  "\n"
+                  " — removed \n"
+                  "\n"
+                  "`effective-system-prompt`\n"
+                  "\n"
+                  " and \n"
+                  "\n"
+                  "`effective-system-prompt-for-query`\n"
+                  "\n"
+                  " exports + docstring mention\n"
+                  "- `loop.clj`\n"
+                  "\n"
+                  " — removed both function definitions (\n"
+                  "\n"
+                  "`effective-system-prompt`\n"
+                  "\n"
+                  ", \n"
+                  "\n"
+                  "`effective-system-prompt-for-query`\n"
+                  "\n"
+                  ")\n"
+                  "- `CLAUDE.md`\n"
+                  "\n"
+                  " — removed two references\n"
+                  "- `docs/src/extensions/overview.md`\n"
+                  "\n"
+                  " — updated paragraph about inspector\n"
+                  "\n"
+                  "**Loop clean: ** true\n"
+                  "\n"
+                  "**No remaining source references.**")
+            lines  (md->lines src 80 :answer)
+            bullets (bullet-bodies src 80)]
+        ;; SIX bullets in, SIX bullet items out. Each one carries the
+        ;; signature of its first source code-span so we can pin the
+        ;; mapping bullet-by-bullet.
+        (let [first-bodies (->> bullets
+                             (map strip-sentinels)
+                             ;; Some items wrap onto multiple lines;
+                             ;; pick only those with the ` • ` prefix
+                             ;; that opens a fresh item, not the
+                             ;; continuation indent.
+                             (filter #(str/starts-with? % "  • "))
+                             vec)]
+          (expect (= 6 (count first-bodies)))
+          (expect (str/includes? (nth first-bodies 0) "dialogs.clj"))
+          (expect (str/includes? (nth first-bodies 1) "screen.clj"))
+          (expect (str/includes? (nth first-bodies 2) "core.clj"))
+          (expect (str/includes? (nth first-bodies 3) "loop.clj"))
+          (expect (str/includes? (nth first-bodies 4) "CLAUDE.md"))
+          (expect (str/includes? (nth first-bodies 5) "overview.md")))
+        ;; The closing summary lines must NOT be folded into the
+        ;; last bullet — they're top-level bold paragraphs.
+        (let [bold-lines (->> lines
+                           (filter #(= p/MARKER_MD_BOLD (marker-of %)))
+                           (map (comp strip-sentinels body-of)))]
+          (expect (some #(str/includes? % "Loop clean")          bold-lines))
+          (expect (some #(str/includes? % "No remaining source") bold-lines))))))
+
+  (describe "structural lines close an open list scope"
+    (it "heading after a fragmented bullet doesn't get sucked into it"
+      (let [src (str "- foo\n"
+                  "\n"
+                  "continuation\n"
+                  "\n"
+                  "## A new heading")
+            lines (md->lines src 80 :answer)
+            bullets (bullet-bodies src 80)]
+        (expect (= 1 (count bullets)))
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo continuation"))
+        (expect (some #(and (= p/MARKER_MD_H2 (marker-of %))
+                         (str/includes? (body-of %) "A new heading"))
+                  lines))))
+
+    (it "code fence after a fragmented bullet stays a fence"
+      (let [src (str "- foo\n"
+                  "\n"
+                  "still bullet\n"
+                  "\n"
+                  "```clj\n"
+                  "(+ 1 2)\n"
+                  "```\n")
+            lines (md->lines src 80 :answer)
+            bullets (bullet-bodies src 80)]
+        (expect (= 1 (count bullets)))
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo still bullet"))
+        (expect (some #(and (= p/MARKER_MD_CODE (marker-of %))
+                         (str/includes? (body-of %) "(+ 1 2)"))
+                  lines))))
+
+    (it "bold-only paragraph after a bullet does not get coalesced"
+      ;; This is the regression that broke `**Loop clean:**` etc.
+      (let [src (str "- foo\n"
+                  "\n"
+                  "**Status:** done.")
+            lines (md->lines src 80 :answer)
+            bullets (bullet-bodies src 80)]
+        (expect (= 1 (count bullets)))
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
+        (expect (not (str/includes? (strip-sentinels (first bullets)) "Status")))
+        ;; Either MARKER_MD_BOLD (when the line is purely bold) or a
+        ;; plain line carrying inline-bold sentinels — both prove it
+        ;; is no longer part of the bullet.
+        (expect (some #(str/includes? (strip-sentinels %) "Status")
+                  lines)))))
+
+  (describe "two consecutive blank lines close the list (CommonMark loose-list end)"
+    (it "second paragraph after double-blank doesn't fold into bullet"
+      (let [src (str "- foo\n"
+                  "\n"
+                  "still item\n"
+                  "\n"
+                  "\n"
+                  "fresh paragraph")
+            bullets (bullet-bodies src 80)]
+        (expect (= 1 (count bullets)))
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo still item"))
+        (expect (not (str/includes? (strip-sentinels (first bullets)) "fresh paragraph"))))))
+
+  (describe "punctuation reflow on coalesce"
+    (it "stray spaces around () , and . are tightened back to prose form"
+      (let [src (str "- foo (\n"
+                  "\n"
+                  "bar\n"
+                  "\n"
+                  ", baz\n"
+                  "\n"
+                  ")\n")
+            bullets (bullet-bodies src 80)]
+        (expect (= 1 (count bullets)))
+        ;; "( bar" → "(bar", "bar ," → "bar,", "baz )" → "baz)"
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo (bar, baz)")))))
+
+  (describe "well-formed input still passes through cleanly"
+    (it "single-line bullets are not altered by the pre-pass"
+      ;; Pure pass-through — the coalesce shouldn't ever change the
+      ;; shape of a bullet that's already on one line.
+      (let [src "- alpha\n- beta\n- gamma"
+            bullets (bullet-bodies src 80)]
+        (expect (= 3 (count bullets)))
+        (expect (str/includes? (strip-sentinels (nth bullets 0)) "alpha"))
+        (expect (str/includes? (strip-sentinels (nth bullets 1)) "beta"))
+        (expect (str/includes? (strip-sentinels (nth bullets 2)) "gamma"))))
+
+    (it "lines outside any list are not touched"
+      ;; `coalesce-loose-list-items` runs on the raw line vec; assert
+      ;; non-list input round-trips unchanged.
+      (let [in  ["plain prose" "" "more prose" "" "## heading"]
+            out (coalesce-loose-list-items in)]
+        (expect (= in out))))))

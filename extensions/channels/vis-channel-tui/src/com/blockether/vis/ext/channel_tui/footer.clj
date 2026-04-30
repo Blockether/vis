@@ -4,7 +4,7 @@
    Codex-style three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       glm-5.1 (balanced)        \u280B iter 7 · 4.1s              97% left · $0.04
+       glm-5.1 (balanced)                                   $0.04
 
    Each region holds a list of `{:text :fg :bold? :region :priority}`
    spans separated by ' · ' in muted color. The full segment list is
@@ -12,9 +12,9 @@
    number (least important) until it fits the available width.
 
    States (driven by `:loading?`, `:cancelling?` from app-db):
-     idle       → LEFT=model    CENTER=∅           RIGHT=ctx-left% · cost
-     running    → LEFT=model    CENTER=∅           RIGHT=ctx-left% · cost
-     cancelling → LEFT=model    CENTER=cancelling…  RIGHT=ctx-left% · cost
+     idle       → LEFT=model    CENTER=∅           RIGHT=cost
+     running    → LEFT=model    CENTER=∅           RIGHT=cost
+     cancelling → LEFT=model    CENTER=cancelling…  RIGHT=cost
 
    Run-state (spinner, iteration counter, elapsed time, current
    phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
@@ -128,7 +128,7 @@
 
    `:priority` semantics: 1 = critical (never drop), higher = drop first
    when the row overflows. The full priority hierarchy:
-     1  ctx %, run-state spinner, cancelling…
+     1  run-state spinner, cancelling…
      2  model name, elapsed (running)
      3  iter counter, model reasoning suffix
      4  cost"
@@ -145,8 +145,7 @@
                         (str (name provider) "/" model)
                         model)
         reasoning? (boolean (:reasoning? info))
-        ctx        (ctx-left-info messages model)
-        cost-str   (format-cost (session-cost messages))]
+        cost-str   (format-cost (session-cost messages))]        cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       model-display
@@ -174,12 +173,6 @@
       ;; current-iteration.
 
       ;; ── RIGHT ─────────────────────────────────────────────────────────────
-      ctx
-      (conj {:text (str (when (:estimated? ctx) "~") (:pct ctx) "% left")
-             :fg (ctx-color (:pct ctx))
-             :bold? (<= (:pct ctx) 30)
-             :region :right :priority 1})
-
       cost-str
       (conj {:text cost-str
              :fg t/footer-fg-muted :bold? false

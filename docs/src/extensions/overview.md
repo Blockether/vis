@@ -225,9 +225,7 @@ builds the complete system message. It:
    when present
 3. Joins all active prompt blocks with `\n\n` and appends to the core prompt
 
-Both iteration loop paths and the TUI `[?]` inspector
-(`com.blockether.vis.core/effective-system-prompt`) call this same
-function — zero duplication, zero drift.
+All iteration loop paths call this same function — zero duplication, zero drift.
 
 If an extension's `activation-fn` or `prompt` fn throws, the error is
 logged at `:error` level and that extension's prompt is skipped —

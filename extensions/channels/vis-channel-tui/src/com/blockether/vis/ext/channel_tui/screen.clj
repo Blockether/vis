@@ -178,7 +178,7 @@
         text-rows    (input-text-rows input cols)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
         ;; Reserve the bottom-most row for the dedicated footer
-        ;; (model / run-state / ctx-left%) and the top-most band for
+        ;; (model / run-state) and the top-most band for
         ;; the dedicated header (top rule + title row + bottom rule).
         ;; The input box sits directly above the footer; the messages
         ;; area fills everything from `messages-top` down to the
@@ -936,15 +936,6 @@
                                :toggles
                                (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db)))]
                                  (state/dispatch [:update-settings s]))
-
-                               :system-prompt
-                               (with-dialog-lock
-                                 #(let [conversation-id (get-in @state/app-db [:conversation :id])
-                                        prompt  (if conversation-id
-                                                  (or (vis/effective-system-prompt conversation-id)
-                                                    "(no system prompt)")
-                                                  "(no conversation)")]
-                                    (dlg/text-viewer-dialog! screen "Inspect Latest System Prompt" prompt)))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
