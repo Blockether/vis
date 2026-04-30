@@ -604,6 +604,15 @@
 ;; cheaper move.
 (declare extract-link-refs paint-link-chrome-row!)
 
+;; `chrome-display-text` (further down) calls into `markdown->inline`
+;; via `strip-inline-markup` so the chrome row doesn't show raw
+;; `**` / `_` / backticks that the LLM put inside link bracket text.
+;; The actual `markdown->inline` body lives in the inline tokeniser
+;; section ~900 lines below; the existing forward-decl down there is
+;; far too late for a chrome helper this high in the file. We pin
+;; the var here so Clojure can resolve the symbol at compile time.
+(declare markdown->inline)
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1261,13 +1270,41 @@
     (= kind :file)  link-icon-file
     :else           link-icon-link))
 
+;; Inline-style sentinel codepoints emitted by `markdown->inline`
+;; (BOLD/ITALIC/STRIKE/CODE on/off pairs in the U+E110–U+E117 PUA
+;; range). The chrome strip doesn't paint per-character SGR — it's
+;; a single-tone hover band — so we strip the sentinels back out
+;; before display, leaving plain text. The pre-pass through
+;; `markdown->inline` is the trick: `**bold**` cleanly becomes
+;; `bold`, `*italic*` becomes `italic`, ` `code` ` becomes `code`,
+;; and unmatched openers (`*half`, `**incomplete`) stay literal
+;; — same behaviour the prose body gets. Without this pass the
+;; chrome shows raw markdown markup verbatim, e.g.
+;;   [See **here**](url) -> "🔗 See **here** → url"
+;; which looks like a typo to the user.
+(def ^:private chrome-text-sentinel-re #"[\uE110-\uE117]")
+
+(defn- strip-inline-markup
+  "Run `text` through `markdown->inline` then drop the styling
+   sentinels, yielding plain visible text. See the comment above
+   `chrome-text-sentinel-re` for the rationale."
+  ^String [^String text]
+  (-> (or text "")
+    markdown->inline
+    (str/replace chrome-text-sentinel-re "")))
+
 (defn- chrome-display-text
   "Build the visible chrome row for a ref:
      <icon> <text> → <url>
-   The url tail is shortened to fit `max-w`. Pure."
+   The url tail is shortened to fit `max-w`. Pure.
+
+   `text` is run through `strip-inline-markup` so inline emphasis
+   inside the bracket portion (e.g. `[See **here**](url)`,
+   ``[Title with `code`](url)``) renders as plain text in the
+   chrome row instead of leaking raw `**` / backticks / `*`."
   ^String [ref ^long max-w]
   (let [icon  (ref-icon ref)
-        text  (or (:text ref) "")
+        text  (strip-inline-markup (or (:text ref) ""))
         url   (or (:url ref)  "")
         sep   " → "
         ;; Reserve room: icon (2 cols) + space + sep + at least 8 cols
@@ -1398,8 +1435,10 @@
 (declare markdown->lines)
 
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
-
-(declare markdown->inline)
+;;
+;; `markdown->inline` is forward-declared once at the top of the
+;; file (search `(declare markdown->inline)`), so no second declare
+;; here.
 
 (defn- word-char-at?
   "True iff index `i` is inside `s` and points at a letter or digit.
@@ -2443,6 +2482,43 @@
                  (table-separator-row? (first rst)))
                (let [[tbl tail] (consume-table lines max-w m)]
                  (recur (seq tail) false (into acc tbl)))
+
+               ;; <details> / </details> framing tags. The TUI doesn't
+               ;; (yet) model true collapsibility — there's no per-bubble
+               ;; "is this section collapsed" state and no click region
+               ;; on the summary line. Without that plumbing, leaking
+               ;; raw `<details>` and `</details>` into the answer body
+               ;; just shows the user HTML they can't act on. We drop
+               ;; the framing tags here; the inner body (already
+               ;; separated by blank lines in `md/details` output)
+               ;; renders as normal markdown between them, and the
+               ;; <summary> branch below paints the disclosure label.
+               ;;
+               ;; The regex tolerates attributes (`<details open>`)
+               ;; and any leading whitespace. Tag must be the only
+               ;; content on its line — inline `<details>` mid-prose
+               ;; (rare) falls through to plain rendering.
+               (re-matches #"^\s*</?details(\s[^>]*)?>\s*$" line)
+               (recur rst false acc)
+
+               ;; <summary>label</summary> on its own line —
+               ;; the disclosure heading inside a <details> block.
+               ;; Painted with the `:bold` marker (same style real
+               ;; bold lines get) and prefixed with a `▾` triangle
+               ;; so the user reads it as an expanded disclosure
+               ;; section. Inner content runs through
+               ;; `markdown->inline` so `<summary>**Logs**</summary>`
+               ;; keeps the inner bold + ` `code` ` etc.
+               (re-matches #"^\s*<summary>.*</summary>\s*$" line)
+               (let [[_ inner] (re-matches #"^\s*<summary>(.*)</summary>\s*$" line)
+                     decorated (markdown->inline (or inner ""))
+                     prefix    "▾ "
+                     wrap-w    (max 1 (- max-w (count prefix)))]
+                 (recur rst false
+                   (into acc
+                     (into [(str (:bold m) prefix (first (wrap-text decorated wrap-w)))]
+                       (mapv #(str (:bold m) "  " %)
+                         (rest (wrap-text decorated wrap-w)))))))
 
                ;; Heading 3 — and H4/H5/H6 collapsed onto the H3
                ;; marker. Terminal palettes top out at ~3 visually

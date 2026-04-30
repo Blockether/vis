@@ -213,8 +213,13 @@
                         :progress-extra progress-extra})
         total-h      (long (:total-h layout))]
     (render/fill-background! g cols rows)
-    (header/draw-header! g db header-top cols)
+    ;; Messages area draws FIRST so its internal cr/reset! clears stale
+    ;; regions from the previous frame. Header registers its :copy-id
+    ;; region AFTER messages, so it survives to be looked up by the
+    ;; mouse handler. Both use absolute row coordinates in disjoint
+    ;; ranges, so visual output is unaffected by the draw order.
     (render/draw-messages-area! g layout messages-top messages-bottom cols)
+    (header/draw-header! g db header-top cols)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
@@ -687,9 +692,9 @@
                              (let [text (:text hit)]
                                (future
                                  (try (input/clipboard-copy! text)
-                                   (catch Throwable _))
-                                 (vis/notify! "✓ Copied conversation ID"
-                                   :level :success :ttl-ms 1500)))
+                                   (catch Throwable _)))
+                               (vis/notify! "✓ Copied conversation ID"
+                                 :level :success :ttl-ms 1500))
 
                              ;; Default (markdown link / image /
                              ;; file-link chrome): hand the URL to
