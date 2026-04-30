@@ -37,6 +37,7 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
    [edamame.core :as edamame]
@@ -217,6 +218,37 @@
     (catch Throwable e
       (ex-message e))))
 
+(defn- edamame-parses?
+  "Predicate the repair search hands to `parse-diagnose/try-quote-rebalance`.
+   Returns true when `src` survives `edamame/parse-string-all` with
+   the same opts the rest of this ns uses; false on any throw."
+  [^String src]
+  (try
+    (edamame/parse-string-all src edamame-opts)
+    true
+    (catch Throwable _ false)))
+
+(defn quote-rebalance
+  "Companion to `parinfer-rebalance` for the OTHER common shape of
+   malformed Clojure source: an unbalanced double-quote string.
+
+   Parinfer doesn't fix string delimiters. We do:
+
+     1. Quick-out when the unescaped-quote count is even.
+     2. Find the line where the running count first goes odd.
+     3. Try removing each unescaped `\"` on that line, ONE AT A
+        TIME (most common LLM mistake — conversation cf9e29b5).
+     4. As a fallback, try appending `\"` at end of that line
+        (the \"missing close-quote\" case).
+     5. Each candidate goes to edamame; first one that parses wins.
+
+   Returns the rebalanced source string, or `nil` when nothing in
+   the search produces a parsable variant. Same contract as
+   `parinfer-rebalance` so the two slot into the parse pipeline
+   the same way."
+  ^String [^String source]
+  (parse-diagnose/try-quote-rebalance source edamame-parses?))
+
 (defn parinfer-rebalance
   "First-line repair for malformed Clojure source. Calls parinfer's
    indent-mode auto-balancer (a battle-tested 1100-line algo from
@@ -322,7 +354,8 @@
         ;; Attempt 1: edamame on raw source.
         [(parse-and-slice code-str false) nil]
         (catch Throwable raw-err
-          ;; Attempt 2: parinfer rebalance, then edamame on rebalanced.
+          ;; Attempt 2: parinfer rebalance (parens / brackets),
+          ;; then edamame on rebalanced.
           (if-let [rebalanced (parinfer-rebalance code-str)]
             (try
               [(parse-and-slice rebalanced true) nil]
@@ -332,7 +365,18 @@
                 ;; the raw error so the caller can try the
                 ;; extension chain on the original source.
                 [nil (ex-message raw-err)]))
-            [nil (ex-message raw-err)]))))))
+            ;; Attempt 3: quote rebalance (extra/missing `\"` chars).
+            ;; Same contract as parinfer-rebalance — returns the
+            ;; rebalanced source iff it parses cleanly via edamame,
+            ;; else nil.
+            (if-let [rebalanced (quote-rebalance code-str)]
+              (try
+                [(parse-and-slice rebalanced true) nil]
+                (catch Throwable _
+                  [nil (ex-message raw-err)]))
+              ;; Both repair passes gave up. Surface the original
+              ;; error so the extension rescue chain can have a go.
+              [nil (ex-message raw-err)])))))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 

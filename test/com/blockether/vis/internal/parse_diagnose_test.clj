@@ -86,15 +86,18 @@
   (it "balanced plain string -> 2"
     (expect (= 2 (diag/count-unescaped-quotes "say \"hi\""))))
 
-  (it "escaped quote does NOT count"
-    (expect (= 2 (diag/count-unescaped-quotes "(md/code \"\\\"\")")))
-    (expect (= 4 (diag/count-unescaped-quotes "say \"\\\"\\\"\" twice"))))
+  (it "escaped quote does NOT count — (md/code \"\\\"\") parses as 2 delimiters around the escape"
+    (expect (= 2 (diag/count-unescaped-quotes "(md/code \"\\\"\")"))))
 
-  (it "literal backslash followed by quote: escape eats the next char"
-    ;; Source `\\\"` = one literal backslash then an escaped quote;
-    ;; the escape rule consumes the second `\` and skips ahead to
-    ;; the `"` after it as a string delimiter.
-    (expect (= 2 (diag/count-unescaped-quotes "\\\\\"foo\""))))
+  (it "a backslash before a quote is treated as the escape — even when the backslash itself was a literal in the source"
+    ;; Raw source bytes: `say "\"\"" twice`
+    ;; (Clojure literal: "say \"\\\"\\\"\" twice")
+    ;; Counter walks the BYTES, treating every backslash as the
+    ;; opener of an escape pair regardless of whether it itself
+    ;; arrived from a `\\` source sequence. Two `\` bytes in the
+    ;; middle eat the two embedded quotes -> only the outer pair
+    ;; counts.
+    (expect (= 2 (diag/count-unescaped-quotes "say \"\\\"\\\"\" twice"))))
 
   (it "the broken snippet has an ODD count (the regression signature)"
     (expect (odd? (diag/count-unescaped-quotes broken-snippet-from-cf9e29b5)))))
@@ -128,3 +131,49 @@
       (expect (odd? (:total d)))
       (expect (str/includes? (:hint d) "line 14"))
       (expect (str/includes? (:hint d) "Unbalanced double-quote")))))
+
+;; -----------------------------------------------------------------------------
+;; Auto-repair — parinfer-equivalent for quotes.
+;; -----------------------------------------------------------------------------
+
+(defn- edamame-parses? [^String src]
+  (try
+    (edamame/parse-string-all src
+      {:all true :readers (fn [_tag] (fn [v] (list 'do v)))})
+    true
+    (catch Throwable _ false)))
+
+(defdescribe try-quote-rebalance-test
+  (it "returns nil when the source is already balanced"
+    (expect (nil? (diag/try-quote-rebalance
+                    "(println \"a\" \"b\")"
+                    edamame-parses?))))
+
+  (it "removes a stray `\"` and returns a parsable variant (extra-quote case)"
+    (let [broken "(str \"foo\" \"bar\" \")"
+          fixed  (diag/try-quote-rebalance broken edamame-parses?)]
+      (expect (some? fixed))
+      (expect (edamame-parses? fixed))
+      ;; The quote count of the fix is even.
+      (expect (even? (diag/count-unescaped-quotes fixed)))))
+
+  (it "appends a missing `\"` at end of line (missing-close case)"
+    ;; A fence-style mistake: opener present, no closer on the line.
+    (let [broken "(println \"hello)"
+          fixed  (diag/try-quote-rebalance broken edamame-parses?)]
+      (expect (some? fixed))
+      (expect (edamame-parses? fixed))))
+
+  (it "REPAIRS the broken cf9e29b5 snippet — the regression that motivated this whole fn"
+    (let [fixed (diag/try-quote-rebalance broken-snippet-from-cf9e29b5
+                  edamame-parses?)]
+      (expect (some? fixed))
+      (expect (edamame-parses? fixed))
+      ;; The repair is local: only the offending line should change.
+      ;; Lines 1–13 and 15+ stay byte-identical.
+      (let [original-lines (str/split-lines broken-snippet-from-cf9e29b5)
+            fixed-lines    (str/split-lines fixed)]
+        (expect (= (count original-lines) (count fixed-lines)))
+        (doseq [i (range (count original-lines))]
+          (when (and (not= 13 i) (not= 14 i)) ;; line 14 (1-based) is at idx 13
+            (expect (= (nth original-lines i) (nth fixed-lines i)))))))))

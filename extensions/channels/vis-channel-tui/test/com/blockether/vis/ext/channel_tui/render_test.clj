@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render-test
   (:require
+   [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [clojure.string :as str]
@@ -723,3 +724,137 @@
           (expect (= 0 top))
           (expect (= 4 bot)))))    ;; track-h(5) - thumb-h(1) = 4
     ))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; <details> / <summary> rendering
+;;
+;; Pre-fix the TUI markdown pipeline had no branch for HTML block tags,
+;; so the lines emitted by `(md/details (md/summary …) body)` rendered
+;; literally as `<details>`, `<summary>Click</summary>`, `</details>`
+;; in the chat bubble — three rows of raw HTML the user can't act on.
+;; The renderer now drops the framing tags and paints the summary as
+;; a bold `▾ label` disclosure heading. True click-to-collapse still
+;; needs per-bubble state + click regions; this fix is the visual
+;; baseline.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe details-summary-rendering-test
+  (describe "`<details>` / `</details>` framing tags are dropped"
+    (it "`<details>` line emits no row"
+      ;; If the renderer ever leaks the framing tag back into the
+      ;; output we'll see a PLAIN `<details>` row reappear — this
+      ;; pins the drop.
+      (let [lines (md->lines "<details>\n<summary>L</summary>\n\nbody\n\n</details>" 60)]
+        (expect (not-any? #(str/includes? % "<details>") lines))
+        (expect (not-any? #(str/includes? % "</details>") lines))))
+
+    (it "`<details open>` (with attribute) is also dropped"
+      (let [lines (md->lines "<details open>\nbody\n</details>" 60)]
+        (expect (not-any? #(str/includes? % "<details") lines))
+        (expect (not-any? #(str/includes? % "</details>") lines))))
+
+    (it "body between framing tags renders as normal markdown"
+      ;; The whole point of stripping the wrappers is so the inner
+      ;; markdown still flows through the existing pipeline. A bullet
+      ;; inside <details> must still come out with the bullet marker.
+      (let [lines (md->lines "<details>\n<summary>L</summary>\n\n- item\n\n</details>" 60)
+            bullet-line (first (filter #(= p/MARKER_MD_BULLET (marker-of %)) lines))]
+        (expect (some? bullet-line))
+        (expect (str/includes? bullet-line "item")))))
+
+  (describe "`<summary>label</summary>` renders as bold disclosure heading"
+    (it "emits a single bold-marked row prefixed with `▾ `"
+      (let [[line] (filter #(= p/MARKER_MD_BOLD (marker-of %))
+                     (md->lines "<summary>Click to expand</summary>" 60))]
+        (expect (some? line))
+        (expect (str/starts-with? (body-of line) "▾ "))
+        (expect (str/includes? line "Click to expand"))))
+
+    (it "inner inline markdown is honoured (`**bold** inside summary`)"
+      ;; `<summary>**Logs**</summary>` should keep the inner bold
+      ;; styling, same as a heading body would. The renderer routes
+      ;; the inner content through `markdown->inline` so the bold
+      ;; sentinels show up alongside the visible text.
+      (let [[line] (filter #(= p/MARKER_MD_BOLD (marker-of %))
+                     (md->lines "<summary>**Logs**</summary>" 60))]
+        (expect (str/includes? line p/INLINE_BOLD_ON))
+        (expect (str/includes? line "Logs"))
+        (expect (str/includes? line p/INLINE_BOLD_OFF)))))
+
+  (describe "full `(md/details (md/summary …) body)` shape round-trips"
+    ;; Mirrors the actual emit shape `vis-foundation/markdown.clj`
+    ;; produces. Pre-fix the user saw three rows of raw HTML; post-fix
+    ;; only the disclosure label + body remain.
+    (it "summary label is bold, body lines are PLAIN, framing tags absent"
+      (let [src    (str "<details>\n<summary>Logs</summary>\n\n"
+                     "Hidden text.\n\n</details>")
+            lines  (md->lines src 60)
+            text   (str/join "\n" lines)]
+        (expect (not (str/includes? text "<details")))
+        (expect (not (str/includes? text "<summary")))
+        (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
+                         (str/includes? % "Logs")) lines))
+        ;; `:answer` mode uses an empty-string marker for PLAIN lines
+        ;; (see `md-marker-sets`). `marker-of` returns the FIRST char
+        ;; of the row, so for plain lines it's the first content char
+        ;; (`H`), not a known styling marker. We assert via
+        ;; "present and not styled by any known marker".
+        (let [styled-markers #{p/MARKER_MD_H1 p/MARKER_MD_H2 p/MARKER_MD_H3
+                               p/MARKER_MD_BOLD p/MARKER_MD_CODE
+                               p/MARKER_MD_BULLET p/MARKER_MD_QUOTE
+                               p/MARKER_MD_HR}]
+          (expect (some #(and (str/includes? % "Hidden text.")
+                           (not (contains? styled-markers (marker-of %))))
+                    lines)))))))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; Link-chrome strip — strip inline emphasis from anchor text
+;;
+;; `parse-md-refs` captures whatever sits between `[…]` raw, so
+;; `[See **here**](url)` flows into the chrome row with literal `**`
+;; baked in: "🔗 See **here** → url". The renderer now runs the
+;; anchor text through `markdown->inline` and strips the styling
+;; sentinels, leaving plain visible text in the chrome.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(def ^:private chrome-display-text @#'render/chrome-display-text)
+
+(defn- chrome-of [src]
+  (let [[ref] (links/parse-md-refs src)]
+    (chrome-display-text ref 80)))
+
+(defdescribe chrome-display-text-strips-inline-markup-test
+  (describe "emphasis inside link text doesn't leak into chrome row"
+    (it "`[See **here**](url)` → no `**` in chrome"
+      (let [s (chrome-of "[See **here**](https://example.com)")]
+        (expect (str/includes? s "See here"))
+        (expect (not (str/includes? s "**")))))
+
+    (it "`[Spec *v2*](url)` → no stray `*` in chrome"
+      (let [s (chrome-of "[Spec *v2*](https://example.com)")]
+        (expect (str/includes? s "Spec v2"))
+        (expect (not (str/includes? s "*v2*")))))
+
+    (it "``[Title with `code`](url)`` → backticks stripped from chrome"
+      (let [s (chrome-of "[Title with `code`](https://example.com)")]
+        (expect (str/includes? s "Title with code"))
+        (expect (not (str/includes? s "`code`"))))))
+
+  (describe "emphasis OUTSIDE the brackets is unaffected (regression net)"
+    ;; `**[link](url)**` — bold lives outside the bracket, so
+    ;; `parse-md-refs` already captures clean text. This test pins
+    ;; that the new strip doesn't accidentally mangle the URL or icon.
+    (it "`**[link](url)**` → chrome reads `link` cleanly"
+      (let [s (chrome-of "**[link](https://example.com)**")]
+        (expect (str/includes? s "link"))
+        (expect (str/includes? s "https://example.com"))
+        (expect (not (str/includes? s "**"))))))
+
+  (describe "chrome icon + url tail still render after the strip"
+    ;; Smoke test that the strip didn't drop the leading icon or the
+    ;; ` → ` separator. Without these the affordance loses its
+    ;; "this is a link" cue.
+    (it "icon + arrow + url all present"
+      (let [s (chrome-of "[plain](https://example.com)")]
+        (expect (str/includes? s " → "))
+        (expect (str/includes? s "https://example.com"))))))

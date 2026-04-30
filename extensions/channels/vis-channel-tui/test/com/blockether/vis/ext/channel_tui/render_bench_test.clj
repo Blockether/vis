@@ -282,3 +282,87 @@
     (println)
     (println "Done. Lower = faster. Phase 1 + 2 = algorithm; Phase 3 = cache.")
     nil))
+
+;;; ── Virtualisation benchmark ───────────────────────────────────────────
+;;
+;; Compares the OLD eager `apply-settings` projection (every assistant
+;; bubble formats on every call) to the NEW `virtual/layout` (formats
+;; only the bubbles whose viewport interval is non-empty). Workload
+;; mirrors what conversation 954bf315 throws at the chat panel: a few
+;; small messages plus two big trace bubbles (22-iter and 14-iter)
+;; that dominate the cold-paint cost.
+
+(def ^:private virtual
+  (delay (requiring-resolve 'com.blockether.vis.ext.channel-tui.virtual/layout)))
+
+(defn- big-trace-msg [n-iters forms-per-iter]
+  {:role            :assistant
+   :raw-answer      (apply str (repeat 200 "a "))
+   :text            "a a a"
+   :trace           (vec (repeat n-iters
+                           {:thinking  (apply str (repeat 50 "thinking. "))
+                            :code      (vec (repeat forms-per-iter "(+ 1 2)"))
+                            :results   (vec (repeat forms-per-iter "3"))
+                            :stdouts   (vec (repeat forms-per-iter ""))
+                            :durations (vec (repeat forms-per-iter 1))
+                            :successes (vec (repeat forms-per-iter true))}))
+   :iteration-count n-iters
+   :timestamp       #inst "2026-04-30T00:00:00"})
+
+(defn- user-msg [text]
+  {:role :user :text text :timestamp #inst "2026-04-30T00:00:00"})
+
+(defn run-virtual-bench!
+  "Compare cold-paint cost: eager projection of every assistant
+   message vs `virtual/layout` projecting only the visible subset.
+   Workload models conversation 954bf315 — 12 messages, two of which
+   are huge trace bubbles. Cache is invalidated between iterations so
+   each run pays full cold cost (the case the user sees on TUI
+   startup)."
+  []
+  (let [layout-fn @virtual
+        msgs   [(user-msg "first prompt")
+                (big-trace-msg 22 4)        ;; the 22-iter monster
+                (user-msg "second prompt")
+                (big-trace-msg 1 3)
+                (user-msg "third prompt")
+                (big-trace-msg 1 3)
+                (user-msg "fourth prompt")
+                (big-trace-msg 2 3)
+                (user-msg "fifth prompt")
+                (big-trace-msg 14 4)        ;; the 14-iter monster
+                (user-msg "sixth prompt")
+                (big-trace-msg 1 1)]
+        bubble-w 100
+        settings {:show-thinking true :show-iterations true}
+        inner-h  38
+        assistants (filter #(= :assistant (:role %)) msgs)]
+    (println)
+    (println (format "Workload: %d msgs (%d assistants)" (count msgs) (count assistants)))
+    (println)
+    (println "── Cold first-paint, viewport at auto-bottom ──")
+
+    (let [eager (bench-quick "old eager (apply-settings simulate)"
+                  (fn [_]
+                    (render/invalidate-cache!)
+                    (doseq [m assistants]
+                      (render/format-answer-with-thinking
+                        (:raw-answer m) (:trace m) bubble-w settings)))
+                  [nil])
+          virt  (bench-quick "new virtual/layout (auto-bottom, only visible projects)"
+                  (fn [_]
+                    (render/invalidate-cache!)
+                    (layout-fn msgs bubble-w settings nil inner-h {}))
+                  [nil])]
+      (speedup-line "old eager" eager "new virtual" virt))
+
+    (println)
+    (println "── Cold paint scrolled to TOP — the big tail bubbles must NOT format ──")
+    (bench-quick "virtual/layout (scroll=0)"
+      (fn [_]
+        (render/invalidate-cache!)
+        (layout-fn msgs bubble-w settings 0 inner-h {}))
+      [nil])
+    (println "  → only the top-of-viewport bubbles paid format cost; the")
+    (println "    14-iter and 22-iter tail bubbles stayed as cheap estimates.")
+    nil))
