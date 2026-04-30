@@ -444,7 +444,7 @@
    (sdk/symbol 'code code
      {:doc "Inline code span: `` `text` ``."
       :arglists '([text])
-      :examples ["(md/code \"vis/cat\")"]})
+      :examples ["(md/code \"v/cat\")"]})
    ;; `summary` is registered alongside the inline tag-style helpers
    ;; (kbd / bold / italic) because it produces a single bare HTML
    ;; tag, not a block. Composes with `details` via tag-passthrough.

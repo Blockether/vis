@@ -33,7 +33,7 @@
 ;; bubble while we re-format from scratch" cliff like the old
 ;; clear-the-whole-thing strategy.
 
-(def ^:private ^:const fmt-cache-cap 512)
+(def ^:private ^:const fmt-cache-cap 4096)
 
 (defn- make-fmt-cache ^LinkedHashMap []
   (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
@@ -1477,6 +1477,102 @@
         :else
         (recur (inc k))))))
 
+;; ── Markdown link / image pre-pass ────────────────────────────────────────
+;;
+;; Hand-rolled scanner that mirrors the regex
+;;
+;;     #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
+;;
+;; — `[text](url)` becomes `text`, `![alt](url)` becomes `""`. Used to
+;; live as `(str/replace s #"…" (fn [m] …))` inside `markdown->inline`.
+;; That allocated a Pattern call, a Matcher, and a per-match callback
+;; closure on every line of every assistant bubble on every redraw,
+;; which dominated cold-open cost on long conversations (multi-MB of
+;; trace lines, dozens of `[path](path)` links per answer).
+;;
+;; The new version walks chars in a single loop and lazily allocates
+;; a `StringBuilder` only when the first match is actually found —
+;; the (very common) case where a line carries no link markup at all
+;; returns the input string unchanged with zero allocations.
+
+(defn- find-md-link-url-end
+  "Given `s` of length `n` and `start` pointing at the first char of
+   the URL inside `[text](url)`, return the index of the closing `)`
+   that ends the link, or -1 if no valid URL ends at this position.
+
+   Mirrors the URL portion of the regex
+   `([^)\\s]+)(?:\\s+\"[^\"]*\")?\\)`: at least one non-space
+   non-paren URL char, optional ` \"title\"`, then `)`."
+  ^long [^String s ^long n ^long start]
+  (loop [k start]
+    (if (>= k n)
+      -1
+      (let [c (.charAt s k)]
+        (cond
+          (= c \))
+          (if (> k start) k -1)            ;; URL must have ≥1 char
+
+          (or (= c \space) (= c \tab))
+          (if (= k start)
+            -1                              ;; whitespace before any URL char
+            (let [ws-end (loop [m k]
+                           (if (and (< m n)
+                                 (let [cc (.charAt s m)]
+                                   (or (= cc \space) (= cc \tab))))
+                             (recur (inc m))
+                             m))]
+              (if (and (< ws-end n) (= \" (.charAt s ws-end)))
+                (let [title-close (.indexOf s "\"" (inc ws-end))]
+                  (if (and (>= title-close 0)
+                        (< (inc title-close) n)
+                        (= \) (.charAt s (inc title-close))))
+                    (inc title-close)
+                    -1))
+                -1)))
+
+          :else (recur (inc k)))))))
+
+(defn- strip-md-links
+  "Remove markdown link / image markup from `s`, leaving the anchor
+   text for links and dropping images entirely. Hand-rolled scanner;
+   see the comment block above `find-md-link-url-end` for why.
+
+   Returns `s` UNCHANGED (same identity) when the input carries no
+   link/image markup, so downstream identity-keyed caches stay hot."
+  ^String [^String s]
+  (let [n (.length s)]
+    (loop [i 0
+           last-write 0
+           ^StringBuilder sb nil]
+      (if (>= i n)
+        (if (nil? sb)
+          s
+          (do (.append sb s last-write n)
+            (.toString sb)))
+        (let [c (.charAt s i)
+              image? (and (= c \!)
+                       (< (inc i) n)
+                       (= \[ (.charAt s (inc i))))]
+          (if (or image? (= c \[))
+            (let [bracket-i  (if image? (inc i) i)
+                  text-start (inc bracket-i)
+                  bracket-close (.indexOf s "]" text-start)]
+              (if (and (>= bracket-close 0)
+                    (< (inc bracket-close) n)
+                    (= \( (.charAt s (inc bracket-close))))
+                (let [url-from (+ bracket-close 2)
+                      url-end  (find-md-link-url-end s n url-from)]
+                  (if (neg? url-end)
+                    (recur (inc i) last-write sb)
+                    (let [match-end (inc url-end)
+                          ^StringBuilder b (or sb (StringBuilder. n))]
+                      (.append b s last-write i)
+                      (when-not image?
+                        (.append b s text-start bracket-close))
+                      (recur match-end match-end b))))
+                (recur (inc i) last-write sb)))
+            (recur (inc i) last-write sb)))))))
+
 (defn- markdown->inline
   "Tokenize CommonMark inline syntax (`**bold**`, `__bold__`,
    `*italic*`, `_italic_`, `~~strike~~`, `` `code` ``) into
@@ -1518,14 +1614,18 @@
    enough to ignore or already handled by line-level markers
    (`# heading`, `- bullet`, `> quote`, fenced code)."
   ^String [^String s]
-  (if (or (nil? s) (zero? (.length s)))
+  (if (or (nil? s) (zero? (.length ^String s)))
     (or s "")
-    (let [s (-> s
-              (str/replace
-                #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
-                (fn [[_ image? text]]
-                  (if image? "" text))))
-          n  (.length s)
+    ;; NOTE: do NOT wrap this body in `cached*`. Every line of every
+    ;; iteration trace would land its own entry; the 512-cap LRU
+    ;; saturates after a single 22-iter bubble (~228 entries) and
+    ;; evicts the much-more-valuable `format-answer-with-thinking`
+    ;; entries that are keyed at the WHOLE-bubble level. The
+    ;; algorithmic win comes from `strip-md-links` (StringBuilder),
+    ;; the steady-state win comes from the outer fawt cache; an
+    ;; inline-level cache between them just thrashes both.
+    (let [s  (strip-md-links s)
+          n  (.length ^String s)
           sb (StringBuilder.)
           ;; Each token entry: [opener, closer, ON-sentinel, OFF-sentinel,
           ;;                    recurse-into-content?].

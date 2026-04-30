@@ -107,4 +107,4 @@ Patterns:
                  (recur (z/replace hit 'NEW))
                  z))))
 
-Full rewrite-clj.zip API bound under z/. Stick to the bound symbols. Missing fn? `(vis/extension-readme 'clj)` for full reference, or https://cljdoc.org/d/rewrite-clj/rewrite-clj/.")
+Full rewrite-clj.zip API bound under z/. Stick to the bound symbols. Missing fn? `(v/extension-readme 'clj)` for full reference, or https://cljdoc.org/d/rewrite-clj/rewrite-clj/.")

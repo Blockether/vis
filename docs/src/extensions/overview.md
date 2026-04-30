@@ -182,7 +182,7 @@ At `register-extension!` time:
 1. A SCI namespace `vis.ext.tools` is created with all wrapped symbols
 2. The alias `vis` is registered in the SCI context
 3. `(require '[vis.ext.tools :as vis])` is auto-evaluated in the sandbox
-4. The LLM calls `(vis/cat ...)`, `(vis/ls ...)`, `(vis/rg ...)`, etc.
+4. The LLM calls `(v/cat ...)`, `(v/ls ...)`, `(v/rg ...)`, etc.
 5. Bare `(read-file ...)` does **not** resolve - the alias is mandatory
 
 The system prompt auto-prepends a namespace header to each extension's
@@ -190,10 +190,10 @@ prompt block:
 
 ```
 [namespace: vis → vis.ext.tools]
-Filesystem tools (use vis/ prefix):
-- (vis/cat path) ...
-- (vis/ls ".") ...
-- (vis/rg ["foo" "bar"] ".") ...
+Filesystem tools (use v/ prefix):
+- (v/cat path) ...
+- (v/ls ".") ...
+- (v/rg ["foo" "bar"] ".") ...
 ```
 
 Extension-declared `:ext/classes` and `:ext/imports` are also injected

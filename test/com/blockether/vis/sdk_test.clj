@@ -33,14 +33,14 @@
 
   (it "renders canonical prompt text from symbol docstrings + arglists"
     (expect
-      (= (str "Filesystem tools (use vis/ prefix; positional args only)\n"
-           "- (vis/cat path) or (vis/cat path offset limit) — Read a file preview.\n"
-           "- vis/max-retries — Maximum retry attempts.\n"
+      (= (str "Filesystem tools (use v/ prefix; positional args only)\n"
+           "- (v/cat path) or (v/cat path offset limit) — Read a file preview.\n"
+           "- v/max-retries — Maximum retry attempts.\n"
            "RULES:\n"
            "- Discover paths first.")
         (sdk/render-prompt
           {:ext/doc "Filesystem tools"
-           :ext/ns-alias {:ns 'vis.ext.tools :alias 'vis}
+           :ext/ns-alias {:ns 'vis.ext.tools :alias 'v}
            :ext/symbols [cat-symbol retries-value]
            :usage-note "positional args only"
            :notes ["RULES:" "- Discover paths first."]})))))
@@ -64,7 +64,7 @@
               {:ext/namespace 'com.acme.ext.fs
                :ext/doc       "Filesystem tools"
                :ext/kind      "filesystem"
-               :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+               :ext/ns-alias  {:ns 'vis.ext.tools :alias 'v}
                :ext/prompt    "placeholder"
                :ext/symbols   [cat-symbol retries-value]})]
       (expect (fn? (:ext/activation-fn e)))
@@ -109,21 +109,21 @@
     (it "fires a SYMBOL-level hook only when the broken code mentions it"
       (let [grep (sym-with-parse-rescue 'rg
                    (fn [{:keys [code]}] (str/replace code "X" "Y")))
-            ext  (ext-with-syms 'ns-a 'vis [grep])]
-      ;; Code mentions `vis/rg` — hook fires.
-        (expect (= "(vis/rg \"Y\")"
-                  (sdk/try-rescue-parse-error [ext] "(vis/rg \"X\")" "err" {})))
+            ext  (ext-with-syms 'ns-a 'v [grep])]
+      ;; Code mentions `v/rg` — hook fires.
+        (expect (= "(v/rg \"Y\")"
+                  (sdk/try-rescue-parse-error [ext] "(v/rg \"X\")" "err" {})))
       ;; Code does NOT mention rg — hook is skipped.
         (expect (nil?
                   (sdk/try-rescue-parse-error [ext] "(other-tool \"X\")" "err" {})))))
 
     (it "matches both bare and ns-aliased call forms"
       (let [grep (sym-with-parse-rescue 'rg (fn [_] "REPAIRED"))
-            ext  (ext-with-syms 'ns 'vis [grep])]
+            ext  (ext-with-syms 'ns 'v [grep])]
         (expect (= "REPAIRED"
                   (sdk/try-rescue-parse-error [ext] "(rg \"x\")" "err" {})))
         (expect (= "REPAIRED"
-                  (sdk/try-rescue-parse-error [ext] "(vis/rg \"x\")" "err" {})))))
+                  (sdk/try-rescue-parse-error [ext] "(v/rg \"x\")" "err" {})))))
 
     (it "walks every matching symbol; first non-nil rewrite wins"
       (let [a (sym-with-parse-rescue 'foo (fn [_] nil))
@@ -144,24 +144,24 @@
 
     (it "falls back to the EXTENSION-level hook when no symbol matches"
       (let [grep (sym-with-parse-rescue 'rg (fn [_] "NEVER"))
-            ext  (ext-with-syms 'ns 'vis [grep] (fn [_] "FROM-EXT"))]
+            ext  (ext-with-syms 'ns 'v [grep] (fn [_] "FROM-EXT"))]
       ;; No mention of rg — symbol hook skipped — ext hook fires.
         (expect (= "FROM-EXT"
                   (sdk/try-rescue-parse-error [ext] "(unrelated)" "err" {})))))
 
     (it "prefers SYMBOL-level rescue over the extension-level fallback"
       (let [grep (sym-with-parse-rescue 'rg (fn [_] "FROM-SYM"))
-            ext  (ext-with-syms 'ns 'vis [grep] (fn [_] "FROM-EXT"))]
+            ext  (ext-with-syms 'ns 'v [grep] (fn [_] "FROM-EXT"))]
         (expect (= "FROM-SYM"
-                  (sdk/try-rescue-parse-error [ext] "(vis/rg \"x\")" "err" {})))))
+                  (sdk/try-rescue-parse-error [ext] "(v/rg \"x\")" "err" {})))))
 
     (it "passes :code, :error, :sym, :environment to symbol hooks"
       (let [seen (atom nil)
             grep (sym-with-parse-rescue 'rg
                    (fn [ctx] (reset! seen ctx) nil))
-            ext  (ext-with-syms 'ns 'vis [grep])]
-        (sdk/try-rescue-parse-error [ext] "(vis/rg)" "the-err" {:env :sentinel})
-        (expect (= {:code        "(vis/rg)"
+            ext  (ext-with-syms 'ns 'v [grep])]
+        (sdk/try-rescue-parse-error [ext] "(v/rg)" "the-err" {:env :sentinel})
+        (expect (= {:code        "(v/rg)"
                     :error       "the-err"
                     :sym         'rg
                     :environment {:env :sentinel}}
@@ -194,7 +194,7 @@
                                             {:ext/namespace 'com.acme.ext.fs
                                              :ext/doc       "Filesystem tools"
                                              :ext/kind      "filesystem"
-                                             :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+                                             :ext/ns-alias  {:ns 'vis.ext.tools :alias 'v}
                                              :ext/prompt    "RULES:\n- Discover paths first."
                                              :ext/symbols   [cat-symbol retries-value]})])}
           active-exts   (sdk/active-extensions environment)
@@ -208,9 +208,9 @@
       ;; heading-as-prompt-text. Author can still emit those by calling
       ;; `sdk/render-prompt` from inside `:ext/prompt`, but the runtime
       ;; doesn't do it for them anymore.
-      (expect (not (str/includes? system-prompt "Filesystem tools (use vis/ prefix)")))
-      (expect (not (str/includes? system-prompt "- (vis/cat path)")))
-      (expect (not (str/includes? system-prompt "- vis/max-retries"))))))
+      (expect (not (str/includes? system-prompt "Filesystem tools (use v/ prefix)")))
+      (expect (not (str/includes? system-prompt "- (v/cat path)")))
+      (expect (not (str/includes? system-prompt "- v/max-retries"))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; From commandline_test.clj
@@ -671,7 +671,7 @@
   (it ":iteration-final without :final keeps every slot (non-terminal iter)"
     (let [{:keys [on-chunk get-timeline]} (sdk/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
-                 :code "(vis/cat \"x\")" :result {:lines []} :stdout "" :stderr ""
+                 :code "(v/cat \"x\")" :result {:lines []} :stdout "" :stderr ""
                  :execution-time-ms 1 :error nil})
       (on-chunk {:phase :iteration-final :iteration 0
                  :final nil :done? false})
@@ -1635,7 +1635,7 @@
                 {:ext/namespace 'com.blockether.vis.test.parse-rescue
                  :ext/doc       "Loop test fixture."
                  :ext/kind      "filesystem"
-                 :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+                 :ext/ns-alias  {:ns 'vis.ext.tools :alias 'v}
                  :ext/prompt    (constantly "placeholder")
                  :ext/symbols   [rg-symbol]})]
       {:extensions (atom [ext])
@@ -1660,18 +1660,18 @@
 
     (it "repairs a single `\\|` site (baseline; pre-fix already passed)"
       (let [env  (minimal-environment)
-            code "(vis/rg \"a\\|b\")"
+            code "(v/rg \"a\\|b\")"
             err  (parse-error-message code)
             out  (try-extension-parse-rescue env code err)]
         (expect (some? err))
-        (expect (= "(vis/rg \"a\\\\|b\")" out))
+        (expect (= "(v/rg \"a\\\\|b\")" out))
         (expect (parses? out))))
 
     (it "loops the rescue across THREE `\\|` sites until the source parses (Bug 2.A.1)"
     ;; Pre-fix: returns nil (single-shot rescue gives up on 2+ sites).
     ;; Post-fix: returns a fully repaired string that parses cleanly.
       (let [env  (minimal-environment)
-            code "(vis/rg \"foo\\|bar\\|baz\\|qux\")"
+            code "(v/rg \"foo\\|bar\\|baz\\|qux\")"
             err  (parse-error-message code)
             out  (try-extension-parse-rescue env code err)]
         (expect (some? err))
@@ -1682,7 +1682,7 @@
 
     (it "loops across `\\|` AND `\\.` AND `\\(` mixed escapes"
       (let [env  (minimal-environment)
-            code "(vis/rg \"a\\|b\\.c\\(d\")"
+            code "(v/rg \"a\\|b\\.c\\(d\")"
             err  (parse-error-message code)
             out  (try-extension-parse-rescue env code err)]
         (expect (some? err))
@@ -1695,7 +1695,7 @@
     ;; only handles Unsupported-escape errors; other shapes return
     ;; nil from every iteration of the loop.
       (let [env  (minimal-environment)
-            code "(vis/rg 'unterminated"
+            code "(v/rg 'unterminated"
             err  (parse-error-message code)
             out  (try-extension-parse-rescue env code err)]
         (expect (some? err))
@@ -1718,11 +1718,11 @@
                   {:ext/namespace 'com.blockether.vis.test.pathological
                    :ext/doc       "pathological"
                    :ext/kind      "filesystem"
-                   :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+                   :ext/ns-alias  {:ns 'vis.ext.tools :alias 'v}
                    :ext/prompt    (constantly "x")
                    :ext/symbols   [rg]})
             env {:extensions (atom [ext]) :sci-ctx (sci/init {})}
-            code "(vis/rg \"a\\|b\")"
+            code "(v/rg \"a\\|b\")"
             err  (parse-error-message code)
             start-ms (System/currentTimeMillis)
             out  (try-extension-parse-rescue env code err)

@@ -127,9 +127,9 @@ between iterations. Continuity is delivered by:
   from inside a fenced code block.
 
 For deeper introspection, the opt-in `vis-foundation` extension
-exposes `(vis/turn)`, `(vis/conversation)`, `(vis/conversations)`,
-`(vis/var-history 'sym)`, `(vis/find-attempts pattern)`,
-`(vis/failures)`, and `(vis/diagnose)`. See
+exposes `(v/turn)`, `(v/conversation)`, `(v/conversations)`,
+`(v/var-history 'sym)`, `(v/find-attempts pattern)`,
+`(v/failures)`, and `(v/diagnose)`. See
 [Meta extension](../extensions/common/vis-foundation.md).
 
 ## SYSTEM vars
@@ -200,4 +200,4 @@ There is no `<vars_archive>` block. Vars that get auto-forgotten
 (see `auto-forget-stale-vars!` in `internal/loop.clj`) drop out of
 the sandbox and are no longer rendered. The DB still carries their
 full history; the agent recovers prior versions on demand via
-`(vis/var-history 'sym)` (from `vis-foundation`).
+`(v/var-history 'sym)` (from `vis-foundation`).

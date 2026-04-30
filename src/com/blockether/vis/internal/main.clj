@@ -169,9 +169,10 @@
    (`providers`, `channels`, `foundation`, …) used to render the
    table in grouped sections. `:group` is a finer label *inside* the
    kind (provider label / channel cmd / persistance id), blank for
-   kinds that don't have one. `:author` and `:owner` come straight
-   from the extension manifest; the latter identifies the package's
-   distribution (\"vis\" for everything bundled here)."
+   kinds that don't have one. `:author`, `:owner`, and `:license` come
+   straight from the extension manifest; `:owner` identifies the
+   package's distribution (\"vis\" for everything bundled here), and `:license` carries the SPDX
+   identifier (e.g. `Apache-2.0`)."
   []
   (mapv (fn [e]
           {:namespace (short-ext-ns (:ext/namespace e))
@@ -180,6 +181,7 @@
            :group     (per-kind-group e)
            :author    (or (:ext/author e) "—")
            :owner     (or (:ext/owner e) "—")
+           :license   (or (:ext/license e) "—")
            :version   (or (:ext/version e) "—")})
     (extension/registered-extensions)))
 
@@ -786,7 +788,8 @@
    {:key :group     :label "Group"       :width 18 :align :left}
    {:key :author    :label "Author"      :width 12 :align :left}
    {:key :owner     :label "Owner"       :width  8 :align :left}
-   {:key :doc       :label "Description" :width 40 :align :left}
+   {:key :license   :label "License"     :width 10 :align :left}
+   {:key :doc       :label "Description" :width 36 :align :left}
    {:key :version   :label "Version"     :width 10 :align :left}])
 
 (defn- extensions-table-width

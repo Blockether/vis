@@ -3,12 +3,12 @@
 
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the two
-   tools that returned strings under the legacy contract — vis/cat
-   and vis/rg — now that both ship pure structured maps. The
+   tools that returned strings under the legacy contract — v/cat
+   and v/rg — now that both ship pure structured maps. The
    structured contracts are stable enough to assert key-by-key:
 
-     (vis/cat path)             -> {:path :offset :total-lines :truncated-by :lines}
-     (vis/rg patterns path)     -> {:hits :truncated-by}
+     (v/cat path)             -> {:path :offset :total-lines :truncated-by :lines}
+     (v/rg patterns path)     -> {:hits :truncated-by}
 
    Tests reach `read-file` / `grep-files` directly through the
    private-fn registry to avoid bringing up a full SCI sandbox.
@@ -41,7 +41,7 @@
 
 (defn- temp-dir-path
   "Cwd-relative directory path under the shared temp root, created if
-   missing. Used when a vis/ tool takes a directory (vs. a file) and
+   missing. Used when a v/ tool takes a directory (vs. a file) and
    we must NOT spit into it."
   [name]
   (let [rel (str (temp-root) "/" name)]

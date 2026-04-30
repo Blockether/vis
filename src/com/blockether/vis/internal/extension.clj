@@ -13,7 +13,7 @@
      - the system-prompt block rendered from `:ext/symbols`
      - the per-iteration nudge composers
      - the parse-error rescue chain
-     - the `(vis/extensions)` / `(vis/extension-doc id name)`
+     - the `(v/extensions)` / `(v/extension-doc id name)`
        catalog the agent reads to discover its own surface
 
    Channel and provider registries live in `internal.registry` (the
@@ -301,7 +301,7 @@
 
    Accepts an extension map or any map with:
    - :ext/doc      or :heading
-   - :ext/ns-alias optional {:alias 'vis}
+   - :ext/ns-alias optional {:alias 'v}
    - :ext/symbols  vector of symbol + value entries
    - :usage-note   optional extra note added to the heading
    - :notes        optional string or seq of extra lines appended verbatim

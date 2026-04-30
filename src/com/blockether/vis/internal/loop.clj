@@ -611,7 +611,7 @@
 ;;
 ;; The iteration loop discards a `(answer ...)` call iff the form
 ;; that ITSELF invoked it errored. Sibling errors (a typo in some
-;; OTHER form, a bad vis/edit elsewhere) do NOT gate termination —
+;; OTHER form, a bad v/edit elsewhere) do NOT gate termination —
 ;; the model's intent to finalize is honored as long as the answer-
 ;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
 ;; sibling error, which is how a turn could rack up 148 retries with
@@ -844,7 +844,7 @@
           ;;
           ;;   2. Option C (form-scoped error gate): if the answer-
           ;;      bearing form's own evaluation errored anyway
-          ;;      (e.g. `(do (vis/edit …throws…) (answer "x"))` —
+          ;;      (e.g. `(do (v/edit …throws…) (answer "x"))` —
           ;;      the form had inner work that crashed), the answer
           ;;      is discarded with the form's own error. Sibling
           ;;      forms BEFORE the answer-form may error freely; that
@@ -1149,7 +1149,7 @@
 (defn inject-system-var-snapshots
   "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
    `SYSTEM_VAR_NAMES` on EVERY iteration. The model's
-   `(vis/var-history 'X)` then returns ONE row per iteration
+   `(v/var-history 'X)` then returns ONE row per iteration
    for each X, even when the value is unchanged or blank.
 
    Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_QUERY_ID,
@@ -1501,7 +1501,7 @@
                                            :system-prompt      system-prompt
                                          ;; Same frozen snapshot bound in SCI.
                                          ;; Re-stamped every iteration so
-                                         ;; vis/var-history 'TURN_ACTIVE_EXTENSIONS
+                                         ;; v/var-history 'TURN_ACTIVE_EXTENSIONS
                                          ;; returns one row per iter, not just iter 0.
                                            :extensions-snapshot (prompt/extensions-snapshot active-exts)
                                          ;; Live conversation title; same value
@@ -2324,8 +2324,8 @@
   ;; `(alias/symbol ...)`, not `(sdk/symbol ...)`.
   ;;
   ;; Multi-extension MERGE: two extensions can share an `:ext/ns-alias`
-  ;; (e.g. one ext registers `vis/cat`/`vis/ls`, another adds
-  ;; `vis/diff` under the same `vis` alias). The bindings are MERGED
+  ;; (e.g. one ext registers `v/cat`/`v/ls`, another adds
+  ;; `v/diff` under the same `vis` alias). The bindings are MERGED
   ;; into the existing namespace map; same-name symbols get last-write-
   ;; wins (matching how `install-extension!` already replaces an
   ;; extension with the same `:ext/namespace`). A telemere warn line
