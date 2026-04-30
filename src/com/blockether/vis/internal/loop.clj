@@ -381,9 +381,13 @@
               [nil (ex-message raw-err)])))))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
+(def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
 (defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
+
+(defn- markdown-fence-block? [expr]
+  (boolean (re-matches MARKDOWN_FENCE_RE (str expr))))
 
 (defn- comment-only-block? [^String expr]
   (try
@@ -395,6 +399,9 @@
     (bare-string-code-block? expr)
     "Bare string literal in :code. Prose belongs in :answer (the loop auto-detects plain text), not in :code."
 
+    (markdown-fence-block? expr)
+    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms inside the code block."
+
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
@@ -403,6 +410,10 @@
     (cond
       (re-find #"#\([^)]*#\(" s)
       "Nested #() is illegal in Clojure. Rewrite inner #() as (fn [...] ...)"
+
+      (re-matches MARKDOWN_FENCE_RE s)
+      "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms inside the code block."
+
       :else nil)))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns]}]

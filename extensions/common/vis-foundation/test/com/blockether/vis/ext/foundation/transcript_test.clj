@@ -96,6 +96,31 @@
           (expect (= "gpt-4o" (:model (:conversation data)))))
         (finally (vis/db-dispose-connection! s)))))
 
+  (it "accepts an unambiguous string id prefix and normalizes back to the full UUID"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid    (seed! s)
+              prefix (subs (str cid) 0 8)
+              data   (transcript/transcript s prefix)]
+          (expect (map? data))
+          (expect (= cid (:id (:conversation data))))
+          (expect (= 2 (count (:turns data)))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "returns nil for an ambiguous string prefix instead of picking an arbitrary conversation"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (doseq [_ (range 17)]
+          (vis/db-store-conversation! s {:channel :tui}))
+        (let [ids     (mapv :id (vis/db-list-conversations s :tui))
+              buckets (vals (group-by #(subs (str %) 0 1) ids))
+              matches (first (filter #(> (count %) 1) buckets))
+              prefix  (subs (str (first matches)) 0 1)]
+          ;; 17 UUIDs guarantee at least one shared first hex digit.
+          (expect (> (count matches) 1))
+          (expect (nil? (transcript/transcript s prefix))))
+        (finally (vis/db-dispose-connection! s)))))
+
   (it "rolls up turn / iteration counts and tokens / cost into :totals"
     (let [s (vis/db-create-connection! :memory)]
       (try
@@ -210,6 +235,17 @@
         (let [out (transcript/transcript-md s "00000000-0000-0000-0000-000000000000")]
           (expect (string? out))
           (expect (str/includes? out "Conversation not found")))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "accepts an unambiguous string prefix in the Markdown renderer too"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid    (seed! s)
+              prefix (subs (str cid) 0 8)
+              out    (transcript/transcript-md s prefix)]
+          (expect (string? out))
+          (expect (str/includes? out (str "conversation `" cid "`")))
+          (expect (not (str/includes? out "Conversation not found"))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "renders header + per-turn block + per-iteration block dump"

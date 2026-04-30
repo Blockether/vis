@@ -979,6 +979,16 @@
       ;; Must surface SOMETHING actionable; exact message is edamame's.
       (expect (pos? (count err))))))
 
+(defdescribe markdown-fence-guard-test
+  (it "rejects raw markdown fence tokens before SCI eval can blow the stack"
+    (let [environment (vis/create-sci-context nil)
+          execute-code-var (resolve 'com.blockether.vis.internal.loop/execute-code)
+          result ((deref execute-code-var) environment "``````clojure")]
+      (expect (string? (:error result)))
+      (expect (re-find #"Markdown fence" (:error result)))
+      (expect (not (re-find #"StackOverflowError" (:error result))))
+      (expect (= 0 (:execution-time-ms result))))))
+
 (defdescribe comment-glue-test
   (it "leading `;;` lands in :comment, code stays in :expr"
     (let [src ";; this is x\n(def x 1)"

@@ -53,7 +53,33 @@
       (expect (= "You are a helpful assistant." (:instructions body)))
       (expect (= [{:role "user"
                    :content [{:type "input_text" :text "2+2"}]}]
-                (:input body))))))
+                (:input body)))))
+
+  (it "extracts reasoning from response.completed when no streaming reasoning delta arrived"
+    (let [content            (StringBuilder.)
+          reasoning          (StringBuilder.)
+          usage              (volatile! nil)
+          completed-response (volatile! nil)
+          chunks             (atom [])
+          response           {:output [{:type "reasoning"
+                                        :summary [{:type "summary_text"
+                                                   :text "Need to inspect the TUI rendering path."}]}
+                                       {:type "message"
+                                        :content [{:type "output_text"
+                                                   :text "(answer :ok)"}]}]
+                              :usage {:input_tokens 11
+                                      :output_tokens 17
+                                      :total_tokens 28
+                                      :output_tokens_details {:reasoning_tokens 9}}}]
+      (#'codex/process-codex-event!
+       {:type "response.completed" :response response}
+       content reasoning usage completed-response
+       #(swap! chunks conj %))
+      (expect (= "Need to inspect the TUI rendering path." (str reasoning)))
+      (expect (= "Need to inspect the TUI rendering path."
+                (:reasoning (last @chunks))))
+      (expect (= true (:done? (last @chunks))))
+      (expect (= 9 (get-in @usage [:completion_tokens_details :reasoning_tokens]))))))
 
 (defdescribe provider-registration-test
   (it "registers the OpenAI Codex auth provider"
