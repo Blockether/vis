@@ -153,13 +153,13 @@
         (expect (= ["claude-4" "gpt-4o"] (mapv :model (drop 1 rows))))
         (expect (= [:anthropic :openai]   (mapv :provider (drop 1 rows)))))))
 
-  (it "returns [] (vector, never nil) for an unknown query-id"
+  (it "returns [] (vector, never nil) for an unknown conversation-turn-id"
     (let [s    (h/store)
           rows (vis/db-list-conversation-turn-states s (random-uuid))]
       (expect (vector? rows))
       (expect (= [] rows))))
 
-  (it "returns [] (vector, never nil) when query-id is nil"
+  (it "returns [] (vector, never nil) when conversation-turn-id is nil"
     (let [s (h/store)]
       (expect (= [] (vis/db-list-conversation-turn-states s nil))))))
 

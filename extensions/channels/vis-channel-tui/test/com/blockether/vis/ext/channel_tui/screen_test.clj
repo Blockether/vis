@@ -16,6 +16,12 @@
 (def ^:private current-hint
   (deref #'screen/current-hint))
 
+(def ^:private migration-checksum-mismatch?
+  (deref #'screen/migration-checksum-mismatch?))
+
+(def ^:private migration-checksum-user-message
+  (deref #'screen/migration-checksum-user-message))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
    the contract the channel entry point relies on to print a clean
@@ -30,6 +36,26 @@
     (let [hint (current-hint {:input (input/empty-input)})]
       (expect (re-find #"↑↓ history" hint))
       (expect (not (re-find #"Ctrl\+P/N" hint))))))
+
+(defdescribe migration-checksum-error-test
+  (it "detects Flyway checksum mismatch text in the top-level message"
+    (let [e (ex-info "Validate failed: Migrations have failed validation\nMigration checksum mismatch for migration version 1"
+              {})]
+      (expect (true? (migration-checksum-mismatch? e)))))
+
+  (it "detects mismatch text in a nested cause"
+    (let [cause (ex-info "Migration checksum mismatch for migration version 1" {})
+          e     (ex-info "wrapper" {} cause)]
+      (expect (true? (migration-checksum-mismatch? e)))))
+
+  (it "returns false for unrelated exceptions"
+    (expect (false? (migration-checksum-mismatch? (ex-info "boom" {})))))
+
+  (it "user message points at removing the local DB dir"
+    (let [msg (migration-checksum-user-message)]
+      (expect (re-find #"schema mismatch" msg))
+      (expect (re-find #"~/.vis/vis.mdb" msg))
+      (expect (re-find #"Flyway repair" msg)))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

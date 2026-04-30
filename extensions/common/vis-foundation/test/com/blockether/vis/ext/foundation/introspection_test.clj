@@ -29,17 +29,17 @@
 (defn- bootstrap [store]
   (let [conversation-id (vis/db-store-conversation! store
                           {:channel :tui :title "meta test"})
-        query-id (vis/db-store-conversation-turn! store
-                   {:parent-conversation-id conversation-id
-                    :query "what's the plan?"
-                    :status :running})]
-    {:conversation-id conversation-id :conversation-turn-id query-id}))
+        conversation-turn-id (vis/db-store-conversation-turn! store
+                               {:parent-conversation-id conversation-id
+                                :query "what's the plan?"
+                                :status :running})]
+    {:conversation-id conversation-id :conversation-turn-id conversation-turn-id}))
 
 (defn- db-store-iteration!
-  [store query-id {:keys [blocks thinking error]
-                   :or {blocks []}}]
+  [store conversation-turn-id {:keys [blocks thinking error]
+                               :or {blocks []}}]
   (vis/db-store-iteration! store
-    (cond-> {:conversation-turn-id    query-id
+    (cond-> {:conversation-turn-id    conversation-turn-id
              :blocks blocks
              :duration-ms 100
              :llm-model   "test-model"
@@ -83,8 +83,8 @@
 
   (it "splits attempts and errors so callers consume each list directly (no second filter pass)"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}
                   {:id 1 :code "(boom)"  :error "boom" :execution-time-ms 1}]})
       (let [turn ((private-fn "foundation-turn") (env s conversation-id))]
@@ -98,9 +98,9 @@
     ;; pins the contract so a future addition is a deliberate decision,
     ;; not a silent regression.
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
       (vis/db-store-iteration! s
-        {:conversation-turn-id    query-id
+        {:conversation-turn-id    conversation-turn-id
          :blocks      [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]
          :duration-ms 100
          :llm-model   "test-model"})
@@ -132,8 +132,8 @@
 
   (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (vis/db-update-conversation-turn! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (vis/db-update-conversation-turn! s conversation-turn-id
         {:answer "42" :iteration-count 1 :duration-ms 50 :status :done
          :prior-outcome :complete})
       (let [conversation ((private-fn "foundation-conversation") (env s conversation-id))
@@ -144,27 +144,27 @@
 
   (it "auto-excludes the in-flight turn (= TURN_CONVERSATION_TURN_ID) from the current conversation"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           env-with-in-flight (assoc (env s conversation-id)
-                               :current-query-id-atom (atom query-id))
+                               :current-conversation-turn-id-atom (atom conversation-turn-id))
           conversation ((private-fn "foundation-conversation") env-with-in-flight)]
       (expect (= 0 (:turn-count conversation))) ; bootstrap creates exactly 1 turn, the in-flight one
       (expect (empty? (:turns conversation)))
-      (expect (= query-id (:in-flight-turn-id conversation)))))
+      (expect (= conversation-turn-id (:in-flight-turn-id conversation)))))
 
   (it "does NOT filter when inspecting a foreign conversation"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           other (vis/db-store-conversation! s {:channel :telegram :title "other"})
           env-with-in-flight (assoc (env s conversation-id)
-                               :current-query-id-atom (atom query-id))
+                               :current-conversation-turn-id-atom (atom conversation-turn-id))
           conversation ((private-fn "foundation-conversation") env-with-in-flight other)]
       ;; Foreign conversation untouched: no in-flight-turn-id, original turns kept.
       (expect (= other (:id conversation)))
       (expect (= 0 (:turn-count conversation)))
       (expect (nil? (:in-flight-turn-id conversation)))))
 
-  (it "does NOT filter when no turn is in flight (current-query-id-atom = nil)"
+  (it "does NOT filter when no turn is in flight (current-conversation-turn-id-atom = nil)"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
           conversation ((private-fn "foundation-conversation") (env s conversation-id))]
@@ -265,37 +265,37 @@
       (expect (= [] rows)))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/query-retries query-id) — retry history introspection.
+;; (v/query-retries conversation-turn-id) — retry history introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-query-retries-test
   (it "returns the v0 row for a query with no retries"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)
-          rows ((private-fn "meta-query-retries") (env s conversation-id) query-id)]
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          rows ((private-fn "meta-query-retries") (env s conversation-id) conversation-turn-id)]
       (expect (vector? rows))
       (expect (= 1 (count rows)))
       (expect (= 0 (:version (first rows))))
-      (expect (nil? (:forked-from-query-state-id (first rows))))))
+      (expect (nil? (:forked-from-conversation-turn-state-id (first rows))))))
 
   (it "surfaces every retry in version order with forked-from links"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (vis/db-retry-conversation-turn! s query-id {:status :running :model "claude-4"})
-      (vis/db-retry-conversation-turn! s query-id {:status :done    :model "gpt-4o"})
-      (let [rows ((private-fn "meta-query-retries") (env s conversation-id) query-id)]
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (vis/db-retry-conversation-turn! s conversation-turn-id {:status :running :model "claude-4"})
+      (vis/db-retry-conversation-turn! s conversation-turn-id {:status :done    :model "gpt-4o"})
+      (let [rows ((private-fn "meta-query-retries") (env s conversation-id) conversation-turn-id)]
         (expect (= 3 (count rows)))
         (expect (= [0 1 2] (mapv :version rows)))
-        (expect (every? :forked-from-query-state-id (drop 1 rows))))))
+        (expect (every? :forked-from-conversation-turn-state-id (drop 1 rows))))))
 
-  (it "returns [] (vector, never nil) for an unknown query-id"
+  (it "returns [] (vector, never nil) for an unknown conversation-turn-id"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
           rows ((private-fn "meta-query-retries") (env s conversation-id) (random-uuid))]
       (expect (vector? rows))
       (expect (= [] rows))))
 
-  (it "returns [] (vector, never nil) when env or query-id missing"
+  (it "returns [] (vector, never nil) when env or conversation-turn-id missing"
     (expect (= [] ((private-fn "meta-query-retries") {} (random-uuid))))
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)]
@@ -308,8 +308,8 @@
 (defdescribe foundation-find-attempts-test
   (it "one-arg form regex-searches the current turn"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)"        :result 3 :execution-time-ms 1}
                   {:id 1 :code "(grep \"FOO\")" :result [] :execution-time-ms 1}
                   {:id 2 :code "(grep \"BAR\")" :result [] :execution-time-ms 1}]})
@@ -318,13 +318,13 @@
         (expect (every? #(re-find #"grep" (:code %)) hits))
         ;; :turn-id resolves to the latest query of the conversation — a
         ;; UUID identifying the turn the attempt belongs to.
-        (expect (= query-id (-> hits first :turn-id)))
-        (expect (every? #(= query-id (:turn-id %)) hits)))))
+        (expect (= conversation-turn-id (-> hits first :turn-id)))
+        (expect (every? #(= conversation-turn-id (:turn-id %)) hits)))))
 
   (it "accepts a Pattern object directly"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(defn foo [x] x)" :result nil :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) #"\bdefn\b")]
         (expect (= 1 (count hits))))))
@@ -343,8 +343,8 @@
 
   (it "returns [] (vector, never nil) when the current turn has no matches"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) #"Unmatched delimiter")]
         ;; Defensive default: agents commonly do `(first hits)` /
@@ -368,15 +368,15 @@
 (defdescribe foundation-find-attempts-everywhere-test
   (it "scans every conversation in the DB"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           other-conversation-id (vis/db-store-conversation! s
                                   {:channel :tui :title "other turn"})
-          other-query-id (vis/db-store-conversation-turn! s
-                           {:parent-conversation-id other-conversation-id
-                            :query "other goal" :status :running})]
-      (db-store-iteration! s query-id
+          other-conversation-turn-id (vis/db-store-conversation-turn! s
+                                       {:parent-conversation-id other-conversation-id
+                                        :query "other goal" :status :running})]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(grep \"alpha\")" :result [] :execution-time-ms 1}]})
-      (db-store-iteration! s other-query-id
+      (db-store-iteration! s other-conversation-turn-id
         {:blocks [{:id 0 :code "(grep \"beta\")" :result [] :execution-time-ms 1}]})
       (let [hits ((private-fn "foundation-find-attempts-everywhere") (env s conversation-id) #"grep")]
         (expect (= 2 (count hits)))
@@ -388,8 +388,8 @@
 
   (it "returns [] (vector, never nil) when nothing matches"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       ;; Reproduces the exact diagnose-loop failure: agent searches for
       ;; an error that doesn't exist in the DB, expects an empty vec
@@ -411,8 +411,8 @@
 (defdescribe meta-failure-diagnostics-test
   (it "normalizes provider schema rejections with raw previews"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:error {:message "Your response did not match the JSON schema contract."
                  :data {:type :svar.spec/schema-rejected
                         :reason :not-a-map
@@ -428,8 +428,8 @@
 
   (it "classifies regex escaping and patch no-match tool failures"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0
                    :code "(v/rg \"foo\\|bar\\|baz\" \"x\")"
                    :error "Unsupported escape character: \\|"
@@ -454,8 +454,8 @@
     ;; cluster (6 + 2) just past `REPETITION_THRESHOLD` so the bucket
     ;; with 6 fires and the bucket with 2 stays below the floor.
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks
          (into
            (mapv (fn [i]
@@ -484,16 +484,16 @@
 
   (it "conversation-id form scans every turn"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)
-          second-query-id (vis/db-store-conversation-turn! s
-                            {:parent-conversation-id conversation-id
-                             :query "second turn"
-                             :status :running})]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          second-conversation-turn-id (vis/db-store-conversation-turn! s
+                                        {:parent-conversation-id conversation-id
+                                         :query "second turn"
+                                         :status :running})]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(v/rg \"x\\|y\" \"z\")"
                    :error "Unsupported escape character: \\|"
                    :execution-time-ms 1}]})
-      (db-store-iteration! s second-query-id
+      (db-store-iteration! s second-conversation-turn-id
         {:blocks [{:id 0 :code "(v/patch [{:path \"x\"}])"
                    :error "SEARCH block 1 not found in x"
                    :execution-time-ms 1}]})
@@ -504,8 +504,8 @@
 
   (it "returns [] (vector, never nil) when the current turn has no failures"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures") (env s conversation-id))]
         (expect (vector? failures))
@@ -518,17 +518,17 @@
 (defdescribe foundation-failures-everywhere-test
   (it "aggregates failures across every conversation in the DB"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           other-conversation-id (vis/db-store-conversation! s
                                   {:channel :tui :title "other turn"})
-          other-query-id (vis/db-store-conversation-turn! s
-                           {:parent-conversation-id other-conversation-id
-                            :query "other goal" :status :running})]
-      (db-store-iteration! s query-id
+          other-conversation-turn-id (vis/db-store-conversation-turn! s
+                                       {:parent-conversation-id other-conversation-id
+                                        :query "other goal" :status :running})]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(v/rg \"x\\|y\" \"z\")"
                    :error "Unsupported escape character: \\|"
                    :execution-time-ms 1}]})
-      (db-store-iteration! s other-query-id
+      (db-store-iteration! s other-conversation-turn-id
         {:blocks [{:id 0 :code "(v/patch [{:path \"x\"}])"
                    :error "SEARCH block 1 not found in x"
                    :execution-time-ms 1}]})
@@ -542,8 +542,8 @@
 
   (it "returns [] (vector, never nil) when no failures exist"
     (let [s (h/store)
-          {:keys [conversation-id query-id]} (bootstrap s)]
-      (db-store-iteration! s query-id
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures-everywhere") (env s conversation-id))]
         (expect (vector? failures))
