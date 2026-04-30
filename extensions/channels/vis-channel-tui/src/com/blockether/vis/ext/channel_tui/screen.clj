@@ -1024,11 +1024,17 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
+(def ^:private tui-usage
+  "vis channels tui [--conversation-id ID | --resume]")
+
 (defn- parse-args
-  "Parse `vis channels tui` flags. Unknown flags are ignored on purpose so the
-   TUI never refuses to start because of a stray argument.
+  "Parse `vis channels tui` flags.
      --conversation-id ID   Resume a conversation (full UUID or short prefix)
-     --resume               Resume the latest :tui conversation"
+     --resume               Resume the latest :tui conversation
+
+   Unknown flags and missing flag values throw a `:vis/user-error` ex-info
+   so the user sees a clean error instead of the TUI silently swallowing a
+   typo (e.g. `--conversations-id`)."
   [args]
   (loop [args (seq args) opts {}]
     (if-not args
@@ -1036,9 +1042,18 @@
       (let [arg  (first args)
             more (next args)]
         (case arg
-          "--conversation-id" (recur (next more) (assoc opts :conversation-id (first more)))
-          "--resume"          (recur more (assoc opts :resume true))
-          (recur more opts))))))
+          "--conversation-id"
+          (let [v (first more)]
+            (when (or (nil? v) (str/starts-with? v "--"))
+              (throw (ex-info (str "--conversation-id requires a value (UUID or short prefix)"
+                                "\nUsage: " tui-usage)
+                       {:vis/user-error true})))
+            (recur (next more) (assoc opts :conversation-id v)))
+          "--resume"
+          (recur more (assoc opts :resume true))
+          (throw (ex-info (str "unknown flag: " arg
+                            "\nUsage: " tui-usage)
+                   {:vis/user-error true})))))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
@@ -1103,6 +1118,6 @@
      :ext/channels  [{:channel/id        :tui
                       :channel/cmd       "tui"
                       :channel/doc       "Interactive terminal UI."
-                      :channel/usage     "vis channels tui [--conversation-id ID | --resume]"
+                      :channel/usage     tui-usage
                       :channel/owns-tty? true
                       :channel/main-fn   #'channel-main}]}))

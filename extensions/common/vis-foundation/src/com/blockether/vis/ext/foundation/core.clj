@@ -26,6 +26,7 @@
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
+   [com.blockether.vis.ext.foundation.transcript :as transcript]
    ;; Side-effect require: registers the `md/` extension. The aggregator
    ;; does not pull markdown symbols into its own `:ext/symbols` vec —
    ;; markdown ships as a sibling extension under its own alias so
@@ -56,6 +57,7 @@
      :ext/kind           "foundation"
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
+                                [transcript/transcript-symbol]
                                 editing/editing-symbols
                                 environment/environment-symbols))
      :ext/doctor-check-fn doctor/check-fn}))
@@ -67,3 +69,9 @@
 ;; plan §1 Q18. Direct `register-cmd!` (NOT `:ext/cli`) because the
 ;; command must live at the top of the tree, not under `vis extensions`.
 (doctor/register-cli!)
+
+;; Register the top-level `vis diagnose <CONVERSATION-ID>` CLI
+;; command. Same pattern as `vis doctor` — the data + Markdown
+;; renderer + CLI surface are one cohesive feature owned by
+;; foundation, not host plumbing.
+(transcript/register-cli!)

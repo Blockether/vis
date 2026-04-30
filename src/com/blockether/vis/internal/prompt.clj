@@ -457,7 +457,22 @@ SYSTEM vars (read-only; bound by name in the sandbox):
 
 Host primitives (top-level, no alias — named for what they write):
   (answer ARG)               terminal answer; closes the turn
-  (conversation-title ARG)   one-arity title write; broadcasts to every channel watching the conversation. Read via the `CONVERSATION_TITLE` SYSTEM var.")
+  (conversation-title ARG)   one-arity title write; broadcasts to every channel watching the conversation. Read via the `CONVERSATION_TITLE` SYSTEM var.
+
+Stdlib aliases (always pre-resolved in the sandbox — use these short forms instead of fully-qualified calls):
+  str/    -> clojure.string         e.g. (str/split s #\",\") (str/blank? s) (str/join \", \" xs)
+  set/    -> clojure.set            e.g. (set/union a b) (set/difference a b)
+  walk/   -> clojure.walk           e.g. (walk/postwalk f form) (walk/keywordize-keys m)
+  edn/    -> fast-edn.core          e.g. (edn/read-string s) (edn/read-string {:readers …} s)
+  json/   -> charred.api            e.g. (json/read-json s) (json/write-json-str x)
+  pp/     -> clojure.pprint         e.g. (pp/pprint x) (pp/pprint-str x)   (alias `pprint/` works too)
+  zp/     -> zprint.core            e.g. (zp/zprint-str x) (zp/zprint x {:width 80})
+  lt/     -> lazytest.core          e.g. (lt/expect-fn = a b) (lt/throws? Exception …)
+  test/   -> clojure.test           e.g. (test/is (= a b))
+  c+/     -> clojure+.core          e.g. (c+/cond+ …)
+  s/      -> clojure.spec.alpha     e.g. (s/def ::id uuid?) (s/valid? ::id x) (s/keys :req-un [::id]) (s/conform ::shape m)
+
+These aliases are ALWAYS available — do NOT write `(require '[clojure.string :as str])` or `(:require [clojure.spec.alpha :as s])` inside a fenced block; the SCI sandbox already wired them up at boot. Just call them.")
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum.

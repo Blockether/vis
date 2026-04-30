@@ -308,21 +308,43 @@
                     items)]
     (remove nil? unwrapped)))
 
+(defn- item-text
+  "Render a single list item. Strings pass through; sequentials
+   are composed via compose-text so inline helpers inside a vector
+   item just work:
+
+     (item-text "plain string")              ;=> "plain string"
+     (item-text ["a " (md/code "b") " c"])  ;=> "a `b` c"
+  [x]
+  (if (sequential? x)
+    (compose-text x)
+    (->str x)))
+
 (defn ul
   "Unordered list. Accepts a single seq or variadic args.
-   (ul [\"a\" \"b\"]) and (ul \"a\" \"b\") both work.
+   Each item may be a string or a sequential of parts (strings +
+   inline helpers) composed into one item text.
+
+     (md/ul [\"a\" \"b\"])
+     (md/ul [[\"The \" (md/code \"foo\") \" works\"] \"plain\"])
+
    One `- item` per element, newline-joined, no trailing newline."
   [& items]
   (->> (normalize-list-items items)
-    (map #(str "- " (->str %)))
+    (map #(str "- " (item-text %)))
     (str/join "\n")))
 
 (defn ol
   "Ordered list, 1-based numbering. Accepts a single seq or variadic args.
-   (ol [\"a\" \"b\"]) and (ol \"a\" \"b\") both work."
+   Each item may be a string or a sequential of parts composed into
+   one item text.
+
+     (md/ol [\"a\" \"b\"])
+     (md/ol [[\"Step \" (md/code \"1\") \": go\"] \"done\"])"
+  [& items]
   [& items]
   (->> (normalize-list-items items)
-    (map-indexed (fn [i x] (str (inc i) ". " (->str x))))
+    (map-indexed (fn [i x] (str (inc i) ". " (item-text x))))
     (str/join "\n")))
 
 (defn checklist
@@ -337,7 +359,7 @@
                           (map? it)        [(:text it) (:done? it)]
                           (sequential? it) [(first it) (second it)]
                           :else            [it false])]
-             (str "- [" (if d? "x" " ") "] " (->str t)))))
+             (str "- [" (if d? "x" " ") "] " (item-text t)))))
     (str/join "\n")))
 
 ;; =============================================================================

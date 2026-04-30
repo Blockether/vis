@@ -113,6 +113,24 @@
 ;; Optional source-code rewriter for SCI/edamame parse errors.
 (s/def :ext/on-parse-error-fn fn?)
 
+;; ----------------------------------------------------------------------------
+;; Iteration-loop lifecycle hooks. Side-effecting fns invoked by the
+;; loop at well-defined boundaries. See
+;; `internal.lifecycle/phase->manifest-key` for the canonical
+;; phase↔key map and `docs/src/extensions/lifecycle.md` for payload
+;; shapes. ALL four are optional; an extension that doesn't care
+;; about lifecycle simply omits them.
+;;
+;; Composition is broadcast: every active extension's listener fires
+;; for every event, plus the per-call `:hooks` slot a channel/test
+;; passed in. A listener that throws is caught + logged via Telemere
+;; — it MUST NOT take the loop down or starve sibling listeners.
+;; ----------------------------------------------------------------------------
+(s/def :ext/on-turn-start-fn      fn?)
+(s/def :ext/on-iteration-start-fn fn?)
+(s/def :ext/on-iteration-end-fn   fn?)
+(s/def :ext/on-turn-end-fn        fn?)
+
 ;; Optional dependency declaration. Vector of extension namespace symbols.
 (s/def :ext/requires (s/coll-of symbol? :kind vector?))
 
@@ -233,7 +251,9 @@
             :ext/on-parse-error-fn :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
-            :ext/doctor-check-fn])
+            :ext/doctor-check-fn
+            :ext/on-turn-start-fn :ext/on-iteration-start-fn
+            :ext/on-iteration-end-fn :ext/on-turn-end-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 

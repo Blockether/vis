@@ -906,6 +906,13 @@
     (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
     (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
     (some? (:llm_model row))            (assoc :model (:llm_model row))
+    ;; Forensic fields — the full transcript surface needs these on
+    ;; the data shape even when callers don't render them by default.
+    (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
+    (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json (:llm_user_prompt row)))
+    (some? (:answer_form_idx row))      (assoc :answer-form-idx   (:answer_form_idx row))
+    (some? (:llm_returned_empty_blocks row))
+    (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_blocks row))))
     ;; Token / cost columns — ALWAYS present on the read side, with
     ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
     ;; is NULL. Callers can assume `(:input-tokens it)` is a long
