@@ -23,7 +23,26 @@
     (expect (= "###### x" (md/h 9 "x"))))
 
   (it "coerces nil to empty"
-    (expect (= "# " (md/h1 nil)))))
+    (expect (= "# " (md/h1 nil))))
+
+  (it "variadic: concatenates parts (author owns whitespace)"
+    ;; This is the regression that broke conversation 4b1ed602: the
+    ;; LLM wrote `(md/h3 \"Proposal: \" (md/code \":foo\") \" sentinel\")`
+    ;; and we threw ArityException. After the variadic fix the form
+    ;; reads naturally:
+    (expect (= "### Proposal: `:foo` sentinel"
+              (md/h3 "Proposal: " (md/code ":foo") " sentinel")))
+    (expect (= "# Build of `v1.2.3`"
+              (md/h1 "Build of " (md/code "v1.2.3"))))
+    (expect (= "## a b"
+              (md/h 2 "a" " " "b"))))
+
+  (it "variadic: nil parts dropped, seqs spliced one level"
+    (expect (= "# ab"  (md/h1 "a" nil "b")))
+    (expect (= "# abc" (md/h1 ["a" "b" "c"]))))
+
+  (it "no args -> empty heading body"
+    (expect (= "# " (md/h1)))))
 
 (defdescribe inline-test
   (it "bold / italic / bold-italic / strike"
@@ -39,6 +58,21 @@
     (let [by-sym (into {} (map (juxt :ext.symbol/sym identity)) md/markdown-symbols)]
       (expect (= md/italic (get-in by-sym ['em :ext.symbol/fn])))
       (expect (= md/bold   (get-in by-sym ['strong :ext.symbol/fn])))))
+
+  (it "inline emphasis helpers are variadic: parts concatenated, nil dropped, seqs spliced"
+    ;; Same regression class as md/h3 — the LLM composes naturally
+    ;; (md/bold \"build \" (md/code \"v1.2.3\")) instead of pre-joining
+    ;; with str. Variadic shape removes the foot-gun.
+    (expect (= "**build `v1.2.3`**"
+              (md/bold "build " (md/code "v1.2.3"))))
+    (expect (= "*a b*"
+              (md/italic "a" " " "b")))
+    (expect (= "`v/cat`"
+              (md/code "v/" "cat")))
+    (expect (= "~~old~~"
+              (md/strike "o" nil "ld")))
+    (expect (= "<kbd>Ctrl+K</kbd>"
+              (md/kbd "Ctrl+K"))))
 
   (it "code, kbd"
     (expect (= "`v/cat`" (md/code "v/cat")))
@@ -116,6 +150,10 @@
   (it "blockquote prefixes every line"
     (expect (= "> a\n> b" (md/blockquote "a\nb")))
     (expect (= ">"        (md/blockquote ""))))
+
+  (it "blockquote variadic: parts concatenated, then per-line prefix"
+    (expect (= "> a b"        (md/blockquote "a " "b")))
+    (expect (= "> head\n> tail" (md/blockquote "head" "\n" "tail"))))
 
   (it "quote is a shorter alias for blockquote (registered via SCI symbol 'quote)"
     ;; `clojure.core/quote` is a special form, so we can't invoke
@@ -315,14 +353,20 @@
   (it "join drops nils inside a spliced sequential"
     (expect (= "a\n\nb" (md/join ["a" nil "b"]))))
 
-  (it "->str still refuses bare lazy seq inside a strict-arity inline builder"
-    ;; md/p is now variadic-with-splicing, but every other builder
-    ;; that takes a single string slot (md/bold, md/italic, md/code,
-    ;; md/code-block, md/blockquote, …) still routes through `->str`,
-    ;; so a stray `(map render xs)` keeps failing loudly instead of
-    ;; shipping `clojure.lang.LazySeq@<hex>` into the answer.
+  (it "variadic inline helpers splice ONE level (matching md/p), reject NESTED sequentials"
+    ;; Inline helpers (md/bold / md/italic / md/code / …) are now
+    ;; variadic-with-splicing, same contract as md/p. A bare lazy
+    ;; seq is treated as splice-able parts — the LazySeq@<hex> leak
+    ;; is prevented by `expand-parts` flattening, not by rejection.
+    (expect (= "**ab**" (md/bold (map identity ["a" "b"]))))
+    (expect (= "`v/cat`" (md/code (map identity ["v/" "cat"]))))
+    ;; Nested-beyond-one-level still surfaces as an explicit throw
+    ;; via `->str` so a tree of seqs doesn't silently drop
+    ;; structure or splat reader-syntax into the answer.
     (expect (throws? clojure.lang.ExceptionInfo
-              #(md/bold (map identity ["a" "b"]))))
+              #(md/bold [["nested"]])))
+    ;; md/code-block is NOT variadic (single :code positional + opt
+    ;; :lang) — a stray seq there still throws.
     (expect (throws? clojure.lang.ExceptionInfo
               #(md/code-block (map identity ["line1" "line2"])))))
 
