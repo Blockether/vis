@@ -762,20 +762,43 @@
         (expect (some? bullet-line))
         (expect (str/includes? bullet-line "item")))))
 
-  (describe "`<summary>label</summary>` renders as bold disclosure heading"
-    (it "emits a single bold-marked row prefixed with `▾ `"
-      (let [[line] (filter #(= p/MARKER_MD_BOLD (marker-of %))
+  (describe "`<summary>label</summary>` renders on its own SUMMARY band"
+    ;; The summary line carries `MARKER_MD_SUMMARY` (distinct from
+    ;; `MARKER_MD_BOLD`) so the painter can paint it with a tinted
+    ;; lavender band — the visual cue that the section is a
+    ;; disclosure region. Bolt-on `▾ ` glyph stays so the user reads
+    ;; the band as an expanded-disclosure header even before they
+    ;; notice the colour.
+    (it "emits a SUMMARY-marked row prefixed with `▾ `"
+      (let [[line] (filter #(= p/MARKER_MD_SUMMARY (marker-of %))
                      (md->lines "<summary>Click to expand</summary>" 60))]
         (expect (some? line))
         (expect (str/starts-with? (body-of line) "▾ "))
         (expect (str/includes? line "Click to expand"))))
+
+    (it "summary marker is distinct from BOLD (own painter zone)"
+      ;; Pinning that a regression that mapped `:summary` back to
+      ;; `:bold` (the painter would lose the lavender band) shows up
+      ;; as a test failure here, not as a silent visual regression.
+      (let [lines (md->lines "<summary>Logs</summary>" 60)]
+        (expect (some #(= p/MARKER_MD_SUMMARY (marker-of %)) lines))
+        (expect (not-any? #(= p/MARKER_MD_BOLD (marker-of %)) lines))))
+
+    (it "thinking-mode summary uses TH_MD_SUMMARY marker"
+      ;; <details> can land inside an iteration's `:thinking` block
+      ;; just like in the final answer; the dim variant of the band
+      ;; keeps the reasoning zone cohesive.
+      (let [[line] (filter #(= p/MARKER_TH_MD_SUMMARY (marker-of %))
+                     (md->lines "<summary>Plan</summary>" 60 :thinking))]
+        (expect (some? line))
+        (expect (str/starts-with? (body-of line) "▾ "))))
 
     (it "inner inline markdown is honoured (`**bold** inside summary`)"
       ;; `<summary>**Logs**</summary>` should keep the inner bold
       ;; styling, same as a heading body would. The renderer routes
       ;; the inner content through `markdown->inline` so the bold
       ;; sentinels show up alongside the visible text.
-      (let [[line] (filter #(= p/MARKER_MD_BOLD (marker-of %))
+      (let [[line] (filter #(= p/MARKER_MD_SUMMARY (marker-of %))
                      (md->lines "<summary>**Logs**</summary>" 60))]
         (expect (str/includes? line p/INLINE_BOLD_ON))
         (expect (str/includes? line "Logs"))
@@ -785,14 +808,14 @@
     ;; Mirrors the actual emit shape `vis-foundation/markdown.clj`
     ;; produces. Pre-fix the user saw three rows of raw HTML; post-fix
     ;; only the disclosure label + body remain.
-    (it "summary label is bold, body lines are PLAIN, framing tags absent"
+    (it "summary label carries SUMMARY marker, body lines are PLAIN, framing tags absent"
       (let [src    (str "<details>\n<summary>Logs</summary>\n\n"
                      "Hidden text.\n\n</details>")
             lines  (md->lines src 60)
             text   (str/join "\n" lines)]
         (expect (not (str/includes? text "<details")))
         (expect (not (str/includes? text "<summary")))
-        (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
+        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
                          (str/includes? % "Logs")) lines))
         ;; `:answer` mode uses an empty-string marker for PLAIN lines
         ;; (see `md-marker-sets`). `marker-of` returns the FIRST char
@@ -802,7 +825,7 @@
         (let [styled-markers #{p/MARKER_MD_H1 p/MARKER_MD_H2 p/MARKER_MD_H3
                                p/MARKER_MD_BOLD p/MARKER_MD_CODE
                                p/MARKER_MD_BULLET p/MARKER_MD_QUOTE
-                               p/MARKER_MD_HR}]
+                               p/MARKER_MD_HR  p/MARKER_MD_SUMMARY}]
           (expect (some #(and (str/includes? % "Hidden text.")
                            (not (contains? styled-markers (marker-of %))))
                     lines)))))))
