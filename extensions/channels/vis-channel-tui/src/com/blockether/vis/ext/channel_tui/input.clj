@@ -281,7 +281,7 @@
                     (if (and (= (count @fields) 2) (seq @seen))
                       (let [button (long (nth @fields 0))
                             col    (long (nth @fields 1))
-                            row    (long (digits->int @seen))
+                            row    (digits->int @seen)
                             atype  (sgr-mouse-decode button col row (long (int c)))
                             btn    (sgr-button-number button)
                             ;; SGR is 1-indexed, Lanterna's 0-indexed.

@@ -587,7 +587,7 @@
       (it "renders the right number of lines (top + header + sep + N rows interspersed + bottom)"
         ;; top + header + head-sep + (N rows + (N-1) row-seps) + bottom
         (let [n (count rows)]
-          (expect (= (+ 1 1 1 (+ n (dec n)) 1) (count out)))))
+          (expect (= (+ 4 n (dec n)) (count out)))))
 
       (it "every line has the exact same display width — the grid is monomorphic"
         ;; With lanterna 3.1.5-vis.3's VS-16 width fix, our model and

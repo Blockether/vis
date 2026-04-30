@@ -95,23 +95,24 @@
     (removeEldestEntry [_eldest]
       (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
 
-(defn- height-key [message bubble-w settings]
+(defn- height-key [message bubble-w settings detail-expansions]
   [(System/identityHashCode message)
    (long bubble-w)
-   (System/identityHashCode settings)])
+   (System/identityHashCode settings)
+   (System/identityHashCode detail-expansions)])
 
 (defn- height-cache-get
   "Peek the sticky height cache. Returns a long or nil."
-  [message bubble-w settings]
+  [message bubble-w settings detail-expansions]
   (locking height-cache
-    (.get height-cache (height-key message bubble-w settings))))
+    (.get height-cache (height-key message bubble-w settings detail-expansions))))
 
 (defn- height-cache-put!
   "Pin `h` as the real height for `message` at `bubble-w` under
    `settings`. Returns `h` so callers can chain."
-  ^long [message bubble-w settings ^long h]
+  [message bubble-w settings detail-expansions h]
   (locking height-cache
-    (.put height-cache (height-key message bubble-w settings) h))
+    (.put height-cache (height-key message bubble-w settings detail-expansions) h))
   h)
 
 (defn invalidate-heights!
@@ -202,31 +203,37 @@
 (defn project-message
   "Apply the same `:text` projection `screen/apply-settings` used to
    apply, but for ONE message at a time so the virtual layer can call
-   it lazily per-bubble. Hits the same caches `apply-settings` did.
+   it lazily per-bubble. Hits the same caches `apply-settings` did."
+  ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
+  ([message ^long bubble-w settings {:keys [conversation-id detail-expansions]}]
+   (let [show-timestamps? (boolean (get settings :show-timestamps false))
+         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))]
+     (cond
+       (and (= :assistant (:role message)) (:trace message))
+       (let [{:keys [text lines line-meta]}
+             (render/format-answer-with-thinking-data
+               (:raw-answer message) (:trace message) bubble-w settings
+               (:confidence message)
+               (= :cancelled (:status message))
+               {:conversation-id      conversation-id
+                :conversation-turn-id (:conversation-turn-id message)
+                :detail-expansions   detail-expansions})]
+         (-> message
+           (assoc :text text :prewrapped-lines lines :line-meta line-meta)
+           strip-ts))
 
-   `live-text` (optional) overrides the projected text \u2014 used by the
-   loading-bubble path where the text changes every spinner tick and
-   bypasses the cache."
-  [message ^long bubble-w settings]
-  (let [show-timestamps? (boolean (get settings :show-timestamps false))
-        strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))]
-    (cond
-      (and (= :assistant (:role message)) (:trace message))
-      (-> message
-        (assoc :text
-          (render/format-answer-with-thinking
-            (:raw-answer message) (:trace message) bubble-w settings
-            (:confidence message)
-            (= :cancelled (:status message))))
-        strip-ts)
+       (= :assistant (:role message))
+       (let [{:keys [text lines line-meta]}
+             (render/format-answer-markdown-data
+               (:text message) bubble-w
+               {:conversation-id      conversation-id
+                :conversation-turn-id (:conversation-turn-id message)
+                :detail-expansions   detail-expansions})]
+         (-> message
+           (assoc :text text :prewrapped-lines lines :line-meta line-meta)
+           strip-ts))
 
-      (= :assistant (:role message))
-      (-> message
-        (assoc :text
-          (render/format-answer-markdown (:text message) bubble-w))
-        strip-ts)
-
-      :else (strip-ts message))))
+       :else (strip-ts message)))))
 
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;
@@ -290,10 +297,12 @@
    args, and this one takes 6, so `bubble-w` / `inner-h` are
    plain Object args here — we cast with `long` inside the body."
   [messages bubble-w settings scroll inner-h
-   {:keys [progress loading? progress-extra] :or {progress nil loading? false}}]
-  (let [bubble-w (long bubble-w)
-        inner-h  (long inner-h)
-        n        (long (count messages))
+   {:keys [progress loading? progress-extra] :or {progress nil loading? false}}
+   & [{:keys [conversation-id detail-expansions]}]]
+  (let [bubble-w          (long bubble-w)
+        inner-h           (long inner-h)
+        detail-expansions detail-expansions
+        n                 (long (count messages))
         ;; Pass 1 ── sticky-real height if we've measured this
         ;; message before, otherwise the cheap estimate. Identity-
         ;; keyed cache means once a message has been visible (or
@@ -301,7 +310,7 @@
         ;; — no more `total-h` jitter on scroll, no more
         ;; click-to-position landing in the wrong row.
         est      (mapv (fn [m]
-                         (or (height-cache-get m bubble-w settings)
+                         (or (height-cache-get m bubble-w settings detail-expansions)
                            (estimated-height m bubble-w)))
                    messages)
         est-off  (vec (reductions + 0 (map long est)))
@@ -334,13 +343,15 @@
                   pm (if loading-bubble?
                        (assoc m :text
                          (render/progress->text progress bubble-w settings progress-extra))
-                       (project-message m bubble-w settings))
+                       (project-message m bubble-w settings
+                         {:conversation-id conversation-id
+                          :detail-expansions detail-expansions}))
                   real-h (long (render/bubble-height pm bubble-w))]
               ;; Pin the real height in the sticky cache for the
               ;; raw message identity (NOT the loading bubble — its
               ;; height changes every spinner tick by definition).
               (when-not loading-bubble?
-                (height-cache-put! m bubble-w settings real-h))
+                (height-cache-put! m bubble-w settings detail-expansions real-h))
               {:idx i :projected pm :height real-h}))
           forced-idxs)
         ;; Refine heights vec with real measurements.
@@ -418,7 +429,7 @@
    cached entries match the keys subsequent layout passes will
    look up. Mismatched settings = wasted compute (the layout pass
    will format again with different cache keys)."
-  ^Thread [messages bubble-w settings]
+  ^Thread [messages bubble-w settings & [{:keys [conversation-id detail-expansions]}]]
   (let [n (long (count messages))]
     (when (pos? n)
       (let [bubble-w (long bubble-w)
@@ -438,9 +449,11 @@
                         ;; user-visible as a one-row scrollbar nudge.
                         ;; Pin everyone; stability beats the cycles.
                         (let [m (nth messages i)
-                              pm (project-message m bubble-w settings)
+                              pm (project-message m bubble-w settings
+                                   {:conversation-id conversation-id
+                                    :detail-expansions detail-expansions})
                               h  (long (render/bubble-height pm bubble-w))]
-                          (height-cache-put! m bubble-w settings h))
+                          (height-cache-put! m bubble-w settings detail-expansions h))
                         (recur (dec i))))
                     (catch InterruptedException _
                       ;; Cooperative cancellation — nothing to do.

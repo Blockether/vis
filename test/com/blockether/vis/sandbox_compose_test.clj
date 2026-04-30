@@ -430,5 +430,5 @@
     (require 'com.blockether.vis.internal.prompt)
     (let [prompt (deref (resolve 'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT))]
       (doseq [tok prompt-required-tokens]
-        (expect (boolean (str/includes? prompt tok))
+        (expect (str/includes? prompt tok)
           (str "prompt missing token: " tok))))))

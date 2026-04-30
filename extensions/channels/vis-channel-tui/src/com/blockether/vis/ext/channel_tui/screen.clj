@@ -211,7 +211,9 @@
                        messages-scroll inner-h
                        {:progress       progress
                         :loading?       loading?
-                        :progress-extra progress-extra})
+                        :progress-extra progress-extra}
+                       {:conversation-id    (get-in db [:conversation :id])
+                        :detail-expansions (:detail-expansions db)})
         total-h      (long (:total-h layout))]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
@@ -498,7 +500,9 @@
                      bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
                      settings (or (:settings @state/app-db) {})]
                  (vreset! prewarm-thread
-                   (virtual/pre-warm! history bubble-w settings))))))
+                   (virtual/pre-warm! history bubble-w settings
+                     {:conversation-id    id
+                      :detail-expansions (:detail-expansions @state/app-db)}))))))
 
       ;; Spawn the render thread BEFORE the input loop. It will paint
       ;; the first frame as soon as `:render-version` is non-zero (every
@@ -786,6 +790,8 @@
                                    (catch Throwable _)))
                                (vis/notify! "✓ Copied conversation ID"
                                  :level :success :ttl-ms 1500))
+                             :toggle-details
+                             (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
                              (future
                                (try (opener/open! (:url hit))
                                  (catch Throwable _ nil))))))
@@ -835,6 +841,9 @@
                                    (catch Throwable _)))
                                (vis/notify! "✓ Copied conversation ID"
                                  :level :success :ttl-ms 1500))
+
+                             :toggle-details
+                             (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
 
                              ;; Default (markdown link / image /
                              ;; file-link chrome): hand the URL to
@@ -1055,41 +1064,6 @@
                             "\nUsage: " tui-usage)
                    {:vis/user-error true})))))))
 
-(defn- throwable-chain
-  "Walk `(.getCause t)` defensively. Returns `[t cause ...]`, bounded so a
-   pathological/cyclic cause graph cannot loop forever."
-  [^Throwable t]
-  (loop [acc [] cur t seen #{}]
-    (cond
-      (nil? cur)           acc
-      (contains? seen cur) acc
-      (>= (count acc) 16)  acc
-      :else                (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
-
-(defn- migration-checksum-mismatch?
-  "True when any link in the throwable cause chain matches Flyway's migration
-   checksum validation failure text."
-  [^Throwable t]
-  (boolean
-    (some (fn [^Throwable cause]
-            (let [m (or (ex-message cause) "")]
-              (or (str/includes? m "Migration checksum mismatch")
-                (str/includes? m "Migrations have failed validation"))))
-      (throwable-chain t))))
-
-(defn- migration-checksum-user-message
-  "Actionable one-shot guidance for schema checksum mismatches.
-
-   Typical trigger: the local `V*__*.sql` migration file changed after a
-   previous run already recorded a checksum in `flyway_schema_history`.
-   The safest default for local/dev usage is to recreate the DB directory."
-  []
-  (str "Database schema mismatch: local migrations changed since this database "
-    "was created. "
-    "If you do not need old local conversations, remove ~/.vis/vis.mdb and "
-    "restart Vis. "
-    "If you need to keep it, run Flyway repair on that database first."))
-
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
    library prints, JVM warnings) MUST be redirected to ~/.vis/vis.log
@@ -1123,24 +1097,13 @@
     (try
       (run-chat! (parse-args args))
       (catch Throwable t
-        (cond
-          (:vis/user-error (ex-data t))
+        (if (:vis/user-error (ex-data t))
           ;; Caller-facing error: invalid flag value, missing
           ;; conversation id, etc. Print the message clean and let the
           ;; process exit non-zero — no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
           (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: " (.getMessage t)))
             (reset! exit-code 2))
-
-          (migration-checksum-mismatch? t)
-          ;; Flyway checksum mismatches are actionable local-state
-          ;; problems, not runtime crashes. Show the concise fix path
-          ;; and exit like a user error (code 2), without a Java trace.
-          (do (.println ^java.io.PrintStream vis/original-stdout
-                (str "vis: " (migration-checksum-user-message)))
-            (reset! exit-code 2))
-
-          :else
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
           (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: fatal error — " (.getMessage t)))

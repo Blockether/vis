@@ -368,6 +368,12 @@
     (p/styled g [p/ITALIC]
       (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
 
+(defn- swap-items
+  [items i j]
+  (-> items
+    (assoc i (nth items j))
+    (assoc j (nth items i))))
+
 (defn- move-model-to-front
   [models idx]
   (if (or (neg? idx) (>= idx (count models)) (zero? idx))
@@ -437,7 +443,7 @@
                     next-name)))))
 
           (dlg/draw-hint-bar! g left hint-row inner-w
-            [["↑/↓" "move"] ["A" "add"] ["D" "del"] ["R" "make primary"] ["Esc" "back"]])
+            [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
 
@@ -449,12 +455,22 @@
                   {:models (vec @models)}
 
                   (= ktype KeyType/ArrowUp)
-                  (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                    (recur))
+                  (if (.isAltDown key)
+                    (do (when (pos? @selected)
+                          (swap! models swap-items @selected (dec @selected))
+                          (swap! selected dec))
+                      (recur))
+                    (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
+                      (recur)))
 
                   (= ktype KeyType/ArrowDown)
-                  (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                    (recur))
+                  (if (.isAltDown key)
+                    (do (when (< @selected (dec total))
+                          (swap! models swap-items @selected (inc @selected))
+                          (swap! selected inc))
+                      (recur))
+                    (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
+                      (recur)))
 
                   (= ktype KeyType/Character)
                   (let [c (Character/toLowerCase (.getCharacter key))]
@@ -494,12 +510,6 @@
                       :else (recur)))
 
                   :else (recur))))))))))
-
-(defn- swap-provider
-  [items i j]
-  (-> items
-    (assoc i (nth items j))
-    (assoc j (nth items i))))
 
 (defn- ensure-base-url
   [provider]
@@ -575,7 +585,7 @@
                  (= ktype KeyType/ArrowUp)
                  (if (.isAltDown key)
                    (do (when (pos? @selected)
-                         (swap! items swap-provider @selected (dec @selected))
+                         (swap! items swap-items @selected (dec @selected))
                          (swap! selected dec))
                      (recur))
                    (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
@@ -584,7 +594,7 @@
                  (= ktype KeyType/ArrowDown)
                  (if (.isAltDown key)
                    (do (when (< @selected (dec total))
-                         (swap! items swap-provider @selected (inc @selected))
+                         (swap! items swap-items @selected (inc @selected))
                          (swap! selected inc))
                      (recur))
                    (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
