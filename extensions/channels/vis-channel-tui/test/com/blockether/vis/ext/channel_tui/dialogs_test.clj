@@ -10,3 +10,27 @@
 (deftest smoke-test
   (testing "dialogs namespace loads and text-input-dialog! is public"
     (is (fn? (var-get #'dlg/text-input-dialog!)))))
+
+(deftest apply-settings-option-test
+  (let [apply-settings-option (var-get #'dlg/apply-settings-option)
+        settings-option-label (var-get #'dlg/settings-option-label)]
+    (testing "toggle rows flip booleans"
+      (is (= {:show-thinking false}
+            (apply-settings-option {:show-thinking true}
+              {:key :show-thinking :type :toggle}))))
+
+    (testing "choice rows cycle quick -> balanced -> deep -> quick"
+      (is (= {:reasoning-level :balanced}
+            (apply-settings-option {:reasoning-level :quick}
+              {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
+      (is (= {:reasoning-level :quick}
+            (apply-settings-option {:reasoning-level :deep}
+              {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]}))))
+
+    (testing "choice labels surface the live value"
+      (is (= "Reasoning effort: deep"
+            (settings-option-label {:key :reasoning-level
+                                    :type :choice
+                                    :choices [:quick :balanced :deep]
+                                    :label "Reasoning effort"}
+              {:reasoning-level :deep}))))))

@@ -645,7 +645,7 @@
 ;; definitions up here would split a long, cohesive block of
 ;; markdown / inline-marker code; the forward declares are the
 ;; cheaper move.
-(declare extract-link-refs paint-link-chrome-row!)
+(declare extract-link-refs paint-link-chrome-row! in-viewport?)
 
 ;; `chrome-display-text` (further down) calls into `markdown->inline`
 ;; via `strip-inline-markup` so the chrome row doesn't show raw
@@ -655,6 +655,33 @@
 ;; far too late for a chrome helper this high in the file. We pin
 ;; the var here so Clojure can resolve the symbol at compile time.
 (declare markdown->inline)
+
+(def ^:private copy-message-icon "⧉")
+
+(defn message->markdown
+  "Markdown payload copied from a single chat bubble."
+  [{:keys [markdown text]}]
+  (or markdown text ""))
+
+(defn- paint-copy-message-control!
+  "Paint and register the per-message markdown copy affordance."
+  [^TextGraphics g message x y viewport-top viewport-h]
+  (let [w       (p/display-width copy-message-icon)
+        bounds  {:row y :col x :width w}
+        hovered (and (= :copy-message-markdown (:kind (cr/hovered)))
+                  (= bounds (:bounds (cr/hovered))))]
+    (when (or (zero? (long viewport-h))
+            (in-viewport? viewport-top viewport-h y))
+      (p/clear-styles! g)
+      (p/set-colors! g
+        (if hovered t/link-chrome-hover-fg t/dialog-hint)
+        (if hovered t/link-chrome-hover-bg t/terminal-bg))
+      (p/fill-rect! g x y w 1)
+      (p/put-str! g x y copy-message-icon)
+      (cr/register!
+        {:kind     :copy-message-markdown
+         :bounds   bounds
+         :markdown (message->markdown message)}))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -764,6 +791,8 @@
     (when time-str
       (p/set-colors! g t/dialog-hint t/terminal-bg)
       (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str))
+    (paint-copy-message-control!
+      g message (+ bx (p/display-width label) 1) start-row viewport-top viewport-h)
 
     ;; Content begins directly under the role banner for ASSISTANT
     ;; bubbles — the previous breathing row read as an unwanted top
@@ -1974,7 +2003,7 @@
           (subvec remaining run))))))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments results stdouts durations successes error repeat-count]}
+  [{:keys [thinking events code comments results stdouts durations successes error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id]
        :or   {show-header? true}}]]
@@ -1987,155 +2016,193 @@
                       [(line-entry (str iteration-hdr-marker header-line))]
                       [])
         thinking-lines
-        (when (and (string? thinking) (not (str/blank? thinking)))
-          (let [entries (markdown->entries (str/trim thinking) fill-w :thinking
-                          {:conversation-id      conversation-id
-                           :conversation-turn-id conversation-turn-id
-                           :detail-expansions   detail-expansions
-                           :iteration-number    iteration-number
-                           :section             :thinking})
-                entries (or (seq entries)
-                          (mapv #(line-entry (str thinking-marker %))
-                            (wrap-text (str/trim thinking) fill-w)))]
-            (vec (concat [(line-entry (str thinking-marker ""))]
-                   entries
-                   [(line-entry (str thinking-marker ""))]))))
+        (fn [thinking-text]
+          (when (and (string? thinking-text) (not (str/blank? thinking-text)))
+            (let [entries (markdown->entries (str/trim thinking-text) fill-w :thinking
+                            {:conversation-id      conversation-id
+                             :conversation-turn-id conversation-turn-id
+                             :detail-expansions   detail-expansions
+                             :iteration-number    iteration-number
+                             :section             :thinking})
+                  entries (or (seq entries)
+                            (mapv #(line-entry (str thinking-marker %))
+                              (wrap-text (str/trim thinking-text) fill-w)))]
+              (vec (concat [(line-entry (str thinking-marker ""))]
+                     entries
+                     [(line-entry (str thinking-marker ""))])))))
         error-lines
-        (when (map? error)
-          (let [repeat-count      (max 1 (long (or repeat-count 1)))
-                badge             (when (> repeat-count 1) (str "  × " repeat-count))
-                hdr-label         (str (label-text "error") (or badge ""))
-                hdr-pad           (max 0 (- fill-w (count hdr-label) 1))
-                hdr-line          (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
-                err-message       (or (:message error) (str (:type error)) "unknown error")
-                raw               (some-> (get-in error [:data :raw-data]) str str/trim)
-                recv              (get-in error [:data :received-type])
-                err-message-rows  (mapv #(line-entry (str err-result-marker %))
-                                    (wrap-text (vis/format-error err-message) fill-w))
-                raw-rows          (when (and raw (not (str/blank? raw)))
-                                    (let [hdr        (str "provider returned"
-                                                       (when recv (str " (" recv ")"))
-                                                       ":")
-                                          raw-trim   (if (> (count raw) 600) (str (subs raw 0 600) "…") raw)
-                                          body-lines (mapv #(line-entry (str err-result-marker %))
-                                                       (wrap-text raw-trim fill-w))]
-                                      (into [(line-entry (str err-result-marker hdr))] body-lines)))]
-            (vec (concat
-                   [(line-entry (str iteration-pad-marker ""))]
-                   (when show-header? [(line-entry (str iteration-pad-marker ""))])
-                   (when show-header? [(line-entry hdr-line)])
-                   [(line-entry (str code-err-pad-marker ""))]
-                   err-message-rows
-                   (when (seq raw-rows) [(line-entry (str code-err-pad-marker ""))])
-                   (or raw-rows [])
-                   [(line-entry (str code-err-pad-marker ""))]))))
-        code+result-lines
-        (when (seq code)
-          (into []
-            (mapcat
-              (fn [[idx form]]
-                (let [block-number  (inc idx)
-                      success?      (when successes (get successes idx))
-                      has-status?   (some? success?)
-                      is-error?     (and has-status? (not success?))
-                      duration-ms   (when durations (get durations idx))
-                      duration-str  (vis/format-duration duration-ms)
-                      expr-label    (label-text "code" block-number)
-                      expr-hdr      (let [pl (max 0 (- fill-w (count expr-label) 1))]
-                                      (str (repeat-str \space pl) expr-label " "))
-                      status-text   (when has-status?
-                                      (str (if success? "✓" "✗")
-                                        (when duration-str (str " " duration-str))))
-                      status-line   (when status-text
-                                      (let [s-marker (if success? code-ok-marker code-err-marker)
-                                            pl       (max 0 (- fill-w (count status-text) 1))]
-                                        (line-entry (str s-marker (repeat-str \space pl) status-text " "))))
-                      c-marker      (cond
-                                      (not has-status?) code-marker
-                                      success?          code-ok-marker
-                                      :else             code-err-marker)
-                      c-pad         (if is-error? code-err-pad-marker code-pad-marker)
-                      comment-text  (some-> comments (get idx))
-                      comment-lines (when (and (string? comment-text)
-                                            (not (str/blank? comment-text)))
-                                      (let [trimmed (str/trim comment-text)
-                                            wrapped (mapcat (fn [line] (wrap-text line fill-w))
-                                                      (str/split-lines trimmed))]
-                                        (mapv #(line-entry (str thinking-marker %)) wrapped)))
-                      code-text     (str/trim (or form ""))
-                      formatted     (vis/format-clojure code-text fill-w)
-                      code-lines    (str/split-lines formatted)
-                      c-lines       (mapv #(line-entry (str c-marker %)) code-lines)
-                      result-str    (when results (get results idx))
-                      r-marker      (if is-error? err-result-marker result-marker)
-                      r-wrapped     (when (and result-str (not (str/blank? (str result-str))))
-                                      (wrap-text (str/trim (str result-str)) fill-w))
-                      result-lines  (when (seq r-wrapped)
+        (fn []
+          (when (map? error)
+            (let [repeat-count      (max 1 (long (or repeat-count 1)))
+                  badge             (when (> repeat-count 1) (str "  × " repeat-count))
+                  hdr-label         (str (label-text "error") (or badge ""))
+                  hdr-pad           (max 0 (- fill-w (count hdr-label) 1))
+                  hdr-line          (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
+                  err-message       (or (:message error) (str (:type error)) "unknown error")
+                  raw               (some-> (get-in error [:data :raw-data]) str str/trim)
+                  recv              (get-in error [:data :received-type])
+                  err-message-rows  (mapv #(line-entry (str err-result-marker %))
+                                      (wrap-text (vis/format-error err-message) fill-w))
+                  raw-rows          (when (and raw (not (str/blank? raw)))
+                                      (let [hdr        (str "provider returned"
+                                                         (when recv (str " (" recv ")"))
+                                                         ":")
+                                            raw-trim   (if (> (count raw) 600) (str (subs raw 0 600) "…") raw)
+                                            body-lines (mapv #(line-entry (str err-result-marker %))
+                                                         (wrap-text raw-trim fill-w))]
+                                        (into [(line-entry (str err-result-marker hdr))] body-lines)))]
+              (vec (concat
+                     [(line-entry (str iteration-pad-marker ""))]
+                     (when show-header? [(line-entry (str iteration-pad-marker ""))])
+                     (when show-header? [(line-entry hdr-line)])
+                     [(line-entry (str code-err-pad-marker ""))]
+                     err-message-rows
+                     (when (seq raw-rows) [(line-entry (str code-err-pad-marker ""))])
+                     (or raw-rows [])
+                     [(line-entry (str code-err-pad-marker ""))])))))
+        form-lines
+        (fn [idx block-number]
+          (let [form          (when code (get code idx))
+                success?      (when successes (get successes idx))
+                has-status?   (some? success?)
+                is-error?     (and has-status? (not success?))
+                duration-ms   (when durations (get durations idx))
+                duration-str  (vis/format-duration duration-ms)
+                expr-label    (label-text "code" block-number)
+                expr-hdr      (let [pl (max 0 (- fill-w (count expr-label) 1))]
+                                (str (repeat-str \space pl) expr-label " "))
+                status-text   (when has-status?
+                                (str (if success? "✓" "✗")
+                                  (when duration-str (str " " duration-str))))
+                status-line   (when status-text
+                                (let [s-marker (if success? code-ok-marker code-err-marker)
+                                      pl       (max 0 (- fill-w (count status-text) 1))]
+                                  (line-entry (str s-marker (repeat-str \space pl) status-text " "))))
+                c-marker      (cond
+                                (not has-status?) code-marker
+                                success?          code-ok-marker
+                                :else             code-err-marker)
+                c-pad         (if is-error? code-err-pad-marker code-pad-marker)
+                comment-text  (some-> comments (get idx))
+                comment-lines (when (and (string? comment-text)
+                                      (not (str/blank? comment-text)))
+                                (let [trimmed (str/trim comment-text)
+                                      wrapped (mapcat (fn [line] (wrap-text line fill-w))
+                                                (str/split-lines trimmed))]
+                                  (mapv #(line-entry (str thinking-marker %)) wrapped)))
+                code-text     (str/trim (or form ""))
+                formatted     (vis/format-clojure code-text fill-w)
+                code-lines    (str/split-lines formatted)
+                c-lines       (mapv #(line-entry (str c-marker %)) code-lines)
+                result-str    (when results (get results idx))
+                r-marker      (if is-error? err-result-marker result-marker)
+                r-wrapped     (when (and result-str (not (str/blank? (str result-str))))
+                                (wrap-text (str/trim (str result-str)) fill-w))
+                result-lines  (when (seq r-wrapped)
+                                (maybe-collapse-block
+                                  {:conversation-id      conversation-id
+                                   :detail-expansions   detail-expansions
+                                   :conversation-turn-id conversation-turn-id
+                                   :iteration-number    iteration-number
+                                   :block-number        block-number
+                                   :kind                :result
+                                   :summary             (str "RESULT (code " block-number ")")
+                                   :summary-marker      md-summary-marker
+                                   :body-marker         r-marker
+                                   :lines               r-wrapped
+                                   :max-w               fill-w}))
+                code-block    (vec (concat
+                                     (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
+                                     (when (seq comment-lines)
+                                       (concat [(line-entry (str thinking-marker ""))]
+                                         comment-lines
+                                         [(line-entry (str thinking-marker ""))]))
+                                     [(line-entry (str c-pad ""))]
+                                     c-lines
+                                     (when (seq result-lines) [(line-entry (str c-pad ""))])
+                                     result-lines
+                                     (when status-line [status-line])
+                                     [(line-entry (str c-pad ""))]))
+                stdout-str    (when stdouts (get stdouts idx))
+                stdout-block  (when (and stdout-str (not (str/blank? (str stdout-str))))
+                                (let [text-lines      (wrap-text (str/trim (str stdout-str)) fill-w)
+                                      plain-entries   (mapv #(line-entry (str stdout-marker %)) text-lines)
+                                      collapsed-entries
                                       (maybe-collapse-block
                                         {:conversation-id      conversation-id
                                          :detail-expansions   detail-expansions
                                          :conversation-turn-id conversation-turn-id
                                          :iteration-number    iteration-number
                                          :block-number        block-number
-                                         :kind                :result
-                                         :summary             (str "RESULT (code " block-number ")")
+                                         :kind                :stdout
+                                         :summary             (str "STDOUT (code " block-number ")")
                                          :summary-marker      md-summary-marker
-                                         :body-marker         r-marker
-                                         :lines               r-wrapped
-                                         :max-w               fill-w}))
-                      code-block    (vec (concat
-                                           (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
-                                           (when (seq comment-lines)
-                                             (concat [(line-entry (str thinking-marker ""))]
-                                               comment-lines
-                                               [(line-entry (str thinking-marker ""))]))
-                                           [(line-entry (str c-pad ""))]
-                                           c-lines
-                                           (when (seq result-lines) [(line-entry (str c-pad ""))])
-                                           result-lines
-                                           (when status-line [status-line])
-                                           [(line-entry (str c-pad ""))]))
-                      stdout-str    (when stdouts (get stdouts idx))
-                      stdout-block  (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                      (let [text-lines      (wrap-text (str/trim (str stdout-str)) fill-w)
-                                            plain-entries   (mapv #(line-entry (str stdout-marker %)) text-lines)
-                                            collapsed-entries
-                                            (maybe-collapse-block
-                                              {:conversation-id      conversation-id
-                                               :detail-expansions   detail-expansions
-                                               :conversation-turn-id conversation-turn-id
-                                               :iteration-number    iteration-number
-                                               :block-number        block-number
-                                               :kind                :stdout
-                                               :summary             (str "STDOUT (code " block-number ")")
-                                               :summary-marker      md-summary-marker
-                                               :body-marker         stdout-marker
-                                               :lines               text-lines
-                                               :max-w               fill-w})]
-                                        (if (not= collapsed-entries plain-entries)
-                                          collapsed-entries
-                                          (let [slabel     (label-text "stdout")
-                                                slabel-pad (max 0 (- fill-w (count slabel) 1))
-                                                slabel-ln  (line-entry (str iteration-hdr-marker
-                                                                         (repeat-str \space slabel-pad)
-                                                                         slabel " "))]
-                                            (vec (concat
-                                                   (when show-header? [slabel-ln])
-                                                   [(line-entry (str stdout-pad-marker ""))]
-                                                   plain-entries
-                                                   [(line-entry (str stdout-pad-marker ""))]))))))
-                      margin        (when (seq stdout-block) [(line-entry (str iteration-pad-marker ""))])]
-                  (concat
-                    (when (pos? idx) [(line-entry (str iteration-pad-marker ""))])
-                    code-block margin stdout-block))))
-            (map-indexed vector code)))
+                                         :body-marker         stdout-marker
+                                         :lines               text-lines
+                                         :max-w               fill-w})]
+                                  (if (not= collapsed-entries plain-entries)
+                                    collapsed-entries
+                                    (let [slabel     (label-text "stdout")
+                                          slabel-pad (max 0 (- fill-w (count slabel) 1))
+                                          slabel-ln  (line-entry (str iteration-hdr-marker
+                                                                   (repeat-str \space slabel-pad)
+                                                                   slabel " "))]
+                                      (vec (concat
+                                             (when show-header? [slabel-ln])
+                                             [(line-entry (str stdout-pad-marker ""))]
+                                             plain-entries
+                                             [(line-entry (str stdout-pad-marker ""))]))))))
+                margin        (when (seq stdout-block) [(line-entry (str iteration-pad-marker ""))])]
+            (vec (concat code-block margin stdout-block))))
         grouped
-        (when (seq code+result-lines)
-          (vec (concat
-                 [(line-entry (str iteration-pad-marker ""))]
-                 code+result-lines
-                 [(line-entry (str iteration-pad-marker ""))])))]
-    (into (vec (concat header thinking-lines error-lines)) grouped)))
+        (when (seq code)
+          (let [code+result-lines
+                (into []
+                  (mapcat (fn [[idx _form]]
+                            (concat
+                              (when (pos? idx) [(line-entry (str iteration-pad-marker ""))])
+                              (form-lines idx (inc idx))))
+                    (map-indexed vector code)))]
+            (when (seq code+result-lines)
+              (vec (concat
+                     [(line-entry (str iteration-pad-marker ""))]
+                     code+result-lines
+                     [(line-entry (str iteration-pad-marker ""))])))))
+        ordered
+        (when (seq events)
+          (let [event-lines (loop [remaining    events
+                                   block-number 1
+                                   out          []]
+                              (if-let [event (first remaining)]
+                                (case (:type event)
+                                  :thinking
+                                  (recur (rest remaining)
+                                    block-number
+                                    (into out
+                                      (concat
+                                        (when (seq out) [(line-entry (str iteration-pad-marker ""))])
+                                        (thinking-lines (:thinking event)))))
+
+                                  :form-result
+                                  (recur (rest remaining)
+                                    (inc block-number)
+                                    (into out
+                                      (concat
+                                        (when (seq out) [(line-entry (str iteration-pad-marker ""))])
+                                        (form-lines (:form-idx event) block-number))))
+
+                                  (recur (rest remaining) block-number out))
+                                out))]
+            (when (seq event-lines)
+              (vec (concat
+                     [(line-entry (str iteration-pad-marker ""))]
+                     event-lines
+                     [(line-entry (str iteration-pad-marker ""))])))))
+        body (or ordered grouped)
+        trailing-errors (error-lines)]
+    (if (seq ordered)
+      (into (vec header) (concat body trailing-errors))
+      (into (vec (concat header (thinking-lines thinking) trailing-errors)) body))))
 
 (defn- format-iteration-entry
   [entry code-width iteration-number & [opts]]

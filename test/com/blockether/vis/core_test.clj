@@ -709,6 +709,21 @@
       (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking…"})
       (expect (= "thinking…" (:thinking (first (get-timeline)))))))
 
+  (it "reasoning / code / reasoning builds ordered :events for live rendering"
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
+      (on-chunk {:phase :reasoning :iteration 0 :thinking "alpha"})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(+ 1 1)" :result 2 :stdout "" :stderr ""
+                 :execution-time-ms 1 :error nil})
+      ;; svar streams accumulated reasoning, not deltas. Tracker must
+      ;; split the second segment relative to the prior snapshot.
+      (on-chunk {:phase :reasoning :iteration 0 :thinking "alpha\nbeta"})
+      (let [entry (first (get-timeline))]
+        (expect (= [{:type :thinking :thinking "alpha"}
+                    {:type :form-result :form-idx 0}
+                    {:type :thinking :thinking "\nbeta"}]
+                  (:events entry))))))
+
   (it ":form-result with :error formats the error string into :results"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
@@ -785,6 +800,12 @@
         (expect (= [true false true] (:successes entry)))
         (expect (re-find #"ERROR:" (nth (:results entry) 1)))
         (expect (re-find #"LAST top-level form" (nth (:results entry) 1)))
+        ;; Re-emit updates the existing event in place; no duplicate
+        ;; code block lands in the ordered live trace.
+        (expect (= [{:type :form-result :form-idx 0}
+                    {:type :form-result :form-idx 1}
+                    {:type :form-result :form-idx 2}]
+                  (:events entry)))
         ;; Sibling slots untouched.
         (expect (= "1" (str (nth (:results entry) 0))))
         (expect (= "2" (str (nth (:results entry) 2)))))))

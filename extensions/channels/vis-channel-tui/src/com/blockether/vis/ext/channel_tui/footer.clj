@@ -51,8 +51,6 @@
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 
 (def ^:private default-reasoning-level
-  "Mirrors `query/core.clj`'s `balanced-reasoning` constant. The TUI
-   doesn't expose a per-conversation override yet."
   :balanced)
 
 (defn- chosen-model-info
@@ -85,7 +83,7 @@
      3  iter counter, model reasoning suffix
      4  cost"
   [db _now-ms]
-  (let [{:keys [messages cancelling?]} db
+  (let [{:keys [messages cancelling? settings]} db
         info       (chosen-model-info)
         model      (:name info)
         provider   (:provider info)
@@ -97,6 +95,7 @@
                         (str (name provider) "/" model)
                         model)
         reasoning? (boolean (:reasoning? info))
+        reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -106,7 +105,7 @@
              :region :left :priority 2})
 
       reasoning?
-      (conj {:text (str "(" (name default-reasoning-level) ")")
+      (conj {:text (str "(" (name reasoning-level) ")")
              :fg t/footer-fg-muted :bold? false
              :region :left :priority 3})
 

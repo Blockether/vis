@@ -783,6 +783,14 @@
                        (when (and (not was-dragging?) (not already-handled?))
                          (when-let [hit (cr/lookup mx my)]
                            (case (:kind hit)
+                             :copy-message-markdown
+                             (let [markdown (or (:markdown hit) (:text hit) "")]
+                               (try (input/clipboard-copy! markdown)
+                                 (catch Throwable _ nil))
+                               (vis/notify! "✓ Copied message markdown"
+                                 :level :success)
+                               (state/dispatch [:bump-render-version]))
+
                              :copy-id
                              (let [text (:text hit)]
                                (future
@@ -834,6 +842,14 @@
                              ;; TUI-specific flash state; the
                              ;; cross-channel notifications system
                              ;; carries the feedback.
+                             :copy-message-markdown
+                             (let [markdown (or (:markdown hit) (:text hit) "")]
+                               (try (input/clipboard-copy! markdown)
+                                 (catch Throwable _ nil))
+                               (vis/notify! "✓ Copied message markdown"
+                                 :level :success)
+                               (state/dispatch [:bump-render-version]))
+
                              :copy-id
                              (let [text (:text hit)]
                                (future

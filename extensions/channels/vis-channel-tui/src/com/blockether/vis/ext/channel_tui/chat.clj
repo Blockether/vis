@@ -154,23 +154,26 @@
    Returns `{:answer str}` or `{:error str}`.
 
    `opts` may contain:
-     :on-chunk    — fn receiving phased chunks `{:phase :iteration ...}`. Phases:
-                    `:reasoning` (LLM streaming), `:form-result` (one form done),
-                    `:iteration-final` (iteration complete), `:iteration-error`
-                    (iteration aborted). See `progress/make-progress-tracker`
-                    for accumulating chunks into a timeline.
-                    on every streaming chunk from the RLM. The TUI uses this
-                    to project a live per-iteration progress timeline into
-                    the assistant placeholder bubble.
-     :cancel-atom — (atom bool) honored by the iteration loop; flipping
-                    it to true causes the current query to terminate at
-                    the next safe point and return `{:status :cancelled}`."
+     :on-chunk          — fn receiving phased chunks `{:phase :iteration ...}`. Phases:
+                          `:reasoning` (LLM streaming), `:form-result` (one form done),
+                          `:iteration-final` (iteration complete), `:iteration-error`
+                          (iteration aborted). See `progress/make-progress-tracker`
+                          for accumulating chunks into a timeline.
+                          on every streaming chunk from the RLM. The TUI uses this
+                          to project a live per-iteration progress timeline into
+                          the assistant placeholder bubble.
+     :cancel-atom       — (atom bool) honored by the iteration loop; flipping
+                          it to true causes the current query to terminate at
+                          the next safe point and return `{:status :cancelled}`.
+     :reasoning-default — base reasoning effort (`:quick`, `:balanced`, `:deep`)
+                          forwarded to `vis/send!` for reasoning-capable models."
   ([conversation text] (query! conversation text {}))
-  ([{:keys [id]} text {:keys [on-chunk cancel-atom]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default]}]
    (try
      (let [send-opts (cond-> {}
-                       on-chunk    (assoc :hooks {:on-chunk on-chunk})
-                       cancel-atom (assoc :cancel-atom cancel-atom))
+                       on-chunk          (assoc :hooks {:on-chunk on-chunk})
+                       cancel-atom       (assoc :cancel-atom cancel-atom)
+                       reasoning-default (assoc :reasoning-default reasoning-default))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; Plain text — the bubble renderer dims it via the
