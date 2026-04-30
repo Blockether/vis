@@ -634,9 +634,35 @@
                      ;; freeze the input loop's redraw cadence.
                      (= atype MouseActionType/CLICK_DOWN)
                      (do (when-let [hit (cr/lookup mx my)]
-                           (future
-                             (try (opener/open! (:url hit))
-                               (catch Throwable _ nil))))
+                           (case (:kind hit)
+                             ;; Header copy-id glyph: drop the full
+                             ;; UUID onto the system clipboard, then
+                             ;; flash a "✓ Copied!" feedback in the
+                             ;; header band for ~1.5s. The flash is
+                             ;; an app-db `:header-flash` map; a
+                             ;; timer future dispatches the clear
+                             ;; event after the deadline so the
+                             ;; band repaints back to id+glyph.
+                             :copy-id
+                             (let [text (:text hit)
+                                   until (+ (System/currentTimeMillis) 1500)]
+                               (future
+                                 (try (input/clipboard-copy! text)
+                                   (state/dispatch
+                                     [:header-flash-set
+                                      {:text "✓ Copied!" :until until}])
+                                   (Thread/sleep 1600)
+                                   (state/dispatch [:header-flash-clear])
+                                   (catch Throwable _ nil))))
+
+                             ;; Default (markdown link / image /
+                             ;; file-link chrome): hand the URL to
+                             ;; the OS opener on a side thread —
+                             ;; a slow `xdg-open` cannot freeze the
+                             ;; input loop's redraw cadence.
+                             (future
+                               (try (opener/open! (:url hit))
+                                 (catch Throwable _ nil)))))
                        (recur))
 
                      ;; Every other click — track above/below the

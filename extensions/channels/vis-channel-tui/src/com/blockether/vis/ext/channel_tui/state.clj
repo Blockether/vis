@@ -243,6 +243,24 @@
   (fn [db [_ title]]
     (assoc db :title title)))
 
+(reg-event-db :header-flash-set
+  ;; Ephemeral feedback message painted in the header band — used
+  ;; by the click-to-copy-id affordance to flash "Copied!" for ~1.5s
+  ;; before reverting to the short-id. Shape:
+  ;;   {:text "Copied!" :until <epoch-ms>}
+  ;; Header reads this on every paint; once `now > until`, the
+  ;; band reverts on its own. The accompanying `:header-flash-clear`
+  ;; event is what the timer future dispatches to bump the render
+  ;; version after the deadline (header is event-painted, not
+  ;; tick-driven — we need an explicit nudge to repaint past the
+  ;; expiry).
+  (fn [db [_ flash]]
+    (assoc db :header-flash flash)))
+
+(reg-event-db :header-flash-clear
+  (fn [db _]
+    (dissoc db :header-flash)))
+
 (reg-event-db :update-input
   (fn [db [_ new-input]]
     (assoc db :input new-input)))

@@ -59,18 +59,49 @@
 ;; Headings
 ;; =============================================================================
 
-(defn h
-  "Heading at level n (clamped [1, 6])."
-  ^String [n s]
-  (let [lvl (max 1 (min 6 (long n)))]
-    (str (apply str (repeat lvl "#")) " " (->str s))))
+(defn- compose-text
+  "Variadic-friendly text composer used by every inline / heading /
+   block helper that takes \"text-ish\" parts. Mirrors `md/p`'s
+   contract — nil dropped, sequential collections spliced one level,
+   scalar parts coerced via `->str` — BUT joins with empty string so
+   author-supplied whitespace stays authoritative. The LLM naturally
+   writes
+     (md/h3 \"Propozycja: \" (md/code \":foo/bar\") \" sentinel\")
+   with the spaces baked into the literals; we don't second-guess.
 
-(defn h1 ^String [s] (h 1 s))
-(defn h2 ^String [s] (h 2 s))
-(defn h3 ^String [s] (h 3 s))
-(defn h4 ^String [s] (h 4 s))
-(defn h5 ^String [s] (h 5 s))
-(defn h6 ^String [s] (h 6 s))
+   1-arg string short-circuits (no allocation, no expand-parts walk)
+   so the original single-string shape pays nothing extra."
+  ^String [parts]
+  (cond
+    ;; Common case: 1 string -> no allocation, no walk.
+    (and (= 1 (count parts)) (string? (first parts)))
+    (first parts)
+    ;; 1 nil/scalar -> ->str directly. Must NOT enter this branch
+    ;; for sequential single arg — those need splice via expand-parts
+    ;; so `(md/h1 ["a" "b"])` reads as parts, not a thrown coll.
+    (and (= 1 (count parts)) (not (sequential? (first parts))))
+    (->str (first parts))
+    :else
+    (->> (expand-parts parts)
+      (mapv ->str)
+      (apply str))))
+
+(defn h
+  "Heading at level n (clamped [1, 6]). Variadic body — see md/h1."
+  ^String [n & parts]
+  (let [lvl (max 1 (min 6 (long n)))]
+    (str (apply str (repeat lvl "#")) " " (compose-text parts))))
+
+;; Variadic, like md/p: 1 string short-circuits (the common case);
+;; multi-arg parts are concatenated (nil dropped, seqs spliced) so
+;; an inline (md/code …) / (md/bold …) call inside a heading just
+;; works instead of triggering ArityException.
+(defn h1 ^String [& parts] (str "# "      (compose-text parts)))
+(defn h2 ^String [& parts] (str "## "     (compose-text parts)))
+(defn h3 ^String [& parts] (str "### "    (compose-text parts)))
+(defn h4 ^String [& parts] (str "#### "   (compose-text parts)))
+(defn h5 ^String [& parts] (str "##### "  (compose-text parts)))
+(defn h6 ^String [& parts] (str "###### " (compose-text parts)))
 
 ;; =============================================================================
 ;; Inline
@@ -92,12 +123,17 @@
     (mapv ->str)
     (str/join " ")))
 
-(defn bold ^String [s] (str "**" (->str s) "**"))
-(defn italic ^String [s] (str "*" (->str s) "*"))
-(defn bold-italic ^String [s] (str "***" (->str s) "***"))
-(defn strike ^String [s] (str "~~" (->str s) "~~"))
-(defn code ^String [s] (str "`" (->str s) "`"))
-(defn kbd ^String [s] (str "<kbd>" (->str s) "</kbd>"))
+;; Inline emphasis / spans — every helper variadic for the same
+;; reason headings are: the LLM naturally composes (md/bold "foo "
+;; (md/code "bar")) and would otherwise hit ArityException. 1-arg
+;; string short-circuits in compose-text, so the canonical shape
+;; pays nothing extra.
+(defn bold        ^String [& parts] (str "**"     (compose-text parts) "**"))
+(defn italic      ^String [& parts] (str "*"      (compose-text parts) "*"))
+(defn bold-italic ^String [& parts] (str "***"    (compose-text parts) "***"))
+(defn strike      ^String [& parts] (str "~~"     (compose-text parts) "~~"))
+(defn code        ^String [& parts] (str "`"      (compose-text parts) "`"))
+(defn kbd         ^String [& parts] (str "<kbd>"  (compose-text parts) "</kbd>"))
 
 (defn- escape-title-attr
   "Escape `\"` so link/image title attr stays well-formed."
@@ -173,9 +209,11 @@
        "```"))))
 
 (defn blockquote
-  "Quote each line of s with `> `. Multi-line preserved; empty -> `>`."
-  ^String [s]
-  (let [text (->str s)]
+  "Quote each line with `> `. Variadic body — nil dropped, seqs
+   spliced, parts concatenated; the resulting text is split on `\n`
+   so every line gets the `> ` prefix. Empty -> `>`."
+  ^String [& parts]
+  (let [text (compose-text parts)]
     (if (str/blank? text)
       ">"
       (->> (str/split-lines text)
@@ -192,15 +230,17 @@
   "  ")
 
 (defn summary
-  "Standalone `<summary>x</summary>` tag — disclosure label inside
-   `(md/details …)`. Use when the label needs styled spans (md/bold,
-   md/code, …); md/details lifts a wrapped <summary> part to the
-   canonical first-child slot regardless of arg position.
+  "Standalone `<summary>…</summary>` tag — disclosure label inside
+   `(md/details …)`. Variadic body, same rules as the inline
+   helpers: nil dropped, seqs spliced, parts concatenated.
 
-     (md/details (md/summary (md/bold \"Logs\")) body)
-     ; -> <summary><strong>Logs</strong></summary>…"
-  ^String [s]
-  (str "<summary>" (->str s) "</summary>"))
+     (md/summary \"Logs\")
+     (md/summary (md/bold \"Logs\") \" (\" (md/code \"42\") \")\")
+
+   `md/details` lifts a wrapped <summary> part to the canonical
+   first-child slot regardless of arg position."
+  ^String [& parts]
+  (str "<summary>" (compose-text parts) "</summary>"))
 
 (defn- summary-tagged?
   "True when s is a `<summary>…</summary>` block (md/summary or hand-
@@ -391,33 +431,35 @@
 
 (def ^:private symbol-entries
   [(sdk/symbol 'h1 h1
-     {:doc "H1: `# text`."
-      :arglists '([text])
-      :examples ["(md/h1 \"Patch report\")"]})
+     {:doc "H1: `# text`. Variadic body — nil dropped, seqs spliced, parts concatenated (author owns whitespace)."
+      :arglists '([& parts])
+      :examples ["(md/h1 \"Patch report\")"
+                 "(md/h1 \"Build of \" (md/code \"v1.2.3\"))"]})
    (sdk/symbol 'h2 h2
-     {:doc "H2: `## text`."
-      :arglists '([text])
+     {:doc "H2: `## text`. Variadic body — see md/h1."
+      :arglists '([& parts])
       :examples ["(md/h2 \"Summary\")"]})
    (sdk/symbol 'h3 h3
-     {:doc "H3: `### text`."
-      :arglists '([text])
-      :examples ["(md/h3 \"Details\")"]})
+     {:doc "H3: `### text`. Variadic body — see md/h1."
+      :arglists '([& parts])
+      :examples ["(md/h3 \"Proposal: \" (md/code \":vis/silent\") \" sentinel\")"]})
    (sdk/symbol 'h4 h4
-     {:doc "H4: `#### text`."
-      :arglists '([text])
+     {:doc "H4: `#### text`. Variadic body — see md/h1."
+      :arglists '([& parts])
       :examples ["(md/h4 \"Notes\")"]})
    (sdk/symbol 'h5 h5
-     {:doc "H5: `##### text`."
-      :arglists '([text])
+     {:doc "H5: `##### text`. Variadic body — see md/h1."
+      :arglists '([& parts])
       :examples ["(md/h5 \"Caveat\")"]})
    (sdk/symbol 'h6 h6
-     {:doc "H6: `###### text`."
-      :arglists '([text])
+     {:doc "H6: `###### text`. Variadic body — see md/h1."
+      :arglists '([& parts])
       :examples ["(md/h6 \"Footnote\")"]})
    (sdk/symbol 'h h
-     {:doc "Heading at level n (clamped [1, 6])."
-      :arglists '([level text])
-      :examples ["(md/h 3 \"Step 1\")"]})
+     {:doc "Heading at level n (clamped [1, 6]). Variadic body — see md/h1."
+      :arglists '([level & parts])
+      :examples ["(md/h 3 \"Step 1\")"
+                 "(md/h 2 \"Build of \" (md/code \"v1.2.3\"))"]})
 
    (sdk/symbol 'p p
      {:doc "Paragraph. Joins parts with single space; nil dropped; seqs splice one level (matches md/join / md/lines)."
@@ -426,33 +468,35 @@
                  "(md/p \"Patched\" n \"files\")"
                  "(md/p \"Status:\" (md/bold \"OK\"))"]})
    (sdk/symbol 'bold bold
-     {:doc "Bold span: `**text**`."
-      :arglists '([text])
-      :examples ["(md/bold \"important\")"]})
+     {:doc "Bold span: `**text**`. Variadic — parts concatenated, nil dropped, seqs spliced."
+      :arglists '([& parts])
+      :examples ["(md/bold \"important\")"
+                 "(md/bold \"build \" (md/code \"v1.2.3\"))"]})
    (sdk/symbol 'strong bold
-     {:doc "Bold span: `**text**` (HTML-semantic alias for `md/bold`)."
-      :arglists '([text])
+     {:doc "Bold span: `**text**` (HTML-semantic alias for `md/bold`). Variadic — see md/bold."
+      :arglists '([& parts])
       :examples ["(md/strong \"important\")"]})
    (sdk/symbol 'italic italic
-     {:doc "Italic span: `*text*`."
-      :arglists '([text])
+     {:doc "Italic span: `*text*`. Variadic — see md/bold."
+      :arglists '([& parts])
       :examples ["(md/italic \"subtle\")"]})
    (sdk/symbol 'em italic
-     {:doc "Italic span: `*text*` (HTML-semantic alias for `md/italic`)."
-      :arglists '([text])
+     {:doc "Italic span: `*text*` (HTML-semantic alias for `md/italic`). Variadic — see md/bold."
+      :arglists '([& parts])
       :examples ["(md/em \"subtle\")"]})
    (sdk/symbol 'bold-italic bold-italic
-     {:doc "Bold-italic span: `***text***`."
-      :arglists '([text])
+     {:doc "Bold-italic span: `***text***`. Variadic — see md/bold."
+      :arglists '([& parts])
       :examples ["(md/bold-italic \"!!!\")"]})
    (sdk/symbol 'strike strike
-     {:doc "Strikethrough span: `~~text~~`."
-      :arglists '([text])
+     {:doc "Strikethrough span: `~~text~~`. Variadic — see md/bold."
+      :arglists '([& parts])
       :examples ["(md/strike \"obsolete\")"]})
    (sdk/symbol 'code code
-     {:doc "Inline code span: `` `text` ``."
-      :arglists '([text])
-      :examples ["(md/code \"v/cat\")"]})
+     {:doc "Inline code span: `` `text` ``. Variadic — parts concatenated."
+      :arglists '([& parts])
+      :examples ["(md/code \"v/cat\")"
+                 "(md/code \"v/\" tool-name)"]})
    ;; `summary` is registered alongside the inline tag-style helpers
    ;; (kbd / bold / italic) because it produces a single bare HTML
    ;; tag, not a block. Composes with `details` via tag-passthrough.
@@ -460,15 +504,15 @@
    ;; need it can discover it via `(symbol-info 'md/summary)`; we
    ;; don't want every answer reaching for collapsible UI.
    (sdk/symbol 'summary summary
-     {:doc "Standalone `<summary>text</summary>` tag for use inside (md/details …). md/details lifts it to the canonical first-child slot regardless of arg position."
-      :arglists '([text])
+     {:doc "Standalone `<summary>…</summary>` tag for use inside (md/details …). Variadic — parts concatenated. md/details lifts it to the canonical first-child slot regardless of arg position."
+      :arglists '([& parts])
       :examples ["(md/summary \"Logs\")"
-                 "(md/details (md/summary (md/bold \"Logs\")) body)"
-                 "(md/details intro snippet (md/summary \"Trace\"))"]})
+                 "(md/summary (md/bold \"Logs\") \" (\" (md/code \"42\") \")\")"
+                 "(md/details (md/summary (md/bold \"Logs\")) body)"]})
 
    (sdk/symbol 'kbd kbd
-     {:doc "Keyboard span: `<kbd>text</kbd>`."
-      :arglists '([text])
+     {:doc "Keyboard span: `<kbd>text</kbd>`. Variadic — parts concatenated."
+      :arglists '([& parts])
       :examples ["(md/kbd \"Ctrl+K\")"]})
    (sdk/symbol 'link link
      {:doc "Hyperlink: `[text](url)`. 3-arg adds tooltip title attr. TUI + Telegram render as clickable wherever the surface supports it."
@@ -497,12 +541,13 @@
       :examples ["(md/code-block \"(println :ok)\" \"clojure\")"
                  "(md/code-block \"plain text\")"]})
    (sdk/symbol 'blockquote blockquote
-     {:doc "Quote each line of text with `> `."
-      :arglists '([text])
-      :examples ["(md/blockquote \"caveat\")"]})
+     {:doc "Quote each line with `> `. Variadic — parts concatenated then split on \"\\n\"."
+      :arglists '([& parts])
+      :examples ["(md/blockquote \"caveat\")"
+                 "(md/blockquote \"line1\\nline2\")"]})
    (sdk/symbol 'quote blockquote
-     {:doc "Quote each line of text with `> ` (shorter alias for `md/blockquote`)."
-      :arglists '([text])
+     {:doc "Quote each line with `> ` (shorter alias for `md/blockquote`). Variadic — see md/blockquote."
+      :arglists '([& parts])
       :examples ["(md/quote \"caveat\")"]})
    (sdk/value 'hr hr
      {:doc "Horizontal rule (`---`)."})
@@ -563,9 +608,12 @@
   "Prompt fragment listing the `md/` surface for the iteration prompt."
   (str
     "`md/` = markdown for (answer …). Pure string builders, no templating.\n"
-    "  Headings   (md/h1 \"…\") (md/h2 \"…\") (md/h3 \"…\") (md/h level \"…\")\n"
-    "  Inline     (md/bold s | md/strong s) (md/italic s | md/em s) (md/code s) (md/kbd s) (md/strike s)\n"
-    "             ; md/strong = md/bold; md/em = md/italic; md/quote = md/blockquote (semantic aliases)\n"
+    "  Headings   (md/h1 …parts) (md/h2 …parts) (md/h3 …parts) (md/h level …parts)\n"
+    "             ; variadic: (md/h3 \"Build \" (md/code \"v1.2.3\")) just works — nil dropped, seqs spliced, no whitespace inserted.\n"
+    "  Inline     (md/bold …parts | md/strong …) (md/italic … | md/em …) (md/code …) (md/kbd …) (md/strike …)\n"
+    "             ; semantic aliases: md/strong=md/bold, md/em=md/italic, md/quote=md/blockquote.\n"
+    "             ; ALL inline / heading helpers are variadic (nil dropped, seqs spliced, parts concatenated):\n"
+    "             ; (md/bold \"build \" (md/code \"v1.2.3\")) -> **build `v1.2.3`** — author owns whitespace.\n"
     "  Links      (md/link text url) (md/link text url title)   ; tooltip via title\n"
     "             (md/image alt url) (md/image alt url title)\n"
     "             (md/file-link path) (md/file-link path line)  ; CITE source files this way\n"
