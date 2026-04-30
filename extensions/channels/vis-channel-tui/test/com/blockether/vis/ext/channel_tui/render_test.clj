@@ -593,6 +593,82 @@
                   100 dummy-markers)]
         (expect (= 1 (count (visual-widths out))))))))
 
+(defdescribe render-table-cell-wrapping-test
+  ;; The user complaint: tables don't auto-wrap. Pre-fix render-table
+  ;; truncated long cells with `…` once the column was forced narrow,
+  ;; so a `vis ls` table on a 60-col bubble shrunk every filename to
+  ;; gibberish. Post-fix every overflowing cell word-wraps onto more
+  ;; physical lines inside the same row, and the grid stays
+  ;; monomorphic.
+  (describe "Cells that don't fit are word-wrapped onto multiple lines"
+    (it "narrow bubble: long cell content wraps instead of being truncated"
+      ;; 30-col viewport, 2 cols. Natural widths would need ~50 cols.
+      ;; Pre-fix: each col shrunk to ~6, content truncated with ….
+      ;; Post-fix: each col >= the longest token, content wrapped.
+      (let [out  (render-table
+                   ["Name" "Description"]
+                   [["alpha-module" "the very first module of the system"]
+                    ["beta"         "second module, smaller scope"]]
+                   30 dummy-markers)
+            bare (mapv strip-marker out)]
+        ;; Grid stays monomorphic.
+        (expect (= 1 (count (visual-widths out))))
+        ;; The whole table fits inside max-w.
+        (expect (every? #(<= (p/display-width %) 30) bare))
+        ;; No truncation ellipsis sneaked in — we wrapped, not cut.
+        (expect (not-any? #(str/includes? % "…") bare))
+        ;; Every original word is somewhere in the rendered output.
+        (let [joined (str/join " " bare)]
+          (doseq [w ["alpha-module" "first" "system" "smaller" "scope"]]
+            (expect (str/includes? joined w))))))
+
+    (it "wrapping a cell expands the row to multiple physical lines"
+      ;; One column, narrow viewport, content longer than the column.
+      ;; The single body row should emit > 1 inner line so the cell
+      ;; word-wraps vertically.
+      (let [out  (render-table
+                   ["Note"]
+                   [["this is a fairly long sentence that has to wrap"]]
+                   20 dummy-markers)
+            bare (mapv strip-marker out)
+            ;; Inner lines = everything that isn't a horizontal rule.
+            inner (filterv #(str/starts-with? % "│") bare)]
+        (expect (= 1 (count (visual-widths out))))
+        ;; Header (1) + at least 2 wrapped body lines.
+        (expect (>= (count inner) 3))
+        (expect (every? #(<= (p/display-width %) 20) bare))))
+
+    (it "multi-column row equalises height: every column gets the same number of physical lines"
+      ;; Cell-level wrapping must keep the grid aligned: if column A
+      ;; wraps to 3 lines, column B (1 line) is padded to 3 lines.
+      ;; Verified by counting `│` separators on every row line —
+      ;; identical separator counts ⇒ grid intact.
+      (let [out  (render-table
+                   ["A" "B" "C"]
+                   [["one two three four five six seven"
+                     "x"
+                     "y"]]
+                   30 dummy-markers)
+            bare (mapv strip-marker out)
+            inner (filterv #(str/starts-with? % "│") bare)]
+        (expect (= 1 (count (visual-widths out))))
+        ;; Every inner row has the same number of `│` (= n-cols + 1).
+        (expect (= 1 (count (distinct (map #(count (re-seq #"│" %))
+                                        inner)))))))
+
+    (it "naturally-fitting tables do NOT wrap (no behaviour change for short content)"
+      ;; Regression guard: the user's pathological table (max-w=200)
+      ;; fits naturally and must keep emitting exactly 1 physical
+      ;; line per logical row — no surprise expansion.
+      (let [out (render-table
+                  ["A" "B"]
+                  [["x" "y"]
+                   ["foo" "bar"]]
+                  100 dummy-markers)]
+        (expect (= 1 (count (visual-widths out))))
+        ;; top + header + sep + row + sep + row + bot = 7 lines.
+        (expect (= 7 (count out)))))))
+
 (defdescribe scrollbar-thumb-geometry-test
   ;; Pinning the painter/hit-test contract. Both the message-area
   ;; painter and the input-thread mouse handler must agree on which
