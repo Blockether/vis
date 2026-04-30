@@ -2029,6 +2029,47 @@
                (str t pad))]
     (str " " body " ")))
 
+(def ^:private TABLE_CELL_MIN_W_CAP
+  "Soft floor for column width when shrinking a table to fit the
+   viewport. Picked so a column carrying one nasty 30-char token
+   (URL, hex digest, identifier) doesn't blow the whole table out:
+   that token will word-break across lines instead of forcing every
+   other column down to 1 column. 12 cols reads as a comfortable
+   lower bound for typical prose; only kicks in when the natural
+   widths don't fit."
+  12)
+
+(defn- longest-token-width
+  "Display width of the widest whitespace-delimited token across
+   `cells`. Used as the per-column floor when shrinking — keeps the
+   word-wrapper from constantly hard-breaking ordinary words. Floors
+   at 1 so the result is always a sensible column width."
+  ^long [cells]
+  (long
+    (reduce
+      (fn [m s]
+        (let [s (str s)]
+          (if (str/blank? s)
+            m
+            (apply max m
+              (map p/display-width (str/split s #"\s+"))))))
+      1
+      cells)))
+
+(defn- wrap-cell-lines
+  "Word-wrap one cell's text to fit `w` display columns, reusing the
+   shared `wrap-text*` so behaviour matches the rest of the bubble:
+   break at spaces when possible, hard-break on column otherwise.
+   Returns at least one line; an empty/blank cell yields `[\"\"]` so
+   row-height equalisation always sees something to pad against."
+  [text ^long w]
+  (let [s (str text)]
+    (cond
+      (<= w 0)                   [""]
+      (str/blank? s)             [""]
+      (<= (p/display-width s) w) [s]
+      :else                      (wrap-text* s w))))
+
 (defn- render-table
   "Render a parsed markdown table (headers vec + rows vec-of-vecs) as
    a list of marker-prefixed display lines.
@@ -2046,8 +2087,14 @@
    ink — the user complaint that triggered this design.
 
    `markers` is `{:thead :tsep :trow}` from `md-marker-sets`. Tables
-   that exceed `max-w` get their column widths shrunk proportionally
-   so the result always fits inside the bubble."
+   wider than `max-w` first try to shrink each column toward its
+   `longest-token-width` floor (capped at `TABLE_CELL_MIN_W_CAP`),
+   then word-wrap each cell vertically across as many sub-rows as
+   needed to keep all content inside the grid. Only when the floors
+   themselves can't fit (extreme case: many columns, narrow bubble)
+   does the renderer fall back to uniform scale-down + hard breaks.
+   Net effect: a `vis ls` table no longer truncates filenames; long
+   prose cells flow onto the next visual line within the same row."
 
   [headers rows max-w {:keys [thead tsep trow]}]
   (let [n-cols    (max 1 (apply max (count headers) (map count rows)))
@@ -2078,8 +2125,52 @@
         overhead   (+ (* 2 n-cols) (inc n-cols))
         avail      (max n-cols (- max-w overhead))
         sum-w      (max 1 (reduce + 0 col-widths-raw))
-        col-widths (if (<= (+ sum-w overhead) max-w)
+        ;; Per-column floor: never shrink a column below its widest
+        ;; single token (capped). Word-wrap then breaks naturally on
+        ;; spaces inside the column instead of slicing 'AGENTS.md' to
+        ;; 'AGE…' just because the bubble is narrow. The cap stops a
+        ;; lone 200-char URL from monopolising the table.
+        col-mins   (mapv (fn [i]
+                           (min TABLE_CELL_MIN_W_CAP
+                             (longest-token-width
+                               (cons (nth h i "")
+                                 (map #(nth % i "") rs)))))
+                     (range n-cols))
+        sum-min    (reduce + 0 col-mins)
+        col-widths (cond
+                     ;; Natural widths fit — no shrinking needed.
+                     (<= (+ sum-w overhead) max-w)
                      col-widths-raw
+
+                     ;; Mins fit. Distribute remaining budget on per-
+                     ;; column slack (raw - min) so wider columns
+                     ;; receive proportionally more of the surplus,
+                     ;; while every column keeps its word-wrap floor.
+                     (<= sum-min avail)
+                     (let [budget    (- avail sum-min)
+                           slack     (mapv (fn [i]
+                                             (max 0 (- (nth col-widths-raw i)
+                                                      (nth col-mins i))))
+                                       (range n-cols))
+                           slack-sum (reduce + 0 slack)
+                           extra     (if (zero? slack-sum)
+                                       (vec (repeat n-cols 0))
+                                       (mapv (fn [s]
+                                               (int (* (/ (double s) slack-sum)
+                                                      budget)))
+                                         slack))
+                           base      (mapv + col-mins extra)
+                           used      (reduce + 0 base)
+                           leftover  (max 0 (- avail used))]
+                       (vec (map-indexed
+                              (fn [i w] (if (< i leftover) (inc w) w))
+                              base)))
+
+                     ;; Even the floors don't fit (many narrow cols /
+                     ;; tiny bubble). Degrade to the original uniform
+                     ;; scale-down — content will hard-break, but the
+                     ;; table still lands inside `max-w`.
+                     :else
                      (let [scale  (/ (double avail) sum-w)
                            shrunk (mapv #(max 1 (int (* % scale))) col-widths-raw)
                            used   (reduce + 0 shrunk)
@@ -2111,23 +2202,51 @@
         ;; integers also right-aligns).
         col-aligns (mapv (fn [i] (column-align (map #(nth % i "") rs)))
                      (range n-cols))
-        format-row (fn [cells]
-                     (str "│"
-                       (str/join "│"
-                         (map-indexed
-                           (fn [i c] (pad-cell c (nth col-widths i) (nth col-aligns i)))
-                           cells))
-                       "│"))]
+        ;; Word-wrap each cell to its column width, then equalise
+        ;; per-cell line counts with empty lines so the grid stays
+        ;; aligned across multi-line rows. A 1-line row wraps to
+        ;; itself; a row whose widest cell wraps to N lines emits N
+        ;; physical lines, every other cell padded with blanks.
+        format-row-lines
+        (fn [cells]
+          (let [wrapped (vec (map-indexed
+                               (fn [i c]
+                                 (wrap-cell-lines c (nth col-widths i)))
+                               cells))
+                row-h   (long (apply max 1 (map count wrapped)))
+                padded  (mapv (fn [ws]
+                                (vec (concat ws
+                                       (repeat (- row-h (count ws)) ""))))
+                          wrapped)]
+            (mapv
+              (fn [k]
+                (str "│"
+                  (str/join "│"
+                    (map-indexed
+                      (fn [i col-lines]
+                        (pad-cell (nth col-lines k)
+                          (nth col-widths i)
+                          (nth col-aligns i)))
+                      padded))
+                  "│"))
+              (range row-h))))]
     (vec (concat
            [(str tsep top-line)]
-           [(str thead (format-row h))]
+           ;; Header may itself wrap when a long heading meets a
+           ;; shrunk column; mark every sub-line with `thead` so the
+           ;; bubble paints them all bold.
+           (mapv #(str thead %) (format-row-lines h))
            [(str tsep head-sep)]
            ;; Interleave `row-sep` between every pair of body rows
-           ;; so every row gets its own boxed cell. `interpose`
-           ;; would inject a sep but only between, not after the
-           ;; last — perfect, the bottom-line caps things off.
-           (interpose (str tsep row-sep)
-             (mapv #(str trow (format-row %)) rs))
+           ;; so each logical row sits in its own boxed cell. Each
+           ;; logical row may now expand to multiple physical lines
+           ;; (cell-level word-wrap), so flatten after interposing.
+           (apply concat
+             (interpose
+               [(str tsep row-sep)]
+               (mapv (fn [r]
+                       (mapv #(str trow %) (format-row-lines r)))
+                 rs)))
            [(str tsep bot-line)]))))
 
 (defn- consume-table
