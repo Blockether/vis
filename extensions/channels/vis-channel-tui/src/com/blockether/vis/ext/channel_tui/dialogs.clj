@@ -352,7 +352,7 @@
               ;; them into the Bearer token.
               (input/paste-start? key)
               (do (vreset! paste-buffer (StringBuilder.))
-                  (recur))
+                (recur))
 
               (input/paste-end? key)
               (let [^StringBuilder sb @paste-buffer]
@@ -372,7 +372,7 @@
               (some? @paste-buffer)
               (do (when-let [ch (input/keystroke->paste-char key)]
                     (.append ^StringBuilder @paste-buffer ch))
-                  (recur))
+                (recur))
 
               ;; ── Regular key dispatch ─────────────────────────
               :else
