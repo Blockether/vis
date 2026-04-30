@@ -51,10 +51,78 @@
    :warn-on-boxed` clean across this namespace per the repo's GraalVM
    ratchet."
   (:require
-   [com.blockether.vis.ext.channel-tui.render :as render]))
+   [com.blockether.vis.ext.channel-tui.render :as render])
+  (:import
+   [java.util LinkedHashMap]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
+
+;;; ── Sticky real-height cache ───────────────────────────────────────────────────
+;;
+;; Why this exists: with the layout planner alone, off-screen
+;; messages got `estimated-height` (cheap) and visible ones got
+;; `bubble-height` (real). When the user scrolled, the visible set
+;; changed, different messages flipped between estimate ↔ real, and
+;; `total-h` jittered — the scrollbar thumb position drifted on
+;; every scroll frame, and click-to-position landed somewhere else
+;; than where the user clicked because the click computed a target
+;; against the OLD total-h while the next paint used a different
+;; one. Conversation 7b18414d showed the symptom on first click.
+;;
+;; The fix: ONCE we've measured a message's real bubble-height we
+;; remember it forever (or until LRU eviction). Off-screen messages
+;; we've already seen keep their real height; only never-seen
+;; messages fall back to the estimate. The pre-warmer writes here
+;; too, so within ~1 s of opening a conversation EVERY assistant
+;; has its real height pinned and the scrollbar is perfectly
+;; stable.
+;;
+;; Cache key tuple: `[(identityHashCode message) bubble-w
+;; (identityHashCode settings)]`. Identity-hash on `message` is
+;; safe because chat-state messages are immutable once added
+;; (`update :messages conj` only ever appends; finalised assistant
+;; messages get replaced as a whole map exactly once). Width and
+;; settings identity capture the cache-busting axes we care about.
+;;
+;; Cap is generous (8192) because each entry is just a long height
+;; — a few KB of overhead total even at 8k entries.
+
+(def ^:private ^:const height-cache-cap 8192)
+
+(defonce ^:private ^LinkedHashMap height-cache
+  (proxy [LinkedHashMap] [128 0.75 true]
+    (removeEldestEntry [_eldest]
+      (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
+
+(defn- height-key [message bubble-w settings]
+  [(System/identityHashCode message)
+   (long bubble-w)
+   (System/identityHashCode settings)])
+
+(defn- height-cache-get
+  "Peek the sticky height cache. Returns a long or nil."
+  [message bubble-w settings]
+  (locking height-cache
+    (.get height-cache (height-key message bubble-w settings))))
+
+(defn- height-cache-put!
+  "Pin `h` as the real height for `message` at `bubble-w` under
+   `settings`. Returns `h` so callers can chain."
+  ^long [message bubble-w settings ^long h]
+  (locking height-cache
+    (.put height-cache (height-key message bubble-w settings) h))
+  h)
+
+(defn invalidate-heights!
+  "Drop the entire sticky height cache. Tests + width changes call this."
+  []
+  (locking height-cache (.clear height-cache)))
+
+(defn height-cache-size
+  "Current sticky-height entry count (handy for tests / diagnostics)."
+  ^long []
+  (locking height-cache (.size height-cache)))
 
 ;;; ── Estimated-height heuristic ─────────────────────────────────────────────
 
@@ -226,8 +294,16 @@
   (let [bubble-w (long bubble-w)
         inner-h  (long inner-h)
         n        (long (count messages))
-        ;; Pass 1 ── estimate every message.
-        est      (mapv (fn [m] (estimated-height m bubble-w)) messages)
+        ;; Pass 1 ── sticky-real height if we've measured this
+        ;; message before, otherwise the cheap estimate. Identity-
+        ;; keyed cache means once a message has been visible (or
+        ;; touched by `pre-warm!`) we keep its real height forever
+        ;; — no more `total-h` jitter on scroll, no more
+        ;; click-to-position landing in the wrong row.
+        est      (mapv (fn [m]
+                         (or (height-cache-get m bubble-w settings)
+                           (estimated-height m bubble-w)))
+                   messages)
         est-off  (vec (reductions + 0 (map long est)))
         est-tot  (long (peek est-off))
         scroll-1 (long (or scroll (max 0 (- est-tot inner-h))))
@@ -254,11 +330,17 @@
         (mapv
           (fn [^long i]
             (let [m (nth messages i)
-                  pm (if (= i loading-last-idx)
+                  loading-bubble? (= i loading-last-idx)
+                  pm (if loading-bubble?
                        (assoc m :text
                          (render/progress->text progress bubble-w settings progress-extra))
                        (project-message m bubble-w settings))
                   real-h (long (render/bubble-height pm bubble-w))]
+              ;; Pin the real height in the sticky cache for the
+              ;; raw message identity (NOT the loading bubble — its
+              ;; height changes every spinner tick by definition).
+              (when-not loading-bubble?
+                (height-cache-put! m bubble-w settings real-h))
               {:idx i :projected pm :height real-h}))
           forced-idxs)
         ;; Refine heights vec with real measurements.
@@ -346,16 +428,19 @@
                   (try
                     (loop [i (dec n)]
                       (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
+                        ;; Warm EVERY message, not just assistants.
+                        ;; User-message bubble-height is cheap, but
+                        ;; the *real* value is `chrome+lines+refs+1`
+                        ;; while `estimated-height` undershoots by 1
+                        ;; for short user prompts. Skipping users
+                        ;; means total-h drifts by 1 per user msg
+                        ;; the first time it scrolls into view —
+                        ;; user-visible as a one-row scrollbar nudge.
+                        ;; Pin everyone; stability beats the cycles.
                         (let [m (nth messages i)
-                              ;; project-message hits the same caches
-                              ;; layout will hit; bubble-height too.
-                              ;; Skip user messages — they're cheap and
-                              ;; the cache hit alone isn't worth a
-                              ;; thread context switch.
-                              project? (= :assistant (:role m))]
-                          (when project?
-                            (let [pm (project-message m bubble-w settings)]
-                              (render/bubble-height pm bubble-w))))
+                              pm (project-message m bubble-w settings)
+                              h  (long (render/bubble-height pm bubble-w))]
+                          (height-cache-put! m bubble-w settings h))
                         (recur (dec i))))
                     (catch InterruptedException _
                       ;; Cooperative cancellation — nothing to do.

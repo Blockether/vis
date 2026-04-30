@@ -1,5 +1,6 @@
-(ns com.blockether.vis.sdk-test
-  "Tests for the merged vis namespace split (sdk + env + loop).
+(ns com.blockether.vis.core-test
+  "Tests for `com.blockether.vis.core` -- the public SDK surface
+   composed from sdk + env + loop.
 
    One src ns, one test ns. Sections below mirror the src reading order
    (errors, cancellation, discovery, CLI, channels, providers, storage,
@@ -327,8 +328,24 @@
                  {:name "q" :kind :positional :required true}]]
       (expect (re-find #"Missing.*p.*q" (vis/validate-args specs {})))))
 
-  (it "unknown flags are silently dropped"
-    (expect (= {} (vis/parse-args [] ["--whatever" "value"])))))
+  (it "parse-args itself stays loose: unknown flags are dropped at the parse layer"
+    ;; `parse-args` is a low-level helper; strict-flag policing lives
+    ;; in `dispatch!`. Keeping `parse-args` loose lets bespoke handlers
+    ;; (e.g. `vis run`'s prompt-collecting parser) layer their own
+    ;; flag rules on top.
+    (expect (= {} (vis/parse-args [] ["--whatever" "value"]))))
+
+  (it "unknown-flags reports `--` tokens that don't match the spec"
+    (let [specs [{:name "verbose" :kind :flag :type :boolean}
+                 {:name "out"     :kind :flag :type :string}]]
+      (expect (= [] (vis/unknown-flags specs ["--verbose" "--out" "/tmp"])))
+      (expect (= ["--bogus"] (vis/unknown-flags specs ["--bogus"])))
+      (expect (= ["--bogus"] (vis/unknown-flags specs ["--verbose" "--bogus" "x"])))
+      ;; --help / -h are universal and must NEVER be flagged unknown
+      (expect (= [] (vis/unknown-flags specs ["--help"])))
+      (expect (= [] (vis/unknown-flags specs ["-h"])))
+      ;; flag values that LOOK like flags don't get mis-classified
+      (expect (= [] (vis/unknown-flags specs ["--out" "--weird-value"]))))))
 
 (defdescribe registered-command-with-args-test
   ;; End-to-end: registered command → mounted into a parent → dispatched
@@ -372,6 +389,62 @@
                    {:print-fn (constantly nil)})]
         (expect (= :error (:status r)))
         (expect (re-find #"Missing required.*path" (:error r)))))
+
+    (it "unknown flags are rejected with the list of accepted flags"
+      (clear-registry!)
+      (let [ran? (atom false)]
+        (vis/register-cmd!
+          {:cmd/name "deploy"
+           :cmd/doc  "deploy"
+           :cmd/args [{:name "verbose" :kind :flag :type :boolean}
+                      {:name "out"     :kind :flag :type :string}]
+           :cmd/run-fn (fn [_ _] (reset! ran? true))})
+        (let [root (vis/command
+                     {:cmd/name "vis" :cmd/doc "root"
+                      :cmd/subcommands #(vis/registered-under [])})
+              r    (vis/dispatch! root ["vis" "deploy"
+                                        "--bogus" "--also-bogus" "v"]
+                     {:print-fn (constantly nil)})]
+          (expect (= :error (:status r)))
+          (expect (re-find #"Unknown flag" (:error r)))
+          (expect (re-find #"--bogus" (:error r)))
+          ;; The accepted-flag list spells out every declared flag
+          (expect (re-find #"Accepted flags.*--verbose.*--out" (:error r)))
+          ;; --help/-h is always implicitly allowed
+          (expect (re-find #"--help" (:error r)))
+          ;; And the run-fn never fired
+          (expect (false? @ran?)))))
+
+    (it "--help is allowed even when other unknown flags would also be present is N/A: help short-circuits dispatch"
+      (clear-registry!)
+      (vis/register-cmd!
+        {:cmd/name "deploy"
+         :cmd/doc  "deploy"
+         :cmd/args [{:name "verbose" :kind :flag :type :boolean}]
+         :cmd/run-fn (fn [_ _] :should-not-run)})
+      (let [root (vis/command
+                   {:cmd/name "vis" :cmd/doc "root"
+                    :cmd/subcommands #(vis/registered-under [])})
+            r    (vis/dispatch! root ["vis" "deploy" "--help"]
+                   {:print-fn (constantly nil)})]
+        (expect (= :help (:status r)))))
+
+    (it "commands without flag specs stay loose so bespoke parsers work"
+      (clear-registry!)
+      (let [seen (atom nil)]
+        (vis/register-cmd!
+          {:cmd/name "auth"
+           :cmd/doc  "auth"
+           ;; No :cmd/args at all -- the command does its own parsing
+           ;; over `residual`. The strict check must NOT fire here.
+           :cmd/run-fn (fn [_parsed residual] (reset! seen residual))})
+        (let [root (vis/command
+                     {:cmd/name "vis" :cmd/doc "root"
+                      :cmd/subcommands #(vis/registered-under [])})
+              r    (vis/dispatch! root ["vis" "auth" "github" "--status"]
+                     {:print-fn (constantly nil)})]
+          (expect (= :ok (:status r)))
+          (expect (= ["github" "--status"] @seen)))))
 
     (it "render-command for a registered command lists ARGUMENTS + FLAGS sections"
       (clear-registry!)
@@ -1816,7 +1889,34 @@
 (defdescribe vis-conversations
   (it "exits 0 even when no conversations exist"
     (let [{:keys [exit]} (run-vis "conversations")]
-      (expect (zero? exit)))))
+      (expect (zero? exit))))
+
+  (it "--help renders the new fork flag in the FLAGS section"
+    (let [{:keys [exit out]} (run-vis "conversations" "--help")]
+      (expect (zero? exit))
+      (expect (contains-all? out ["--fork" "--title" "FLAGS"]))))
+
+  (it "--fork against a missing id exits non-zero with a clear message"
+    ;; A bare token that's neither a valid UUID nor a unique prefix
+    ;; flows through `resolve-conversation-by-prefix` and surfaces as
+    ;; `Conversation not found`. A *well-formed but unknown* UUID is
+    ;; resolved to itself by db-resolve-conversation-id and falls into
+    ;; the secondary `Failed to fork ...` branch -- both exit non-zero,
+    ;; but the test pins the most-common user-typo path.
+    (let [{:keys [exit out]}
+          (run-vis "conversations" "--fork" "definitely-not-a-real-id-zzzz")]
+      (expect (not (zero? exit)))
+      (expect (str/includes? out "Conversation not found")))))
+
+(defdescribe vis-strict-flag-rejection
+  (it "unknown flag on a spec'd command exits non-zero with the accepted-flag list"
+    (let [{:keys [exit out]} (run-vis "conversations" "--bogus-flag" "v")]
+      (expect (not (zero? exit)))
+      (expect (str/includes? out "Unknown flag"))
+      (expect (str/includes? out "--bogus-flag"))
+      (expect (str/includes? out "--fork"))
+      (expect (str/includes? out "--title"))
+      (expect (str/includes? out "--help")))))
 
 (defdescribe vis-run-help
   (it "shows `vis run` usage and flag list"

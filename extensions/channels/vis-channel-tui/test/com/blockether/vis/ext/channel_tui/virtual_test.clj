@@ -206,6 +206,49 @@
         (.join ^Thread t 5000)
         (expect (nil? (virtual/stop-pre-warm! t)))))))
 
+(defdescribe sticky-height-cache-test
+  (describe "once a message has been measured, layout returns its REAL height forever"
+    ;; Regression: conversation 7b18414d. Before the sticky cache,
+    ;; off-screen messages reverted to `estimated-height` on every
+    ;; layout call — `total-h` jittered as visible ↔ off-screen
+    ;; flipped per scroll, scrollbar thumb drifted, click-to-position
+    ;; landed in the wrong row.
+    (it "`total-h` is stable across many scroll positions after pre-warm"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs [(user-msg "first")
+                  (trace-assistant-msg 5 3 "answer one")
+                  (user-msg "second")
+                  (trace-assistant-msg 8 4 "answer two")
+                  (user-msg "third")]
+            t (virtual/pre-warm! msgs bubble-w settings)]
+        (.join ^Thread t 30000)
+        ;; Every layout pass MUST agree on total-h after pre-warm.
+        (let [totals (mapv (fn [s]
+                             (:total-h
+                               (virtual/layout msgs bubble-w settings s 10 {})))
+                       [nil 0 50 100 500 (long 1e6)])]
+          (expect (= 1 (count (distinct totals)))))))
+
+    (it "layout pins the real height of any message it measures"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs [(trace-assistant-msg 3 2 "first")
+                  (trace-assistant-msg 3 2 "second")]]
+        ;; First layout (auto-bottom) measures whichever bubble is visible.
+        (virtual/layout msgs bubble-w settings nil 5 {})
+        ;; The cache must now contain at least one real height.
+        (expect (pos? (virtual/height-cache-size)))))
+
+    (it "`invalidate-heights!` drops the cache cleanly"
+      (virtual/invalidate-heights!)
+      (expect (zero? (virtual/height-cache-size)))
+      (let [msgs [(trace-assistant-msg 1 1 "x")]]
+        (virtual/layout msgs bubble-w settings nil 5 {})
+        (expect (pos? (virtual/height-cache-size)))
+        (virtual/invalidate-heights!)
+        (expect (zero? (virtual/height-cache-size)))))))
+
 (defdescribe project-message-test
   (describe "user messages pass through (no :text mutation)"
     (it "drops :timestamp when :show-timestamps false (default)"

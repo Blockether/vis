@@ -77,6 +77,7 @@
 
   ;; Aggregate test runner.
   :test  {:extra-paths ["test"
+                        "test/resources"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-foundation/test"]

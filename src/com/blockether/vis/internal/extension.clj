@@ -669,6 +669,15 @@
   ;; Keyed by :ext/namespace to prevent duplicates.
   (atom {}))
 
+(defonce ^:private extension-source-markers
+  ;; Sidecar atom holding source-file markers per registered extension.
+  ;; Keyed by :ext/namespace. Populated at register-time, dropped at
+  ;; deregister-time. Read by `iteration-metadata` (first iteration of
+  ;; each query, see plan Q15) and by `reload-extensions!`'s diff. Kept
+  ;; OUT of the extension map itself so `extension/validate!` doesn't have
+  ;; to know about runtime-derived fields. Plan §5.5.
+  (atom {}))
+
 (defn- dispatch-providers! [providers]
   (doseq [provider-entry providers]
     (registry/register-provider! provider-entry)))
@@ -712,6 +721,10 @@
    backends (`:ext/persistance`) -- gets routed here and dispatched into
    the matching sub-registry as a side effect.
 
+   Also computes source-file markers (paths, max-mtime, sha256) and
+   stores them in a sidecar atom for the iteration-metadata writer
+   and the v2 change-detector. Plan §5.5.
+
    Idempotent on `:ext/namespace`. Returns the validated extension."
   [ext]
   (let [ext    (extension ext)
@@ -729,11 +742,67 @@
     (doseq [c (:ext/channels ext)] (registry/register-channel! c))
     (dispatch-providers!   (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
+    ;; Compute and store source markers in the sidecar atom. Resolved
+    ;; via the helper (see source_markers.clj) which knows how to walk
+    ;; both file: and jar: classpath URLs. Failures are logged at :warn
+    ;; and degrade to empty markers — they don't fail registration.
+    (try
+      (let [markers ((requiring-resolve
+                       'com.blockether.vis.internal.extension.source-markers/resolve-markers-for-extension)
+                     ext)]
+        (swap! extension-source-markers assoc ns-sym markers))
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::source-markers-failed
+                   :data  {:ext ns-sym :error (ex-message t)}})))
     ext))
 
-#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
-(defn deregister-extension! [ns-sym]
+(defn extension-source-markers-of
+  "Lookup the source markers stored for `ns-sym`. Returns the marker
+   map (`{:source-paths :source-mtime-max :source-hash-sha256}`) or
+   nil when the extension was never registered (or its markers
+   computation failed at register time)."
+  [ns-sym]
+  (get @extension-source-markers ns-sym))
+
+(defn deregister-extension!
+  "Drop an extension from the global registry AND reverse every side
+   effect `register-extension!` dispatched: deregister each CLI
+   subcommand, channel, provider, and persistence backend. Returns nil.
+
+   Plan caveat: side-effect cleanup on `:removed` extensions. Used by
+   `reload-extensions!` when an extension disappears between scans."
+  [ns-sym]
+  (when-let [ext (get @extension-registry ns-sym)]
+    (doseq [c (:ext/cli ext)]
+      (let [mounted (mount-under-extensions c)]
+        (try (registry/deregister-cmd! (:cmd/parent mounted) (:cmd/name mounted))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::deregister-cmd-failed
+                       :data  {:ext ns-sym :cmd (:cmd/name mounted)
+                               :error (ex-message t)}})))))
+    (doseq [c (:ext/channels ext)]
+      (try (registry/deregister-channel! (:channel/id c))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::deregister-channel-failed
+                     :data  {:ext ns-sym :channel-id (:channel/id c)
+                             :error (ex-message t)}}))))
+    (doseq [p (:ext/providers ext)]
+      (try (registry/deregister-provider! (:provider/id p))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::deregister-provider-failed
+                     :data  {:ext ns-sym :provider-id (:provider/id p)
+                             :error (ex-message t)}}))))
+    (doseq [{:persistance/keys [id]} (:ext/persistance ext)]
+      (try (persistance/deregister-backend! id)
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::deregister-backend-failed
+                     :data  {:ext ns-sym :backend-id id
+                             :error (ex-message t)}}))))
+    (tel/log! {:level :info :id ::deregister-global
+               :data {:ext ns-sym}
+               :msg  (str "Extension '" ns-sym "' deregistered globally")}))
   (swap! extension-registry dissoc ns-sym)
+  (swap! extension-source-markers dissoc ns-sym)
   nil)
 
 (defn registered-extensions []

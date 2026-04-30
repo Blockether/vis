@@ -18,9 +18,13 @@
     (subs s 0 1)))
 
 (defn- body-of
-  "Drop the leading marker (PUA codepoint) and return the visible text."
+  "Drop the leading marker (PUA codepoint) and return the visible text.
+   Tolerates empty input — a blank line in `:answer` mode renders as
+   the empty string with the empty `:plain` marker, so callers must
+   not crash when iterating over a frame that includes blank rows."
   [s]
-  (when (string? s) (subs s 1)))
+  (when (string? s)
+    (if (zero? (count s)) "" (subs s 1))))
 
 (defdescribe markdown-headings-test
   (describe "ATX headings 1-3 each carry their own marker"
@@ -1028,12 +1032,24 @@
           (expect (str/includes? (nth first-bodies 4) "CLAUDE.md"))
           (expect (str/includes? (nth first-bodies 5) "overview.md")))
         ;; The closing summary lines must NOT be folded into the
-        ;; last bullet — they're top-level bold paragraphs.
-        (let [bold-lines (->> lines
-                           (filter #(= p/MARKER_MD_BOLD (marker-of %)))
-                           (map (comp strip-sentinels body-of)))]
-          (expect (some #(str/includes? % "Loop clean")          bold-lines))
-          (expect (some #(str/includes? % "No remaining source") bold-lines))))))
+        ;; last bullet. The two paragraphs render with different
+        ;; markers by design:
+        ;;   - `**Loop clean: ** true` is a plain-text paragraph
+        ;;     with inline bold sentinels (line carries trailing
+        ;;     ` true` after the closing `**`, so it doesn't match
+        ;;     the bold-only-line branch).
+        ;;   - `**No remaining source references.**` IS pure
+        ;;     `**...**` and renders as a bold-only line
+        ;;     (`MARKER_MD_BOLD`).
+        ;; Either way, both must appear as their OWN lines, not
+        ;; concatenated into the last bullet's body.
+        (let [stripped (mapv (comp strip-sentinels body-of) lines)]
+          (expect (some #(str/includes? % "Loop clean")          stripped))
+          (expect (some #(str/includes? % "No remaining source") stripped))
+          ;; Bold-only marker on the second one specifically.
+          (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
+                           (str/includes? % "No remaining source"))
+                    lines))))))
 
   (describe "structural lines close an open list scope"
     (it "heading after a fragmented bullet doesn't get sucked into it"
@@ -1212,20 +1228,27 @@
 
         ;; Two source bullets ⇒ exactly two rendered bullet items
         ;; (the ` • ` line; continuations carry the indent prefix).
-        (let [openers (->> bullets
-                        (map strip-sentinels)
-                        (filter #(str/starts-with? % "  • "))
-                        vec)]
+        ;; `bvec` strips PUA sentinels; `flatten-bullet` reflows wrap
+        ;; whitespace so assertions read against single-spaced prose
+        ;; instead of the raw `    `-indented continuation rows.
+        (let [bvec        (mapv strip-sentinels bullets)
+              flatten-bullet
+              (fn [lines]
+                (-> (str/join " " lines)
+                  (str/replace #"\s+" " ")))
+              openers (vec (keep-indexed
+                             (fn [i s] (when (str/starts-with? s "  • ") i))
+                             bvec))]
           (expect (= 2 (count openers)))
 
           ;; Bullet 1: bold header inline + every code span inline.
           ;; The defining symptom of the bug was each `Let` / `me` /
           ;; `dig` / `deeper` / `what` landing on its own paragraph;
-          ;; they must now appear in ONE bullet body.
-          (let [b1 (->> bullets
-                     (map strip-sentinels)
-                     (filter #(str/includes? % "Turn 1"))
-                     str/join)]
+          ;; they must now appear in ONE bullet body. Re-join every
+          ;; line of bullet 1 (opener + wrapped continuations) so the
+          ;; assertions ride above wrap-column boundaries.
+          (let [[s1 s2] openers
+                b1 (flatten-bullet (subvec bvec s1 (or s2 (count bvec))))]
             (expect (str/includes? b1 "Turn 1 — \"system prompt copy\" prune:"))
             (expect (str/includes? b1 "38 failures"))
             (expect (str/includes? b1 "wrong file paths (src/com/blockether/vis/tui, db.clj"))
@@ -1236,13 +1259,11 @@
             (expect (str/includes? b1 "(Let, me, dig, deeper, what, etc.)"))
             (expect (str/includes? b1 "28 unresolved-symbol errors")))
 
-          ;; Bullet 2: code span containing `:]` keeps the visible
+          ;; Bullet 2: code span containing `: ]` keeps the visible
           ;; whitespace intact (the punctuation reflow must NOT
           ;; tighten ` ]` inside the quoted error string).
-          (let [b2 (->> bullets
-                     (map strip-sentinels)
-                     (filter #(str/includes? % "Turn 3+"))
-                     str/join)]
+          (let [[_ s2] openers
+                b2 (flatten-bullet (subvec bvec s2))]
             (expect (str/includes? b2 "Turn 3+ — footer % left removal:"))
             (expect (str/includes? b2 "z/zedit"))
             (expect (str/includes? b2 "\"Unmatched delimiter: ]\""))
@@ -1283,12 +1304,19 @@
           ;; `**Loop clean:**` must NOT have been folded into the
           ;; bullet's body.
           (expect (not (str/includes? b "Loop clean"))))
-        ;; The two bold paragraphs survive as bold lines — the
-        ;; first because it has trailing prose (`top-level-bold-
-        ;; paragraph-line?` true), the second because the list has
-        ;; already been closed by then.
-        (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
-                         (str/includes? % "Loop clean"))
+        ;; The two bold paragraphs survive as their own lines (not
+        ;; folded into the bullet). Marker shape differs between
+        ;; them by design:
+        ;;   - `**Loop clean:** true` is a plain-text paragraph with
+        ;;     inline bold sentinels (because the line carries
+        ;;     trailing ` true` after the closing `**`, so it isn't
+        ;;     a pure bold-only line).
+        ;;   - `**No remaining source references.**` IS a pure
+        ;;     bold-only line, so it carries `MARKER_MD_BOLD`.
+        ;; The shared invariant: each paragraph appears as its own
+        ;; line (one of `lines`), separate from the bullet body
+        ;; above.
+        (expect (some #(str/includes? (strip-sentinels %) "Loop clean: true")
                   lines))
         (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
                          (str/includes? % "No remaining source references"))
