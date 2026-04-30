@@ -11,9 +11,9 @@
 | Extensions | `environment :extensions` | Conversation |
 | Var-index cache | `environment :var-index-atom` | Conversation |
 | Recursion depth | `environment :depth-atom` | Conversation |
-| Current iteration counter | `environment :current-iteration-atom` (query-scoped, int counter starting at 0) | Query |
-| Current iteration row id | `environment :current-iteration-id-atom` (query-scoped, UUID of the latest `db-store-iteration!` row, or nil) | Query |
-| Token usage | `usage-atom` (local in iteration loop) | Query |
+| Current iteration counter | `environment :current-iteration-atom` (turn-scoped, int counter starting at 0) | Turn |
+| Current iteration row id | `environment :current-iteration-id-atom` (turn-scoped, UUID of the latest `db-store-iteration!` row, or nil) | Turn |
+| Token usage | `usage-atom` (local in iteration loop) | Turn |
 
 ## Environment map
 
@@ -57,7 +57,7 @@ this section before changing provider/model-switching code.
 **Implication:** `rebuild-router!` alone does NOT change the model
 used by an already-open conversation. The cached env keeps talking
 to whatever provider was primary when it was created. Symptom: the
-status bar shows the new model, but `query_state.llm_root_model` and
+status bar shows the new model, but `conversation_turn_state.llm_root_model` and
 the assistant bubble's footer keep showing the old one.
 
 **Resolution:** `lp/refresh-cached-routers! router` walks the

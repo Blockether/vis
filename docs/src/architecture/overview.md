@@ -9,7 +9,7 @@ Conversation layer                       lifecycle + per-conversation lock
     ↓
 Environment                              SCI sandbox + extensions + var-index + DB handle
     ↓
-Query engine                             one user turn
+Turn engine                              one user turn
     ↓
 Iteration engine                         one LLM round-trip; assembles O(1) context
     ↓
@@ -23,7 +23,7 @@ bot polling, CLI argument parsing. No business logic. Each channel calls
 into the conversation layer.
 
 **Conversation Layer** — owns the in-process cache of live environments,
-per-conversation locking, and the send → query bridge. One conversation
+per-conversation locking, and the send → turn bridge. One conversation
 = one environment = one SCI sandbox.
 
 **Environment** — the runtime map representing one live conversation.
@@ -31,7 +31,7 @@ Holds the SCI sandbox, registered extensions, var-index cache, DB
 handle, and router. See
 [Environment Map](../extensions/environment.md) for every key.
 
-**Query Engine** — one user turn. Validates inputs, stores the query
+**Turn Engine** — one user turn. Validates inputs, stores the turn
 entity, enters the iteration loop, finalizes cost/duration/tokens.
 
 **Iteration Engine** — one LLM round-trip. Assembles context (journal,

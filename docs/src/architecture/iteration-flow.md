@@ -7,7 +7,7 @@ What happens when the user sends a message, end to end.
 ```
 user message
   → internal/loop.clj :: send!         acquire per-conversation lock; build history
-  → internal/loop.clj :: query!        validate; store query; enter loop
+  → internal/loop.clj :: run-turn!     validate; store turn; enter loop
       loop:
         1. Build Context
         2. Ask LLM
@@ -20,7 +20,7 @@ user message
 
 **Step details:**
 
-1. **Build Context** — `<journal>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_QUERY_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) the model can read directly. Active extensions may append one `[system_nudge]` line each via `:ext/nudge-fn`.
+1. **Build Context** — `<journal>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) the model can read directly. Active extensions may append one `[system_nudge]` line each via `:ext/nudge-fn`.
 2. **Ask LLM** — plain-text completion + fenced code-block
    extraction. The call site is
    `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
@@ -29,7 +29,7 @@ user message
    source. NO JSON spec, NO schema validation, NO schema-reject
    retry layer; reader errors on the extracted source flow as
    ordinary iteration errors instead. The router is the env's
-   snapshot router — NOT the global `query-core/router-atom`. See
+   snapshot router — NOT the global loop router atom. See
    [Router Lifecycle](state.md#router-lifecycle) for why this matters
    when provider/model is switched mid-session.
 3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
@@ -139,7 +139,7 @@ prefix-tagged lifetime tiers:
 
 - **`TURN_*`** — frozen at turn start, immutable for the whole turn:
   - `TURN_USER_REQUEST` — user's current message text.
-  - `TURN_QUERY_ID` — UUID of THIS in-flight turn (== query soul id).
+  - `TURN_CONVERSATION_TURN_ID` — UUID of THIS in-flight turn (== conversation turn soul id).
   - `TURN_CONVERSATION_SOUL_ID` — UUID of the `conversation_soul` row.
   - `TURN_CONVERSATION_STATE_ID` — UUID of the latest `conversation_state` row at turn start.
   - `TURN_SYSTEM_PROMPT` — the full assembled system prompt driving THIS turn.
