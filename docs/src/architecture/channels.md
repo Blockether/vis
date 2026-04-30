@@ -82,7 +82,7 @@ top-level command set built in `cli.clj :: root-command`:
 
 | Command                  | Purpose                                                                  |
 | ------------------------ | ------------------------------------------------------------------------ |
-| `vis run "prompt"`         | One-shot agent query (defined in `internal/main.clj`).                            |
+| `vis run "prompt"`         | One-shot agent turn (defined in `internal/main.clj`).                            |
 | `vis auth <provider>`      | Provider auth (e.g. GitHub Copilot OAuth, Z.ai static-API-key).                   |
 | `vis conversations […]`    | List conversations, optionally filtered by channel (`tui` / `telegram` / `cli`).  |
 | `vis doctor`               | Environment diagnostics.                                                          |

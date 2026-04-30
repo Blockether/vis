@@ -28,16 +28,14 @@ These keys exist on every environment for its entire lifetime:
 ### Turn-scoped keys
 
 These keys are `assoc`'d onto the environment map when a turn starts
-(internally a `query!` invocation — `internal/loop.clj ::
-prepare-query-context`). They do **not** exist on the base
-environment returned by `create-environment`. Naming follows the
-ubiquitous-language rule: *turn* is the product concept, *query* is
-the runtime function / DB row that backs it.
+(internally the turn-run entrypoint in `internal/loop.clj`, via
+`prepare-turn-context`). They do **not** exist on the base
+environment returned by `create-environment`.
 
 | Key | Type | Description |
 |-----|------|-------------|
 | `:current-iteration-atom` | `atom of int` | Plain integer counter for the iteration in flight (0-indexed). Bumped before every `db-store-iteration!`. Read by extensions that want to know which iteration they're in. |
-| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `db-store-iteration!`. Created by `prepare-query-context`, reset to `nil` at query start, updated after each `db-store-iteration!`. Used for sub-RLM parenting and for log correlation. |
+| `:current-iteration-id-atom` | `atom of UUID or nil` | Entity ID (UUID) of the most recent `db-store-iteration!`. Created by `prepare-turn-context`, reset to `nil` at turn start, updated after each `db-store-iteration!`. Used for sub-RLM parenting and for log correlation. |
 
 ## Safe operations
 

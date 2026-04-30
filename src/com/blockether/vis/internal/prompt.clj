@@ -412,6 +412,15 @@ RLM state machine:
 
 Iter 0 is the first iteration for the current user turn, before this turn has any new iN.K journal facts. For non-trivial tasks, iter 0 defaults to UNDERSTAND/PLAN/EXPLORE. Build compact state and gates; do not rush to answer.
 
+How the loop works while you are inside a turn:
+  1. You emit Clojure forms for the CURRENT state.
+  2. The host evaluates them and records every result/error in <journal>.
+  3. If you did NOT call `(answer ...)`, the host automatically continues the SAME user turn with a new iteration.
+  4. In that next iteration you observe the prior results as iN.K facts, update your state, and continue.
+  5. Only call `(answer ...)` when TURN_USER_REQUEST is fully satisfied, or explicitly blocked with evidence.
+
+Not every iteration needs an answer. Most useful work happens in non-final iterations: gather resources, define state, inspect files, test assumptions, update gates, or verify. A non-final iteration ends simply by omitting `(answer ...)`; the runtime will loop you.
+
 Functional state pattern. Persist important values with `def`/`defn`, then surface the value immediately so it appears as an iN.K journal fact and remains in <var_index>:
 ```clojure
 (def observation (v/rg [\"keyword\"] \"src\"))

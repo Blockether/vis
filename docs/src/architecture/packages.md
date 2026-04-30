@@ -32,14 +32,14 @@ re-listing it.
 | Path | Purpose |
 | ---- | ------- |
 | `src/com/blockether/vis/core.clj` | Public API facade. Re-exports every supported symbol from `internal/*`. **The names in `core.clj` are the contract**; the `internal/` tree is free to be split, merged, and renamed as the architecture evolves. |
-| `src/com/blockether/vis/internal/cancellation.clj` | In-flight query cancellation tokens. |
+| `src/com/blockether/vis/internal/cancellation.clj` | In-flight turn cancellation tokens. |
 | `src/com/blockether/vis/internal/commandline.clj` | Argument parser, command tree renderer, dispatcher. |
 | `src/com/blockether/vis/internal/config.clj` | Config loader, db-path (`~/.vis/vis.mdb`), router builder, provider presets. |
 | `src/com/blockether/vis/internal/env.clj` | SCI sandbox, var-index, `SYSTEM_VAR_NAMES`, `system-var-sym?`. |
 | `src/com/blockether/vis/internal/error.clj` | Shared exception → user message formatter. |
 | `src/com/blockether/vis/internal/extension.clj` | Extension spec, slot dispatch (`:ext/symbols`, `:ext/cli`, `:ext/channels`, `:ext/providers`, `:ext/persistance`), `register-extension!`, `discover-extensions!`. |
 | `src/com/blockether/vis/internal/format.clj` | `format-clojure`, `format-tokens`, `format-cost`, `format-iterations`. |
-| `src/com/blockether/vis/internal/loop.clj` | Iteration loop, query engine, conversation lifecycle, environment lifecycle, router management. |
+| `src/com/blockether/vis/internal/loop.clj` | Iteration loop, turn engine, conversation lifecycle, environment lifecycle, router management. |
 | `src/com/blockether/vis/internal/main.clj` | `vis` binary surface: `-main`, dispatcher wiring, persistence-backed Telemere `:db` handler, built-in commands (`run` / `auth` / `doctor` / `conversations` / `extensions list`), one-shot `agent` + `run!` helpers. |
 | `src/com/blockether/vis/internal/manifest.clj` | `META-INF/vis-extension/vis.edn` classpath scanner. |
 | `src/com/blockether/vis/internal/markdown.clj` | Conversation -> Markdown exporter. Single host helper for projecting a persisted conversation (every turn: user prompt + final answer + optional metadata) into a paste-friendly Markdown string. Surface: `conversation->markdown`. Lives in the runtime so every channel (TUI, Telegram, CLI agent, third-party) ships a `Copy as Markdown` / `Export conversation` affordance through the same projection. |
