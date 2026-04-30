@@ -169,6 +169,18 @@
 (s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
 
+;; Doctor checks contributed by this extension. Each entry is a map
+;; describing one diagnostic check the `vis doctor` aggregator will
+;; invoke. Plan §1 Q19 + §10. Authors who don't ship checks just omit
+;; the field (defaults to []).
+(s/def :check/id          keyword?)
+(s/def :check/name        non-blank-string?)
+(s/def :check/description non-blank-string?)
+(s/def :check/run-fn      fn?)
+(s/def ::doctor-check
+  (s/keys :req [:check/id :check/name :check/description :check/run-fn]))
+(s/def :ext/doctor-checks (s/coll-of ::doctor-check :kind vector?))
+
 ;; Vector of symbol entries this extension binds into the sandbox.
 (s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
 
@@ -210,7 +222,8 @@
             :ext/ns-alias :ext/prompt :ext/nudge-fn
             :ext/on-parse-error-fn :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
-            :ext/cli :ext/channels :ext/providers :ext/persistance])
+            :ext/cli :ext/channels :ext/providers :ext/persistance
+            :ext/doctor-checks])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 
@@ -643,7 +656,8 @@
       (not (:ext/cli spec))                            (assoc :ext/cli [])
       (not (:ext/channels spec))                       (assoc :ext/channels [])
       (not (:ext/providers spec))                      (assoc :ext/providers [])
-      (not (:ext/persistance spec))                    (assoc :ext/persistance []))
+      (not (:ext/persistance spec))                    (assoc :ext/persistance [])
+      (not (:ext/doctor-checks spec))                  (assoc :ext/doctor-checks []))
     (validate!)))
 
 ;; =============================================================================

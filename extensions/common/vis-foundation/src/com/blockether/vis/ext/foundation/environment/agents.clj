@@ -21,7 +21,6 @@
    model isn't bound by rules it can't see, but the user/agent
    knows something is broken. See plan §1 Q10."
   (:require
-   [babashka.fs :as fs]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)

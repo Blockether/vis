@@ -128,6 +128,6 @@
      :ext/channels  [{:channel/id      :telegram
                       :channel/cmd     "telegram"
                       :channel/doc     "Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)."
-                      :channel/usage   "vis telegram"
+                      :channel/usage   "vis channels telegram"
                       :channel/main-fn #'channel-main}]}))
 

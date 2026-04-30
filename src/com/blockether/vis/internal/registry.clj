@@ -86,7 +86,7 @@
 ;; in the registry.
 (s/def :channel/id keyword?)
 
-;; Sub-command word the CLI matches. `vis tui ...` -> :tui channel.
+;; Sub-command word the CLI matches. `vis channels tui ...` -> :tui channel.
 ;; Two registered channels MUST NOT share the same :channel/cmd.
 ;; There is no "default" channel — invoking `vis` with no command
 ;; prints help. Every channel is an explicit subcommand.
@@ -107,7 +107,7 @@
 (s/def :channel/owns-tty? boolean?)
 
 ;; Entry point. (fn [args-vec] -> any). `args-vec` are the CLI tokens
-;; AFTER the channel command (so for `vis telegram --foo bar` it is
+;; AFTER the channel command (so for `vis channels telegram --foo bar` it is
 ;; `["--foo" "bar"]`).
 ;; Accepts any IFn (functions OR vars) so callers can pass `#'channel-main`
 ;; and benefit from REPL redefinition.
@@ -388,7 +388,7 @@
   {:cmd/name      (:channel/cmd c)
    :cmd/doc       (:channel/doc c)
    :cmd/usage     (or (:channel/usage c)
-                    (str "vis channel " (:channel/cmd c)))
+                    (str "vis channels " (:channel/cmd c)))
    :cmd/owns-tty? (boolean (:channel/owns-tty? c))
    :cmd/run-fn    (fn [_parsed residual]
                     ((:channel/main-fn c) (vec residual)))})

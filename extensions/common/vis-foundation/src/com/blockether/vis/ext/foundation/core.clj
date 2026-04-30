@@ -22,6 +22,7 @@
    The legacy `fs/` alias (babashka.fs path-math wrappers) was\n   dropped: the `v/` editing tools resolve every path internally\n   against `(fs/cwd)` already, and the model has no need to do path\n   math directly inside the sandbox. If it ever does, the host's\n   `clojure.java.io` namespace is still available."
   (:require
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation.doctor :as doctor]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
@@ -45,17 +46,24 @@
 
 (def vis-extension
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.foundation.core
-     :ext/doc       "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg / edit / write), and environment awareness (snapshot / git / languages / monorepo). Owns the `<environment>` block in the system prompt."
-     :ext/version   "0.7.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/ns-alias  {:ns 'vis.ext.v :alias 'v}
-     :ext/kind      "foundation"
-     :ext/prompt    combined-prompt
-     :ext/symbols   (vec (concat introspection/all-symbols
-                           editing/editing-symbols
-                           environment/environment-symbols))}))
+    {:ext/namespace      'com.blockether.vis.ext.foundation.core
+     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg / edit / write), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt and the `vis doctor` CLI command."
+     :ext/version        "0.7.0"
+     :ext/author         "Blockether"
+     :ext/owner          "vis"
+     :ext/license        "Apache-2.0"
+     :ext/ns-alias       {:ns 'vis.ext.v :alias 'v}
+     :ext/kind           "foundation"
+     :ext/prompt         combined-prompt
+     :ext/symbols        (vec (concat introspection/all-symbols
+                                editing/editing-symbols
+                                environment/environment-symbols))
+     :ext/doctor-checks  doctor/all-checks}))
 
 (vis/register-extension! vis-extension)
+
+;; Register the top-level `vis doctor` CLI command. Foundation owns
+;; this now (lifted out of `internal/main.clj`'s built-ins) — see
+;; plan §1 Q18. Direct `register-cmd!` (NOT `:ext/cli`) because the
+;; command must live at the top of the tree, not under `vis extensions`.
+(doctor/register-cli!)

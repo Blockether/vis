@@ -1025,7 +1025,7 @@
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
 (defn- parse-args
-  "Parse `vis tui` flags. Unknown flags are ignored on purpose so the
+  "Parse `vis channels tui` flags. Unknown flags are ignored on purpose so the
    TUI never refuses to start because of a stray argument.
      --conversation-id ID   Resume a conversation (full UUID or short prefix)
      --resume               Resume the latest :tui conversation"
@@ -1103,6 +1103,6 @@
      :ext/channels  [{:channel/id        :tui
                       :channel/cmd       "tui"
                       :channel/doc       "Interactive terminal UI."
-                      :channel/usage     "vis tui [--conversation-id ID | --resume]"
+                      :channel/usage     "vis channels tui [--conversation-id ID | --resume]"
                       :channel/owns-tty? true
                       :channel/main-fn   #'channel-main}]}))
