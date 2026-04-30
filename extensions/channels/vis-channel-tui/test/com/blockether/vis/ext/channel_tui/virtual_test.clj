@@ -169,6 +169,43 @@
             ;; format-answer-with-thinking was called only for visible
             (expect (<= @calls (count visible)))))))))
 
+(defdescribe pre-warm-test
+  (describe "pre-warm! warms the LRU off the render thread"
+    (it "returns nil for empty messages, no thread spawned"
+      (expect (nil? (virtual/pre-warm! [] bubble-w settings))))
+    (it "returns a daemon thread for non-empty messages"
+      (let [t (virtual/pre-warm! [(plain-assistant-msg "hi")] bubble-w settings)]
+        (expect (some? t))
+        (expect (.isDaemon ^Thread t))
+        (virtual/stop-pre-warm! t)))
+    (it "warms the cache so a subsequent layout call is cheap"
+      ;; The whole point: after pre-warm finishes, calling
+      ;; format-answer-with-thinking on the warmed assistants must
+      ;; hit the cache (sub-microsecond), NOT recompute. Verified by
+      ;; counting calls into the uncached `format-answer-with-thinking*`
+      ;; surface.
+      (render/invalidate-cache!)
+      (let [msgs [(trace-assistant-msg 3 2 "answer")
+                  (trace-assistant-msg 2 1 "another")]
+            t (virtual/pre-warm! msgs bubble-w settings)]
+        (.join ^Thread t 5000)
+        ;; Now both bubbles' fawt entries should be cached.
+        (let [calls (atom 0)
+              real  @#'render/format-answer-with-thinking*]
+          (with-redefs [render/format-answer-with-thinking*
+                        (fn [& args] (swap! calls inc) (apply real args))]
+            (doseq [m msgs]
+              (render/format-answer-with-thinking
+                (:raw-answer m) (:trace m) bubble-w settings))
+            ;; Pre-warm warmed both — no fresh format-answer-with-thinking*
+            ;; calls expected.
+            (expect (zero? @calls))))))
+    (it "stop-pre-warm! is safe on nil and on already-finished threads"
+      (expect (nil? (virtual/stop-pre-warm! nil)))
+      (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]
+        (.join ^Thread t 5000)
+        (expect (nil? (virtual/stop-pre-warm! t)))))))
+
 (defdescribe project-message-test
   (describe "user messages pass through (no :text mutation)"
     (it "drops :timestamp when :show-timestamps false (default)"

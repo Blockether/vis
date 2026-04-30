@@ -213,17 +213,28 @@
                         :progress-extra progress-extra})
         total-h      (long (:total-h layout))]
     (render/fill-background! g cols rows)
-    ;; Messages area draws FIRST so its internal cr/reset! clears stale
-    ;; regions from the previous frame. Header registers its :copy-id
-    ;; region AFTER messages, so it survives to be looked up by the
-    ;; mouse handler. Both use absolute row coordinates in disjoint
-    ;; ranges, so visual output is unaffected by the draw order.
+    ;; Messages area draws FIRST. It opens a new click-region staging
+    ;; pass via `cr/begin-frame!` and registers every painted chrome
+    ;; row (links, image markers, file links). The header then
+    ;; registers its :copy-id region. The published click-region
+    ;; registry is unchanged until `cr/commit-frame!` runs at the end
+    ;; of this fn — so the input thread can `cr/lookup` at any time
+    ;; during the paint and still get a complete previous frame back
+    ;; instead of a half-filled buffer (the bug that made the header
+    ;; copy-id button feel \"sometimes broken\" when the spinner was
+    ;; ticking).
     (render/draw-messages-area! g layout messages-top messages-bottom cols)
     (header/draw-header! g db header-top cols)
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
+    ;; Atomically publish every chrome region painted above. Until
+    ;; this swap runs the input thread sees the PREVIOUS frame's
+    ;; regions, which is the correct fallback — the previous frame
+    ;; matches what's actually still on the user's screen up to this
+    ;; instant.
+    (cr/commit-frame!)
     (.refresh screen Screen$RefreshType/DELTA)
     {:cols cols :rows rows :total-h total-h :inner-h inner-h
      :messages-top messages-top}))
@@ -431,7 +442,12 @@
         ;; Render thread handle is held in a volatile so the `finally`
         ;; clause can join it. (Locals from the `try` body aren't in
         ;; scope inside `finally`.)
-           render-thread (volatile! nil)]
+           render-thread (volatile! nil)
+           ;; Daemon thread that pre-formats every assistant bubble
+           ;; in the background so the FIRST scroll-up doesn't pay
+           ;; ~500 ms / big-trace-bubble on the render thread.
+           ;; Stays nil for fresh conversations (nothing to warm).
+           prewarm-thread (volatile! nil)]
        (.startScreen screen)
        (try
       ;; Show provider dialog on first launch if no config
@@ -469,7 +485,19 @@
              (when title
                (state/dispatch [:set-title title]))
              (subscribe-title-listener! id)
-             (register-conversation-shutdown-hook! id)))
+             (register-conversation-shutdown-hook! id)
+             ;; Kick off background pre-warm of the LRU. Walks the
+             ;; history bottom-up calling project + bubble-height,
+             ;; so by the time the user scrolls UP the cache is
+             ;; already hot. Empty conversations skip this entirely.
+             ;; Cancelled in the shutdown hook below.
+             (when (seq history)
+               (let [size     (screen-size screen)
+                     cols     (.getColumns size)
+                     bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                     settings (or (:settings @state/app-db) {})]
+                 (vreset! prewarm-thread
+                   (virtual/pre-warm! history bubble-w settings))))))
 
       ;; Spawn the render thread BEFORE the input loop. It will paint
       ;; the first frame as soon as `:render-version` is non-zero (every
@@ -632,6 +660,33 @@
                      ;; click without movement must not move content.
                      (and (= atype MouseActionType/CLICK_DOWN) on-thumb?)
                      (do (vreset! scrollbar-drag-offset (- my thumb-top))
+                       (recur))
+
+                     ;; CLICK_DOWN on the scrollbar TRACK (right
+                     ;; gutter, anywhere in the messages-area rows,
+                     ;; off-thumb): jump the thumb so it CENTERS on
+                     ;; the cursor row, then arm a drag with the same
+                     ;; centered grip offset so a follow-up motion
+                     ;; tracks naturally. This is the modern macOS
+                     ;; \"jump to spot\" behaviour — a click anywhere
+                     ;; on the scrollbar moves you there, instead of
+                     ;; the legacy paged \"click-above-thumb = page-up\"
+                     ;; convention. The previous build silently
+                     ;; ignored every off-thumb click in the gutter,
+                     ;; which felt broken (\"I'm clicking on the
+                     ;; scrollbar and nothing scrolls\").
+                     (and (= atype MouseActionType/CLICK_DOWN)
+                       (some? geom)
+                       (>= mx (- cols render/MESSAGE_MARGIN_RIGHT))
+                       (< mx cols)
+                       (>= my bar-top)
+                       (< my (+ bar-top inner-h)))
+                     (let [grip (long (quot thumb-h 2))]
+                       (vreset! scrollbar-drag-offset grip)
+                       (state/dispatch
+                         [:scroll-to-y
+                          (- my grip)
+                          bar-top inner-h total-h inner-h])
                        (recur))
 
                      ;; Drag continues to track the cursor's Y as
@@ -868,6 +923,10 @@
         ;; no-op when shutdown? was already true) finish before we
         ;; tear down the screen.
            (state/dispatch [:shutdown])
+           ;; Cancel the pre-warm worker BEFORE joining the render
+           ;; thread — it might still be holding `cached*` work
+           ;; that we'd rather drop than wait on.
+           (virtual/stop-pre-warm! @prewarm-thread)
            (when-let [t @render-thread]
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
            (when-let [conversation (:conversation @state/app-db)]

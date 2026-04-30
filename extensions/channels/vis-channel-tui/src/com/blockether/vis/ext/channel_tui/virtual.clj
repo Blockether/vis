@@ -292,3 +292,95 @@
      :heights    heights'
      :offsets    offsets'
      :visible    visible-set}))
+
+;;; ── Background pre-warmer ────────────────────────────────────────────────────
+;;
+;; Why this exists, top of mind: with virtualisation alone, scrolling
+;; UP through a long conversation pays the FULL
+;; `format-answer-with-thinking*` cost (~500 ms / big trace bubble)
+;; on the render thread the FIRST time a never-seen bubble enters
+;; the viewport — the user feels that as a frame-stall mid-scroll.
+;; Pre-warming runs the same projection on a background daemon
+;; thread right after the first paint succeeds, so by the time the
+;; user scrolls, every bubble's `format-answer-with-thinking` /
+;; `bubble-height` entries are already in the LRU. Subsequent
+;; layouts hit the cache and return in microseconds.
+;;
+;; Concurrency contract:
+;;   * `cached*` in render.clj uses double-checked locking — the
+;;     pre-warm thread NEVER blocks the render thread on the same
+;;     key, even mid-compute.
+;;   * The thread is a daemon at `Thread/MIN_PRIORITY + 1` so a
+;;     busy JVM still services UI before warming. Honestly the JVM
+;;     barely respects priority, but setting it documents intent.
+;;   * Cancellation is via `Thread.interrupt()` — we check between
+;;     bubbles, not inside `format-answer-with-thinking*` (no way
+;;     to interrupt a CPU-bound function mid-call without
+;;     instrumenting the tokenizer, which is way more invasive than
+;;     the win is worth).
+;;   * Returns the `Thread`. Caller stores it; on conversation
+;;     switch / shutdown, call `stop-pre-warm!` to interrupt.
+
+(defn pre-warm!
+  "Spawn a daemon worker thread that calls `project-message` and
+   `bubble-height` for every message in `messages` so the LRU is
+   hot by the time the user scrolls. Walks in REVERSE order — the
+   user almost always scrolls UP from the bottom, so the next-to-
+   last message warms first, the FIRST message last.
+
+   Returns the `Thread` so the caller can stop it on conversation
+   switch / shutdown via `stop-pre-warm!`. Returns `nil` for an
+   empty conversation (nothing to warm).
+
+   Settings parity with `layout`: pass the SAME settings map so the
+   cached entries match the keys subsequent layout passes will
+   look up. Mismatched settings = wasted compute (the layout pass
+   will format again with different cache keys)."
+  ^Thread [messages bubble-w settings]
+  (let [n (long (count messages))]
+    (when (pos? n)
+      (let [bubble-w (long bubble-w)
+            t (Thread.
+                ^Runnable
+                (fn []
+                  (try
+                    (loop [i (dec n)]
+                      (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
+                        (let [m (nth messages i)
+                              ;; project-message hits the same caches
+                              ;; layout will hit; bubble-height too.
+                              ;; Skip user messages — they're cheap and
+                              ;; the cache hit alone isn't worth a
+                              ;; thread context switch.
+                              project? (= :assistant (:role m))]
+                          (when project?
+                            (let [pm (project-message m bubble-w settings)]
+                              (render/bubble-height pm bubble-w))))
+                        (recur (dec i))))
+                    (catch InterruptedException _
+                      ;; Cooperative cancellation — nothing to do.
+                      nil)
+                    (catch Throwable t
+                      ;; Pre-warming must NEVER bring the TUI down.
+                      ;; Swallow + lose silently; the next layout
+                      ;; pass will pay the un-warmed cost itself.
+                      (try
+                        (require 'taoensso.telemere)
+                        ((resolve 'taoensso.telemere/log!)
+                         :warn
+                         (str "vis-channel-tui pre-warm threw: "
+                           (or (ex-message t) (str t))))
+                        (catch Throwable _ nil)))))
+                "vis-channel-tui-prewarm")]
+        (.setDaemon t true)
+        (.setPriority t (max Thread/MIN_PRIORITY
+                          (dec Thread/NORM_PRIORITY)))
+        (.start t)
+        t))))
+
+(defn stop-pre-warm!
+  "Interrupt and forget a pre-warm thread previously returned by
+   `pre-warm!`. Safe on `nil` and on already-finished threads."
+  [^Thread t]
+  (when (and t (.isAlive t))
+    (.interrupt t)))
