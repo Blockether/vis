@@ -34,6 +34,7 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.config :as config]
+   [com.blockether.vis.internal.diagnose :as diagnose]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
@@ -757,6 +758,47 @@
           (stdout! ""))
         (cli-list-conversations! ch)))))
 
+;;; ── `vis diagnose` ──────────────────────────────────────────
+;;
+;; Post-mortem Markdown report for one conversation. Pulls every
+;; turn / retry / iteration / block-level error from the SQLite
+;; backend and prints the rendered Markdown to stdout. Replaces the
+;; old agent-authored `REPRODUCTION.md` flow, which kept failing
+;; under the same prose-in-code bug it was trying to document.
+;;
+;; Usage:
+;;   vis diagnose <CONVERSATION-ID>
+;;
+;; The id is matched the same way as `vis conversations --fork`:
+;; full UUID OR an unambiguous prefix.
+
+(defn- cli-diagnose!
+  "`vis diagnose <conv-id>` handler. Resolves the id by prefix (same
+   helper that backs `vis conversations --fork`), renders the
+   diagnostic Markdown, and writes it to stdout. Exits 1 on a missing
+   id so shell pipelines can detect the failure."
+  [_parsed residual]
+  (config/init-cli!)
+  (let [cid-input (some-> (first residual) str/trim not-empty)]
+    (cond
+      (nil? cid-input)
+      (do (stdout! "Usage: vis diagnose <CONVERSATION-ID>")
+        (stdout! "")
+        (stdout! "List existing conversations with:")
+        (stdout! "  vis conversations")
+        (shutdown-agents)
+        (System/exit 1))
+
+      :else
+      (let [d        (lp/db-info)
+            resolved (resolve-conversation-by-prefix d cid-input)]
+        (if (nil? resolved)
+          (do (stdout! (str "Conversation not found: " cid-input))
+            (shutdown-agents)
+            (System/exit 1))
+          (do (stdout! (diagnose/render d resolved))
+            (shutdown-agents)))))))
+
 ;;; ── `vis auth` ──────────────────────────────────────────────────────────
 
 (defn- print-auth-status! [provider]
@@ -900,6 +942,16 @@
                          "vis auth github-copilot --status"
                          "vis auth github-copilot --logout"]
           :cmd/run-fn cli-auth!}
+
+         {:cmd/name  "diagnose"
+          :cmd/doc   "Render a Markdown diagnostic report for a conversation."
+          :cmd/usage "vis diagnose <CONVERSATION-ID>"
+          :cmd/args  [{:name "conversation-id" :kind :positional :type :string
+                       :doc  "Conversation id (full UUID or unambiguous prefix)."}]
+          :cmd/examples ["vis diagnose eeaf9651-06c7-4dda-9e97-877fcef06337"
+                         "vis diagnose eeaf9651"
+                         "vis diagnose eeaf9651 > REPRODUCTION.md"]
+          :cmd/run-fn cli-diagnose!}
 
          {:cmd/name  "conversations"
           :cmd/doc   "List conversations stored on disk, or fork one."

@@ -711,7 +711,7 @@
    Nippy blob in `iteration.blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
   [db-info {:keys [query-id blocks thinking answer answer-form-idx duration-ms vars error metadata
-                   llm-messages llm-provider llm-model]}]
+                   llm-messages llm-provider llm-model tokens cost-usd]}]
   (when (ds db-info)
     (let [iteration-id   (UUID/randomUUID)
           iteration-id-s (str iteration-id)
@@ -770,7 +770,17 @@
                              :created_at           now
                              :finished_at          now}
                       (some? answer-form-idx)
-                      (assoc :answer_form_idx answer-form-idx))]}))
+                      (assoc :answer_form_idx answer-form-idx)
+                      ;; Token / cost columns — omitted when nil so the
+                      ;; row keeps NULL (the schema marks them nullable
+                      ;; for exactly this reason: an LLM call that
+                      ;; failed before returning usage produces no
+                      ;; tokens, no cost, no fake zeros).
+                      (some? (:input tokens))     (assoc :llm_input_tokens     (long (:input tokens)))
+                      (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
+                      (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
+                      (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
+                      (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]}))
       ;; 3. Vars → expression_soul (kind=var, stateful) + expression_state (versioned)
       (when conversation-state-id
         (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
@@ -896,6 +906,17 @@
     (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
     (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
     (some? (:llm_model row))            (assoc :model (:llm_model row))
+    ;; Token / cost columns — ALWAYS present on the read side, with
+    ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
+    ;; is NULL. Callers can assume `(:input-tokens it)` is a long
+    ;; and `(:cost-usd it)` is a double without `or`-padding at
+    ;; every use site. The schema CHECK still rejects negative
+    ;; values; absent = zero by convention.
+    true (assoc :input-tokens     (long   (or (:llm_input_tokens row) 0)))
+    true (assoc :output-tokens    (long   (or (:llm_output_tokens row) 0)))
+    true (assoc :reasoning-tokens (long   (or (:llm_reasoning_tokens row) 0)))
+    true (assoc :cached-tokens    (long   (or (:llm_cached_tokens row) 0)))
+    true (assoc :cost-usd         (double (or (:llm_cost_usd row) 0.0)))
     ;; Iteration metadata (JSON) carries the per-iteration metrics:
     ;; :var-history-recall-count plus per-iteration extension info.
     (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))

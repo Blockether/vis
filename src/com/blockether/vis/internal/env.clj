@@ -26,17 +26,21 @@
 ;; ---------------------------------------------------------------------------
 ;; `shape` — sandbox-bound structural describe.
 ;;
-;; Replaces the original 9-line typology-only shape. The model uses this to
-;; learn what a value is BEFORE walking it: keys of a map, element-shape of a
-;; collection, length of a string. Critical for guarding against "assumed the
-;; data lived in `TURN_ACTIVE_EXTENSIONS` with `:kind :skill`"-class bugs:
-;; one `(shape (v/skills))` returns `[:vec 6 [:map 6 [:body :description
-;; :extra :found? :name :path :source]]]` and the misconception evaporates.
+;; The model uses this to learn what a value is BEFORE walking it: keys of a
+;; map AND their value types, element shapes of a collection (with union
+;; detection across heterogeneous elements), length of a string, depth of
+;; nested structures. Critical for guarding against
+;; "assumed the data lived in `TURN_ACTIVE_EXTENSIONS` with `:kind :skill`"
+;; -class bugs: one `(shape TURN_ACCESSIBLE_SKILLS)` returns
+;; `[:vec 6 [:map {:description [:string 95] :name [:string 8]
+;;                 :path [:string 71] :source :keyword}]]`
+;; and the misconception evaporates.
 ;;
-;; Returns plain Clojure data — readable, diff-friendly, safe to embed in the
-;; <journal>. Bounded: never walks past element 0 of a collection, never
-;; renders more than `SHAPE_MAX_KEYS` keys for a map, and uses
-;; `bounded-count` so an infinite seq returns a finite size.
+;; Bounded: at most `SHAPE_SAMPLE_LIMIT` elements walked per collection (for
+;; union detection), at most `SHAPE_MAX_KEYS` keys rendered per map,
+;; recursion capped by `depth` (default 4), and `bounded-count` keeps lazy /
+;; infinite seqs from blowing up. Returns plain Clojure data — readable,
+;; diff-friendly, safe to embed in the <journal>.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private ^:const SHAPE_MAX_KEYS
@@ -49,25 +53,115 @@
    tail of a lazy/infinite seq."
   4096)
 
+(def ^:private ^:const SHAPE_SAMPLE_LIMIT
+  "Number of elements walked when computing a collection's element-shape.
+   Drives union detection: if the first N elements all share one shape, the
+   collection is reported as homogeneous; otherwise as `[:union …]`."
+  16)
+
+(def ^:private ^:const SHAPE_DEFAULT_DEPTH
+  "Default recursion depth. Each step into a collection or map decrements;
+   reaching 0 collapses sub-shapes to size-only forms (`[:map N]`,
+   `[:vec N]`). 4 deep covers practical data structures while bounding
+   pathological inputs (worst case ~16^4 = 65 K shape calls)."
+  4)
+
+(def ^:private ^:const SHAPE_DOC_MAX_CHARS
+  "Char cap for the first-line docstring excerpt embedded in `[:var …]`
+   shapes. Keeps output one-screen-wide; the model can resolve the var and
+   read the full doc when it actually wants it."
+  80)
+
 (declare ^:private shape*)
 
+(defn- doc-first-line
+  "First non-blank line of `s`, trimmed and clipped to SHAPE_DOC_MAX_CHARS.
+   Returns nil for blank inputs so callers can `cond-> conj` cleanly."
+  [s]
+  (when (and (string? s) (not (str/blank? s)))
+    (let [line (->> (str/split-lines s) (map str/trim) (some seq))
+          line (apply str line)]
+      (when (seq line)
+        (if (> (count line) SHAPE_DOC_MAX_CHARS)
+          (str (subs line 0 SHAPE_DOC_MAX_CHARS) "…")
+          line)))))
+
+(defn- var-like?
+  "True for both Clojure-side `clojure.lang.Var` and SCI-side `sci.lang.Var`.
+   `clojure.core/var?` only matches the former — inside the sandbox we get
+   SCI vars, so a single predicate on them keeps the shape branch reachable
+   from both sides."
+  [v]
+  (or (var? v)
+    (instance? sci.lang.Var v)))
+
+(defn- var-fq-symbol
+  "Build a fully-qualified symbol from a var's metadata. Falls back to the
+   bare `:name` when the var hasn't been interned into a namespace, and to
+   `'?` when even that's missing (anonymous SCI vars)."
+  [m]
+  (let [ns-part (some-> (:ns m) str)
+        nm-part (some-> (:name m) str)]
+    (cond
+      (and ns-part nm-part) (symbol ns-part nm-part)
+      nm-part               (symbol nm-part)
+      :else                 '?)))
+
+(defn- elements-shape
+  "Walk up to SHAPE_SAMPLE_LIMIT elements; return a single shape when every
+   sample agrees, or `[:union shape₁ shape₂ …]` (sorted deterministically by
+   pr-str) when they don't. The sample is bounded so heterogeneous tails
+   past the limit are silently ignored — callers wanting full coverage can
+   always fold themselves."
+  [v depth]
+  (let [unique (->> v
+                 (take SHAPE_SAMPLE_LIMIT)
+                 (mapv #(shape* % depth))
+                 distinct)]
+    (if (= 1 (count unique))
+      (first unique)
+      (into [:union] (sort-by pr-str unique)))))
+
 (defn- col-shape
-  "Render a collection's shape as `[tag size]` (empty) or
-   `[tag size <element-shape-of-first>]`. Walks at most one element; recurses
-   one level via `shape*` with `(dec depth)`."
+  "Render a collection's shape:
+     empty            -> [tag 0]                       ; size only
+     depth-capped     -> [tag N]                       ; size only (no element walk)
+     non-empty + room -> [tag N <element-shape>]       ; element-shape may be a [:union …]
+   `tag` is one of :vec :seq :set :list. Uses bounded-count so lazy /
+   infinite seqs report a finite \"4096+\" sentinel instead of looping."
   [tag v depth]
   (let [n         (bounded-count SHAPE_BOUNDED_COUNT_CAP v)
         size-form (if (>= n SHAPE_BOUNDED_COUNT_CAP) (str n "+") n)]
-    (if (zero? n)
-      [tag 0]
-      (if (pos? depth)
-        [tag size-form (shape* (first v) (dec depth))]
-        [tag size-form]))))
+    (cond
+      (zero? n)     [tag 0]
+      (zero? depth) [tag size-form]
+      :else         [tag size-form (elements-shape v (dec depth))])))
+
+(defn- map-shape
+  "Render a map's shape:
+     empty            -> [:map 0]                          ; size only
+     depth-capped     -> [:map N]                          ; size only (no keys / values)
+     all keys shown   -> [:map {key value-shape …}]        ; size implicit in (count keys)
+     truncated        -> [:map N {first-16-keys-with-vals}]; size on the outside, sample inside
+   Keys are sorted by their string form for deterministic output. Values
+   are recursively shaped at `(dec depth)`."
+  [v depth]
+  (let [n  (count v)]
+    (cond
+      (zero? n)     [:map 0]
+      (zero? depth) [:map n]
+      :else
+      (let [sorted-ks (sort-by str (keys v))
+            shown-ks  (vec (take SHAPE_MAX_KEYS sorted-ks))
+            child     (long (dec depth))
+            pairs     (into {} (mapv (fn [k] [k (shape* (get v k) child)]) shown-ks))]
+        (if (> n SHAPE_MAX_KEYS)
+          [:map n (assoc pairs '… '…)]
+          [:map pairs])))))
 
 (defn- shape*
   "Recursive shape walker. `depth` caps recursion: 0 = scalar / size only,
-   1 = collection with first-element type, 2 = first-element with its own
-   keys/element-shape (the default top-level depth)."
+   1+ = walk element / value shapes one more level down."
   [v depth]
   (cond
     (nil? v)        :nil
@@ -75,27 +169,53 @@
     (integer? v)    :int
     (float? v)      :float
     (ratio? v)      :ratio
-    (keyword? v)    :keyword
-    (symbol? v)     :symbol
+    ;; Keywords + symbols carry namespace information that's part of their
+    ;; identity — collapsing `:foo/bar` and `:bar` both to `:keyword` would
+    ;; hide a discriminator the model often needs (e.g. `:db/ident` vs
+    ;; `:user/ident`). We wrap the value to disambiguate from the type-tag
+    ;; namespace `shape` itself uses (`:int`, `:keyword`, … are RESERVED
+    ;; tags; a literal user keyword always lives behind a `[:keyword …]` /
+    ;; `[:symbol …]` envelope).
+    (keyword? v)    [:keyword v]
+    (symbol? v)     [:symbol v]
     (string? v)     [:string (count v)]
     (instance? java.util.regex.Pattern v) :regex
     (inst? v)       :inst
     (uuid? v)       :uuid
-    (map? v)        (let [n  (count v)
-                          ks (->> (keys v)
-                               (take (inc SHAPE_MAX_KEYS))
-                               (sort-by str)
-                               vec)]
-                      (cond
-                        (zero? n)        [:map 0]
-                        (zero? depth)    [:map n]
-                        (> n SHAPE_MAX_KEYS) [:map n (conj (vec (take SHAPE_MAX_KEYS ks)) '…)]
-                        :else            [:map n ks]))
+    (map? v)        (map-shape v depth)
     (vector? v)     (col-shape :vec  v depth)
     (set? v)        (col-shape :set  v depth)
     (list? v)       (col-shape :list v depth)
     (sequential? v) (col-shape :seq  v depth)
-    (fn? v)         :fn
+    (var-like? v)   (let [m        (meta v)
+                          sym      (var-fq-symbol m)
+                          arglists (:arglists m)
+                          doc-line (doc-first-line (:doc m))]
+                      ;; Function-bearing vars surface arglists (and a one-line
+                      ;; doc excerpt when set). Value-bearing vars surface the
+                      ;; deref'd shape so the model sees what's behind the
+                      ;; `#'` without a separate eval. Deref is wrapped in
+                      ;; try/catch — some vars are unbound, throw on access,
+                      ;; or sit behind side-effecting late-init.
+                      (cond
+                        arglists      (cond-> [:var sym arglists]
+                                        doc-line (conj doc-line))
+                        (zero? depth) [:var sym]
+                        :else         (try [:var sym (shape* @v (long (dec depth)))]
+                                        (catch Throwable _ [:var sym]))))
+    (fn? v)         (let [m        (meta v)
+                          arglists (:arglists m)
+                          doc-line (doc-first-line (:doc m))]
+                      ;; Bare fn values rarely carry meta (the metadata lives
+                      ;; on the var, not the value), but anonymous fns built
+                      ;; via `^{:arglists …} (fn …)` and SCI-interned fns can.
+                      ;; Surface what we have; fall back to plain `:fn` when
+                      ;; nothing's annotated.
+                      (cond
+                        (and arglists doc-line) [:fn arglists doc-line]
+                        arglists                [:fn arglists]
+                        doc-line                [:fn doc-line]
+                        :else                   :fn))
     ;; Catch-all: anything we don't have a predicate for surfaces its
     ;; FULLY-QUALIFIED class name as a string. Lossy lowercase shortnames
     ;; (`:stringbuilder`) hide which package the value came from — a
@@ -106,29 +226,36 @@
                       "?")))
 
 (defn shape
-  "Describe a value's structure as plain Clojure data.
+  "Describe a value's structure as plain Clojure data — a real schema, not
+   just a tag.
 
    Scalars return a type keyword (`:int`, `:bool`, `:keyword`, …). Strings
    return `[:string N]`. Collections return `[tag size <element-shape>]`
-   for non-empty colls; the element-shape is computed from the FIRST element
-   only — cheap and bounded. Maps return `[:map size <sorted-keys>]`; keys
-   over `SHAPE_MAX_KEYS` collapse to a trailing `…`.
+   where element-shape is either a single shape (homogeneous) or
+   `[:union …]` (heterogeneous). Maps return `[:map {key value-shape …}]`
+   when keys fit and `[:map N {first-16-keys-with-values}]` when truncated.
+   Recursion depth defaults to 4; the two-arity form lets callers tighten
+   or widen.
 
-   Two-arity form lets callers cap recursion depth (default 2) when they only
-   want the outer shell. Always finite, never throws on lazy/infinite seqs
-   (uses `bounded-count` with a 4096 cap; sizes at-or-above render as
-   `\"4096+\"`).
+   Always finite, never throws on lazy / infinite seqs (uses `bounded-count`
+   with a 4096 cap; sizes at-or-above render as `\"4096+\"`). Unknown JVM
+   types fall back to their fully-qualified class name as a string.
 
    Examples:
-     (shape nil)                          ;; => :nil
-     (shape \"hello\")                      ;; => [:string 5]
-     (shape {:a 1 :b 2})                  ;; => [:map 2 [:a :b]]
-     (shape [1 2 3])                      ;; => [:vec 3 :int]
-     (shape ())                           ;; => [:list 0]
-     (shape (StringBuilder. \"hi\"))       ;; => \"java.lang.StringBuilder\"
-     (shape (v/skills))                   ;; => [:vec 6 [:map 6 [:body :description :extra :name :path :source]]]"
-  ([v]       (shape* v 2))
-  ([v depth] (shape* v (long (or depth 2)))))
+     (shape nil)                              ;; => :nil
+     (shape \"hello\")                          ;; => [:string 5]
+     (shape :db/ident)                        ;; => [:keyword :db/ident]
+     (shape 'clojure.core/+)                  ;; => [:symbol clojure.core/+]
+     (shape {:a 1 :b \"hi\"})                   ;; => [:map {:a :int :b [:string 2]}]
+     (shape [1 2 3])                          ;; => [:vec 3 :int]
+     (shape [1 \"two\" :three])                 ;; => [:vec 3 [:union :int [:keyword :three] [:string 3]]]
+     (shape {:a {:b 1}})                      ;; => [:map {:a [:map {:b :int}]}]
+     (shape #'clojure.core/+)                 ;; => [:var clojure.core/+ ([] [x] [x y] [x y & more]) \"Returns the sum of nums. (+) returns 0. …\"]
+     (shape #(do %&))                          ;; => :fn
+     (shape (StringBuilder. \"hi\"))           ;; => \"java.lang.StringBuilder\"
+     (shape TURN_ACCESSIBLE_SKILLS)           ;; => [:vec 6 [:map {:description [:string 95] :name [:string 8] :path [:string 71] :source [:keyword :repo]}]]"
+  ([v]       (shape* v SHAPE_DEFAULT_DEPTH))
+  ([v depth] (shape* v (long (or depth SHAPE_DEFAULT_DEPTH)))))
 
 (defn sci-update-binding!
   "Update a binding in an existing SCI context.

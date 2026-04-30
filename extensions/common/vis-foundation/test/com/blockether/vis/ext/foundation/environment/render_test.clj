@@ -89,10 +89,11 @@
       (expect (not (string/includes? out "monorepo:"))))))
 
 ;; -----------------------------------------------------------------------------
-;; format-skills-block — the tail line is the model's only documented surface
-;; for `(v/skills)` / `(v/skill ...)`. Pin both the alias (must be `v/`, not
-;; `vis/`) and the imperative code-shaped phrasing so any drift back to a
-;; passive sentence breaks the build.
+;; format-skills-block — the tail line points the model at the SYSTEM-var
+;; surface for enumeration (TURN_ACCESSIBLE_SKILLS) and at the activation
+;; symbol `(v/load-skill ...)` for body load. The retired `(v/skills)`
+;; symbol must NOT leak back in: ONE source of truth for enumeration
+;; (the SYSTEM var) wins over the symbol-call alternative.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe format-skills-block-test
@@ -105,16 +106,17 @@
                   :description "Disciplined diagnosis loop."}])]
       (expect (string/includes? out "<skills count=\"1\">"))
       (expect (string/includes? out "  diagnose [repo]: Disciplined diagnosis loop."))
-      ;; Imperative, code-shaped tail — the WHOLE point of the fix.
-      (expect (string/includes? out "(v/skills)"))
+      ;; Tail line: SYSTEM-var enumeration + symbol-call activation.
+      (expect (string/includes? out "TURN_ACCESSIBLE_SKILLS"))
       (expect (string/includes? out "(v/load-skill \"name\")"))
-      ;; Wrong alias / pre-rename name must NOT leak back in.
+      ;; Retired surfaces must NOT leak back in.
+      (expect (not (string/includes? out "(v/skills)")))
       (expect (not (string/includes? out "(vis/skills)")))
       (expect (not (string/includes? out "(vis/skill")))
       (expect (not (string/includes? out "(v/skill \"")))
       (expect (string/ends-with? out "</skills>"))))
 
-  (it "truncation marker still uses (v/skills)"
+  (it "truncation marker points at TURN_ACCESSIBLE_SKILLS, not the retired (v/skills) call"
     ;; Force truncation by stuffing many oversized descriptions.
     (let [skills (vec (for [i (range 200)]
                         {:name (str "skill-" i)
@@ -122,5 +124,5 @@
                          :description (apply str "x" (repeat 200 \.))}))
           out    (render/format-skills-block skills)]
       (expect (string/includes? out "more skills not shown"))
-      (expect (string/includes? out "(v/skills)"))
-      (expect (not (string/includes? out "(vis/skills)"))))))
+      (expect (string/includes? out "TURN_ACCESSIBLE_SKILLS"))
+      (expect (not (string/includes? out "(v/skills)"))))))

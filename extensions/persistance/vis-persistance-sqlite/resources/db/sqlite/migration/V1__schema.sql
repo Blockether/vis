@@ -151,6 +151,30 @@ CREATE TABLE iteration (
   llm_returned_empty_blocks  INTEGER NOT NULL DEFAULT 0
                                   CHECK (llm_returned_empty_blocks IN (0, 1)),
 
+  -- Per-iteration token accounting + estimated USD cost. NULL when
+  -- the provider response did not surface usage (e.g. the LLM call
+  -- itself failed before a response was returned). Reasoning /
+  -- cached tokens are subsets of completion / prompt respectively;
+  -- callers that want "input minus cached" compute it themselves.
+  -- Cost is provider-side estimated USD via the router's pricing
+  -- table — recorded so historical rows survive future price
+  -- changes.
+  llm_input_tokens                INTEGER CHECK (
+                                    llm_input_tokens IS NULL OR llm_input_tokens >= 0
+                                  ),
+  llm_output_tokens               INTEGER CHECK (
+                                    llm_output_tokens IS NULL OR llm_output_tokens >= 0
+                                  ),
+  llm_reasoning_tokens            INTEGER CHECK (
+                                    llm_reasoning_tokens IS NULL OR llm_reasoning_tokens >= 0
+                                  ),
+  llm_cached_tokens               INTEGER CHECK (
+                                    llm_cached_tokens IS NULL OR llm_cached_tokens >= 0
+                                  ),
+  llm_cost_usd                    REAL    CHECK (
+                                    llm_cost_usd IS NULL OR llm_cost_usd >= 0
+                                  ),
+
   metadata                        TEXT,    -- JSON-encoded per-iteration context (active extensions, etc.)
 
   -- Per-iteration code-block log as ONE Nippy-encoded vec of

@@ -256,14 +256,23 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe shape-fn-test
-  (it "scalars resolve to their type keyword"
+  (it "scalar non-keyword/symbol values resolve to their type keyword"
     (expect (= :nil     (sandbox-eval "(shape nil)")))
     (expect (= :bool    (sandbox-eval "(shape true)")))
     (expect (= :bool    (sandbox-eval "(shape false)")))
     (expect (= :int     (sandbox-eval "(shape 7)")))
-    (expect (= :float   (sandbox-eval "(shape 1.5)")))
-    (expect (= :keyword (sandbox-eval "(shape :a/b)")))
-    (expect (= :symbol  (sandbox-eval "(shape 'sym)"))))
+    (expect (= :float   (sandbox-eval "(shape 1.5)"))))
+
+  (it "keywords + symbols are wrapped, preserving the namespace verbatim"
+    ;; The wrapper distinguishes a value-keyword (e.g. `:foo/bar` returned
+    ;; from data) from a TYPE-TAG keyword that `shape` itself uses (`:int`,
+    ;; `:bool`, …). Without the wrapper, a vec of `[:int :foo]` would shape
+    ;; to `[:vec 2 :keyword]` and lose `:foo`'s identity — with the wrapper
+    ;; it stays `[:vec 2 [:union [:keyword :int] [:keyword :foo]]]`.
+    (expect (= [:keyword :a/b] (sandbox-eval "(shape :a/b)")))
+    (expect (= [:keyword :a]   (sandbox-eval "(shape :a)")))
+    (expect (= [:symbol 'foo]  (sandbox-eval "(shape 'foo)")))
+    (expect (= [:symbol 'a/b]  (sandbox-eval "(shape 'a/b)"))))
 
   (it "strings carry their character count"
     (expect (= [:string 5]  (sandbox-eval "(shape \"hello\")")))
@@ -275,51 +284,108 @@
     (expect (= [:set 0]  (sandbox-eval "(shape #{})")))
     (expect (= [:list 0] (sandbox-eval "(shape (list))"))))
 
-  (it "non-empty homogeneous vec/seq/set/list reports first-element shape"
-    (expect (= [:vec 3 :int]      (sandbox-eval "(shape [1 2 3])")))
-    (expect (= [:set 2 :keyword]  (sandbox-eval "(shape #{:a :b})")))
-    (expect (= [:list 2 :symbol]  (sandbox-eval "(shape (list 'x 'y))")))
+  (it "homogeneous collections report the single shared element shape"
+    (expect (= [:vec 3 :int] (sandbox-eval "(shape [1 2 3])")))
     ;; bare seq via `seq` over a vec
     (let [out (sandbox-eval "(shape (seq [1 2 3]))")]
       (expect (#{[:vec 3 :int] [:seq 3 :int] [:list 3 :int]} out))))
 
-  (it "map shape lists keys sorted by str"
-    (expect (= [:map 2 [:a :b]]
+  (it "heterogeneous collections render as [:union …] sorted by pr-str"
+    ;; Mixing int/keyword/string — each keyword wraps to its own shape
+    ;; entry, so the union surfaces three distinct kinds of value.
+    (expect (= [:vec 3 [:union :int [:keyword :two] [:string 3]]]
+              (sandbox-eval "(shape [1 :two \"thr\"])")))
+    ;; Mixed numeric: int + float -> union, not collapsed.
+    (expect (= [:vec 2 [:union :float :int]]
+              (sandbox-eval "(shape [1 2.0])")))
+    ;; Sets of distinct keywords keep each one's identity (sorted by pr-str).
+    (let [out (sandbox-eval "(shape #{:a :b})")]
+      (expect (= :set (first out)))
+      (expect (= 2    (second out)))
+      ;; The union body is a sorted vec; check both keywords are present.
+      (let [union-body (nth out 2)]
+        (expect (= :union (first union-body)))
+        (expect (= #{[:keyword :a] [:keyword :b]} (set (rest union-body)))))))
+
+  (it "map shape carries every key's value type"
+    (expect (= [:map {:a :int :b [:string 2]}]
+              (sandbox-eval "(shape {:a 1 :b \"hi\"})")))
+    ;; Keys ordered by their string form internally; `=` is
+    ;; order-independent so this still passes either way.
+    (expect (= [:map {:a :int :b :int}]
               (sandbox-eval "(shape {:b 2 :a 1})"))))
 
-  (it "recurses one level: vec of maps reports the inner map's keys"
-    (expect (= [:vec 2 [:map 2 [:k :v]]]
+  (it "nested maps recurse — each level surfaces keys + value types"
+    (expect (= [:map {:a [:map {:b :int}]}]
+              (sandbox-eval "(shape {:a {:b 1}})")))
+    (expect (= [:vec 2 [:map {:k :int :v :int}]]
               (sandbox-eval "(shape [{:k 1 :v 2} {:k 3 :v 4}])"))))
 
-  (it "depth knob caps recursion"
-    ;; depth = 0 — outer collection only, no element walk.
+  (it "depth knob caps recursion: deeper nesting collapses to size-only"
+    ;; depth = 0 — outer container, no element / value walk.
     (expect (= [:vec 2]
               (sandbox-eval "(shape [{:k 1} {:k 2}] 0)")))
     (expect (= [:map 1]
               (sandbox-eval "(shape {:a {:b 1}} 0)")))
-    ;; depth = 1 — outer collection + first element typed but not
-    ;; further unpacked (a map is reported as `[:map N]`, no keys).
+    ;; depth = 1 — outer container shaped, inner collapses to size-only.
     (expect (= [:vec 2 [:map 1]]
-              (sandbox-eval "(shape [{:k 1} {:k 2}] 1)"))))
+              (sandbox-eval "(shape [{:k 1} {:k 2}] 1)")))
+    (expect (= [:map {:a [:map 1]}]
+              (sandbox-eval "(shape {:a {:b 1}} 1)"))))
 
-  (it "large maps clip their key list with a trailing …"
+  (it "large maps clip key/value pairs with a trailing … entry (size precedes the sample)"
     ;; SHAPE_MAX_KEYS = 16. Build 20 keys and verify the tail collapses.
+    ;; Truncated form keeps `[:map N {first-16-pairs+…/…}]` — N is the
+    ;; real size; the inner map shows the first 16 keys with their value
+    ;; shapes plus a sentinel `… …` pair.
     (let [out (sandbox-eval
                 "(shape (into {} (for [i (range 20)] [(keyword (str \"k\" i)) i])))")]
       (expect (vector? out))
       (expect (= :map (first out)))
       (expect (= 20   (second out)))
-      ;; 16 explicit keys + a trailing … sentinel.
-      (let [ks (nth out 2)]
-        (expect (= 17 (count ks)))
-        (expect (= '… (last ks))))))
+      (let [pairs (nth out 2)]
+        (expect (map? pairs))
+        ;; 16 keyword keys + 1 `…` sentinel = 17 entries.
+        (expect (= 17 (count pairs)))
+        ;; sentinel pair under the symbol `…`.
+        (expect (= '… (get pairs '…)))
+        ;; First 16 keys all map to `:int`.
+        (expect (every? #{:int}
+                  (vals (dissoc pairs '…)))))))
 
-  (it "unknown JVM types fall back to a class-derived keyword"
+  (it "unknown JVM types fall back to the fully-qualified class name as a string"
     ;; StringBuilder is in the sandbox classes allowlist and matches none
-    ;; of `shape`'s explicit predicates — the catch-all branch lowercases
-    ;; the simple class name.
-    (expect (= :stringbuilder
-              (sandbox-eval "(shape (java.lang.StringBuilder. \"hi\"))")))))
+    ;; of `shape`'s explicit predicates. The catch-all preserves the
+    ;; package + capitalisation faithfully (no lossy lowercase keyword).
+    (expect (= "java.lang.StringBuilder"
+              (sandbox-eval "(shape (java.lang.StringBuilder. \"hi\"))"))))
+
+  ;; ---------------------------------------------------------------------
+  ;; Vars and functions — the model often holds an SCI var (`(def foo …)`
+  ;; persists as a sandbox var) or a fn-value. `shape` introspects both.
+  ;; ---------------------------------------------------------------------
+
+  (it "value vars surface their fully-qualified symbol + the deref'd shape"
+    ;; `(def n 42)` interns an SCI var in `sandbox`; `#'n` is that var.
+    ;; Meta carries `:ns sandbox :name n`, no `:arglists`. Shape recurses
+    ;; into the value at reduced depth.
+    (let [out (sandbox-eval "(do (def n 42) (shape #'n))")]
+      (expect (= :var          (first out)))
+      (expect (= 'sandbox/n    (second out)))
+      (expect (= :int          (nth out 2)))))
+
+  (it "function vars surface arglists and a one-line doc excerpt"
+    (let [out (sandbox-eval
+                "(do (defn greet \"Say hello to NAME.\\n\\nReturns a string.\" [name] (str \"hi \" name)) (shape #'greet))")]
+      (expect (= :var              (first out)))
+      (expect (= 'sandbox/greet    (second out)))
+      (expect (= '([name])         (nth out 2)))
+      (expect (= "Say hello to NAME." (nth out 3)))))
+
+  (it "function values without metadata surface as bare :fn"
+    ;; `#(* % %)` lambda — no var, no `:arglists`, no `:doc`.
+    (expect (= :fn (sandbox-eval "(shape (fn [x] (* x x)))")))
+    (expect (= :fn (sandbox-eval "(shape #(* % %))")))))
 
 ;; -----------------------------------------------------------------------------
 ;; Cross-check: every pattern shown in CORE_SYSTEM_PROMPT either appears
@@ -349,7 +415,7 @@
    ;; with extensions (regression guard for the empty-bullet bug we hit
    ;; on conversation 9b1e460d-c8ed-457e-bf00-b84157235c38).
    "TURN_ACCESSIBLE_SKILLS"
-   "(v/skill name)"
+   "(v/load-skill name)"
    "(shape x)"])
 
 (defdescribe prompt-contract-test

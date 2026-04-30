@@ -246,7 +246,10 @@
 
 (defn list-all
   "Vec of skill maps, alphabetical by `:name`. Empty when no skills
-   are found anywhere. Surfaces as `(v/skills)`."
+   are found anywhere. Drives both the `<skills>` block in the
+   system prompt and the `TURN_ACCESSIBLE_SKILLS` SYSTEM var; not
+   exposed as a sandbox surface (the SYSTEM var is the model-facing
+   API)."
   []
   (or (:loaded (current)) []))
 
