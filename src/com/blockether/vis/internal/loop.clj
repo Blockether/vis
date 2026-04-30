@@ -1205,7 +1205,7 @@
 
    Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_QUERY_ID,
    TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
-   TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS) repeat verbatim across
+   TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS) repeat verbatim across
    iterations of the same turn — that is the intentional contract:
    \"every iteration carries a snapshot of every SYSTEM var\". The
    dedup-on-unchanged optimization the previous version did was a
@@ -1219,7 +1219,7 @@
                          turn-query-id iteration-id
                          conversation-soul-id conversation-state-id
                          system-prompt
-                         extensions-snapshot
+                         extensions-snapshot accessible-skills-snapshot
                          conversation-title conversation-metadata]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
@@ -1230,6 +1230,7 @@
       (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
       (stamp "TURN_SYSTEM_PROMPT"           (or system-prompt ""))
       (stamp "TURN_ACTIVE_EXTENSIONS"       (or extensions-snapshot []))
+      (stamp "TURN_ACCESSIBLE_SKILLS"       (or accessible-skills-snapshot []))
       (stamp "ITERATION_ID"                 (or iteration-id ""))
       (stamp "ITERATION_PREVIOUS_REASONING" (or thinking ""))
       (stamp "CONVERSATION_TITLE"           (or conversation-title ""))
@@ -1374,6 +1375,12 @@
     ;; surface.
     (env/bind-and-bump! environment 'TURN_ACTIVE_EXTENSIONS
       (prompt/extensions-snapshot active-exts))
+    ;; TURN_ACCESSIBLE_SKILLS = frozen vec of skill summaries the model
+    ;; can filter/map/some over. Bodies are NOT included; loading one
+    ;; is the activation step via (v/load-skill name). See
+    ;; prompt/accessible-skills-snapshot for the per-element shape.
+    (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
+      (prompt/accessible-skills-snapshot))
     ;; Reset ITERATION_ID to nil at turn start; rebound by
     ;; `update-iteration-id!` after each iteration row commits.
     (env/bind-and-bump! environment 'ITERATION_ID nil)
@@ -1564,11 +1571,13 @@
                                                                     (:db-info environment)
                                                                     (:conversation-id environment))
                                            :system-prompt      system-prompt
-                                         ;; Same frozen snapshot bound in SCI.
+                                         ;; Same frozen snapshots bound in SCI.
                                          ;; Re-stamped every iteration so
-                                         ;; v/var-history 'TURN_ACTIVE_EXTENSIONS
-                                         ;; returns one row per iter, not just iter 0.
-                                           :extensions-snapshot (prompt/extensions-snapshot active-exts)
+                                         ;; v/var-history 'TURN_ACTIVE_EXTENSIONS /
+                                         ;; 'TURN_ACCESSIBLE_SKILLS returns one row
+                                         ;; per iter, not just iter 0.
+                                           :extensions-snapshot        (prompt/extensions-snapshot active-exts)
+                                           :accessible-skills-snapshot (prompt/accessible-skills-snapshot)
                                          ;; Live conversation title; same value
                                          ;; the SCI sandbox sees as CONVERSATION_TITLE.
                                            :conversation-title    (some-> (:conversation-title-atom environment)

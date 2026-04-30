@@ -1,7 +1,11 @@
 (ns com.blockether.vis.internal.doctor-test
   "Unit tests for the cross-extension doctor aggregator. Covers
-   plan §6: aggregator auto-injection, deterministic ordering,
-   exit-code mapping, throwing-check capture, empty-registry case."
+   plan §6: aggregator auto-injection of `:ext`, deterministic
+   ordering, exit-code mapping, throwing-fn capture, empty-registry
+   case. The contract: each extension provides a single
+   `:ext/doctor-check-fn` that returns a seq of message maps; the
+   host stamps `:ext` on every message, leaves `:check-id` to the
+   extension to fill in."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.doctor :as doctor]
@@ -38,37 +42,33 @@
           (extension/register-extension! ext))))))
 
 (defn- mk-ext
-  "Build a minimal extension map with the given namespace + doctor
-   checks vec."
-  [ns-sym checks]
-  (extension/extension
-    {:ext/namespace     ns-sym
-     :ext/doc           (str "synthetic " ns-sym)
-     :ext/doctor-checks checks}))
+  "Build a minimal extension map with the given namespace + a
+   `:ext/doctor-check-fn` that returns the provided messages."
+  ([ns-sym] (mk-ext ns-sym (constantly [])))
+  ([ns-sym check-fn]
+   (extension/extension
+     {:ext/namespace       ns-sym
+      :ext/doc             (str "synthetic " ns-sym)
+      :ext/doctor-check-fn check-fn})))
 
-(defn- mk-check
-  "Build a check entry whose run-fn returns a fixed messages vec."
-  [id msgs]
-  {:check/id          id
-   :check/name        (str "synthetic " id)
-   :check/description (str "synthetic check " id)
-   :check/run-fn      (constantly msgs)})
+(defn- stamping-fn
+  "Build a check fn that returns `msgs` with each pre-stamped with the
+   given `:check-id`. Mirrors what real extensions do."
+  [check-id msgs]
+  (constantly (mapv #(assoc % :check-id check-id) msgs)))
 
-(defn- mk-throwing-check [id error-msg]
-  {:check/id          id
-   :check/name        (str "throwing " id)
-   :check/description "intentionally throws"
-   :check/run-fn      (fn [_env] (throw (Exception. ^String error-msg)))})
+(defn- throwing-fn [error-msg]
+  (fn [_env] (throw (Exception. ^String error-msg))))
 
 ;; ---------------------------------------------------------------------------
 ;; run-checks
 ;; ---------------------------------------------------------------------------
 
 (defdescribe run-checks-test
-  (it "auto-injects :ext and :check-id on every emitted message"
+  (it "auto-injects :ext on every emitted message; preserves :check-id when stamped"
     (with-registry*
       [(mk-ext 'test.foo
-         [(mk-check ::probe [{:level :info :message "hello"}])])]
+         (stamping-fn ::probe [{:level :info :message "hello"}]))]
       #(let [msgs (doctor/run-checks {})]
          (expect (= 1 (count msgs)))
          (let [m (first msgs)]
@@ -77,49 +77,54 @@
            (expect (= :info (:level m)))
            (expect (= "hello" (:message m)))))))
 
-  (it "preserves declaration order across extensions and checks"
+  (it "messages without :check-id stamp pass through with no :check-id key"
+    (with-registry*
+      [(mk-ext 'test.foo (constantly [{:level :info :message "raw"}]))]
+      #(let [m (first (doctor/run-checks {}))]
+         (expect (= 'test.foo (:ext m)))
+         (expect (nil? (:check-id m))))))
+
+  (it "preserves message order across extensions and within an extension"
     (with-registry*
       [(mk-ext 'test.alpha
-         [(mk-check ::a1 [{:level :info :message "a1"}])
-          (mk-check ::a2 [{:level :info :message "a2"}])])
+         (constantly [{:level :info :message "a1" :check-id ::a}
+                      {:level :info :message "a2" :check-id ::a}]))
        (mk-ext 'test.beta
-         [(mk-check ::b1 [{:level :info :message "b1"}])])]
+         (constantly [{:level :info :message "b1" :check-id ::b}]))]
       #(let [msgs (doctor/run-checks {})]
          (expect (= ["a1" "a2" "b1"] (mapv :message msgs))))))
 
-  (it "throwing check fns become a single :error message with check-id"
+  (it "throwing check fn becomes a single :error message tagged with the extension"
     (with-registry*
-      [(mk-ext 'test.bad
-         [(mk-throwing-check ::boom "kaboom")])]
+      [(mk-ext 'test.bad (throwing-fn "kaboom"))]
       #(let [msgs (doctor/run-checks {})
              m    (first msgs)]
          (expect (= 1 (count msgs)))
          (expect (= :error (:level m)))
          (expect (str/includes? (:message m) "kaboom"))
-         (expect (= ::boom (:check-id m)))
          (expect (= 'test.bad (:ext m))))))
 
   (it "supports a check fn returning a single map (not wrapped in vec)"
     (with-registry*
-      [(mk-ext 'test.single
-         [{:check/id          ::single
-           :check/name        "single"
-           :check/description "returns one map"
-           :check/run-fn      (constantly {:level :warn :message "watch out"})}])]
+      [(mk-ext 'test.single (constantly {:level :warn :message "watch out"}))]
       #(let [msgs (doctor/run-checks {})]
          (expect (= 1 (count msgs)))
          (expect (= :warn (:level (first msgs)))))))
 
+  (it "nil return is treated as no messages"
+    (with-registry*
+      [(mk-ext 'test.nil (constantly nil))]
+      #(expect (empty? (doctor/run-checks {})))))
+
   (it "coerces unknown :level into :error"
     (with-registry*
-      [(mk-ext 'test.bad-level
-         [(mk-check ::lvl [{:level :purple :message "??"}])])]
+      [(mk-ext 'test.bad-level (constantly [{:level :purple :message "??"}]))]
       #(let [m (first (doctor/run-checks {}))]
          (expect (= :error (:level m))))))
 
-  (it "extension declaring no :ext/doctor-checks contributes nothing"
+  (it "extension declaring no :ext/doctor-check-fn contributes nothing"
     (with-registry*
-      [(mk-ext 'test.silent [])]
+      [(mk-ext 'test.silent)]
       #(expect (empty? (doctor/run-checks {})))))
 
   (it "empty registry returns empty messages"
@@ -208,14 +213,14 @@
   (it "nil when registry has only :info messages"
     (with-registry*
       [(mk-ext 'test.clean
-         [(mk-check ::ok [{:level :info :message "ok"}])])]
+         (constantly [{:level :info :message "ok" :check-id ::ok}]))]
       #(expect (nil? (doctor/startup-hint-line {})))))
 
   (it "warns about issue count when warnings present"
     (with-registry*
       [(mk-ext 'test.warn
-         [(mk-check ::a [{:level :warn :message "w1"}])
-          (mk-check ::b [{:level :warn :message "w2"}])])]
+         (constantly [{:level :warn :message "w1" :check-id ::a}
+                      {:level :warn :message "w2" :check-id ::b}]))]
       #(let [hint (doctor/startup-hint-line {})]
          (expect (some? hint))
          (expect (str/includes? hint "2 issues"))
@@ -224,8 +229,8 @@
   (it "issues count includes errors"
     (with-registry*
       [(mk-ext 'test.error
-         [(mk-check ::a [{:level :warn  :message "w"}
-                         {:level :error :message "e"}])])]
+         (constantly [{:level :warn  :message "w" :check-id ::a}
+                      {:level :error :message "e" :check-id ::a}]))]
       #(let [hint (doctor/startup-hint-line {})]
          (expect (str/includes? hint "2 issues")))))
 
@@ -238,13 +243,15 @@
 ;; ---------------------------------------------------------------------------
 
 (defdescribe spec-validation-test
-  (it "extension with no :ext/doctor-checks is accepted (defaults to [])"
+  (it "extension with no :ext/doctor-check-fn is accepted (defaults to no-op)"
     (let [ext (extension/extension {:ext/namespace 'test.no-checks
                                     :ext/doc       "no checks declared"})]
-      (expect (= [] (:ext/doctor-checks ext)))))
+      (expect (fn? (:ext/doctor-check-fn ext)))
+      (expect (= [] ((:ext/doctor-check-fn ext) {})))))
 
-  (it "extension with :ext/doctor-checks [] is accepted"
-    (let [ext (extension/extension {:ext/namespace     'test.empty-checks
-                                    :ext/doc           "empty checks vec"
-                                    :ext/doctor-checks []})]
-      (expect (= [] (:ext/doctor-checks ext))))))
+  (it "extension with explicit no-op :ext/doctor-check-fn round-trips"
+    (let [no-op (constantly [])
+          ext   (extension/extension {:ext/namespace       'test.empty-checks
+                                      :ext/doc             "explicit no-op"
+                                      :ext/doctor-check-fn no-op})]
+      (expect (identical? no-op (:ext/doctor-check-fn ext))))))

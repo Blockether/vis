@@ -18,6 +18,7 @@
    so future tweaks to the iteration loop's parse pipeline keep
    surfacing a useful hint for this class of LLM mistake."
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as diag]
    [edamame.core :as edamame]
@@ -208,7 +209,7 @@
   ;; Slurped at namespace-load time; the fixture is checked in
   ;; verbatim so the test stays deterministic across machines.
   (slurp
-    (clojure.java.io/resource
+    (io/resource
       "parse-fixtures/eeaf9651-multi-line-unclosed-string.clj.txt")))
 
 (defdescribe multi-line-unclosed-string-failure-test

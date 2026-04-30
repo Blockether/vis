@@ -58,7 +58,7 @@
      :ext/symbols        (vec (concat introspection/all-symbols
                                 editing/editing-symbols
                                 environment/environment-symbols))
-     :ext/doctor-checks  doctor/all-checks}))
+     :ext/doctor-check-fn doctor/check-fn}))
 
 (vis/register-extension! vis-extension)
 

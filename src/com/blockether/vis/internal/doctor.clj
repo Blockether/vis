@@ -1,15 +1,17 @@
 (ns com.blockether.vis.internal.doctor
-  "Doctor protocol: aggregates `:ext/doctor-checks` from every
+  "Doctor protocol: aggregates `:ext/doctor-check-fn` from every
    registered extension into a single cross-cutting diagnostic
    surface. `vis doctor` invokes [[run-checks]] then
    [[format-output]] + [[exit-code]].
 
    Plan §1 Q19 + §10:
-     - Output ordering: extensions in registration order; within
-       each extension, checks in declaration order; messages in
-       fn-return order. Levels NOT re-sorted within a section —
+     - One fn per extension. The fn returns a seq of message maps;
+       the extension self-stamps `:check-id` on each message when it
+       wants the formatter's per-section prefix.
+     - Output ordering: extensions in registration order; messages
+       in fn-return order. Levels NOT re-sorted within a section —
        cause-and-effect narrative preserved.
-     - Activation contract: checks run for EVERY registered
+     - Activation contract: the fn runs for EVERY registered
        extension regardless of `:ext/activation-fn`. Check fns must
        defensively handle missing env keys.
      - Exit codes: 0 if only :info or empty; 1 if any :warn (no
@@ -37,48 +39,44 @@
       (assoc :level   level
         :message message))))
 
-(defn- run-one-check
-  "Run one check. Each emitted message gets `:ext` (the namespace) and
-   `:check-id` auto-injected. Throwables become a single :error
-   message describing the throw."
-  [ext-ns {:check/keys [id run-fn]} environment]
+(defn- run-one-extension
+  "Run ONE extension's `:ext/doctor-check-fn`. Each emitted message
+   gets `:ext` (the namespace) auto-injected; `:check-id` is left to
+   the extension to stamp. Throwables become a single :error message
+   describing the throw."
+  [ext-ns check-fn environment]
   (try
-    (let [returned (run-fn environment)
+    (let [returned (check-fn environment)
           msgs     (cond
-                     (map? returned) [returned]
+                     (nil? returned)        []
+                     (map? returned)        [returned]
                      (sequential? returned) (vec returned)
                      :else [{:level   :error
-                             :message (str "check returned non-message value: "
+                             :message (str ":ext/doctor-check-fn returned non-message value: "
                                         (pr-str returned))}])]
-      (mapv (fn [m]
-              (-> (coerce-message m)
-                (assoc :ext ext-ns :check-id id)))
-        msgs))
+      (mapv (fn [m] (-> (coerce-message m) (assoc :ext ext-ns))) msgs))
     (catch Throwable t
       (tel/log! {:level :error :id ::check-threw
-                 :data  {:ext      ext-ns
-                         :check-id id
-                         :error    (ex-message t)}})
-      [{:level    :error
-        :message  (str "check threw: " (or (ex-message t) (str t)))
-        :ext      ext-ns
-        :check-id id}])))
+                 :data  {:ext   ext-ns
+                         :error (ex-message t)}})
+      [{:level   :error
+        :message (str ":ext/doctor-check-fn threw: " (or (ex-message t) (str t)))
+        :ext     ext-ns}])))
 
 (defn run-checks
-  "Walk every registered extension, run every `:ext/doctor-checks`
-   entry, return a vec of message maps with `:ext` + `:check-id`
-   auto-injected.
+  "Walk every registered extension, invoke its `:ext/doctor-check-fn`,
+   return a vec of message maps with `:ext` auto-injected. The
+   extension's fn is responsible for stamping `:check-id` on each
+   message when it wants per-section grouping in the formatter.
 
-   Plan §10: extensions in registration order; within each, checks
-   in declaration order. Activation-fn ignored: every registered
-   extension's checks run."
+   Plan §10: extensions in registration order; messages in fn-return
+   order. Activation-fn ignored: every registered extension's fn runs."
   [environment]
   (vec
     (mapcat
       (fn [ext]
-        (let [ext-ns (:ext/namespace ext)
-              checks (or (:ext/doctor-checks ext) [])]
-          (mapcat #(run-one-check ext-ns % environment) checks)))
+        (when-let [check-fn (:ext/doctor-check-fn ext)]
+          (run-one-extension (:ext/namespace ext) check-fn environment)))
       (extension/registered-extensions))))
 
 (defn exit-code

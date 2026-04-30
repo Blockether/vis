@@ -1591,13 +1591,14 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented eleven SYSTEM vars"
+  (it "SYSTEM_VAR_NAMES contains exactly the documented twelve SYSTEM vars"
     (expect (= '#{TURN_USER_REQUEST
                   TURN_QUERY_ID
                   TURN_CONVERSATION_SOUL_ID
                   TURN_CONVERSATION_STATE_ID
                   TURN_SYSTEM_PROMPT
                   TURN_ACTIVE_EXTENSIONS
+                  TURN_ACCESSIBLE_SKILLS
                   ITERATION_ID
                   ITERATION_PREVIOUS_REASONING
                   CONVERSATION_TITLE
@@ -1614,6 +1615,7 @@
       (expect (true?  (system-var-sym? 'TURN_CONVERSATION_STATE_ID)))
       (expect (true?  (system-var-sym? 'TURN_SYSTEM_PROMPT)))
       (expect (true?  (system-var-sym? 'TURN_ACTIVE_EXTENSIONS)))
+      (expect (true?  (system-var-sym? 'TURN_ACCESSIBLE_SKILLS)))
       (expect (true?  (system-var-sym? 'ITERATION_ID)))
       (expect (true?  (system-var-sym? 'ITERATION_PREVIOUS_REASONING)))
       (expect (true?  (system-var-sym? 'CONVERSATION_TITLE)))

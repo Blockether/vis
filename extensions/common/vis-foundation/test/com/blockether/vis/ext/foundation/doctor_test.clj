@@ -1,19 +1,23 @@
 (ns com.blockether.vis.ext.foundation.doctor-test
-  "Unit tests for foundation's `:ext/doctor-checks` entries:
+  "Unit tests for foundation's `:ext/doctor-check-fn` sections:
    ::system, ::agents-md, ::skills, ::scan-warnings.
 
-   Plan §6: each check returns expected message shapes for every
-   input scenario."
+   Plan §6: each section returns expected message shapes for every
+   input scenario; the composite `check-fn` stamps the right
+   `:check-id` on every message."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.doctor :as doctor]
    [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- run-check [check-map env]
-  ;; Mirror what the aggregator does to a single check fn: invoke
-  ;; with env, collect the returned messages.
-  (let [r ((:check/run-fn check-map) env)]
-    (if (map? r) [r] (vec r))))
+(defn- section-msgs
+  "Run the composite `check-fn` against `env`, then keep only the
+   messages stamped with the given `:check-id` — the test sees just
+   the section it cares about."
+  [check-id env]
+  (->> (doctor/check-fn env)
+    (filter #(= check-id (:check-id %)))
+    vec))
 
 ;; ---------------------------------------------------------------------------
 ;; ::system
@@ -21,7 +25,7 @@
 
 (defdescribe system-check-test
   (it "emits 5 :info messages with OS / Java / Clojure / Memory / DB path"
-    (let [msgs (run-check doctor/system-check {})
+    (let [msgs     (section-msgs ::doctor/system {})
           msg-text (mapv :message msgs)]
       (expect (= 5 (count msgs)))
       (expect (every? #(= :info (:level %)) msgs))
@@ -32,12 +36,12 @@
       (expect (some #(str/starts-with? % "DB path:") msg-text))))
 
   (it "DB path message says '(no DB)' when env has no :db-info"
-    (let [msgs (run-check doctor/system-check {})
+    (let [msgs (section-msgs ::doctor/system {})
           db   (some #(when (str/starts-with? (:message %) "DB path:") %) msgs)]
       (expect (str/includes? (:message db) "(no DB)"))))
 
   (it "DB path message includes the path when :db-info :path present"
-    (let [msgs (run-check doctor/system-check {:db-info {:path "/tmp/test.db"}})
+    (let [msgs (section-msgs ::doctor/system {:db-info {:path "/tmp/test.db"}})
           db   (some #(when (str/starts-with? (:message %) "DB path:") %) msgs)]
       (expect (str/includes? (:message db) "/tmp/test.db")))))
 
@@ -46,13 +50,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defdescribe agents-md-check-test
-  ;; This check reads from the agents/ scanner, which is cwd-cached.
+  ;; This section reads from the agents/ scanner, which is cwd-cached.
   ;; In the test JVM, cwd is the repo root which DOES have AGENTS.md.
   ;; So we exercise the present case with the live data; the absent
   ;; case is covered indirectly by the agents scanner tests.
 
   (it "emits one :info message when AGENTS.md found"
-    (let [msgs (run-check doctor/agents-md-check {})]
+    (let [msgs (section-msgs ::doctor/agents-md {})]
       (expect (= 1 (count msgs)))
       (let [m (first msgs)]
         (expect (= :info (:level m)))
@@ -65,7 +69,7 @@
 
 (defdescribe skills-check-test
   (it "emits one :info message summarising count + breakdown"
-    (let [msgs (run-check doctor/skills-check {})]
+    (let [msgs (section-msgs ::doctor/skills {})]
       (expect (= 1 (count msgs)))
       (let [m (first msgs)]
         (expect (= :info (:level m)))
@@ -78,25 +82,27 @@
 
 (defdescribe scan-warnings-check-test
   (it "emits zero messages when nothing malformed (clean repo)"
-    (let [msgs (run-check doctor/scan-warnings-check {})]
-      (expect (empty? msgs)))))
+    (expect (empty? (section-msgs ::doctor/scan-warnings {})))))
 
 ;; ---------------------------------------------------------------------------
-;; Bundled vec sanity
+;; Composite check-fn shape
 ;; ---------------------------------------------------------------------------
 
-(defdescribe all-checks-shape-test
-  (it "all-checks vec contains the four documented entries in order"
-    (expect (= 4 (count doctor/all-checks)))
-    (expect (= [:com.blockether.vis.ext.foundation.doctor/system
-                :com.blockether.vis.ext.foundation.doctor/agents-md
-                :com.blockether.vis.ext.foundation.doctor/skills
-                :com.blockether.vis.ext.foundation.doctor/scan-warnings]
-              (mapv :check/id doctor/all-checks))))
+(defdescribe check-fn-shape-test
+  (it "check-fn is a function suitable for `:ext/doctor-check-fn`"
+    (expect (fn? doctor/check-fn)))
 
-  (it "every entry has the four required fields"
-    (doseq [c doctor/all-checks]
-      (expect (keyword? (:check/id c)))
-      (expect (string?  (:check/name c)))
-      (expect (string?  (:check/description c)))
-      (expect (fn?      (:check/run-fn c))))))
+  (it "every emitted message carries one of the four documented :check-ids in section order"
+    (let [msgs (doctor/check-fn {})
+          ids  (distinct (mapv :check-id msgs))]
+      (expect (every? #{::doctor/system
+                        ::doctor/agents-md
+                        ::doctor/skills
+                        ::doctor/scan-warnings}
+                ids))
+      ;; Sections appear in the documented order — system, agents-md, skills,
+      ;; scan-warnings. Any present subset preserves that ordering.
+      (let [section-order [::doctor/system ::doctor/agents-md
+                           ::doctor/skills ::doctor/scan-warnings]
+            present (filter (set ids) section-order)]
+        (expect (= present ids))))))

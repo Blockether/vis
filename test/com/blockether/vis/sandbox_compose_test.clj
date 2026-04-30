@@ -249,6 +249,79 @@
               #(sandbox-eval "(slurp \"/etc/hosts\")")))))
 
 ;; -----------------------------------------------------------------------------
+;; (shape v) — sandbox-bound structural describe. The model's first-aid kit
+;; for unknown values: scalar -> type kw, string -> [:string N], collection ->
+;; [tag size <element-shape>], map -> [:map size <sorted-keys>]. Recursion
+;; depth caps at 2 so the output stays one line for a vec-of-maps.
+;; -----------------------------------------------------------------------------
+
+(defdescribe shape-fn-test
+  (it "scalars resolve to their type keyword"
+    (expect (= :nil     (sandbox-eval "(shape nil)")))
+    (expect (= :bool    (sandbox-eval "(shape true)")))
+    (expect (= :bool    (sandbox-eval "(shape false)")))
+    (expect (= :int     (sandbox-eval "(shape 7)")))
+    (expect (= :float   (sandbox-eval "(shape 1.5)")))
+    (expect (= :keyword (sandbox-eval "(shape :a/b)")))
+    (expect (= :symbol  (sandbox-eval "(shape 'sym)"))))
+
+  (it "strings carry their character count"
+    (expect (= [:string 5]  (sandbox-eval "(shape \"hello\")")))
+    (expect (= [:string 0]  (sandbox-eval "(shape \"\")"))))
+
+  (it "empty collections show their tag plus a 0 size"
+    (expect (= [:vec 0]  (sandbox-eval "(shape [])")))
+    (expect (= [:map 0]  (sandbox-eval "(shape {})")))
+    (expect (= [:set 0]  (sandbox-eval "(shape #{})")))
+    (expect (= [:list 0] (sandbox-eval "(shape (list))"))))
+
+  (it "non-empty homogeneous vec/seq/set/list reports first-element shape"
+    (expect (= [:vec 3 :int]      (sandbox-eval "(shape [1 2 3])")))
+    (expect (= [:set 2 :keyword]  (sandbox-eval "(shape #{:a :b})")))
+    (expect (= [:list 2 :symbol]  (sandbox-eval "(shape (list 'x 'y))")))
+    ;; bare seq via `seq` over a vec
+    (let [out (sandbox-eval "(shape (seq [1 2 3]))")]
+      (expect (#{[:vec 3 :int] [:seq 3 :int] [:list 3 :int]} out))))
+
+  (it "map shape lists keys sorted by str"
+    (expect (= [:map 2 [:a :b]]
+              (sandbox-eval "(shape {:b 2 :a 1})"))))
+
+  (it "recurses one level: vec of maps reports the inner map's keys"
+    (expect (= [:vec 2 [:map 2 [:k :v]]]
+              (sandbox-eval "(shape [{:k 1 :v 2} {:k 3 :v 4}])"))))
+
+  (it "depth knob caps recursion"
+    ;; depth = 0 — outer collection only, no element walk.
+    (expect (= [:vec 2]
+              (sandbox-eval "(shape [{:k 1} {:k 2}] 0)")))
+    (expect (= [:map 1]
+              (sandbox-eval "(shape {:a {:b 1}} 0)")))
+    ;; depth = 1 — outer collection + first element typed but not
+    ;; further unpacked (a map is reported as `[:map N]`, no keys).
+    (expect (= [:vec 2 [:map 1]]
+              (sandbox-eval "(shape [{:k 1} {:k 2}] 1)"))))
+
+  (it "large maps clip their key list with a trailing …"
+    ;; SHAPE_MAX_KEYS = 16. Build 20 keys and verify the tail collapses.
+    (let [out (sandbox-eval
+                "(shape (into {} (for [i (range 20)] [(keyword (str \"k\" i)) i])))")]
+      (expect (vector? out))
+      (expect (= :map (first out)))
+      (expect (= 20   (second out)))
+      ;; 16 explicit keys + a trailing … sentinel.
+      (let [ks (nth out 2)]
+        (expect (= 17 (count ks)))
+        (expect (= '… (last ks))))))
+
+  (it "unknown JVM types fall back to a class-derived keyword"
+    ;; StringBuilder is in the sandbox classes allowlist and matches none
+    ;; of `shape`'s explicit predicates — the catch-all branch lowercases
+    ;; the simple class name.
+    (expect (= :stringbuilder
+              (sandbox-eval "(shape (java.lang.StringBuilder. \"hi\"))")))))
+
+;; -----------------------------------------------------------------------------
 ;; Cross-check: every pattern shown in CORE_SYSTEM_PROMPT either appears
 ;; verbatim above, or reduces to one that does. If you add a pattern to
 ;; the prompt, add the case here. This guard test fails loud if the
@@ -271,7 +344,13 @@
    "TURN_USER_REQUEST"
    "CONVERSATION_TITLE"
    "(answer ARG)"
-   "(conversation-title ARG)"])
+   "(conversation-title ARG)"
+   ;; Skills + shape — explicit so the model never re-confuses skills
+   ;; with extensions (regression guard for the empty-bullet bug we hit
+   ;; on conversation 9b1e460d-c8ed-457e-bf00-b84157235c38).
+   "TURN_ACCESSIBLE_SKILLS"
+   "(v/skill name)"
+   "(shape x)"])
 
 (defdescribe prompt-contract-test
   (it "every pattern this test asserts is also surfaced in CORE_SYSTEM_PROMPT"

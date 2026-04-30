@@ -271,10 +271,12 @@
 ;; Doctor protocol
 ;;
 ;; Cross-cutting diagnostic surface. Every extension can declare
-;; `:ext/doctor-checks` (vec of `{:check/id :check/name :check/description
-;; :check/run-fn}`); `vis doctor` aggregates them all into a level-aware
-;; (info / warn / error) report with 0 / 1 / 2 exit code by max level.
-;; See plan §1 Q19 + §10.
+;; `:ext/doctor-check-fn` — a single `(fn [env]) -> seq<msg>` returning
+;; diagnostic messages. The host auto-injects `:ext` on each emitted message;
+;; the extension self-stamps `:check-id` when it wants the formatter's
+;; per-section grouping. `vis doctor` aggregates across every registered
+;; extension into a level-aware (info / warn / error) report with 0 / 1 / 2
+;; exit code by max level. See plan §1 Q19 + §10.
 ;; =============================================================================
 (def run-doctor-checks    doctor/run-checks)
 (def doctor-exit-code     doctor/exit-code)

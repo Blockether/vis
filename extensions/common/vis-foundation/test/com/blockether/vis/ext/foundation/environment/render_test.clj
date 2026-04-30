@@ -87,3 +87,40 @@
     (let [out (render/render {:host base-host :git nil :languages nil
                               :monorepo {:shape nil :totals {} :files {}}})]
       (expect (not (string/includes? out "monorepo:"))))))
+
+;; -----------------------------------------------------------------------------
+;; format-skills-block — the tail line is the model's only documented surface
+;; for `(v/skills)` / `(v/skill ...)`. Pin both the alias (must be `v/`, not
+;; `vis/`) and the imperative code-shaped phrasing so any drift back to a
+;; passive sentence breaks the build.
+;; -----------------------------------------------------------------------------
+
+(defdescribe format-skills-block-test
+  (it "returns nil when the catalog is empty"
+    (expect (nil? (render/format-skills-block []))))
+
+  (it "renders one skill with the documented tail line"
+    (let [out (render/format-skills-block
+                [{:name "diagnose" :source :repo
+                  :description "Disciplined diagnosis loop."}])]
+      (expect (string/includes? out "<skills count=\"1\">"))
+      (expect (string/includes? out "  diagnose [repo]: Disciplined diagnosis loop."))
+      ;; Imperative, code-shaped tail — the WHOLE point of the fix.
+      (expect (string/includes? out "(v/skills)"))
+      (expect (string/includes? out "(v/load-skill \"name\")"))
+      ;; Wrong alias / pre-rename name must NOT leak back in.
+      (expect (not (string/includes? out "(vis/skills)")))
+      (expect (not (string/includes? out "(vis/skill")))
+      (expect (not (string/includes? out "(v/skill \"")))
+      (expect (string/ends-with? out "</skills>"))))
+
+  (it "truncation marker still uses (v/skills)"
+    ;; Force truncation by stuffing many oversized descriptions.
+    (let [skills (vec (for [i (range 200)]
+                        {:name (str "skill-" i)
+                         :source :repo
+                         :description (apply str "x" (repeat 200 \.))}))
+          out    (render/format-skills-block skills)]
+      (expect (string/includes? out "more skills not shown"))
+      (expect (string/includes? out "(v/skills)"))
+      (expect (not (string/includes? out "(vis/skills)"))))))
