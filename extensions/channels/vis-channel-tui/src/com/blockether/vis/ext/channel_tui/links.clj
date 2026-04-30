@@ -30,13 +30,28 @@
 
 (def ^:private link-re
   "Match `[text](url)` and `![alt](url)` shapes. `text` may not
-   contain `]`; `url` may not contain `)`. Pre-CommonMark simple,
-   but covers everything the `md/` builders emit. The optional `!`
-   prefix is captured separately so we can flag images.
+   contain `]` OR a newline; `url` may not contain `)` OR
+   whitespace. Pre-CommonMark simple, but covers everything the
+   `md/` builders emit. The optional `!` prefix is captured
+   separately so we can flag images.
 
-   We use a non-greedy quantifier on the text portion to handle
-   `[a](b)[c](d)` runs without backtracking the whole line."
-  #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+   The newline anchor on the text portion is load-bearing: this
+   regex runs against the WHOLE formatted bubble (multi-line,
+   thinking + code + answer), so without it `[^\\]]*?` happily
+   eats newlines and matches phantom links across paragraph
+   boundaries — e.g. prose like \"… look for `[params](url)`
+   text pattern, and\nif so…\" pulls in `text` containing a
+   real `\n`. Downstream, `display-width` calls Lanterna's
+   `TextCharacter.fromString` on that text, Lanterna refuses
+   control chars (0x0a), and the render thread's catch-all
+   swallows the throw — net effect: the bubble silently fails
+   to paint and the user sees a blank/white scrollback area.
+   Conversation 954bf315 hit this in production; the regression
+   net for the failure mode lives in `links_test`.
+
+   We use a non-greedy quantifier on the text portion so
+   `[a](b)[c](d)` runs don't backtrack the whole line."
+  #"(!)?\[([^\]\n\r]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 (defn- file-shape?
   "True when `text`/`url` look like the `md/file-link` shape:

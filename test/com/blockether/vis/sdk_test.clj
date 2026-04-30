@@ -201,7 +201,7 @@
           system-prompt (sdk/assemble-system-prompt environment
                           {:active-extensions active-exts})]
       ;; Header IS present (alias → namespace marker still added).
-      (expect (str/includes? system-prompt "[namespace: vis → vis.ext.tools]"))
+      (expect (str/includes? system-prompt "[namespace: v → vis.ext.tools]"))
       ;; Author-supplied :ext/prompt content IS present verbatim.
       (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))
       ;; Auto-canonical render is GONE — no symbol lines, no `:ext/doc`

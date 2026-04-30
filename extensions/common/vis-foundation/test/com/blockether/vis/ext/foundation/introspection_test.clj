@@ -565,7 +565,7 @@
           this       (some #(when (= 'com.blockether.vis.ext.foundation.core (:namespace %)) %)
                        extensions)]
       (expect (some? this))
-      (expect (= 'vis (:alias this)))
+      (expect (= 'v (:alias this)))
       (expect (vector? (:symbols this)))
       ;; Unified vis ext bundles introspection + editing + environment
       ;; under one alias. Spot-check one symbol from each area.
@@ -594,7 +594,7 @@
 
 (defdescribe foundation-extension-docs-test
   (it "single-arg form returns summaries for a registered extension"
-    (let [docs ((private-fn "foundation-extension-docs") {} 'vis)]
+    (let [docs ((private-fn "foundation-extension-docs") {} 'v)]
       (expect (vector? docs))
       (expect (= #{"README.md"} (set (map :name docs))))
       (expect (every? #(string? (:description %)) docs))
@@ -602,7 +602,7 @@
       (expect (every? #(vector? (:reflinks %)) docs))))
 
   (it "summaries do NOT include :content (catalog stays small)"
-    (let [docs ((private-fn "foundation-extension-docs") {} 'vis)]
+    (let [docs ((private-fn "foundation-extension-docs") {} 'v)]
       (expect (every? #(not (contains? % :content)) docs))))
 
   (it "reflinks vec is present (potentially empty in the unified-vis world)"
@@ -611,20 +611,20 @@
     ;; everything lives under one ext id (`vis`), so cross-ext
     ;; reflinks for THIS package are empty by construction. The
     ;; field still has to be a vec, never nil.
-    (let [readme (first ((private-fn "foundation-extension-docs") {} 'vis))]
+    (let [readme (first ((private-fn "foundation-extension-docs") {} 'v))]
       (expect (vector? (:reflinks readme)))))
 
   (it "no-arg form returns the full registry keyed by id symbol"
     (let [registry ((private-fn "foundation-extension-docs") {})]
       (expect (map? registry))
-      (expect (contains? registry 'vis))))
+      (expect (contains? registry 'v))))
 
   (it "unknown reference returns nil"
     (expect (nil? ((private-fn "foundation-extension-docs") {} 'no.such.extension)))))
 
 (defdescribe foundation-extension-doc-test
   (it "returns the full descriptor map for a declared doc"
-    (let [doc ((private-fn "foundation-extension-doc") {} 'vis "README.md")]
+    (let [doc ((private-fn "foundation-extension-doc") {} 'v "README.md")]
       (expect (map? doc))
       (expect (= "README.md" (:name doc)))
       (expect (string? (:description doc)))
@@ -635,7 +635,7 @@
       (expect (vector? (:reflinks doc)))))
 
   (it "links carry author-declared targets and contexts"
-    (let [doc   ((private-fn "foundation-extension-doc") {} 'vis "README.md")
+    (let [doc   ((private-fn "foundation-extension-doc") {} 'v "README.md")
           links (:links doc)]
       ;; The unified vis-foundation README links to the RLM paper
       ;; (URL) and the prompt-assembler source file (file). No
@@ -644,19 +644,19 @@
       (expect (some #(some? (:file %)) links))))
 
   (it "returns nil for an unknown doc name"
-    (expect (nil? ((private-fn "foundation-extension-doc") {} 'vis "NOPE.md"))))
+    (expect (nil? ((private-fn "foundation-extension-doc") {} 'v "NOPE.md"))))
 
   (it "returns nil for an unknown extension reference"
     (expect (nil? ((private-fn "foundation-extension-doc") {} 'no.such.ext "README.md")))))
 
 (defdescribe foundation-extension-readme-test
   (it "resolves by id symbol"
-    (let [text ((private-fn "foundation-extension-readme") {} 'vis)]
+    (let [text ((private-fn "foundation-extension-readme") {} 'v)]
       (expect (string? text))
       (expect (clojure.string/includes? text "v/extensions"))))
 
   (it "resolves by id keyword"
-    (let [text ((private-fn "foundation-extension-readme") {} :vis)]
+    (let [text ((private-fn "foundation-extension-readme") {} :v)]
       (expect (string? text))
       (expect (clojure.string/includes? text "v/extension-readme"))))
 

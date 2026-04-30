@@ -183,6 +183,45 @@
     (let [c (int (.charAt g 0))]
       (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
+(defn- sanitize-control-chars
+  "Replace every ASCII control character in `s` (codepoints 0x00–0x1F)
+   with `·` so a stray `\n` / `\t` / `\r` from a malformed link
+   parse or bad upstream string can NEVER take the render thread
+   down. Returns `s` UNCHANGED (same identity, no allocation) when
+   the input is clean — the overwhelmingly common case — so we
+   don't pay a StringBuilder allocation on every grapheme-width
+   call.
+
+   Conversation 954bf315 was the live trigger: a buggy
+   `parse-md-refs` regex pulled multi-line prose into a `:text`
+   field, `chrome-display-text` joined it into a chrome row,
+   `display-width` was called on it, Lanterna's
+   `TextCharacter.fromString` threw on `0x0a`, the render thread's
+   catch-all swallowed the throw, the bubble silently failed to
+   paint, and the user saw a blank scrollback. The regex got fixed
+   upstream; this is the belt-and-braces fallback for any future
+   caller that lets a control char slip into a paint string.
+
+   Inline-span sentinels (\uE110…\uE117) live in the BMP
+   private-use area, not C0, so they pass through untouched."
+  ^String [^String s]
+  (let [n (.length s)
+        first-bad (loop [i 0]
+                    (cond
+                      (>= i n) -1
+                      (< (int (.charAt s i)) 0x20) i
+                      :else (recur (inc i))))]
+    (if (neg? first-bad)
+      s
+      (let [sb (StringBuilder. n)]
+        (.append sb s 0 first-bad)
+        (loop [k first-bad]
+          (if (>= k n)
+            (.toString sb)
+            (let [c (.charAt s k)]
+              (.append sb (if (< (int c) 0x20) \u00b7 c))
+              (recur (inc k)))))))))
+
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
 
@@ -196,11 +235,17 @@
    count as zero columns: they're invisible style toggles, never
    painted, never advance the cursor.
 
+   Stray ASCII control bytes (0x00–0x1F) get sanitized to `·`
+   before reaching Lanterna — see `sanitize-control-chars` for the
+   why. Without that, a single rogue `\n` from a misbehaving link
+   parse used to take down the entire render thread.
+
    Returns 0 for nil/empty input."
   ^long [s]
   (if (or (nil? s) (zero? (.length ^CharSequence s)))
     0
-    (let [cells (TextCharacter/fromString ^String s)
+    (let [^String safe (sanitize-control-chars (str s))
+          cells (TextCharacter/fromString safe)
           n     (alength cells)]
       (loop [i 0 width 0]
         (if (>= i n)
