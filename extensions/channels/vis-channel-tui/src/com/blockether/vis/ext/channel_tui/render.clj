@@ -2496,6 +2496,130 @@
         rendered (render-table headers body-rows max-w markers)]
     [rendered tail]))
 
+(def ^:private list-marker-line-re
+  ;; Single-source regex shared by `coalesce-loose-list-items` (the
+  ;; pre-pass) and the bullet branch of `markdown->lines`. Matches
+  ;; both `- foo` / `* foo` / `+ foo` and `1. foo` / `1) foo` so the
+  ;; pre-pass covers numbered lists too.
+  #"^\s*(?:[-*+]|\d+[.)])\s+.*")
+
+(defn- list-marker-line? [^String line]
+  (boolean (re-matches list-marker-line-re line)))
+
+(defn- structural-non-list-line?
+  "Block-level elements that close an open list scope when they
+   appear on their own line. We close on these so a heading or fence
+   landing right after a list item doesn't get sucked into the item
+   as a continuation paragraph. Mirrors the cases `markdown->lines`
+   has dedicated branches for; keep the two in sync.
+
+   Bold openers (`**...`) at line start also count: they almost
+   always introduce a new top-level paragraph (`**Status:** done.`)
+   rather than continuing a previous bullet's body. Without this
+   the closing summary lines `**Loop clean:** true` get sucked
+   into the last bullet of a preceding list."
+  [^String line]
+  (let [t (str/trim line)]
+    (or (str/starts-with? t "```")               ;; code fence
+      (re-matches #"^#{1,6} .*" t)              ;; ATX heading
+      (re-matches #"^([-*_])\1{2,}$" t)         ;; horizontal rule
+      (re-matches #"^>\s?.*" t)                 ;; blockquote
+      (re-matches #"^\|.*\|$" t)                ;; pipe-table row
+      (re-matches #"^</?details(\s[^>]*)?>$" t) ;; details / /details
+      (re-matches #"^<summary>.*</summary>$" t) ;; summary tag
+      (str/starts-with? t "**"))))               ;; bold paragraph
+
+(defn- coalesce-loose-list-items
+  "Pre-pass over input lines that collapses multi-paragraph list
+   items into single-line items.
+
+   Why: poorly-formatted LLM (or hand-typed) markdown often emits
+
+       - `dialogs.clj`
+
+        — removed `:system-prompt` palette command
+
+   where blank lines INSIDE a list item turn the bullet's body into
+   a chain of loose top-level paragraphs (CommonMark spec-compliant
+   but visually broken: only the first fragment paints under the
+   `• ` marker, every subsequent paragraph shows up flush-left as
+   if it weren't part of the bullet at all). The TUI bubble has
+   nowhere to render that hierarchy correctly, so we coalesce the
+   loose paragraphs back into the bullet line before parsing.
+
+   The list scope ends on:
+   - another bullet / numbered list marker (start of next item),
+   - any non-list structural line (heading, code fence, blockquote,
+     pipe-table row, horizontal rule, `<details>` / `<summary>`),
+   - two consecutive blank lines (CommonMark loose-list close),
+   - end of input.
+
+   Lines outside an open list pass through unchanged — we only
+   reshape content that's clearly a fragmented bullet item.
+
+   Continuations are joined with a single ASCII space; leading
+   whitespace on the continuation line is dropped (it was Markdown
+   indentation, not visible content)."
+  [lines]
+  (loop [lines    (seq lines)
+         current  nil      ;; the bullet line we're accumulating into
+         blanks   0         ;; buffered consecutive blank lines
+         acc      []]
+    (cond
+      ;; End of input — flush.
+      (nil? lines)
+      (cond-> acc current (conj current))
+
+      :else
+      (let [line (first lines) rst (next lines)]
+        (cond
+          ;; In list scope, see another list marker → flush current,
+          ;; start a new item. Buffered blanks were intra-item; drop
+          ;; them (the new item separates itself).
+          (and current (list-marker-line? line))
+          (recur rst line 0 (conj acc current))
+
+          ;; In list scope, hit a structural non-list line → flush
+          ;; current with one blank separator (so the heading / fence
+          ;; that follows reads as a fresh block), then re-process
+          ;; this line in idle mode by NOT advancing `lines`.
+          (and current (structural-non-list-line? line))
+          (recur lines nil 0 (conj acc current ""))
+
+          ;; In list scope, blank line. One blank → buffer; two in a
+          ;; row → list closes (CommonMark loose-list end).
+          (and current (str/blank? line))
+          (let [n (inc blanks)]
+            (if (>= n 2)
+              (recur rst nil 0 (conj acc current ""))
+              (recur rst current n acc)))
+
+          ;; In list scope, plain text line → continuation. Strip
+          ;; leading indentation (Markdown structural whitespace),
+          ;; join with one space onto the running bullet text.
+          ;; Then re-flow whitespace around punctuation that the
+          ;; fragmentation left orphaned: ill-formed input often
+          ;; has `(\n\nfoo\n\n,\n\nbar\n\n)` which would otherwise
+          ;; emerge as `( foo , bar )`. The replacements collapse
+          ;; ` ,` / ` .` / ` ;` / ` :` / ` )` / ` ]` and `( ` / `[ `
+          ;; back to their natural prose forms.
+          current
+          (let [cont (str/trim line)
+                joined (if (str/blank? cont)
+                         current
+                         (-> (str (str/trimr current) " " cont)
+                           (str/replace #" +([,;:.\)\]])" "$1")
+                           (str/replace #"([\(\[]) +" "$1")))]
+            (recur rst joined 0 acc))
+
+          ;; Idle, see a list marker → enter list scope.
+          (list-marker-line? line)
+          (recur rst line 0 acc)
+
+          ;; Idle, anything else → pass through unchanged.
+          :else
+          (recur rst nil 0 (conj acc line)))))))
+
 (defn- markdown->lines
   "Parse markdown text into marker-prefixed lines for styled rendering.
 
@@ -2515,6 +2639,12 @@
      - inline `**bold**` / `` `code` `` stripped to plain text
        (terminal can't easily style mid-line spans)
 
+   Loose-list rescue: list items whose body has been fragmented
+   across blank lines (`- foo\n\nbar\n\nbaz`) are coalesced back
+   into a single line by `coalesce-loose-list-items` BEFORE this
+   parser runs. Without that pre-pass, only `foo` lands under the
+   bullet marker and `bar` / `baz` paint as flush-left paragraphs.
+
    `max-w` is the max visible width per emitted line. Returns a vec
    of marker-prefixed lines. Returns `nil` for blank/nil input.
 
@@ -2528,7 +2658,7 @@
      (let [m       (get md-marker-sets mode (md-marker-sets :answer))
            plain-m (:plain m)
            emit-plain (fn [s] (str plain-m s))
-           input-lines (str/split-lines text)]
+           input-lines (coalesce-loose-list-items (str/split-lines text))]
        (loop [lines  (seq input-lines)
               in-code? false
               acc    []]

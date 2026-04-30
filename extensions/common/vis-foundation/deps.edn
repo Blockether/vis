@@ -14,4 +14,9 @@
         ;; JGit — repository discovery + branch/HEAD inspection. Used by
         ;; both `(vis/ls)` / `(vis/rg)` (gitignore parsing) and the
         ;; environment ext's git-snapshot reader.
-        org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}}
+        org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}
+        ;; YAMLStar — pure-Clojure YAML 1.2 loader by the YAML inventor.
+        ;; GraalVM-friendly. Used by the environment ext's skills frontmatter
+        ;; parser. Pre-1.0; if it bites, fall back to clj-commons/clj-yaml
+        ;; (see plans/2026-04-30-foundation-agents-skills-doctor.md §9).
+        org.yamlstar/yamlstar              {:mvn/version "0.1.3"}}}

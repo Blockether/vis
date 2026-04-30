@@ -2700,50 +2700,6 @@
   [id]
   (:environment (ensure-env! id)))
 
-(defn effective-system-prompt-for-query
-  "Return the reconstructed prompt snapshot for a specific query-id in a
-   conversation. Renders the minimal projection: <journal> + <var_index>."
-  [conversation-id query-id]
-  (when-let [env (env-for conversation-id)]
-    (let [active-exts   (prompt/active-extensions env)
-          system-prompt (prompt/assemble-system-prompt env
-                          {:system-prompt     (:system-prompt (by-id conversation-id))
-                           :active-extensions active-exts})
-          db-info       (:db-info env)
-          queries       (when db-info
-                          (try (persistance/db-list-conversation-queries db-info (:conversation-id env))
-                            (catch Throwable _ nil)))
-          query-row     (some #(when (= (:id %) query-id) %) queries)
-          query-text    (or (:query query-row) "<the user's message appears here>")
-          iteration-context-block (prompt/build-iteration-context env
-                                    {:active-extensions active-exts})]
-      ;; Iterations now go through `svar/ask-code!` — a plain-text
-      ;; completion path with no JSON spec. svar appends one short
-      ;; code-format reminder (`:code-tail-pointer? true`) as the last
-      ;; text block of the last user message. We render that hint here
-      ;; so the inspector matches the wire shape the model actually sees.
-      (str "═══ MESSAGE 1: System (role: system) ═══\n"
-        system-prompt
-        "\n\n═══ MESSAGE 2: User query (role: user) ═══\n"
-        query-text
-        (when iteration-context-block
-          (str "\n\n═══ MESSAGE 3: Iteration context (role: user, appended per iteration) ═══\n"
-            iteration-context-block))
-        "\n\n═══ MESSAGE 4: Code-format reminder (role: user, appended by svar/ask-code!) ═══\n"
-        "Reply with clojure source inside ```clojure … ``` fences. "
-        "Multiple fenced blocks are allowed and will be concatenated in order. "
-        "No prose outside fences. No commentary, no explanation."))))
-
-(defn effective-system-prompt
-  "Return the reconstructed prompt snapshot for the latest query in a conversation."
-  [conversation-id]
-  (when-let [d (some-> (env-for conversation-id) :db-info)]
-    (let [queries (try (persistance/db-list-conversation-queries d conversation-id)
-                    (catch Throwable _ nil))
-          last-q  (last queries)]
-      (when last-q
-        (effective-system-prompt-for-query conversation-id (:id last-q))))))
-
 (defn send!
   ([id messages] (send! id messages {}))
   ([id messages opts]

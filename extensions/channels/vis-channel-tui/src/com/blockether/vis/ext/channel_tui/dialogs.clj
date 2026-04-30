@@ -562,8 +562,7 @@
   [{:id :configure-provider :label "Configure Provider"}
    {:id :toggles            :label "Toggles"}
    {:id :copy               :label "Copy Messages"}
-   {:id :copy-as-markdown   :label "Copy Conversation as Markdown"}
-   {:id :system-prompt      :label "Inspect Latest System Prompt"}])
+   {:id :copy-as-markdown   :label "Copy Conversation as Markdown"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.

@@ -720,7 +720,7 @@ All under `packages/vis-runtime/src/com/blockether/vis_runtime/`:
 - `loop/core.clj` — environment lifecycle + system-prompt assembly
 - `loop/runtime/conversation/core.clj` — conversation lifecycle
   (`create!`, `by-id`, `by-channel`, `for-telegram-chat!`,
-  `set-title!`, `env-for`, `effective-system-prompt`, `send!`,
+  `set-title!`, `env-for`, `send!`,
   `close!`, `delete!`, `db-sweep-orphaned-running-queries!`, `close-all!`)
 - `loop/runtime/conversation/environment/core.clj` — SCI sandbox + var-index
 - `loop/runtime/conversation/environment/query/core.clj` — query engine
@@ -857,7 +857,6 @@ Conversation IDs are plain UUIDs. No name prefixes, no string lookups.
 ;; Mutate
 (conversations/set-title! conversation-id "New title")
 (conversations/env-for conversation-id)                 ;; raw env (for presenter projections / inspectors)
-(conversations/effective-system-prompt conversation-id) ;; assembled system prompt for the [?] inspector
 
 ;; Turn
 (conversations/send! conversation-id messages opts)     ;; locked per conversation-id; see docstring for every opt
