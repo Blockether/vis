@@ -85,13 +85,31 @@
     (.startsWith resolved cwd)))
 
 (defn- file-url->path
-  "Strip the `file:` scheme from `s` and decode percent-escapes. Drops
-   one or more leading slashes after the `file:` prefix so both
-   `file:relative` and `file:///abs/path` collapse to the same shape
-   the OS opener understands."
+  "Strip the `file:` scheme from `s` and decode percent-escapes.
+
+   Recognised shapes (RFC 8089 + the ad-hoc `file:relative` some
+   producers emit):
+     file:///abs/path       → /abs/path
+     file://host/abs/path   → /abs/path        (host dropped — we don’t support remote)
+     file:/abs/path         → /abs/path
+     file:relative          → relative          (rare)
+
+   The result preserves leading `/` for absolute paths so callers
+   can still distinguish abs vs rel — my earlier `/{0,3}` glob
+   collapsed the two and silently re-anchored absolute file:// URLs
+   under `(fs/cwd)`, which then double-prefixed and escaped."
   ^String [^String s]
-  (let [stripped (-> s
-                   (str/replace-first #"(?i)^file:/{0,3}" ""))]
+  (let [no-scheme (str/replace-first s #"(?i)^file:" "")
+        stripped  (cond
+                    ;; file:///abs/path  or  file://host/abs/path
+                    (str/starts-with? no-scheme "//")
+                    (let [after-slashes (subs no-scheme 2)
+                          slash-idx     (.indexOf after-slashes "/")]
+                      (if (neg? slash-idx)
+                        ;; file://host  with no path — nothing useful
+                        ""
+                        (subs after-slashes slash-idx)))
+                    :else no-scheme)]
     (try (java.net.URLDecoder/decode stripped "UTF-8")
       (catch Throwable _ stripped))))
 
@@ -130,7 +148,13 @@
         :file
         (let [decoded     (file-url->path (str/trim (str s)))
               [path line] (strip-line-anchor decoded)
-              file        (.normalize (fs/path (fs/cwd) path))
+              ;; Absolute paths bypass cwd-anchoring; relative paths
+              ;; resolve under (fs/cwd). Both flow through the same
+              ;; cwd-escape guard before we hand the result back.
+              file        (.normalize
+                            (if (str/starts-with? path "/")
+                              (fs/path path)
+                              (fs/path (fs/cwd) path)))
               f           (.toFile file)]
           (when (under-cwd? f)
             {:scheme :file :target (.getAbsolutePath f) :line line}))
@@ -192,7 +216,7 @@
   [argv]
   (try
     (let [pb (ProcessBuilder. ^java.util.List argv)
-          dn (java.lang.ProcessBuilder$Redirect/DISCARD)]
+          dn java.lang.ProcessBuilder$Redirect/DISCARD]
       (.redirectOutput pb dn)
       (.redirectError pb dn)
       (.start pb)
@@ -213,7 +237,7 @@
     (cond
       (= scheme :rejected)
       {:status :rejected-scheme :command nil :scheme nil :target nil
-       :error (str \"Rejected scheme for: \" (pr-str s))}
+       :error (str "Rejected scheme for: " (pr-str s))}
 
       :else
       (if-let [{:keys [target] :as resolved} (safe-target s)]
@@ -238,15 +262,16 @@
                       (recur (next chain))))
                   {:status :spawn-failed :command argv :scheme (:scheme resolved)
                    :target target
-                   :error (str \"No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed.\")}))
+                   :error (str "No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed.")}))
 
               :else
               {:status :spawn-failed :command argv :scheme (:scheme resolved)
                :target target :error (.getMessage ^Throwable err)}))
           {:status :no-opener :command nil :scheme (:scheme resolved)
            :target target
-           :error (str \"No opener available for OS: \" (System/getProperty \"os.name\"))})
-        ;; safe-target returned nil \u2014 path-escape (the only way
+           :error (str "No opener available for OS: "
+                    (System/getProperty "os.name"))})
+        ;; safe-target returned nil — path-escape (the only way
         ;; a known-good scheme can land here).
         {:status :path-escape :command nil :scheme scheme :target nil
-         :error (str \"Path escapes the working directory: \" (pr-str s))}))))
+         :error (str "Path escapes the working directory: " (pr-str s))}))))

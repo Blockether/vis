@@ -1,6 +1,8 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as sdk]
+            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
@@ -592,6 +594,15 @@
               (or seg-start-char char-pos)
               (or seg-start-col col-pos))))))))
 
+;; Forward declarations — the link-chrome painter + ref extractor
+;; are defined further down (between the inline-marker tokeniser
+;; and `bubble-height*`) but are reached from the prose-painting
+;; loop in `draw-chat-bubble!` defined right below. Pulling the
+;; definitions up here would split a long, cohesive block of
+;; markdown / inline-marker code; the forward declares are the
+;; cheaper move.
+(declare extract-link-refs paint-link-chrome-row!)
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -611,8 +622,20 @@
    the only fills come from inline marker zones (code blocks,
    answer-bg, stdout, etc.).
 
-   Returns the number of screen rows consumed (including spacing)."
-  [^TextGraphics g {:keys [role text timestamp duration-ms iteration-count tokens cost status]} start-row left max-w]
+   Returns the number of screen rows consumed (including spacing).
+
+   Extra params:
+     `viewport-top` and `viewport-h` describe the absolute screen
+     window the messages-area paints into. They’re only consulted
+     by the link-chrome painter to decide whether to register a
+     click region for an off-screen chrome row (it doesn’t).
+     Callers that paint outside `draw-messages-area!` (tests, REPL
+     exploration) can pass `0 / 0` to disable click registration."
+  [^TextGraphics g
+   {:keys [role text timestamp duration-ms iteration-count tokens cost status] :as message}
+   start-row left max-w
+   & [{:keys [viewport-top viewport-h]
+       :or   {viewport-top 0 viewport-h 0}}]]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
         ;; Cancelled turns are status messages, not real answers —
@@ -1146,40 +1169,202 @@
                     line-fg line-bg
                     t/code-block-fg t/code-block-bg)))))))
 
-      ;; Below-content meta row.
+      ;; Below-content link-chrome strip.
       ;;
-      ;; Final per-message layout (no outer box, no bg fill, no
-      ;; horizontal rule under the label):
-      ;;   row 0          : label + timestamp
-      ;;   row 1 … N      : wrapped content (with marker-zone fills)
-      ;;   row 1+N        : meta (right-aligned, dim) — skipped for cancelled
-      ;;   row 2+N        : single blank gap before the next message
-      (p/clear-styles! g)
-      (let [meta-row (+ btop bubble-h)]
-        (when meta-str
-          (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) meta-row meta-str))
-        ;; Return: rows consumed
-        ;;   = label(1) + content(N) + meta(1) + gap(1)
-        (+ 1 bubble-h 1 1)))))
+      ;; One chrome row per (md/link …) / (md/image …) /
+      ;; (md/file-link …) reference present in the message body.
+      ;; Painted between content and meta so it sits inside the
+      ;; bubble’s footprint but below the prose. Each row registers
+      ;; itself with `click-regions` so the screen mouse handler
+      ;; can hand the click off to the OS opener.
+      (let [refs           (extract-link-refs message bubble-w)
+            chrome-rows    (count refs)
+            chrome-top     (+ btop bubble-h)
+            ;; Coordinate translation: `clip` was created at
+            ;; `(0, viewport-top)`, so y inside the clip == y +
+            ;; viewport-top on the absolute screen. The chrome
+            ;; painter needs the absolute row to register a click
+            ;; region.
+            abs-col-base   0
+            abs-row-of     (fn ^long [^long y] (+ (long viewport-top) y))]
+        (when (pos? chrome-rows)
+          (doseq [[i ref] (map-indexed vector refs)]
+            (let [y       (+ chrome-top i)
+                  abs-row (abs-row-of y)]
+              (paint-link-chrome-row!
+                g ref bx y bubble-w
+                abs-col-base abs-row
+                (long viewport-top) (long viewport-h)))))
+
+        ;; Below-content meta row.
+        ;;
+        ;; Final per-message layout (no outer box, no bg fill, no
+        ;; horizontal rule under the label):
+        ;;   row 0                    : label + timestamp
+        ;;   row 1 … N                : wrapped content (with marker-zone fills)
+        ;;   row 1+N … 1+N+M-1        : link chrome (M refs)
+        ;;   row 1+N+M                : meta (right-aligned, dim) — skipped for cancelled
+        ;;   row 2+N+M                : single blank gap before the next message
+        (p/clear-styles! g)
+        (let [meta-row (+ chrome-top chrome-rows)]
+          (when meta-str
+            (p/set-colors! g t/dialog-hint t/terminal-bg)
+            (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) meta-row meta-str))
+          ;; Return: rows consumed
+          ;;   = label(1) + content(N) + chrome(M) + meta(1) + gap(1)
+          (+ 1 bubble-h chrome-rows 1 1))))))
+
+;; ---------------------------------------------------------------------------
+;; Link / image / file-link chrome
+;;
+;; Painted as a strip of one-row chrome entries between the wrapped
+;; content and the meta line. Each entry is the user-visible
+;; clickable affordance for a markdown reference (`[text](url)`,
+;; `![alt](url)`, `[path:line](path#Lline)`) the model emitted in
+;; the answer.
+;;
+;; Why a sidecar strip instead of inlining clickable spans into the
+;; existing wrap-and-paint pipeline:
+;;
+;;   - The inline tokeniser already runs over `:answer` text and
+;;     intentionally drops link/image markup as plain prose. Touching
+;;     it would force a second pass through the styled-line painter
+;;     and risk regressions in the existing markdown rendering.
+;;
+;;   - Click-region bounds are easier to reason about row-aligned
+;;     than mid-line. A whole row is the click target; hover
+;;     highlights the whole row.
+;;
+;;   - The chrome doubles as a discoverability cue — the user sees
+;;     “these N things in this answer are clickable” at a glance,
+;;     not a sea of inline blue text they have to hunt for.
+;;
+;; The strip is OPT-OUT for callers that pass `:hide-links? true` on
+;; the message map. Today that flag isn’t set anywhere; reserved as
+;; an escape hatch for warnings / cancelled messages where we deem
+;; the chrome noise.
+
+(def ^:private link-icon-image    "\uD83D\uDCF7")  ; 📷
+(def ^:private link-icon-link     "\uD83D\uDD17")  ; 🔗
+(def ^:private link-icon-file     "\uD83D\uDCC4")  ; 📄
+(def ^:private link-icon-blocked  "\uD83D\uDEAB")  ; 🚫
+
+(defn- ref-icon
+  "Return the chrome icon string for `ref`. Disabled refs always
+   render with the blocked icon regardless of kind so the user
+   reads “this one is dead” before reading the URL."
+  ^String [{:keys [kind enabled?]}]
+  (cond
+    (not enabled?) link-icon-blocked
+    (= kind :image) link-icon-image
+    (= kind :file)  link-icon-file
+    :else           link-icon-link))
+
+(defn- chrome-display-text
+  "Build the visible chrome row for a ref:
+     <icon> <text> → <url>
+   The url tail is shortened to fit `max-w`. Pure."
+  ^String [ref ^long max-w]
+  (let [icon  (ref-icon ref)
+        text  (or (:text ref) "")
+        url   (or (:url ref)  "")
+        sep   " → "
+        ;; Reserve room: icon (2 cols) + space + sep + at least 8 cols
+        ;; of url.
+        head     (str icon " " text)
+        head-w   (p/display-width head)
+        sep-w    (p/display-width sep)
+        avail    (max 0 (- max-w head-w sep-w))
+        url-disp (if (<= (count url) avail)
+                   url
+                   (let [keep (max 0 (- avail 1))]
+                     (str (subs url 0 (min (count url) keep)) "…")))]
+    (str head sep url-disp)))
+
+(defn extract-link-refs*
+  "Pure ref extractor. Walks `text` once and returns the vec of
+   refs `links/parse-md-refs` produces, plus a synthesised
+   `:display` string for chrome painting at width `max-w`."
+  [^String text ^long max-w]
+  (let [refs (links/parse-md-refs text)]
+    (mapv (fn [r] (assoc r :display (chrome-display-text r max-w))) refs)))
+
+(defn extract-link-refs
+  "Memoised wrapper around `extract-link-refs*`. Keyed by the
+   message text’s identity-hash + width — the same trick
+   `bubble-height` uses to dodge re-walking immutable message bodies
+   on every paint."
+  [{:keys [text hide-links?]} max-w]
+  (if hide-links?
+    []
+    (cached* [::refs (System/identityHashCode text) (long max-w)]
+      #(extract-link-refs* (or text "") max-w))))
+
+(defn- in-viewport?
+  "True when `abs-row` is inside the currently-painted messages
+   viewport `[viewport-top, viewport-top + viewport-h)`."
+  [^long viewport-top ^long viewport-h ^long abs-row]
+  (and (>= abs-row viewport-top)
+    (< abs-row (+ viewport-top viewport-h))))
+
+(defn- paint-link-chrome-row!
+  "Paint one chrome row at `(x, y)` (clip-relative coords) inside a
+   `bubble-w`-wide column. When the row’s absolute screen position
+   `abs-row` is inside the viewport AND the ref is enabled, register
+   a click region.
+
+   The row paints `<icon> <text> → <url>` in three colour zones so
+   the affordance reads cleanly (link colour for the text, muted
+   gray for the arrow + url tail). Hover state inverts the row to a
+   pale blue band."
+  [^TextGraphics g
+   {:keys [display enabled?] :as ref}
+   x y bubble-w
+   abs-col-base abs-row
+   viewport-top viewport-h]
+  (let [hovered? (and enabled?
+                   (= abs-row (:row (:bounds (cr/hovered)))))
+        bg       (cond
+                   hovered? t/link-chrome-hover-bg
+                   :else    t/terminal-bg)
+        fg-text  (cond
+                   (not enabled?) t/link-chrome-blocked-fg
+                   hovered?       t/link-chrome-hover-fg
+                   :else          t/link-chrome-fg)]
+    (p/clear-styles! g)
+    (p/set-colors! g t/text-fg bg)
+    (p/fill-rect! g x y bubble-w 1)
+    ;; Whole row painted in one colour pass; the text/arrow/url
+    ;; tri-tone is a future polish — the single-tone read is
+    ;; already obviously a link, the tri-tone added complexity
+    ;; without changing the click affordance.
+    (p/set-colors! g fg-text bg)
+    (p/put-str! g x y display)
+    (when (and enabled? (in-viewport? viewport-top viewport-h abs-row))
+      (cr/register!
+        {:bounds   {:row abs-row :col (+ abs-col-base x) :width bubble-w}
+         :url      (:url ref)
+         :kind     (:kind ref)
+         :line     (:line ref)
+         :scheme   (:scheme ref)
+         :enabled? true}))))
+
+;; ---------------------------------------------------------------------------
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
-   label(1) + optional top-pad(1, user only) + wrapped-lines + meta(1)
-   + gap(1). Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w -
-   2*h-pad`) so layout math stays consistent across the height calc
-   and the draw. Assistant bubbles sit directly under the role
-   banner — the previous global breathing row read as an unwanted
-   top margin above the thinking block. User bubbles keep the
-   breathing row so the yellow block has visible top padding;
-   `draw-chat-bubble!` shifts content + bg-fill down accordingly."
-  [{:keys [text role]} max-w]
+   label(1) + optional top-pad(1, user only) + wrapped-lines
+   + link-chrome(refs) + meta(1) + gap(1). Mirrors `draw-chat-bubble!`'s
+   wrap width (`bubble-w - 2*h-pad`) so layout math stays consistent
+   across the height calc and the draw."
+  [{:keys [text role] :as message} max-w]
   (let [bubble-w  max-w
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
         lines     (wrap-text text content-w)
-        top-pad   (if (= role :user) 1 0)]
-    (+ 1 top-pad (count lines) 1 1)))
+        top-pad   (if (= role :user) 1 0)
+        refs      (extract-link-refs message bubble-w)]
+    (+ 1 top-pad (count lines) (count refs) 1 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by `:text` identity + role +
@@ -2311,6 +2496,12 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/fill-rect! g 0 box-top cols (max 0 (- box-bottom box-top)))
 
+    ;; Drop every click region from the previous frame BEFORE we
+    ;; paint the new one. Bubbles register their chrome rows during
+    ;; paint; the registry is the single source of truth for what
+    ;; is currently clickable on screen.
+    (cr/reset!)
+
     (let [clip (.newTextGraphics g
                  (TerminalPosition. 0 text-top)
                  (TerminalSize. cols inner-h))]
@@ -2319,7 +2510,9 @@
               message-h   (nth heights idx)]
           (when (and (> (+ message-top message-h) 0)
                   (< message-top inner-h))
-            (draw-chat-bubble! clip (nth messages idx) message-top MESSAGE_MARGIN_LEFT bubble-w))))
+            (draw-chat-bubble! clip (nth messages idx) message-top
+              MESSAGE_MARGIN_LEFT bubble-w
+              {:viewport-top text-top :viewport-h inner-h}))))
 
       (when-let [{:keys [thumb-top-rel thumb-h]}
                  (scrollbar-thumb-geometry total-h inner-h eff-scroll)]

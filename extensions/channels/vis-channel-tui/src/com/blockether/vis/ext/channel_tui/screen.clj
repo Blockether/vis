@@ -2,6 +2,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as sdk]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -438,16 +440,20 @@
 
      (let [terminal (UnixTerminal. @sdk/tty-in @sdk/tty-out (Charset/defaultCharset))
            _        (input/register-custom-patterns! terminal)
-           ;; Enable mouse capture so the user can grab the messages
-           ;; scrollbar with the mouse and drag it. CLICK_RELEASE_DRAG
-           ;; gives us press + release + drag events but NOT bare
-           ;; mouse-move (those would spam render-version on every
-           ;; cursor twitch and serve no UX purpose). Wheel scroll
-           ;; comes through as `MouseActionType/SCROLL_UP/_DOWN`
-           ;; either way. If the host terminal doesn't honour the
-           ;; mode-set escape we silently fall back to keyboard-only
-           ;; scrolling.
-           _        (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG)
+           ;; Enable mouse capture: scrollbar drag, wheel scroll,
+           ;; AND click-to-open + hover-highlight on link/image
+           ;; chrome rows. CLICK_RELEASE_DRAG_MOVE is the most
+           ;; verbose mode but it's the only one that delivers bare
+           ;; `MOVE` events — we need them so a hovered link row
+           ;; can repaint with a hover-bg before the user clicks.
+           ;; The MOVE handler debounces by row so it never re-paints
+           ;; on cursor twitches inside the same chrome row. Wheel
+           ;; scroll arrives as `MouseActionType/SCROLL_UP/_DOWN`
+           ;; in every mode. If the host terminal doesn't honour the
+           ;; mode-set escape, the entire mouse surface becomes
+           ;; inert (no clicks, no hover) — by design, since the
+           ;; mouse picker is the only entry point to the opener.
+           _        (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
                       (catch Throwable _ nil))
            screen   (TerminalScreen. terminal)
         ;; Render thread handle is held in a volatile so the `finally`
@@ -604,6 +610,33 @@
 
                      (= atype MouseActionType/CLICK_RELEASE)
                      (do (vreset! scrollbar-drag-offset nil)
+                       (recur))
+
+                     ;; MOVE — hover. We want the chat link-chrome
+                     ;; rows to highlight when the user hovers over
+                     ;; them. Look up the click region under the
+                     ;; cursor; if it changed, update the hover
+                     ;; pointer and bump the render version so the
+                     ;; renderer repaints the highlighted row. The
+                     ;; bump is gated by `set-hovered!` returning
+                     ;; true so a cursor twitch inside the same
+                     ;; chrome row doesn't trigger a repaint storm.
+                     (= atype MouseActionType/MOVE)
+                     (do (when (cr/set-hovered! (cr/lookup mx my))
+                           (state/dispatch [:bump-render-version]))
+                       (recur))
+
+                     ;; CLICK_DOWN that didn't grab the scrollbar:
+                     ;; if it landed on a registered click region
+                     ;; (a markdown link / image / file-link
+                     ;; chrome row), hand the URL to the OS opener
+                     ;; on a side thread — a slow `xdg-open` cannot
+                     ;; freeze the input loop's redraw cadence.
+                     (= atype MouseActionType/CLICK_DOWN)
+                     (do (when-let [hit (cr/lookup mx my)]
+                           (future
+                             (try (opener/open! (:url hit))
+                               (catch Throwable _ nil))))
                        (recur))
 
                      ;; Every other click — track above/below the
