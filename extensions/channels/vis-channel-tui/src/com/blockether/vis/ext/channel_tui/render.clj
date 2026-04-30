@@ -43,17 +43,30 @@
 (defonce ^:private ^LinkedHashMap fmt-cache (make-fmt-cache))
 
 (defn- cached* [k compute-fn]
-  ;; LinkedHashMap is not thread-safe; the render thread is the only
-  ;; caller after the Layer-C refactor but the sentinel + lock keeps
-  ;; us safe if anyone ever invokes a formatter from elsewhere
-  ;; (tests, REPL exploration, future channels).
-  (locking fmt-cache
-    (let [hit (.get fmt-cache k)]
-      (if (some? hit)
-        hit
-        (let [v (compute-fn)]
-          (.put fmt-cache k v)
-          v)))))
+  ;; LinkedHashMap is not thread-safe — the render thread used to be
+  ;; the only caller, but `virtual/pre-warm!` now hits these caches
+  ;; from a worker thread to keep first-scroll smooth. Two callers
+  ;; means the lock matters, AND the lock granularity matters: if
+  ;; we held it across `compute-fn` (which can run for ~500 ms on a
+  ;; big trace bubble's `format-answer-with-thinking*`), the render
+  ;; thread would stall on every cache miss the worker hit. So we
+  ;; do double-checked locking: lock only for the dictionary
+  ;; touches (.get / .put), never for the compute.
+  ;;
+  ;; If two threads race on the same missing key, both compute, but
+  ;; the second one's `(or (.get …) …)` discards its result and
+  ;; reuses the first one's value, so the cache map stays
+  ;; deterministic. Wasted CPU on the duplicate compute is bounded
+  ;; by the cache cap and rare in practice (the worker walks
+  ;; messages in order; by the time the render thread asks for the
+  ;; same key it's almost always already a hit).
+  (let [hit (locking fmt-cache (.get fmt-cache k))]
+    (if (some? hit)
+      hit
+      (let [v (compute-fn)]
+        (locking fmt-cache
+          (or (.get fmt-cache k)
+            (do (.put fmt-cache k v) v)))))))
 
 (defn invalidate-cache!
   "Drop every cached projection. Call on settings changes that the
@@ -775,17 +788,44 @@
       ;;   answer-hdr-marker  optional \"FINAL ANSWER\" superscript
       ;;   answer-pad-marker  blank padding above/below the answer
       ;; Whichever appears first wins.
-      (let [iteration-bg t/iteration-header-bg
+      (let [n            (count lines)
+            ;; Restrict iteration to rows that actually intersect the
+            ;; viewport. Pre-virtualisation we walked all `n` lines
+            ;; on every redraw and let Lanterna clip OS-side; for an
+            ;; 11k-row trace bubble (conv 7b18414d) that pegged the
+            ;; render thread at ~110 ms / frame even with a fully
+            ;; warm cache. Now we only touch the rows whose screen
+            ;; offset is inside [0, viewport-h).
+            ;;
+            ;; `viewport-h` is the messages-area inner height; the
+            ;; caller in `draw-messages-area!` passes it. Tests /
+            ;; REPL exploration that pass `viewport-h=0` (the
+            ;; arity-3 default) keep the old paint-everything
+            ;; behaviour.
+            i-start      (long (if (pos? (long viewport-h)) (max 0 (- btop)) 0))
+            i-end        (long (if (pos? (long viewport-h)) (min n (- (long viewport-h) btop)) n))
+            iteration-bg t/iteration-header-bg
             answer-marker? (fn [^String l]
                              (or (str/starts-with? l answer-sep-marker)
                                (str/starts-with? l answer-hdr-marker)
                                (str/starts-with? l answer-pad-marker)))
-            answer-start (or (some (fn [[i l]] (when (answer-marker? l) i))
-                               (map-indexed vector lines))
-                           (count lines))]
-        (doseq [[i line] (map-indexed vector lines)]
-          (p/clear-styles! g)
-          (let [in-answer? (> i answer-start)
+            ;; Allocation-free O(n) scan, cached by `lines`-identity.
+            ;; The previous `(some (map-indexed vector lines))`
+            ;; allocated a fresh `[i l]` tuple per element on every
+            ;; redraw — 11k tuples per frame on the big bubbles.
+            ;; `wrap-text` is identity-stable across frames, so the
+            ;; cached answer-start hits next time around.
+            answer-start (cached* [::ans-start (System/identityHashCode lines)]
+                           #(loop [i 0]
+                              (cond
+                                (>= i n) n
+                                (answer-marker? (nth lines i)) i
+                                :else (recur (inc i)))))]
+        (loop [i (long i-start)]
+          (when (< i i-end)
+            (let [line (nth lines i)]
+              (p/clear-styles! g)
+              (let [in-answer? (> i (long answer-start))
                 ;; Two coordinate systems per content row:
                 ;;   text  at `x = bx + h-pad`, runs `content-w` cols  — keeps
                 ;;         body padded inside the column.
@@ -1177,7 +1217,8 @@
                   ;; are present, so this is free for ASCII-only text.
                   (p/paint-styled-line! g x y line
                     line-fg line-bg
-                    t/code-block-fg t/code-block-bg)))))))
+                    t/code-block-fg t/code-block-bg)))))
+            (recur (inc i))))))
 
       ;; Below-content link-chrome strip.
       ;;
@@ -2807,11 +2848,13 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/fill-rect! g 0 box-top cols (max 0 (- box-bottom box-top)))
 
-    ;; Drop every click region from the previous frame BEFORE we
-    ;; paint the new one. Bubbles register their chrome rows during
-    ;; paint; the registry is the single source of truth for what
-    ;; is currently clickable on screen.
-    (cr/reset!)
+    ;; Open a new staging pass for click regions. Bubbles register
+    ;; their chrome rows during paint; downstream painters (header,
+    ;; …) register theirs too. The published registry that the
+    ;; input thread reads doesn't change until the screen calls
+    ;; `cr/commit-frame!` after every painter has run — so the
+    ;; input thread never lookup-misses on a half-filled buffer.
+    (cr/begin-frame!)
 
     (let [clip (.newTextGraphics g
                  (TerminalPosition. 0 text-top)

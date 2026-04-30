@@ -1,21 +1,28 @@
 (ns com.blockether.vis.ext.channel-tui.click-regions
   "Live registry of clickable rectangles painted by the chat
-   renderer. The render thread `reset!`s the registry at the start
-   of every full repaint and `register!`s one entry per painted
-   chrome row; the input thread `lookup`s the entry under the mouse
+   renderer. The render thread calls `begin-frame!` at the start of
+   every full repaint, `register!`s one entry per painted chrome
+   row, then `commit-frame!`s the staged set as the new live
+   registry. The input thread `lookup`s the entry under the mouse
    cursor on `MOVE` (hover) and `CLICK_DOWN`.
 
-   Why a top-level atom instead of threading state through the
-   render API:
+   Why double-buffered (staging + published) instead of one atom:
+
+   - `register!` runs many times during a paint. Reads from the
+     input thread can land BETWEEN the per-row registrations of
+     a single frame. With a single-buffer design the input thread
+     would see a partially-filled vec and miss clicks on chrome
+     rows that hadn't been painted yet — the very bug that made
+     the header copy-id button feel \"sometimes broken\". The
+     staged buffer is private to the render thread; `commit-frame!`
+     publishes the WHOLE frame's regions in a single atomic swap,
+     so `lookup` always sees a complete frame (the previous one
+     until commit, the new one after).
 
    - The renderer paints into a Lanterna `TextGraphics` object that
      has no place to attach \"and also \u2014 here are the clickable
      bits I just drew.\" We'd otherwise need a parallel return
      channel through every paint helper.
-
-   - Render and input run on different threads. An immutable vec
-     swapped atomically + a single-threaded `reset!`/`register!`
-     pair gives us lock-free reads from input.
 
    - The set is small (tens of entries at most \u2014 the visible
      scrollback's worth of links); a linear scan on lookup is
@@ -46,33 +53,43 @@
 ;; pipeline can communicate \"this one is blocked\" to the user.
 ;; They never produce an open!.
 
-;; Currently-registered click regions for the painted scrollback.
-;; The vec is small (tens of entries) so a linear scan on lookup
-;; is fine and we avoid the locking dance a spatial index would need.
+;; PUBLISHED registry — what `lookup` reads. Holds the LAST fully
+;; committed frame's regions. The vec is small (tens of entries)
+;; so a linear scan on lookup is fine and we avoid the locking
+;; dance a spatial index would need.
 (defonce ^:private regions-atom (atom []))
+
+;; STAGING buffer — only the render thread writes. Filled by
+;; `register!` between `begin-frame!` and `commit-frame!`. The
+;; input thread never reads this; lookups always go to
+;; `regions-atom` so a half-filled staging buffer never leaks.
+(defonce ^:private staging-atom (atom []))
 
 ;; Currently-hovered region, or nil. Read by the renderer to paint a
 ;; highlight; written by the mouse handler on `MOVE` events.
+;; Hover is intentionally NOT cleared on `begin-frame!`/`commit-frame!`:
+;; the user's cursor doesn't move just because a frame ticked, so
+;; the highlight should persist until the next MOVE event.
 (defonce ^:private hover-atom (atom nil))
 
 ;; =============================================================================
 ;; Mutators
 ;; =============================================================================
 
-(defn reset!
-  "Drop every registered region. Called by the renderer at the start
-   of each full chat repaint so stale regions from the previous
-   viewport never leak into the current one. Also clears the hover
-   pointer."
+(defn begin-frame!
+  "Open a new paint pass: drop every staged region. Call once at the
+   top of every full chat repaint, BEFORE any `register!`. Does not
+   touch the published registry — `lookup` keeps returning the
+   previous frame's regions until `commit-frame!` runs."
   []
-  (clojure.core/reset! regions-atom [])
-  (clojure.core/reset! hover-atom nil))
+  (clojure.core/reset! staging-atom []))
 
 (defn register!
-  "Append `region` to the registry. The renderer calls this once per
-   painted chrome row; the order matches paint order so a later
-   region painted on top of an earlier one wins on lookup (matches
-   what the user actually sees on screen).
+  "Append `region` to the staging buffer. The renderer calls this
+   once per painted chrome row; the order matches paint order so a
+   later region painted on top of an earlier one wins on lookup
+   (matches what the user actually sees on screen). Regions become
+   visible to `lookup` only after `commit-frame!`.
 
    Validates the bounds shape \u2014 silently dropping a bad entry
    would mask renderer bugs."
@@ -81,7 +98,25 @@
   (assert (integer? (:row bounds)))
   (assert (integer? (:col bounds)))
   (assert (integer? (:width bounds)))
-  (swap! regions-atom conj region))
+  (swap! staging-atom conj region))
+
+(defn commit-frame!
+  "Atomically publish the staged regions as the new live set. Call
+   once at the END of every full chat repaint, after every painter
+   (messages area, header, footer, …) has registered its regions.
+   `lookup` then sees the freshly-painted frame in a single step,
+   never a partial buffer."
+  []
+  (clojure.core/reset! regions-atom @staging-atom))
+
+(defn reset!
+  "Drop every published AND staged region; clear hover. Used by
+   tests and by the screen teardown path; not part of the
+   per-frame paint pipeline."
+  []
+  (clojure.core/reset! regions-atom [])
+  (clojure.core/reset! staging-atom [])
+  (clojure.core/reset! hover-atom nil))
 
 ;; =============================================================================
 ;; Readers
