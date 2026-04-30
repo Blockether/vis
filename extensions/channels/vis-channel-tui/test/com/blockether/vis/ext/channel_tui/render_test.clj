@@ -1052,6 +1052,18 @@
                     lines))))))
 
   (describe "structural lines close an open list scope"
+    ;; New semantics (April 2026): a flush-left, letter-starting
+    ;; line after a single blank line ALSO closes the list scope —
+    ;; it reads as a fresh top-level paragraph, not a fragmented
+    ;; bullet body. Mirrors CommonMark loose-list-end behaviour and
+    ;; stops AGENTS.md-style `Modes:` / `Logs: …` summary paragraphs
+    ;; from being silently folded into the last bullet. The two
+    ;; tests below were originally written under the older `fold
+    ;; everything until you hit a heading/fence` policy; updated
+    ;; here to match the new behaviour. The `eeaf9651` md/join
+    ;; regression test below STILL passes because md/join chunks
+    ;; never start with an alphanumeric character (always a space,
+    ;; backtick, `*`, or punctuation).
     (it "heading after a fragmented bullet doesn't get sucked into it"
       (let [src (str "- foo\n"
                   "\n"
@@ -1061,7 +1073,15 @@
             lines (md->lines src 80 :answer)
             bullets (bullet-bodies src 80)]
         (expect (= 1 (count bullets)))
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo continuation"))
+        ;; Bullet body is `foo` alone — `continuation` is a fresh
+        ;; flush-left paragraph and no longer folds in.
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
+        (expect (not (str/includes? (strip-sentinels (first bullets)) "continuation")))
+        ;; `continuation` survives as its own plain-text line
+        ;; (NOT under the bullet marker).
+        (expect (some #(and (not= p/MARKER_MD_BULLET (marker-of %))
+                         (str/includes? (strip-sentinels %) "continuation"))
+                  lines))
         (expect (some #(and (= p/MARKER_MD_H2 (marker-of %))
                          (str/includes? (body-of %) "A new heading"))
                   lines))))
@@ -1077,7 +1097,12 @@
             lines (md->lines src 80 :answer)
             bullets (bullet-bodies src 80)]
         (expect (= 1 (count bullets)))
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo still bullet"))
+        ;; Bullet = `foo` alone. `still bullet` is a fresh paragraph.
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
+        (expect (not (str/includes? (strip-sentinels (first bullets)) "still bullet")))
+        (expect (some #(and (not= p/MARKER_MD_BULLET (marker-of %))
+                         (str/includes? (strip-sentinels %) "still bullet"))
+                  lines))
         (expect (some #(and (= p/MARKER_MD_CODE (marker-of %))
                          (str/includes? (body-of %) "(+ 1 2)"))
                   lines))))
@@ -1100,16 +1125,27 @@
 
   (describe "two consecutive blank lines close the list (CommonMark loose-list end)"
     (it "second paragraph after double-blank doesn't fold into bullet"
+      ;; Under the post-April-2026 fresh-paragraph rule, `still item`
+      ;; ALREADY closes the list on the FIRST blank because it's a
+      ;; flush-left, letter-starting line. So bullet = `foo` and
+      ;; `still item` + `fresh paragraph` are both their own
+      ;; top-level paragraphs. The double-blank rule is now a
+      ;; redundant safety net; the fresh-paragraph rule fires first.
       (let [src (str "- foo\n"
                   "\n"
                   "still item\n"
                   "\n"
                   "\n"
                   "fresh paragraph")
-            bullets (bullet-bodies src 80)]
+            bullets (bullet-bodies src 80)
+            lines   (md->lines src 80 :answer)]
         (expect (= 1 (count bullets)))
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo still item"))
-        (expect (not (str/includes? (strip-sentinels (first bullets)) "fresh paragraph"))))))
+        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
+        (expect (not (str/includes? (strip-sentinels (first bullets)) "still item")))
+        (expect (not (str/includes? (strip-sentinels (first bullets)) "fresh paragraph")))
+        ;; Both follow-up paragraphs survive as their own lines.
+        (expect (some #(str/includes? (strip-sentinels %) "still item") lines))
+        (expect (some #(str/includes? (strip-sentinels %) "fresh paragraph") lines)))))
 
   (describe "punctuation reflow on coalesce"
     (it "stray spaces around () , and . are tightened back to prose form"

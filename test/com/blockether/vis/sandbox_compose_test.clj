@@ -365,22 +365,18 @@
   ;; persists as a sandbox var) or a fn-value. `shape` introspects both.
   ;; ---------------------------------------------------------------------
 
-  (it "value vars surface their fully-qualified symbol + the deref'd shape"
+  (it "value vars surface their (sandbox-stripped) symbol + the deref'd shape"
     ;; `(def n 42)` interns an SCI var in `sandbox`; `#'n` is that var.
-    ;; Meta carries `:ns sandbox :name n`, no `:arglists`. Shape recurses
-    ;; into the value at reduced depth.
+    ;; Meta carries `:ns sandbox :name n`, no `:arglists`. The `sandbox/`
+    ;; prefix is implicit (the model never types it) so the shape reads
+    ;; `[:var n …]`, not the noisier `[:var sandbox/n …]`.
     (let [out (sandbox-eval "(do (def n 42) (shape #'n))")]
-      (expect (= :var          (first out)))
-      (expect (= 'sandbox/n    (second out)))
-      (expect (= :int          (nth out 2)))))
+      (expect (= [:var 'n :int] out))))
 
   (it "function vars surface arglists and a one-line doc excerpt"
     (let [out (sandbox-eval
                 "(do (defn greet \"Say hello to NAME.\\n\\nReturns a string.\" [name] (str \"hi \" name)) (shape #'greet))")]
-      (expect (= :var              (first out)))
-      (expect (= 'sandbox/greet    (second out)))
-      (expect (= '([name])         (nth out 2)))
-      (expect (= "Say hello to NAME." (nth out 3)))))
+      (expect (= [:var 'greet '([name]) "Say hello to NAME."] out))))
 
   (it "function values without metadata surface as bare :fn"
     ;; `#(* % %)` lambda — no var, no `:arglists`, no `:doc`.

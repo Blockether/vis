@@ -2559,6 +2559,57 @@
       (re-matches #"^<summary>.*</summary>$" t) ;; summary tag
       (top-level-bold-paragraph-line? t))))      ;; **prefix:** value
 
+(def ^:private continuation-tail-char?
+  "Trailing characters on the running bullet line that signal `the
+   sentence isn't done`. When the previous chunk ended with one of
+   these, the next chunk — even a flush-left, letter-starting one —
+   is treated as a continuation rather than a fresh paragraph. Covers
+   open brackets / parens / braces, dashes, colons, semicolons,
+   commas — every punctuator that grammar guarantees demands more
+   text after it."
+  #{\( \[ \{ \: \; \, \— \– \-})
+
+(defn- fresh-paragraph-line?
+  "True when `line` looks like a brand-new top-level paragraph that
+   appeared after a blank line — i.e. flush-left, opens with an
+   alphanumeric character. Used by `coalesce-loose-list-items` to
+   close an open list scope when the post-blank line is OBVIOUSLY a
+   new paragraph rather than an `md/join`-fragmented continuation
+   of the current bullet.
+
+   The two real-world shapes this discriminates:
+
+     Case A (close — fresh paragraph after a list, the AGENTS.md
+     pattern):
+       - bullet item …
+       - bullet item …
+
+       Modes:
+
+     Case B (keep coalescing — `md/join` artefact INSIDE a bullet's
+     body, the eeaf9651 regression):
+       - **Header:** intro
+
+        38 failures across iterations …
+
+       `src/com/blockether/...`
+
+       , `db.clj`
+
+   Case B's continuations always start with whitespace (md/join
+   author-supplied leading space), a backtick (` `code` `), a `*`
+   (bold span), or punctuation (`,`, `(`, `)`, `:`). None of those
+   trip the `[A-Za-z0-9]` test. Case A's `Modes:` / `Logs:` /
+   `Baseline = …` ALL open with a letter, so the test fires and
+   the list closes cleanly.
+
+   Indented continuations (`  more text` directly under a bullet)
+   are NOT flush-left, so this returns false and the line still
+   folds into the current bullet — preserving the documented
+   `- foo\n\n indented continuation` reflow."
+  [^String line]
+  (boolean (re-matches #"^[A-Za-z0-9].*" line)))
+
 (defn- coalesce-loose-list-items
   "Pre-pass over input lines that collapses multi-paragraph list
    items into single-line items.
@@ -2623,6 +2674,34 @@
             (if (>= n 2)
               (recur rst nil 0 (conj acc current ""))
               (recur rst current n acc)))
+
+          ;; In list scope, plain text line that LOOKS LIKE a fresh
+          ;; top-level paragraph (flush-left, opens with a letter or
+          ;; digit) AND we just saw a blank line → close the list
+          ;; scope and re-process the line in idle mode. This stops
+          ;; AGENTS.md-style summary paragraphs (`Modes:`, `Logs: …`,
+          ;; `Baseline = …`) after a bullet list from being silently
+          ;; folded into the last bullet's body. CommonMark closes a
+          ;; list on a single blank line + non-indented continuation;
+          ;; we mirror that for the plain-prose case while leaving
+          ;; `md/join` artefacts (lines opening with whitespace,
+          ;; backtick, `*`, punctuation) on the continuation path so
+          ;; the eeaf9651 regression stays fixed.
+          ;;
+          ;; Exception: if `current` ends with an open-grammar tail
+          ;; char (`(`, `[`, `{`, `:`, `;`, `,`, `—`, `–`, `-`), the
+          ;; sentence is mid-clause and the next line continues it,
+          ;; even when that line is flush-left and letter-starting.
+          ;; Covers the `- foo (\n\nbar\n\n, baz\n\n)` reflow case.
+          ;; Tested by AGENTS.md repro + `loose-bullet-coalesce-test`.
+          (and current
+            (pos? blanks)
+            (fresh-paragraph-line? line)
+            (let [^String trimmed (str/trimr current)
+                  n (.length trimmed)]
+              (or (zero? n)
+                (not (continuation-tail-char? (.charAt trimmed (dec n)))))))
+          (recur lines nil 0 (conj acc current ""))
 
           ;; In list scope, plain text line → continuation. Strip
           ;; leading indentation (Markdown structural whitespace),

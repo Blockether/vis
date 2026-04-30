@@ -1095,6 +1095,11 @@
    failures-everywhere-symbol
    query-retries-symbol
    diagnose-symbol
+   ;; `v/transcript` lives in the sibling `transcript.clj` ns; the
+   ;; var is referenced by symbol-resolution at registration time so
+   ;; this ns doesn't need to require it (avoids a load-order coupling
+   ;; between introspection and transcript). The aggregator in
+   ;; `core.clj` does the wiring.
    extensions-symbol
    extension-docs-symbol
    extension-doc-symbol
@@ -1113,6 +1118,7 @@
     "  (v/failures cid?)              classify failed iterations (current turn or one conversation)\n"
     "  (v/failures-everywhere)        classify failed iterations across EVERY conversation (heavy)\n"
     "  (v/diagnose cid?)              {:repetition-loop? :repetition-clusters :by-classification :next-actions ...}\n"
+    "  (v/transcript cid?)            full transcript {:conversation :totals :turns} — every iteration + every block (code, comment, result, stdout, stderr, error)\n"
     "  (v/extensions)                 loaded ext catalog\n"
     "  (v/extension-docs ext-ref)     declared doc summaries (no content)\n"
     "  (v/extension-doc ext-ref name) full doc descriptor incl. :content\n"

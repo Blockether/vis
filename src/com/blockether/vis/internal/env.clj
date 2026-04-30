@@ -8,6 +8,7 @@
    in `com.blockether.vis.internal.loop` (`send!`, `create!`, `query!`, …)."
   (:require
    [clojure.set]
+   [clojure.spec.alpha]
    [clojure.string :as str]
    [clojure.walk]
    [clojure+.core]
@@ -62,9 +63,11 @@
 (def ^:private ^:const SHAPE_DEFAULT_DEPTH
   "Default recursion depth. Each step into a collection or map decrements;
    reaching 0 collapses sub-shapes to size-only forms (`[:map N]`,
-   `[:vec N]`). 4 deep covers practical data structures while bounding
-   pathological inputs (worst case ~16^4 = 65 K shape calls)."
-  4)
+   `[:vec N]`). 6 deep covers nested config / parsed-AST / DB-row shapes
+   the model commonly inspects, while bounding pathological inputs at
+   ~16^6 = 16.7 M shape calls (worst case; realistic data is far smaller
+   because most collections are well below the SHAPE_SAMPLE_LIMIT)."
+  6)
 
 (def ^:private ^:const SHAPE_DOC_MAX_CHARS
   "Char cap for the first-line docstring excerpt embedded in `[:var …]`
@@ -95,17 +98,30 @@
   (or (var? v)
     (instance? sci.lang.Var v)))
 
+(def ^:private ^:const SHAPE_SANDBOX_NS
+  "The implicit namespace every model-defined var lives in. Stripped from
+   `[:var …]` shapes so `(def n 42); (shape #'n)` reads as `[:var n :int]`,
+   not the noisier `[:var sandbox/n :int]` — the model never qualifies its
+   own vars when calling them, the shape shouldn't either. Vars from any
+   OTHER namespace (e.g. `#'clojure.core/+`) keep the full qualifier so the
+   model can disambiguate library code from its own definitions."
+  "sandbox")
+
 (defn- var-fq-symbol
-  "Build a fully-qualified symbol from a var's metadata. Falls back to the
-   bare `:name` when the var hasn't been interned into a namespace, and to
-   `'?` when even that's missing (anonymous SCI vars)."
+  "Build a symbol identifying the var. Strips the implicit `sandbox/` prefix
+   for sandbox-defined vars (their namespace is implicit — the model never
+   types it). Other namespaces stay fully qualified. Falls back to the bare
+   `:name` when the var hasn't been interned, and to `'?` when even that's
+   missing."
   [m]
   (let [ns-part (some-> (:ns m) str)
         nm-part (some-> (:name m) str)]
     (cond
-      (and ns-part nm-part) (symbol ns-part nm-part)
-      nm-part               (symbol nm-part)
-      :else                 '?)))
+      (and ns-part nm-part
+        (= SHAPE_SANDBOX_NS ns-part)) (symbol nm-part)
+      (and ns-part nm-part)           (symbol ns-part nm-part)
+      nm-part                         (symbol nm-part)
+      :else                           '?)))
 
 (defn- elements-shape
   "Walk up to SHAPE_SAMPLE_LIMIT elements; return a single shape when every
@@ -251,6 +267,7 @@
      (shape [1 \"two\" :three])                 ;; => [:vec 3 [:union :int [:keyword :three] [:string 3]]]
      (shape {:a {:b 1}})                      ;; => [:map {:a [:map {:b :int}]}]
      (shape #'clojure.core/+)                 ;; => [:var clojure.core/+ ([] [x] [x y] [x y & more]) \"Returns the sum of nums. (+) returns 0. …\"]
+     (do (def n 42) (shape #'n))              ;; => [:var n :int]                  ; sandbox/ stripped
      (shape #(do %&))                          ;; => :fn
      (shape (StringBuilder. \"hi\"))           ;; => \"java.lang.StringBuilder\"
      (shape TURN_ACCESSIBLE_SKILLS)           ;; => [:vec 6 [:map {:description [:string 95] :name [:string 8] :path [:string 71] :source [:keyword :repo]}]]"
@@ -414,6 +431,7 @@
         set-ns  (sci/create-ns 'clojure.set nil)
         walk-ns (sci/create-ns 'clojure.walk nil)
         plus-ns (sci/create-ns 'clojure+.core nil)
+        spec-ns (sci/create-ns 'clojure.spec.alpha nil)
         ;; Patch clojure.string/split so string delimiters auto-promote to
         ;; Patterns. The original raises a late ClassCastException when an
         ;; LLM passes a string, usually after the cast hides inside a lazy
@@ -439,6 +457,26 @@
                                                     'clojure.set (sci/copy-ns clojure.set set-ns)
                                                     'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
                                                     'clojure+.core (sci/copy-ns clojure+.core plus-ns)
+                                                    ;; clojure.spec.alpha — LLMs reach for s/def / s/valid? /
+                                                    ;; s/keys / s/and / s/conform reflexively when given a
+                                                    ;; data-shape problem. Pre-fix, none of those resolved in
+                                                    ;; the sandbox and the model wasted iterations bouncing
+                                                    ;; off "could not resolve symbol s/def". `sci/copy-ns`
+                                                    ;; carries macros (unlike the lighter `ns->sci-map`),
+                                                    ;; which is what spec needs (`s/def`, `s/keys`, `s/fdef`
+                                                    ;; are all macros).
+                                                    ;;
+                                                    ;; `:exclude-when-meta []` is load-bearing: by default
+                                                    ;; `copy-ns` skips vars tagged `^:no-doc` or `^:skip-wiki`,
+                                                    ;; and EVERY internal helper the spec macros expand into
+                                                    ;; (`def-impl`, `and-spec-impl`, `or-spec-impl`,
+                                                    ;; `cat-impl`, `every-impl`, `keys-spec-impl`, …) carries
+                                                    ;; `^:skip-wiki`. Without an empty exclude list the
+                                                    ;; macros expand to symbols that don't exist in the SCI
+                                                    ;; namespace and `(s/def ::id int?)` throws "Unable to
+                                                    ;; resolve symbol: clojure.spec.alpha/def-impl".
+                                                    'clojure.spec.alpha (sci/copy-ns clojure.spec.alpha spec-ns
+                                                                          {:exclude-when-meta []})
                                                     'fast-edn.core (ns->sci-map 'fast-edn.core)
                                                     'clojure.edn (ns->sci-map 'fast-edn.core)
                                                     'zprint.core {'zprint-str    zprint/zprint-str
@@ -472,7 +510,8 @@
                                                     'json 'charred.api
                                                     'lt 'lazytest.core
                                                     'test 'clojure.test
-                                                    'c+ 'clojure+.core}
+                                                    'c+ 'clojure+.core
+                                                    's 'clojure.spec.alpha}
                                        :classes {'java.lang.Character Character
                                                  'java.lang.Math Math
                                                  'java.lang.String String
