@@ -120,10 +120,36 @@
 (defonce ^:private cached-manifests (atom nil))
 (defonce ^:private discovered? (atom false))
 
+(defonce ^:private load-failures-atom
+  ;; ::ext-load-failure entries collected during the most recent
+  ;; classpath scan. Each entry: {:source :reason :path :extension-id
+  ;; :extension-ns :class}. `:source` is the literal keyword
+  ;; `:extension-load` so the foundation `<scan-warnings>` block can
+  ;; tag every line with its origin and the user reads "the
+  ;; extension-load-failure warnings come from manifest discovery,
+  ;; not from skills". Public via `load-failures` (read-only); cleared
+  ;; on every `scan!`. The atom is the single point that lets us
+  ;; surface the failure to TWO consumers — the system prompt's
+  ;; `<scan-warnings>` block (so the LLM sees "foundation extension
+  ;; failed; v/cat will be unbound") and the launcher's stderr banner
+  ;; (so the user running `bin/vis` notices before they spend an
+  ;; iteration loop on phantom errors). Pre-fix: `discover-extension-failed`
+  ;; was a buried `~/.vis/vis.log` ERROR line; conversation
+  ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks bouncing
+  ;; off `Unable to resolve symbol: v/cat` because nothing else surfaced
+  ;; that the foundation extension's source had a syntax error.
+  (atom []))
+
 (defn- scan!
   "One pass: read every vis.edn URL, merge per id, require every
    declared namespace exactly once across all URLs. Returns the
-   merged manifest map."
+   merged manifest map.
+
+   Side effect: appends every load-failure entry to
+   `load-failures-atom` so consumers (foundation `<scan-warnings>`
+   block, startup launcher banner) can surface them. The atom is
+   reset to `[]` on entry so consecutive scans don't compound stale
+   warnings."
   []
   (let [urls   (try
                  (enumeration-seq
@@ -133,6 +159,7 @@
                  (catch Exception _ nil))
         merged (atom {})
         seen   (atom #{})]
+    (reset! load-failures-atom [])
     (doseq [^java.net.URL url urls]
       (try
         (let [content    (slurp url)
@@ -152,22 +179,37 @@
                              :msg   (str "Auto-discovered extension ns '"
                                       ns-sym "' (id " id ") from " url)})
                   (catch Throwable t
-                    (tel/log! {:level :error :id ::discover-extension-failed
-                               :data  {:extension-id id
-                                       :extension-ns ns-sym
-                                       :source (str url)
-                                       :class (.getName (class t))
-                                       :message (ex-message t)}
-                               :msg   (str "Failed to load extension ns '"
-                                        ns-sym "': " (ex-message t))}))))))
+                    (let [msg (or (ex-message t) (str t))]
+                      (swap! load-failures-atom conj
+                        {:source       :extension-load
+                         :extension-id id
+                         :extension-ns ns-sym
+                         :path         (str url)
+                         :class        (.getName (class t))
+                         :reason       (str "require '" ns-sym "' threw "
+                                         (.getSimpleName (class t)) ": " msg)})
+                      (tel/log! {:level :error :id ::discover-extension-failed
+                                 :data  {:extension-id id
+                                         :extension-ns ns-sym
+                                         :source (str url)
+                                         :class (.getName (class t))
+                                         :message msg}
+                                 :msg   (str "Failed to load extension ns '"
+                                          ns-sym "': " msg)})))))))
           (when (empty? normalized)
             (tel/log! {:level :warn :id ::discover-extension-empty
                        :data {:source (str url)}
                        :msg  (str url " parsed but declared no extensions")})))
         (catch Throwable t
-          (tel/log! {:level :error :id ::discover-extension-parse-failed
-                     :data  {:source (str url) :message (ex-message t)}
-                     :msg   (str "Failed to parse " url ": " (ex-message t))}))))
+          (let [msg (or (ex-message t) (str t))]
+            (swap! load-failures-atom conj
+              {:source :extension-load
+               :path   (str url)
+               :class  (.getName (class t))
+               :reason (str "vis.edn parse failed: " msg)})
+            (tel/log! {:level :error :id ::discover-extension-parse-failed
+                       :data  {:source (str url) :message msg}
+                       :msg   (str "Failed to parse " url ": " msg)})))))
     @merged))
 
 (defn scan-extensions!
@@ -199,3 +241,16 @@
   (reset! discovered? false)
   (reset! cached-manifests nil)
   (scan-extensions!))
+
+(defn load-failures
+  "Vec of `{:source :extension-load :extension-id :extension-ns :path
+   :class :reason}` maps for every extension namespace whose
+   `(require ns)` threw during the most recent classpath scan, plus
+   any vis.edn that failed to parse. Empty vec when every namespace
+   loaded cleanly.
+
+   The shape of each entry matches what
+   `vis-foundation`'s `<scan-warnings>` renderer expects so callers
+   can splice the result straight into the user-facing block."
+  []
+  @load-failures-atom)

@@ -12,10 +12,11 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- seed!
-  "Two-turn fixture matching the REPRODUCTION.md case: one clean
-   turn (with comment, result, stdout) and one failing turn (error
-   block + clean block, with stderr capture). Returns the
-   conversation id."
+  "Two-turn fixture exercising the full transcript surface: one
+   clean turn with comment / result / stdout / a `(def …)` var /
+   thinking trace / answer-form-idx, and one failing turn with a
+   prose-in-code error block + a clean follow-up block + stderr
+   capture. Returns the conversation id."
   [s]
   (let [cid (vis/db-store-conversation! s {:channel :tui
                                            :title "Transcript fixture"
@@ -24,18 +25,28 @@
         q1  (vis/db-store-query! s {:parent-conversation-id cid
                                     :query "First turn"
                                     :status :running})]
+    ;; Turn 1: terminal iteration with a `(def …)` var, an `(answer …)`
+    ;; block (idx 1), and a thinking trace.
     (vis/db-store-iteration! s {:query-id q1
                                 :blocks [{:code              "(+ 1 1)"
                                           :comment           ";; double-check arithmetic"
                                           :result            2
                                           :stdout            "hello from clojure"
-                                          :execution-time-ms 5}]
+                                          :execution-time-ms 5}
+                                         {:code              "(answer \"42\")"
+                                          :result            :vis/silent
+                                          :execution-time-ms 2}]
+                                :answer        "42"
+                                :answer-form-idx 1
+                                :thinking      "Reasoning about arithmetic"
+                                :vars          [{:name "x" :value 42 :code "(def x 42)"}]
                                 :duration-ms 12
                                 :llm-provider :blockether
                                 :llm-model    "gpt-4o"
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cost-usd 0.0042})
-    (vis/db-update-query! s q1 {:status :done})
+    (vis/db-update-query! s q1 {:status :done :answer "42"})
+    ;; Turn 2: failure iteration. No vars, no answer.
     (let [q2 (vis/db-store-query! s {:parent-conversation-id cid
                                      :query "Second turn that fails"
                                      :status :running})]
@@ -141,6 +152,46 @@
               turn  (first (:turns (transcript/transcript s cid)))]
           (expect (= "blockether" (:provider turn)))
           (expect (= "gpt-4o"     (:model turn))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "carries thinking + answer-form-idx + vars + final answer on every iteration / turn"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid   (seed! s)
+              data  (transcript/transcript s cid)
+              turn  (first (:turns data))
+              iter  (first (:iterations turn))]
+          ;; Reasoning trace surfaces verbatim on the iteration.
+          (expect (= "Reasoning about arithmetic" (:thinking iter)))
+          ;; The terminal block index points at the `(answer …)` form.
+          (expect (= 1 (:answer-form-idx iter)))
+          ;; Per-iteration vars carry the (def …) we persisted.
+          (let [vars (:vars iter)]
+            (expect (= 1 (count vars)))
+            (expect (= "x" (:name (first vars))))
+            (expect (= 42  (:value (first vars))))
+            (expect (str/includes? (:code (first vars)) "(def x 42)")))
+          ;; The final answer surfaces on the turn.
+          (expect (= "42" (:answer turn))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "surfaces :returned-empty-blocks? as a typed boolean"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid (vis/db-store-conversation! s {:channel :tui :title "empty" :model "x"})
+              q   (vis/db-store-query! s {:parent-conversation-id cid
+                                          :query "empty turn"
+                                          :status :running})
+              _   (vis/db-store-iteration! s {:query-id q :blocks []
+                                              :duration-ms 1
+                                              :tokens {:input 10 :output 0}
+                                              :cost-usd 0.0001})
+              _   (vis/db-update-query! s q {:status :done})
+              iter (-> (transcript/transcript s cid)
+                     :turns first :iterations first)]
+          ;; Empty-blocks? defaults to true (bit was 1) when the iter
+          ;; row recorded zero blocks.
+          (expect (true? (:returned-empty-blocks? iter))))
         (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------
@@ -190,5 +241,18 @@
           (expect (str/includes? out "[error]"))
           ;; Locale-stable dot separator for cost.
           (expect (str/includes? out "$0.0042"))
-          (expect (str/includes? out "$0.0021")))
+          (expect (str/includes? out "$0.0021"))
+          ;; Thinking trace renders under a `_thinking:_` label.
+          (expect (str/includes? out "_thinking:_"))
+          (expect (str/includes? out "Reasoning about arithmetic"))
+          ;; Vars renders under a `_vars defined this iteration:_`
+          ;; label with one bullet per var.
+          (expect (str/includes? out "_vars defined this iteration:_"))
+          (expect (str/includes? out "`x`"))
+          ;; The `(answer ...)` block is flagged with `[answer]` on
+          ;; the status line so the reader spots the terminal form.
+          (expect (str/includes? out "[answer]"))
+          ;; The final answer text renders under a `#### Final answer`
+          ;; section after every iteration of its turn.
+          (expect (str/includes? out "#### Final answer")))
         (finally (vis/db-dispose-connection! s))))))
