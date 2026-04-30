@@ -63,7 +63,7 @@
     (let [e (sdk/extension
               {:ext/namespace 'com.acme.ext.fs
                :ext/doc       "Filesystem tools"
-               :ext/group     "filesystem"
+               :ext/kind      "filesystem"
                :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                :ext/prompt    "placeholder"
                :ext/symbols   [cat-symbol retries-value]})]
@@ -96,7 +96,7 @@
      (sdk/extension
        (cond-> {:ext/namespace ns-sym
                 :ext/doc       "fixture"
-                :ext/group     "filesystem"
+                :ext/kind      "filesystem"
                 :ext/prompt    "placeholder"
                 :ext/ns-alias  {:ns (clojure.core/symbol (str "vis.ext." alias-sym))
                                 :alias alias-sym}
@@ -193,7 +193,7 @@
     (let [environment {:extensions (atom [(sdk/extension
                                             {:ext/namespace 'com.acme.ext.fs
                                              :ext/doc       "Filesystem tools"
-                                             :ext/group     "filesystem"
+                                             :ext/kind      "filesystem"
                                              :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                                              :ext/prompt    "RULES:\n- Discover paths first."
                                              :ext/symbols   [cat-symbol retries-value]})])}
@@ -781,7 +781,7 @@
                   {:ext/namespace 'test.merge.a
                    :ext/doc       "Test ext A"
                    :ext/version   "0.0.1"
-                   :ext/group     "shared-test"
+                   :ext/kind      "shared-test"
                    :ext/ns-alias  {:ns 'test.shared.ns :alias 'shared}
                    :ext/symbols   [(sdk/symbol 'a-fn (constantly :from-a)
                                      {:doc "A" :arglists '([])})
@@ -791,7 +791,7 @@
                   {:ext/namespace 'test.merge.b
                    :ext/doc       "Test ext B"
                    :ext/version   "0.0.1"
-                   :ext/group     "shared-test"
+                   :ext/kind      "shared-test"
                    :ext/ns-alias  {:ns 'test.shared.ns :alias 'shared}
                    :ext/symbols   [(sdk/symbol 'b-fn (constantly :from-b)
                                      {:doc "B" :arglists '([])})
@@ -819,7 +819,7 @@
                    {:ext/namespace 'test.replace.x
                     :ext/doc       "v1"
                     :ext/version   "0.0.1"
-                    :ext/group     "replace-test"
+                    :ext/kind      "replace-test"
                     :ext/ns-alias  {:ns 'test.replace.ns :alias 'replace-test}
                     :ext/symbols   [(sdk/symbol 'reg (constantly :v1)
                                       {:doc "reg" :arglists '([])})]})
@@ -827,7 +827,7 @@
                    {:ext/namespace 'test.replace.x  ;; same namespace
                     :ext/doc       "v2"
                     :ext/version   "0.0.2"
-                    :ext/group     "replace-test"
+                    :ext/kind      "replace-test"
                     :ext/ns-alias  {:ns 'test.replace.ns :alias 'replace-test}
                     :ext/symbols   [(sdk/symbol 'reg (constantly :v2)
                                       {:doc "reg" :arglists '([])})]})]
@@ -1634,7 +1634,7 @@
     (let [ext (sdk/extension
                 {:ext/namespace 'com.blockether.vis.test.parse-rescue
                  :ext/doc       "Loop test fixture."
-                 :ext/group     "filesystem"
+                 :ext/kind      "filesystem"
                  :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                  :ext/prompt    (constantly "placeholder")
                  :ext/symbols   [rg-symbol]})]
@@ -1717,7 +1717,7 @@
             ext (sdk/extension
                   {:ext/namespace 'com.blockether.vis.test.pathological
                    :ext/doc       "pathological"
-                   :ext/group     "filesystem"
+                   :ext/kind      "filesystem"
                    :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
                    :ext/prompt    (constantly "x")
                    :ext/symbols   [rg]})

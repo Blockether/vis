@@ -429,7 +429,7 @@ SYSTEM vars (read-only; bound by name in the sandbox):
   TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
   TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
   TURN_SYSTEM_PROMPT           the assembled system prompt for this turn
-  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :version :group :symbols :docs} for every active extension
+  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :version :kind :symbols :docs} for every active extension
   ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
   ITERATION_PREVIOUS_REASONING last iteration's :thinking text
   CONVERSATION_TITLE           current conversation title (\"\" until set)
@@ -489,7 +489,10 @@ Host primitives (top-level, no alias — named for what they write):
      :namespace — fully-qualified ns symbol of the extension.
      :doc       — one-line LLM description from `:ext/doc` (when set).
      :version   — semver string (when set).
-     :group     — prompt-rendering group name (when set).
+     :kind      — categorical bucket (providers, channels, foundation,
+                  languages, persistance, …) used as the section
+                  label both in this snapshot and in `vis extensions
+                  list` (when set).
      :symbols   — vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
                   from `(vis/extension-doc ...)` if the model wants
@@ -521,7 +524,7 @@ Host primitives (top-level, no alias — named for what they write):
                        :symbols   (mapv :ext.symbol/sym (:ext/symbols ext))
                        :docs      (vec doc-names)}
                 alias                (assoc :alias   alias)
-                (:ext/group ext)     (assoc :group   (:ext/group ext))
+                (:ext/kind ext)      (assoc :kind    (:ext/kind ext))
                 (:ext/version ext)   (assoc :version (:ext/version ext))
                 (:ext/doc ext)       (assoc :doc     (:ext/doc ext))))))))
 

@@ -58,7 +58,7 @@ Key names spell out the full word (`:previous-blocks`, not
 (sdk/extension
   {:ext/namespace 'my-tool
    :ext/doc       "My custom tool"
-   :ext/group     "tools"
+   :ext/kind      "tools"
    :ext/prompt    "Prefer batching by 10 items at a time."
    :ext/symbols   [my-tool-sym]
    :ext/nudge-fn  (fn [{:keys [environment iteration previous-blocks]}]

@@ -384,7 +384,7 @@
 ;;                                    :namespace 'com.blockether.vis.ext.foundation.introspection
 ;;                                    :doc      "..."
 ;;                                    :version  "..."            ;; when present
-;;                                    :group    "..."            ;; when present
+;;                                    :kind     "..."            ;; when present
 ;;                                    :symbols  [sym1 sym2 ...]
 ;;                                    :docs     ["README.md" ...]}
 ;;

@@ -6,13 +6,15 @@
    `extension` builder that are most likely to bit-rot under
    refactors:
 
-     1. `:ext/group` auto-derivation for the categorical cases
-        (extensions that contribute providers or channels).
-     2. Explicit `:ext/group` always wins over auto-derivation.
-     3. `:ext/subgroup` is no longer part of the spec \u2014 the builder
+     1. `:ext/kind` auto-derivation for the categorical cases
+        (extensions that contribute providers, channels, or
+        persistence backends).
+     2. Explicit `:ext/kind` always wins over auto-derivation.
+     3. `:ext/subgroup` is no longer part of the spec — the builder
         neither requires it nor injects it.
-     4. The `:ext/symbols` -> `:ext/group` requirement still bites
-        when an extension exports sandbox symbols without a group."
+     4. The `:ext/symbols` -> `:ext/kind` requirement still bites
+        when an extension exports sandbox symbols without a kind.
+     5. `:ext/owner` round-trips and coexists with `:ext/author`."
   (:require
    [com.blockether.vis.internal.extension :as ext]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -27,20 +29,20 @@
   {:provider/id    :test
    :provider/label "Test provider"})
 
-(defdescribe group-auto-derivation-test
+(defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"
     (let [e (ext/extension
               {:ext/namespace 'test.provider-only
                :ext/doc       "Provider-only extension."
                :ext/providers [base-provider]})]
-      (expect (= "providers" (:ext/group e)))))
+      (expect (= "providers" (:ext/kind e)))))
 
   (it "derives \"channels\" for extensions exporting :ext/channels"
     (let [e (ext/extension
               {:ext/namespace 'test.channel-only
                :ext/doc       "Channel-only extension."
                :ext/channels  [base-channel]})]
-      (expect (= "channels" (:ext/group e)))))
+      (expect (= "channels" (:ext/kind e)))))
 
   (it "derives \"persistance\" for extensions exporting :ext/persistance"
     (let [e (ext/extension
@@ -48,21 +50,21 @@
                :ext/doc       "Persistence-only extension."
                :ext/persistance [{:persistance/id :test
                                   :persistance/ns 'test.backend.core}]})]
-      (expect (= "persistance" (:ext/group e)))))
+      (expect (= "persistance" (:ext/kind e)))))
 
-  (it "leaves :ext/group blank when the extension fits no categorical bucket"
+  (it "leaves :ext/kind blank when the extension fits no categorical bucket"
     (let [e (ext/extension
               {:ext/namespace 'test.bare
-               :ext/doc       "No surfaces, no group."})]
-      (expect (nil? (:ext/group e)))))
+               :ext/doc       "No surfaces, no kind."})]
+      (expect (nil? (:ext/kind e)))))
 
-  (it "explicit :ext/group always wins over auto-derivation"
+  (it "explicit :ext/kind always wins over auto-derivation"
     (let [e (ext/extension
-              {:ext/namespace 'test.explicit-group
-               :ext/doc       "Channel ext with custom group."
-               :ext/group     "custom-bucket"
+              {:ext/namespace 'test.explicit-kind
+               :ext/doc       "Channel ext with custom kind."
+               :ext/kind      "custom-bucket"
                :ext/channels  [base-channel]})]
-      (expect (= "custom-bucket" (:ext/group e))))))
+      (expect (= "custom-bucket" (:ext/kind e))))))
 
 (defdescribe owner-field-test
   (it "accepts :ext/owner as a non-blank string and round-trips it"
@@ -95,31 +97,15 @@
     (let [e (ext/extension
               {:ext/namespace 'test.no-subgroup
                :ext/doc       "Subgroup is dead."
-               :ext/group     "anything"})]
-      (expect (not (contains? e :ext/subgroup)))))
+               :ext/kind      "anything"})]
+      (expect (not (contains? e :ext/subgroup))))))
 
-  (it "passing :ext/subgroup is rejected as an unknown key by the spec"
-    ;; Spec validation runs through `validate!` and throws on unknown
-    ;; keys is *not* what `s/keys` does \u2014 it just ignores them. So
-    ;; we assert the weaker (but truthful) property: the builder does
-    ;; not propagate / honour an explicit subgroup.
-    (let [e (ext/extension
-              {:ext/namespace 'test.legacy-subgroup
-               :ext/doc       "Legacy author still sets :ext/subgroup."
-               :ext/group     "g"
-               :ext/subgroup  "ignored"})]
-      ;; The builder doesn't strip arbitrary keys, but it also doesn't
-      ;; *promise* anything about :ext/subgroup. The contract this test
-      ;; pins is: the canonical group is intact and the spec doesn't
-      ;; declare subgroup anymore (so consumers should stop reading it).
-      (expect (= "g" (:ext/group e))))))
-
-(defdescribe symbols-still-need-group-test
-  (it "an extension with :ext/symbols and no :ext/group fails validation"
+(defdescribe symbols-still-need-kind-test
+  (it "an extension with :ext/symbols and no :ext/kind fails validation"
     (let [thrown? (try
                     (ext/extension
-                      {:ext/namespace 'test.symbols-no-group
-                       :ext/doc       "Symbols without a group."
+                      {:ext/namespace 'test.symbols-no-kind
+                       :ext/doc       "Symbols without a kind."
                        :ext/ns-alias  {:ns 'test.sym :alias 'tst}
                        :ext/symbols   [(ext/value 'x 1 {:doc "A value."})]})
                     false

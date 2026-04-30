@@ -141,27 +141,46 @@
       (str "v/" (subs s (count ext-ns-prefix)))
       s)))
 
+(defn- per-kind-group
+  "Per-row \"Group\" cell — a finer label *inside* `:ext/kind`. Pulled
+   from the extension's contribution slot that matches its kind:
+
+     - providers   → joined `:provider/label`s
+     - channels    → joined `:channel/cmd`s
+     - persistance → joined `:persistance/id` names
+     - everything else (foundation, languages, uncategorized) → blank
+
+   Joined with `, ` so an extension contributing multiple of one
+   surface (e.g. `provider-zai` exporting both Coding-Plan and
+   pay-as-you-go) reads as a single comma-separated cell instead of
+   a wrapped multi-line column."
+  [e]
+  (case (:ext/kind e)
+    "providers"   (->> (:ext/providers e) (keep :provider/label) (str/join ", "))
+    "channels"    (->> (:ext/channels e)  (keep :channel/cmd)    (str/join ", "))
+    "persistance" (->> (:ext/persistance e) (keep (comp name :persistance/id)) (str/join ", "))
+    ""))
+
 (defn list-extensions
   "Return all registered extensions with their metadata (table rows).
 
    `:namespace` is shortened with the `v/` prefix (see
-   `short-ext-ns`). `:subgroup` carries the provider label when the
-   extension contributes one or more LLM providers — it's blank for
-   everything else. `:group` carries the categorical bucket
-   (`providers`, `channels`, `foundation`, …) used to render the table
-   in grouped sections."
+   `short-ext-ns`). `:kind` carries the categorical bucket
+   (`providers`, `channels`, `foundation`, …) used to render the
+   table in grouped sections. `:group` is a finer label *inside* the
+   kind (provider label / channel cmd / persistance id), blank for
+   kinds that don't have one. `:author` and `:owner` come straight
+   from the extension manifest; the latter identifies the package's
+   distribution (\"vis\" for everything bundled here)."
   []
   (mapv (fn [e]
-          (let [provider-labels (->> (:ext/providers e)
-                                  (keep :provider/label)
-                                  (str/join ", "))]
-            {:namespace (short-ext-ns (:ext/namespace e))
-             :doc       (:ext/doc e)
-             :group     (or (:ext/group e) "uncategorized")
-             :subgroup  provider-labels
-             :owner     (or (:ext/owner e) "—")
-             :version   (or (:ext/version e) "—")
-             :cli-cmds  (str/join ", " (map :cmd/name (or (:ext/cli e) [])))}))
+          {:namespace (short-ext-ns (:ext/namespace e))
+           :doc       (:ext/doc e)
+           :kind      (or (:ext/kind e) "uncategorized")
+           :group     (per-kind-group e)
+           :author    (or (:ext/author e) "—")
+           :owner     (or (:ext/owner e) "—")
+           :version   (or (:ext/version e) "—")})
     (extension/registered-extensions)))
 
 (defn find-extension-cmd
@@ -514,7 +533,7 @@
 
 (defn- print-section-heading!
   "Render a section heading line for a grouped table — used when
-   `vis extensions list` breaks the rows into per-`:ext/group`
+   `vis extensions list` breaks the rows into per-`:ext/kind`
    sub-tables. `width` is the total visible width of the surrounding
    table so the rule under the label spans the same column run."
   [label width]
@@ -764,11 +783,11 @@
 
 (def ^:private extensions-table-cols
   [{:key :namespace :label "Namespace"   :width 28 :align :left}
-   {:key :subgroup  :label "Subgroup"    :width 18 :align :left}
+   {:key :group     :label "Group"       :width 18 :align :left}
+   {:key :author    :label "Author"      :width 12 :align :left}
    {:key :owner     :label "Owner"       :width  8 :align :left}
-   {:key :doc       :label "Description" :width 36 :align :left}
-   {:key :version   :label "Version"     :width 10 :align :left}
-   {:key :cli-cmds  :label "CLI"         :width 16 :align :left}])
+   {:key :doc       :label "Description" :width 40 :align :left}
+   {:key :version   :label "Version"     :width 10 :align :left}])
 
 (defn- extensions-table-width
   "Visible width of the rendered table (sum of column widths +
@@ -787,10 +806,10 @@
     (if (empty? exts)
       (stdout! "No extensions registered.")
       (do (stdout! "\n  Extensions\n")
-        (doseq [[group rows] (sort-by key (group-by :group exts))]
-          (print-section-heading! group width)
+        (doseq [[kind rows] (sort-by key (group-by :kind exts))]
+          (print-section-heading! kind width)
           (print-table! cols
-            (sort-by (juxt :subgroup :namespace) rows)))
+            (sort-by (juxt :group :namespace) rows)))
         (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 

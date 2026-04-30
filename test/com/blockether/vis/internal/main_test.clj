@@ -51,10 +51,12 @@
       (expect (= (count (extension/registered-extensions)) (count rows)))
       (doseq [r rows]
         (expect (every? #(contains? r %)
-                  [:namespace :doc :group :subgroup :version :cli-cmds]))
+                  [:namespace :doc :kind :group :author :owner :version]))
         (expect (string? (:namespace r)))
+        (expect (string? (:kind r)))
         (expect (string? (:group r)))
-        (expect (string? (:subgroup r))))))
+        (expect (string? (:author r)))
+        (expect (string? (:owner r))))))
 
   (it "shortens every extension namespace with the `v/` prefix"
     (doseq [{:keys [namespace]} (main/list-extensions)]
@@ -63,7 +65,7 @@
       (expect (or (str/starts-with? namespace "v/")
                 (not (str/starts-with? namespace "com.blockether.vis.ext."))))))
 
-  (it "copies every provider label into :subgroup when the extension contributes one"
+  (it "copies every provider label into :group when the extension's kind is providers"
     (doseq [ext (extension/registered-extensions)]
       (let [labels   (->> (:ext/providers ext) (keep :provider/label))
             ext-name (str (:ext/namespace ext))
@@ -74,6 +76,21 @@
                                       (str "com.blockether.vis.ext."
                                         (subs (:namespace %) 2))))))
                        first)]
-        (when (and row (seq labels))
+        (when (and row (seq labels) (= "providers" (:kind row)))
           (doseq [label labels]
-            (expect (str/includes? (:subgroup row) label))))))))
+            (expect (str/includes? (:group row) label)))))))
+
+  (it "copies every channel cmd into :group when the extension's kind is channels"
+    (doseq [ext (extension/registered-extensions)]
+      (let [cmds     (->> (:ext/channels ext) (keep :channel/cmd))
+            ext-name (str (:ext/namespace ext))
+            row      (->> (main/list-extensions)
+                       (filter #(or (= (:namespace %) ext-name)
+                                  (and (str/starts-with? (:namespace %) "v/")
+                                    (= ext-name
+                                      (str "com.blockether.vis.ext."
+                                        (subs (:namespace %) 2))))))
+                       first)]
+        (when (and row (seq cmds) (= "channels" (:kind row)))
+          (doseq [cmd cmds]
+            (expect (str/includes? (:group row) cmd))))))))

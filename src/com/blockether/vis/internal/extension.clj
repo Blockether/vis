@@ -90,12 +90,14 @@
 ;; Extension-level documentation - describes what this bundle provides.
 (s/def :ext/doc non-blank-string?)
 
-;; Top-level group, used for prompt rendering AND as the bucket label
-;; in `vis extensions list`. Examples: "foundation", "languages",
-;; "providers", "channels". Authors may set it explicitly; for the
-;; common categorical cases (extensions that contribute providers or
-;; channels and nothing else) the `extension` builder auto-derives it.
-(s/def :ext/group non-blank-string?)
+;; Top-level kind — the *category* of surface this extension
+;; contributes. Used for prompt-rendering section labels AND as the
+;; section heading in `vis extensions list`. Examples: "foundation",
+;; "languages", "providers", "channels", "persistance". Authors may
+;; set it explicitly; for the common categorical cases (extensions
+;; that only contribute providers / channels / persistence backends)
+;; the `extension` builder auto-derives it.
+(s/def :ext/kind non-blank-string?)
 
 ;; Guard evaluated at each query boundary. (fn [env] -> bool).
 ;; Default: (constantly true).
@@ -195,22 +197,22 @@
   (or (empty? (:ext/symbols ext))
     (some? (:ext/ns-alias ext))))
 
-(defn- group-required-when-symbols?
+(defn- kind-required-when-symbols?
   [ext]
   (or (empty? (:ext/symbols ext))
-    (some? (:ext/group ext))))
+    (some? (:ext/kind ext))))
 
 (s/def ::extension
   (s/and
     (s/keys :req [:ext/namespace :ext/doc]
-      :opt [:ext/group :ext/activation-fn
+      :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/nudge-fn
             :ext/on-parse-error-fn :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance])
     ns-alias-required-when-symbols?
-    group-required-when-symbols?))
+    kind-required-when-symbols?))
 
 ;; =============================================================================
 ;; Symbol helpers (builder fns)
@@ -605,20 +607,20 @@
 ;; Public API — extension builder
 ;; =============================================================================
 
-(defn- derive-group
-  "Auto-derive `:ext/group` for the categorical cases when the author
+(defn- derive-kind
+  "Auto-derive `:ext/kind` for the categorical cases when the author
    didn't set one. Extensions that contribute providers, channels, or
    persistence backends (and nothing forcing a different label) get
    bucketed under `\"providers\"` / `\"channels\"` / `\"persistance\"`
    so `vis extensions list` reads as a clean grouped table instead
    of a column of blanks.
 
-   Explicit `:ext/group` always wins. Extensions that fit no
-   categorical bucket (and don't set a group themselves) stay
+   Explicit `:ext/kind` always wins. Extensions that fit no
+   categorical bucket (and don't set a kind themselves) stay
    blank — that's a legitimate \"uncategorized\" outcome."
   [spec]
   (cond
-    (some? (:ext/group spec))           (:ext/group spec)
+    (some? (:ext/kind spec))            (:ext/kind spec)
     (seq (:ext/providers spec))         "providers"
     (seq (:ext/channels spec))          "channels"
     (seq (:ext/persistance spec))       "persistance"
@@ -633,7 +635,7 @@
     (cond-> (contains? spec :ext/prompt) (update :ext/prompt normalize-prompt))
     (cond->
       (not (:ext/activation-fn spec))                  (assoc :ext/activation-fn (constantly true))
-      (some? (derive-group spec))                      (assoc :ext/group (derive-group spec))
+      (some? (derive-kind spec))                       (assoc :ext/kind (derive-kind spec))
       (not (:ext/symbols spec))                        (assoc :ext/symbols [])
       (not (:ext/classes spec))                        (assoc :ext/classes {})
       (not (:ext/imports spec))                        (assoc :ext/imports {})

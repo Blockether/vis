@@ -574,7 +574,7 @@
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.md :alias 'md}
-     :ext/group     "foundation"
+     :ext/kind      "foundation"
      :ext/prompt    (fn [_env] markdown-prompt)
      :ext/symbols   markdown-symbols}))
 

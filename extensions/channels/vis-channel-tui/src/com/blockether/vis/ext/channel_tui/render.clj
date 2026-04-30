@@ -1521,10 +1521,10 @@
   (if (or (nil? s) (zero? (.length s)))
     (or s "")
     (let [s (-> s
-                (str/replace
-                  #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
-                  (fn [[_ image? text]]
-                    (if image? "" text))))
+              (str/replace
+                #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
+                (fn [[_ image? text]]
+                  (if image? "" text))))
           n  (.length s)
           sb (StringBuilder.)
           ;; Each token entry: [opener, closer, ON-sentinel, OFF-sentinel,

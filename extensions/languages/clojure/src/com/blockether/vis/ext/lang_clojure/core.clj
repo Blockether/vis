@@ -63,7 +63,7 @@
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
-     :ext/group     "languages"
+     :ext/kind      "languages"
      :ext/prompt    zedit/z-prompt
      :ext/symbols   (into [zedit/zedit-symbol] rewrite-clj-zip-symbols)}))
 
