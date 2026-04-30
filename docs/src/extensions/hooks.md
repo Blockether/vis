@@ -133,7 +133,7 @@ are logged and skipped — a buggy rescue can never break turn
 execution.
 
 Sketch (hypothetical — no production extension currently ships parse-error
-rescue; the `vis/rg` API was deliberately narrowed to a vector of literal
+rescue; the `v/rg` API was deliberately narrowed to a vector of literal
 substrings precisely so this class of bug becomes unrepresentable on the
 input side):
 
@@ -150,7 +150,7 @@ edamame would fail. The loop would notice `frob` in the broken form and
 call `rescue-frob-parse`, which could double the backslash so the
 re-parse succeeds and the tool fn runs with the LLM's intended string.
 In practice we prefer to design the API so the bad shape is unreachable
-(`vis/rg` patterns vector + auto-quoted literals) rather than rescue it
+(`v/rg` patterns vector + auto-quoted literals) rather than rescue it
 at runtime — cheaper to maintain, easier to reason about.
 
 ## A note on naming

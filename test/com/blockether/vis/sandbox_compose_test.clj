@@ -265,7 +265,7 @@
    the live SCI sandbox — they just no longer need to be
    simultaneously enumerated in the prompt as a contract."
   ["write code -> get data -> process data -> emit answer"
-   "(def x (vis/cat"
+   "(def x (v/cat"
    "<journal>"
    "<var_index>"
    "TURN_USER_REQUEST"

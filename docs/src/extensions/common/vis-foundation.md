@@ -14,7 +14,7 @@ guarantees) is inlined as the extension's canonical README. Read
 it from inside the agent with:
 
 ```clojure
-(vis/extension-readme 'environment)
+(v/extension-readme 'environment)
 ```
 
 Or load it from disk at
@@ -23,7 +23,7 @@ under `[environment :docs "README.md" :content]`.
 
 ## Sibling extensions in this jar
 
-The `vis-foundation` jar ships two SCI aliases. The `vis/` alias
+The `vis-foundation` jar ships two SCI aliases. The `v/` alias
 covers introspection, file I/O, and environment awareness (above).
 The second alias is for answer construction:
 

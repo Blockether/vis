@@ -33,7 +33,7 @@
     (expect (= "~~x~~"   (md/strike "x"))))
 
   (it "code, kbd"
-    (expect (= "`vis/cat`" (md/code "vis/cat")))
+    (expect (= "`v/cat`" (md/code "v/cat")))
     (expect (= "<kbd>Ctrl+K</kbd>" (md/kbd "Ctrl+K"))))
 
   (it "link / image (2-arg)"

@@ -1,21 +1,21 @@
 (ns com.blockether.vis.ext.foundation.editing.core
-  "Editing tools exposed under the `vis/` alias in the SCI sandbox.
+  "Editing tools exposed under the `v/` alias in the SCI sandbox.
 
    Surface (intentionally small) — every tool returns pure
    structured data, no English prose smuggled into return values:
 
-     (vis/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines}
-     (vis/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
-     (vis/ls path)             ; -> nested {:name :path :type :size :children} tree
-     (vis/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
-     (vis/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
-     (vis/edit path search replace)   ; -> {:path :bytes-before :bytes-after}
-     (vis/write path content)         ; -> {:path :bytes}
+     (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines}
+     (v/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
+     (v/ls path)             ; -> nested {:name :path :type :size :children} tree
+     (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
+     (v/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
+     (v/edit path search replace)   ; -> {:path :bytes-before :bytes-after}
+     (v/write path content)         ; -> {:path :bytes}
 
    Plus the babashka.fs surface bound under `fs/` (cwd, exists?, glob,
    parent, components, file-name, extension, expand-home, list-dir,
    relativize). Use the fs primitives for path math; reach for a
-   higher-level vis/ symbol when you also need to read or mutate the
+   higher-level v/ symbol when you also need to read or mutate the
    file's contents.
 
    Clojure-specific structured editing (`z/zedit` plus the `z/`
@@ -104,7 +104,7 @@
   (let [validate-positive (fn [k v]
                             (when (and (some? v)
                                     (or (not (integer? v)) (not (pos? v))))
-                              (throw (ex-info (str "vis/cat " k " must be a positive integer")
+                              (throw (ex-info (str "v/cat " k " must be a positive integer")
                                        {:type :ext.foundation.editing/invalid-cat-opts
                                         :opt  k :got v}))))]
     (cond
@@ -123,7 +123,7 @@
       (do (validate-positive :offset opts)
         {:offset opts :limit nil :char-limit default-read-char-limit})
 
-      :else (throw (ex-info (str "Invalid (vis/cat) opts: " (pr-str opts))
+      :else (throw (ex-info (str "Invalid (v/cat) opts: " (pr-str opts))
                      {:type :ext.foundation.editing/invalid-cat-opts :opts opts})))))
 
 (defn- take-lines-under-char-cap
@@ -245,7 +245,7 @@
 ;; =============================================================================
 
 (defn- compile-pattern
-  "vis/rg accepts ONLY a non-empty vector of literal substrings. Each
+  "v/rg accepts ONLY a non-empty vector of literal substrings. Each
    element is matched LITERALLY (PCRE metacharacters are escaped via
    `Pattern/quote`); the elements are OR'd together internally. This
    removes every regex-DSL footgun (`\\|`, `\\.`, `\\d`, ...) by making
@@ -257,17 +257,17 @@
     (Pattern/compile (str/join "|" (map #(Pattern/quote %) p)))
 
     (and (vector? p) (empty? p))
-    (throw (ex-info "vis/rg patterns vector must be non-empty."
+    (throw (ex-info "v/rg patterns vector must be non-empty."
              {:type :ext.foundation.editing/empty-patterns}))
 
     (vector? p)
-    (throw (ex-info "vis/rg patterns vector must contain only strings."
+    (throw (ex-info "v/rg patterns vector must contain only strings."
              {:type :ext.foundation.editing/non-string-in-patterns
               :got  (mapv type p)}))
 
     (string? p)
     (throw (ex-info
-             (str "vis/rg pattern must be a vector of literal strings, "
+             (str "v/rg pattern must be a vector of literal strings, "
                "not a string. Wrap in a vector: [\"" p "\"]. For multiple "
                "alternatives use [\"a\" \"b\" \"c\"]. No regex DSL.")
              {:type :ext.foundation.editing/string-pattern-rejected
@@ -275,13 +275,13 @@
 
     (instance? java.util.regex.Pattern p)
     (throw (ex-info
-             (str "vis/rg pattern must be a vector of literal strings, "
+             (str "v/rg pattern must be a vector of literal strings, "
                "not a regex literal. For #\"foo|bar\" use [\"foo\" \"bar\"]. "
                "For genuine regex needs use (re-seq #\"...\" (slurp f)).")
              {:type :ext.foundation.editing/regex-pattern-rejected}))
 
     :else
-    (throw (ex-info "vis/rg pattern must be a non-empty vector of strings."
+    (throw (ex-info "v/rg pattern must be a non-empty vector of strings."
              {:type :ext.foundation.editing/invalid-pattern-type
               :got  (type p)}))))
 
@@ -350,7 +350,7 @@
 (defn- match-context
   "Return up to `n` matches of `s` in `original` with line numbers and
    surrounding line context, so an ambiguous edit can be disambiguated
-   without another vis/cat round-trip."
+   without another v/cat round-trip."
   [original s n]
   (let [matches (loop [from 0 acc []]
                   (let [idx (.indexOf original s from)]
@@ -385,7 +385,7 @@
    3-arg form replaces the FIRST occurrence; throws when ambiguous.
    4-arg form takes opts — supported keys:
      :line N  pick the occurrence on or after line N (the same number
-              `vis/cat` printed). No ambiguity check; nearest match wins.
+              `v/cat` printed). No ambiguity check; nearest match wins.
 
    When ambiguous (no :line given), the error embeds matched line
    numbers + surrounding context so the model can disambiguate without
@@ -398,7 +398,7 @@
          r (str replace)
          line (:line opts)]
      (when (str/blank? s)
-       (throw (ex-info "vis/edit :search must be non-blank. Use vis/write to overwrite a whole file."
+       (throw (ex-info "v/edit :search must be non-blank. Use v/write to overwrite a whole file."
                 {:type :ext.foundation.editing/blank-search})))
      (let [start-from (if line (char-offset-of-line original line) 0)
            first-idx (.indexOf original s start-from)
@@ -406,14 +406,14 @@
                         (.indexOf original s (+ first-idx (count s))))]
        (cond
          (neg? first-idx)
-         (throw (ex-info (str "vis/edit :search not found in " (rel-path f)
+         (throw (ex-info (str "v/edit :search not found in " (rel-path f)
                            (when line (str " (searching from line " line " onward)")))
                   {:type :ext.foundation.editing/search-not-found
                    :path (rel-path f)
                    :search (subs s 0 (min 200 (count s)))}))
          (and second-idx (>= second-idx 0))
          (let [hits (match-context original s 5)]
-           (throw (ex-info (str "vis/edit :search appears " (count hits)
+           (throw (ex-info (str "v/edit :search appears " (count hits)
                              " times in " (rel-path f)
                              ". Either add surrounding lines until the match is unique, or pass {:line N} to pick the occurrence on or after that line. Hits: "
                              (pr-str (mapv (fn [h] (str "L" (:line h) ": " (str/trim (:context h)))) hits)))
@@ -443,17 +443,17 @@
             "Default char-limit 6000; opts {:offset N :limit M :char-limit C}. "
             "Compose display text yourself: (str/join \"\\n\" (:lines r)).")
      :arglists '([path] [path opts])
-     :examples ["(vis/cat \"src/main.clj\")"
-                "(:lines (vis/cat \"src/main.clj\"))"
-                "(vis/cat \"big.log\" {:offset 5000 :limit 200})"
-                "(str/join \"\\n\" (:lines (vis/cat \"src/main.clj\")))"]}))
+     :examples ["(v/cat \"src/main.clj\")"
+                "(:lines (v/cat \"src/main.clj\"))"
+                "(v/cat \"big.log\" {:offset 5000 :limit 200})"
+                "(str/join \"\\n\" (:lines (v/cat \"src/main.clj\")))"]}))
 
 (def ls-symbol
   (sdk/symbol 'ls list-files
     {:doc "List a directory tree. opts {:depth :hidden? :respect-gitignore?}."
      :arglists '([path] [path opts])
-     :examples ["(vis/ls \".\")"
-                "(vis/ls \"src\" {:depth 3})"]}))
+     :examples ["(v/ls \".\")"
+                "(v/ls \"src\" {:depth 3})"]}))
 
 (def rg-symbol
   (sdk/symbol 'rg grep-files
@@ -464,34 +464,34 @@
             "opts {:limit :hidden? :respect-gitignore?}. "
             "For genuine regex needs use (re-seq #\"...\" (some file-text-source)).")
      :arglists '([patterns path] [patterns path opts])
-     :examples ["(vis/rg [\"defn render\"] \"src\")"
-                "(:hits (vis/rg [\"defn render\"] \"src\"))"
-                "(vis/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
+     :examples ["(v/rg [\"defn render\"] \"src\")"
+                "(:hits (v/rg [\"defn render\"] \"src\"))"
+                "(v/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
 
 (def edit-symbol
   (sdk/symbol 'edit edit-file
     {:doc "Replace the FIRST occurrence of `search` with `replace` in `path`. Throws if `search` is missing or non-unique. Pass {:line N} as a 4th arg to pick the occurrence on or after line N when context-anchoring is hard."
      :arglists '([path search replace] [path search replace opts])
-     :examples ["(vis/edit \"src/main.clj\" \"(def OLD 1)\" \"(def NEW 2)\")"
-                "(vis/edit \"src/main.clj\" \"foo\" \"bar\" {:line 142})"]}))
+     :examples ["(v/edit \"src/main.clj\" \"(def OLD 1)\" \"(def NEW 2)\")"
+                "(v/edit \"src/main.clj\" \"foo\" \"bar\" {:line 142})"]}))
 
 (def write-symbol
   (sdk/symbol 'write write-file
     {:doc "Overwrite or create a file with the given content. Creates parent directories as needed."
      :arglists '([path content])
-     :examples ["(vis/write \"new.txt\" \"hello\")"]}))
+     :examples ["(v/write \"new.txt\" \"hello\")"]}))
 
 (def editing-symbols
   [cat-symbol ls-symbol rg-symbol edit-symbol write-symbol])
 
 (def editing-prompt
-  "`vis/` = file I/O (5 tools). EVERY tool returns pure structured data — maps with explicit keys, never English-prose strings. Compose display text yourself when you need it.
-  (vis/cat path)             -> {:path :offset :total-lines :truncated-by :lines}. :lines = vec of raw line strings. Default char-limit 6000; opts {:offset :limit :char-limit}. Pagination: `(vis/cat p {:offset (+ (:offset r) (count (:lines r)))})`.
-  (vis/ls path)              -> nested {:name :path :type :size :children} tree. opts {:depth :hidden? :respect-gitignore?}.
-  (vis/rg [\"a\" \"b\"] path)  -> {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}. patterns = non-empty vec of literal strings (no regex DSL). For real regex: (re-seq #\"...\" (str/join \"\\n\" (:lines (vis/cat path)))).
-  (vis/edit path s r)        -> {:path :bytes-before :bytes-after}. Replace FIRST `s`->`r`. `s` must be unique. 4th arg {:line N} disambiguates by line.
-  (vis/write path content)   -> {:path :bytes}. Overwrite/create.
+  "`v/` = file I/O (5 tools). EVERY tool returns pure structured data — maps with explicit keys, never English-prose strings. Compose display text yourself when you need it.
+  (v/cat path)             -> {:path :offset :total-lines :truncated-by :lines}. :lines = vec of raw line strings. Default char-limit 6000; opts {:offset :limit :char-limit}. Pagination: `(v/cat p {:offset (+ (:offset r) (count (:lines r)))})`.
+  (v/ls path)              -> nested {:name :path :type :size :children} tree. opts {:depth :hidden? :respect-gitignore?}.
+  (v/rg [\"a\" \"b\"] path)  -> {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}. patterns = non-empty vec of literal strings (no regex DSL). For real regex: (re-seq #\"...\" (str/join \"\\n\" (:lines (v/cat path)))).
+  (v/edit path s r)        -> {:path :bytes-before :bytes-after}. Replace FIRST `s`->`r`. `s` must be unique. 4th arg {:line N} disambiguates by line.
+  (v/write path content)   -> {:path :bytes}. Overwrite/create.
 
 For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).
 
-Read once, reuse. Cross-iter? `(def x (vis/cat ...))`. Identical re-reads run again on every call — bind once, reuse via the var.")
+Read once, reuse. Cross-iter? `(def x (v/cat ...))`. Identical re-reads run again on every call — bind once, reuse via the var.")

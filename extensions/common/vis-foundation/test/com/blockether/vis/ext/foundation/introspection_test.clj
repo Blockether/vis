@@ -14,7 +14,7 @@
 (require '[com.blockether.vis.ext.foundation.introspection])
 
 ;; Populate the classpath docs registry once for the whole namespace.
-;; The (vis/extensions ...) / (vis/extension-docs ...) / etc. tests
+;; The (v/extensions ...) / (v/extension-docs ...) / etc. tests
 ;; read from the registry that `discover-extensions!` produces by
 ;; merging every `META-INF/vis-extension/vis.edn` on the classpath.
 ;; Idempotent across runs (memoized inside the loader).
@@ -58,7 +58,7 @@
   (deref (resolve (symbol "com.blockether.vis.ext.foundation.introspection" name))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/turn) — single rich snapshot of the current turn
+;; (v/turn) — single rich snapshot of the current turn
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-turn-test
@@ -93,7 +93,7 @@
         (expect (= "boom" (-> turn :errors first :error))))))
 
   (it "omits the dropped :redundancy key from the snapshot"
-    ;; The dedup cache + redundancy metric were removed; (vis/turn)
+    ;; The dedup cache + redundancy metric were removed; (v/turn)
     ;; no longer surfaces a `:redundancy` key. Asserting absence here
     ;; pins the contract so a future addition is a deliberate decision,
     ;; not a silent regression.
@@ -108,7 +108,7 @@
         (expect (not (contains? turn :redundancy)))))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/conversation [id]) — current or specific conversation
+;; (v/conversation [id]) — current or specific conversation
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversation-test
@@ -172,7 +172,7 @@
       (expect (nil? (:in-flight-turn-id conversation))))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/conversations [channel]) — list across one or all channels
+;; (v/conversations [channel]) — list across one or all channels
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversations-test
@@ -203,7 +203,7 @@
       (expect (= 1 (:turn-count this))))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/var-history sym [conversation-id])
+;; (v/var-history sym [conversation-id])
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-var-history-test
@@ -224,7 +224,7 @@
       (expect (= [] ((private-fn "foundation-var-history") (env s conversation-id) 'foo other))))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/conversation-forks [conversation-id]) — fork tree introspection.
+;; (v/conversation-forks [conversation-id]) — fork tree introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversation-forks-test
@@ -265,7 +265,7 @@
       (expect (= [] rows)))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/query-retries query-id) — retry history introspection.
+;; (v/query-retries query-id) — retry history introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-query-retries-test
@@ -302,7 +302,7 @@
       (expect (= [] ((private-fn "meta-query-retries") (env s conversation-id) nil))))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/find-attempts pattern [conversation-id])
+;; (v/find-attempts pattern [conversation-id])
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-find-attempts-test
@@ -362,7 +362,7 @@
       (expect (= [] hits)))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/find-attempts-everywhere pattern) — cross-conversation regex search.
+;; (v/find-attempts-everywhere pattern) — cross-conversation regex search.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-find-attempts-everywhere-test
@@ -405,7 +405,7 @@
       (expect (= [] hits)))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/failures) and (vis/diagnose) — no raw SQLite needed for triage
+;; (v/failures) and (v/diagnose) — no raw SQLite needed for triage
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-failure-diagnostics-test
@@ -431,11 +431,11 @@
           {:keys [conversation-id query-id]} (bootstrap s)]
       (db-store-iteration! s query-id
         {:blocks [{:id 0
-                   :code "(vis/rg \"foo\\|bar\\|baz\" \"x\")"
+                   :code "(v/rg \"foo\\|bar\\|baz\" \"x\")"
                    :error "Unsupported escape character: \\|"
                    :execution-time-ms 1}
                   {:id 1
-                   :code "(vis/patch [{:path \"render.clj\" :search \"x\" :replace \"y\"}])"
+                   :code "(v/patch [{:path \"render.clj\" :search \"x\" :replace \"y\"}])"
                    :error "SEARCH block 1 not found in render.clj"
                    :execution-time-ms 1}]})
       (let [diagnosis ((private-fn "foundation-diagnose") (env s conversation-id))]
@@ -460,14 +460,14 @@
          (into
            (mapv (fn [i]
                    {:id i
-                    :code (str "(vis/cat \"src/tui/file" i ".clj\")")
+                    :code (str "(v/cat \"src/tui/file" i ".clj\")")
                     :error (str "File not found: /Users/x/vis/src/tui/file" i ".clj")
                     :execution-time-ms 1})
              (range 6))
-           [{:id 6 :code "(vis/cat \"src/tui/render.clj\")"
+           [{:id 6 :code "(v/cat \"src/tui/render.clj\")"
              :error "Path not found: /Users/x/vis/src/tui"
              :execution-time-ms 1}
-            {:id 7 :code "(vis/cat \"src/tui\")"
+            {:id 7 :code "(v/cat \"src/tui\")"
              :error "Path not found: /Users/x/vis/src/tui"
              :execution-time-ms 1}])})
       (let [diag ((private-fn "foundation-diagnose") (env s conversation-id))
@@ -490,11 +490,11 @@
                              :query "second turn"
                              :status :running})]
       (db-store-iteration! s query-id
-        {:blocks [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
+        {:blocks [{:id 0 :code "(v/rg \"x\\|y\" \"z\")"
                    :error "Unsupported escape character: \\|"
                    :execution-time-ms 1}]})
       (db-store-iteration! s second-query-id
-        {:blocks [{:id 0 :code "(vis/patch [{:path \"x\"}])"
+        {:blocks [{:id 0 :code "(v/patch [{:path \"x\"}])"
                    :error "SEARCH block 1 not found in x"
                    :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures") (env s conversation-id) conversation-id)]
@@ -512,7 +512,7 @@
         (expect (= [] failures))))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/failures-everywhere) — cross-conversation failure scan.
+;; (v/failures-everywhere) — cross-conversation failure scan.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-failures-everywhere-test
@@ -525,11 +525,11 @@
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id
-        {:blocks [{:id 0 :code "(vis/rg \"x\\|y\" \"z\")"
+        {:blocks [{:id 0 :code "(v/rg \"x\\|y\" \"z\")"
                    :error "Unsupported escape character: \\|"
                    :execution-time-ms 1}]})
       (db-store-iteration! s other-query-id
-        {:blocks [{:id 0 :code "(vis/patch [{:path \"x\"}])"
+        {:blocks [{:id 0 :code "(v/patch [{:path \"x\"}])"
                    :error "SEARCH block 1 not found in x"
                    :execution-time-ms 1}]})
       (let [failures ((private-fn "foundation-failures-everywhere") (env s conversation-id))]
@@ -555,8 +555,8 @@
       (expect (= [] failures)))))
 
 ;; -----------------------------------------------------------------------------
-;; (vis/extensions), (vis/extension-docs ...), (vis/extension-doc ...),
-;; and (vis/extension-readme ...) — catalog + abstracts + bodies.
+;; (v/extensions), (v/extension-docs ...), (v/extension-doc ...),
+;; and (v/extension-readme ...) — catalog + abstracts + bodies.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-extensions-catalog-test
@@ -574,7 +574,7 @@
       (expect (contains? (set (:symbols this)) 'snapshot))
       ;; :docs is a vector of summary maps. Each summary carries the
       ;; structured descriptor fields except :content; :content lives
-      ;; on the full descriptor returned by (vis/extension-doc ...).
+      ;; on the full descriptor returned by (v/extension-doc ...).
       (let [docs (:docs this)
             readme (some #(when (= "README.md" (:name %)) %) docs)]
         (expect (vector? docs))
@@ -653,12 +653,12 @@
   (it "resolves by id symbol"
     (let [text ((private-fn "foundation-extension-readme") {} 'vis)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "vis/extensions"))))
+      (expect (clojure.string/includes? text "v/extensions"))))
 
   (it "resolves by id keyword"
     (let [text ((private-fn "foundation-extension-readme") {} :vis)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "vis/extension-readme"))))
+      (expect (clojure.string/includes? text "v/extension-readme"))))
 
   (it "resolves by full extension namespace"
     (let [text ((private-fn "foundation-extension-readme") {} 'com.blockether.vis.ext.foundation.core)]
@@ -666,7 +666,7 @@
       (expect (clojure.string/includes? text "# vis-foundation"))))
 
   (it "resolves by alias-ns symbol"
-    (let [text ((private-fn "foundation-extension-readme") {} 'vis.ext.vis)]
+    (let [text ((private-fn "foundation-extension-readme") {} 'vis.ext.v)]
       (expect (string? text))))
 
   (it "returns nil for an unknown extension reference"

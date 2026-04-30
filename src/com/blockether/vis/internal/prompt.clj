@@ -39,7 +39,7 @@
   "Rolling-window size for <journal> entries. 12 carries the last
    dozen iterations of the conversation (cross-turn) so a follow-up
    turn sees the immediate context of the prior turn's work without
-   re-fetching via `(vis/conversation)`.
+   re-fetching via `(v/conversation)`.
 
    When the iteration's prompt token count crosses
    `CONTEXT_PRESSURE_THRESHOLD` of the model's context window the
@@ -271,7 +271,7 @@
           "  Keys above are illustrative — use whatever shape fits the\n"
           "  task. Atoms preferred (file paths, symbol names, error keys,\n"
           "  iN.K refs) over prose. Raw history stays reachable via\n"
-          "  `(vis/find-attempts \"…\")` and `(vis/conversation)` after\n"
+          "  `(v/find-attempts \"…\")` and `(v/conversation)` after\n"
           "  iterations roll off; use those when you genuinely need\n"
           "  precision your `(def …)` didn't capture.")))))
 
@@ -400,7 +400,7 @@ Reply each turn with one or more ```clojure … ``` fences. Their source concate
 
 The canonical pattern for any tool call you'll inspect more than once:
 ```clojure
-(def x (vis/cat \"src/foo.clj\"))   ;; lands in <var_index> + var-history
+(def x (v/cat \"src/foo.clj\"))   ;; lands in <var_index> + var-history
 x                                  ;; surfaces value in this iter's <journal>
 ```
 `(def …)` persists across iterations; the bare symbol surfaces the value in the current iteration's `<journal>` so you (and future iterations) can see what you just bound. One-shot probes (count, presence-check) stay inline.
@@ -409,13 +409,13 @@ Terminal: `(answer …)` is the LAST top-level form of its iteration (last or on
 ```clojure
 (answer \"done\")
 (let [s (build-summary)] (answer s))
-(do (vis/edit …) (answer \"done\"))
+(do (v/edit …) (answer \"done\"))
 (work-1) (work-2) (answer (compose work-1 work-2))   ;; iter 1+, after observing iN.K results
 ```
 
-Iter 0 answer fits when the reply is self-contained: static markdown, a fixed list, the value of a SYSTEM var (`TURN_ACTIVE_EXTENSIONS`, `CONVERSATION_TITLE`, …), or anything you can compose inline without needing to read iN.K results first. Wrap any prerequisite work into one structural form: `(let [s (build)] (answer s))`, `(answer (md/join …))`, `(do (vis/edit …) (answer \"done\"))`.
+Iter 0 answer fits when the reply is self-contained: static markdown, a fixed list, the value of a SYSTEM var (`TURN_ACTIVE_EXTENSIONS`, `CONVERSATION_TITLE`, …), or anything you can compose inline without needing to read iN.K results first. Wrap any prerequisite work into one structural form: `(let [s (build)] (answer s))`, `(answer (md/join …))`, `(do (v/edit …) (answer \"done\"))`.
 
-Iter 0 also fits exploration. Aim for 1–3 forms that narrow your search (one `(vis/ls \".\")`, one targeted `(vis/rg [\"keyword\"] \"src\")`, one `(vis/cat path)` at the likely entry-point), then read results in iter 1's `<journal>` and commit `(answer …)` there once the picture is clear.
+Iter 0 also fits exploration. Aim for 1–3 forms that narrow your search (one `(v/ls \".\")`, one targeted `(v/rg [\"keyword\"] \"src\")`, one `(v/cat path)` at the likely entry-point), then read results in iter 1's `<journal>` and commit `(answer …)` there once the picture is clear.
 
 Each iteration's user msg carries:
   <journal>     last 2 iters: thinking + comments + code + results, addressable iN.K
@@ -479,11 +479,11 @@ Host primitives (top-level, no alias — named for what they write):
    Returns a vec of compact, fully-realized data maps — NO functions,
    NO atoms, NO opaque runtime objects. The model walks this with
    `filter` / `keep` / `some` exactly like any other Clojure data
-   structure; never has to reach into `(vis/extensions)` just to
+   structure; never has to reach into `(v/extensions)` just to
    discover what's loaded.
 
    Per element:
-     :alias     — short symbol the model calls under (`'vis`, `'vis`,
+     :alias     — short symbol the model calls under (`'v`, `'md`,
                   `'git`, ...). nil when the extension didn't declare
                   an `:ext/ns-alias`.
      :namespace — fully-qualified ns symbol of the extension.
@@ -495,11 +495,11 @@ Host primitives (top-level, no alias — named for what they write):
                   list` (when set).
      :symbols   — vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
-                  from `(vis/extension-doc ...)` if the model wants
+                  from `(v/extension-doc ...)` if the model wants
                   them).
      :docs      — vec of doc-name strings (e.g. `\"README.md\"`) the
                   extension ships in its `vis.edn` registry. Reachable
-                  via `(vis/extension-doc 'id name)`.
+                  via `(v/extension-doc 'id name)`.
 
    The vec is bound ONCE at turn start (see `iteration-loop`) and
    stays frozen for the rest of the turn — every iteration sees the
@@ -510,7 +510,7 @@ Host primitives (top-level, no alias — named for what they write):
             (let [ext-ns   (:ext/namespace ext)
                   alias    (get-in ext [:ext/ns-alias :alias])
                   ;; Resolve doc names through the global extension
-                  ;; registry. Same mapping `(vis/extensions)` uses;
+                  ;; registry. Same mapping `(v/extensions)` uses;
                   ;; we duplicate the lookup here (instead of calling
                   ;; the meta extension) because the loop layer is
                   ;; upstream of every ext, including meta itself —

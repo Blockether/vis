@@ -51,12 +51,13 @@
       (expect (= (count (extension/registered-extensions)) (count rows)))
       (doseq [r rows]
         (expect (every? #(contains? r %)
-                  [:namespace :doc :kind :group :author :owner :version]))
+                  [:namespace :doc :kind :group :author :owner :license :version]))
         (expect (string? (:namespace r)))
         (expect (string? (:kind r)))
         (expect (string? (:group r)))
         (expect (string? (:author r)))
-        (expect (string? (:owner r))))))
+        (expect (string? (:owner r)))
+        (expect (string? (:license r))))))
 
   (it "shortens every extension namespace with the `v/` prefix"
     (doseq [{:keys [namespace]} (main/list-extensions)]

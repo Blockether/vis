@@ -220,9 +220,9 @@ Every `md/` symbol is registered through the standard extension
 machinery, so the model can introspect the surface:
 
 ```clojure
-(vis/extensions)                            ; -> includes :md
-(vis/extension-doc 'md 'file-link)          ; full descriptor
-(vis/extension-doc 'md 'link)               ; arglists, examples, doc
+(v/extensions)                            ; -> includes :md
+(v/extension-doc 'md 'file-link)          ; full descriptor
+(v/extension-doc 'md 'link)               ; arglists, examples, doc
 ```
 
 See [Extension overview](../overview.md) for the underlying

@@ -117,12 +117,12 @@ For embedding Vis in your own Clojure program, require
          '[com.blockether.vis.core :as cfg]
          '[com.blockether.svar.internal.llm :as llm])
 
-(def env (vis/create-environment (cfg/make-router) {:db :memory}))
+(def env (v/create-environment (cfg/make-router) {:db :memory}))
 
-(vis/query! env [(llm/user "What is 2+2?")])
+(v/query! env [(llm/user "What is 2+2?")])
 ;; => {:answer "4" :iterations 1 :duration-ms 312 :tokens {...} :cost {...}}
 
-(vis/dispose-environment! env)
+(v/dispose-environment! env)
 ```
 
 Full API reference: [Public API](architecture/packages.md#package-map).
@@ -153,9 +153,9 @@ vis extensions list                  # list everything that registered
 vis extensions <cmd> [args…]         # run an extension's exported CLI command
 ```
 
-The bundled `extensions/common/vis-foundation` package adds `vis/cat`,
-`vis/ls`, `vis/rg`, `vis/edit`, and `vis/sh` (filesystem + shell tools
-namespaced under the `vis/` alias). It is already wired into the root
+The bundled `extensions/common/vis-foundation` package adds `v/cat`,
+`v/ls`, `v/rg`, `v/edit`, and `v/sh` (filesystem + shell tools
+namespaced under the `v/` alias). It is already wired into the root
 `deps.edn`; add the same `:local/root` entry to a downstream consumer's
 `deps.edn` to enable it:
 
