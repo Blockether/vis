@@ -409,7 +409,7 @@
       (assoc-in db [:progress :iterations] (vec (or iterations []))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iteration-count duration-ms tokens cost confidence query-id status]}]]]
+  (fn [db [_ answer & [{:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status]}]]]
     (let [start    (:query-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
@@ -421,7 +421,7 @@
           ;; trace together with a plain status footer (\"Cancelled
           ;; by user.\") so partial work stays visible.
           response (-> (chat/assistant-message (or answer ""))
-                     (cond-> query-id                (assoc :conversation-turn-id query-id)
+                     (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
                        (seq trace)
                        (assoc :trace trace :raw-answer (or answer ""))
                        (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))

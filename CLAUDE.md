@@ -373,7 +373,7 @@ shipped to readers as broken rendering or unreadable noise.
 that happened in every conversation — queries, iterations, final
 answers, persisted SCI vars, timings, costs. Before hypothesizing
 about a user-reported bug that references a specific `conversation-id`
-or `query-id`, **open the DB**. The conversation API
+or `conversation-turn-id`, **open the DB**. The conversation API
 (`com.blockether.vis.core`) covers the
 common high-level reads (list by channel, env-for, send!, delete!)
 and should be your first stop. Drop to raw SQL for schema/migration

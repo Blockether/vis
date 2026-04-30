@@ -71,18 +71,18 @@
 (defn- current-conversation-id [env]
   (:conversation-id env))
 
-(defn- current-query-id
+(defn- current-conversation-turn-id
   "UUID of the in-flight turn, or nil when no turn is running yet.
 
    Internally the turn is persisted as a `query` row — hence the
-   `:current-query-id-atom` env key and this helper's `query-id`
+   `:current-conversation-turn-id-atom` env key and this helper's `conversation-turn-id`
    suffix. The product concept is *turn*; everywhere this id is
    surfaced to the model (e.g. `(v/turn)` results, the
    `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
    SCI-visible `TURN_CONVERSATION_TURN_ID` SYSTEM var so meta-fns can filter
    it without round-tripping through SCI."
   [env]
-  (some-> (:current-query-id-atom env) deref))
+  (some-> (:current-conversation-turn-id-atom env) deref))
 
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
@@ -93,10 +93,10 @@
   (and a b (= (str a) (str b))))
 
 (defn- iteration-rows
-  "Fetch the iteration rows for `query-id`; returns [] on any failure."
-  [db-info query-id]
+  "Fetch the iteration rows for `conversation-turn-id`; returns [] on any failure."
+  [db-info conversation-turn-id]
   (try
-    (vis/db-list-conversation-turn-iterations db-info query-id)
+    (vis/db-list-conversation-turn-iterations db-info conversation-turn-id)
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
@@ -406,7 +406,7 @@
    (foundation-conversation env (current-conversation-id env)))
   ([env conversation-id]
    (when-let [snapshot (conversation-snapshot (:db-info env) conversation-id)]
-     (let [in-flight-id (current-query-id env)
+     (let [in-flight-id (current-conversation-turn-id env)
            same-conv?   (and in-flight-id
                           (same-uuid? conversation-id (current-conversation-id env)))]
        (if-not same-conv?
@@ -534,18 +534,18 @@
 
 (defn- meta-query-retries
   "List every `conversation_turn_state` row (= every retry version) for the query
-   soul behind `query-id`, oldest version first. Each row maps to
+   soul behind `conversation-turn-id`, oldest version first. Each row maps to
    `{:state-id :version :forked-from-query-state-id :status :prior-outcome
      :provider :model :created-at :iteration-count}`. Version 0 with
    `:forked-from-query-state-id nil` is the original run; any higher
-   version is a retry. `query-id` is a `conversation_turn_soul` UUID — the same id
+   version is a retry. `conversation-turn-id` is a `conversation_turn_soul` UUID — the same id
    surfaced as `:turn-id` by `v/find-attempts`, `:id` by `v/turn`,
    or `:turns[].id` by `v/conversation`. Returns `[]` (never nil)
    when the query is unknown or the env is missing handles."
-  [env query-id]
-  (if (and (:db-info env) query-id)
+  [env conversation-turn-id]
+  (if (and (:db-info env) conversation-turn-id)
     (try
-      (vec (vis/db-list-conversation-turn-states (:db-info env) query-id))
+      (vec (vis/db-list-conversation-turn-states (:db-info env) conversation-turn-id))
       (catch Throwable _ []))
     []))
 
@@ -943,15 +943,15 @@
 (def query-retries-symbol
   (vis/symbol 'query-retries meta-query-retries
     {:doc       (str "Vector of every conversation_turn_state row (one per retry version) "
-                  "for the soul behind `query-id`, oldest first: "
+                  "for the soul behind `conversation-turn-id`, oldest first: "
                   "[{:state-id :version :forked-from-query-state-id :status "
                   ":prior-outcome :provider :model :created-at :iteration-count} …]. "
                   "Version 0 = the original run; higher versions are retries "
                   "with :forked-from-query-state-id pointing at the previous :state-id. "
-                  "`query-id` = the conversation_turn_soul UUID surfaced as :turn-id by "
+                  "`conversation-turn-id` = the conversation_turn_soul UUID surfaced as :turn-id by "
                   "find-attempts / :id by (v/turn) / :turns[].id by (v/conversation). "
                   "Returns [] (never nil) when the query has no rows.")
-     :arglists  '([query-id])
+     :arglists  '([conversation-turn-id])
      :examples  ["(v/query-retries (:id (v/turn)))"
                  "(v/query-retries \"3a7b2c…\")"
                  "(filter :forked-from-query-state-id (v/query-retries qid))"]
