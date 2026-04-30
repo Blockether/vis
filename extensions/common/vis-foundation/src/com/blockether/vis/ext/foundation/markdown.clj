@@ -429,10 +429,18 @@
      {:doc "Bold span: `**text**`."
       :arglists '([text])
       :examples ["(md/bold \"important\")"]})
+   (sdk/symbol 'strong bold
+     {:doc "Bold span: `**text**` (HTML-semantic alias for `md/bold`)."
+      :arglists '([text])
+      :examples ["(md/strong \"important\")"]})
    (sdk/symbol 'italic italic
      {:doc "Italic span: `*text*`."
       :arglists '([text])
       :examples ["(md/italic \"subtle\")"]})
+   (sdk/symbol 'em italic
+     {:doc "Italic span: `*text*` (HTML-semantic alias for `md/italic`)."
+      :arglists '([text])
+      :examples ["(md/em \"subtle\")"]})
    (sdk/symbol 'bold-italic bold-italic
      {:doc "Bold-italic span: `***text***`."
       :arglists '([text])
@@ -492,6 +500,10 @@
      {:doc "Quote each line of text with `> `."
       :arglists '([text])
       :examples ["(md/blockquote \"caveat\")"]})
+   (sdk/symbol 'quote blockquote
+     {:doc "Quote each line of text with `> ` (shorter alias for `md/blockquote`)."
+      :arglists '([text])
+      :examples ["(md/quote \"caveat\")"]})
    (sdk/value 'hr hr
      {:doc "Horizontal rule (`---`)."})
    (sdk/value 'br br
@@ -552,7 +564,8 @@
   (str
     "`md/` = markdown for (answer …). Pure string builders, no templating.\n"
     "  Headings   (md/h1 \"…\") (md/h2 \"…\") (md/h3 \"…\") (md/h level \"…\")\n"
-    "  Inline     (md/bold s) (md/italic s) (md/code s) (md/kbd s) (md/strike s)\n"
+    "  Inline     (md/bold s | md/strong s) (md/italic s | md/em s) (md/code s) (md/kbd s) (md/strike s)\n"
+    "             ; md/strong = md/bold; md/em = md/italic; md/quote = md/blockquote (semantic aliases)\n"
     "  Links      (md/link text url) (md/link text url title)   ; tooltip via title\n"
     "             (md/image alt url) (md/image alt url title)\n"
     "             (md/file-link path) (md/file-link path line)  ; CITE source files this way\n"

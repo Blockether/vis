@@ -32,6 +32,27 @@
     (it "Mixed ASCII + emoji line is six columns"
       (expect (= 6 (p/display-width MIXED)))))
 
+  (describe "control characters are sanitized, NEVER throw (regression: conv 954bf315)"
+    ;; Pre-sanitizer, Lanterna's `TextCharacter.fromString` threw on
+    ;; any C0 byte (0x00–0x1F), the render thread's catch-all
+    ;; swallowed it, the bubble silently failed to paint, the user
+    ;; saw a blank scrollback. Each control byte must now degrade to
+    ;; a single visible · column instead of taking the thread down.
+    (it "newline (0x0a) does not throw"
+      (expect (= 5 (p/display-width "a\nb c"))))
+    (it "tab (0x09) does not throw"
+      (expect (= 3 (p/display-width "a\tb"))))
+    (it "carriage return (0x0d) does not throw"
+      (expect (= 3 (p/display-width "a\rb"))))
+    (it "NUL (0x00) does not throw"
+      (expect (= 3 (p/display-width "a\u0000b"))))
+    (it "clean strings still hit the no-alloc fast path (identity preserved)"
+      ;; The sanitizer returns its input UNCHANGED when no control
+      ;; chars are present, which `display-width` relies on to keep
+      ;; the hot path allocation-free. Verified by absence-of-crash
+      ;; and equality with the post-fix expected width.
+      (expect (= 11 (p/display-width "hello world")))))
+
   (describe "BMP `Emoji_Presentation=Yes` chars are TWO columns (lanterna fork fix)"
     ;; Pre-fix lanterna's TextCharacter.isDoubleWidth() returned false
     ;; for these because they're single-`char` BMP code points, not CJK,

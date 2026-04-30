@@ -74,4 +74,39 @@
 
   (it "handles nil / empty input"
     (expect (= [] (links/parse-md-refs nil)))
-    (expect (= [] (links/parse-md-refs "")))))
+    (expect (= [] (links/parse-md-refs ""))))
+
+  ;; Regression: conversation 954bf315 froze the TUI on open because
+  ;; this regex's text portion (`[^\\]]*?`) ate newlines, matching
+  ;; phantom links across paragraph boundaries. The captured `:text`
+  ;; carried a literal `\n`, `chrome-display-text` joined it into a
+  ;; chrome row, `display-width` fed it to Lanterna's
+  ;; `TextCharacter.fromString`, and Lanterna refused on 0x0a. The
+  ;; render thread's catch-all swallowed the throw, the bubble
+  ;; silently failed to paint, the user saw a blank scrollback.
+  ;; Anchor the regex to single lines and the cascade stops at the
+  ;; source.
+  (it "never matches across newlines (regression: conv 954bf315 froze TUI)"
+    ;; Multi-line prose where a naive regex would match
+    ;; `[params](url)` then continue to a *different* `](url)` on a
+    ;; later line, eating the entire intervening paragraph as `:text`.
+    (let [s (str "see `[params](url)` text pattern, and\n"
+              "if so, emit just text and skip past the [\n"
+              "foo](https://x.example.com)")
+          out (links/parse-md-refs s)]
+      ;; Only the genuine same-line `[params](url)` is a match;
+      ;; the cross-line `[\nfoo](https://x.example.com)` is NOT.
+      (expect (= 1 (count out)))
+      (expect (= "params" (:text (first out))))
+      (expect (not (some #(= \newline %) (str (:text (first out))))))))
+
+  (it "never returns a ref whose :text contains any control char"
+    ;; Belt-and-braces: even contrived input must never yield a ref
+    ;; with C0 bytes in it. `display-width` has its own sanitizer
+    ;; for defence in depth, but the parser is the right boundary.
+    (let [out (links/parse-md-refs
+                "a [first](u) b\nc [span\nbroken](v) d [last](w)")]
+      (expect (= ["first" "last"] (mapv :text out)))
+      (doseq [r out]
+        (doseq [ch (str (:text r))]
+          (expect (>= (int ch) 0x20)))))))

@@ -14,7 +14,7 @@ Single alias: `z/` — entry (`z/zedit`) + the full `rewrite-clj.zip` API.
 
 ## Why structured edits
 
-Plain text edits (`vis/edit`) lose to whitespace drift / nested forms. Structured edits via `rewrite-clj.zip` preserve formatting/comments and reason about source as a tree. Clojure-only -> lives here, not on the generic editing surface.
+Plain text edits (`v/edit`) lose to whitespace drift / nested forms. Structured edits via `rewrite-clj.zip` preserve formatting/comments and reason about source as a tree. Clojure-only -> lives here, not on the generic editing surface.
 
 ## z/zedit
 
@@ -49,7 +49,7 @@ Most useful publics (full set bound at extension load — any future rewrite-clj
 
   (z/root-string zloc)        render whole tree
 
-If `(vis/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/.
+If `(v/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/.
 
 ## Examples
 
@@ -89,20 +89,20 @@ Rename every occurrence:
 ## Use when
 
 - Editing `.clj` `.cljc` `.cljs` `.edn` and node locatable by value or structural path.
-- `vis/edit` would need fragile whitespace/quote anchoring.
+- `v/edit` would need fragile whitespace/quote anchoring.
 - Adding require / refactoring let-binding / renaming def at structural granularity.
 
 ## Use other tools when
 
-- Not Clojure source -> `vis/edit` or `vis/write`.
-- Single locally-unique line -> `vis/edit` faster.
-- Read only -> `vis/cat`."
+- Not Clojure source -> `v/edit` or `v/write`.
+- Single locally-unique line -> `v/edit` faster.
+- Read only -> `v/cat`."
     :links
     [{:to-id vis :to-doc "README.md"
-      :context "Generic editing — vis/cat, vis/edit, vis/write, vis/rg"}
-     {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/zedit.clj"
+      :context "Generic editing — v/cat, v/edit, v/write, v/rg"}
+     {:file "extensions/languages/clojure/src/com/blockether/v/ext/lang_clojure/zedit.clj"
       :context "Source: z/zedit"}
-     {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/core.clj"
+     {:file "extensions/languages/clojure/src/com/blockether/v/ext/lang_clojure/core.clj"
       :context "Aggregator publishing rewrite-clj.zip publics under z/"}
      {:url "https://cljdoc.org/d/rewrite-clj/rewrite-clj/"
       :context "rewrite-clj zipper API reference"}]}}}}

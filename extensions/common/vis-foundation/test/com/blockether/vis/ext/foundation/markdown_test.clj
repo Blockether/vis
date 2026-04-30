@@ -32,6 +32,14 @@
     (expect (= "***x***" (md/bold-italic "x")))
     (expect (= "~~x~~"   (md/strike "x"))))
 
+  (it "em / strong are HTML-semantic aliases for italic / bold (registered as SCI symbols)"
+    ;; The aliases are sandbox-only (not Clojure-side defns), so we
+    ;; verify them via the symbols vector instead of calling them
+    ;; directly from the test ns.
+    (let [by-sym (into {} (map (juxt :ext.symbol/sym identity)) md/markdown-symbols)]
+      (expect (= md/italic (get-in by-sym ['em :ext.symbol/fn])))
+      (expect (= md/bold   (get-in by-sym ['strong :ext.symbol/fn])))))
+
   (it "code, kbd"
     (expect (= "`v/cat`" (md/code "v/cat")))
     (expect (= "<kbd>Ctrl+K</kbd>" (md/kbd "Ctrl+K"))))
@@ -108,6 +116,17 @@
   (it "blockquote prefixes every line"
     (expect (= "> a\n> b" (md/blockquote "a\nb")))
     (expect (= ">"        (md/blockquote ""))))
+
+  (it "quote is a shorter alias for blockquote (registered via SCI symbol 'quote)"
+    ;; `clojure.core/quote` is a special form, so we can't invoke
+    ;; `md/quote` as a regular Clojure fn from the test file. Verify
+    ;; the SCI symbol entry instead: it MUST be registered, and its
+    ;; impl MUST be the same fn as `md/blockquote`.
+    (let [entry (->> md/markdown-symbols
+                  (filter #(= 'quote (:ext.symbol/sym %)))
+                  first)]
+      (expect (some? entry))
+      (expect (= md/blockquote (:ext.symbol/fn entry)))))
 
   (it "hr / br are constants"
     (expect (= "---" md/hr))
@@ -343,9 +362,9 @@
   (it "exposes one symbol entry per public surface fn"
     (let [syms  (set (map :ext.symbol/sym md/markdown-symbols))
           names #{'h 'h1 'h2 'h3 'h4 'h5 'h6
-                  'p 'bold 'italic 'bold-italic 'strike 'code 'kbd
+                  'p 'bold 'strong 'italic 'em 'bold-italic 'strike 'code 'kbd
                   'link 'image 'file-link 'anchor
-                  'code-block 'blockquote 'hr 'br 'details 'summary
+                  'code-block 'blockquote 'quote 'hr 'br 'details 'summary
                   'ul 'ol 'checklist
                   'table
                   'join 'lines 'section 'escape}]
