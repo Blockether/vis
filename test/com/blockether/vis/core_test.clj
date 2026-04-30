@@ -1936,7 +1936,15 @@
     (let [{:keys [exit out]} (run-vis "auth")]
       (expect (zero? exit))
       ;; github-copilot provider auto-registers and should appear
-      (expect (str/includes? out "github-copilot")))))
+      (expect (str/includes? out "github-copilot"))))
+
+  (it "shows status/logout flags and Codex examples in provider help"
+    (let [{:keys [exit out]} (run-vis "auth" "openai-codex" "--help")]
+      (expect (zero? exit))
+      (expect (contains-all? out ["FLAGS"
+                                  "--status"
+                                  "--logout"
+                                  "vis auth openai-codex --status"])))))
 
 (defdescribe vis-unknown-command
   (it "returns non-zero (or routes to `run` fallback gracefully)"

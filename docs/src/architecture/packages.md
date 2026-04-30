@@ -59,6 +59,7 @@ Every plug-in ships exactly one classpath manifest at
 | ------- | ---- | ------- | ---------- | ----- |
 | `vis-persistance-sqlite` | `extensions/persistance/vis-persistance-sqlite/` | SQLite backend for the persistence facade. Owns the SQLite schema and JDBC stack: sqlite-jdbc, next.jdbc, HoneySQL, HikariCP, nippy, the SQLite Flyway driver. Internal namespace: `com.blockether.vis.ext.persistance-sqlite.core`. | — | Ships the canonical SQLite schema at `resources/db/sqlite/migration/V1__schema.sql`. Loading the namespace auto-registers the `:sqlite` backend with the persistence facade. |
 | `vis-provider-github-copilot` | `extensions/providers/vis-provider-github-copilot/` | GitHub Copilot OAuth device-flow provider. Internal namespace: `com.blockether.vis.ext.provider-github-copilot`. | — | Registers a provider in the global registry; surfaces under `vis auth github-copilot`. |
+| `vis-provider-openai-codex` | `extensions/providers/vis-provider-openai-codex/` | OpenAI Codex / ChatGPT OAuth provider with PKCE, localhost callback, token refresh, and account-id extraction. Internal namespace: `com.blockether.vis.ext.provider-openai-codex`. | — | Registers a provider in the global registry; surfaces under `vis auth openai-codex`. |
 | `vis-provider-zai` | `extensions/providers/vis-provider-zai/` | Z.ai (ZhipuAI) static-API-key provider — covers both the coding-plan and pay-as-you-go endpoints in one extension. Internal namespace: `com.blockether.vis.ext.provider-zai`. | — | Surfaces under `vis auth <plan>` per registered plan. |
 | `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat. Internal namespace: `com.blockether.vis.ext.channel-tui.*` (state / dialogs / screen / chat / render / input / footer / theme / primitives / provider). | `:tui` | `:channel/owns-tty? true`. Conversations are stored under the same `:tui` keyword used for CLI dispatch. |
 | `vis-channel-telegram` | `extensions/channels/vis-channel-telegram/` | Telegram Bot API long-poll loop wired into `for-telegram-chat!`. Internal namespace: `com.blockether.vis.ext.channel-telegram.*`. | `:telegram` | Optional channel; omitting the jar leaves the rest of vis usable. |
@@ -143,6 +144,7 @@ extensions/channels/vis-channel-tui                  ─┐
 extensions/channels/vis-channel-telegram             ─┤
 extensions/persistance/vis-persistance-sqlite        ─┤
 extensions/providers/vis-provider-github-copilot     ─┤
+extensions/providers/vis-provider-openai-codex       ─┤
 extensions/providers/vis-provider-zai                ─┤  → com.blockether/vis (root)
 extensions/common/vis-foundation                    ─┤
 extensions/common/vis-foundation             ─┤
@@ -171,6 +173,7 @@ convention. Examples:
 - `com.blockether.vis.ext.foundation.editing.core`
 - `com.blockether.vis.ext.lang-clojure.core`
 - `com.blockether.vis.ext.provider-github-copilot`
+- `com.blockether.vis.ext.provider-openai-codex`
 - `com.blockether.vis.ext.provider-zai`
 
 The benchmark harness lives under `benchmarks/src/…`.

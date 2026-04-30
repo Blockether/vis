@@ -699,6 +699,12 @@
   ;; Keyed by :ext/namespace to prevent duplicates.
   (atom {}))
 
+(defonce ^:private extension-order
+  ;; Namespace insertion order for `registered-extensions`. A plain
+  ;; hash-map does not preserve order, and adding/removing unrelated
+  ;; extensions can reshuffle doctor/lifecycle output.
+  (atom []))
+
 (defonce ^:private extension-source-markers
   ;; Sidecar atom holding source-file markers per registered extension.
   ;; Keyed by :ext/namespace. Populated at register-time, dropped at
@@ -759,6 +765,8 @@
   [ext]
   (let [ext    (extension ext)
         ns-sym (:ext/namespace ext)]
+    (when-not (contains? @extension-registry ns-sym)
+      (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
     (tel/log! {:level :info :id ::register-global
                :data {:ext ns-sym
@@ -832,11 +840,13 @@
                :data {:ext ns-sym}
                :msg  (str "Extension '" ns-sym "' deregistered globally")}))
   (swap! extension-registry dissoc ns-sym)
+  (swap! extension-order (fn [order] (vec (remove #{ns-sym} order))))
   (swap! extension-source-markers dissoc ns-sym)
   nil)
 
 (defn registered-extensions []
-  (vec (vals @extension-registry)))
+  (let [registry @extension-registry]
+    (into [] (keep registry) @extension-order)))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.

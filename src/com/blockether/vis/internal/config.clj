@@ -104,8 +104,12 @@
                        Optional; when missing the picker queries the
                        provider's `/v1/models` directly.
      :base-url       — ONLY for vis-only providers svar doesn't know
-                       (`:github-models`, `:github-copilot`). Every
+                       (`:github-models`, `:github-copilot`,
+                       `:openai-codex`). Every
                        other id leaves base-url to svar's catalog.
+     :api-style      — svar wire-protocol dispatch override. Only set for
+                       providers whose HTTP surface is not OpenAI-compatible
+                       chat/completions despite using Bearer auth.
 
    Adding a new provider svar already knows: list it here with
    `:label` (and optionally `:default-models`). Do NOT re-list its
@@ -137,12 +141,18 @@
                                      "mistralai/mistral-small-2503"]}
    :github-copilot {:label "GitHub Copilot"
                     :base-url "https://api.githubcopilot.com"
-                    :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini" "gemini-2.0-flash-001"]}})
+                    :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini" "gemini-2.0-flash-001"]}
+   :openai-codex   {:label "OpenAI Codex (ChatGPT OAuth)"
+                    :base-url "https://chatgpt.com/backend-api"
+                    :api-style :openai-codex
+                    :default-models ["gpt-5.1" "gpt-5.1-codex-mini" "gpt-5.1-codex-max"
+                                     "gpt-5.2" "gpt-5.2-codex" "gpt-5.3-codex"
+                                     "gpt-5.4" "gpt-5.5"]}})
 
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used
    first. Anything not in this vec lands at the end."
-  [:openai :anthropic :openrouter :github-copilot :github-models
+  [:openai :anthropic :openai-codex :openrouter :github-copilot :github-models
    :zai :zai-coding :blockether :ollama :lmstudio])
 
 (defn- blockether-env-api-key []
@@ -164,6 +174,7 @@
       (cond-> {:id pid}
         (:label vis-md)               (assoc :label (:label vis-md))
         (known-provider-base-url pid) (assoc :base-url (known-provider-base-url pid))
+        (:api-style vis-md)           (assoc :api-style (:api-style vis-md))
         (:default-models vis-md)      (assoc :default-models (:default-models vis-md))))))
 
 (defn provider-presets
@@ -211,13 +222,13 @@
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
-   `:base-url`, `:models`).
+   `:base-url`, `:api-style`, `:models`).
 
    svar's `make-router` calls `normalize-provider` which auto-resolves
    `:base-url` from svar's `KNOWN_PROVIDERS` table for built-in
    providers, so we forward `:base-url` ONLY when the provider map
    has one explicitly (vis-only providers like `:github-models`,
-   user overrides, or OAuth-supplied URLs). For known providers
+   `:openai-codex`, user overrides, or OAuth-supplied URLs). For known providers
    svar fills in the URL itself — stop fighting it.
 
    When `:api-key` is nil, look the provider up in the global
@@ -231,16 +242,19 @@
         api-key      (:api-key provider)
         models       (->> (:models provider) (keep ->svar-model) vec)
         explicit-url (:base-url provider)
+        api-style    (or (:api-style provider) (:api-style (get VIS_PROVIDER_METADATA pid)))
         get-token-fn (when (nil? api-key)
                        (some-> (registry/provider-by-id pid) :provider/get-token-fn))]
     (if get-token-fn
       (let [{:keys [token api-url]} (get-token-fn)
             url (or explicit-url api-url)]
         (cond-> {:id pid :models models :api-key token}
-          url (assoc :base-url url)))
+          url       (assoc :base-url url)
+          api-style (assoc :api-style api-style)))
       (cond-> {:id pid :models models}
         api-key      (assoc :api-key api-key)
-        explicit-url (assoc :base-url explicit-url)))))
+        explicit-url (assoc :base-url explicit-url)
+        api-style    (assoc :api-style api-style)))))
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
@@ -273,12 +287,27 @@
           (when (map? raw) raw))
         (catch Exception _ nil)))))
 
+(defn- apply-provider-metadata
+  "Backfill runtime-only metadata for provider configs already stored on disk."
+  [provider]
+  (let [metadata (get VIS_PROVIDER_METADATA (:id provider))]
+    (cond-> provider
+      (and (nil? (:base-url provider)) (:base-url metadata))
+      (assoc :base-url (:base-url metadata))
+
+      (and (nil? (:api-style provider)) (:api-style metadata))
+      (assoc :api-style (:api-style metadata)))))
+
+(defn- apply-config-metadata [config]
+  (update config :providers #(mapv apply-provider-metadata %)))
+
 (defn load-config
   "Load provider config in svar-native syntax. `~/.vis/config.edn`
    takes priority, falling back to BLOCKETHER_* env vars."
   []
   (or (some-> (load-config-raw)
-        ((fn [raw] (when (seq (:providers raw)) raw))))
+        ((fn [raw] (when (seq (:providers raw)) raw)))
+        apply-config-metadata)
     (blockether-env-config)))
 
 (defn save-config!

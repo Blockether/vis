@@ -1,0 +1,15 @@
+{:paths ["src" "resources"]
+ ;; OpenAI Codex (ChatGPT OAuth) provider. Self-registers with
+ ;; `com.blockether.vis.core` at namespace load via the unified
+ ;; `META-INF/vis-extension/vis.edn`.
+ :deps
+ {org.clojure/clojure   {:mvn/version "1.12.4"}
+  com.blockether/vis    {:local/root "../../.."}
+  com.cnuernber/charred {:mvn/version "1.038"}
+  com.taoensso/telemere {:mvn/version "1.2.1"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}

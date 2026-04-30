@@ -1,0 +1,63 @@
+(ns com.blockether.vis.ext.provider-openai-codex-test
+  (:require [charred.api :as json]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.provider-openai-codex :as codex]
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.sun.net.httpserver HttpHandler]
+           [java.util Base64]))
+
+(defn- base64url [s]
+  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
+    (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))
+
+(defn- jwt [payload]
+  (str (base64url (json/write-json-str {:alg "none"}))
+    "."
+    (base64url (json/write-json-str payload))
+    ".sig"))
+
+(defdescribe authorization-input-test
+  (it "parses full callback URLs, query strings, code#state, and bare codes"
+    (expect (= {:code "abc" :state "s1"}
+              (codex/parse-authorization-input
+                "http://localhost:1455/auth/callback?code=abc&state=s1")))
+    (expect (= {:code "abc" :state "s1"}
+              (codex/parse-authorization-input "code=abc&state=s1")))
+    (expect (= {:code "abc" :state "s1"}
+              (codex/parse-authorization-input "abc#s1")))
+    (expect (= {:code "abc"}
+              (codex/parse-authorization-input "abc")))))
+
+(defdescribe account-id-test
+  (it "extracts the ChatGPT account id from Codex access-token JWTs"
+    (let [token (jwt {(keyword "https://api.openai.com/auth")
+                      {:chatgpt_account_id "acct_123"}})]
+      (expect (= "acct_123" (codex/account-id token))))))
+
+(defdescribe callback-server-test
+  (it "builds a JDK HttpHandler for the localhost OAuth callback"
+    (expect (instance? HttpHandler (#'codex/oauth-callback-handler "state" (promise))))))
+
+(defdescribe codex-transport-test
+  (it "resolves the Responses endpoint even when svar passes a chat URL"
+    (expect (= "https://chatgpt.com/backend-api/codex/responses"
+              (#'codex/codex-responses-url "https://chatgpt.com/backend-api/chat/completions")))
+    (expect (= "https://chatgpt.com/backend-api/codex/responses"
+              (#'codex/codex-responses-url "https://chatgpt.com/backend-api/codex"))))
+
+  (it "builds a Codex Responses request body with required instructions"
+    (let [body (#'codex/codex-request-body [{:role "user" :content "2+2"}]
+                                           "gpt-5.5"
+                                           {})]
+      (expect (= "gpt-5.5" (:model body)))
+      (expect (= "You are a helpful assistant." (:instructions body)))
+      (expect (= [{:role "user"
+                   :content [{:type "input_text" :text "2+2"}]}]
+                (:input body))))))
+
+(defdescribe provider-registration-test
+  (it "registers the OpenAI Codex auth provider"
+    (let [provider (vis/provider-by-id :openai-codex)]
+      (expect (= :openai-codex (:provider/id provider)))
+      (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
+      (expect (ifn? (:provider/get-token-fn provider))))))

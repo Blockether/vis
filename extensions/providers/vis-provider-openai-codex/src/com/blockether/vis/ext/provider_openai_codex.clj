@@ -1,0 +1,730 @@
+(ns com.blockether.vis.ext.provider-openai-codex
+  "OpenAI Codex (ChatGPT OAuth) provider.
+
+   This mirrors Codex CLI / ChatGPT OAuth:
+   1. Generate PKCE verifier + S256 challenge.
+   2. Open auth.openai.com with Codex's public client id.
+   3. Receive the authorization code on localhost:1455/auth/callback
+      (or accept a pasted redirect URL/code as fallback).
+   4. Exchange the code for ChatGPT access/refresh tokens.
+   5. Refresh the access token before expiry and expose it to Vis as
+      the provider token.
+
+   Tokens are persisted at `~/.vis/openai-codex-auth.json`. The access
+   token is a JWT; Codex requests require the embedded ChatGPT account
+   id, so this namespace validates/extracts it during login/refresh."
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.svar.internal.llm :as svar-llm]
+            [taoensso.telemere :as tel])
+  (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
+           [java.awt Desktop Desktop$Action]
+           [java.io BufferedReader IOException InputStream InputStreamReader]
+           [java.net InetSocketAddress URI URLDecoder URLEncoder]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpRequest$Builder
+            HttpResponse HttpResponse$BodyHandlers]
+           [java.security MessageDigest SecureRandom]
+           [java.time Duration]
+           [java.util Base64]
+           [java.util.concurrent Executors TimeUnit]))
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def ^:private CLIENT_ID "app_EMoamEEZ73f0CkXaXp7hrann")
+(def ^:private AUTHORIZE_URL "https://auth.openai.com/oauth/authorize")
+(def ^:private TOKEN_URL "https://auth.openai.com/oauth/token")
+(def ^:private REDIRECT_URI "http://localhost:1455/auth/callback")
+(def ^:private CALLBACK_HOST (or (System/getenv "VIS_OAUTH_CALLBACK_HOST")
+                               (System/getenv "PI_OAUTH_CALLBACK_HOST")
+                               "127.0.0.1"))
+(def ^:private CALLBACK_PORT 1455)
+(def ^:private SCOPE "openid profile email offline_access")
+(def ^:private JWT_CLAIM_PATH "https://api.openai.com/auth")
+(def ^:private CODEX_BASE_URL "https://chatgpt.com/backend-api")
+(def ^:private CODEX_RESPONSES_PATH "/codex/responses")
+(def ^:private CODEX_OPENAI_BETA "responses=experimental")
+(def ^:private AUTH_FILE (str (System/getProperty "user.home")
+                           "/.vis/openai-codex-auth.json"))
+(def ^:private REFRESH_MARGIN_MS (* 5 60 1000))
+(def ^:private CALLBACK_TIMEOUT_MS (* 10 60 1000))
+
+(def ^:private success-html
+  "<!doctype html><html><head><meta charset='utf-8'><title>Vis authentication</title></head><body><h1>Authentication complete</h1><p>OpenAI authentication completed. You can close this window.</p></body></html>")
+
+(defn- error-html [message]
+  (str "<!doctype html><html><head><meta charset='utf-8'><title>Vis authentication</title></head><body><h1>Authentication failed</h1><p>"
+    message
+    "</p></body></html>"))
+
+;; =============================================================================
+;; Encoding / crypto helpers
+;; =============================================================================
+
+(def ^:private secure-random (delay (SecureRandom.)))
+
+(defn- random-bytes [n]
+  (let [bytes (byte-array n)]
+    (.nextBytes ^SecureRandom @secure-random bytes)
+    bytes))
+
+(defn- bytes->hex [^bytes bytes]
+  (let [sb (StringBuilder. (* 2 (alength bytes)))]
+    (doseq [b bytes]
+      (let [v (bit-and 0xff (int b))]
+        (when (< v 16) (.append sb \0))
+        (.append sb (Integer/toHexString v))))
+    (str sb)))
+
+(defn- base64url [^bytes bytes]
+  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
+
+(defn- sha256 [^String s]
+  (.digest (MessageDigest/getInstance "SHA-256")
+    (.getBytes s java.nio.charset.StandardCharsets/UTF_8)))
+
+(defn- generate-pkce []
+  (let [verifier  (base64url (random-bytes 32))
+        challenge (base64url (sha256 verifier))]
+    {:verifier verifier :challenge challenge}))
+
+(defn- create-state []
+  (bytes->hex (random-bytes 16)))
+
+(defn- url-encode [v]
+  (URLEncoder/encode (str v) "UTF-8"))
+
+(defn- url-decode [^String v]
+  (URLDecoder/decode v "UTF-8"))
+
+(defn- form-encode [params]
+  (str/join "&"
+    (map (fn [[k v]] (str (url-encode (name k)) "=" (url-encode v)))
+      params)))
+
+(defn- parse-query-string [^String qs]
+  (when-not (str/blank? qs)
+    (into {}
+      (keep (fn [part]
+              (let [[k v] (str/split part #"=" 2)]
+                (when-not (str/blank? k)
+                  [(keyword (url-decode k)) (url-decode (or v ""))]))))
+      (str/split qs #"&"))))
+
+(defn parse-authorization-input
+  "Parse a pasted OAuth callback URL, raw query string, `code#state`,
+   or bare code. Returns `{:code string? :state string?}`."
+  [input]
+  (let [value (str/trim (or input ""))]
+    (cond
+      (str/blank? value)
+      {}
+
+      (str/starts-with? value "http")
+      (try
+        (let [uri    (URI. value)
+              params (merge (parse-query-string (.getRawQuery uri))
+                       (parse-query-string (.getRawFragment uri)))]
+          (select-keys params [:code :state]))
+        (catch Exception _
+          {:code value}))
+
+      (str/includes? value "#")
+      (let [[code state] (str/split value #"#" 2)]
+        (cond-> {:code code}
+          (not (str/blank? state)) (assoc :state state)))
+
+      (str/includes? value "code=")
+      (select-keys (parse-query-string value) [:code :state])
+
+      :else
+      {:code value})))
+
+(defn- jwt-payload [token]
+  (try
+    (let [parts   (str/split token #"\.")
+          payload (second parts)]
+      (when (= 3 (count parts))
+        (json/read-json
+          (String. (.decode (Base64/getUrlDecoder) ^String payload)
+            java.nio.charset.StandardCharsets/UTF_8)
+          :key-fn keyword)))
+    (catch Exception _ nil)))
+
+(defn account-id
+  "Extract the ChatGPT account id from a Codex access-token JWT."
+  [access-token]
+  (let [payload (jwt-payload access-token)
+        auth    (get payload (keyword JWT_CLAIM_PATH))
+        id      (:chatgpt_account_id auth)]
+    (when-not (str/blank? id) id)))
+
+;; =============================================================================
+;; HTTP helpers
+;; =============================================================================
+
+(def ^:private http-client
+  (delay
+    (-> (HttpClient/newBuilder)
+      (.connectTimeout (Duration/ofSeconds 15))
+      (.followRedirects java.net.http.HttpClient$Redirect/NORMAL)
+      (.build))))
+
+(defn- post-form [url params]
+  (let [body (form-encode params)
+        req  (-> (HttpRequest/newBuilder)
+               (.uri (URI/create url))
+               (.timeout (Duration/ofSeconds 30))
+               (.header "Accept" "application/json")
+               (.header "Content-Type" "application/x-www-form-urlencoded")
+               (.POST (HttpRequest$BodyPublishers/ofString body))
+               (.build))
+        resp (.send ^HttpClient @http-client req (HttpResponse$BodyHandlers/ofString))
+        text (.body resp)]
+    {:status (.statusCode resp)
+     :body   text
+     :json   (try (json/read-json text :key-fn keyword)
+               (catch Exception _ nil))}))
+
+(defn- token-result [json]
+  (let [access-token  (:access_token json)
+        refresh-token (:refresh_token json)
+        expires-in    (:expires_in json)
+        account-id*   (account-id access-token)]
+    (when (or (str/blank? access-token)
+            (str/blank? refresh-token)
+            (not (number? expires-in))
+            (str/blank? account-id*))
+      (throw (ex-info "OpenAI Codex token response missing required fields"
+               {:response (dissoc json :access_token :refresh_token)})))
+    {:access-token  access-token
+     :refresh-token refresh-token
+     :expires-at-ms (+ (System/currentTimeMillis) (* (long expires-in) 1000))
+     :account-id    account-id*}))
+
+(defn- exchange-authorization-code! [code verifier]
+  (let [{:keys [status body json]} (post-form TOKEN_URL
+                                     {:grant_type    "authorization_code"
+                                      :client_id     CLIENT_ID
+                                      :code          code
+                                      :code_verifier verifier
+                                      :redirect_uri  REDIRECT_URI})]
+    (when-not (<= 200 status 299)
+      (throw (ex-info (str "OpenAI Codex token exchange failed: HTTP " status)
+               {:status status :body body})))
+    (token-result json)))
+
+(defn- refresh-access-token! [refresh-token]
+  (let [{:keys [status body json]} (post-form TOKEN_URL
+                                     {:grant_type    "refresh_token"
+                                      :refresh_token refresh-token
+                                      :client_id     CLIENT_ID})]
+    (when-not (<= 200 status 299)
+      (throw (ex-info (str "OpenAI Codex token refresh failed: HTTP " status)
+               {:status status :body body})))
+    (token-result json)))
+
+;; =============================================================================
+;; Token persistence
+;; =============================================================================
+
+(defn- load-auth-file []
+  (let [f (io/file AUTH_FILE)]
+    (when (.exists f)
+      (try
+        (json/read-json (slurp f) :key-fn keyword)
+        (catch Exception _ nil)))))
+
+(defn- save-auth-file! [credentials]
+  (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
+    (when-not (.exists dir) (.mkdirs dir))
+    (spit AUTH_FILE (json/write-json-str (assoc credentials :saved-at (System/currentTimeMillis))))
+    credentials))
+
+(defn- delete-auth-file! []
+  (let [f (io/file AUTH_FILE)]
+    (when (.exists f) (.delete f))))
+
+(defn detect-credentials
+  "Detect persisted OpenAI Codex credentials. Returns a status-friendly
+   map or nil; does not validate with the network."
+  []
+  (when-let [auth (load-auth-file)]
+    (when-let [access-token (:access-token auth)]
+      (when-not (str/blank? access-token)
+        {:access-token access-token
+         :source       :auth-file
+         :account-id   (or (:account-id auth) (account-id access-token))
+         :expires-at-ms (:expires-at-ms auth)}))))
+
+(defn get-openai-codex-token!
+  "Return a fresh Codex access token in the provider-token shape used by
+   Vis: `{:token access-token :api-url CODEX_BASE_URL}`."
+  []
+  (let [auth (load-auth-file)
+        now  (System/currentTimeMillis)]
+    (cond
+      (and (:access-token auth)
+        (:expires-at-ms auth)
+        (> (long (:expires-at-ms auth)) (+ now REFRESH_MARGIN_MS)))
+      {:token (:access-token auth) :api-url CODEX_BASE_URL}
+
+      (:refresh-token auth)
+      (let [fresh (refresh-access-token! (:refresh-token auth))]
+        (save-auth-file! fresh)
+        (tel/log! {:level :info :id ::codex-token-refreshed
+                   :data  {:expires-in-ms (- (:expires-at-ms fresh) now)
+                           :account-id     (:account-id fresh)}
+                   :msg   "OpenAI Codex token refreshed"})
+        {:token (:access-token fresh) :api-url CODEX_BASE_URL})
+
+      :else
+      (throw (ex-info "No OpenAI Codex credentials found. Run `vis auth openai-codex` to authenticate."
+               {:type :vis/openai-codex-not-authenticated})))))
+
+;; =============================================================================
+;; OAuth authorization flow
+;; =============================================================================
+
+(defn create-authorization-flow
+  "Create PKCE verifier, CSRF state, and OpenAI authorization URL."
+  ([] (create-authorization-flow "vis"))
+  ([originator]
+   (let [{:keys [verifier challenge]} (generate-pkce)
+         state (create-state)
+         query (form-encode {:response_type              "code"
+                             :client_id                  CLIENT_ID
+                             :redirect_uri               REDIRECT_URI
+                             :scope                      SCOPE
+                             :code_challenge             challenge
+                             :code_challenge_method      "S256"
+                             :state                      state
+                             :id_token_add_organizations "true"
+                             :codex_cli_simplified_flow  "true"
+                             :originator                 originator})]
+     {:verifier verifier
+      :state    state
+      :url      (str AUTHORIZE_URL "?" query)})))
+
+(defn- send-html! [^HttpExchange exchange status html]
+  (let [bytes (.getBytes ^String html java.nio.charset.StandardCharsets/UTF_8)]
+    (doto (.getResponseHeaders exchange)
+      (.set "Content-Type" "text/html; charset=utf-8"))
+    (.sendResponseHeaders exchange status (alength bytes))
+    (with-open [out (.getResponseBody exchange)]
+      (.write out bytes))))
+
+(defn- oauth-callback-handler [state code-promise]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (try
+        (let [params (parse-query-string (.getRawQuery (.getRequestURI ^HttpExchange exchange)))]
+          (cond
+            (not= state (:state params))
+            (send-html! exchange 400 (error-html "State mismatch."))
+
+            (str/blank? (:code params))
+            (send-html! exchange 400 (error-html "Missing authorization code."))
+
+            :else
+            (do
+              (send-html! exchange 200 success-html)
+              (deliver code-promise (:code params)))))
+        (catch Exception _
+          (send-html! exchange 500 (error-html "Internal error while processing OAuth callback.")))))))
+
+(defn- start-local-oauth-server [state]
+  (try
+    (let [code-promise (promise)
+          server       (HttpServer/create (InetSocketAddress. CALLBACK_HOST CALLBACK_PORT) 0)
+          executor     (Executors/newSingleThreadExecutor)]
+      (.createContext server "/auth/callback" (oauth-callback-handler state code-promise))
+      (.setExecutor server executor)
+      (.start server)
+      {:server       server
+       :code-promise code-promise
+       :close        (fn []
+                       (.stop server 0)
+                       (.shutdownNow executor)
+                       (.awaitTermination executor 1 TimeUnit/SECONDS))})
+    (catch IOException e
+      (tel/log! {:level :warn :id ::codex-callback-bind-failed
+                 :data  {:host CALLBACK_HOST :port CALLBACK_PORT :error (ex-message e)}
+                 :msg   "OpenAI Codex OAuth callback server failed to bind"})
+      nil)))
+
+(defn- open-browser! [url]
+  (try
+    (when (Desktop/isDesktopSupported)
+      (let [desktop (Desktop/getDesktop)]
+        (when (.isSupported desktop Desktop$Action/BROWSE)
+          (.browse desktop (URI. url))
+          true)))
+    (catch Exception _ false)))
+
+(defn- prompt-for-code! [printer-fn]
+  (printer-fn "")
+  (printer-fn "  Paste the authorization code or full redirect URL, then press Enter:")
+  (read-line))
+
+(defn login!
+  "Run the Codex OAuth flow and persist fresh credentials."
+  ([printer-fn] (login! printer-fn {}))
+  ([printer-fn {:keys [originator] :or {originator "vis"}}]
+   (let [print! (or printer-fn (constantly nil))]
+     (if (detect-credentials)
+       (do
+         (print! "  Already authenticated with OpenAI Codex.")
+         (print! "  Run `vis auth openai-codex --status` for details.")
+         (print! "  Run `vis auth openai-codex --logout` first to re-authenticate.")
+         :already-authenticated)
+       (let [{:keys [verifier state url]} (create-authorization-flow originator)
+             server-info (start-local-oauth-server state)]
+         (try
+           (print! "")
+           (print! "  OpenAI Codex authentication")
+           (print! "  ─────────────────────────────")
+           (print! (str "  Open this URL if your browser does not open automatically:"))
+           (print! (str "  " url))
+           (print! "")
+           (if (open-browser! url)
+             (print! "  Browser opened. Complete login to finish.")
+             (print! "  Browser auto-open failed; open the URL manually."))
+           (when-not server-info
+             (print! "  Local callback server could not start. After login, paste the redirect URL."))
+           (let [callback-code (when server-info
+                                 (deref (:code-promise server-info) CALLBACK_TIMEOUT_MS nil))
+                 input         (or callback-code (prompt-for-code! print!))
+                 parsed        (parse-authorization-input input)
+                 code          (:code parsed)]
+             (when (and (:state parsed) (not= state (:state parsed)))
+               (throw (ex-info "State mismatch" {:expected state :actual (:state parsed)})))
+             (when (str/blank? code)
+               (throw (ex-info "Missing authorization code" {})))
+             (let [credentials (save-auth-file! (exchange-authorization-code! code verifier))]
+               (print! (str "  ✓ Authenticated! OpenAI Codex is ready (account "
+                         (:account-id credentials) ")."))
+               :ok))
+           (finally
+             (when-let [close (:close server-info)]
+               (close)))))))))
+
+;; =============================================================================
+;; Public CLI helpers
+;; =============================================================================
+
+(defn authenticated? []
+  (some? (detect-credentials)))
+
+(defn status []
+  (let [detected (detect-credentials)
+        now      (System/currentTimeMillis)]
+    (cond-> {:authenticated? (some? detected)}
+      detected
+      (assoc :source (:source detected)
+        :account-id (:account-id detected)
+        :oauth-token-preview (let [t (:access-token detected)]
+                               (str (subs t 0 (min 8 (count t))) "...")))
+      (:expires-at-ms detected)
+      (assoc :copilot-token-valid? (> (long (:expires-at-ms detected)) now)
+        :expires-in-ms (- (long (:expires-at-ms detected)) now)))))
+
+(defn logout! []
+  (delete-auth-file!)
+  :logged-out)
+
+;; =============================================================================
+;; svar Codex transport adapter
+;; =============================================================================
+
+(defonce ^:private original-svar-chat-completion (atom nil))
+
+(defn- codex-responses-url [base-url]
+  (let [raw        (or (some-> base-url str str/trim not-empty) CODEX_BASE_URL)
+        normalized (-> raw
+                     (str/replace #"/+$" "")
+                     ;; svar computes a chat-completions URL before invoking
+                     ;; chat-completion; Codex is a Responses endpoint instead.
+                     (str/replace #"/chat/completions$" ""))]
+    (cond
+      (str/ends-with? normalized CODEX_RESPONSES_PATH)
+      normalized
+
+      (str/ends-with? normalized "/codex")
+      (str normalized "/responses")
+
+      :else
+      (str normalized CODEX_RESPONSES_PATH))))
+
+(defn- text-content [content]
+  (cond
+    (string? content)
+    content
+
+    (sequential? content)
+    (->> content
+      (keep (fn [block]
+              (cond
+                (string? block) block
+                (= "text" (:type block)) (:text block)
+                (= "input_text" (:type block)) (:text block)
+                (= "output_text" (:type block)) (:text block)
+                :else nil)))
+      (str/join "\n"))
+
+    :else
+    (str content)))
+
+(defn- responses-content-blocks [role content]
+  (let [text-type (if (= role "assistant") "output_text" "input_text")]
+    (cond
+      (string? content)
+      [{:type text-type :text content}]
+
+      (sequential? content)
+      (->> content
+        (keep (fn [block]
+                (cond
+                  (string? block)
+                  {:type text-type :text block}
+
+                  (contains? #{"text" "input_text" "output_text"} (:type block))
+                  {:type text-type :text (:text block)}
+
+                  (= "image_url" (:type block))
+                  (when-let [url (get-in block [:image_url :url])]
+                    {:type "input_image" :image_url url})
+
+                  :else nil)))
+        vec)
+
+      :else
+      [{:type text-type :text (str content)}])))
+
+(defn- codex-request-body [messages model extra-body]
+  (let [system-text (->> messages
+                      (filter #(= "system" (:role %)))
+                      (map (comp text-content :content))
+                      (remove str/blank?)
+                      (str/join "\n\n"))
+        input       (->> messages
+                      (remove #(= "system" (:role %)))
+                      (mapv (fn [{:keys [role content]}]
+                              {:role    (if (= "assistant" role) "assistant" "user")
+                               :content (responses-content-blocks role content)})))
+        effort      (:reasoning_effort extra-body)]
+    (cond-> {:model  model
+             :store  false
+             :stream true
+             :input  input
+             :text   {:verbosity "low"}
+             :include ["reasoning.encrypted_content"]}
+      true (assoc :instructions (if (str/blank? system-text)
+                                  "You are a helpful assistant."
+                                  system-text))
+      effort (assoc :reasoning {:effort effort :summary "auto"})
+      (:temperature extra-body) (assoc :temperature (:temperature extra-body))
+      (:service_tier extra-body) (assoc :service_tier (:service_tier extra-body))
+      (:top_p extra-body) (assoc :top_p (:top_p extra-body)))))
+
+(defn- normalize-codex-usage [usage]
+  (when usage
+    (let [input-details  (:input_tokens_details usage)
+          output-details (:output_tokens_details usage)]
+      (cond-> {:prompt_tokens     (:input_tokens usage)
+               :completion_tokens (:output_tokens usage)
+               :total_tokens      (:total_tokens usage)}
+        (:cached_tokens input-details)
+        (assoc :prompt_tokens_details
+          {:cached_tokens (:cached_tokens input-details)})
+
+        (:reasoning_tokens output-details)
+        (assoc :completion_tokens_details
+          {:reasoning_tokens (:reasoning_tokens output-details)})))))
+
+(defn- output-content-text [content]
+  (->> content
+    (keep (fn [block]
+            (cond
+              (= "output_text" (:type block)) (:text block)
+              (= "text" (:type block)) (:text block)
+              (string? (:text block)) (:text block)
+              :else nil)))
+    (str/join "")))
+
+(defn- response-output-text [response]
+  (->> (:output response)
+    (keep (fn [item]
+            (when (= "message" (:type item))
+              (output-content-text (:content item)))))
+    (remove str/blank?)
+    (str/join "\n")))
+
+(defn- codex-error-message [event]
+  (or (get-in event [:response :error :message])
+    (get-in event [:error :message])
+    (:message event)
+    (:code event)
+    (json/write-json-str event)))
+
+(defn- maybe-emit-chunk! [on-chunk content reasoning usage]
+  (when on-chunk
+    (on-chunk {:content   (let [s (str content)] (when-not (str/blank? s) s))
+               :reasoning (let [s (str reasoning)] (when-not (str/blank? s) s))
+               :api-usage @usage
+               :done?     false})))
+
+(defn- process-codex-event! [event content reasoning usage completed-response on-chunk]
+  (let [event-type (:type event)]
+    (cond
+      (= "error" event-type)
+      (throw (ex-info (str "OpenAI Codex error: " (codex-error-message event))
+               {:type :svar.core/http-error :event event}))
+
+      (= "response.failed" event-type)
+      (throw (ex-info (str "OpenAI Codex response failed: " (codex-error-message event))
+               {:type :svar.core/http-error :event event}))
+
+      (= "response.output_text.delta" event-type)
+      (do
+        (.append ^StringBuilder content (or (:delta event) ""))
+        (maybe-emit-chunk! on-chunk content reasoning usage))
+
+      (contains? #{"response.reasoning_text.delta"
+                   "response.reasoning_summary_text.delta"} event-type)
+      (do
+        (.append ^StringBuilder reasoning (or (:delta event) ""))
+        (maybe-emit-chunk! on-chunk content reasoning usage))
+
+      (or (= "response.completed" event-type)
+        (= "response.done" event-type)
+        (= "response.incomplete" event-type))
+      (let [response (:response event)]
+        (vreset! completed-response response)
+        (when-let [u (:usage response)]
+          (vreset! usage (normalize-codex-usage u)))))))
+
+(defn- parse-codex-sse! [^InputStream stream content reasoning usage completed-response on-chunk]
+  (letfn [(process-data! [data-lines]
+            (when (seq data-lines)
+              (let [data (str/trim (str/join "\n" data-lines))]
+                (when-not (or (str/blank? data) (= "[DONE]" data))
+                  (when-let [event (try (json/read-json data :key-fn keyword)
+                                     (catch Exception _ nil))]
+                    (process-codex-event!
+                      event content reasoning usage completed-response on-chunk))))))]
+    (with-open [reader (BufferedReader. (InputStreamReader. stream "UTF-8"))]
+      (loop [data-lines []]
+        (if-let [line (.readLine reader)]
+          (cond
+            (str/blank? line)
+            (do
+              (process-data! data-lines)
+              (recur []))
+
+            (str/starts-with? line "data:")
+            (recur (conj data-lines (str/trim (subs line 5))))
+
+            :else
+            (recur data-lines))
+          (process-data! data-lines))))))
+
+(defn- codex-headers [api-key]
+  (let [account-id* (account-id api-key)]
+    (when (str/blank? account-id*)
+      (throw (ex-info "OpenAI Codex token is missing a ChatGPT account id"
+               {:type :svar.core/http-error})))
+    {"Authorization"      (str "Bearer " api-key)
+     "chatgpt-account-id" account-id*
+     "originator"         "vis"
+     "OpenAI-Beta"        CODEX_OPENAI_BETA
+     "Accept"             "text/event-stream"
+     "Content-Type"       "application/json"
+     "User-Agent"         "vis"}))
+
+(defn- codex-http-error! [url status body]
+  (let [parsed (try (json/read-json body :key-fn keyword) (catch Exception _ nil))
+        detail (or (:detail parsed) (get-in parsed [:error :message]))]
+    (throw (ex-info (str "OpenAI Codex HTTP " status
+                      (when detail (str ": " detail)))
+             {:type :svar.core/http-error
+              :url url
+              :status status
+              :body body}))))
+
+(defn- codex-chat-completion [messages model api-key base-url opts]
+  (let [timeout-ms (long (get opts :timeout-ms 300000))
+        on-chunk   (:on-chunk opts)
+        body       (codex-request-body messages model (:extra-body opts))
+        url        (codex-responses-url base-url)
+        req        (reduce (fn [^HttpRequest$Builder b [k v]]
+                             (.header b k v))
+                     (-> (HttpRequest/newBuilder)
+                       (.uri (URI/create url))
+                       (.timeout (Duration/ofMillis timeout-ms))
+                       (.POST (HttpRequest$BodyPublishers/ofString
+                                (json/write-json-str body))))
+                     (codex-headers api-key))
+        resp       (.send ^HttpClient @http-client
+                     (.build ^HttpRequest$Builder req)
+                     (HttpResponse$BodyHandlers/ofInputStream))
+        status     (.statusCode ^HttpResponse resp)]
+    (if-not (<= 200 status 299)
+      (with-open [stream ^InputStream (.body ^HttpResponse resp)]
+        (codex-http-error! url status (slurp stream)))
+      (let [content            (StringBuilder.)
+            reasoning          (StringBuilder.)
+            usage              (volatile! nil)
+            completed-response (volatile! nil)]
+        (parse-codex-sse!
+          (.body ^HttpResponse resp) content reasoning usage completed-response on-chunk)
+        (let [fallback-content (when-let [response @completed-response]
+                                 (response-output-text response))
+              content-text     (let [s (str content)]
+                                 (if (str/blank? s) fallback-content s))
+              reasoning-text   (let [s (str reasoning)]
+                                 (when-not (str/blank? s) s))]
+          {:content       (when-not (str/blank? content-text) content-text)
+           :reasoning     reasoning-text
+           :api-usage     @usage
+           :http-response {:url url :streaming? true :status status}})))))
+
+(defn- install-svar-codex-chat-completion! []
+  (let [original (or @original-svar-chat-completion @#'svar-llm/chat-completion)]
+    (reset! original-svar-chat-completion original)
+    (alter-var-root #'svar-llm/chat-completion
+      (constantly
+        (fn
+          ([messages model api-key base-url]
+           (original messages model api-key base-url))
+          ([messages model api-key base-url opts]
+           (if (= :openai-codex (:api-style opts))
+             (codex-chat-completion messages model api-key base-url opts)
+             (original messages model api-key base-url opts))))))))
+
+;; =============================================================================
+;; Provider registration
+;; =============================================================================
+
+(require '[com.blockether.vis.core :as vis])
+
+(install-svar-codex-chat-completion!)
+
+(vis/register-extension!
+  (vis/extension
+    {:ext/namespace 'com.blockether.vis.ext.provider-openai-codex
+     :ext/doc       "OpenAI Codex / ChatGPT OAuth provider."
+     :ext/version   "0.1.0"
+     :ext/author    "Blockether"
+     :ext/owner     "vis"
+     :ext/license   "Apache-2.0"
+     :ext/providers
+     [{:provider/id           :openai-codex
+       :provider/label        "OpenAI Codex (ChatGPT OAuth)"
+       :provider/status-fn    #'status
+       :provider/logout-fn    #'logout!
+       :provider/detect-fn    #'detect-credentials
+       :provider/auth-fn      #'login!
+       :provider/get-token-fn #'get-openai-codex-token!}]}))
