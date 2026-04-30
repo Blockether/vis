@@ -453,7 +453,11 @@
                  "(:cost-usd (:totals (v/transcript)))"
                  "(map :thinking (mapcat :iterations (:turns (v/transcript))))"
                  "(filter :error (mapcat :blocks (mapcat :iterations (:turns (v/transcript)))))"]
-     :before-fn (fn [args env _ctx] (cons env args))}))
+     :before-fn (fn [env _f args]
+                 ;; inject-environment pattern: prepend env so impl fns receive (env & user-args).
+                 ;; transcript fn takes [db-info conversation-id], so we must extract db-info
+                 ;; from env and resolve optional conversation-id from env when not provided.
+                 {:args (vec (cons (:db-info env) (or (seq args) [(:conversation-id env)])))})}))
 
 ;; =============================================================================
 ;; CLI command — `vis diagnose <CONVERSATION-ID>`. Foundation owns it

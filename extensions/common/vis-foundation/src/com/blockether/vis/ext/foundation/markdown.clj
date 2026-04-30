@@ -224,10 +224,17 @@
   "Horizontal rule (`---`)."
   "---")
 
-(def br
-  "Hard line break suffix. Append + newline -> `<br/>` (CommonMark
-   trailing-spaces)."
-  "  ")
+(def ^{:doc "Hard line break suffix. Append + newline -> `<br/>` (CommonMark
+   trailing-spaces). Usable as both a value (stringified to `\"  \"`) and a
+   zero-arg function `((md/br))` returning the same string."}
+  br
+  "Callable hard line break: value or zero-arg fn."
+  (reify
+    CharSequence
+    (toString [_] "  ")
+    clojure.lang.IFn
+    (invoke [_] "  ")
+    (applyTo [_ _] "  ")))
 
 (defn summary
   "Standalone `<summary>…</summary>` tag — disclosure label inside
