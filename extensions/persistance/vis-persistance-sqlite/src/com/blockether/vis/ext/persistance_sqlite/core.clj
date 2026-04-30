@@ -22,7 +22,7 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -38,14 +38,14 @@
 ;; Helpers
 ;; =============================================================================
 
-(def ds      sdk/ds)
-(def now-ms  sdk/now-ms)
-(def ->id    sdk/->id)
-(def ->uuid  sdk/->uuid)
-(def ->ref   sdk/->ref)
-(def ->kw    sdk/->kw)
-(def ->kw-back sdk/->kw-back)
-(def ->date  sdk/->date)
+(def ds      vis/ds)
+(def now-ms  vis/now-ms)
+(def ->id    vis/->id)
+(def ->uuid  vis/->uuid)
+(def ->ref   vis/->ref)
+(def ->kw    vis/->kw)
+(def ->kw-back vis/->kw-back)
+(def ->date  vis/->date)
 
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
@@ -1150,8 +1150,8 @@
 ;; routes here.
 ;; =============================================================================
 
-(sdk/register-extension!
-  (sdk/extension
+(vis/register-extension!
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.persistance-sqlite.core
      :ext/doc       "SQLite + Flyway persistence backend."
      :ext/version   "0.3.0"

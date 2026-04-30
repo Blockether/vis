@@ -5,7 +5,7 @@
    SQLite DB, then invokes the impl fns directly with a fake env map."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
 
@@ -18,7 +18,7 @@
 ;; read from the registry that `discover-extensions!` produces by
 ;; merging every `META-INF/vis-extension/vis.edn` on the classpath.
 ;; Idempotent across runs (memoized inside the loader).
-(sdk/discover-extensions!)
+(vis/discover-extensions!)
 
 (h/use-mem-store!)
 
@@ -27,9 +27,9 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- bootstrap [store]
-  (let [conversation-id (sdk/db-store-conversation! store
+  (let [conversation-id (vis/db-store-conversation! store
                           {:channel :tui :title "meta test"})
-        query-id (sdk/db-store-query! store
+        query-id (vis/db-store-query! store
                    {:parent-conversation-id conversation-id
                     :query "what's the plan?"
                     :status :running})]
@@ -38,7 +38,7 @@
 (defn- db-store-iteration!
   [store query-id {:keys [blocks thinking error]
                    :or {blocks []}}]
-  (sdk/db-store-iteration! store
+  (vis/db-store-iteration! store
     (cond-> {:query-id    query-id
              :blocks blocks
              :duration-ms 100
@@ -99,7 +99,7 @@
     ;; not a silent regression.
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (sdk/db-store-iteration! s
+      (vis/db-store-iteration! s
         {:query-id    query-id
          :blocks      [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]
          :duration-ms 100
@@ -124,7 +124,7 @@
   (it "arg form fetches any conversation by id"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/db-store-conversation! s {:channel :telegram :title "other"})
+          other (vis/db-store-conversation! s {:channel :telegram :title "other"})
           conversation ((private-fn "foundation-conversation") (env s conversation-id) other)]
       (expect (= other (:id conversation)))
       (expect (= :telegram (:channel conversation)))
@@ -133,7 +133,7 @@
   (it "turns include goal/outcome/answer when present"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (sdk/db-update-query! s query-id
+      (vis/db-update-query! s query-id
         {:answer "42" :iteration-count 1 :duration-ms 50 :status :done
          :prior-outcome :complete})
       (let [conversation ((private-fn "foundation-conversation") (env s conversation-id))
@@ -155,7 +155,7 @@
   (it "does NOT filter when inspecting a foreign conversation"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          other (sdk/db-store-conversation! s {:channel :telegram :title "other"})
+          other (vis/db-store-conversation! s {:channel :telegram :title "other"})
           env-with-in-flight (assoc (env s conversation-id)
                                :current-query-id-atom (atom query-id))
           conversation ((private-fn "foundation-conversation") env-with-in-flight other)]
@@ -178,8 +178,8 @@
 (defdescribe foundation-conversations-test
   (it "no-arg form scans every known channel"
     (let [s (h/store)
-          a (sdk/db-store-conversation! s {:channel :tui :title "vis-a"})
-          b (sdk/db-store-conversation! s {:channel :telegram :title "tg-b"})
+          a (vis/db-store-conversation! s {:channel :tui :title "vis-a"})
+          b (vis/db-store-conversation! s {:channel :telegram :title "tg-b"})
           all ((private-fn "foundation-conversations") (env s a))
           ids (set (map :id all))]
       (expect (contains? ids a))
@@ -187,8 +187,8 @@
 
   (it "channel-arg form filters to one channel"
     (let [s (h/store)
-          a (sdk/db-store-conversation! s {:channel :tui :title "vis-a"})
-          _ (sdk/db-store-conversation! s {:channel :telegram :title "tg-b"})
+          a (vis/db-store-conversation! s {:channel :tui :title "vis-a"})
+          _ (vis/db-store-conversation! s {:channel :telegram :title "tg-b"})
           tui-list ((private-fn "foundation-conversations") (env s a) :telegram)]
       (expect (= 1 (count tui-list)))
       (expect (= :telegram (:channel (first tui-list))))))
@@ -220,7 +220,7 @@
   (it "explicit conversation-id form queries a different conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/db-store-conversation! s {:channel :tui :title "other"})]
+          other (vis/db-store-conversation! s {:channel :tui :title "other"})]
       (expect (= [] ((private-fn "foundation-var-history") (env s conversation-id) 'foo other))))))
 
 ;; -----------------------------------------------------------------------------
@@ -240,8 +240,8 @@
   (it "surfaces every fork with parent links and per-state query counts"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)]
-      (sdk/db-fork-conversation! s conversation-id {:title "Branch A"})
-      (sdk/db-fork-conversation! s conversation-id {:title "Branch B"})
+      (vis/db-fork-conversation! s conversation-id {:title "Branch A"})
+      (vis/db-fork-conversation! s conversation-id {:title "Branch B"})
       (let [rows ((private-fn "foundation-conversation-forks") (env s conversation-id))]
         (expect (= 3 (count rows)))
         (expect (= [0 1 2] (mapv :version rows)))
@@ -251,8 +251,8 @@
   (it "explicit conversation-id form scans a different conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          other (sdk/db-store-conversation! s {:channel :tui :title "other"})]
-      (sdk/db-fork-conversation! s other {:title "Other branch"})
+          other (vis/db-store-conversation! s {:channel :tui :title "other"})]
+      (vis/db-fork-conversation! s other {:title "Other branch"})
       (let [rows ((private-fn "foundation-conversation-forks") (env s conversation-id) other)]
         (expect (= 2 (count rows))))))
 
@@ -281,8 +281,8 @@
   (it "surfaces every retry in version order with forked-from links"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)]
-      (sdk/db-retry-query! s query-id {:status :running :model "claude-4"})
-      (sdk/db-retry-query! s query-id {:status :done    :model "gpt-4o"})
+      (vis/db-retry-query! s query-id {:status :running :model "claude-4"})
+      (vis/db-retry-query! s query-id {:status :done    :model "gpt-4o"})
       (let [rows ((private-fn "meta-query-retries") (env s conversation-id) query-id)]
         (expect (= 3 (count rows)))
         (expect (= [0 1 2] (mapv :version rows)))
@@ -332,7 +332,7 @@
   (it "two-arg form scans every turn of the given conversation"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          q2 (sdk/db-store-query! s
+          q2 (vis/db-store-query! s
                {:parent-conversation-id conversation-id
                 :query "second turn" :status :running})]
       ;; Leave q1 empty; fill q2.
@@ -369,9 +369,9 @@
   (it "scans every conversation in the DB"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          other-conversation-id (sdk/db-store-conversation! s
+          other-conversation-id (vis/db-store-conversation! s
                                   {:channel :tui :title "other turn"})
-          other-query-id (sdk/db-store-query! s
+          other-query-id (vis/db-store-query! s
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id
@@ -485,7 +485,7 @@
   (it "conversation-id form scans every turn"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          second-query-id (sdk/db-store-query! s
+          second-query-id (vis/db-store-query! s
                             {:parent-conversation-id conversation-id
                              :query "second turn"
                              :status :running})]
@@ -519,9 +519,9 @@
   (it "aggregates failures across every conversation in the DB"
     (let [s (h/store)
           {:keys [conversation-id query-id]} (bootstrap s)
-          other-conversation-id (sdk/db-store-conversation! s
+          other-conversation-id (vis/db-store-conversation! s
                                   {:channel :tui :title "other turn"})
-          other-query-id (sdk/db-store-query! s
+          other-query-id (vis/db-store-query! s
                            {:parent-conversation-id other-conversation-id
                             :query "other goal" :status :running})]
       (db-store-iteration! s query-id

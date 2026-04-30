@@ -20,7 +20,7 @@
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
   (:require
    [babashka.fs :as fs]
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [rewrite-clj.zip :as z])
   (:import
    (java.io File)))
@@ -79,7 +79,7 @@
 ;; =============================================================================
 
 (def zedit-symbol
-  (sdk/symbol 'zedit zedit-file
+  (vis/symbol 'zedit zedit-file
     {:doc      "Structured edit of a Clojure file. zfn gets a rewrite-clj zipper at file root and MUST return a zipper. Sibling z/ ops navigate/edit: z/find-value, z/replace, z/right, z/sexpr, ..."
      :arglists '([path zfn])
      :examples ["(z/zedit \"src/x.clj\" (fn [zl] (z/edit zl str/upper-case)))"

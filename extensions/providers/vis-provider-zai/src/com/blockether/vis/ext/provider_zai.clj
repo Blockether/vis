@@ -278,7 +278,7 @@
 ;; `provider-presets`).
 ;; =============================================================================
 
-(require '[com.blockether.vis.core :as sdk])
+(require '[com.blockether.vis.core :as vis])
 
 (defn- provider-entry [plan-tag]
   (let [{:keys [provider-id label]} (get PLANS plan-tag)]
@@ -290,8 +290,8 @@
      :provider/auth-fn      (make-auth-fn plan-tag)
      :provider/get-token-fn (make-get-token-fn plan-tag)}))
 
-(sdk/register-extension!
-  (sdk/extension
+(vis/register-extension!
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.provider-zai
      :ext/doc       "Z.ai (ZhipuAI) static-API-key provider — covers both the coding-plan and pay-as-you-go endpoints in one extension."
      :ext/version   "0.1.0"

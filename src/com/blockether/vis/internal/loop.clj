@@ -800,7 +800,7 @@
                              ;; envelope on success and error —
                              ;; consumers branch on `:error nil?`,
                              ;; not on shape.
-                             (when on-chunk
+                             (when (and on-chunk (not= :vis/silent (:result result)))
                                (on-chunk {:phase             :form-result
                                           :iteration         iteration
                                           :form-idx          idx
@@ -831,7 +831,10 @@
                                   :timeout? (:timeout? result)
                                   :repaired? (:repaired? result)}
                            form-comment (assoc :comment form-comment)))
-                   (range) code-blocks block-results block-comments)]
+                   (range) code-blocks block-results block-comments)
+          silent-form-idxs (into #{}
+                             (keep-indexed (fn [idx r] (when (= :vis/silent (:result r)) idx)))
+                             block-results)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. Two
@@ -907,6 +910,7 @@
                          :error validation-error}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
+             :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name}
             {:thinking thinking
              :blocks (strip-noop-blocks blocks)
@@ -922,6 +926,7 @@
                             :answer-form-idx  form-idx}
              :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
+             :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name}))
           ;; Normal path
         {:thinking thinking
@@ -930,6 +935,7 @@
          :duration-ms (or (:duration-ms ask-result) 0)
          :llm-messages messages
          :llm-provider (:provider resolved-model)
+         :silent-form-idxs silent-form-idxs
          :llm-model    (some-> (:name resolved-model) str)}))))
 
 ;; =============================================================================
@@ -1470,7 +1476,7 @@
                                  :consecutive-errors (inc consecutive-errors) :restarts restarts))))
 
                     (let [_ (accumulate-usage! (:api-usage iteration-result))
-                          {:keys [thinking blocks final-result]} iteration-result
+                          {:keys [thinking blocks final-result silent-form-idxs]} iteration-result
                           final-answer (when final-result (:answer final-result))
                           _ (update-system-vars! environment
                               {:thinking thinking :final-result final-result :final-answer final-answer})
@@ -1563,6 +1569,7 @@
                                                           :iteration-count (inc iteration)
                                                           :status          :success}
                                        :answer-form-idx  (:answer-form-idx final-result)
+                                       :silent-form-idxs silent-form-idxs
                                        :done?            true}))
                           (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                   :iteration-count (inc iteration)}
@@ -1584,11 +1591,12 @@
                           ;; marker. `:final` is nil because the
                           ;; turn isn't done yet.
                             (when on-chunk
-                              (on-chunk {:phase     :iteration-final
-                                         :iteration iteration
-                                         :thinking  thinking
-                                         :final     nil
-                                         :done?     false}))
+                              (on-chunk {:phase            :iteration-final
+                                         :iteration        iteration
+                                         :thinking         thinking
+                                         :final            nil
+                                         :silent-form-idxs silent-form-idxs
+                                         :done?            false}))
                             (let [had-success? (some #(nil? (:error %)) blocks)
                                   next-errors (if had-success? 0 (inc consecutive-errors))
                                   _ (when had-success? (swap! var-index-atom update :current-revision inc))
@@ -2233,7 +2241,7 @@
                                      (set-title-with-broadcast!
                                        db-info conversation-id
                                        conversation-title-atom s)
-                                     s))
+                                     :vis/silent))
         env-bindings             {'var-history        var-history-fn
                                   'answer             answer-fn
                                   'conversation-title conversation-title-fn}
@@ -2321,7 +2329,7 @@
         (conj without ext))))
   ;; Bind extension symbols ONLY into the aliased namespace — never
   ;; into sandbox. The LLM must always use the alias form
-  ;; `(alias/symbol ...)`, not `(sdk/symbol ...)`.
+  ;; `(alias/symbol ...)`, not `(vis/symbol ...)`.
   ;;
   ;; Multi-extension MERGE: two extensions can share an `:ext/ns-alias`
   ;; (e.g. one ext registers `v/cat`/`v/ls`, another adds

@@ -27,7 +27,7 @@
          (md/ul [\"Run verify.sh\" \"Update CHANGELOG\"])))"
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.core :as sdk]))
+   [com.blockether.vis.core :as vis]))
 
 (set! *warn-on-reflection* true)
 
@@ -297,33 +297,45 @@
 ;; =============================================================================
 
 (defn ul
-  "Unordered list. items = seq of strings (or str-coercible). One
-   `- item` per element, newline-joined, no trailing newline."
-  ^String [items]
-  (->> (or items [])
-    (map #(str "- " (->str %)))
-    (str/join "\n")))
+  "Unordered list. Accepts a single seq or variadic args.
+   (ul [\"a\" \"b\"]) and (ul \"a\" \"b\") both work.
+   One `- item` per element, newline-joined, no trailing newline."
+  [& items]
+  (let [items (if (and (= 1 (count items)) (sequential? (first items)))
+                (first items)
+                items)]
+    (->> (or items [])
+      (map #(str "- " (->str %)))
+      (str/join "\n"))))
 
 (defn ol
-  "Ordered list, 1-based numbering."
-  ^String [items]
-  (->> (or items [])
-    (map-indexed (fn [i x] (str (inc i) ". " (->str x))))
-    (str/join "\n")))
+  "Ordered list, 1-based numbering. Accepts a single seq or variadic args.
+   (ol [\"a\" \"b\"]) and (ol \"a\" \"b\") both work."
+  [& items]
+  (let [items (if (and (= 1 (count items)) (sequential? (first items)))
+                (first items)
+                items)]
+    (->> (or items [])
+      (map-indexed (fn [i x] (str (inc i) ". " (->str x))))
+      (str/join "\n"))))
 
 (defn checklist
-  "GitHub task list. items =
-     - vec of [text done?] pairs, OR
-     - vec of {:text … :done? bool} maps."
-  ^String [items]
-  (->> (or items [])
-    (map (fn [it]
-           (let [[t d?] (cond
-                          (map? it)        [(:text it) (:done? it)]
-                          (sequential? it) [(first it) (second it)]
-                          :else            [it false])]
-             (str "- [" (if d? "x" " ") "] " (->str t)))))
-    (str/join "\n")))
+  "GitHub task list. Accepts a single seq or variadic args.
+   items are [text done?] pairs or {:text … :done? bool} maps.
+   (checklist [[\"a\" true] [\"b\" false]]) and
+   (checklist [\"a\" true] [\"b\" false]) both work."
+  [& items]
+  (let [items (if (and (= 1 (count items)) (sequential? (first items)))
+                (first items)
+                items)]
+    (->> (or items [])
+      (map (fn [it]
+             (let [[t d?] (cond
+                            (map? it)        [(:text it) (:done? it)]
+                            (sequential? it) [(first it) (second it)]
+                            :else            [it false])]
+               (str "- [" (if d? "x" " ") "] " (->str t)))))
+      (str/join "\n"))))
 
 ;; =============================================================================
 ;; Tables
@@ -430,69 +442,69 @@
 ;; =============================================================================
 
 (def ^:private symbol-entries
-  [(sdk/symbol 'h1 h1
+  [(vis/symbol 'h1 h1
      {:doc "H1: `# text`. Variadic body — nil dropped, seqs spliced, parts concatenated (author owns whitespace)."
       :arglists '([& parts])
       :examples ["(md/h1 \"Patch report\")"
                  "(md/h1 \"Build of \" (md/code \"v1.2.3\"))"]})
-   (sdk/symbol 'h2 h2
+   (vis/symbol 'h2 h2
      {:doc "H2: `## text`. Variadic body — see md/h1."
       :arglists '([& parts])
       :examples ["(md/h2 \"Summary\")"]})
-   (sdk/symbol 'h3 h3
+   (vis/symbol 'h3 h3
      {:doc "H3: `### text`. Variadic body — see md/h1."
       :arglists '([& parts])
       :examples ["(md/h3 \"Proposal: \" (md/code \":vis/silent\") \" sentinel\")"]})
-   (sdk/symbol 'h4 h4
+   (vis/symbol 'h4 h4
      {:doc "H4: `#### text`. Variadic body — see md/h1."
       :arglists '([& parts])
       :examples ["(md/h4 \"Notes\")"]})
-   (sdk/symbol 'h5 h5
+   (vis/symbol 'h5 h5
      {:doc "H5: `##### text`. Variadic body — see md/h1."
       :arglists '([& parts])
       :examples ["(md/h5 \"Caveat\")"]})
-   (sdk/symbol 'h6 h6
+   (vis/symbol 'h6 h6
      {:doc "H6: `###### text`. Variadic body — see md/h1."
       :arglists '([& parts])
       :examples ["(md/h6 \"Footnote\")"]})
-   (sdk/symbol 'h h
+   (vis/symbol 'h h
      {:doc "Heading at level n (clamped [1, 6]). Variadic body — see md/h1."
       :arglists '([level & parts])
       :examples ["(md/h 3 \"Step 1\")"
                  "(md/h 2 \"Build of \" (md/code \"v1.2.3\"))"]})
 
-   (sdk/symbol 'p p
+   (vis/symbol 'p p
      {:doc "Paragraph. Joins parts with single space; nil dropped; seqs splice one level (matches md/join / md/lines)."
       :arglists '([& parts])
       :examples ["(md/p \"Done.\")"
                  "(md/p \"Patched\" n \"files\")"
                  "(md/p \"Status:\" (md/bold \"OK\"))"]})
-   (sdk/symbol 'bold bold
+   (vis/symbol 'bold bold
      {:doc "Bold span: `**text**`. Variadic — parts concatenated, nil dropped, seqs spliced."
       :arglists '([& parts])
       :examples ["(md/bold \"important\")"
                  "(md/bold \"build \" (md/code \"v1.2.3\"))"]})
-   (sdk/symbol 'strong bold
+   (vis/symbol 'strong bold
      {:doc "Bold span: `**text**` (HTML-semantic alias for `md/bold`). Variadic — see md/bold."
       :arglists '([& parts])
       :examples ["(md/strong \"important\")"]})
-   (sdk/symbol 'italic italic
+   (vis/symbol 'italic italic
      {:doc "Italic span: `*text*`. Variadic — see md/bold."
       :arglists '([& parts])
       :examples ["(md/italic \"subtle\")"]})
-   (sdk/symbol 'em italic
+   (vis/symbol 'em italic
      {:doc "Italic span: `*text*` (HTML-semantic alias for `md/italic`). Variadic — see md/bold."
       :arglists '([& parts])
       :examples ["(md/em \"subtle\")"]})
-   (sdk/symbol 'bold-italic bold-italic
+   (vis/symbol 'bold-italic bold-italic
      {:doc "Bold-italic span: `***text***`. Variadic — see md/bold."
       :arglists '([& parts])
       :examples ["(md/bold-italic \"!!!\")"]})
-   (sdk/symbol 'strike strike
+   (vis/symbol 'strike strike
      {:doc "Strikethrough span: `~~text~~`. Variadic — see md/bold."
       :arglists '([& parts])
       :examples ["(md/strike \"obsolete\")"]})
-   (sdk/symbol 'code code
+   (vis/symbol 'code code
      {:doc "Inline code span: `` `text` ``. Variadic — parts concatenated."
       :arglists '([& parts])
       :examples ["(md/code \"v/cat\")"
@@ -503,57 +515,57 @@
    ;; Intentionally NOT mentioned in `markdown-prompt` — callers who
    ;; need it can discover it via `(symbol-info 'md/summary)`; we
    ;; don't want every answer reaching for collapsible UI.
-   (sdk/symbol 'summary summary
+   (vis/symbol 'summary summary
      {:doc "Standalone `<summary>…</summary>` tag for use inside (md/details …). Variadic — parts concatenated. md/details lifts it to the canonical first-child slot regardless of arg position."
       :arglists '([& parts])
       :examples ["(md/summary \"Logs\")"
                  "(md/summary (md/bold \"Logs\") \" (\" (md/code \"42\") \")\")"
                  "(md/details (md/summary (md/bold \"Logs\")) body)"]})
 
-   (sdk/symbol 'kbd kbd
+   (vis/symbol 'kbd kbd
      {:doc "Keyboard span: `<kbd>text</kbd>`. Variadic — parts concatenated."
       :arglists '([& parts])
       :examples ["(md/kbd \"Ctrl+K\")"]})
-   (sdk/symbol 'link link
+   (vis/symbol 'link link
      {:doc "Hyperlink: `[text](url)`. 3-arg adds tooltip title attr. TUI + Telegram render as clickable wherever the surface supports it."
       :arglists '([text url] [text url title])
       :examples ["(md/link \"docs\" \"https://example.com\")"
                  "(md/link \"spec\" \"docs/spec.md\" \"Full spec\")"]})
-   (sdk/symbol 'image image
+   (vis/symbol 'image image
      {:doc "Image: `![alt](url)`. 3-arg embeds tooltip title."
       :arglists '([alt url] [alt url title])
       :examples ["(md/image \"diagram\" \"./diagram.png\")"
                  "(md/image \"flow\" \"./flow.png\" \"Iteration flow\")"]})
-   (sdk/symbol 'file-link file-link
+   (vis/symbol 'file-link file-link
      {:doc "Cite a workspace file. 1-arg -> `[path](path)`; 2-arg -> `[path:line](path#Lline)` so channels can jump to the exact line. Use for every source-code reference."
       :arglists '([path] [path line])
       :examples ["(md/file-link \"src/main.clj\")"
                  "(md/file-link \"src/main.clj\" 142)"]})
-   (sdk/symbol 'anchor anchor
+   (vis/symbol 'anchor anchor
      {:doc "Same-doc heading anchor. 1-arg auto-slugifies; 2-arg takes explicit slug."
       :arglists '([text] [text slug])
       :examples ["(md/anchor \"Patch report\")"
                  "(md/anchor \"Jump to summary\" \"summary\")"]})
 
-   (sdk/symbol 'code-block code-block
+   (vis/symbol 'code-block code-block
      {:doc "Fenced code block. 1-arg = no language; 2-arg embeds it."
       :arglists '([code] [code lang])
       :examples ["(md/code-block \"(println :ok)\" \"clojure\")"
                  "(md/code-block \"plain text\")"]})
-   (sdk/symbol 'blockquote blockquote
+   (vis/symbol 'blockquote blockquote
      {:doc "Quote each line with `> `. Variadic — parts concatenated then split on \"\\n\"."
       :arglists '([& parts])
       :examples ["(md/blockquote \"caveat\")"
                  "(md/blockquote \"line1\\nline2\")"]})
-   (sdk/symbol 'quote blockquote
+   (vis/symbol 'quote blockquote
      {:doc "Quote each line with `> ` (shorter alias for `md/blockquote`). Variadic — see md/blockquote."
       :arglists '([& parts])
       :examples ["(md/quote \"caveat\")"]})
-   (sdk/value 'hr hr
+   (vis/value 'hr hr
      {:doc "Horizontal rule (`---`)."})
-   (sdk/value 'br br
+   (vis/value 'br br
      {:doc "Hard line break suffix (CommonMark trailing-spaces)."})
-   (sdk/symbol 'details details
+   (vis/symbol 'details details
      {:doc (str "Collapsible block: `<details>…</details>`. Variadic: parts splice "
              "(nil dropped, seqs flattened), body parts blank-line joined. A `<summary>…</summary>` "
              "part — produced by md/summary or hand-rolled — is lifted to the canonical "
@@ -563,39 +575,39 @@
                  "(md/details intro snippet (md/summary \"Trace\"))"
                  "(md/details para1 para2)"]})
 
-   (sdk/symbol 'ul ul
+   (vis/symbol 'ul ul
      {:doc "Unordered list. items = seq; each entry becomes one `- item` line."
       :arglists '([items])
       :examples ["(md/ul [\"a\" \"b\" \"c\"])"]})
-   (sdk/symbol 'ol ol
+   (vis/symbol 'ol ol
      {:doc "Ordered list, 1-based numbering."
       :arglists '([items])
       :examples ["(md/ol [\"first\" \"second\"])"]})
-   (sdk/symbol 'checklist checklist
+   (vis/symbol 'checklist checklist
      {:doc "Task list: items = `[text done?]` pairs OR `{:text :done?}` maps."
       :arglists '([items])
       :examples ["(md/checklist [[\"done\" true] [\"todo\" false]])"]})
 
-   (sdk/symbol 'table table
+   (vis/symbol 'table table
      {:doc "Markdown table. headers = vec of column titles; rows = vec of row vecs. Opts: `{:align [:left :center :right …]}`."
       :arglists '([headers rows] [headers rows opts])
       :examples ["(md/table [\"file\" \"lines\"] [[\"a\" 12] [\"b\" 30]])"
                  "(md/table [\"k\" \"v\"] [[\"x\" 1]] {:align [:left :right]})"]})
 
-   (sdk/symbol 'join join
+   (vis/symbol 'join join
      {:doc "Stitch block pieces with one BLANK line (`\\n\\n`)."
       :arglists '([& parts])
       :examples ["(md/join (md/h1 \"x\") (md/p \"y\"))"]})
-   (sdk/symbol 'lines lines
+   (vis/symbol 'lines lines
      {:doc "Stitch lines with single newline."
       :arglists '([& parts])
       :examples ["(md/lines \"a\" \"b\")"]})
-   (sdk/symbol 'section section
+   (vis/symbol 'section section
      {:doc "Heading + body shortcut. Default level 2; 3-arg picks level."
       :arglists '([title body] [level title body])
       :examples ["(md/section \"Summary\" \"…\")"
                  "(md/section 3 \"Details\" \"…\")"]})
-   (sdk/symbol 'escape escape
+   (vis/symbol 'escape escape
      {:doc "Backslash-escape every CommonMark special character in s."
       :arglists '([s])
       :examples ["(md/escape \"1 + 2 = *3*\")"]})])
@@ -627,7 +639,7 @@
     "Cite source via (md/file-link path line) -> TUI jumps to line. (md/link …) for URLs, (md/image alt url) for diagrams. Hand-rolled `[…](…)` drifts from channel conventions; the helpers stay aligned."))
 
 (def markdown-extension
-  (sdk/extension
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.foundation.markdown
      :ext/doc       "Markdown under SCI alias `md/`. Headings, inline emphasis, lists, tables, code blocks, joiners. Pure string builders for the (answer …) argument."
      :ext/version   "0.1.0"
@@ -639,4 +651,4 @@
      :ext/prompt    (fn [_env] markdown-prompt)
      :ext/symbols   markdown-symbols}))
 
-(sdk/register-extension! markdown-extension)
+(vis/register-extension! markdown-extension)

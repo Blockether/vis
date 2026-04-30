@@ -4,27 +4,36 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       (reserved, empty today)   Conversation title          d8d6a0a1 ⎘
+       ✓ Copied!                 Conversation title          d8d6a0a1 [copy]
+       (notification banner)     (or fallback placeholder)   (id + click target)
 
+   - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
+     Color-coded by `:level` (success / info / warn / error). Empty
+     when no notification is active. The host notifications module
+     is the single source of truth for cross-channel ephemeral
+     signals — any extension or channel can `(v/notify! …)` and the
+     banner surfaces here.
    - CENTER: conversation title from app-db (`:title`). When the
      conversation has no title yet, falls back to a placeholder so
      the row never looks broken on a fresh run.
    - RIGHT: short conversation id (first 8 chars of the UUID, the
-     same convention `vis conversations` uses, paint-friendly) +
-     a clickable copy glyph that drops the FULL UUID onto the
-     system clipboard. The click target covers both the id label
-     and the glyph so the user has a forgiving target. After a
-     successful copy the band briefly flashes `✓ Copied!` in place
-     of the id (driven by `:header-flash` in app-db; written by
-     the click handler in screen.clj, cleared by a timer future).
-   - LEFT: intentionally empty — left as a slot for future surfaces
-     (provider lineage / channel badge / branch name) without
-     having to redo the layout math.
+     same convention `vis conversations` uses) + a clickable
+     `[copy]` affordance that drops the FULL UUID onto the system
+     clipboard. The click target covers the id label and the
+     `[copy]` text so the user has a forgiving target. Visual
+     feedback is the LEFT-slot `✓ Copied!` notification — same
+     mechanism every other cross-channel signal flows through.
 
-   Pure draw: reads `:title`, `:conversation`, `:header-flash` from
-   app-db once, writes cells, registers ONE click region for the
-   copy affordance."
+   Pure draw: reads `:title` and `:conversation` from app-db, the
+   active notifications list from `vis.core/notifications`, writes
+   cells, registers ONE click region for the copy affordance.
+
+   Repaint: the banner updates as notifications come and go.
+   `screen.clj` registers a watcher on screen mount that bumps the
+   render version for any change, so a `(notify! …)` from anywhere
+   nudges this band to repaint immediately."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]))
@@ -48,16 +57,11 @@
    first turn not finished yet). Italicised so it reads as a hint."
   "Untitled conversation")
 
-(def ^:private copy-glyph
-  "Single-cell ASCII-friendly copy affordance painted right of the
-   short-id. ⎘ (U+2398, NEXT PAGE / 'copy') reads as a copy/paste
-   icon in most monospace fonts that ship with terminal emulators
-   used in 2026; falls back gracefully to a box on terminals that
-   don't render it."
-  "⎘")
-
-(def ^:private copied-flash-text
-  "✓ Copied!")
+(def ^:private copy-affordance
+  "Plain-text affordance painted right of the short-id. ASCII-only
+   so it renders identically across every terminal font; no glyph
+   roulette."
+  "[copy]")
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -67,20 +71,30 @@
 (defn- full-id [conversation]
   (some-> conversation :id str))
 
-(defn- flash-active?
-  "True when `(:header-flash db)` carries an `:until` deadline that
-   hasn't passed yet. Read by the header to decide whether to paint
-   the id+glyph or the flash text."
-  [db]
-  (when-let [{:keys [until]} (:header-flash db)]
-    (and (number? until)
-      (< (System/currentTimeMillis) (long until)))))
-
 (defn- title-text [db]
   (let [t (:title db)]
     (if (and (string? t) (not (str/blank? t)))
       [t false]
       [placeholder-title true])))
+
+(defn- latest-notification
+  "Most-recently-pushed active notification, or nil. We display ONE
+   at a time in the header — the LEFT slot is a single row. If
+   multiple are active simultaneously, the freshest wins; older ones
+   stay in the queue and surface as the freshest one expires."
+  []
+  (last (vis/notifications)))
+
+(defn- level->fg
+  "Map a notification level to a foreground color. Falls back to the
+   muted-footer color so an unknown level still renders something."
+  [level]
+  (case level
+    :success t/footer-fg-strong
+    :warn    t/footer-fg-strong
+    :error   t/footer-fg-strong
+    :info    t/footer-fg
+    t/footer-fg-muted))
 
 (defn- draw-rule!
   "Paint a full-width single-line horizontal rule on `row` in the
@@ -92,68 +106,93 @@
     (p/set-char! g c row p/BOX_H))
   (p/clear-styles! g))
 
-(defn- right-block
-  "Compose the RIGHT-side text block (id + glyph, OR the flash
-   message). Returns `{:text str :width int :flash? bool}`. Single
-   place that knows how the right region looks under each state
-   so `draw-header!` can stay focused on layout math + paint."
-  [db conversation-id-short]
-  (cond
-    ;; Flash overrides everything else.
-    (flash-active? db)
-    {:text copied-flash-text :width (count copied-flash-text) :flash? true}
-
-    ;; Normal: "4b1ed602 ⎘" — id, single space, glyph.
-    conversation-id-short
-    (let [text (str conversation-id-short " " copy-glyph)]
-      {:text text :width (count text) :flash? false})
-
-    ;; No conversation id yet — nothing to paint.
-    :else
-    {:text "" :width 0 :flash? false}))
+(defn- right-block-text
+  "Compose the right-side text: \"4b1ed602 [copy]\" when a conversation
+   id exists, otherwise empty. Single place that knows the layout
+   so `draw-header!` can stay focused on placement math."
+  [id-short]
+  (if id-short
+    (str id-short " " copy-affordance)
+    ""))
 
 (defn draw-header!
   "Paint the header band starting at `header-top`, full width `cols`.
    The band is `HEADER_ROWS` rows tall: top rule, content row, bottom
-   rule. Pure draw, safe to call every frame.
+   rule. Pure draw + ONE click-region registration; safe to call
+   every frame.
 
-   Layout per the namespace doc: empty LEFT, centered CONVERSATION_TITLE,
-   short conversation-id + copy glyph on the RIGHT. When the title
-   would overlap the right block, the title is truncated with an
-   ellipsis so the id stays readable — the id is the more diagnostic
-   of the two when the user is debugging which conversation they
-   actually opened.
+   Layout per the namespace doc: notification banner LEFT, centered
+   conversation title CENTER, short conversation id + `[copy]` glyph
+   RIGHT. When the title would overlap either edge block, the title
+   is truncated with an ellipsis so the diagnostically-important id
+   stays readable.
 
-   Side effect: registers ONE click region for the right block when
-   a conversation id exists, so the screen mouse handler can copy
-   the FULL UUID to clipboard on click."
+   Side effect: registers ONE click region for the right-block
+   covering both the id label AND the `[copy]` affordance, so the
+   click target is forgiving. The screen mouse handler (in
+   `screen.clj`) recognises `:kind :copy-id` and drops the FULL
+   UUID onto the system clipboard, then pushes a host notification
+   that this band surfaces in the LEFT slot."
   [g db header-top cols]
-  (let [content-row (+ header-top 1)
-        bottom-row  (+ header-top 2)
-        edge-pad    1
-        id-short    (short-id (:conversation db))
-        full-uuid   (full-id  (:conversation db))
-        {:keys [text width flash?]} (right-block db id-short)
-        right-col   (when (pos? width) (max 0 (- cols edge-pad width)))
+  (let [content-row  (+ header-top 1)
+        bottom-row   (+ header-top 2)
+        edge-pad     1
+        id-short     (short-id (:conversation db))
+        full-uuid    (full-id  (:conversation db))
+        right-text   (right-block-text id-short)
+        right-w      (count right-text)
+        right-col    (when (pos? right-w) (max 0 (- cols edge-pad right-w)))
+        notif        (latest-notification)
+        notif-text   (some-> notif :text)
+        notif-level  (some-> notif :level)
+        ;; Reserve up to 1/3 of the row for the LEFT banner so the
+        ;; centered title still has room. Banner truncates with an
+        ;; ellipsis if the notification text is longer.
+        left-cap     (max 0 (quot cols 3))
+        left-trim    (when notif-text
+                       (cond
+                         (zero? left-cap)              ""
+                         (<= (count notif-text) left-cap) notif-text
+                         :else (str (subs notif-text 0 (max 0 (dec left-cap))) "…")))
+        left-w       (or (some-> left-trim count) 0)
+        gap          2
         [title placeholder?] (title-text db)
-        gap         2
-        title-max   (max 0 (- cols (* 2 edge-pad) width (if (pos? width) gap 0)))
-        title-trim  (cond
-                      (zero? title-max) ""
-                      (<= (count title) title-max) title
-                      :else (str (subs title 0 (max 0 (dec title-max))) "…"))
-        title-w     (count title-trim)
+        title-max    (max 0 (- cols (* 2 edge-pad) right-w left-w
+                              (if (pos? right-w) gap 0)
+                              (if (pos? left-w) gap 0)))
+        title-trim   (cond
+                       (zero? title-max)            ""
+                       (<= (count title) title-max) title
+                       :else (str (subs title 0 (max 0 (dec title-max))) "…"))
+        title-w      (count title-trim)
         title-col-raw (max edge-pad (quot (- cols title-w) 2))
-        title-col   (if (and right-col (> (+ title-col-raw title-w) (- right-col gap)))
-                      (max edge-pad (- right-col gap title-w))
-                      title-col-raw)]
+        title-col    (cond
+                       (and right-col
+                         (> (+ title-col-raw title-w) (- right-col gap)))
+                       (max edge-pad (- right-col gap title-w))
+                       (and (pos? left-w)
+                         (< title-col-raw (+ edge-pad left-w gap)))
+                       (+ edge-pad left-w gap)
+                       :else
+                       title-col-raw)]
 
     (draw-rule! g header-top cols)
 
+    ;; Wipe content row to terminal-bg first so the previous frame's
+    ;; characters can't bleed through the gaps between LEFT/CENTER/RIGHT.
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
 
+    ;; LEFT — latest notification banner.
+    (when (pos? left-w)
+      (p/clear-styles! g)
+      (p/set-colors! g (level->fg notif-level) t/terminal-bg)
+      (p/enable! g p/BOLD)
+      (p/put-str! g edge-pad content-row left-trim)
+      (p/clear-styles! g))
+
+    ;; CENTER — title or placeholder.
     (when (pos? title-w)
       (p/clear-styles! g)
       (if placeholder?
@@ -164,23 +203,15 @@
       (p/put-str! g title-col content-row title-trim)
       (p/clear-styles! g))
 
-    (when (pos? width)
+    ;; RIGHT — id + copy affordance + click region.
+    (when (pos? right-w)
       (p/clear-styles! g)
-      (cond
-        flash?     (p/set-colors! g t/footer-fg-strong t/terminal-bg)
-        :else      (p/set-colors! g t/footer-fg-muted  t/terminal-bg))
-      (p/put-str! g right-col content-row text)
+      (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+      (p/put-str! g right-col content-row right-text)
       (p/clear-styles! g)
-
-      ;; Register the click region for the id+glyph block. We skip
-      ;; registration during the flash because (a) the user just
-      ;; clicked successfully and a double-click 1.5 s later would
-      ;; be uninteresting, (b) the bounds geometry is identical so
-      ;; the next paint after the flash expires re-registers it on
-      ;; its own.
-      (when (and (not flash?) full-uuid)
+      (when full-uuid
         (cr/register!
-          {:bounds   {:row content-row :col right-col :width width}
+          {:bounds   {:row content-row :col right-col :width right-w}
            :kind     :copy-id
            :text     full-uuid
            :enabled? true})))

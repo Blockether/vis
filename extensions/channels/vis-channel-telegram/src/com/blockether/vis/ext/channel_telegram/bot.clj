@@ -3,10 +3,10 @@
    message to the shared conversations API and ships the answer back.
 
    Each Telegram chat maps to a `:telegram` conversation via
-   `sdk/for-telegram-chat!` (find-or-create on chat-id). One process can
+   `vis/for-telegram-chat!` (find-or-create on chat-id). One process can
    serve many chats; svar serializes asks per-conversation via the
    conversation's lock in `com.blockether.vis.core`."
-  (:require [com.blockether.vis.core :as sdk]
+  (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [taoensso.telemere :as tel]))
 
@@ -27,7 +27,7 @@
   ;; bracket and the TUI per-message footer. Provider + model
   ;; auto-extract from the result's `:cost :provider` / `:cost :model`,
   ;; rendering as `provider/model` (e.g. `blockether/glm-5.1`).
-  (let [line (sdk/format-meta-line result)]
+  (let [line (vis/format-meta-line result)]
     (str "\n\n_" (tg/escape-markdown-v2 line) "_")))
 
 (defn- handle-update! [token update]
@@ -39,8 +39,8 @@
         (future
           (try
             (tg/send-chat-action! token chat-id "typing")
-            (let [{:keys [id]} (sdk/for-telegram-chat! chat-id)
-                  result       (sdk/send! id text
+            (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
+                  result       (vis/send! id text
                                  {:max-context-tokens 2200})
                   answer       (if (string? (:answer result)) (:answer result) (pr-str (:answer result)))]
               (tg/send-message! token chat-id
@@ -50,7 +50,7 @@
                          :data {:sender sender :chat-id chat-id :error (ex-message e)}
                          :msg (str "error handling msg from " sender " in chat " chat-id)})
               (try (tg/send-message! token chat-id
-                     (sdk/format-error (sdk/db-error->user-message e)))
+                     (vis/format-error (vis/db-error->user-message e)))
                 (catch Exception _ nil)))))))))
 
 (defn- poll-loop! [token]
@@ -94,7 +94,7 @@
     (when-let [t @poll-thread]
       (.interrupt ^Thread t)
       (reset! poll-thread nil))
-    (sdk/close-all!)
+    (vis/close-all!)
     (tel/log! {:level :info :id ::stopped}
       "Telegram bot stopped")))
 
@@ -114,11 +114,11 @@
   "Channel entry point. Boots the CLI runtime config, then starts the
    long-poll loop and blocks forever (until SIGTERM → shutdown hook)."
   [_args]
-  (sdk/init-cli!)
+  (vis/init-cli!)
   (-main))
 
-(sdk/register-extension!
-  (sdk/extension
+(vis/register-extension!
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
      :ext/doc       "Telegram bot channel — long-poll loop wired into conversations."
      :ext/version   "0.3.0"

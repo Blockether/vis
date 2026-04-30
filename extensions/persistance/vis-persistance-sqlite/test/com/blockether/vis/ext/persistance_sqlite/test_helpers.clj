@@ -10,7 +10,7 @@
 
    Each test gets an isolated in-memory DB. No manual setup/teardown."
   (:require
-   [com.blockether.vis.core :as sdk]
+   [com.blockether.vis.core :as vis]
    [honey.sql :as sql]
    [lazytest.core :as lt]
    [next.jdbc :as jdbc]
@@ -30,12 +30,12 @@
   []
   (lt/set-ns-context!
     [(lt/around-each [f]
-       (let [s (sdk/db-create-connection! :memory)]
+       (let [s (vis/db-create-connection! :memory)]
          (try
            (binding [*store* s]
              (f))
            (finally
-             (sdk/db-dispose-connection! s)))))]))
+             (vis/db-dispose-connection! s)))))]))
 
 (defn raw-query
   "Execute raw HoneySQL against the store's datasource."

@@ -373,7 +373,7 @@
 ;; to swap providers without touching vis-runtime.
 ;; =============================================================================
 
-(require '[com.blockether.vis.core :as sdk])
+(require '[com.blockether.vis.core :as vis])
 
 (defn- interactive-auth!
   "Wrap the multi-step device flow into one fn the CLI / TUI can
@@ -398,8 +398,8 @@
         (print! "  ✓ Authenticated! GitHub Copilot is ready.")
         :ok))))
 
-(sdk/register-extension!
-  (sdk/extension
+(vis/register-extension!
+  (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.provider-github-copilot
      :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
      :ext/version   "0.3.0"

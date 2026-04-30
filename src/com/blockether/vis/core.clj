@@ -32,6 +32,8 @@
                          try-rescue-parse-error, discover-extensions!
      Format helpers      format-clojure, format-date, format-duration
      Markdown export     conversation->markdown
+     Notifications      notify!, notifications, dismiss!, dismiss-all!,
+                         watch-notifications!, unwatch-notifications!
      Iteration loop      query!, send!, create!, by-id, by-channel,
                          for-telegram-chat!, env-for, close!, close-all!,
                          delete!, set-title!, effective-system-prompt,
@@ -66,6 +68,7 @@
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
    [com.blockether.vis.internal.markdown     :as markdown]
+   [com.blockether.vis.internal.notifications :as notifications]
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
@@ -99,6 +102,23 @@
 (def format-cost       fmt/format-cost)
 (def format-iterations fmt/format-iterations)
 (def format-meta-line  fmt/format-meta-line)
+
+;; =============================================================================
+;; Notifications
+;;
+;; Cross-channel ephemeral signals — \"copied\", \"verify.sh passed\",
+;; \"provider switched\". Any extension or channel can push via
+;; `notify!`; the TUI banner / Telegram chat / CLI agent each
+;; subscribe with `watch!` and surface entries in their own visual
+;; idiom. Levels (`:info` / `:success` / `:warn` / `:error`) are
+;; advisory metadata for the consumer.
+;; =============================================================================
+(def notify!         notifications/notify!)
+(def notifications   notifications/notifications)
+(def dismiss!        notifications/dismiss!)
+(def dismiss-all!    notifications/dismiss-all!)
+(def watch-notifications!   notifications/watch!)
+(def unwatch-notifications! notifications/unwatch!)
 
 ;; =============================================================================
 ;; Markdown export
