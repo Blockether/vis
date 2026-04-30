@@ -26,6 +26,25 @@
   (when (string? s)
     (if (zero? (count s)) "" (subs s 1))))
 
+(defdescribe wrap-text-marker-test
+  (describe "structural row markers survive wrapping"
+    (it "keeps result background marker on every wrapped continuation"
+      (let [lines (render/wrap-text (str p/MARKER_RESULT "alpha beta gamma delta") 12)]
+        (expect (= [p/MARKER_RESULT p/MARKER_RESULT]
+                  (mapv marker-of lines)))
+        (expect (= ["alpha beta" "gamma delta"]
+                  (mapv body-of lines)))))
+
+    (it "keeps code background marker on hard-wrapped long forms"
+      (let [lines (render/wrap-text (str p/MARKER_CODE_OK (apply str (repeat 30 "x"))) 10)]
+        (expect (= 3 (count lines)))
+        (expect (every? #(= p/MARKER_CODE_OK (marker-of %)) lines))
+        (expect (every? #(<= (p/display-width (body-of %)) 10) lines))))
+
+    (it "does not invent markers for plain wrapped prose"
+      (let [lines (render/wrap-text "alpha beta gamma" 8)]
+        (expect (= ["alpha" "beta" "gamma"] lines))))))
+
 (defdescribe markdown-headings-test
   (describe "ATX headings 1-3 each carry their own marker"
     (it "# Heading 1 → MARKER_MD_H1"

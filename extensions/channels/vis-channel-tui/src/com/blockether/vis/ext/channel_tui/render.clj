@@ -89,6 +89,55 @@
 
 ;;; ── Text wrapping ───────────────────────────────────────────────────────────
 
+(defn- structural-line-marker?
+  "True for invisible first-column markers consumed by `draw-chat-bubble!`.
+   These markers select a row background/style. When wrapping a long marked
+   row, every continuation must keep the same marker; otherwise only the first
+   visual row paints the code/result/stdout/thinking background and the rest
+   falls through as plain assistant text."
+  [^Character ch]
+  (boolean
+    (or (#{\u200B \u200C \u200D \uFEFF} ch)
+      (<= (int \u2060) (int ch) (int \u206F))
+      (<= (int \uE001) (int ch) (int \uE02C)))))
+
+(defn- split-structural-line-marker
+  [^String line]
+  (when (and (string? line) (pos? (count line)))
+    (let [ch (.charAt line 0)]
+      (when (structural-line-marker? ch)
+        [(subs line 0 1) (subs line 1)]))))
+
+(defn- wrap-unmarked-line
+  [^String line ^long max-width]
+  (if (<= (p/display-width line) max-width)
+    [line]
+    (loop [remaining line
+           acc       []]
+      (if (<= (p/display-width remaining) max-width)
+        (conj acc remaining)
+        ;; `cut` is the CHAR index that bounds the longest prefix fitting
+        ;; in `max-width` COLUMNS without splitting a grapheme. Char-index,
+        ;; not column, because we still need to slice `remaining`.
+        (let [cut     (p/col-prefix-end remaining max-width)
+              chunk   (subs remaining 0 cut)
+              last-sp (str/last-index-of chunk " ")]
+          (if (and last-sp (pos? last-sp))
+            ;; Break at word boundary
+            (recur (subs remaining (inc (int last-sp)))
+              (conj acc (subs remaining 0 (int last-sp))))
+            ;; No space found — hard break at column boundary
+            (recur (subs remaining cut)
+              (conj acc chunk))))))))
+
+(defn- wrap-line-preserving-marker
+  [line max-width]
+  (if-let [[marker body] (split-structural-line-marker line)]
+    (if (<= (p/display-width line) max-width)
+      [line]
+      (mapv #(str marker %) (wrap-unmarked-line body max-width)))
+    (wrap-unmarked-line line max-width)))
+
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
    `wrap-text` itself."
@@ -96,30 +145,7 @@
   (if (or (str/blank? text) (<= max-width 0))
     [""]
     (let [input-lines (str/split-lines text)]
-      (into []
-        (mapcat
-          (fn [line]
-            (if (<= (p/display-width line) max-width)
-              [line]
-              (loop [remaining line
-                     acc       []]
-                (if (<= (p/display-width remaining) max-width)
-                  (conj acc remaining)
-                     ;; `cut` is the CHAR index that bounds the longest
-                     ;; prefix fitting in `max-width` COLUMNS without
-                     ;; splitting a grapheme. Char-index, not column,
-                     ;; because we still need to slice `remaining`.
-                  (let [cut     (p/col-prefix-end remaining max-width)
-                        chunk   (subs remaining 0 cut)
-                        last-sp (str/last-index-of chunk " ")]
-                    (if (and last-sp (pos? last-sp))
-                         ;; Break at word boundary
-                      (recur (subs remaining (inc (int last-sp)))
-                        (conj acc (subs remaining 0 (int last-sp))))
-                         ;; No space found — hard break at column boundary
-                      (recur (subs remaining cut)
-                        (conj acc chunk)))))))))
-        input-lines))))
+      (into [] (mapcat #(wrap-line-preserving-marker % max-width)) input-lines))))
 
 (defn wrap-text
   "Memoized `wrap-text*`. Keyed by source-string identity so finalized
