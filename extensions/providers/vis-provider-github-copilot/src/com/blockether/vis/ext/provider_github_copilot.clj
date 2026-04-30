@@ -404,6 +404,7 @@
      :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/providers
      [{:provider/id           :github-copilot

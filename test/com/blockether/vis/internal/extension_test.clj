@@ -42,6 +42,14 @@
                :ext/channels  [base-channel]})]
       (expect (= "channels" (:ext/group e)))))
 
+  (it "derives \"persistance\" for extensions exporting :ext/persistance"
+    (let [e (ext/extension
+              {:ext/namespace 'test.persistance-only
+               :ext/doc       "Persistence-only extension."
+               :ext/persistance [{:persistance/id :test
+                                  :persistance/ns 'test.backend.core}]})]
+      (expect (= "persistance" (:ext/group e)))))
+
   (it "leaves :ext/group blank when the extension fits no categorical bucket"
     (let [e (ext/extension
               {:ext/namespace 'test.bare
@@ -55,6 +63,32 @@
                :ext/group     "custom-bucket"
                :ext/channels  [base-channel]})]
       (expect (= "custom-bucket" (:ext/group e))))))
+
+(defdescribe owner-field-test
+  (it "accepts :ext/owner as a non-blank string and round-trips it"
+    (let [e (ext/extension
+              {:ext/namespace 'test.owned
+               :ext/doc       "An owned extension."
+               :ext/owner     "vis"
+               :ext/channels  [base-channel]})]
+      (expect (= "vis" (:ext/owner e)))))
+
+  (it "is independent of :ext/author — both can coexist with different values"
+    (let [e (ext/extension
+              {:ext/namespace 'test.coexist
+               :ext/doc       "Author and owner are distinct."
+               :ext/author    "Blockether"
+               :ext/owner     "vis"
+               :ext/channels  [base-channel]})]
+      (expect (= "Blockether" (:ext/author e)))
+      (expect (= "vis" (:ext/owner e)))))
+
+  (it "is optional — omitting it does not break validation"
+    (let [e (ext/extension
+              {:ext/namespace 'test.no-owner
+               :ext/doc       "No owner declared."
+               :ext/channels  [base-channel]})]
+      (expect (not (contains? e :ext/owner))))))
 
 (defdescribe subgroup-removed-test
   (it "the builder never injects an :ext/subgroup key"

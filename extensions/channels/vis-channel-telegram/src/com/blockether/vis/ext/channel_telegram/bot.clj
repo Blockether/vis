@@ -123,6 +123,7 @@
      :ext/doc       "Telegram bot channel — long-poll loop wired into conversations."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/channels  [{:channel/id      :telegram
                       :channel/cmd     "telegram"

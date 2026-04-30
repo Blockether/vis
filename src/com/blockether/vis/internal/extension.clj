@@ -117,8 +117,16 @@
 ;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
 (s/def :ext/version non-blank-string?)
 
-;; Author name or org.
+;; Author name or org — the entity that *created* the extension
+;; (e.g. "Blockether", "Acme Corp.").
 (s/def :ext/author non-blank-string?)
+
+;; Owner of the *package* — the project / distribution that ships
+;; this extension. For everything bundled in this repo: "vis".
+;; Third-party packages set their own owner (often the same as
+;; `:ext/author`, but they're independent: a Blockether-authored
+;; extension can be vendored by a downstream distribution).
+(s/def :ext/owner non-blank-string?)
 
 ;; SPDX license identifier.
 (s/def :ext/license non-blank-string?)
@@ -199,7 +207,7 @@
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/nudge-fn
             :ext/on-parse-error-fn :ext/requires
-            :ext/version :ext/author :ext/license
+            :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance])
     ns-alias-required-when-symbols?
     group-required-when-symbols?))
@@ -599,10 +607,11 @@
 
 (defn- derive-group
   "Auto-derive `:ext/group` for the categorical cases when the author
-   didn't set one. Extensions that contribute providers or channels
-   (and nothing forcing a different label) get bucketed under
-   `\"providers\"` / `\"channels\"` so `vis extensions list` reads as
-   a clean grouped table instead of a column of blanks.
+   didn't set one. Extensions that contribute providers, channels, or
+   persistence backends (and nothing forcing a different label) get
+   bucketed under `\"providers\"` / `\"channels\"` / `\"persistance\"`
+   so `vis extensions list` reads as a clean grouped table instead
+   of a column of blanks.
 
    Explicit `:ext/group` always wins. Extensions that fit no
    categorical bucket (and don't set a group themselves) stay
@@ -612,6 +621,7 @@
     (some? (:ext/group spec))           (:ext/group spec)
     (seq (:ext/providers spec))         "providers"
     (seq (:ext/channels spec))          "channels"
+    (seq (:ext/persistance spec))       "persistance"
     :else                               nil))
 
 (defn extension

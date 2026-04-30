@@ -1156,6 +1156,7 @@
      :ext/doc       "SQLite + Flyway persistence backend."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
+     :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/persistance [{:persistance/id :sqlite
                         :persistance/ns 'com.blockether.vis.ext.persistance-sqlite.core}]}))

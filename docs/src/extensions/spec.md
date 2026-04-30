@@ -50,7 +50,8 @@ Two conditional rules apply on top of the spec:
 | `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
 | `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.foundation.editing.core]`. |
 | `:ext/version`           | ✗              | —                    | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"`. |
-| `:ext/author`            | ✗              | —                    | Author name or org, e.g. `"Blockether"`. |
+| `:ext/author`            | ✗              | —                    | Author / creator of the extension itself — the entity that wrote the code. e.g. `"Blockether"`. |
+| `:ext/owner`             | ✗              | —                    | Owner of the *package* / distribution that ships this extension. Distinct from `:ext/author`: a Blockether-authored extension may be vendored by another distribution. Every extension bundled in this repo declares `:ext/owner "vis"`. Surfaces as the `Owner` column in `vis extensions list`. |
 | `:ext/license`           | ✗              | —                    | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"`. |
 | `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/group` and `:ext/ns-alias` become required. |
 | `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol → Class}` — Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
@@ -256,6 +257,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/doc           "Document search and retrieval"
      :ext/version       "1.0.0"
      :ext/author        "Blockether"
+     :ext/owner         "vis"
      :ext/license       "Apache-2.0"
      :ext/group         "knowledge"
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
