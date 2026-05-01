@@ -2,6 +2,27 @@
 
 ## MANDATORY: Agent Rules
 
+
+### Clojure dev loop — nREPL first
+
+Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
+
+- Start with `bin/dev` or `clojure -M:dev` (default port `7888`; override with `NREPL_PORT=<port>`).
+- Dev launcher writes `.nrepl-port`; do not commit that file.
+- Discover port with `clj-nrepl-eval --discover-ports`.
+- Eval with `clj-nrepl-eval -p <port> "<clojure-code>"`.
+- Always use `:reload` after edits: `clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload)"`.
+- Prefer nREPL eval over fresh JVM startup for checks.
+- Run CLI entrypoints with `dev/cli!`, e.g. `clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"`.
+- Start TUI with `dev/tui!`, e.g. `clj-nrepl-eval -p 7888 "(dev/tui!)"`.
+- `dev/tui!` must open a separate macOS Terminal.app window running `bin/dev terminal-tui`.
+- In that Terminal.app process, nREPL and `vis channels tui` must run in the **same JVM/process** so the TUI is controllable from REPL.
+- Do **not** launch TUI as `bin/vis channels tui` from `dev/tui!`; that creates an uncontrolled separate Java process.
+- Do **not** run TUI inside the nREPL/stdout tool terminal.
+- Direct shortcut: `bin/dev tui` opens Terminal.app running the attached nREPL+TUI JVM.
+- If Clojure delimiters break, do **not** manually rebalance parens. Run `clj-paren-repair <files>`.
+- Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
+
 ### Run `./verify.sh` before every commit
 
 `./verify.sh` (repo root) = single pre-commit gate. 8 checks, stops at first failure. **Every PR / commit / agent-authored change ships only on a green run.** Overrides convenience, scope creep, "just a one-line fix."
