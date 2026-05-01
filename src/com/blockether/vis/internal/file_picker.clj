@@ -14,6 +14,7 @@
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
+           [java.util Locale]
            [java.util.concurrent ExecutionException Future TimeUnit TimeoutException]
            [org.eclipse.jgit.api Git Status]
            [org.eclipse.jgit.lib Repository]
@@ -37,7 +38,7 @@
 
 (defn open-repository
   "Open the git repository containing `start`, or nil when `start` is
-   outside git." 
+   outside git."
   ^Repository [^File start]
   (try
     (let [^FileRepositoryBuilder builder (FileRepositoryBuilder.)]
@@ -49,7 +50,7 @@
     (catch Throwable _ nil)))
 
 (defn status-priority
-  "Higher = more visually important in the picker." 
+  "Higher = more visually important in the picker."
   [status]
   (case status
     :conflict  6
@@ -74,7 +75,7 @@
 (defn collect-git-status
   "Return a git-status snapshot for `repo`, or nil on timeout/failure.
    Uses one bounded background task so the UI cannot hang indefinitely
-   on a very large working tree." 
+   on a very large working tree."
   [^Repository repo ^long timeout-ms]
   (let [task (reify java.util.concurrent.Callable
                (call [_]
@@ -109,7 +110,7 @@
 
 (defn git-status-snapshot
   "Git metadata for the repository containing `cwd`, or a reduced empty
-   shape when the directory is not in git or status collection fails." 
+   shape when the directory is not in git or status collection fails."
   [^Path cwd]
   (if-let [^Repository repo (open-repository (.toFile cwd))]
     (try
@@ -143,9 +144,10 @@
   (let [abs-path    (.toAbsolutePath path)
         rel-path    (display-path cwd abs-path)
         parent-path (let [parent (.getParent abs-path)]
-                      (if parent
-                        (display-path cwd parent)
-                        "."))
+                      (cond
+                        (nil? parent) "."
+                        (= (.toAbsolutePath parent) (.toAbsolutePath cwd)) "."
+                        :else (display-path cwd parent)))
         repo-rel    (when repo-root
                       (let [repo-root-abs (.toAbsolutePath ^Path repo-root)]
                         (when (.startsWith abs-path repo-root-abs)
@@ -164,7 +166,7 @@
 (defn collect-file-picker-entries
   "Index regular files under the current working directory. Skips `.git`
    internals unconditionally; everything else stays eligible so the UI can
-   toggle ignored files on/off without rebuilding the index." 
+   toggle ignored files on/off without rebuilding the index."
   []
   (let [cwd      (cwd-path)
         git-info (git-status-snapshot cwd)
@@ -184,15 +186,15 @@
     @entries))
 
 (defn format-bytes
-  "Human-ish byte string for picker rows." 
+  "Human-ish byte string for picker rows."
   [n]
   (cond
     (< n 1024) (str n "B")
-    (< n (* 1024 1024)) (format "%.1fK" (/ (double n) 1024.0))
-    :else (format "%.1fM" (/ (double n) 1048576.0))))
+    (< n (* 1024 1024)) (String/format Locale/US "%.1fK" (into-array Object [(/ (double n) 1024.0)]))
+    :else (String/format Locale/US "%.1fM" (into-array Object [(/ (double n) 1048576.0)]))))
 
 (defn format-relative-age
-  "Compact relative age for picker rows." 
+  "Compact relative age for picker rows."
   [now-ms mtime-ms]
   (let [delta-ms (max 0 (- now-ms mtime-ms))
         minutes  (quot delta-ms 60000)
@@ -205,7 +207,7 @@
       :else          (str days "d"))))
 
 (defn file-picker-score
-  "Heuristic fuzzy score for `query` against `path`. Nil means no match." 
+  "Heuristic fuzzy score for `query` against `path`. Nil means no match."
   [path query]
   (let [path-lc   (str/lower-case path)
         query-lc  (str/lower-case (or query ""))
@@ -224,7 +226,7 @@
 
 (defn resolved-sort-mode
   "Auto mode = recent when the query is blank, relevance when the user
-   is actively filtering." 
+   is actively filtering."
   [sort-mode query]
   (case sort-mode
     :recent    :recent
@@ -233,7 +235,7 @@
     :recent))
 
 (defn status-label
-  "Single-character git badge for picker rows." 
+  "Single-character git badge for picker rows."
   [status]
   (case status
     :modified  "M"
@@ -245,7 +247,7 @@
     " "))
 
 (defn decorate-entry
-  "Attach derived display fields used by the picker renderer." 
+  "Attach derived display fields used by the picker renderer."
   [entry now-ms query]
   (let [score (file-picker-score (:path entry) query)]
     (assoc entry
@@ -261,7 +263,7 @@
    Options:
    - :include-ignored?  include gitignored files
    - :sort-mode         :auto | :recent | :relevance
-   - :now-ms            override current time for deterministic tests" 
+   - :now-ms            override current time for deterministic tests"
   [entries query {:keys [include-ignored? sort-mode now-ms]
                   :or   {include-ignored? false
                          sort-mode :auto
@@ -285,7 +287,7 @@
       vec)))
 
 (defn cycle-sort-mode
-  "Advance to the next picker sort mode." 
+  "Advance to the next picker sort mode."
   [sort-mode]
   (let [idx (.indexOf ^java.util.List sort-order sort-mode)]
     (nth sort-order
@@ -293,7 +295,7 @@
 
 (defn sort-label
   "Human label for the current sort mode. Auto shows the resolved mode
-   too, so the footer tells the truth about what the picker is doing." 
+   too, so the footer tells the truth about what the picker is doing."
   [sort-mode query]
   (case sort-mode
     :auto (str "auto (" (name (resolved-sort-mode sort-mode query)) ")")

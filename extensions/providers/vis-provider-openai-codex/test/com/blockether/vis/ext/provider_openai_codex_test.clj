@@ -101,9 +101,27 @@
                       :llm-headers {"chatgpt-account-id" "acct_123"}}
                     (codex/get-openai-codex-token!))))))))
 
+(defdescribe codex-limits-test
+  (it "reports :ok when Codex credentials exist"
+    (with-redefs-fn {#'codex/detect-credentials (constantly {:account-id "acct_123"})}
+      (fn []
+        (let [report (codex/limits)]
+          (expect (= :openai-codex (:provider-id report)))
+          (expect (= :ok (:status report)))
+          (expect (= [] (get-in report [:dynamic :limits])))))))
+
+  (it "reports :unauthenticated when Codex credentials are absent"
+    (with-redefs-fn {#'codex/detect-credentials (constantly nil)}
+      (fn []
+        (let [report (codex/limits)]
+          (expect (= :openai-codex (:provider-id report)))
+          (expect (= :unauthenticated (:status report)))
+          (expect (= [] (get-in report [:dynamic :limits]))))))))
+
 (defdescribe provider-registration-test
   (it "registers the OpenAI Codex auth provider"
     (let [provider (vis/provider-by-id :openai-codex)]
       (expect (= :openai-codex (:provider/id provider)))
       (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
-      (expect (ifn? (:provider/get-token-fn provider))))))
+      (expect (ifn? (:provider/get-token-fn provider)))
+      (expect (ifn? (:provider/limits-fn provider))))))

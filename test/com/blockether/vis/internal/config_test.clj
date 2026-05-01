@@ -37,6 +37,28 @@
         (expect (= :openai-compatible-responses (:api-style provider)))
         (expect (= {"chatgpt-account-id" "acct_123"} (:llm-headers provider)))))))
 
+(defdescribe internal-local-provider-registration-test
+  (it "registers internal Ollama and LM Studio status providers"
+    (let [ollama   (registry/provider-by-id :ollama)
+          lmstudio (registry/provider-by-id :lmstudio)]
+      (expect (= :ollama (:provider/id ollama)))
+      (expect (= :lmstudio (:provider/id lmstudio)))
+      (expect (ifn? (:provider/status-fn ollama)))
+      (expect (ifn? (:provider/status-fn lmstudio)))))
+
+  (it "status fns return schema-adherent local status maps"
+    (with-redefs [config/local-provider-status (fn [provider-id]
+                                                 {:authenticated? true
+                                                  :provider-id    provider-id
+                                                  :source         :local
+                                                  :base-url       "http://localhost"
+                                                  :status-code    200})]
+      (let [status ((:provider/status-fn (registry/provider-by-id :ollama)))]
+        (expect (= true (:authenticated? status)))
+        (expect (= :ollama (:provider-id status)))
+        (expect (= :local (:source status)))
+        (expect (= 200 (:status-code status)))))))
+
 (defdescribe model-name-test
   (it "extracts model names from strings and maps"
     (expect (= "gpt-5.1" (config/model-name "gpt-5.1")))

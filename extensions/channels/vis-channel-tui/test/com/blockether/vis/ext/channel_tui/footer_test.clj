@@ -9,7 +9,7 @@
                                                           :provider :openai
                                                           :reasoning? true})}
         (fn []
-          (expect (= ["openai/gpt-5" "(deep)"]
+          (expect (= ["openai/gpt-5" "(reasoning:deep)"]
                     (->> (build-segments {:messages []
                                           :settings {:reasoning-level :deep}}
                            0)
@@ -22,7 +22,7 @@
                                                           :provider :openai-codex
                                                           :reasoning? true})}
         (fn []
-          (expect (= ["openai-codex/gpt-5.5" "(balanced)" "(verbosity:high)"]
+          (expect (= ["openai-codex/gpt-5.5" "(reasoning:balanced)" "(verbosity:high)"]
                     (->> (build-segments {:messages []
                                           :settings {:reasoning-level :balanced
                                                      :openai-codex-verbosity :high}}

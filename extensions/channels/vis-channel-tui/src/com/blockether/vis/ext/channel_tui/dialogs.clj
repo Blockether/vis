@@ -7,7 +7,7 @@
             [com.blockether.vis.internal.file-picker :as picker])
   (:import [com.googlecode.lanterna TextColor$RGB]
            [com.googlecode.lanterna Symbols]
-           [com.googlecode.lanterna.input KeyType]
+           [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]))
 
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
@@ -16,21 +16,14 @@
 
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
-;; Every modal in the TUI shares ONE default WIDTH (terminal-proportional,
-;; clamped 50–100 cols). HEIGHT is content-driven and grows only as far
-;; as the body needs, with a small floor (`DEFAULT_DIALOG_MIN_HEIGHT`,
-;; box rows). Rationale: an ESC-stack of nested dialogs reads more cleanly
-;; when each layer lines up at the same column footprint, but pinning a
-;; one-size-fits-all height (70% of terminal) wiped out most of the chat
-;; underneath every popup — even a 4-item palette painted as a giant
-;; box. Flexible height keeps small dialogs small (chat stays visible)
-;; while letting big ones (text viewer, long settings) still use the
-;; vertical room they actually need.
+;; Every modal in the TUI now shares ONE default WIDTH and ONE default
+;; HEIGHT. Users asked for the dialog stack to stop "breathing" as they
+;; moved between Settings / Providers / confirm / input popups, so the
+;; default arity of `draw-dialog-chrome!` ignores caller-specific body
+;; height and uses a common terminal-proportional footprint instead.
 ;;
-;; Every dialog passes its own `content-h` to `draw-dialog-chrome!`'s
-;; default-width arity. The chrome floors that against `MIN_HEIGHT` so
-;; tiny content (1-line confirm) still renders in a deliberate-feeling
-;; box, not a squashed 5-row one.
+;; Dialogs that genuinely need a bespoke size can still call the fully
+;; explicit width+height arity, but the common path stays uniform.
 
 (def ^:const DEFAULT_DIALOG_WIDTH_RATIO
   "Fraction of terminal width every modal occupies by default."
@@ -39,14 +32,21 @@
 (def ^:const DEFAULT_DIALOG_MIN_WIDTH 50)
 (def ^:const DEFAULT_DIALOG_MAX_WIDTH 100)
 
+(def ^:const DEFAULT_DIALOG_HEIGHT_RATIO
+  "Fraction of terminal height every modal occupies by default. Shared
+   across the whole ESC stack so dialogs keep the same footprint."
+  0.55)
+
 (def ^:const DEFAULT_DIALOG_MIN_HEIGHT
-  "Minimum dialog box height in rows. Floor so a 1-line confirm, the
-   API-key text input, and the router/model picker all render at the
-   same deliberate-feeling size. 12 rows = title bar (1) + separator
-   (1) + body (~7) + separator (1) + hint (1) + borders (2). Below
-   this the chrome eats the body and small dialogs look squashed next
-   to each other."
+  "Minimum dialog box height in rows. Keeps the shared modal footprint
+   deliberate even on shorter terminals."
   14)
+
+(def ^:const DEFAULT_DIALOG_MAX_HEIGHT
+  "Maximum default dialog box height in rows. Leaves enough surrounding
+   chat visible that a modal still feels like an overlay instead of a
+   screen takeover."
+  24)
 
 (def ^:const DIALOG_CHROME_W 4)  ;; border(1) + pad(1) each side
 (def ^:const DIALOG_CHROME_H 6)  ;; top + title + sep + body + sep + hint + bot
@@ -62,11 +62,15 @@
                 (min (max DEFAULT_DIALOG_MIN_WIDTH (- cols 4))))]
     (max 1 (- box-w DIALOG_CHROME_W))))
 
-(defn floor-content-height
-  "Raise `content-h` to the value that produces a box at least
-   `DEFAULT_DIALOG_MIN_HEIGHT` rows tall. Idempotent; never shrinks."
-  [content-h]
-  (max (or content-h 0) (- DEFAULT_DIALOG_MIN_HEIGHT DIALOG_CHROME_H)))
+(defn default-content-height
+  "Shared content height every dialog uses, derived from `rows`.
+   Clamped to a common modal footprint so dialogs keep equal height."
+  [rows]
+  (let [box-h (-> (int (* rows DEFAULT_DIALOG_HEIGHT_RATIO))
+                (max DEFAULT_DIALOG_MIN_HEIGHT)
+                (min DEFAULT_DIALOG_MAX_HEIGHT)
+                (min (max DEFAULT_DIALOG_MIN_HEIGHT (- rows 4))))]
+    (max 1 (- box-h DIALOG_CHROME_H))))
 
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
@@ -196,31 +200,34 @@
 
 (defn- draw-text-input-field!
   [g left row inner-w text cursor]
-  (let [field-left (+ left 2)
-        field-w    (max 1 (- inner-w 2))
-        h-off      (max 0 (- cursor (dec field-w)))
-        visible    (subs text h-off (min (count text) (+ h-off field-w)))]
+  (let [box-left   (+ left 2)
+        box-w      (max 3 (- inner-w 2))
+        input-left (inc box-left)
+        input-w    (max 1 (- box-w 2))
+        h-off      (max 0 (- cursor (dec input-w)))
+        visible    (subs text h-off (min (count text) (+ h-off input-w)))]
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/draw-box! g box-left row box-w 3)
     (p/set-colors! g t/box-fg input-field-bg)
-    (p/fill-rect! g field-left row field-w 1)
-    (p/put-str! g field-left row visible)
-    (p/cursor-pos (+ field-left (- cursor h-off)) row)))
+    (p/fill-rect! g input-left (inc row) input-w 1)
+    (p/put-str! g input-left (inc row) visible)
+    (p/cursor-pos (+ input-left (- cursor h-off)) (inc row))))
 
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
 
    Three arities:
-   - `(g cols rows title content-h)` — shared default width
-     (`default-content-width`), caller-provided content height (floored
-     to `DEFAULT_DIALOG_MIN_HEIGHT`). PREFERRED. Width stays consistent
-     across the ESC stack; height grows only as far as the content needs.
+   - `(g cols rows title content-h)` — shared default width and height.
+     Caller-supplied `content-h` is ignored in this arity on purpose;
+     the whole TUI dialog stack now uses one common footprint.
    - `(g cols rows title content-w content-h)` — fully explicit. Use
      only when a dialog genuinely needs a non-default width.
 
    Returns {:left :top :right :bottom :inner-w :inner-h}."
-  ([g cols rows title content-h]
+  ([g cols rows title _content-h]
    (draw-dialog-chrome! g cols rows title
      (default-content-width cols)
-     (floor-content-height content-h)))
+     (default-content-height rows)))
   ([g cols rows title content-w content-h]
    (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
          box-left      (quot (- cols box-w) 2)
@@ -347,7 +354,7 @@
       (let [items         (picker/file-picker-items entries @query {:include-ignored? @include-ignored?
                                                                     :sort-mode @sort-mode})
             total         (count items)
-            content-lines (+ 3 (max 1 (min total file-picker-max-visible)))
+            content-lines (+ 5 (max 1 (min total file-picker-max-visible)))
             size          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols          (.getColumns size)
             rows          (.getRows size)
@@ -356,8 +363,9 @@
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds content-lines)
             _             (swap! selected #(clamp % 0 (max 0 (dec total))))
-            list-top      (+ content-top 3)
-            list-h        (max 1 (- content-h 3))
+            mode-row      (+ content-top 4)
+            list-top      (+ content-top 5)
+            list-h        (max 1 (- content-h 5))
             visible       (min total list-h)
             _             (swap! scroll #(visible-window-start @selected % list-h total))
             mode-line     (str "Ignored: " (if @include-ignored? "on" "off")
@@ -367,7 +375,7 @@
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
           (p/set-colors! g t/dialog-hint t/dialog-bg)
-          (p/put-str! g (+ left 2) (inc content-top) (ellipsize mode-line (max 1 (- inner-w 2))))
+          (p/put-str! g (+ left 2) mode-row (ellipsize mode-line (max 1 (- inner-w 2))))
 
           (if (zero? total)
             (do
@@ -381,45 +389,68 @@
                     (nth items idx))))))
 
           (draw-hint-bar! g left hint-row inner-w
-            [["type" "filter"] ["I" "ignored"] ["S" "sort"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
+            [["type" "filter"] ["Alt+I" "ignored"] ["Alt+S" "sort"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
 
         (let [key (.readInput screen)]
           (when key
-            (condp = (.getKeyType key)
-              KeyType/Escape nil
-              KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
-              KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                  (reset! selected 0)
-                                  (reset! scroll 0)
-                                  (recur))
-              KeyType/Enter (when (pos? total) (:path (nth items @selected)))
-              KeyType/Character
-              (let [c (Character/toLowerCase (.getCharacter key))]
+            (cond
+              (instance? MouseAction key)
+              (let [^MouseAction ma key
+                    atype (.getActionType ma)
+                    pos   (.getPosition ma)
+                    mx    (.getColumn pos)
+                    my    (.getRow pos)
+                    hit-idx (when (and (>= mx (inc left)) (< mx (+ left 1 inner-w))
+                                    (>= my list-top) (< my (+ list-top visible)))
+                              (+ @scroll (- my list-top)))]
                 (cond
-                  (= c \i)
-                  (do (swap! include-ignored? not)
-                    (reset! selected 0)
-                    (reset! scroll 0)
+                  (and (= atype MouseActionType/CLICK_DOWN) (some? hit-idx) (< hit-idx total))
+                  (do (reset! selected hit-idx)
                     (recur))
 
-                  (= c \s)
-                  (do (swap! sort-mode picker/cycle-sort-mode)
-                    (reset! selected 0)
-                    (reset! scroll 0)
-                    (recur))
-
-                  (Character/isISOControl c)
-                  (recur)
+                  (and (= atype MouseActionType/CLICK_RELEASE) (some? hit-idx) (< hit-idx total))
+                  (:path (nth items hit-idx))
 
                   :else
-                  (do (swap! query str c)
-                    (reset! selected 0)
-                    (reset! scroll 0)
-                    (recur))))
-              (recur))))))))
+                  (recur)))
+
+              :else
+              (condp = (.getKeyType key)
+                KeyType/Escape nil
+                KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                                    (reset! selected 0)
+                                    (reset! scroll 0)
+                                    (recur))
+                KeyType/Enter (when (pos? total) (:path (nth items @selected)))
+                KeyType/Character
+                (let [raw-c (.getCharacter key)
+                      c     (Character/toLowerCase raw-c)]
+                  (cond
+                    (and (.isAltDown key) (= c \i))
+                    (do (swap! include-ignored? not)
+                      (reset! selected 0)
+                      (reset! scroll 0)
+                      (recur))
+
+                    (and (.isAltDown key) (= c \s))
+                    (do (swap! sort-mode picker/cycle-sort-mode)
+                      (reset! selected 0)
+                      (reset! scroll 0)
+                      (recur))
+
+                    (Character/isISOControl raw-c)
+                    (recur)
+
+                    :else
+                    (do (swap! query str raw-c)
+                      (reset! selected 0)
+                      (reset! scroll 0)
+                      (recur))))
+                (recur)))))))))
 
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
 
@@ -435,12 +466,12 @@
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            ;; Content: label row + input row.
-            bounds (draw-dialog-chrome! g cols rows title 2)
+            ;; Content: label row + spacer + 3-row bordered input box.
+            bounds (draw-dialog-chrome! g cols rows title 5)
             {:keys [left inner-w]} bounds
-            {:keys [content-top hint-row]} (dialog-layout bounds 2)
+            {:keys [content-top hint-row]} (dialog-layout bounds 5)
             label-row  content-top
-            input-row  (inc content-top)
+            input-row  (+ content-top 2)
             txt        (apply str @text)
             display    (if mask (apply str (repeat (count txt) mask)) txt)
             cursor-pos (draw-text-input-field! g left input-row inner-w display @cursor)]
@@ -588,8 +619,7 @@
   [:low :medium :high])
 
 (def ^:private settings-sections
-  [{:id :providers  :label "Providers"}
-   {:id :extensions :label "Extensions"}
+  [{:id :extensions :label "Extensions"}
    {:id :ui         :label "UI"}])
 
 (def ^:private settings-options-by-section
@@ -620,16 +650,9 @@
   []
   (->> settings-sections
     (mapcat (fn [{:keys [id label]}]
-              (case id
-                :providers [{:type :section
-                             :label label}
-                            {:id :configure-provider
-                             :type :action
-                             :label "Configure providers"
-                             :description "Add, remove, and reorder providers and models"}]
-                (into [{:type :section
-                        :label label}]
-                  (get settings-options-by-section id [])))))
+              (into [{:type :section
+                      :label label}]
+                (get settings-options-by-section id []))))
     vec))
 
 (defn- settings-option-label
@@ -688,8 +711,7 @@
     (ellipsize (str prefix filler) available)))
 
 (defn settings-dialog!
-  "Show one settings dialog with category headers for Providers, Extensions,
-   and UI.
+  "Show one settings dialog with category headers for Extensions and UI.
 
    Toggle rows render `[✓]` / `[ ]`. Choice rows render `[→]` and cycle
    through their allowed values with Space or Enter. Action rows render
@@ -697,10 +719,7 @@
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). Esc closes the dialog and returns the
-   current settings map.
-
-   `callbacks` is an optional map keyed by row `:id` (currently
-   `:configure-provider`)."
+   current settings map."
   ([^TerminalScreen screen settings]
    (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
@@ -802,6 +821,9 @@
   "Command palette entries. Each is {:id keyword :label str}.
    Quit is intentionally NOT here — use Ctrl+C to quit.
 
+   `:providers` opens router/model/auth configuration directly from the
+   palette instead of nesting it under Settings.
+
    `:copy` is the per-message picker (Space toggles, Enter copies
    selected as plain `role: text`). `:copy-as-markdown` is the
    one-shot “give me the whole conversation as a Markdown document
@@ -809,9 +831,10 @@
    shared host helper `com.blockether.vis.core/conversation->markdown`
    so the CLI agent and Telegram channel can ship the same affordance
    without re-implementing the projection."
-  [{:id :settings          :label "Settings"}
-   {:id :copy              :label "Copy Messages"}
-   {:id :copy-as-markdown  :label "Copy Conversation as Markdown"}])
+  [{:id :providers        :label "Providers"}
+   {:id :settings         :label "Settings"}
+   {:id :copy             :label "Copy Messages"}
+   {:id :copy-as-markdown :label "Copy Conversation as Markdown"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.

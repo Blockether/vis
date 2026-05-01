@@ -30,6 +30,13 @@
     :size  9216
     :mtime-ms 2000
     :git-status :untracked
+    :ignored? false}
+   {:path "src/input_helpers.clj"
+    :name "input_helpers.clj"
+    :parent "src"
+    :size  4096
+    :mtime-ms 1500
+    :git-status nil
     :ignored? false}])
 
 (defdescribe file-picker-score-test
@@ -53,6 +60,7 @@
                   {:sort-mode :auto :include-ignored? false :now-ms 5000})]
       (expect (= ["docs/src/usage.md"
                   "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/input.clj"
+                  "src/input_helpers.clj"
                   "src/com/blockether/vis/ext/channel_tui/footer.clj"]
                 (mapv :path items)))))
 
@@ -67,12 +75,12 @@
     (let [items (picker/file-picker-items sample-entries "input"
                   {:sort-mode :auto :include-ignored? false :now-ms 5000})]
       (expect (= ["extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/input.clj"
-                  "src/com/blockether/vis/ext/channel_tui/footer.clj"]
+                  "src/input_helpers.clj"]
                 (mapv :path items)))))
 
   (it "decorates entries with compact size + age labels"
     (let [item (first (picker/file-picker-items sample-entries "footer"
-                       {:sort-mode :auto :include-ignored? false :now-ms 61000}))]
+                        {:sort-mode :auto :include-ignored? false :now-ms 61000}))]
       (expect (= "14.0K" (:size-label item)))
       (expect (= "1m" (:age-label item))))))
 

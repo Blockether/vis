@@ -23,11 +23,15 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.registry :as registry]
    [taoensso.telemere :as tel])
   (:import
-   (java.io FileInputStream FileOutputStream)))
+   (java.io FileInputStream FileOutputStream)
+   (java.net URI)
+   (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers)
+   (java.time Duration)))
 
 (def config-dir  (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
@@ -40,6 +44,11 @@
 (def tty-out (delay ^java.io.OutputStream (FileOutputStream. "/dev/tty")))
 
 (def ^java.io.PrintStream original-stdout System/out)
+
+(def provider-status-http-client
+  (-> (HttpClient/newBuilder)
+    (.connectTimeout (Duration/ofSeconds 2))
+    (.build)))
 
 (defn init!
   "Redirect System/out and System/err to the log file. Lanterna uses
@@ -195,6 +204,49 @@
   (or (:label (get VIS_PROVIDER_METADATA pid))
     (some-> pid name str/capitalize)
     "Provider"))
+
+(defn- trim-trailing-slashes
+  [s]
+  (str/replace (or s "") #"/+$" ""))
+
+(defn- local-provider-models-url
+  [provider-id]
+  (str (trim-trailing-slashes (:base-url (provider-template provider-id))) "/models"))
+
+(defn- parse-model-list-body
+  [body]
+  (let [parsed (try (svar/str->data body) (catch Throwable _ nil))
+        value  (or (:value parsed) parsed)]
+    (or (:data value) (:models value) [])))
+
+(defn local-provider-status
+  [provider-id]
+  (let [base-url (:base-url (provider-template provider-id))
+        url      (local-provider-models-url provider-id)]
+    (try
+      (let [request (-> (HttpRequest/newBuilder)
+                      (.uri (URI. url))
+                      (.timeout (Duration/ofSeconds 3))
+                      (.GET)
+                      (.build))
+            resp    (.send ^HttpClient provider-status-http-client request
+                      (HttpResponse$BodyHandlers/ofString))
+            code    (.statusCode resp)
+            models  (parse-model-list-body (.body resp))]
+        (cond-> {:authenticated? (<= 200 code 299)
+                 :provider-id    provider-id
+                 :source         :local
+                 :base-url       base-url
+                 :status-code    code}
+          (seq models) (assoc :model-count (count models))
+          (not (<= 200 code 299))
+          (assoc :error (str "HTTP " code " from " url))))
+      (catch Throwable t
+        {:authenticated? false
+         :provider-id    provider-id
+         :source         :local
+         :base-url       base-url
+         :error          (or (.getMessage t) (str t))}))))
 
 (defn provider-base-url
   "Resolve base-url for a provider: explicit field on the provider
@@ -414,3 +466,10 @@
 
 (defn reload-config! []
   (reset! active-config (load-config)))
+
+(doseq [[provider-id label] [[:ollama "Ollama"]
+                             [:lmstudio "LM Studio"]]]
+  (registry/register-provider!
+    {:provider/id        provider-id
+     :provider/label     label
+     :provider/status-fn #(local-provider-status provider-id)}))

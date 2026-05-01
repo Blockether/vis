@@ -110,7 +110,7 @@
              :region :left :priority 2})
 
       reasoning?
-      (conj {:text (str "(" (name reasoning-level) ")")
+      (conj {:text (str "(reasoning:" (name reasoning-level) ")")
              :fg t/footer-fg-muted :bold? false
              :region :left :priority 3})
 

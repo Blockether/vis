@@ -343,10 +343,20 @@
       (expect (= "see <FILE:src/foo.clj> please"
                 (input/expand-file-mentions "see @src/foo.clj please")))))
 
+  (it "supports quoted @mentions for paths with spaces"
+    (with-redefs [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
+                  (fn [path] (str "<FILE:" path ">"))]
+      (expect (= "see <FILE:docs/My File.md> please"
+                (input/expand-file-mentions "see @\"docs/My File.md\" please")))))
+
   (it "leaves non-matching @text alone"
     (expect (= "email me at a@b.com"
               (input/expand-file-mentions "email me at a@b.com"))))
 
-  (it "formats visible mention tokens with a leading @"
+  (it "formats simple visible mention tokens with a leading @"
     (expect (= "@src/foo.clj"
-              (input/format-file-mention "src/foo.clj")))))
+              (input/format-file-mention "src/foo.clj"))))
+
+  (it "quotes visible mention tokens when the path contains whitespace"
+    (expect (= "@\"docs/My File.md\""
+              (input/format-file-mention "docs/My File.md")))))

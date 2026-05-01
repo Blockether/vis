@@ -85,6 +85,7 @@
                         "test/resources"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/providers/vis-provider-openai-codex/test"
+                        "extensions/providers/vis-provider-zai/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-foundation/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
@@ -105,6 +106,7 @@
                         "--dir" "test"
                         "--dir" "extensions/persistance/vis-persistance-sqlite/test"
                         "--dir" "extensions/providers/vis-provider-openai-codex/test"
+                        "--dir" "extensions/providers/vis-provider-zai/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/common/vis-foundation/test"]}
 
@@ -126,6 +128,7 @@
   {:extra-paths ["test"
                  "extensions/persistance/vis-persistance-sqlite/test"
                  "extensions/providers/vis-provider-openai-codex/test"
+                 "extensions/providers/vis-provider-zai/test"
                  "extensions/channels/vis-channel-tui/test"
                  "extensions/common/vis-foundation/test"]
    :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}

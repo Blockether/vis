@@ -143,12 +143,13 @@
 (s/def :provider/logout-fn    ifn?)  ;; () -> nil  (clear creds)
 (s/def :provider/detect-fn    ifn?)  ;; () -> token-or-nil  (non-interactive)
 (s/def :provider/auth-fn      ifn?)  ;; (printer-fn) -> nil (interactive)
-(s/def :provider/get-token-fn ifn?)  ;; () -> token-string  (resolve usable token)
+(s/def :provider/get-token-fn ifn?)  ;; () -> token-string/map  (resolve usable token)
+(s/def :provider/limits-fn    ifn?)  ;; () -> normalized limits envelope/map
 
 (s/def ::provider
   (s/keys :req [:provider/id :provider/label]
     :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn
-          :provider/auth-fn :provider/get-token-fn]))
+          :provider/auth-fn :provider/get-token-fn :provider/limits-fn]))
 
 (defn provider
   "Build and validate a provider descriptor."

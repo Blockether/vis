@@ -720,7 +720,7 @@
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g
-   {:keys [role text timestamp duration-ms iteration-count tokens cost status] :as message}
+   {:keys [role text timestamp duration-ms iteration-count tokens cost status hide-copy?] :as message}
    start-row left max-w
    & [{:keys [viewport-top viewport-h]
        :or   {viewport-top 0 viewport-h 0}}]]
@@ -740,6 +740,7 @@
         ;; "FINAL ANSWER" sit nicely inset from the right edge
         ;; instead of mashed against it.
         h-pad     2
+        show-copy? (not hide-copy?)
         content-w (max 1 (- bubble-w (* 2 h-pad)))
         lines     (or (:prewrapped-lines message)
                     (wrap-text text content-w))
@@ -806,9 +807,13 @@
     ;; breathing row so the yellow block has visible vertical
     ;; padding above the typed text (otherwise the yellow band
     ;; hugs the first character and reads as a single-row strip).
-    ;; Mirror this in `bubble-height*` so the math stays in sync.
-    (let [top-pad (if user? 1 0)
-          btop    (+ start-row 1 top-pad)]
+    ;; User bubbles also keep one breathing row BELOW the typed text,
+    ;; then place the copy affordance on the next line, outside the
+    ;; warm-yellow fill. Mirror this in `bubble-height*` so the math
+    ;; stays in sync.
+    (let [top-pad    (if user? 1 0)
+          bottom-pad (if user? 1 0)
+          btop       (+ start-row 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg — the only fills come from
       ;; structured-trace marker zones (code blocks, stdout, answer
@@ -831,13 +836,14 @@
       ;; (`cancelled-fg`) + dimmed role label + plain status footer
       ;; carry the "aborted" signal on bare terminal-bg.
       ;;
-      ;; User messages: fill the breathing row above content + the
-      ;; content rows, but STOP before the bottom copy-control row.
-      ;; The user explicitly wanted the `[⧉ Copy]` button to sit on
-      ;; plain terminal background, outside the yellow bubble zone.
+      ;; User messages: fill the breathing row above content, the
+      ;; content rows, AND one breathing row below the content, but
+      ;; STOP before the copy-control row. The user explicitly wanted
+      ;; the `[⧉ Copy]` button to sit on plain terminal background,
+      ;; outside the yellow bubble zone.
       (when user?
         (p/set-bg! g bg-color)
-        (p/fill-rect! g bx (- btop top-pad) bubble-w (+ (max 1 bubble-h) top-pad)))
+        (p/fill-rect! g bx (- btop top-pad) bubble-w (+ (max 1 bubble-h) top-pad bottom-pad)))
 
       ;; Text content — per-line styling via invisible marker prefixes
       ;;
@@ -1353,7 +1359,7 @@
       ;; can hand the click off to the OS opener.
       (let [refs           (extract-link-refs message bubble-w)
             chrome-rows    (count refs)
-            chrome-top     (+ btop bubble-h)
+            chrome-top     (+ btop bubble-h bottom-pad)
             ;; Coordinate translation: `clip` was created at
             ;; `(0, viewport-top)`, so y inside the clip == y +
             ;; viewport-top on the absolute screen. The chrome
@@ -1371,26 +1377,32 @@
                 (long viewport-top) (long viewport-h)))))
 
         ;; Below-content footer row: left-aligned copy affordance,
-        ;; optional right-aligned meta on the SAME line.
+        ;; inset by the same 2-col inner padding as the prose; optional
+        ;; right-aligned meta on the SAME line.
         ;;
         ;; Final per-message layout (no outer box, no bg fill, no
         ;; horizontal rule under the label):
         ;;   row 0                    : label + timestamp
         ;;   row 1 … N                : wrapped content (with marker-zone fills)
-        ;;   row 1+N … 1+N+M-1        : link chrome (M refs)
-        ;;   row 1+N+M                : `⧉ Copy` left + meta right, when present
+        ;;   row 1+N                  : bottom pad (user only)
+        ;;   row 1+N+P … 1+N+P+M-1    : link chrome (M refs)
+        ;;   row 1+N+P+M              : `⧉ Copy` left + meta right, when present
         ;;   final row                : single blank gap before the next message
         (p/clear-styles! g)
-        (let [footer-row (+ chrome-top chrome-rows)]
-          (when meta-str
-            (p/set-colors! g t/dialog-hint t/terminal-bg)
-            (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
-          (paint-copy-message-control!
-            g message bx footer-row viewport-top viewport-h)
+        (let [footer?    (or show-copy? meta-str)
+              footer-row (+ chrome-top chrome-rows)]
+          (when footer?
+            (when meta-str
+              (p/set-colors! g t/dialog-hint t/terminal-bg)
+              (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
+            (when show-copy?
+              (paint-copy-message-control!
+                g message (+ bx h-pad) footer-row viewport-top viewport-h)))
           ;; Return: rows consumed
-          ;;   = label(1) + top-pad(user only) + content(N) + chrome(M)
-          ;;     + footer(copy + optional meta)(1) + gap(1)
-          (+ 1 top-pad bubble-h chrome-rows 1 1))))))
+          ;;   = label(1) + top-pad(user only) + content(N)
+          ;;     + bottom-pad(user only) + chrome(M)
+          ;;     + footer(copy and/or meta)(0|1) + gap(1)
+          (+ 1 top-pad bubble-h bottom-pad chrome-rows (if footer? 1 0) 1))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Link / image / file-link chrome
@@ -1560,17 +1572,28 @@
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
    label(1) + optional top-pad(1, user only) + wrapped-lines
-   + link-chrome(refs) + footer(copy + optional meta)(1) + gap(1).
+   + optional bottom-pad(1, user only) + link-chrome(refs)
+   + footer(copy and/or optional meta)(0|1) + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines] :as message} max-w]
-  (let [bubble-w  max-w
-        h-pad     2
-        content-w (max 1 (- bubble-w (* 2 h-pad)))
-        lines     (or prewrapped-lines (wrap-text text content-w))
-        top-pad   (if (= role :user) 1 0)
-        refs      (extract-link-refs message bubble-w)]
-    (+ 1 top-pad (count lines) (count refs) 1 1)))
+  [{:keys [text role prewrapped-lines hide-copy? iteration-count duration-ms tokens cost status] :as message} max-w]
+  (let [bubble-w   max-w
+        h-pad      2
+        content-w  (max 1 (- bubble-w (* 2 h-pad)))
+        lines      (or prewrapped-lines (wrap-text text content-w))
+        top-pad    (if (= role :user) 1 0)
+        bottom-pad (if (= role :user) 1 0)
+        cancelled? (= :cancelled status)
+        meta-str   (when (and (not= role :user) (not cancelled?))
+                     (let [line (vis/format-meta-line
+                                  {:iteration-count iteration-count
+                                   :duration-ms duration-ms
+                                   :tokens tokens
+                                   :cost cost})]
+                       (when-not (str/blank? line) line)))
+        refs       (extract-link-refs message bubble-w)
+        footer?    (or (not hide-copy?) meta-str)]
+    (+ 1 top-pad (count lines) bottom-pad (count refs) (if footer? 1 0) 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by `:text` identity + role +
