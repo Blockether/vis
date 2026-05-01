@@ -307,14 +307,16 @@
    - `:manual-code-fn`  `(fn [printer-fn] string|nil)` collector for the
      final redirect URL or bare authorization code. CLI uses `read-line`;
      the TUI injects a dialog-backed collector. Pass nil to disable manual
-     entry entirely."
+     entry entirely.
+   - `:force?`          when true, starts a fresh OAuth flow even if
+     persisted credentials already exist."
   ([printer-fn] (login! printer-fn {}))
-  ([printer-fn {:keys [originator open-browser-fn manual-code-fn]
+  ([printer-fn {:keys [originator open-browser-fn manual-code-fn force?]
                 :or   {originator "vis"
                        open-browser-fn open-browser!
                        manual-code-fn  prompt-for-code!}}]
    (let [print! (or printer-fn (constantly nil))]
-     (if (detect-credentials)
+     (if (and (not force?) (detect-credentials))
        (do
          (print! "  Already authenticated with OpenAI Codex.")
          (print! "  Run `vis providers status openai-codex` for details.")

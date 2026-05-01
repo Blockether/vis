@@ -287,38 +287,42 @@
    The shared provider flow owns browser launch and token exchange.
    The TUI supplies a dialog-backed manual collector for the final
    redirect URL, so the user can finish auth without dropping back to
-   a shell prompt."
-  [^TerminalScreen screen]
-  (let [provider  (vis/provider-by-id :openai-codex)
-        detect-fn (:provider/detect-fn provider)]
-    (if (and detect-fn (detect-fn))
-      true
-      (do
-        (dlg/confirm-dialog! screen "OpenAI Codex"
-          ["Vis will start the ChatGPT/Codex browser OAuth flow."
-           ""
-           "After browser login, copy the final redirect URL from the"
-           "address bar and paste it into the next dialog."
-           ""
-           "Fallback if needed:"
-           "  vis providers auth openai-codex"])
-        (try
-          (let [result (codex/login! (constantly nil)
-                         {:originator     "vis-tui"
-                          :manual-code-fn (fn [_]
-                                            (dlg/text-input-dialog! screen
-                                              "OpenAI Codex"
-                                              "Paste the final browser URL or authorization code:"))})]
-            (when (= result :ok)
-              (dlg/confirm-dialog! screen "OpenAI Codex" "✓ Authenticated!"))
-            true)
-          (catch Exception e
-            (dlg/confirm-dialog! screen "OpenAI Codex"
-              [(str "Auth failed: " (ex-message e))
-               ""
-               "If browser auth still fails here, run:"
-               "  vis providers auth openai-codex"])
-            false))))))
+   a shell prompt. With `force?`, start a fresh OAuth flow even when
+   credentials already exist."
+  ([^TerminalScreen screen]
+   (codex-oauth-ready! screen false))
+  ([^TerminalScreen screen force?]
+   (let [provider  (vis/provider-by-id :openai-codex)
+         detect-fn (:provider/detect-fn provider)]
+     (if (and (not force?) detect-fn (detect-fn))
+       true
+       (do
+         (dlg/confirm-dialog! screen "OpenAI Codex"
+           ["Vis will start the ChatGPT/Codex browser OAuth flow."
+            ""
+            "After browser login, copy the final redirect URL from the"
+            "address bar and paste it into the next dialog."
+            ""
+            "Fallback if needed:"
+            "  vis providers auth openai-codex"])
+         (try
+           (let [result (codex/login! (constantly nil)
+                          {:originator     "vis-tui"
+                           :force?         force?
+                           :manual-code-fn (fn [_]
+                                             (dlg/text-input-dialog! screen
+                                               "OpenAI Codex"
+                                               "Paste the final browser URL or authorization code:"))})]
+             (when (= result :ok)
+               (dlg/confirm-dialog! screen "OpenAI Codex" "✓ Authenticated!"))
+             true)
+           (catch Exception e
+             (dlg/confirm-dialog! screen "OpenAI Codex"
+               [(str "Auth failed: " (ex-message e))
+                ""
+                "If browser auth still fails here, run:"
+                "  vis providers auth openai-codex"])
+             false)))))))
 
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
@@ -860,7 +864,7 @@
   [^TerminalScreen screen provider]
   (case (:id provider)
     :github-copilot (when (copilot-oauth-flow! screen) provider)
-    :openai-codex   (when (codex-oauth-ready! screen) provider)
+    :openai-codex   (when (codex-oauth-ready! screen true) provider)
     :ollama         nil
     :lmstudio       nil
     (or (prompt-for-api-key! screen provider)
@@ -903,7 +907,7 @@
                      (vis/provider-by-id (:provider-id item)))]
       (case (:provider/id provider)
         :github-copilot (boolean (copilot-oauth-flow! screen))
-        :openai-codex   (boolean (codex-oauth-ready! screen))
+        :openai-codex   (boolean (codex-oauth-ready! screen true))
         (if-let [auth-fn (:provider/auth-fn provider)]
           (let [lines (atom [])
                 print! #(swap! lines conj %)]

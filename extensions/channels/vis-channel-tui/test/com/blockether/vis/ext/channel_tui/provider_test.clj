@@ -114,6 +114,29 @@
         (expect (= "http://localhost:1455/auth/callback?code=abc&state=s"
                   ((get-in @seen [:opts :manual-code-fn]) nil))))))
 
+  (it "forces the shared Codex login flow when re-authenticating existing credentials"
+    (let [seen (atom nil)]
+      (with-redefs [vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
+                    codex/login!       (fn [printer-fn opts]
+                                         (reset! seen {:printer-fn printer-fn :opts opts})
+                                         :ok)
+                    dlg/confirm-dialog! (fn [& _] nil)
+                    dlg/text-input-dialog! (fn [& _] "http://localhost:1455/auth/callback?code=abc&state=s")]
+        (expect (= true (@#'provider/codex-oauth-ready! nil true)))
+        (expect (= true (get-in @seen [:opts :force?]))))))
+
+  (it "uses forced Codex login from the provider action menu"
+    (let [seen (atom nil)
+          provider-config {:id :openai-codex :models [{:name "gpt-5.1"}]}]
+      (with-redefs [vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
+                    codex/login!       (fn [printer-fn opts]
+                                         (reset! seen {:printer-fn printer-fn :opts opts})
+                                         :ok)
+                    dlg/confirm-dialog! (fn [& _] nil)
+                    dlg/text-input-dialog! (fn [& _] "http://localhost:1455/auth/callback?code=abc&state=s")]
+        (expect (= provider-config (provider/authenticate-provider! nil provider-config)))
+        (expect (= true (get-in @seen [:opts :force?]))))))
+
   (it "returns false when the shared Codex login flow fails"
     (with-redefs [vis/provider-by-id (constantly {:provider/detect-fn (constantly nil)})
                   codex/login!       (fn [& _]
