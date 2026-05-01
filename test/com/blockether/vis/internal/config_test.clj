@@ -20,15 +20,14 @@
       (expect (= "http://localhost:1234/v1" (:base-url lmstudio))))))
 
 (defdescribe load-config-test
-  (it "backfills OpenAI Codex runtime metadata for existing config files"
+  (it "adds catalog metadata without rewriting provider-specific fields"
     (with-redefs [config/load-config-raw (fn [] {:providers [{:id :openai-codex
                                                               :models [{:name "gpt-5.5"}]
-                                                              :api-key "stale-token"
-                                                              :api-style :openai-codex}]})]
+                                                              :api-key "configured-token"}]})]
       (let [provider (-> (config/load-config) :providers first)]
         (expect (= "https://chatgpt.com/backend-api" (:base-url provider)))
         (expect (= :openai-compatible-responses (:api-style provider)))
-        (expect (nil? (:api-key provider)))))))
+        (expect (= "configured-token" (:api-key provider)))))))
 
 (defdescribe svar-provider-shape-test
   (it "forwards provider-specific headers from dynamic token resolvers"

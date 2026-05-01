@@ -301,6 +301,14 @@
   (it "ul renders one `- item` per entry"
     (expect (= "- a\n- b\n- c" (md/ul ["a" "b" "c"]))))
 
+  (it "ul accepts preformatted li output without double bullets"
+    (expect (= "- a\n- b"
+              (md/ul [(md/li "a") (md/li "b")]))))
+
+  (it "ul preserves alternate unordered markers that are already present"
+    (expect (= "* a\n+ b\n- c"
+              (md/ul ["* a" "+ b" "- c"]))))
+
   (it "ul handles nil / empty"
     (expect (= "" (md/ul nil)))
     (expect (= "" (md/ul []))))

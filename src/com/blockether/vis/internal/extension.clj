@@ -29,10 +29,252 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
-   [com.blockether.vis.internal.tool-result :as tool-result]
-   [taoensso.telemere :as tel]))
+   [taoensso.telemere :as tel])
+  (:import
+   (java.io ByteArrayOutputStream InputStream)
+   (java.net URL)
+   (java.security MessageDigest)
+   (java.util.jar JarEntry JarFile)))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
+
+;; =============================================================================
+;; Tool-result contract
+;; =============================================================================
+
+(def ^:private max-trace-frames 12)
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(s/def ::ok? boolean?)
+(s/def ::result any?)
+(s/def ::result-shape map?)
+(s/def ::markdown (s/and string? #(not (str/blank? %))))
+
+(s/def ::op keyword?)
+(s/def ::started-at-ms integer?)
+(s/def ::finished-at-ms integer?)
+(s/def ::duration-ms nat-int?)
+
+(s/def ::sym symbol?)
+(s/def ::alias symbol?)
+(s/def ::call (s/and string? #(not (str/blank? %))))
+(s/def ::tool (s/keys :req-un [::sym ::call]
+                :opt-un [::alias]))
+
+(s/def ::namespace symbol?)
+(s/def ::registry-id symbol?)
+(s/def ::kind (s/and string? #(not (str/blank? %))))
+(s/def ::doc (s/and string? #(not (str/blank? %))))
+(s/def ::version (s/and string? #(not (str/blank? %))))
+(s/def ::author (s/and string? #(not (str/blank? %))))
+(s/def ::owner (s/and string? #(not (str/blank? %))))
+(s/def ::license (s/and string? #(not (str/blank? %))))
+(s/def ::tool-result-extension
+  (s/keys :req-un [::namespace]
+    :opt-un [::registry-id ::kind ::doc ::version
+             ::author ::owner ::license]))
+
+(s/def ::paths (s/coll-of string? :kind vector?))
+(s/def ::mtime-max integer?)
+(s/def ::hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
+(s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
+
+(s/def ::provenance
+  (s/and
+    (s/keys :req-un [::op ::started-at-ms ::finished-at-ms ::duration-ms]
+      :opt-un [::tool ::source])
+    #(or (not (contains? % :extension))
+       (s/valid? ::tool-result-extension (:extension %)))))
+
+(s/def ::type (s/and string? #(not (str/blank? %))))
+(s/def ::message string?)
+(s/def ::class string?)
+(s/def ::method string?)
+(s/def ::file string?)
+(s/def ::line pos-int?)
+(s/def ::origin #{:user-code :tool :runtime :library})
+(s/def ::trace-frame (s/keys :req-un [::class ::method ::file ::origin]
+                       :opt-un [::line]))
+(s/def ::trace (s/coll-of ::trace-frame :kind vector?))
+(s/def ::error-map (s/keys :req-un [::type ::message ::trace]))
+(s/def ::error (s/nilable ::error-map))
+
+(s/def ::tool-result-base
+  (s/keys :req-un [::ok? ::result ::result-shape ::provenance ::markdown ::error]))
+
+(s/def ::tool-result
+  (s/and
+    ::tool-result-base
+    (fn [{:keys [ok? error]}]
+      (if ok?
+        (nil? error)
+        (some? error)))))
+
+(defn tool-result?
+  [x]
+  (s/valid? ::tool-result x))
+
+(defn assert-tool-result!
+  [x]
+  (when-not (tool-result? x)
+    (throw (ex-info "Invalid tool result"
+             {:type :vis/invalid-tool-result
+              :value x
+              :explain (s/explain-data ::tool-result x)})))
+  x)
+
+(defn with-presentation
+  "Attach runtime-only presentation hints. The CONTRACT lives in the
+   value; metadata is only for render policy."
+  [x presentation]
+  (with-meta x (assoc (meta x) :vis/presentation presentation)))
+
+(defn presentation
+  [x]
+  (:vis/presentation (meta x)))
+
+(defn normalize-provenance
+  "Fill the common provenance clock keys when absent.
+
+   Required by the tool-result contract:
+     :op
+     :started-at-ms
+     :finished-at-ms
+     :duration-ms
+
+   Callers may pass richer maps (tool / extension / source metadata);
+   this helper only normalizes the shared timing surface."
+  [provenance]
+  (let [provenance (or provenance {})
+        t          (now-ms)
+        started    (long (or (:started-at-ms provenance) t))
+        finished   (long (or (:finished-at-ms provenance) t))
+        duration   (long (or (:duration-ms provenance)
+                           (max 0 (- finished started))))]
+    (assoc provenance
+      :started-at-ms started
+      :finished-at-ms finished
+      :duration-ms duration)))
+
+(defn merge-provenance
+  "Merge `extra` into an already-valid tool-result envelope, re-check
+   the contract, and preserve metadata. Used by the extension wrapper
+   to stamp extension/source provenance onto tool-like returns."
+  [tool-result extra]
+  (let [meta*  (meta tool-result)
+        merged (-> tool-result
+                 (update :provenance #(merge (or % {}) extra))
+                 assert-tool-result!)]
+    (with-meta merged meta*)))
+
+(defn- simple-shape
+  [v depth]
+  (cond
+    (neg? depth) {:type :unknown}
+    (nil? v) {:type :nil}
+    (string? v) {:type :string :chars (count v) :lines (count (str/split-lines v))}
+    (boolean? v) {:type :boolean}
+    (integer? v) {:type :int}
+    (float? v) {:type :float}
+    (keyword? v) {:type :keyword}
+    (symbol? v) {:type :symbol}
+    (map? v) {:type :map
+              :count (count v)
+              :keys (->> (keys v) (take 12) vec)
+              :shape (into {}
+                       (map (fn [[k vv]] [k (simple-shape vv (dec depth))])
+                         (take 8 v)))}
+    (vector? v) {:type :vector
+                 :count (count v)
+                 :items (when-let [x (first v)] (simple-shape x (dec depth)))}
+    (set? v) {:type :set
+              :count (count v)
+              :items (when-let [x (first (seq v))] (simple-shape x (dec depth)))}
+    (sequential? v) {:type :seq
+                     :count (count (take 128 v))
+                     :items (when-let [x (first v)] (simple-shape x (dec depth)))}
+    :else {:type :object
+           :class (.getName (class v))}))
+
+(defn result-shape
+  [v]
+  (simple-shape v 2))
+
+(defn- frame-origin
+  [^StackTraceElement frame]
+  (let [class-name (.getClassName frame)
+        file-name  (.getFileName frame)
+        method     (.getMethodName frame)]
+    (cond
+      (or (= class-name "user")
+        (= class-name "sandbox")
+        (= file-name "iteration")
+        (= method "anonymous-fn"))
+      :user-code
+
+      (str/starts-with? class-name "com.blockether.vis.ext.")
+      :tool
+
+      (str/starts-with? class-name "com.blockether.vis.internal.")
+      :runtime
+
+      :else
+      :library)))
+
+(defn- noisy-frame?
+  [^StackTraceElement frame]
+  (let [class-name (.getClassName frame)]
+    (or (str/starts-with? class-name "sci.impl.")
+      (str/starts-with? class-name "sci.ctx_store")
+      (str/starts-with? class-name "clojure.lang.AFn")
+      (str/starts-with? class-name "clojure.lang.RestFn")
+      (str/starts-with? class-name "clojure.lang.MultiFn")
+      (str/starts-with? class-name "clojure.lang.Var")
+      (str/starts-with? class-name "java.lang.reflect.")
+      (str/starts-with? class-name "jdk.internal.reflect."))))
+
+(defn normalize-trace
+  [^Throwable t]
+  (->> (.getStackTrace t)
+    (remove noisy-frame?)
+    (map (fn [^StackTraceElement frame]
+           (cond-> {:class  (.getClassName frame)
+                    :method (.getMethodName frame)
+                    :file   (or (.getFileName frame) "unknown")
+                    :origin (frame-origin frame)}
+             (pos? (.getLineNumber frame))
+             (assoc :line (.getLineNumber frame)))))
+    (take max-trace-frames)
+    vec))
+
+(defn normalize-error
+  [^Throwable t]
+  {:type    (.getName (class t))
+   :message (or (ex-message t) "")
+   :trace   (normalize-trace t)})
+
+(defn success
+  [{:keys [result provenance markdown] :as m}]
+  (-> {:ok?          true
+       :result       result
+       :result-shape (or (:result-shape m) (result-shape result))
+       :provenance   (normalize-provenance provenance)
+       :markdown     markdown
+       :error        nil}
+    assert-tool-result!))
+
+(defn failure
+  [{:keys [result provenance markdown error throwable] :as m}]
+  (let [err (or error
+              (when throwable (normalize-error throwable)))]
+    (-> {:ok?          false
+         :result       result
+         :result-shape (or (:result-shape m) (result-shape result))
+         :provenance   (normalize-provenance provenance)
+         :markdown     markdown
+         :error        err}
+      assert-tool-result!)))
 
 ;; =============================================================================
 ;; Symbol entry spec
@@ -542,9 +784,9 @@
 
 (defn- enrich-tool-result-provenance
   [ext sym-entry result]
-  (if (tool-result/tool-result? result)
+  (if (tool-result? result)
     (let [ext-prov (extension-provenance ext)]
-      (tool-result/merge-provenance
+      (merge-provenance
         result
         {:tool      (cond-> {:sym  (:ext.symbol/sym sym-entry)
                              :call (tool-call-name ext (:ext.symbol/sym sym-entry))}
@@ -774,6 +1016,179 @@
     (validate!)))
 
 ;; =============================================================================
+;; Extension source markers
+;; =============================================================================
+
+(set! *warn-on-reflection* true)
+
+;; ---------------------------------------------------------------------------
+;; Hash + mtime primitives.
+;; ---------------------------------------------------------------------------
+
+(defn- sha256-digest ^MessageDigest []
+  (MessageDigest/getInstance "SHA-256"))
+
+(defn- bytes->hex ^String [^bytes b]
+  (let [sb (StringBuilder. (* 2 (alength b)))]
+    (dotimes [i (alength b)]
+      (let [v (bit-and (aget b i) 0xff)]
+        (when (< v 16) (.append sb \0))
+        (.append sb (Integer/toString v 16))))
+    (.toString sb)))
+
+(defn- read-stream-bytes ^bytes [^InputStream in]
+  (with-open [out (ByteArrayOutputStream.)]
+    (let [buf (byte-array 8192)]
+      (loop []
+        (let [n (.read in buf)]
+          (when (pos? n)
+            (.write out buf 0 n)
+            (recur)))))
+    (.toByteArray out)))
+
+;; ---------------------------------------------------------------------------
+;; Resolve one namespace → entry map.
+;; ---------------------------------------------------------------------------
+
+(defn- ns->resource-path
+  "Convert `clojure.core` to `clojure/core.clj`. Tries .clj first;
+   .cljc / .cljs fallback if the .clj resolves to nothing."
+  [ns-sym]
+  (let [base (-> (str ns-sym)
+               (str/replace \- \_)
+               (str/replace \. \/))]
+    [(str base ".clj") (str base ".cljc")]))
+
+(defn- find-source-resource
+  ^URL [^ClassLoader cl ns-sym]
+  ;; Locate a resource URL for the namespace, trying .clj before .cljc.
+  ;; Returns nil when nothing on the classpath corresponds.
+  (let [paths (ns->resource-path ns-sym)]
+    (some (fn [p] (.getResource cl ^String p)) paths)))
+
+(defrecord ^:private SourceEntry [^String locator ^long mtime ^bytes content])
+
+(defn- file-entry
+  "Build a SourceEntry for a `file:` URL. Reads the file content for
+   hashing; mtime from `.lastModified`."
+  ^SourceEntry [^URL url]
+  (let [f       (java.io.File. (.toURI url))
+        path    (.getAbsolutePath f)
+        mtime   (.lastModified f)
+        content (try (read-stream-bytes (java.io.FileInputStream. f))
+                  (catch Throwable t
+                    (tel/log! {:level :warn :id ::file-read-failed
+                               :data  {:path path :error (ex-message t)}})
+                    (byte-array 0)))]
+    (->SourceEntry path mtime content)))
+
+(defn- jar-entry-locator
+  "Build a stable locator string for a jar entry: `jar-path!entry-path`.
+   Same convention as the JDK's `jar:` URL form, more readable."
+  [^String jar-path ^String entry-name]
+  (str jar-path "!" entry-name))
+
+(defn- jar-entry
+  "Build a SourceEntry for a `jar:file:` URL. Opens the jar, reads
+   the named entry, hashes its content. mtime is the entry's
+   `getTime` (= jar build time for entries that weren't individually
+   timestamped). Closes the jar on exit."
+  ^SourceEntry [^URL url]
+  (let [conn      (.openConnection url)
+        ;; The cast is paranoid — `.getJarFileURL` lives on `JarURLConnection`,
+        ;; we know URL was a jar: URL when we got here.
+        jconn     ^java.net.JarURLConnection conn
+        jar-url   (.getJarFileURL jconn)
+        jar-file  (java.io.File. (.toURI jar-url))
+        jar-path  (.getAbsolutePath jar-file)
+        entry-nm  (.getEntryName jconn)]
+    (with-open [jar (JarFile. jar-file)]
+      (let [^JarEntry e (.getJarEntry jar entry-nm)]
+        (if (nil? e)
+          (do (tel/log! {:level :warn :id ::jar-entry-missing
+                         :data  {:jar jar-path :entry entry-nm}})
+            nil)
+          (let [mtime   (.getTime e)
+                content (try (with-open [in (.getInputStream jar e)]
+                               (read-stream-bytes in))
+                          (catch Throwable t
+                            (tel/log! {:level :warn :id ::jar-entry-read-failed
+                                       :data  {:jar jar-path :entry entry-nm
+                                               :error (ex-message t)}})
+                            (byte-array 0)))]
+            (->SourceEntry (jar-entry-locator jar-path entry-nm) mtime content)))))))
+
+(defn- url->entry
+  "Dispatch on URL protocol to the right reader. Returns SourceEntry
+   or nil on unrecognized protocol."
+  [^URL url]
+  (try
+    (case (some-> url .getProtocol str/lower-case)
+      "file" (file-entry url)
+      "jar"  (jar-entry url)
+      (do (tel/log! {:level :warn :id ::unsupported-protocol
+                     :data  {:protocol (.getProtocol url) :url (str url)}})
+        nil))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::resolve-failed
+                 :data  {:url (str url) :error (ex-message t)}})
+      nil)))
+
+;; ---------------------------------------------------------------------------
+;; Public API.
+;; ---------------------------------------------------------------------------
+
+(defn resolve-markers
+  "Resolve every namespace in `ns-syms` to its source on the classpath
+   and compute aggregate markers.
+
+   Returns
+     {:source-paths      [\"...\"]               ;; sorted entry locators
+      :source-mtime-max  long                    ;; -1 if nothing resolved
+      :source-hash-sha256 \"hex\"}                ;; nil if nothing resolved
+
+   Always returns a map (never throws). Per-namespace failures are
+   logged at :warn and skipped; an extension whose nses partially
+   resolve still gets markers from the parts that did."
+  [ns-syms]
+  (let [cl       (.getContextClassLoader (Thread/currentThread))
+        urls     (->> ns-syms
+                   (map #(find-source-resource cl %))
+                   (remove nil?))
+        entries  (->> urls
+                   (map url->entry)
+                   (remove nil?)
+                   (sort-by :locator)
+                   vec)]
+    (if (empty? entries)
+      {:source-paths       []
+       :source-mtime-max   -1
+       :source-hash-sha256 nil}
+      (let [paths       (mapv :locator entries)
+            mtime-max   (long (reduce max 0 (map :mtime entries)))
+            digest      (sha256-digest)
+            _           (doseq [^SourceEntry e entries]
+                          (let [^bytes c (:content e)]
+                            (.update digest c 0 (alength c))))
+            hash-bytes  (.digest digest)
+            hash-hex    (bytes->hex hash-bytes)]
+        {:source-paths       paths
+         :source-mtime-max   mtime-max
+         :source-hash-sha256 hash-hex}))))
+
+(defn resolve-markers-for-extension
+  "Convenience wrapper: pull `:nses` (or `:ext/nses`) off the
+   extension map / manifest entry, fall back to `:ext/namespace`
+   when no list is provided. Returns the same shape as
+   [[resolve-markers]]."
+  [ext-or-manifest]
+  (let [ns-syms (or (some-> (:nses ext-or-manifest) seq vec)
+                  (some-> (:ext/nses ext-or-manifest) seq vec)
+                  (when-let [n (:ext/namespace ext-or-manifest)]
+                    [n]))]
+    (resolve-markers (or ns-syms []))))
+
+;; =============================================================================
 ;; Global Extension Registry
 ;; =============================================================================
 
@@ -868,9 +1283,7 @@
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
     ;; and degrade to empty markers — they don't fail registration.
     (try
-      (let [markers ((requiring-resolve
-                       'com.blockether.vis.internal.extension.source-markers/resolve-markers-for-extension)
-                     ext)]
+      (let [markers (resolve-markers-for-extension ext)]
         (swap! extension-source-markers assoc ns-sym markers))
       (catch Throwable t
         (tel/log! {:level :warn :id ::source-markers-failed
@@ -896,9 +1309,7 @@
   [ext]
   (or (extension-source-markers-of (:ext/namespace ext))
     (try
-      ((requiring-resolve
-         'com.blockether.vis.internal.extension.source-markers/resolve-markers-for-extension)
-       ext)
+      (resolve-markers-for-extension ext)
       (catch Throwable t
         (tel/log! {:level :warn :id ::source-markers-on-demand-failed
                    :data  {:ext (:ext/namespace ext)

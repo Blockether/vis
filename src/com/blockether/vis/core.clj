@@ -1,62 +1,42 @@
 (ns com.blockether.vis.core
-  "vis — public API.
+  "vis — broad host facade.
 
-   This is the ONLY namespace external consumers (extensions, channel
-   adapters, embedded SDK callers, tests) should import. Every public
-   symbol the project exposes is re-exported here from one of the
-   `com.blockether.vis.internal.*` namespaces. The internal tree is
-   not stable — it's where modules get split, merged, and renamed as
-   the architecture evolves. The names below ARE the contract.
+   This is the ONLY namespace extensions, channel adapters, embedded
+   callers, and tests should import. It deliberately re-exports host,
+   registry, runtime, persistence, prompt, diagnostic, and sandbox
+   helpers from `com.blockether.vis.internal.*`. The internal tree is
+   not stable; the names exposed here are the host contract.
 
-   Conceptual groups, alphabetic within each:
+   Canonical runtime language:
+     Conversation -> Turn -> Iteration -> Block.
 
-     Cancellation        cancel!, cancellation-atom, cancellation-set-future!,
-                         cancellation-token, cancellation?
-     Channel registry    channel, register-channel!, registered-channels,
-                         channel-by-id, by-cmd
-     CLI dispatcher      command, dispatch!, find-leaf, parse-args,
-                         render-command, render-tree, validate-args,
-                         register-cmd!, deregister-cmd!,
-                         registered-commands, registered-under
-     Configuration       init!, init-cli!, shutdown!, load-config,
-                         load-config-raw, save-config!, reload-config!,
-                         config-path, tty-in, tty-out, original-stdout,
-                         display-label, model-name, provider-base-url,
-                         provider-presets, provider-template
-     Error formatting    error-message, db-error->user-message, format-error,
-                         final-answer-code-error-message
-     Extension contract  extension, symbol, value, register-extension!,
-                         registered-extensions, registered-extension-ids,
-                         extension-id-of-ns, extension-provenance,
-                         extension-doc, extension-docs,
-                         render-prompt, invoke-symbol-wrapper,
-                         try-rescue-parse-error, discover-extensions!
-     Format helpers      format-clojure, format-date, format-duration
-     Markdown export     conversation->markdown
-     Notifications      notify!, notifications, dismiss!, dismiss-all!,
-                         watch-notifications!, unwatch-notifications!
-     Iteration loop      query!, send!, create!, by-id, by-channel,
-                         for-telegram-chat!, env-for, close!, close-all!,
-                         delete!, set-title!,
-                         create-environment, dispose-environment!,
-                         get-router, rebuild-router!, refresh-cached-routers!,
-                         resolve-effective-model,
-                         db-info, auto-forget-stale-vars!,
-                         extract-defining-name
-     Manifest discovery  rediscover!  (test/REPL utility)
-     Persistance facade  db-create-connection!, db-dispose-connection!,
-                         log!, ds, now-ms, every store-*/db-*/update-*/etc.
-                         delegating fn, db-sweep-orphaned-running-queries!
-     Progress tracker    make-progress-tracker
-     Prompt builders     active-extensions, assemble-system-prompt,
-                         build-iteration-context, safe-pr-str
-     Provider registry   provider, register-provider!, registered-providers,
-                         provider-by-id, provider-limits,
-                         all-provider-limits
-     SCI sandbox         create-sci-context, build-var-index,
-                         restore-sandbox!, system-var-sym?, SYSTEM_VAR_NAMES
+   A Turn is one user ask plus assistant answer inside a Conversation.
+   New code and documentation should say turn, not query.
 
-     Binary entry        -main  (invoked by `clojure -M:vis`)"
+   Primary surfaces:
+     - Conversation / turn runtime: create!, send!, turn!, by-id,
+       by-channel, env-for, close!, delete!, set-title!.
+     - Environment runtime: create-environment, dispose-environment!,
+       get-router, rebuild-router!, resolve-effective-model.
+     - Extension contract: extension, symbol, value, render-prompt,
+       register-extension!, registered-extensions, extension docs,
+       provenance, discovery, reload.
+     - Registries: command, channel, provider, and backend registration
+       helpers for host-owned and embedded use.
+     - Persistence facade: db-* functions and connection helpers. The
+       implementation namespace / extension slot are spelled
+       `persistance`; human-facing language is Persistence.
+     - Prompt / SCI / formatting / cancellation / notifications /
+       doctor helpers shared by channels and extensions.
+
+   Not every export is equally high-level. `send!`, extension maps,
+   registry builders, read-side persistence helpers, and Markdown export
+   are the preferred integration surface. Low-level SCI, parse-repair,
+   dispatcher, and write-side db helpers are exported because this is a
+   host facade, but ordinary extensions should avoid depending on them
+   unless they are implementing host-level behavior.
+
+   Binary entry: -main (invoked by `clojure -M:vis`)."
   (:refer-clojure :exclude [symbol])
   (:require
    [com.blockether.vis.internal.cancellation :as cancellation]
@@ -169,6 +149,7 @@
 (def deregister-channel!   registry/deregister-channel!)
 (def registered-channels   registry/registered-channels)
 (def channel-by-id         registry/channel-by-id)
+(def by-cmd                registry/by-cmd)
 
 ;; =============================================================================
 ;; Provider registry
@@ -182,7 +163,10 @@
 (def all-provider-limits   provider-limits/all-provider-limits)
 
 ;; =============================================================================
-;; Persistance facade
+;; Persistence facade
+;;
+;; The namespace and extension slot are spelled `persistance`; public
+;; prose uses the correct domain word: Persistence.
 ;; =============================================================================
 (def ds                                  persistance/ds)
 (def now-ms                              persistance/now-ms)
@@ -216,7 +200,7 @@
 (def db-list-conversation-states            persistance/db-list-conversation-states)
 (def db-latest-conversation-state-id        persistance/db-latest-conversation-state-id)
 
-;; Query lifecycle
+;; Turn lifecycle
 (def db-store-conversation-turn!                        persistance/db-store-conversation-turn!)
 (def db-update-conversation-turn!                       persistance/db-update-conversation-turn!)
 (def db-list-conversation-turns-by-status           persistance/db-list-conversation-turns-by-status)
@@ -230,10 +214,10 @@
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
 
-;; Var registry & history
+;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
 (def db-var-history                      persistance/db-var-history)
-(def db-query-history                    persistance/db-query-history)
+(def db-turn-history                     persistance/db-query-history)
 
 ;; Dependencies
 (def db-store-dependency!                   persistance/db-store-dependency!)
@@ -243,7 +227,7 @@
 (def db-restore-blocks              persistance/db-restore-blocks)
 
 ;; Process-restart cleanup
-(def db-sweep-orphaned-running-queries!     persistance/db-sweep-orphaned-running-queries!)
+(def db-sweep-orphaned-running-turns!       persistance/db-sweep-orphaned-running-queries!)
 
 ;; =============================================================================
 ;; Extension contract
@@ -332,9 +316,9 @@
 (def bind-and-bump!     env/bind-and-bump!)
 
 ;; =============================================================================
-;; Iteration loop / query / environment / conversations
+;; Turn runtime / iteration loop / environment / conversations
 ;; =============================================================================
-(def query!                       lp/query!)
+(def turn!                        lp/turn!)
 (def ask-code!                    lp/ask-code!)
 (def get-router                   lp/get-router)
 (def reset-router!                lp/reset-router!)

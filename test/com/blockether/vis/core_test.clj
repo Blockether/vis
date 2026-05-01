@@ -4,7 +4,7 @@
 
    One src ns, one test ns. Sections below mirror the src reading order
    (errors, cancellation, discovery, CLI, channels, providers, storage,
-   extension, config, sci sandbox, single iteration, query engine,
+   extension, config, sci sandbox, single iteration, turn engine,
    environment lifecycle, conversations, db handler, agent, CLI commands)
    so a failing test points at the SECTION whose code broke."
   (:require
@@ -12,7 +12,7 @@
    [clojure.java.shell :as sh]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.tool-result :as tool-result]
+   [com.blockether.vis.internal.extension :as ext]
    [lazytest.core :refer [defdescribe expect it throws?]]
    [sci.core :as sci]))
 
@@ -60,8 +60,8 @@
     (let [s (vis/symbol 'cat (fn [& _] nil)
               {:doc "Read a file."
                :arglists '([path])
-               :result-spec ::tool-result/tool-result})]
-      (expect (= ::tool-result/tool-result (:ext.symbol/result-spec s)))))
+               :result-spec ::ext/tool-result})]
+      (expect (= ::ext/tool-result (:ext.symbol/result-spec s)))))
 
   (it "extension/symbol carries optional :on-parse-error-fn"
     (let [hook (fn [_] "repaired")
@@ -94,7 +94,7 @@
     (let [sym (vis/symbol 'bad (fn [& _] :not-a-tool-result)
                 {:doc "bad"
                  :arglists '([])
-                 :result-spec ::tool-result/tool-result})
+                 :result-spec ::ext/tool-result})
           ext (vis/extension {:ext/namespace 'com.acme.ext.bad
                               :ext/doc "bad"
                               :ext/kind "filesystem"
@@ -106,12 +106,12 @@
 
   (it "accepts a function result that satisfies :result-spec and stamps extension provenance"
     (let [sym (vis/symbol 'good (fn [& _]
-                                  (tool-result/success {:result true
-                                                        :provenance {:op :demo}
-                                                        :markdown "ok"}))
+                                  (ext/success {:result true
+                                                :provenance {:op :demo}
+                                                :markdown "ok"}))
                 {:doc "good"
                  :arglists '([])
-                 :result-spec ::tool-result/tool-result})
+                 :result-spec ::ext/tool-result})
           ext (vis/extension {:ext/namespace 'com.acme.ext.good
                               :ext/doc "good"
                               :ext/kind "filesystem"
@@ -141,7 +141,17 @@
 
   (it "re-exports the config path on the public vis.core surface"
     (expect (= (str (System/getProperty "user.home") "/.vis/config.edn")
-              vis/config-path))))
+              vis/config-path)))
+
+  (it "exposes turn-language names on the public vis.core surface"
+    (expect (ifn? vis/by-cmd))
+    (expect (ifn? vis/turn!))
+    (expect (ifn? vis/db-turn-history))
+    (expect (ifn? vis/db-sweep-orphaned-running-turns!))
+    (expect (nil? (ns-resolve 'com.blockether.vis.core 'query!)))
+    (expect (nil? (ns-resolve 'com.blockether.vis.core 'db-query-history)))
+    (expect (nil? (ns-resolve 'com.blockether.vis.core
+                    'db-sweep-orphaned-running-queries!)))))
 
 ;; =============================================================================
 ;; try-rescue-parse-error

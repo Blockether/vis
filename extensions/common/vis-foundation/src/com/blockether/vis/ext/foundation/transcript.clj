@@ -40,7 +40,11 @@
             :provider :model :thinking :error
             :tokens :cost-usd
             :answer-form-idx :returned-empty-blocks?
-            :llm-system-prompt :llm-user-prompt :metadata
+            :llm-system-prompt :llm-user-prompt
+            :llm-raw-response-preview :llm-raw-response-length
+            :llm-raw-response-sha256
+            :llm-selected-block-count :llm-selected-block-langs
+            :metadata
             :vars
             [{:name :code :value :version}]
             :blocks
@@ -49,11 +53,10 @@
               :timeout? :repaired?}]}]}]}
 
    The Markdown renderer renders thinking, iteration-level errors,
-   vars, the per-block forensic dump, and the final answer text.
-   `:llm-system-prompt` and `:llm-user-prompt` are intentionally NOT
-   rendered by default — they're multi-KB × N iterations and would
-   blow up the file; they live in DATA so programmatic readers can
-   opt in (e.g. `(:llm-system-prompt (first (:iterations turn)))`)."
+   vars, the per-block forensic dump, final answer text, plus a compact
+   raw-response diagnostics section. Full prompts stay in DATA only so
+   programmatic readers can opt in without every report ballooning
+   (e.g. `(:llm-system-prompt (first (:iterations turn)))`)."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis])
@@ -368,6 +371,69 @@
           (reduce + 0 (map #(count (str (:content %))) messages)) " chars total)")
         body))))
 
+(defn- raw-diagnostic-rows
+  "Flatten transcript turns/iterations into compact raw-response
+   diagnostic rows. Rows exist only when the iteration has persisted
+   raw-response or selected-block forensic data. This is presentation
+   support for `v/report`; `v/inspect` builds its public convenience
+   view from the same underlying transcript fields."
+  [turns]
+  (vec
+    (mapcat (fn [turn]
+              (keep (fn [iter]
+                      (when (or (some? (:llm-raw-response-preview iter))
+                              (some? (:llm-raw-response-length iter))
+                              (some? (:llm-raw-response-sha256 iter))
+                              (some? (:llm-selected-block-count iter))
+                              (seq (:llm-selected-block-langs iter)))
+                        {:turn-id     (:id turn)
+                         :iteration   (:position iter)
+                         :status      (:status iter)
+                         :raw-preview (:llm-raw-response-preview iter)
+                         :raw-length  (:llm-raw-response-length iter)
+                         :raw-sha256  (:llm-raw-response-sha256 iter)
+                         :block-count (:llm-selected-block-count iter)
+                         :block-langs (:llm-selected-block-langs iter)}))
+                (:iterations turn)))
+      turns)))
+
+(defn- sha-prefix
+  [s]
+  (when (not (str/blank? (str s)))
+    (truncate s 12)))
+
+(defn- render-raw-diagnostic-row
+  [{:keys [turn-id iteration status raw-length raw-sha256 block-count block-langs]}]
+  (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "—")
+    " | " (or raw-length "—")
+    " | `" (or (sha-prefix raw-sha256) "—") "`"
+    " | " (or block-count "—")
+    " | " (if (seq block-langs) (str/join ", " block-langs) "—")
+    " |\n"))
+
+(defn- render-raw-diagnostic-details
+  [{:keys [turn-id iteration raw-preview raw-length]}]
+  (render-collapsible
+    (str "Raw LLM response preview for turn " turn-id
+      " / iteration " iteration
+      (when raw-length (str " (" raw-length " chars total)")))
+    (render-fenced "text" raw-preview)))
+
+(defn- render-raw-diagnostics
+  "Compact raw LLM response diagnostics for the whole report. The
+   table is always small; bounded previews live in collapsed details
+   blocks so `v/report` answers the first diagnostic question without
+   forcing users into logs or SQLite."
+  [turns]
+  (let [rows (raw-diagnostic-rows turns)]
+    (when (seq rows)
+      (str "## Raw LLM response diagnostics\n\n"
+        "| Turn | Iter | Status | Raw chars | SHA-256 | Blocks | Langs |\n"
+        "|---|---:|---|---:|---|---:|---|\n"
+        (apply str (map render-raw-diagnostic-row rows))
+        "\n"
+        (apply str (keep render-raw-diagnostic-details rows))))))
+
 (defn- render-iteration-section [iter prev-iter]
   (let [pos     (:position iter)
         status  (or (some-> (:status iter) name) "—")
@@ -453,6 +519,7 @@
    `transcript`'s canonical data shape. Returns a string."
   [data]
   (str (render-header data)
+    (render-raw-diagnostics (:turns data))
     "## Turn-by-turn breakdown\n\n"
     (apply str (map render-turn-block (:turns data)))))
 

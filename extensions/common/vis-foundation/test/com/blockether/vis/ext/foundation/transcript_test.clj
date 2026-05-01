@@ -47,6 +47,8 @@
                                 :llm-model    "gpt-4o"
                                 :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
                                                {:role "user"   :content "USER_TURN_TEXT_FIXTURE"}]
+                                :llm-raw-response "```clojure\n(+ 1 1)\n```"
+                                :llm-selected-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cost-usd 0.0042})
     (vis/db-update-conversation-turn! s q1 {:status :done :answer "42"})
@@ -202,6 +204,20 @@
             (expect (str/includes? (:code (first vars)) "(def x 42)")))
           ;; The final answer surfaces on the turn.
           (expect (= "42" (:answer turn))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "surfaces raw LLM response diagnostics on iteration data"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid  (seed! s)
+              iter (-> (transcript/transcript s cid)
+                     :turns first :iterations first)]
+          (expect (= "```clojure\n(+ 1 1)\n```" (:llm-raw-response-preview iter)))
+          (expect (= 22 (:llm-raw-response-length iter)))
+          (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
+                    (:llm-raw-response-sha256 iter)))
+          (expect (= 1 (:llm-selected-block-count iter)))
+          (expect (= ["clojure"] (:llm-selected-block-langs iter))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "surfaces :returned-empty-blocks? as a typed boolean"

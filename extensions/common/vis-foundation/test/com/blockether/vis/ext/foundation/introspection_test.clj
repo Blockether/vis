@@ -410,6 +410,59 @@
         (expect (vector? (:conversation-forks data)))
         (expect (map? (:turn-retries data))))))
 
+  (it "exposes raw LLM response diagnostics as a top-level inspect view"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          raw-response "provider prelude\n```clojure\n(+ 1 2)\n```"]
+      (vis/db-store-iteration! s
+        {:conversation-turn-id conversation-turn-id
+         :blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]
+         :duration-ms 100
+         :llm-provider :test-provider
+         :llm-model "test-model"
+         :llm-raw-response raw-response
+         :llm-selected-blocks [{:lang "clojure" :source "(+ 1 2)"}]})
+      (let [data ((private-fn "foundation-inspect") (env s conversation-id))
+            diagnostic (first (:llm-diagnostics data))
+            transcript-iter (get-in data [:transcript :turns 0 :iterations 0])]
+        (expect (= 1 (count (:llm-diagnostics data))))
+        (expect (= conversation-turn-id (:turn-id diagnostic)))
+        (expect (= "what's the plan?" (:goal diagnostic)))
+        (expect (= (:id transcript-iter) (:iteration-id diagnostic)))
+        (expect (= 0 (:iteration diagnostic)))
+        (expect (= :done (:status diagnostic)))
+        (expect (= :test-provider (:provider diagnostic)))
+        (expect (= "test-model" (:model diagnostic)))
+        (expect (= raw-response (get-in diagnostic [:raw-response :preview])))
+        (expect (= (count raw-response) (get-in diagnostic [:raw-response :length])))
+        (expect (= (:llm-raw-response-sha256 transcript-iter)
+                  (get-in diagnostic [:raw-response :sha256])))
+        (expect (= 1 (get-in diagnostic [:raw-response :block-count])))
+        (expect (= ["clojure"] (get-in diagnostic [:raw-response :block-langs]))))))
+
+  (it "renders raw LLM response diagnostics in the Markdown report"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          raw-response "provider prelude\n```clojure\n(+ 1 2)\n```"]
+      (vis/db-store-iteration! s
+        {:conversation-turn-id conversation-turn-id
+         :blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]
+         :duration-ms 100
+         :llm-provider :test-provider
+         :llm-model "test-model"
+         :llm-raw-response raw-response
+         :llm-selected-blocks [{:lang "clojure" :source "(+ 1 2)"}]})
+      (let [out ((private-fn "foundation-report") (env s conversation-id))]
+        (expect (string? out))
+        (expect (str/includes? out (str "conversation `" conversation-id "`")))
+        (expect (str/includes? out "Goal:** what's the plan?"))
+        (expect (str/includes? out "Raw LLM response diagnostics"))
+        (expect (str/includes? out "Raw chars"))
+        (expect (str/includes? out (str "| `" conversation-turn-id "` | 0 | done |")))
+        (expect (str/includes? out (str "| " (count raw-response) " |")))
+        (expect (str/includes? out "| 1 | clojure |"))
+        (expect (str/includes? out raw-response)))))
+
   (it "renders Markdown from the same inspected transcript data"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)]

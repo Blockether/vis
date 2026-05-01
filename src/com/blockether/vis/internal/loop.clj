@@ -388,8 +388,15 @@
 (defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
 
+(defn- markdown-fence-line? [line]
+  (boolean (re-matches MARKDOWN_FENCE_RE (str line))))
+
 (defn- markdown-fence-block? [expr]
-  (boolean (re-matches MARKDOWN_FENCE_RE (str expr))))
+  (let [lines (->> (str/split-lines (str expr))
+                (map str/trim)
+                (remove str/blank?))]
+    (boolean (and (seq lines)
+               (every? markdown-fence-line? lines)))))
 
 (defn- comment-only-block? [^String expr]
   (try
@@ -413,7 +420,7 @@
       (re-find #"#\([^)]*#\(" s)
       "Nested #() is illegal in Clojure. Rewrite inner #() as (fn [...] ...)"
 
-      (re-matches MARKDOWN_FENCE_RE s)
+      (markdown-fence-block? s)
       "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms inside the code block."
 
       :else nil)))
@@ -577,7 +584,12 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private INFRASTRUCTURE_ERROR_TYPES
-  #{:svar.llm/all-providers-exhausted
+  ;; These are provider/runtime failures, not model strategy failures.
+  ;; svar already performs its own transport retry/fallback policy before
+  ;; surfacing them to Vis, so feeding them back into the RLM only burns
+  ;; visible iterations and cannot help the model self-correct.
+  #{:svar.core/http-error
+    :svar.llm/all-providers-exhausted
     :svar.llm/circuit-open
     :svar.llm/provider-exhausted})
 
@@ -608,20 +620,20 @@
 
 (defn handle-iteration-exception!
   "Error path for the main-loop try/catch around `run-iteration`.
-   Infrastructure failures re-throw; others return `{::iteration-error …}`."
+   Infrastructure failures are terminal for the turn; model/format/code
+   failures still return `{::iteration-error …}` for RLM self-correction."
   [^Throwable e ctx]
   (let [ex-data-map (ex-data e)
-        iteration (:iteration ctx)]
-    (if (infrastructure-error? ex-data-map)
-      (do (tel/log! {:level :error
-                     :data  (assoc (format-exception-short e) :iteration iteration)}
-            "Provider infrastructure error — aborting iteration loop")
-        (throw e))
-      (let [iteration-error-data (exception->iteration-error-data e ctx)]
-        (tel/log! {:level :warn
-                   :data (assoc (format-exception-short e) :iteration iteration)}
-          "RLM iteration failed, feeding error to LLM")
-        {::iteration-error iteration-error-data}))))
+        iteration (:iteration ctx)
+        fatal? (infrastructure-error? ex-data-map)
+        iteration-error-data (exception->iteration-error-data e ctx)]
+    (tel/log! {:level (if fatal? :error :warn)
+               :data  (assoc (format-exception-short e) :iteration iteration)}
+      (if fatal?
+        "Provider infrastructure error — failing turn without RLM restarts"
+        "RLM iteration failed, feeding error to LLM"))
+    (cond-> {::iteration-error iteration-error-data}
+      fatal? (assoc ::fatal-iteration-error true))))
 
 ;; ---------------------------------------------------------------------------
 ;; get-locals (read sandbox vars)
@@ -971,7 +983,9 @@
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :silent-form-idxs silent-form-idxs
-             :llm-messages messages :llm-provider provider :llm-model model-name}
+             :llm-messages messages :llm-provider provider :llm-model model-name
+             :llm-raw-response (:raw ask-result)
+             :llm-selected-blocks (:blocks ask-result)}
             {:thinking thinking
              :blocks (strip-noop-blocks blocks)
              :final-result {:final?           true
@@ -987,7 +1001,9 @@
              :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :silent-form-idxs silent-form-idxs
-             :llm-messages messages :llm-provider provider :llm-model model-name}))
+             :llm-messages messages :llm-provider provider :llm-model model-name
+             :llm-raw-response (:raw ask-result)
+             :llm-selected-blocks (:blocks ask-result)}))
           ;; Normal path
         {:thinking thinking
          :blocks (strip-noop-blocks blocks)
@@ -996,7 +1012,9 @@
          :llm-messages messages
          :llm-provider (:provider resolved-model)
          :silent-form-idxs silent-form-idxs
-         :llm-model    (some-> (:name resolved-model) str)}))))
+         :llm-model    (some-> (:name resolved-model) str)
+         :llm-raw-response (:raw ask-result)
+         :llm-selected-blocks (:blocks ask-result)}))))
 
 ;; =============================================================================
 ;; Multi-iteration query engine
@@ -1670,11 +1688,32 @@
                                :duration-ms     0
                                :tokens          (:tokens   tc)
                                :cost-usd        (:cost-usd tc)})))
-                        (recur (assoc loop-state
-                                 :iteration (inc iteration)
-                                 :messages (conj messages {:role "user" :content error-feedback})
-                                 :trace (conj trace trace-entry)
-                                 :consecutive-errors (inc consecutive-errors) :restarts restarts))))
+                        (if (::fatal-iteration-error iteration-result)
+                          (let [trace' (conj trace trace-entry)
+                                errors-block (recent-errors-block trace' 3)
+                                fallback (str "Provider call failed before the model could run.\n\n"
+                                           errors-block)
+                                result (merge {:answer fallback
+                                               :status :error
+                                               :status-id (status->id :error)
+                                               :trace trace'
+                                               :iteration-count (inc iteration)}
+                                         (finalize-cost))]
+                            (lifecycle/emit! lifecycle-listeners :turn-end
+                              (merge turn-base-payload
+                                {:status          :error
+                                 :iteration       iteration
+                                 :iteration-count (inc iteration)
+                                 :tokens          (:tokens result)
+                                 :cost-usd        (:cost result)
+                                 :answer          fallback
+                                 :error           iteration-error-data}))
+                            result)
+                          (recur (assoc loop-state
+                                   :iteration (inc iteration)
+                                   :messages (conj messages {:role "user" :content error-feedback})
+                                   :trace (conj trace trace-entry)
+                                   :consecutive-errors (inc consecutive-errors) :restarts restarts)))))
 
                     (let [_ (accumulate-usage! (:api-usage iteration-result))
                           {:keys [thinking blocks final-result silent-form-idxs]} iteration-result
@@ -1732,6 +1771,8 @@
                                                     :llm-messages (:llm-messages iteration-result)
                                                     :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                                     :llm-model (:llm-model iteration-result)
+                                                    :llm-raw-response (:llm-raw-response iteration-result)
+                                                    :llm-selected-blocks (:llm-selected-blocks iteration-result)
                                                     :metadata (iteration-metadata iteration)}
                                              tc (assoc :tokens (:tokens tc)
                                                   :cost-usd (:cost-usd tc)))))
@@ -2214,6 +2255,14 @@
                 :conversation-title-atom (:conversation-title-atom environment)
                 :user-query              query-str}))
            result))))))
+
+(defn turn!
+  "Runs one conversation turn on an RLM environment using iterative LLM
+   code evaluation. A turn is one user ask plus assistant answer."
+  ([environment messages]
+   (turn! environment messages {}))
+  ([environment messages opts]
+   (query! environment messages opts)))
 
 ;; =============================================================================
 ;; Environment lifecycle + system prompt

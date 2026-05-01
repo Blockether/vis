@@ -2,7 +2,7 @@
   "Contract tests for the tool-result envelope: required keys,
    success/failure shape, and sanitized trace normalization."
   (:require
-   [com.blockether.vis.internal.tool-result :as tr]
+   [com.blockether.vis.internal.extension :as tr]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe tool-result-contract-test

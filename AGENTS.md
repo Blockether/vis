@@ -7,7 +7,9 @@
 
 Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
 
-- Start with `bin/dev` or `clojure -M:dev` (default port `7888`; override with `NREPL_PORT=<port>`).
+- Before starting a dev JVM, check for an existing nREPL with `clj-nrepl-eval --discover-ports`.
+- If a Vis nREPL is already running, reuse that port; do **not** start a second nREPL/JVM unless the existing one is unusable or belongs to another project.
+- Start with `bin/dev` or `clojure -M:dev` only when no reusable nREPL is running (default port `7888`; override with `NREPL_PORT=<port>`).
 - Dev launcher writes `.nrepl-port`; do not commit that file.
 - Discover port with `clj-nrepl-eval --discover-ports`.
 - Eval with `clj-nrepl-eval -p <port> "<clojure-code>"`.
@@ -122,6 +124,10 @@ Do this:
 `Ctrl+Y` sends `SIGTSTP` (or `DSUSP` on macOS) -> **suspends entire process**, drops the user to a stopped-job shell prompt. The kernel acts before Lanterna can intercept. **Leave `Ctrl+Y` unbound everywhere** — clipboard, yank, anything else. Reject any PR that introduces a `Ctrl+Y` binding in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`.
 
 Use the copy dialog (`Ctrl+K` → Copy) for clipboard ops.
+
+### Avoid AWT entirely
+
+Do **not** introduce AWT usage in Vis code. Avoid `java.awt.*`, `javax.swing.*`, desktop integrations, system tray APIs, clipboard access through AWT, and anything that requires a graphical JVM. Vis must stay safe in headless terminals, CI, SSH sessions, and TUI-only environments. If a feature appears to need AWT, design a non-AWT terminal/OS-specific adapter instead.
 
 ### HoneySQL is the only SQL surface
 

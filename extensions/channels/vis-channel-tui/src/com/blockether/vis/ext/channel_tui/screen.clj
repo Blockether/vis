@@ -476,10 +476,10 @@
              (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                (state/dispatch [:set-config c]))))
 
-      ;; Sweep orphaned running queries from previous crashes so the
-      ;; rebuilt history shows resolved rows only — no raw query text
+      ;; Sweep orphaned running turns from previous crashes so the
+      ;; rebuilt history shows resolved rows only — no raw turn text
       ;; from a half-completed turn.
-         (try (vis/db-sweep-orphaned-running-queries!) (catch Throwable _ nil))
+         (try (vis/db-sweep-orphaned-running-turns!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
       ;; The --conversation-id case was already validated above (before
