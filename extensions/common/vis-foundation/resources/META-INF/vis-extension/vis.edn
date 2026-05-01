@@ -4,14 +4,14 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, three cooperating surfaces \u2014 introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg / edit / write), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt. Replaces the legacy three-package split (vis-common-foundation + vis-common-editing + vis-common-environment) plus the dropped `fs/` alias."
+    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, three cooperating surfaces \u2014 introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt. Replaces the legacy three-package split (vis-common-foundation + vis-common-editing + vis-common-environment) plus the dropped standalone `fs/` alias."
     :content
     "# vis-foundation
 
 Pkg: `com.blockether/vis-foundation`. Src: `extensions/common/vis-foundation/`.
 Canonical: inlined under `[v :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(v/extension-readme 'vis)`.
 
-ONE alias `v/` bundles everything the agent needs to read its own state, work the filesystem, and see the host environment. Replaces three legacy packages (`vis-common-foundation`, `vis-common-editing`, `vis-common-environment`) and drops the `fs/` alias entirely \u2014 the editing tools resolve every path internally against `(fs/cwd)` already, so the model never had to do path math directly.
+ONE alias `v/` bundles everything the agent needs to read its own state, work the filesystem, and see the host environment. Replaces three legacy packages (`vis-common-foundation`, `vis-common-editing`, `vis-common-environment`) and drops the standalone `fs/` alias while inlining the useful babashka.fs surface back under `v/` as thin cwd-safe wrappers.
 
 ## Sections
 
@@ -37,9 +37,9 @@ Pure reads off the same DB tables the projection layer uses; failures return nil
 (v/extension-readme ext-ref)    ; README :content shortcut
 ```
 
-### File I/O (read + write)
+### File I/O (structured helpers + babashka.fs wrappers)
 
-Every return value is a Clojure map; no prose embedded in tool output.
+Structured helpers still return Clojure maps; the thin babashka.fs wrappers return ordinary Clojure values like strings, booleans, and line vectors.
 
 ```clojure
 (v/cat path)                    ; -> {:path :offset :total-lines :truncated-by :lines}
@@ -48,10 +48,24 @@ Every return value is a Clojure map; no prose embedded in tool output.
 (v/ls path opts)                ; opts {:depth :hidden? :respect-gitignore?}
 (v/rg [\"a\" \"b\"] path)       ; -> {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}
                                   ; patterns = non-empty vec of LITERAL substrings (PCRE metacharacters auto-escaped)
-                                  ; for genuine regex: (re-seq #\"...\" (str/join \"\\n\" (:lines (v/cat path))))
-(v/edit path s r)               ; -> {:path :bytes-before :bytes-after}; replace FIRST `s`->`r`; `s` must be unique
-(v/edit path s r {:line N})     ; disambiguate by line
-(v/write path content)          ; -> {:path :bytes}; overwrite or create
+                                  ; for genuine regex: (re-seq #\"...\" (str/join \"\\n\" (v/read-all-lines path)))
+
+(v/read-all-lines path)         ; -> [\"line\" ...]
+(v/write-lines path lines)      ; -> \"path\"
+(v/update-file path f & xs)     ; -> new-string
+(v/create-dirs path)            ; -> \"path\"
+(v/list-dir path)               ; -> [\"child\" ...]
+(v/glob root pattern)           ; -> [\"match\" ...]
+(v/copy src dest)               ; -> \"dest\"
+(v/move src dest)               ; -> \"dest\"
+(v/delete path)                 ; -> true
+(v/delete-if-exists path)       ; -> true | false
+(v/exists? path)                ; -> true | false
+(v/cwd)                         ; -> \"/abs/path\"
+(v/parent path)                 ; -> \"dir\" | nil
+(v/file-name path)              ; -> \"file.ext\"
+(v/extension path)              ; -> \"ext\"
+(v/relativize from to)          ; -> \"relative/path\"
 ```
 
 For structured Clojure edits use the sibling `vis-language-clojure` extension (alias `clj/`).
@@ -73,7 +87,7 @@ The `<environment>` block in the system prompt (cwd / user / platform / shell / 
 
 ## Why one alias?
 
-Pre-merge the agent had to context-switch between four aliases (`foundation/`, `v/`, `fs/`, `environment/`) to compose a single thought. The aliases were artifacts of separate jars, not separate concerns from the model's POV. Collapsing to `v/` keeps every primitive one short prefix away \u2014 the model's iteration code reads more like prose, less like a multi-namespace boundary."
+Pre-merge the agent had to context-switch between four aliases (`foundation/`, `v/`, `fs/`, `environment/`) to compose a single thought. The aliases were artifacts of separate jars, not separate concerns from the model's POV. Collapsing to `v/` keeps every primitive one short prefix away — now including the useful babashka.fs file surface without reviving a second alias — so the model's iteration code reads more like prose, less like a multi-namespace boundary."
     :links
     [{:url "https://arxiv.org/abs/2512.24601"
       :context "Recursive Language Models paper -- design vis is built on"}

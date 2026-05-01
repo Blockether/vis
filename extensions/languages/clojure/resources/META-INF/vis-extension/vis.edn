@@ -14,7 +14,7 @@ Single alias: `z/` — entry (`z/zedit`) + the full `rewrite-clj.zip` API.
 
 ## Why structured edits
 
-Plain text edits (`v/edit`) lose to whitespace drift / nested forms. Structured edits via `rewrite-clj.zip` preserve formatting/comments and reason about source as a tree. Clojure-only -> lives here, not on the generic editing surface.
+Plain text file rewrites (`v/update-file`, `v/write-lines`) lose to whitespace drift / nested forms. Structured edits via `rewrite-clj.zip` preserve formatting/comments and reason about source as a tree. Clojure-only -> lives here, not on the generic editing surface.
 
 ## z/zedit
 
@@ -89,17 +89,17 @@ Rename every occurrence:
 ## Use when
 
 - Editing `.clj` `.cljc` `.cljs` `.edn` and node locatable by value or structural path.
-- `v/edit` would need fragile whitespace/quote anchoring.
+- `v/update-file` or line-vector rewrites would need fragile whitespace/quote anchoring.
 - Adding require / refactoring let-binding / renaming def at structural granularity.
 
 ## Use other tools when
 
-- Not Clojure source -> `v/edit` or `v/write`.
-- Single locally-unique line -> `v/edit` faster.
-- Read only -> `v/cat`."
+- Not Clojure source -> `v/update-file` / `v/write-lines` / other `v/` filesystem wrappers.
+- Small whole-file text rewrite -> `v/update-file` or `v/write-lines` is fine.
+- Read only -> `v/cat` or `v/read-all-lines`."
     :links
     [{:to-id vis :to-doc "README.md"
-      :context "Generic editing — v/cat, v/edit, v/write, v/rg"}
+      :context "Generic filesystem surface — v/cat, v/read-all-lines, v/write-lines, v/update-file, v/rg"}
      {:file "extensions/languages/clojure/src/com/blockether/v/ext/lang_clojure/zedit.clj"
       :context "Source: z/zedit"}
      {:file "extensions/languages/clojure/src/com/blockether/v/ext/lang_clojure/core.clj"

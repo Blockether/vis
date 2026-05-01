@@ -51,9 +51,16 @@
                                            {})]
       (expect (= "gpt-5.5" (:model body)))
       (expect (= "You are a helpful assistant." (:instructions body)))
+      (expect (= "low" (get-in body [:text :verbosity])))
       (expect (= [{:role "user"
                    :content [{:type "input_text" :text "2+2"}]}]
                 (:input body)))))
+
+  (it "honors caller-specified Codex verbosity"
+    (let [body (#'codex/codex-request-body [{:role "user" :content "2+2"}]
+                                           "gpt-5.5"
+                                           {:text {:verbosity :high}})]
+      (expect (= "high" (get-in body [:text :verbosity])))))
 
   (it "extracts reasoning from response.completed when no streaming reasoning delta arrived"
     (let [content            (StringBuilder.)

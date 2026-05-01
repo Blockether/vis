@@ -350,19 +350,17 @@
 
 (defn- banned-slurp
   "Sandbox `slurp` override that rejects every call. Agent-facing file
-   reads go through `v/cat` exclusively — line-numbered output, path
-   sanity, size cap, offset/limit paging, and var-source tracking all
-   live there. `slurp` returns raw bytes with none of that, making it a
+   reads go through `v/cat` or the thin cwd-safe babashka.fs wrapper
+   `v/read-all-lines`, not raw `slurp`. `slurp` returns raw bytes with
+   no path-policy hint and no opinionated prompt surface, making it a
    cache-coherency footgun: a var bound from `slurp` can't be validated
    against the filesystem the next iteration, so the agent silently
-   trusts stale content. Better to refuse the call and point at
-   `v/cat`."
+   trusts stale content. Better to refuse the call and point at the
+   sanctioned `v/` file surface."
   [& _args]
   (throw (ex-info (str "slurp is banned in the sandbox — use (v/cat \"path\") "
-                    "or (v/cat \"path\" offset limit). "
-                    "v/cat is the only sanctioned file read: line-numbered, "
-                    "size-capped, symlink-safe, and tracked by <var_index> for "
-                    "staleness between iterations.")
+                    "for paginated previews or (v/read-all-lines \"path\") for code-first full-file reads. "
+                    "The sanctioned file surface stays cwd-safe and consistent with the prompt.")
            {:type :tool/banned :tool 'slurp})))
 
 (defn- sandbox-println
@@ -420,10 +418,11 @@
                        're-find safe-re-find
                        're-seq safe-re-seq
                        're-matches safe-re-matches
-                       ;; `slurp` is BANNED. Every file read goes through
-                       ;; `v/cat` so var_index can track mtime/size and
-                       ;; mark cached reads as `valid`/`stale`/`missing`
-                       ;; between iterations. `slurp` bypassed all of that.
+                       ;; `slurp` is BANNED. File reads go through the
+                       ;; sanctioned `v/` filesystem surface (`v/cat` for
+                       ;; paginated previews, `v/read-all-lines` for
+                       ;; code-first full-file reads). `slurp` bypasses the
+                       ;; prompt's path-policy and encourages ad-hoc I/O.
                        'slurp banned-slurp}
         all-bindings (merge EXTRA_BINDINGS base-bindings
                        (or custom-bindings {}))
@@ -645,11 +644,12 @@
                                                   Random java.util.Random}
                                                ;; `slurp` intentionally NOT denied at the SCI level: we
                                                ;; shadow it in sandbox bindings with `banned-slurp`,
-                                               ;; which throws a descriptive ex-info pointing at
-                                               ;; `v/cat`. Keeping it as a sandbox binding (not a
-                                               ;; deny) gives the LLM a useful error message instead of
-                                               ;; SCI's generic "not allowed". `spit` stays denied —
-                                               ;; `write-file` is the audited path that renders diffs.
+                                               ;; which throws a descriptive ex-info pointing at the
+                                               ;; sanctioned `v/` file helpers. Keeping it as a sandbox
+                                               ;; binding (not a deny) gives the LLM a useful error
+                                               ;; message instead of SCI's generic "not allowed".
+                                               ;; `spit` stays denied — `v/write-lines` /
+                                               ;; `v/update-file` are the sanctioned mutation path.
                                                ;;
                                                ;; `require`, `import`, `find-ns` are NOT denied either
                                                ;; (real Clojure reach for namespace discovery); the tool

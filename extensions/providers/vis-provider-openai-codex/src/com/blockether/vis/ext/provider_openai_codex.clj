@@ -503,6 +503,17 @@
       :else
       [{:type text-type :text (str content)}])))
 
+(defn- normalize-codex-verbosity
+  [v]
+  (case (cond
+          (keyword? v) v
+          (string? v)  (keyword (str/lower-case (str/trim v)))
+          :else        nil)
+    :low    "low"
+    :medium "medium"
+    :high   "high"
+    "low"))
+
 (defn- codex-request-body [messages model extra-body]
   (let [system-text (->> messages
                       (filter #(= "system" (:role %)))
@@ -514,12 +525,13 @@
                       (mapv (fn [{:keys [role content]}]
                               {:role    (if (= "assistant" role) "assistant" "user")
                                :content (responses-content-blocks role content)})))
-        effort      (:reasoning_effort extra-body)]
+        effort      (:reasoning_effort extra-body)
+        verbosity   (normalize-codex-verbosity (get-in extra-body [:text :verbosity]))]
     (cond-> {:model  model
              :store  false
              :stream true
              :input  input
-             :text   {:verbosity "low"}
+             :text   {:verbosity verbosity}
              :include ["reasoning.encrypted_content"]}
       true (assoc :instructions (if (str/blank? system-text)
                                   "You are a helpful assistant."
