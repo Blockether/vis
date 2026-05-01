@@ -48,12 +48,14 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 14 (count editing/editing-symbols)))
+    (expect (= 15 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'read-all-lines}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'update-file}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (some #{'bash}
               (map :ext.symbol/sym editing/editing-symbols))))
 
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
@@ -201,7 +203,20 @@
           delete-if-exists (private-fn "delete-if-exists-safe")]
       (expect (true? (exists? path)))
       (expect (true? (delete-if-exists path)))
-      (expect (false? (exists? path))))))
+      (expect (false? (exists? path)))))
+
+  (it "bash runs bounded commands inside the working tree"
+    (let [run-bash (private-fn "run-bash-safe")
+          out      (run-bash "printf '%s' hello && printf '%s' err >&2" {:timeout-ms 5000})]
+      (expect (= 0 (:exit out)))
+      (expect (= "hello" (:stdout out)))
+      (expect (= "err" (:stderr out)))
+      (expect (= "." (:cwd out)))
+      (expect (false? (:timed-out? out)))))
+
+  (it "bash validates cwd through the same safe path guard"
+    (let [run-bash (private-fn "run-bash-safe")]
+      (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."}))))))
 
 (defdescribe tool-envelope-test
   (it "tool wrappers return the required contract keys"

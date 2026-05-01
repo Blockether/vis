@@ -87,7 +87,8 @@
                         "extensions/providers/vis-provider-openai-codex/test"
                         "extensions/providers/vis-provider-zai/test"
                         "extensions/channels/vis-channel-tui/test"
-                        "extensions/common/vis-foundation/test"]
+                        "extensions/common/vis-foundation/test"
+                        "extensions/languages/clojure/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                         com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                         com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
@@ -108,7 +109,8 @@
                         "--dir" "extensions/providers/vis-provider-openai-codex/test"
                         "--dir" "extensions/providers/vis-provider-zai/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
-                        "--dir" "extensions/common/vis-foundation/test"]}
+                        "--dir" "extensions/common/vis-foundation/test"
+                        "--dir" "extensions/languages/clojure/test"]}
 
   :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "benchmarks"}}
           :jvm-opts    ["-Xmx8g"]
@@ -125,6 +127,12 @@
   ;;   clojure -M:dev cli help     # nREPL + run a CLI entry point
   :dev {:extra-paths ["dev" "test"]
         :extra-deps  {nrepl/nrepl {:mvn/version "1.3.1"}}
+        ;; Keep dev nREPL / terminal-tui stderr as quiet as `bin/vis`.
+        ;; Without these flags JDK native-access / Unsafe warnings can
+        ;; corrupt the Lanterna screen before Vis redirects app logs.
+        :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
+                     "--enable-native-access=ALL-UNNAMED"
+                     "--sun-misc-unsafe-memory-access=allow"]
         :main-opts   ["-m" "com.blockether.vis.dev"]}
 
   ;; Microbenchmarks live next to the code they exercise, in

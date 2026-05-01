@@ -487,7 +487,7 @@
 
 (def ^:private symbol-entries
   [(vis/symbol 'h1 h1
-     {:doc "H1: `# text`. Variadic body — nil dropped, seqs spliced, parts concatenated (author owns whitespace)."
+     {:doc "H1: `# text`. Variadic parts concatenate."
       :arglists '([& parts])
       :examples ["(v/h1 \"Patch report\")"
                  "(v/h1 \"Build of \" (v/code \"v1.2.3\"))"]})
@@ -518,13 +518,13 @@
                  "(v/h 2 \"Build of \" (v/code \"v1.2.3\"))"]})
 
    (vis/symbol 'p p
-     {:doc "Paragraph. Joins parts with single space; nil dropped; seqs splice one level (matches v/join / v/lines)."
+     {:doc "Paragraph. Parts join with one space."
       :arglists '([& parts])
       :examples ["(v/p \"Done.\")"
                  "(v/p \"Patched\" n \"files\")"
                  "(v/p \"Status:\" (v/bold \"OK\"))"]})
    (vis/symbol 'bold bold
-     {:doc "Bold span: `**text**`. Variadic — parts concatenated, nil dropped, seqs spliced."
+     {:doc "Bold span: `**text**`."
       :arglists '([& parts])
       :examples ["(v/bold \"important\")"
                  "(v/bold \"build \" (v/code \"v1.2.3\"))"]})
@@ -560,7 +560,7 @@
    ;; need it can discover it via `(symbol-info 'v/summary)`; we
    ;; don't want every answer reaching for collapsible UI.
    (vis/symbol 'summary summary
-     {:doc "Standalone `<summary>…</summary>` tag for use inside (v/details …). Variadic — parts concatenated. v/details lifts it to the canonical first-child slot regardless of arg position."
+     {:doc "`<summary>…</summary>` for `v/details`."
       :arglists '([& parts])
       :examples ["(v/summary \"Logs\")"
                  "(v/summary (v/bold \"Logs\") \" (\" (v/code \"42\") \")\")"
@@ -571,7 +571,7 @@
       :arglists '([& parts])
       :examples ["(v/kbd \"Ctrl+K\")"]})
    (vis/symbol 'link link
-     {:doc "Hyperlink: `[text](url)`. 3-arg adds tooltip title attr. TUI + Telegram render as clickable wherever the surface supports it."
+     {:doc "Link: `[text](url)`. 3-arg adds title."
       :arglists '([text url] [text url title])
       :examples ["(v/link \"docs\" \"https://example.com\")"
                  "(v/link \"spec\" \"docs/spec.md\" \"Full spec\")"]})
@@ -581,7 +581,7 @@
       :examples ["(v/image \"diagram\" \"./diagram.png\")"
                  "(v/image \"flow\" \"./flow.png\" \"Iteration flow\")"]})
    (vis/symbol 'file-link file-link
-     {:doc "Cite a workspace file. 1-arg -> `[path](path)`; 2-arg -> `[path:line](path#Lline)` so channels can jump to the exact line. Use for every source-code reference."
+     {:doc "Workspace file link. 2-arg adds line anchor."
       :arglists '([path] [path line])
       :examples ["(v/file-link \"src/main.clj\")"
                  "(v/file-link \"src/main.clj\" 142)"]})
@@ -611,10 +611,7 @@
    (vis/value 'br br
      {:doc "Hard line break suffix (CommonMark trailing-spaces)."})
    (vis/symbol 'details details
-     {:doc (str "Collapsible block: `<details>…</details>`. Variadic: parts splice "
-             "(nil dropped, seqs flattened), body parts blank-line joined. A `<summary>…</summary>` "
-             "part — produced by v/summary or hand-rolled — is lifted to the canonical "
-             "first-child slot regardless of arg position. Plain strings = body; no auto-wrap.")
+     {:doc "Collapsible `<details>…</details>`. `v/summary` becomes first child."
       :arglists '([& parts])
       :examples ["(v/details (v/summary \"Logs\") body)"
                  "(v/details intro snippet (v/summary \"Trace\"))"
@@ -637,13 +634,13 @@
       :examples ["(v/checklist [[\"done\" true] [\"todo\" false]])"]})
 
    (vis/symbol 'table table
-     {:doc "Markdown table. headers = vec of column titles; rows = vec of row vecs. Opts: `{:align [:left :center :right …]}`."
+     {:doc "Markdown table. Opts: `{:align [:left :center :right]}`."
       :arglists '([headers rows] [headers rows opts])
       :examples ["(v/table [\"file\" \"lines\"] [[\"a\" 12] [\"b\" 30]])"
                  "(v/table [\"k\" \"v\"] [[\"x\" 1]] {:align [:left :right]})"]})
 
    (vis/symbol 'join join
-     {:doc "Stitch block pieces with one BLANK line (`\\n\\n`). Use this to compose block helpers for `(answer …)`; do NOT raw-`str` block helpers together unless you insert separators manually."
+     {:doc "Join blocks with blank lines. Use for `(answer …)`."
       :arglists '([& parts])
       :examples ["(v/join (v/h1 \"x\") (v/p \"y\"))"]})
    (vis/symbol 'lines lines
@@ -667,25 +664,15 @@
 (def markdown-prompt
   "Prompt fragment listing the `v/` surface for the iteration prompt."
   (str
-    "`v/` = markdown for (answer …). Pure string builders, no templating.\n"
-    "  Headings   (v/h1 …parts) (v/h2 …parts) (v/h3 …parts) (v/h level …parts)\n"
-    "             ; variadic: (v/h3 \"Build \" (v/code \"v1.2.3\")) just works — nil dropped, seqs spliced, no whitespace inserted.\n"
-    "  Inline     (v/bold …parts | v/strong …) (v/italic … | v/em …) (v/code …) (v/kbd …) (v/strike …)\n"
-    "             ; semantic aliases: v/strong=v/bold, v/em=v/italic, v/quote=v/blockquote.\n"
-    "             ; ALL inline / heading helpers are variadic (nil dropped, seqs spliced, parts concatenated):\n"
-    "             ; (v/bold \"build \" (v/code \"v1.2.3\")) -> **build `v1.2.3`** — author owns whitespace.\n"
-    "  Links      (v/link text url) (v/link text url title)   ; tooltip via title\n"
-    "             (v/image alt url) (v/image alt url title)\n"
-    "             (v/file-link path) (v/file-link path line)  ; CITE source files this way\n"
-    "             (v/anchor text) (v/anchor text slug)         ; same-doc heading link\n"
-    "  Block      (v/p …parts) (v/code-block s lang?) (v/blockquote s) v/hr v/br (v/details …parts)\n"
-    "             ; v/p joins parts with single space; nil dropped; seqs spliced (like v/join / v/lines). For pretty data blocks prefer (pp/pprint-str x) over (with-out-str (pp/pprint x)).\n"
-    "  Lists      (v/li parts…)                  ; single list item: \"- text\"\n"
-    "             (v/ul items) (v/ol items) (v/checklist [[t done?] …])\n"
-    "  Tables     (v/table headers rows) (v/table headers rows {:align [:left :center :right]})\n"
-    "  Compose    (v/join …blocks) (v/lines …lines) (v/section title body) (v/escape s)\n"
-    "Block fns return text WITHOUT trailing newline. Stitch block helpers with (v/join …), feed to (answer …). Do NOT raw-`str` block helpers together unless you insert separators manually.\n"
-    "Cite source via (v/file-link path line) -> TUI jumps to line. (v/link …) for URLs, (v/image alt url) for diagrams. Hand-rolled `[…](…)` drifts from channel conventions; the helpers stay aligned."))
+    "`v/` markdown for (answer …):\n"
+    "  headings: (v/h1 …) (v/h2 …) (v/h3 …) (v/h level …)\n"
+    "  inline:   (v/bold …) (v/italic …) (v/code …) (v/kbd …) (v/strike …)\n"
+    "  links:    (v/link text url) (v/image alt url) (v/file-link path line?) (v/anchor text slug?)\n"
+    "  blocks:   (v/p …) (v/code-block s lang?) (v/blockquote s) v/hr v/br (v/details …)\n"
+    "  lists:    (v/li …) (v/ul items) (v/ol items) (v/checklist items)\n"
+    "  table:    (v/table headers rows opts?)\n"
+    "  compose:  (v/join …blocks) (v/lines …lines) (v/section title body) (v/escape s)\n"
+    "Use `v/join` for block spacing. Cite source with `v/file-link`."))
 
 ;; NOTE: this ns is implementation-only now. The actual sandbox surface
 ;; is registered by `foundation/core.clj`, which re-exports

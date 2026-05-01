@@ -1,5 +1,6 @@
 1. TODO Fix Codex Provider - Alex - reauthenticate etc
 2. TODO Fix Codex limit-fn - Alex
+3. DOING Add bash in foundation - Karol
 3. DOING Fix rendering of the markdown, so the answer is not the two times, or " " empty blocks - Karol 
 4. TODO Fix the diagnostics / timeline - Karol, single FUNCTION that returns data
 5. TODO Harden the SPECs of the provenance and tools, enforce them. Use consistently symbols instead of TOOLS naming - Karol 

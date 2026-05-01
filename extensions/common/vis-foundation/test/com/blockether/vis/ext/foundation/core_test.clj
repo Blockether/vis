@@ -15,6 +15,7 @@
       ;; Existing areas still present.
       (expect (contains? syms 'extensions))
       (expect (contains? syms 'cat))
+      (expect (contains? syms 'bash))
       (expect (contains? syms 'snapshot))
       ;; Markdown builders now live under the same alias.
       (expect (contains? syms 'h1))
