@@ -87,7 +87,34 @@
                       {:originator     "vis-tui"
                        :manual-code-fn (fn [_]
                                          "http://localhost:1455/auth/callback?code=abc&state=state")})))
-          (expect (= "acct_123" (:account-id @saved))))))))
+          (expect (= "acct_123" (:account-id @saved)))))))
+
+  (it "starts a fresh OAuth flow when force is true and credentials already exist"
+    (let [saved (atom nil)]
+      (with-redefs-fn {#'codex/detect-credentials        (constantly {:account-id "acct_old"})
+                       #'codex/create-authorization-flow (fn [_]
+                                                           {:verifier "verifier"
+                                                            :state    "state"
+                                                            :url      "https://auth.openai.com/x"})
+                       #'codex/open-browser!            (constantly true)
+                       #'codex/exchange-authorization-code! (fn [code verifier]
+                                                              (expect (= "abc" code))
+                                                              (expect (= "verifier" verifier))
+                                                              {:access-token  "tok"
+                                                               :refresh-token "ref"
+                                                               :account-id    "acct_new"
+                                                               :expires-at-ms 42})
+                       #'codex/save-auth-file!          (fn [creds]
+                                                          (reset! saved creds)
+                                                          creds)}
+        (fn []
+          (expect (= :ok
+                    (codex/login! (constantly nil)
+                      {:originator     "vis-tui"
+                       :force?         true
+                       :manual-code-fn (fn [_]
+                                         "http://localhost:1455/auth/callback?code=abc&state=state")})))
+          (expect (= "acct_new" (:account-id @saved))))))))
 
 (defdescribe codex-token-test
   (it "returns the header shape svar's native Responses transport needs"
