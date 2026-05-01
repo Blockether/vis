@@ -194,6 +194,25 @@
                                (str label " does not expose a dynamic quota endpoint yet.")
                                (str label " is not authenticated."))}})))
 
+(defn- auth-instruction-lines
+  [plan-tag]
+  (let [{:keys [provider-id label env-keys base-url]} (get PLANS plan-tag)]
+    (vec
+      (concat [""
+               (str "  " label " requires a static API key.")
+               ""
+               "  Two ways to authenticate:"
+               ""
+               (str "    1. Set the env var, then re-run `vis providers auth " (name provider-id) "`:")]
+        (mapv (fn [name*]
+                (str "         export " name* "=<your-zai-api-key>"))
+          env-keys)
+        [""
+         "    2. Add the provider through the TUI (Ctrl+K → Providers)."
+         "       The TUI prompts for the key directly and writes it to the config."
+         ""
+         (str "  Endpoint: " base-url)]))))
+
 (defn- make-auth-fn
   "Interactive auth flow. The runtime invokes this with a single
    `printer-fn` arg (an `(fn [line] ...)` that writes one line of
@@ -234,19 +253,8 @@
         ;; Nothing anywhere → tell the user how to provide one.
         :else
         (do
-          (print! "")
-          (print! (str "  " label " requires a static API key."))
-          (print! "")
-          (print! "  Two ways to authenticate:")
-          (print! "")
-          (print! (str "    1. Set the env var, then re-run `vis providers auth " (name provider-id) "`:"))
-          (doseq [name* env-keys]
-            (print! (str "         export " name* "=<your-zai-api-key>")))
-          (print! "")
-          (print! "    2. Add the provider through the TUI (Ctrl+K → Providers).")
-          (print! "       The TUI prompts for the key directly and writes it to the config.")
-          (print! "")
-          (print! (str "  Endpoint: " base-url))
+          (doseq [line (auth-instruction-lines plan-tag)]
+            (print! line))
           :no-credentials)))))
 
 ;; =============================================================================
@@ -295,10 +303,11 @@
      :provider/label        label
      :provider/status-fn    (make-status-fn plan-tag)
      :provider/logout-fn    (make-logout-fn plan-tag)
-     :provider/detect-fn    (make-detect-fn plan-tag)
-     :provider/auth-fn      (make-auth-fn plan-tag)
-     :provider/get-token-fn (make-get-token-fn plan-tag)
-     :provider/limits-fn    (make-limits-fn plan-tag)}))
+     :provider/detect-fn       (make-detect-fn plan-tag)
+     :provider/auth-fn         (make-auth-fn plan-tag)
+     :provider/auth-prompt-fn  #(auth-instruction-lines plan-tag)
+     :provider/get-token-fn    (make-get-token-fn plan-tag)
+     :provider/limits-fn       (make-limits-fn plan-tag)}))
 
 (vis/register-extension!
   (vis/extension

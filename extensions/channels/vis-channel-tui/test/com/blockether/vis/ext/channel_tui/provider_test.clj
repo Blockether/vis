@@ -69,6 +69,45 @@
       (expect (= [:models :status]
                 (mapv :id (provider/provider-action-items {:id :ollama})))))))
 
+(defdescribe api-key-auth-prompt-test
+  (it "feeds static provider auth guidance into the API-key input dialog"
+    (with-redefs [vis/provider-by-id (constantly {:provider/auth-fn (fn [print!]
+                                                                      (print! "")
+                                                                      (print! "  Z.ai (Coding Plan) requires a static API key.")
+                                                                      (print! "")
+                                                                      (print! "  Endpoint: https://api.z.ai/api/coding/paas/v4")
+                                                                      :no-credentials)})]
+      (expect (= ["  Z.ai (Coding Plan) requires a static API key."
+                  ""
+                  "  Endpoint: https://api.z.ai/api/coding/paas/v4"]
+                (@#'provider/provider-auth-prompt-body {:id :zai-coding})))))
+
+  (it "prefers pure prompt guidance over running the auth flow"
+    (let [auth-called? (atom false)]
+      (with-redefs [vis/provider-by-id (constantly {:provider/auth-prompt-fn (constantly ["static guidance"])
+                                                    :provider/auth-fn (fn [_]
+                                                                        (reset! auth-called? true))})]
+        (expect (= ["static guidance"]
+                  (@#'provider/provider-auth-prompt-body {:id :zai-coding})))
+        (expect (= false @auth-called?)))))
+
+  (it "treats Esc from the API-key prompt as cancel instead of showing guidance afterward"
+    (let [input-args (atom nil)
+          viewer-called? (atom false)]
+      (with-redefs [vis/provider-by-id (constantly {:provider/auth-fn (fn [print!]
+                                                                        (print! "  Z.ai (Coding Plan) requires a static API key.")
+                                                                        :no-credentials)})
+                    dlg/text-input-dialog! (fn [& args]
+                                             (reset! input-args args)
+                                             nil)
+                    dlg/text-viewer-dialog! (fn [& _]
+                                              (reset! viewer-called? true))]
+        (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding})))
+        (let [opts (apply hash-map (drop 3 @input-args))]
+          (expect (= ["  Z.ai (Coding Plan) requires a static API key."]
+                    (:body opts))))
+        (expect (= false @viewer-called?))))))
+
 (defdescribe provider-status-text-test
   (it "renders config path and catalog limits in the provider status dialog"
     (with-redefs [vis/provider-limits (constantly {:provider-id :openai-codex
