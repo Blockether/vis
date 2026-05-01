@@ -12,7 +12,8 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.ext.provider-github-copilot :as copilot])
+            [com.blockether.vis.ext.provider-github-copilot :as copilot]
+            [com.blockether.vis.ext.provider-openai-codex :as codex])
   (:import [com.googlecode.lanterna.input KeyType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
            [java.net URI]
@@ -142,7 +143,7 @@
         (let [{:keys [user-code verification-uri device-code interval expires-in]}
               (start-fn)]
             ;; Show the code to the user
-          (dlg/confirm-dialog! screen "GitHub Copilot — Authenticate"
+          (dlg/confirm-dialog! screen "GitHub Copilot - Authenticate"
             [(str "1. Open:  " verification-uri)
              (str "2. Enter: " user-code)
              ""
@@ -166,10 +167,12 @@
           nil)))))
 
 (defn- codex-oauth-ready!
-  "OpenAI Codex uses the CLI/browser OAuth flow. The TUI does not own
-   stdin, so it does not run the manual-paste fallback here; it only
-   allows adding the provider after `vis auth openai-codex` has stored
-   credentials."
+  "Run OpenAI Codex browser OAuth from the TUI when needed.
+
+   The shared provider flow owns browser launch and token exchange.
+   The TUI supplies a dialog-backed manual collector for the final
+   redirect URL, so the user can finish auth without dropping back to
+   a shell prompt."
   [^TerminalScreen screen]
   (let [provider  (vis/provider-by-id :openai-codex)
         detect-fn (:provider/detect-fn provider)]
@@ -177,13 +180,30 @@
       true
       (do
         (dlg/confirm-dialog! screen "OpenAI Codex"
-          ["OpenAI Codex needs browser OAuth first."
+          ["Vis will start the ChatGPT/Codex browser OAuth flow."
            ""
-           "Run this in a terminal:"
-           "  vis auth openai-codex"
+           "After browser login, copy the final redirect URL from the"
+           "address bar and paste it into the next dialog."
            ""
-           "Then return here and add the provider."])
-        false))))
+           "Fallback if needed:"
+           "  vis auth openai-codex"])
+        (try
+          (let [result (codex/login! (constantly nil)
+                         {:originator     "vis-tui"
+                          :manual-code-fn (fn [_]
+                                            (dlg/text-input-dialog! screen
+                                              "OpenAI Codex"
+                                              "Paste the final browser URL or authorization code:"))})]
+            (when (= result :ok)
+              (dlg/confirm-dialog! screen "OpenAI Codex" "✓ Authenticated!"))
+            true)
+          (catch Exception e
+            (dlg/confirm-dialog! screen "OpenAI Codex"
+              [(str "Auth failed: " (ex-message e))
+               ""
+               "If browser auth still fails here, run:"
+               "  vis auth openai-codex"])
+            false))))))
 
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
@@ -269,7 +289,7 @@
         label   (vis/display-label (:id provider))
         models  (or (:models provider) [])
         model-count (count (or models []))
-        root-name   (or (:name (first models)) "—")
+        root-name   (or (:name (first models)) "--")
         suffix      (if (<= model-count 1)
                       "(1 model)"
                       (str "(+" (dec model-count) " models)"))
@@ -332,13 +352,13 @@
         ;; reads left-to-right at a glance: "after X → then Y".
         subtitle   (cond
                      (and (nil? previous-name) (nil? next-name))
-                     "   only model — no fallback configured"
+                     "   only model -- no fallback configured"
 
                      (nil? previous-name)
                      (str "   → then " next-name)
 
                      (nil? next-name)
-                     (str "   after " previous-name " — last fallback")
+                     (str "   after " previous-name " -- last fallback")
 
                      :else
                      (str "   after " previous-name " → then " next-name))]

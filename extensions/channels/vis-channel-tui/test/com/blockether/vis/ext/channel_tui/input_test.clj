@@ -115,7 +115,12 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \p)) state)))
       (expect (= {:action :continue :state state}
-                (input/handle-key (ctrl-key (Character. \n)) state))))))
+                (input/handle-key (ctrl-key (Character. \n)) state)))))
+
+  (it "@ opens the fuzzy file picker instead of inserting a literal char"
+    (let [state (input/empty-input)]
+      (expect (= {:action :pick-file :state state}
+                (input/handle-key (char-key (Character. \@)) state))))))
 
 (defdescribe bracketed-paste-helpers-test
   (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"
@@ -330,3 +335,18 @@
           (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
       (expect (= 199 (.getColumn (.getPosition ma))))
       (expect (= 49  (.getRow    (.getPosition ma)))))))
+
+(defdescribe file-mention-expand-test
+  (it "replaces inline @mentions via the file-expander helper"
+    (with-redefs [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
+                  (fn [path] (str "<FILE:" path ">"))]
+      (expect (= "see <FILE:src/foo.clj> please"
+                (input/expand-file-mentions "see @src/foo.clj please")))))
+
+  (it "leaves non-matching @text alone"
+    (expect (= "email me at a@b.com"
+              (input/expand-file-mentions "email me at a@b.com"))))
+
+  (it "formats visible mention tokens with a leading @"
+    (expect (= "@src/foo.clj"
+              (input/format-file-mention "src/foo.clj")))))

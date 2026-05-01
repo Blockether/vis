@@ -4,14 +4,14 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, three cooperating surfaces \u2014 introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt. Replaces the legacy three-package split (vis-common-foundation + vis-common-editing + vis-common-environment) plus the dropped standalone `fs/` alias."
+    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, four cooperating surfaces — introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt and replaces the old multi-alias split."
     :content
     "# vis-foundation
 
 Pkg: `com.blockether/vis-foundation`. Src: `extensions/common/vis-foundation/`.
-Canonical: inlined under `[v :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(v/extension-readme 'vis)`.
+Canonical: inlined under `[v :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(v/extension-readme 'v)`.
 
-ONE alias `v/` bundles everything the agent needs to read its own state, work the filesystem, and see the host environment. Replaces three legacy packages (`vis-common-foundation`, `vis-common-editing`, `vis-common-environment`) and drops the standalone `fs/` alias while inlining the useful babashka.fs surface back under `v/` as thin cwd-safe wrappers.
+ONE alias `v/` bundles everything the agent needs to read its own state, work the filesystem, build answer markdown, and see the host environment. It replaces the older split across separate aliases and keeps the model inside one short prefix for the whole iteration.
 
 ## Sections
 
@@ -39,28 +39,28 @@ Pure reads off the same DB tables the projection layer uses; failures return nil
 
 ### File I/O (structured helpers + babashka.fs wrappers)
 
-Structured helpers still return Clojure maps; the thin babashka.fs wrappers return ordinary Clojure values like strings, booleans, and line vectors.
+Structured helpers return tool-result envelopes; the thin babashka.fs wrappers return ordinary Clojure values like strings, booleans, and line vectors.
 
 ```clojure
-(v/cat path)                    ; -> {:path :offset :total-lines :truncated-by :lines}
+(v/cat path)                    ; -> {:ok? :result :markdown ...}
 (v/cat path opts)               ; opts {:offset N :limit M :char-limit C}
-(v/ls path)                     ; -> nested {:name :path :type :size :children} tree
+(v/ls path)                     ; -> {:ok? :result {:children [...]} ...}
 (v/ls path opts)                ; opts {:depth :hidden? :respect-gitignore?}
-(v/rg [\"a\" \"b\"] path)       ; -> {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}
+(v/rg [\"a\" \"b\"] path)       ; -> {:ok? :result {:hits [...]} ...}
                                   ; patterns = non-empty vec of LITERAL substrings (PCRE metacharacters auto-escaped)
                                   ; for genuine regex: (re-seq #\"...\" (str/join \"\\n\" (v/read-all-lines path)))
 
-(v/read-all-lines path)         ; -> [\"line\" ...]
-(v/write-lines path lines)      ; -> \"path\"
-(v/update-file path f & xs)     ; -> new-string
-(v/create-dirs path)            ; -> \"path\"
-(v/list-dir path)               ; -> [\"child\" ...]
-(v/glob root pattern)           ; -> [\"match\" ...]
-(v/copy src dest)               ; -> \"dest\"
-(v/move src dest)               ; -> \"dest\"
-(v/delete path)                 ; -> true
-(v/delete-if-exists path)       ; -> true | false
-(v/exists? path)                ; -> true | false
+(v/read-all-lines path)         ; -> {:ok? true :result [\"line\" ...] ...}
+(v/write-lines path lines)      ; -> {:ok? true :result \"path\" ...}
+(v/update-file path f & xs)     ; -> {:ok? true :result new-string ...}
+(v/create-dirs path)            ; -> {:ok? true :result \"path\" ...}
+(v/list-dir path)               ; -> {:ok? true :result [\"child\" ...] ...}
+(v/glob root pattern)           ; -> {:ok? true :result [\"match\" ...] ...}
+(v/copy src dest)               ; -> {:ok? true :result \"dest\" ...}
+(v/move src dest)               ; -> {:ok? true :result \"dest\" ...}
+(v/delete path)                 ; -> {:ok? true :result true ...}
+(v/delete-if-exists path)       ; -> {:ok? true :result true|false ...}
+(v/exists? path)                ; -> {:ok? true :result true|false ...}
 (v/cwd)                         ; -> \"/abs/path\"
 (v/parent path)                 ; -> \"dir\" | nil
 (v/file-name path)              ; -> \"file.ext\"
@@ -68,7 +68,28 @@ Structured helpers still return Clojure maps; the thin babashka.fs wrappers retu
 (v/relativize from to)          ; -> \"relative/path\"
 ```
 
-For structured Clojure edits use the sibling `vis-language-clojure` extension (alias `clj/`).
+For structured Clojure edits use the sibling `vis-language-clojure` extension (alias `z/`).
+
+### Markdown answer builders
+
+Programmatic markdown for `(answer …)`. Pure string builders; no templating, no Mustache, no hidden interpolation layer.
+
+```clojure
+(v/h1 \"Patch report\")
+(v/p \"Three files touched.\")
+(v/table [\"file\" \"+/-\"] [[\"core.clj\" \"+12 / -4\"]])
+(v/file-link \"src/core.clj\" 142)
+(v/code-block \"(println :done)\" \"clojure\")
+(v/join (v/h1 \"Done\") (v/p \"Ready.\"))
+
+(answer
+  (v/join
+    (v/h1 \"Patch report\")
+    (v/p \"Three files touched.\")
+    (v/ul [\"Run verify.sh\" \"Update CHANGELOG\"])))
+```
+
+See `docs/src/extensions/common/markdown.md` for the full builder reference.
 
 ### Environment awareness
 
@@ -87,25 +108,11 @@ The `<environment>` block in the system prompt (cwd / user / platform / shell / 
 
 ## Why one alias?
 
-Pre-merge the agent had to context-switch between four aliases (`foundation/`, `v/`, `fs/`, `environment/`) to compose a single thought. The aliases were artifacts of separate jars, not separate concerns from the model's POV. Collapsing to `v/` keeps every primitive one short prefix away — now including the useful babashka.fs file surface without reviving a second alias — so the model's iteration code reads more like prose, less like a multi-namespace boundary."
+Pre-merge the agent had to context-switch between multiple aliases just to compose a single thought. Those boundaries reflected packaging history, not the model's actual job. Collapsing everything to `v/` keeps every primitive one short prefix away, including answer construction, so iteration code reads more like prose and less like namespace shuffling."
     :links
     [{:url "https://arxiv.org/abs/2512.24601"
       :context "Recursive Language Models paper -- design vis is built on"}
      {:file "src/com/blockether/vis/internal/prompt.clj"
-      :context "System-prompt assembler that calls vis-foundation's combined-prompt fn"}]}}}
- md
- {:nses [com.blockether.vis.ext.foundation.markdown]
-  :docs
-  {"README.md"
-   {:created-at #inst "2026-04-29T00:00:00.000-00:00"
-    :description
-    "md/: pure string builders for `(answer …)` bodies. Headings, emphasis, lists, tables, code blocks, link helpers (`md/link` `md/image` `md/file-link` `md/anchor`). Composers (`md/join` `md/lines`) splice sequential collections one level. Strings everywhere — sequential collections in scalar slots throw."
-    :content
-    "# md — markdown builders\n\nPkg: `com.blockether/vis-foundation` (sibling alias `v/`).\nSrc: `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj`.\nDocs: `docs/src/extensions/common/markdown.md` (mdBook).\nLLM read: `(v/extension-readme 'md)`.\n\nOne path to an answer body: pure string builders -> `(answer …)` ships verbatim.\n\n## Surface\n\n```clojure\n;; Headings\n(md/h1 s) (md/h2 s) (md/h3 s) (md/h4 s) (md/h5 s) (md/h6 s)\n(md/h n s)                         ; n clamped to [1,6]\n\n;; Inline\n(md/bold s) (md/italic s) (md/bold-italic s)\n(md/strike s) (md/code s) (md/kbd s)\n\n;; Links / images / citations — use these for every clickable jump\n(md/link text url)                ; [text](url)\n(md/link text url title)          ; + tooltip\n(md/image alt url)\n(md/image alt url title)\n(md/file-link path)               ; [src/foo.clj](src/foo.clj)\n(md/file-link path line)          ; [src/foo.clj:142](src/foo.clj#L142)\n(md/anchor text)\n(md/anchor text slug)\n\n;; Blocks\n(md/p s)                          ; paragraph\n(md/code-block s)                 ; ``` fence\n(md/code-block s \"clojure\")     ; ```clojure fence\n(md/blockquote s)\nmd/hr md/br                       ; constants\n(md/details summary body)\n\n;; Lists\n(md/li parts...)                  ; single list item: \"- text\"\n(md/ul items) (md/ol items)\n(md/checklist [[\"done\" true] [\"todo\" false]])\n\n;; Tables\n(md/table headers rows)\n(md/table headers rows {:align [:left :center :right]})\n\n;; Compose\n(md/join   block-or-coll …)       ; blank line between; splices seqs 1 level\n(md/lines  line-or-coll  …)       ; single newline; splices seqs 1 level\n(md/section title body)           ; h2 + body\n(md/section level title body)\n(md/escape s)                     ; backslash-escape commonmark specials\n```\n\n## Procedural rules\n\n1. Block fn -> string without trailing newline. Compose via `(md/join …)`.\n2. Cite source -> `(md/file-link path line)`. Channels render the jump.\n3. URL / diagram -> `(md/link text url \"tooltip\")` / `(md/image alt url \"tooltip\")`. In-doc jump -> `(md/anchor text)`. Always go through helpers — they stay aligned with channel link conventions.\n4. Scalar slot (`md/p`, `md/h1`, table cell, list item) takes string-coercible value: string, keyword, number. Sequential collection in a scalar slot throws ex-info: `\"sequential collection where a string was expected\"`. Build the row eagerly, then splice via `md/join`.\n5. Compose-slot collections: `md/join` and `md/lines` splice sequential args one level. `(md/join (mapv render xs))` and `(md/join (md/h1 \"…\") (mapv render xs))` both work.\n6. EAGER builders only — evaluate sequences before they reach a builder. Use `mapv`, `keep`, `into [] (map f) xs`, `reduce`, `for` wrapped in `vec`. Lazy seqs (`map`, `filter`, raw `for`) stringify as `clojure.lang.LazySeq@<hex>` if they leak into a scalar slot — eager forms make that impossible by construction.\n\n```clojure\n;; Eager-only forms\n(mapv render-turn turns)                       ; vector of rows\n(into []  (map  render-turn) turns)            ; vector via xform\n(into []  (keep render-maybe) turns)           ; vector, drops nils\n(reduce   (fn [acc t] (conj acc (render t))) [] turns)\n(vec (for [t turns] (render-turn t)))          ; eager `for` -> vector\n```\n\n## Example\n\n```clojure\n(answer\n  (md/join\n    (md/h1 \"Patch report\")\n    (md/p \"Three files touched.\")\n    (md/table [\"file\" \"+/-\"]\n              [[(md/file-link \"src/core.clj\") \"+12 / -4\"]\n               [(md/file-link \"src/loop.clj\" 142) \"+0 / -38\"]])\n    (md/h2 \"Next\")\n    (md/ul [\"Run verify.sh\" \"Update CHANGELOG\"])\n    (md/code-block \"(println :done)\" \"clojure\")))\n\n;; Splice rows from a collection\n(answer\n  (md/join\n    (md/h1 (str \"Conversation: \" CONVERSATION_TITLE))\n    (md/p (str \"Turns: \" (count turns)))\n    md/hr\n    (mapv render-turn turns)))                  ; vector spliced one level\n```"
-    :links
-    [{:file "docs/src/extensions/common/markdown.md"
-      :context "mdBook page — full reference + design rationale."}
-     {:file "docs/src/architecture/iteration-flow.md"
-      :context "How `(answer …)` fits into the iteration loop; references md/ as the canonical body builder."}
-     {:file "extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj"
-      :context "Source."}]}}}}
+      :context "System-prompt assembler that calls vis-foundation's combined-prompt fn"}
+     {:file "docs/src/extensions/common/markdown.md"
+      :context "Full markdown-builder reference for the unified v/ surface."}]}}}}

@@ -595,7 +595,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
    discover what's loaded.
 
    Per element:
-     :alias     — short symbol the model calls under (`'v`, `'md`,
+     :alias     — short symbol the model calls under (`'v`, `'z`,
                   `'git`, ...). nil when the extension didn't declare
                   an `:ext/ns-alias`.
      :namespace — fully-qualified ns symbol of the extension.

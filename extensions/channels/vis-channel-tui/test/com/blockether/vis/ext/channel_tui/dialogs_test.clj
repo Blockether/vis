@@ -55,3 +55,18 @@
     (testing "command palette exposes a single Settings entry"
       (is (= ["Settings" "Copy Messages" "Copy Conversation as Markdown"]
             (mapv :label palette-commands))))))
+
+(deftest file-picker-items-test
+  (let [file-picker-items (var-get #'dlg/file-picker-items)]
+    (testing "blank query returns repo paths in lexical order"
+      (is (= ["deps.edn" "src/a.clj" "test/a_test.clj"]
+            (mapv :path
+              (file-picker-items ["src/a.clj" "deps.edn" "test/a_test.clj"] "")))))
+
+    (testing "filename-prefix matches outrank generic path contains"
+      (is (= ["src/input.clj" "extensions/input/file.clj"]
+            (mapv :path
+              (file-picker-items ["extensions/input/file.clj"
+                                  "src/input.clj"
+                                  "src/other.clj"]
+                "input")))))))

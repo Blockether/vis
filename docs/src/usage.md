@@ -38,6 +38,10 @@ vis auth openai-codex --status    # show whether tokens are present + valid
 vis auth openai-codex --logout    # forget tokens
 ```
 
+You can also start the same OpenAI Codex browser OAuth flow from the
+TUI provider picker; the CLI command remains the fallback when the
+localhost callback cannot complete inside the terminal session.
+
 Provider config + credentials live under `~/.vis/`:
 
 ```
@@ -88,6 +92,8 @@ vis channels tui --conversation-id <UUID>         # resume a specific one (full 
 ```
 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
+The provider picker can also launch the OpenAI Codex browser OAuth
+flow directly from the TUI.
 **Never bind `Ctrl+Y`** — the kernel intercepts it and suspends
 the whole process; this is documented in `AGENTS.md`.
 

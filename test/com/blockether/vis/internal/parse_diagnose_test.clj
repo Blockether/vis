@@ -3,7 +3,7 @@
    real-world reproduction case.
 
    The big one: conversation `cf9e29b5-b0a4-4121-9879-d9706cc2e22a`'s
-   last answer was a multi-line `(answer (md/join …))` Polish-language
+   last answer was a multi-line `(answer (v/join …))` Polish-language
    write-up about Polish typographic quotes, and the LLM dropped one
    close-quote in the middle. edamame surfaced the failure as
 
@@ -35,20 +35,20 @@
   ;; would invalidate the test.
   (str
     "(answer\n"
-    "  (md/join\n"
-    "    (md/h2 \"Ha, ironia :D\")\n"
-    "    (md/p \"To nie był problem z \" (md/code \"v/\") \" jako takim — to był problem z \"\n"
-    "      (md/bold \"polskimi cudzysłowami\") \" w stringu.\")\n"
-    "    (md/h3 \"Co się stało w iteracji 12.1\")\n"
-    "    (md/p \"Kod wyglądał mniej więcej tak:\")\n"
-    "    (md/code-block\n"
-    "      (str \"(md/p \\\"Wszystkie błędy \\u201eUnable to resolve symbol: v/ls\\\", \"\n"
+    "  (v/join\n"
+    "    (v/h2 \"Ha, ironia :D\")\n"
+    "    (v/p \"To nie był problem z \" (v/code \"v/\") \" jako takim — to był problem z \"\n"
+    "      (v/bold \"polskimi cudzysłowami\") \" w stringu.\")\n"
+    "    (v/h3 \"Co się stało w iteracji 12.1\")\n"
+    "    (v/p \"Kod wyglądał mniej więcej tak:\")\n"
+    "    (v/code-block\n"
+    "      (str \"(v/p \\\"Wszystkie błędy \\u201eUnable to resolve symbol: v/ls\\\", \"\n"
     "           \"\\u201ev/cat\\\" etc.)\")\n"
     "      \"clojure\")\n"
-    "    (md/p \"Problem: polski cudzysłów otwierający \" (md/code \"\\u201e\") \" (U+201E, DOUBLE LOW-9 QUOTATION MARK) \"\n"
-    "      \"nie jest delimiterem stringa w Clojure. Ale \" (md/bold \"zwykły\") \" \"\n"
-    "      (md/code \"\\\"\") \" (U+0022) \" już tak.\")\n"
-    "    (md/p \"Więc reader zobaczył:\")))"))
+    "    (v/p \"Problem: polski cudzysłów otwierający \" (v/code \"\\u201e\") \" (U+201E, DOUBLE LOW-9 QUOTATION MARK) \"\n"
+    "      \"nie jest delimiterem stringa w Clojure. Ale \" (v/bold \"zwykły\") \" \"\n"
+    "      (v/code \"\\\"\") \" (U+0022) \" już tak.\")\n"
+    "    (v/p \"Więc reader zobaczył:\")))"))
 
 ;; -----------------------------------------------------------------------------
 ;; Reproduction: edamame DOES fail on the broken snippet, with the
@@ -87,8 +87,8 @@
   (it "balanced plain string -> 2"
     (expect (= 2 (diag/count-unescaped-quotes "say \"hi\""))))
 
-  (it "escaped quote does NOT count — (md/code \"\\\"\") parses as 2 delimiters around the escape"
-    (expect (= 2 (diag/count-unescaped-quotes "(md/code \"\\\"\")"))))
+  (it "escaped quote does NOT count — (v/code \"\\\"\") parses as 2 delimiters around the escape"
+    (expect (= 2 (diag/count-unescaped-quotes "(v/code \"\\\"\")"))))
 
   (it "a backslash before a quote is treated as the escape — even when the backslash itself was a literal in the source"
     ;; Raw source bytes: `say "\"\"" twice`

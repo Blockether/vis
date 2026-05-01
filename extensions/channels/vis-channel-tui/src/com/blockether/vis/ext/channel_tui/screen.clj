@@ -993,6 +993,16 @@
                        (do (state/dispatch [:history-down])
                          (recur))
 
+                       :pick-file
+                       (do
+                         (when-not (:dialog-open? @state/app-db)
+                           (when-let [path (with-dialog-lock #(dlg/file-picker-dialog! screen))]
+                             (state/dispatch
+                               [:update-input
+                                (input/paste-text state
+                                  (str (input/format-file-mention path) " "))])))
+                         (recur))
+
                        :send
                        (let [text (input/input->text state)]
                          (state/dispatch [:reset-input])
