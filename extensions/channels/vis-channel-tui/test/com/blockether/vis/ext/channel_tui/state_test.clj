@@ -153,7 +153,32 @@
         (expect (= "gpt-5"
                   (get-in @state/app-db [:config :providers 0 :models 0 :name])))
         (expect (= ["No alternate models configured" [:level :warn :ttl-ms 1500]]
-                  @notified))))))
+                  @notified)))))
+
+  (it "cycles through models before advancing providers"
+    (let [cycle-primary-model @#'state/cycle-primary-model
+          config {:providers [{:id :openai-codex
+                               :models [{:name "codex-high"}
+                                        {:name "codex-low"}]}
+                              {:id :zai
+                               :models [{:name "glm-4.6"}]}]}
+          first-cycle (cycle-primary-model config)
+          second-cycle (cycle-primary-model (:config first-cycle)
+                         (:cycle-order first-cycle))
+          third-cycle (cycle-primary-model (:config second-cycle)
+                        (:cycle-order second-cycle))]
+      (expect (= :openai-codex
+                (get-in first-cycle [:config :providers 0 :id])))
+      (expect (= "codex-low"
+                (get-in first-cycle [:config :providers 0 :models 0 :name])))
+      (expect (= :zai
+                (get-in second-cycle [:config :providers 0 :id])))
+      (expect (= "glm-4.6"
+                (get-in second-cycle [:config :providers 0 :models 0 :name])))
+      (expect (= :openai-codex
+                (get-in third-cycle [:config :providers 0 :id])))
+      (expect (= "codex-high"
+                (get-in third-cycle [:config :providers 0 :models 0 :name]))))))
 
 (defdescribe send-message-test
   (it "keeps @mentions compact in chat while expanding them for the agent"
