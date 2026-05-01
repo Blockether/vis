@@ -232,7 +232,47 @@
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "Exploration-only iterations must not call `(answer …)`"))
       (expect (str/includes? p "(answer \"scanned\") ; BAD"))
-      (expect (not (str/includes? p "last 2 iters"))))))
+      (expect (not (str/includes? p "last 2 iters")))))
+
+  (it "pins the iter0 no-answer discipline for code/debug/change tasks"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "ITER0 ANSWER BAN"))
+      (expect (str/includes? p "If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state"))
+      (expect (str/includes? p "iter 0 MUST NOT call `(answer …)`"))
+      (expect (str/includes? p "State is symbols plus values"))
+      (expect (str/includes? p "effectful leaves only"))
+      (expect (str/includes? p "railway map")))))
+
+(defdescribe provider-prompt-test
+  (it "appends active provider prompt blocks without replacing the core prompt"
+    (let [seen (atom nil)
+          out (prompt/assemble-system-prompt
+                {:env-id :test}
+                {:active-extensions []
+                 :provider-prompt-context
+                 {:provider {:id :codex-test :models [{:name "m"}]}
+                  :model {:provider :codex-test :name "m"}
+                  :environment {:env-id :test}
+                  :descriptor {:provider/id :codex-test
+                               :provider/label "Codex Test"
+                               :provider/prompt-fn (fn [ctx]
+                                                     (reset! seen ctx)
+                                                     "Provider-specific addendum.")}}})]
+      (expect (str/includes? out "recursive language model (RLM)"))
+      (expect (str/includes? out "[provider: codex-test]"))
+      (expect (str/includes? out "Provider-specific addendum."))
+      (expect (= :codex-test (get-in @seen [:provider :id])))))
+
+  (it "skips blank provider prompt blocks"
+    (let [out (prompt/assemble-system-prompt
+                {}
+                {:active-extensions []
+                 :provider-prompt-context
+                 {:provider {:id :blank-provider}
+                  :descriptor {:provider/id :blank-provider
+                               :provider/label "Blank"
+                               :provider/prompt-fn (constantly "")}}})]
+      (expect (not (str/includes? out "[provider: blank-provider]"))))))
 
 (defdescribe assemble-initial-messages-test
   (it "places system, history, and trailing user content in order"

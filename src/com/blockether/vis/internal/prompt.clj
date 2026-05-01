@@ -411,6 +411,8 @@ Reply each iteration with one or more ```clojure … ``` fences. Their source co
 
 CRITICAL: `(answer ARG)` is a terminal COMMIT. ONE accepted answer ends the user turn. Call it only when the task is complete, verified when relevant, or concretely blocked with evidence. Never use `(answer …)` for progress messages like \"scanned\", \"done\", \"I will inspect next\", or \"found files\".
 
+ITER0 ANSWER BAN for code/debug/change work. If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state, iter 0 MUST NOT call `(answer …)`. Iter 0 for those tasks emits symbols only: understand state, gates, first probes, and values to observe in i0.K. The host continues automatically when no answer is emitted. Only trivial chat whose full satisfaction needs no repo/code/tool/evidence may answer in iter 0.
+
 Final-answer format rule: final answers are Markdown by default. Unless TURN_USER_REQUEST explicitly asks for another format (plain text, JSON, EDN, CSV, etc.), build the answer as Markdown and pass that Markdown string to `(answer …)`. Prefer the `v/` Markdown helpers when they are active: compose blocks with `v/join`, paragraphs with `v/p`, lists with `v/ul` / `v/ol`, tables with `v/table`, code with `v/code` / `v/code-block`, and source citations with `v/file-link`. Do not hand-write raw Markdown fences in emitted Clojure source; use `v/code-block` when the answer needs a fenced code block.
 
 RLM state machine:
@@ -422,7 +424,7 @@ RLM state machine:
   VERIFY      run targeted checks when a check tool exists; otherwise record the blocker
   ANSWER      final concise report with evidence, changed files, verification, or blocker
 
-Iter 0 is the first iteration for the current user turn, before this turn has any new iN.K journal facts. For non-trivial tasks, iter 0 defaults to UNDERSTAND/PLAN/EXPLORE. Build compact state and gates; do not rush to answer.
+Iter 0 is the first iteration for the current user turn, before this turn has any new iN.K journal facts. For non-trivial tasks, iter 0 defaults to UNDERSTAND/PLAN/EXPLORE. For repository/code/debug/change tasks, iter 0 is never ANSWER. Build compact state and gates; do not rush to answer.
 
 How the loop works while you are inside a turn:
   1. You emit Clojure forms for the CURRENT state.
@@ -433,7 +435,7 @@ How the loop works while you are inside a turn:
 
 Not every iteration needs an answer. Most useful work happens in non-final iterations: gather resources, define state, inspect files, test assumptions, update gates, or verify. A non-final iteration ends simply by omitting `(answer ...)`; the runtime will loop you.
 
-Functional state pattern. Persist important values with `def`/`defn`, then surface the value immediately so it appears as an iN.K journal fact and remains in <var_index>:
+Functional state pattern. State is symbols plus values: bind facts, gates, decisions, and next actions as data. Compose pure transforms in the middle; keep effectful leaves only at the edge (`v/rg`, `v/read`, `v/edit`, `v/bash`, verification). Model progress as a railway map: each step returns data like `{:status :ok|:blocked|:error :evidence ... :next ...}`, then the next form composes from that value. Persist important values with `def`/`defn`, then surface the value immediately so it appears as an iN.K journal fact and remains in <var_index>:
 ```clojure
 (def observation (v/rg [\"keyword\"] \"src\"))
 observation
@@ -713,17 +715,55 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
         (str "Extension '" (:ext/namespace ext) "' prompt rendering failed"))
       nil)))
 
+(defn- render-provider-prompt-block
+  "Render the active provider's append-only prompt contribution.
+
+   `provider-prompt-context` is assembled by the loop so this namespace
+   stays pure: `{:provider sanitized-provider-config
+                 :descriptor registered-provider-descriptor
+                 :model resolved-model
+                 :environment environment}`.
+
+   The provider prompt never replaces the core Vis prompt; it is a
+   small provider-specific addendum. Hook failures are logged and the
+   prompt contribution is skipped."
+  [{:keys [provider descriptor] :as provider-prompt-context}]
+  (try
+    (when-let [prompt-fn (:provider/prompt-fn descriptor)]
+      (let [body (prompt-fn provider-prompt-context)]
+        (when (and (string? body) (not (str/blank? body)))
+          (str "[provider: " (name (:id provider)) "]\n" body))))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::provider-prompt-error
+                 :data {:provider (:id provider)
+                        :error    (ex-message t)}
+                 :msg  (str "Provider prompt hook for " (:id provider)
+                         " failed; skipping provider prompt block")})
+      nil)))
+
 (defn assemble-system-prompt
-  "Build the full system prompt: core agent rules + active-extension prompts.
+  "Build the full system prompt: core agent rules + active-extension prompts
+   + the active provider's append-only prompt block.
 
    Required opts:
-     `:active-extensions` — vec from `(active-extensions env)`."
-  [environment {:keys [system-prompt active-extensions] :as opts}]
+     `:active-extensions` — vec from `(active-extensions env)`.
+
+   Optional opts:
+     `:provider-prompt-context` — map for provider `:provider/prompt-fn`:
+        `{:provider sanitized-provider-config
+          :descriptor registered-provider-descriptor
+          :model resolved-model
+          :environment environment}`."
+  [environment {:keys [system-prompt active-extensions provider-prompt-context] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-system-prompt requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [base   (build-system-prompt {:system-prompt system-prompt})
-        ext-ps (seq (keep #(render-extension-prompt-block environment %) active-extensions))]
-    (if ext-ps
-      (str base "\n\n" (str/join "\n\n" ext-ps))
+  (let [base       (build-system-prompt {:system-prompt system-prompt})
+        ext-ps     (keep #(render-extension-prompt-block environment %) active-extensions)
+        provider-p (when provider-prompt-context
+                     (render-provider-prompt-block provider-prompt-context))
+        blocks     (seq (cond-> (vec ext-ps)
+                          provider-p (conj provider-p)))]
+    (if blocks
+      (str base "\n\n" (str/join "\n\n" blocks))
       base)))

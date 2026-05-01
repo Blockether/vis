@@ -1,7 +1,9 @@
 (ns com.blockether.vis.internal.config-test
   (:require [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.registry :as registry]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import
+   (java.nio.file Files)))
 
 (defdescribe provider-template-test
   (it "exposes the OpenAI Codex OAuth preset"
@@ -28,6 +30,28 @@
         (expect (= "https://chatgpt.com/backend-api" (:base-url provider)))
         (expect (= :openai-compatible-responses (:api-style provider)))
         (expect (= "configured-token" (:api-key provider)))))))
+
+(defdescribe save-config-provider-selection-hook-test
+  (it "fires the selected provider hook when the active provider changes"
+    (let [dir (.toString (Files/createTempDirectory "vis-config-test" (make-array java.nio.file.attribute.FileAttribute 0)))
+          path (str dir "/config.edn")
+          calls (atom [])]
+      (with-redefs [config/config-dir dir
+                    config/config-path path
+                    registry/provider-by-id (fn [pid]
+                                              (when (= :new pid)
+                                                {:provider/id :new
+                                                 :provider/label "New"
+                                                 :provider/on-selected-fn #(swap! calls conj %)}))]
+        (config/save-config! {:providers [{:id :old :models [{:name "old-model"}]}]} :seed)
+        (reset! calls [])
+        (config/save-config! {:providers [{:id :new :models [{:name "new-model"}]}]} :test)
+        (expect (= 1 (count @calls)))
+        (expect (= :old (get-in @calls [0 :previous-provider :id])))
+        (expect (= :new (get-in @calls [0 :provider :id])))
+        (expect (= :test (get-in @calls [0 :source])))
+        (config/save-config! {:providers [{:id :new :models [{:name "new-model-2"}]}]} :test)
+        (expect (= 1 (count @calls)))))))
 
 (defdescribe svar-provider-shape-test
   (it "forwards provider-specific headers from dynamic token resolvers"

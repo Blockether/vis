@@ -31,8 +31,11 @@
   {:provider/id    :test
    :provider/label "Test provider"})
 
-(def ^:private provider-with-limits
-  (assoc base-provider :provider/limits-fn (fn [] {:provider-id :test})))
+(def ^:private provider-with-hooks
+  (assoc base-provider
+    :provider/limits-fn (fn [] {:provider-id :test})
+    :provider/on-selected-fn (fn [_ctx] nil)
+    :provider/prompt-fn (fn [_ctx] "provider prompt")))
 
 (defdescribe symbol-parse-rescue-test
   (it "symbol carries optional :on-parse-error-fn"
@@ -51,12 +54,14 @@
                :ext/providers [base-provider]})]
       (expect (= "providers" (:ext/kind e)))))
 
-  (it "accepts provider entries carrying an optional :provider/limits-fn"
+  (it "accepts provider entries carrying optional provider hooks"
     (let [e (ext/extension
-              {:ext/namespace 'test.provider-with-limits
-               :ext/doc       "Provider extension with a limits fn."
-               :ext/providers [provider-with-limits]})]
-      (expect (ifn? (get-in e [:ext/providers 0 :provider/limits-fn])))))
+              {:ext/namespace 'test.provider-with-hooks
+               :ext/doc       "Provider extension with runtime hooks."
+               :ext/providers [provider-with-hooks]})]
+      (expect (ifn? (get-in e [:ext/providers 0 :provider/limits-fn])))
+      (expect (ifn? (get-in e [:ext/providers 0 :provider/on-selected-fn])))
+      (expect (ifn? (get-in e [:ext/providers 0 :provider/prompt-fn])))))
 
   (it "derives \"channels\" for extensions exporting :ext/channels"
     (let [e (ext/extension

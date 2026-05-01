@@ -963,9 +963,11 @@
 
 (def bash-symbol
   (vis/symbol 'bash bash-tool
-    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result; opts {:cwd :timeout-ms :max-output-chars :stdin}."
+    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run)."
      :arglists '([command] [command opts])
-     :examples ["(:result (v/bash \"pwd && ls\"))"
+     :examples ["(def run (v/bash \"pwd && ls\"))"
+                "(get-in run [:result :stdout])"
+                "(get-in run [:result :exit])"
                 "(v/bash \"grep -R needle src\" {:timeout-ms 10000 :max-output-chars 8000})"]
      :result-spec tool-result-spec
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
@@ -993,4 +995,5 @@
   edit:   (v/read-all-lines path) (v/write-lines path lines opts?) (v/update-file path f & xs)
   paths:  (v/create-dirs path) (v/list-dir path) (v/copy src dest) (v/move src dest) (v/delete path) (v/delete-if-exists path) (v/exists? path)
   shell:  (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s})
+  bash result: (def run (v/bash \"pwd\")) then (get-in run [:result :stdout]), (get-in run [:result :stderr]), (get-in run [:result :exit]); never (:stdout run) / (:exit run).
 Use `v/cat` for preview, `v/read-all-lines` for full-file transforms, `v/glob` for paths, `v/rg` for contents. Clojure structure edits: `z/zedit`.")
