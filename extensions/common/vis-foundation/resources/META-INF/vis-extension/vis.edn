@@ -20,8 +20,8 @@ ONE alias `v/` bundles everything the agent needs to read its own state, work th
 Pure reads off the same DB tables the projection layer uses; failures return nil/[] never throw. Conversation-state introspection is intentionally a deep two-call surface: one canonical data map, one Markdown renderer over the same data.
 
 ```clojure
-(v/inspect cid?)                ; canonical state data {:conversation :current-turn :failures :diagnosis :transcript ...}
-(v/report cid?)                 ; Markdown report rendered from the same state data
+(v/inspect cid?)                ; canonical state data {:conversation :current-turn :failures :diagnosis :llm-diagnostics :transcript ...}
+(v/report cid?)                 ; Markdown report rendered from the same state data, incl. raw LLM diagnostics
 (v/extensions)                  ; loaded ext catalog incl. author/owner/license/source markers
 (v/extension-docs ext-ref)      ; declared doc summaries (no content)
 (v/extension-doc ext-ref name)  ; full doc descriptor incl. :content

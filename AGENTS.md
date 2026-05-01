@@ -149,6 +149,15 @@ The ONE pattern:
 
 Raw `jdbc/execute!` with string SQL is allowed in ONE place: `extensions/persistance/vis-persistance-sqlite/src/.../core.clj`, for migration DDL + FTS queries HoneySQL can't express. Everywhere else: HoneySQL or bust.
 
+### SQLite schema changes are inline until told otherwise
+
+Until explicitly told otherwise, Vis database schema changes are made by editing the canonical SQLite schema inline:
+
+- Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` directly.
+- Do **not** add `V2__...sql`, `V3__...sql`, etc. while this rule is active.
+- It is acceptable to delete/recreate the local development DB during this phase; migration history stability is not the priority yet.
+- If a user explicitly asks for real migrations/backward-compatible upgrade path, this rule is suspended for that task.
+
 ### Reply in English
 
 Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. Single-language responses, no apology paragraphs in the user's language. Overrides any implicit language mirroring.

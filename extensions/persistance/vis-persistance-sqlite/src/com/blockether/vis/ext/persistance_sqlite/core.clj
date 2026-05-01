@@ -424,13 +424,13 @@
   "List every `conversation_state` row for the soul behind `conversation-id`,
    oldest version first. Each row maps to
    `{:state-id :version :parent-state-id :title :system-prompt :provider :model
-     :created-at :query-count}` — the raw fork tree of one conversation soul.
+     :created-at :turn-count}` — the raw fork tree of one conversation soul.
 
    The trunk is `:version 0` with `:parent-state-id nil`. A fork is any row
    whose `:parent-state-id` points at another `:state-id` in the same vector;
    group-by `:parent-state-id` to walk the tree.
 
-   `:query-count` is the number of `conversation_turn_soul` rows hanging off that specific
+   `:turn-count` is the number of `conversation_turn_soul` rows hanging off that specific
    state — cheap to compute, useful when triaging which branch is active.
 
    Returns `[]` (never nil) when the conversation is unknown or the env has no
@@ -444,7 +444,7 @@
                            [{:select [[[:count :*]]]
                              :from   :conversation_turn_soul
                              :where  [:= :conversation_turn_soul.conversation_state_id :cs.id]}
-                            :query_count]]
+                            :turn_count]]
                   :from   [[:conversation_state :cs]]
                   :where  [:= :cs.conversation_soul_id soul-id-s]
                   :order-by [[:cs.version :asc]]})]
@@ -455,7 +455,7 @@
                          :parent-state-id (some-> (:parent_state_id row) ->uuid)
                          :title           (:title row)
                          :created-at      (->date (:created_at row))
-                         :query-count     (or (:query_count row) 0)}
+                         :turn-count      (or (:turn_count row) 0)}
                   (:system-prompt state-meta) (assoc :system-prompt (:system-prompt state-meta))
                   (:provider state-meta)      (assoc :provider (->kw-back (:provider state-meta)))
                   (:model state-meta)         (assoc :model (:model state-meta)))))
@@ -474,7 +474,7 @@
    rows attached to that specific state — retries get their own iteration
    trace.
 
-   Returns `[]` (never nil) when the query is unknown or the env has no
+   Returns `[]` (never nil) when the turn is unknown or the env has no
    datasource."
   [db-info conversation-turn-id]
   (if (and (ds db-info) conversation-turn-id)
@@ -541,25 +541,25 @@
       (:id (latest-state-for db-info soul-id-s)))))
 
 ;; =============================================================================
-;; Query — conversation_turn_soul + conversation_turn_state
+;; Turn — conversation_turn_soul + conversation_turn_state
 ;; =============================================================================
 
 (defn db-store-conversation-turn!
   "Create conversation_turn_soul + initial conversation_turn_state (version 0).
    Returns the conversation-turn-soul UUID."
-  [db-info {:keys [parent-conversation-id query messages status]}]
+  [db-info {:keys [parent-conversation-id user-request messages status]}]
   (when (ds db-info)
-    (let [soul-id  (UUID/randomUUID)
-          state-id (UUID/randomUUID)
-          now      (now-ms)
-          state-id-s (latest-state-id db-info parent-conversation-id)
-          q        (or query "")]
+    (let [soul-id        (UUID/randomUUID)
+          state-id       (UUID/randomUUID)
+          now            (now-ms)
+          state-id-s     (latest-state-id db-info parent-conversation-id)
+          user-request-s (or user-request "")]
       (execute! db-info
         {:insert-into :conversation_turn_soul
          :values [{:id                    (str soul-id)
                    :conversation_state_id state-id-s
-                   :title                 (subs q 0 (min (count q) 100))
-                   :turn_text             q
+                   :title                 (subs user-request-s 0 (min (count user-request-s) 100))
+                   :user_request          user-request-s
                    :created_at            now}]})
       (execute! db-info
         {:insert-into :conversation_turn_state
@@ -584,7 +584,7 @@
 
 (defn db-retry-conversation-turn!
   "Create a new conversation_turn_state (version N+1) for an existing conversation_turn_soul.
-   Used when re-running a query with a different provider/model or settings.
+   Used when re-running a turn with a different provider/model or settings.
    Returns the new conversation-turn-state UUID."
   [db-info conversation-turn-soul-id {:keys [status provider model]}]
   (when (ds db-info)
@@ -722,8 +722,8 @@
    Nippy blob in `iteration.blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
   [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
-                   llm-messages llm-provider llm-model llm-raw-response llm-selected-blocks
-                   tokens cost-usd]}]
+                   llm-messages llm-provider llm-model llm-raw-response llm-executable-code
+                   llm-executable-blocks tokens cost-usd]}]
   (when (ds db-info)
     (let [iteration-id   (UUID/randomUUID)
           iteration-id-s (str iteration-id)
@@ -749,7 +749,7 @@
           ;; row map; reading via `:row-count` (with hyphen) was always
           ;; `nil` and pinned every iteration to position 0, which
           ;; collided with the `UNIQUE (conversation_turn_state_id, position)`
-          ;; constraint on the second iteration of every query.
+          ;; constraint on the second iteration of every turn.
           position  (or (:next_position
                          (query-one! db-info
                            {:select [[[:coalesce [:+ [:max :position] 1] 0]
@@ -780,16 +780,16 @@
                              :llm_returned_empty_blocks (if (empty? blocks) 1 0)
                              :metadata             (when metadata (->json metadata))
                              :blocks               (->blob blocks-vec)
-                             :llm_selected_block_count (when (some? llm-selected-blocks)
-                                                         (count llm-selected-blocks))
-                             :llm_selected_block_langs (when (some? llm-selected-blocks)
-                                                         (->json (mapv :lang llm-selected-blocks)))
+                             :llm_executable_code (some-> llm-executable-code str)
+                             :llm_executable_blocks (when (some? llm-executable-blocks)
+                                                      (->json (vec llm-executable-blocks)))
                              :created_at           now
                              :finished_at          now}
                       (some? answer-form-idx)
                       (assoc :answer_form_idx answer-form-idx)
                       raw-response-s
-                      (assoc :llm_raw_response_preview (raw-response-preview raw-response-s)
+                      (assoc :llm_raw_response         raw-response-s
+                        :llm_raw_response_preview (raw-response-preview raw-response-s)
                         :llm_raw_response_length  (count raw-response-s)
                         :llm_raw_response_sha256  (sha256-hex raw-response-s))
                       ;; Token / cost columns — omitted when nil so the
@@ -849,7 +849,7 @@
 ;; Read helpers
 ;; =============================================================================
 
-(defn- row->query [row]
+(defn- row->turn [row]
   (let [state-meta (<-json (:state_metadata row))
         ;; `:provider` may live in either the JSON metadata or the
         ;; dedicated `llm_root_provider` column. The column is the
@@ -858,9 +858,9 @@
         ;; back to the JSON, and always re-keywordize.
         provider   (or (:llm_root_provider row) (:provider state-meta))]
     (cond-> {:id                    (->uuid (:soul_id row))
-             :type                  :query
+             :type                  :turn
              :conversation-state-id (->uuid (:conversation_state_id row))
-             :text                  (:turn_text row)
+             :user-request          (:user_request row)
              :status                (->kw-back (:status row))
              :created-at            (->date (:soul_created_at row))}
       (:title row)              (assoc :name (:title row))
@@ -878,7 +878,7 @@
 (defn- conversation-turn-soul+state-query
   "HoneySQL fragment joining conversation_turn_soul + latest conversation_turn_state."
   [where-clause]
-  {:select [:qs.id :qs.conversation_state_id :qs.title :qs.turn_text
+  {:select [:qs.id :qs.conversation_state_id :qs.title :qs.user_request
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status :qst.metadata [:qst.metadata :state_metadata]
             :qst.llm_root_provider :qst.llm_root_model]
@@ -893,22 +893,22 @@
 
 (defn db-list-conversation-turns-by-status [db-info status]
   (if (ds db-info)
-    (mapv row->query
+    (mapv row->turn
       (query! db-info (conversation-turn-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
 
-(defn- attach-prior-outcome [row->qmap]
-  ;; Surface :prior-outcome on the query map when the column has a value.
+(defn- attach-prior-outcome [row->turn-map]
+  ;; Surface :prior-outcome on the turn map when the column has a value.
   ;; NULL columns surface as an absent key on the returned map.
   (fn [row]
-    (cond-> (row->qmap row)
+    (cond-> (row->turn-map row)
       (:prior_outcome row) (assoc :prior-outcome (keyword (:prior_outcome row))))))
 
 (defn db-list-conversation-turns [db-info conversation-id]
   (if (and (ds db-info) conversation-id)
     (let [state-id-s (latest-state-id db-info conversation-id)]
       (when state-id-s
-        (mapv (attach-prior-outcome row->query)
+        (mapv (attach-prior-outcome row->turn)
           (query! db-info
             (-> (conversation-turn-soul+state-query [:= :qs.conversation_state_id state-id-s])
               (update :select conj :qst.prior_outcome)
@@ -931,16 +931,18 @@
     ;; the data shape even when callers don't render them by default.
     (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
     (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json (:llm_user_prompt row)))
+    (some? (:llm_raw_response row))
+    (assoc :llm-raw-response (:llm_raw_response row))
     (some? (:llm_raw_response_preview row))
     (assoc :llm-raw-response-preview (:llm_raw_response_preview row))
     (some? (:llm_raw_response_length row))
     (assoc :llm-raw-response-length (:llm_raw_response_length row))
     (some? (:llm_raw_response_sha256 row))
     (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
-    (some? (:llm_selected_block_count row))
-    (assoc :llm-selected-block-count (:llm_selected_block_count row))
-    (some? (:llm_selected_block_langs row))
-    (assoc :llm-selected-block-langs (<-json (:llm_selected_block_langs row)))
+    (some? (:llm_executable_code row))
+    (assoc :llm-executable-code (:llm_executable_code row))
+    (some? (:llm_executable_blocks row))
+    (assoc :llm-executable-blocks (<-json (:llm_executable_blocks row)))
     (some? (:answer_form_idx row))      (assoc :answer-form-idx   (:answer_form_idx row))
     (some? (:llm_returned_empty_blocks row))
     (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_blocks row))))
@@ -1059,22 +1061,22 @@
              :order-by [[:est.version :asc]]}))))
     []))
 
-(defn db-query-history [db-info conversation-id]
-  (let [queries (db-list-conversation-turns db-info conversation-id)]
-    (mapv (fn [idx query]
-            (let [qref       (:id query)
-                  iteration-count (count (db-list-conversation-turn-iterations db-info qref))
-                  answer-raw (or (:answer query) "")
-                  answer-preview (subs answer-raw 0 (min (count answer-raw) 160))]
-              {:query-pos       idx
-               :conversation-turn-id        (:id query)
-               :created-at      (:created-at query)
-               :query           (:text query)
-               :status          (:status query)
-               :iteration-count iteration-count
-               :answer-preview  answer-preview}))
+(defn db-turn-history [db-info conversation-id]
+  (let [turns (db-list-conversation-turns db-info conversation-id)]
+    (mapv (fn [idx turn]
+            (let [turn-ref        (:id turn)
+                  iteration-count (count (db-list-conversation-turn-iterations db-info turn-ref))
+                  answer-raw      (or (:answer turn) "")
+                  answer-preview  (subs answer-raw 0 (min (count answer-raw) 160))]
+              {:turn-pos             idx
+               :conversation-turn-id (:id turn)
+               :created-at           (:created-at turn)
+               :user-request         (:user-request turn)
+               :status               (:status turn)
+               :iteration-count      iteration-count
+               :answer-preview       answer-preview}))
       (range)
-      queries)))
+      turns)))
 
 ;; =============================================================================
 ;; Expression dependencies

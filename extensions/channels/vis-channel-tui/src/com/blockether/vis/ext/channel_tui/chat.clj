@@ -46,11 +46,11 @@
    Assistant messages include the code execution trace from all iterations."
   [conversation-id]
   (try
-    (let [d       (vis/db-info)
-          queries (vis/db-list-conversation-turns d conversation-id)]
+    (let [d     (vis/db-info)
+          turns (vis/db-list-conversation-turns d conversation-id)]
       (into []
         (mapcat (fn [q]
-                  (let [user-message (user-message (or (:text q) "") (or (:created-at q) (java.util.Date.)))
+                  (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
                         answer    (or (:answer q) "")
                         model     (:model q)
                         tokens    (cond-> {}
@@ -67,8 +67,8 @@
                         ;; same way live ones do — just the answer
                         ;; text below the iteration trace, never the
                         ;; `(answer "…")` call as code above it.
-                        query-iterations (vis/db-list-conversation-turn-iterations d (:id q))
-                        last-iteration-id (some-> (last query-iterations) :id)
+                        turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
+                        last-iteration-id (some-> (last turn-iterations) :id)
                         produced-answer? (and (some? answer)
                                            (not (str/blank? (str answer))))
                         trace (into []
@@ -93,7 +93,7 @@
                                           :stdouts   stdout-strs
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)})))
-                                query-iterations)
+                                turn-iterations)
                         ;; `:prior-outcome :cancelled` is how the
                         ;; persistance layer marks an aborted turn (the
                         ;; sweep + cancel paths both write that value).
@@ -113,7 +113,7 @@
                                             (seq tokens) (assoc :tokens tokens)
                                             cancelled? (assoc :status :cancelled))]
                     [user-message assistant-message])))
-        queries))
+        turns))
     (catch Exception e
       (t/log! {:level :warn :id ::rebuild-history-failed
                :data  (exception->log-data e)
@@ -149,8 +149,8 @@
     (when-let [conversation (vis/by-id resolved-id)]
       {:id (str (:id conversation)) :history (rebuild-history (str (:id conversation)))})))
 
-(defn query!
-  "Send a user query through the shared conversations cache. Blocking.
+(defn turn!
+  "Send a user request through the shared conversations cache. Blocking.
    Returns `{:answer str}` or `{:error str}`.
 
    `opts` may contain:
@@ -163,13 +163,13 @@
                           to project a live per-iteration progress timeline into
                           the assistant placeholder bubble.
      :cancel-atom       — (atom bool) honored by the iteration loop; flipping
-                          it to true causes the current query to terminate at
+                          it to true causes the current turn to terminate at
                           the next safe point and return `{:status :cancelled}`.
      :reasoning-default — base reasoning effort (`:quick`, `:balanced`, `:deep`)
                           forwarded to `vis/send!` for reasoning-capable models.
      :extra-body        — provider-specific request-body overrides forwarded to
                           `vis/send!` unchanged."
-  ([conversation text] (query! conversation text {}))
+  ([conversation text] (turn! conversation text {}))
   ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body]}]
    (try
      (let [send-opts (cond-> {}
@@ -215,7 +215,7 @@
            ;; — the user sees a one-liner and the log has the same
            ;; one-liner. With the full trace, the next failure pinpoints
            ;; the exact JDBC call that opened the bad handle.
-           (t/log! {:level :error :id ::query-failed
+           (t/log! {:level :error :id ::turn-failed
                     :data  (exception->log-data e)
                     :msg   (str "Query failed: " (ex-message e))})
            {:error (vis/db-error->user-message e)}))))))

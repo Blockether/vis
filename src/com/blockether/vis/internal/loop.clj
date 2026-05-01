@@ -4,7 +4,7 @@
    Owns:
      - Query runtime settings (`*rlm-context*`, `*eval-timeout-ms*`, …)
      - Single-iteration runner (`run-iteration`)
-     - Multi-iteration query engine + router cache (`query!`,
+     - Multi-iteration turn engine + router cache (`turn!`,
        `get-router`, `rebuild-router!`)
      - Environment lifecycle (`create-environment`, `dispose-environment!`)
      - Conversation env cache (`create!`, `by-id`, `by-channel`,
@@ -13,7 +13,7 @@
    The binary entry point (`-main`), the persistence-backed Telemere
    `:db` handler, the one-shot agent helper, and every built-in CLI
    command live in `com.blockether.vis.internal.main`. Channels and embedded
-   consumers reach this namespace directly for `send!` / `query!` /
+   consumers reach this namespace directly for `send!` / `turn!` /
    `create!` / `create-environment`; the binary reaches it through
    `main.clj`.
 
@@ -113,9 +113,9 @@
   (* 30 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
-  "Dynamic timeout in milliseconds for SCI code evaluation. Bound per query!
-   call via :eval-timeout-ms. Nested queries inherit the outer binding.
-   Clamped at the query API boundary to
+  "Dynamic timeout in milliseconds for SCI code evaluation. Bound per turn!
+   call via :eval-timeout-ms. Nested turns inherit the outer binding.
+   Clamped at the turn API boundary to
    [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   DEFAULT_EVAL_TIMEOUT_MS)
 
@@ -132,12 +132,12 @@
 ;; =============================================================================
 
 (def DEFAULT_CONCURRENCY
-  "Default concurrency settings. Applied when :concurrency is absent from query!."
+  "Default concurrency settings. Applied when :concurrency is absent from turn!."
   {:max-parallel-llm 8
    :http-timeout-ms  20000})
 
 (def ^:dynamic *concurrency*
-  "Merged concurrency settings for the current query! process."
+  "Merged concurrency settings for the current turn! process."
   DEFAULT_CONCURRENCY)
 
 ;; =============================================================================
@@ -608,7 +608,7 @@
         s))))
 
 (defn- exception->iteration-error-data
-  "Normalize an exception into the iteration-error-data map stored on the query row.
+  "Normalize an exception into the iteration-error-data map stored on the turn row.
    Delegates to the unified `format-exception` and adds iteration context."
   [^Throwable e ctx]
   (format-exception e
@@ -985,7 +985,8 @@
              :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-raw-response (:raw ask-result)
-             :llm-selected-blocks (:blocks ask-result)}
+             :llm-executable-code (:result ask-result)
+             :llm-executable-blocks (:blocks ask-result)}
             {:thinking thinking
              :blocks (strip-noop-blocks blocks)
              :final-result {:final?           true
@@ -1003,7 +1004,8 @@
              :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-raw-response (:raw ask-result)
-             :llm-selected-blocks (:blocks ask-result)}))
+             :llm-executable-code (:result ask-result)
+             :llm-executable-blocks (:blocks ask-result)}))
           ;; Normal path
         {:thinking thinking
          :blocks (strip-noop-blocks blocks)
@@ -1014,10 +1016,11 @@
          :silent-form-idxs silent-form-idxs
          :llm-model    (some-> (:name resolved-model) str)
          :llm-raw-response (:raw ask-result)
-         :llm-selected-blocks (:blocks ask-result)}))))
+         :llm-executable-code (:result ask-result)
+         :llm-executable-blocks (:blocks ask-result)}))))
 
 ;; =============================================================================
-;; Multi-iteration query engine
+;; Multi-iteration turn engine
 ;; =============================================================================
 
 ;; -----------------------------------------------------------------------------
@@ -1056,7 +1059,7 @@
         "\n\n"))))
 
 ;; -----------------------------------------------------------------------------
-;; Router lifecycle + model helpers (query single-file API)
+;; Router lifecycle + model helpers (turn single-file API)
 ;; -----------------------------------------------------------------------------
 
 (defonce ^:private router-atom (atom nil))
@@ -1258,7 +1261,7 @@
    Each var is normalized to a non-nil string so `expression_state`
    never stores nil for a SYSTEM var — makes the version vec a clean
    log of values across iterations."
-  [vars-snapshot {:keys [query thinking final-answer
+  [vars-snapshot {:keys [user-request thinking final-answer
                          turn-conversation-turn-id iteration-id
                          conversation-soul-id conversation-state-id
                          system-prompt
@@ -1267,7 +1270,7 @@
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
-      (stamp "TURN_USER_REQUEST"            (or query ""))
+      (stamp "TURN_USER_REQUEST"            (or user-request ""))
       (stamp "TURN_CONVERSATION_TURN_ID"                (or turn-conversation-turn-id ""))
       (stamp "TURN_CONVERSATION_SOUL_ID"    (or conversation-soul-id ""))
       (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
@@ -1291,7 +1294,7 @@
     (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
 ;; -----------------------------------------------------------------------------
-;; Iteration loop + run-query! (inlined from former base)
+;; Iteration loop + run-turn! (inlined from former base)
 ;; -----------------------------------------------------------------------------
 
 (def ^:private FRESH_ITER_CARRY
@@ -1310,7 +1313,7 @@
    until the model emits `:answer`, the user cancels, or the
    consecutive-error budget is exhausted. There is NO iteration cap.
    If a buggy model never finalizes, the user cancels."
-  [environment query
+  [environment user-request
    {:keys [system-prompt
            conversation-turn-id history-messages
            max-consecutive-errors max-restarts
@@ -1326,14 +1329,14 @@
         _ (assert effective-model "Router must resolve a root model")
         has-reasoning? (provider-has-reasoning? (:router environment))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
-        ;; Activate extensions ONCE per query. Threaded through both the
+        ;; Activate extensions ONCE per turn. Threaded through both the
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
         ;; ext nudge collector — activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         system-prompt (prompt/assemble-system-prompt environment
                         {:system-prompt      system-prompt
                          :active-extensions  active-exts})
-        initial-user-content query
+        initial-user-content user-request
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
@@ -1351,7 +1354,7 @@
         ;; Per-iteration token + cost projection. The schema's
         ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
         ;; carry one row per iteration so a future `vis report`
-        ;; query can sum or break down cost without re-walking
+        ;; caller can sum or break down cost without re-walking
         ;; provider envelopes. Returns nil when the call surfaced no
         ;; usage (e.g. iteration-level error before a response
         ;; landed), in which case the persistance layer leaves the
@@ -1400,7 +1403,7 @@
         ;; merged on at every emit site.
         turn-base-payload    {:conversation-id (:conversation-id environment)
                               :conversation-turn-id        conversation-turn-id
-                              :goal            query
+                              :user-request    user-request
                               :model           effective-model
                               :provider        (some-> (resolve-effective-model (:router environment)) :provider)}
         emit-hook! (fn [hook-fn payload log-message]
@@ -1416,7 +1419,7 @@
         ;; precomputed `active-exts` (no second activation pass).
         ;;
         ;; Source markers (paths, max-mtime, sha256) are written ONLY
-        ;; on the first iteration of each query (`iter-pos` = 0). The
+        ;; on the first iteration of each turn (`iter-pos` = 0). The
         ;; v2 change-detector reads `WHERE position = 0 ORDER BY
         ;; created_at DESC LIMIT 1` to compare against current state.
         ;; Subsequent iterations omit them — cuts ~99 % redundant DB
@@ -1444,7 +1447,7 @@
     ;; iteration boundaries via `update-system-vars!` /
     ;; `update-title-system-var!`.
     ;; -----------------------------------------------------------------
-    (env/bind-and-bump! environment 'TURN_USER_REQUEST query)
+    (env/bind-and-bump! environment 'TURN_USER_REQUEST user-request)
     (env/bind-and-bump! environment 'TURN_CONVERSATION_TURN_ID conversation-turn-id)
     (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
       (:conversation-id environment))
@@ -1547,7 +1550,7 @@
                                  (map #(str "- " (get-in % [:error :message] (str (:error %)))))
                                  (str/join "\n"))
                         hint (str "Previous attempts failed with these errors:\n" failed
-                               "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " query)
+                               "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " user-request)
                         messages [{:role "system" :content system-prompt} {:role "user" :content hint}]]
                     (recur (assoc loop-state
                              :iteration (inc iteration) :messages messages
@@ -1735,7 +1738,7 @@
                                                     (:turn-count conversation-row)
                                                     (assoc :turn-count (:turn-count conversation-row))))
                           vars-snapshot (inject-system-var-snapshots vars-snapshot
-                                          {:query              query
+                                          {:user-request       user-request
                                            :thinking           thinking
                                            :final-answer       final-answer
                                            :turn-conversation-turn-id      conversation-turn-id
@@ -1772,7 +1775,8 @@
                                                     :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                                     :llm-model (:llm-model iteration-result)
                                                     :llm-raw-response (:llm-raw-response iteration-result)
-                                                    :llm-selected-blocks (:llm-selected-blocks iteration-result)
+                                                    :llm-executable-code (:llm-executable-code iteration-result)
+                                                    :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                     :metadata (iteration-metadata iteration)}
                                              tc (assoc :tokens (:tokens tc)
                                                   :cost-usd (:cost-usd tc)))))
@@ -1896,24 +1900,24 @@
     :error     :error
     :complete))
 
-(defn run-query!
-  "Store query → iteration-loop → update query → return result.
+(defn run-turn!
+  "Store turn → iteration-loop → update turn → return result.
 
    Derives `:prior-outcome` (one of `:complete`,
    `:abandoned`, `:cancelled`, `:error`) from the loop result and
    persists it on the `conversation_turn_state` row. The next turn's
    `<system_state>` digest reads it."
-  [env query loop-opts]
+  [env user-request loop-opts]
   (when-not (map? env)
-    (throw (ex-info "run-query! requires an env map" {:got (type env)})))
-  (when (clojure.string/blank? query)
-    (throw (ex-info "run-query! requires a non-blank query string" {:got query})))
+    (throw (ex-info "run-turn! requires an env map" {:got (type env)})))
+  (when (clojure.string/blank? user-request)
+    (throw (ex-info "run-turn! requires a non-blank user request" {:got user-request})))
   (let [conversation-turn-id (persistance/db-store-conversation-turn! (:db-info env)
                                {:parent-conversation-id (:conversation-id env)
-                                :query query
+                                :user-request user-request
                                 :messages nil
                                 :status :running})
-        result (iteration-loop env query (assoc loop-opts :conversation-turn-id conversation-turn-id))
+        result (iteration-loop env user-request (assoc loop-opts :conversation-turn-id conversation-turn-id))
         prior-outcome (->prior-outcome result)
         _ (persistance/db-update-conversation-turn! (:db-info env) conversation-turn-id
             {:answer          (:answer result)
@@ -1926,10 +1930,10 @@
     (assoc result :conversation-turn-id conversation-turn-id :prior-outcome prior-outcome)))
 
 ;; -----------------------------------------------------------------------------
-;; Prepare query context
+;; Prepare turn context
 ;; -----------------------------------------------------------------------------
 
-(defn- prepare-query-context
+(defn- prepare-turn-context
   "Validates inputs, resolves SCI bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
@@ -1949,21 +1953,21 @@
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
     (let [cancel-atom            (or cancel-atom (atom false))
-          ;; `query-str` = ONLY the current turn's user message.
+          ;; `user-request` = ONLY the current turn's user message.
           ;;
           ;; Prior behavior joined every message's :content (including
           ;; previous turns' user messages + assistant answers + system!) into
           ;; one growing blob. That corrupted three things at once:
-          ;;   1. `query_attrs.text` / `.name` stored the entire transcript
+          ;;   1. the persisted user request stored the entire transcript
           ;;      for every turn — the sidebar showed "Siema\nSiema!\n…".
-          ;;   2. `*query*` SYSTEM var (bound from this same string) grew
+          ;;   2. `TURN_USER_REQUEST` (bound from this same string) grew
           ;;      with each turn instead of reflecting the current ask.
           ;;   3. The synthetic `{:requirement …}` frame the LLM sees
           ;;      restated the whole conversation as the "requirement".
           ;;
           ;; Conversation history still reaches the model via the `messages`
           ;; vector itself (passed through to the LLM call unmodified).
-          ;; `query-str` is ONLY the current turn — one ask, one value.
+          ;; `user-request` is ONLY the current turn — one ask, one value.
           extract-text           (fn [c]
                                    (cond
                                      (string? c)     c
@@ -1971,7 +1975,7 @@
                                                        (keep #(when (= "text" (:type %)) (:text %)) c))
                                      :else           nil))
           ;; Locate the LAST user message once. It's both the source of
-          ;; `query-str` (the `{:requirement ...}` payload for iteration 0)
+          ;; `user-request` (the `{:requirement ...}` payload for iteration 0)
           ;; AND the boundary between history and the current turn:
           ;; everything BEFORE its index is prior conversation history,
           ;; which `iteration-loop` replays as `:history-messages`.
@@ -1981,9 +1985,9 @@
                                            (when (contains? #{"user" :user} (:role m))
                                              i))))
           last-user-message      (when last-user-idx (nth messages last-user-idx))
-          query-str              (or (some-> last-user-message :content extract-text)
+          user-request           (or (some-> last-user-message :content extract-text)
                                    ;; Fallback: no :user role found (malformed caller) —
-                                   ;; use the last message's text. Better than an empty query.
+                                   ;; use the last message's text. Better than an empty user request.
                                    (some-> messages last :content extract-text)
                                    "")
           history-messages       (if last-user-idx
@@ -2010,7 +2014,7 @@
                                    :current-conversation-turn-id-atom current-conversation-turn-id-atom)
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
-       :query-str              query-str
+       :user-request           user-request
        :router                 env-router
        :root-model             root-model
        :root-provider          root-provider
@@ -2035,13 +2039,13 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- run-iteration-phase
-  "Runs the main iteration loop via run-query!.
+  "Runs the main iteration loop via run-turn!.
    Returns iteration-result, conversation-turn-id, cost atoms, and merge-cost! fn."
-  [{:keys [environment query-str history-messages spec
+  [{:keys [environment user-request history-messages spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
            reasoning-default routing extra-body]}]
-  (let [iteration-result (run-query! environment query-str
+  (let [iteration-result (run-turn! environment user-request
                            (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
                                     :system-prompt          system-prompt
@@ -2075,11 +2079,11 @@
      :merge-cost!       merge-cost!}))
 
 ;; -----------------------------------------------------------------------------
-;; Finalize query result
+;; Finalize turn result
 ;; -----------------------------------------------------------------------------
 
-(defn- finalize-query-result
-  "Updates DB query record, builds result map.
+(defn- finalize-turn-result
+  "Updates DB turn record, builds result map.
 
    `:provider` and `:model` are both attached to the persisted cost
    map so the web footer / meta layer can render `provider/model · N
@@ -2099,7 +2103,7 @@
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
       (do
-        (log-stage! :query-end 0
+        (log-stage! :turn-end 0
           {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
@@ -2112,7 +2116,7 @@
                :cost            cost-with-model})
             (catch Exception e
               (tel/log! {:level :warn :data (format-exception-short e)
-                         :msg   "Failed to update query (max iterations)"})))
+                         :msg   "Failed to update turn (max iterations)"})))
           (cond-> {:answer          fallback-answer
                    :status          status
                    :status-id       status-id
@@ -2124,7 +2128,7 @@
             (some? locals) (assoc :locals locals))))
       ;; success path
       (do
-        (log-stage! :query-end 0
+        (log-stage! :turn-end 0
           {:duration-ms duration-ms :iteration-count iteration-count
            :cost (str (:total-cost cost-with-model))})
         (try
@@ -2137,7 +2141,7 @@
              :cost            cost-with-model})
           (catch Exception e
             (tel/log! {:level :warn :data (format-exception-short e)
-                       :msg   "Failed to update query (success)"})))
+                       :msg   "Failed to update turn (success)"})))
         (cond-> {:answer          answer
                  :trace           trace
                  :iteration-count iteration-count
@@ -2151,8 +2155,8 @@
 ;; Public entry point
 ;; -----------------------------------------------------------------------------
 
-(defn query!
-  "Runs a query on an RLM environment using iterative LLM code evaluation.
+(defn turn!
+  "Runs one conversation turn on an RLM environment using iterative LLM code evaluation.
 
     Params:
     `environment` - RLM environment from create-environment.
@@ -2178,23 +2182,23 @@
            :blocks [{:id 0 :code <code-str> :result <value> :stdout <str> :error nil :execution-time-ms 5}
                        ...]}
      - :iteration-count - Number of iterations used.
-     - :duration-ms - Query duration in milliseconds.
+     - :duration-ms - Turn duration in milliseconds.
      - :tokens - Token usage map {:input N :output N :total N}.
      - :cost - Cost map {:input-cost N :output-cost N :total-cost N}.
      - :confidence - Confidence level (:high/:medium/:low) from final iteration.
       - :reasoning - String summary of how the answer was derived (from LLM's FINAL call).
       - :status - Only present on failure (`:error` or `:cancelled`)."
   ([environment messages]
-   (query! environment messages {}))
+   (turn! environment messages {}))
   ([environment messages opts]
-   (let [ctx (prepare-query-context environment messages opts)
+   (let [ctx (prepare-turn-context environment messages opts)
          {:keys [eval-timeout-ms concurrency
-                 debug? query-str root-model
+                 debug? user-request root-model
                  db-info
                  environment-id]} ctx
          merged-concurrency (merge DEFAULT_CONCURRENCY concurrency)]
      (binding [*rlm-context*       {:rlm-environment-id environment-id :rlm-type :main
-                                    :rlm-debug? debug? :rlm-phase :query
+                                    :rlm-debug? debug? :rlm-phase :turn
                                     :db-info db-info
                                     :conversation-soul-id (:conversation-id environment)}
                *eval-timeout-ms*  (clamp-eval-timeout-ms
@@ -2202,10 +2206,10 @@
                *concurrency*      merged-concurrency]
        (tel/with-ctx+ {:db-info db-info
                        :conversation-soul-id (:conversation-id environment)}
-         (log-stage! :query-start 0
+         (log-stage! :turn-start 0
            {:model root-model
             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
-            :query query-str})
+            :user-request user-request})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
                {:keys [iteration-result conversation-turn-id
@@ -2220,7 +2224,7 @@
                 reasoning        :reasoning} iteration-result
                result
                (if status
-                 (finalize-query-result
+                 (finalize-turn-result
                    ctx
                    {:conversation-turn-id          conversation-turn-id
                     :start-time        start-time
@@ -2232,7 +2236,7 @@
                     :answer            iteration-answer
                     :total-tokens-atom total-tokens-atom
                     :total-cost-atom   total-cost-atom})
-                 (finalize-query-result
+                 (finalize-turn-result
                    ctx
                    {:conversation-turn-id          conversation-turn-id
                     :start-time        start-time
@@ -2253,16 +2257,8 @@
                 :db-info                 db-info
                 :conversation-id         (:conversation-id environment)
                 :conversation-title-atom (:conversation-title-atom environment)
-                :user-query              query-str}))
+                :user-request            user-request}))
            result))))))
-
-(defn turn!
-  "Runs one conversation turn on an RLM environment using iterative LLM
-   code evaluation. A turn is one user ask plus assistant answer."
-  ([environment messages]
-   (turn! environment messages {}))
-  ([environment messages opts]
-   (query! environment messages opts)))
 
 ;; =============================================================================
 ;; Environment lifecycle + system prompt
@@ -2304,7 +2300,7 @@
 
 (defn- forget-vars!
   "Unmap `names` from the SCI sandbox namespace. Used by the
-   deterministic auto-forget at query boundaries.
+   deterministic auto-forget at turn boundaries.
 
    HARD GUARD: SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — the
    `TURN_*` / `ITERATION_*` / `CONVERSATION_*` registry) can NEVER be
@@ -2334,19 +2330,19 @@
 (def ^:const AUTO_FORGET_STALE_QUERIES
   "Number of recent queries a var must have been defined/redefined in to
    survive auto-forget. Vars without a docstring that were last touched
-   more than this many queries ago are evicted at the start of each new
-   query. DB rows are untouched — `(var-history 'sym)` still works."
+   more than this many turns ago are evicted at the start of each new
+   turn. DB rows are untouched — `(var-history 'sym)` still works."
   3)
 
 (defn auto-forget-candidates
   "Pure function. Returns the set of sandbox var symbols that should be
-   auto-forgotten at the start of a new query.
+   auto-forgotten at the start of a new turn.
 
    A var is a candidate when ALL of:
    1. It is a user var (not in `initial-ns-keys`).
    2. It is not a SYSTEM var (per `SYSTEM_VAR_NAMES`).
    3. It has NO docstring (runtime SCI meta `:doc` is nil/blank).
-   4. It was last defined/redefined in a query that is NOT among the
+   4. It was last defined/redefined in a turn that is NOT among the
       `recent-conversation-turn-ids`.
 
    Params:
@@ -2354,7 +2350,7 @@
    - `initial-ns-keys`  — set of symbols that are built-in tools/helpers
    - `var-registry`     — result of `db-latest-var-registry`:
                           {symbol → {:conversation-turn-id ... :value ... :code ...}}
-   - `recent-conversation-turn-ids` — set of query UUIDs for the last N queries
+   - `recent-conversation-turn-ids` — set of turn UUIDs for the last N queries
 
    Returns: set of symbols to forget."
   [sandbox-map initial-ns-keys var-registry recent-conversation-turn-ids]
@@ -2376,7 +2372,7 @@
       (keys sandbox-map))))
 
 (defn auto-forget-stale-vars!
-  "Deterministic cleanup at the query boundary: remove sandbox vars that
+  "Deterministic cleanup at the turn boundary: remove sandbox vars that
    (a) have no docstring AND (b) were last defined/redefined more than
    `AUTO_FORGET_STALE_QUERIES` queries ago. Replaces the unreliable
    ask-the-LLM-to-emit-`:forget` pattern for scratch vars. DB rows are
@@ -2470,7 +2466,7 @@
         root-provider            (:provider root-resolved-model)
         ;; Snapshot a base system prompt for the conversation row so the
         ;; sidebar / DB inspectors have something stable to display.
-        ;; Real per-query assembly goes through `prompt/assemble-system-prompt`
+        ;; Real per-turn assembly goes through `prompt/assemble-system-prompt`
         ;; with `:active-extensions`, so this snapshot is just metadata.
         system-prompt            (prompt/build-system-prompt {})
         resolved-conversation-id (persistance/db-resolve-conversation-id db-info conversation)
@@ -2806,7 +2802,7 @@
    Continue-on-error: per-ext failures accumulate in `:errors` and
    orchestration continues. Plan Q16.
 
-   Calling env defers reseat (mid-query reload would race with the
+   Calling env defers reseat (mid-turn reload would race with the
    SCI sandbox actively executing the call); other envs are reseated
    under a `:reload/timeout-ms` (default 30s) per-env lock acquisition.
    Plan caveat: reload deadlock prevention.
@@ -3062,22 +3058,22 @@
 
 (defn- auto-title!
   "Generate a 6-words-max title for `conversation-id` from the user
-   query, persist it, and broadcast. Synchronous — caller picks the
-   thread (we wrap it in a `future` from `query!` so the answer path
+   request, persist it, and broadcast. Synchronous — caller picks the
+   thread (we wrap it in a `future` from `turn!` so the answer path
    is never blocked).
 
    Skipped silently when:
      - the conversation already has a non-blank title
-     - the user query is blank
+     - the user request is blank
      - the LLM call fails / returns blank
      - the post-cleaned candidate is unusable
 
    Goes through `svar/ask-code!` with `:lang \"text\"` (no JSON spec
    anywhere in Vis)."
-  [{:keys [router db-info conversation-id conversation-title-atom user-query]}]
+  [{:keys [router db-info conversation-id conversation-title-atom user-request]}]
   (when (and router db-info conversation-id
-          (string? user-query)
-          (not (str/blank? user-query)))
+          (string? user-request)
+          (not (str/blank? user-request)))
     (let [conv  (try (persistance/db-get-conversation db-info conversation-id)
                   (catch Throwable _ nil))
           cur   (some-> conv :title str)]
@@ -3085,7 +3081,7 @@
         (try
           (let [prompt (str "Pick a short conversation title for this user request — at most "
                          auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
-                         "User request:\n" user-query "\n\n"
+                         "User request:\n" user-request "\n\n"
                          "Reply with ONE fenced ```text block containing only the title.")
                 resp (svar/ask-code! router
                        {:messages           [(svar/user prompt)]
@@ -3131,7 +3127,7 @@
      ;; reload calls and `.tryLock(timeout)` to bound waits on
      ;; OTHER busy envs. Plan caveat: reload deadlock prevention.
      (.lock lock)
-     (try (query! environment message-vec opts)
+     (try (turn! environment message-vec opts)
        (finally (.unlock lock))))))
 
 (defn close!
@@ -3147,12 +3143,12 @@
     (try (persistance/db-delete-conversation-tree! d id)
       (catch Exception _ nil))))
 
-(defn db-sweep-orphaned-running-queries!
+(defn db-sweep-orphaned-running-turns!
   "Convenience wrapper: run the persistence-layer sweep against the
-   shared DB handle. Frontends call this on startup to mark queries
+   shared DB handle. Frontends call this on startup to mark turns
    that crashed mid-write as `:interrupted`."
-  ([] (persistance/db-sweep-orphaned-running-queries! (db-info)))
-  ([db] (persistance/db-sweep-orphaned-running-queries! db)))
+  ([] (persistance/db-sweep-orphaned-running-turns! (db-info)))
+  ([db] (persistance/db-sweep-orphaned-running-turns! db)))
 
 (defn close-all!
   []

@@ -200,7 +200,7 @@
                     (-> db :messages first :text)))
           (expect (= "see @src/core.clj +paste"
                     (last (:input-history db))))
-          (expect (= [[:rlm-query {:id "c1"}
+          (expect (= [[:rlm-turn {:id "c1"}
                        "see @src/core.clj +paste +file"
                        :token
                        :balanced

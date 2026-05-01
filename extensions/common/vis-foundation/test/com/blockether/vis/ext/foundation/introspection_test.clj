@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.foundation.introspection-test
   "Tests for the meta extension's consolidated API. Seven
    functions, each returning a map or vector. Each test bootstraps
-   synthetic conversation + query + iteration rows in an in-memory
+   synthetic conversation + turn + iteration rows in an in-memory
    SQLite DB, then invokes the impl fns directly with a fake env map."
   (:require
    [clojure.string :as str]
@@ -31,7 +31,7 @@
                           {:channel :tui :title "meta test"})
         conversation-turn-id (vis/db-store-conversation-turn! store
                                {:parent-conversation-id conversation-id
-                                :query "what's the plan?"
+                                :user-request "what's the plan?"
                                 :status :running})]
     {:conversation-id conversation-id :conversation-turn-id conversation-turn-id}))
 
@@ -65,11 +65,11 @@
   (it "returns nil when DB is unreachable"
     (expect (nil? ((private-fn "foundation-turn") {:conversation-id "x"}))))
 
-  (it "returns a snapshot map with goal / status / iteration / cost / elapsed-ms"
+  (it "returns a snapshot map with user request / status / iteration / cost / elapsed-ms"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
           turn ((private-fn "foundation-turn") (env s conversation-id))]
-      (expect (= "what's the plan?" (:goal turn)))
+      (expect (= "what's the plan?" (:user-request turn)))
       (expect (= :running (:status turn)))
       (expect (map? (:iteration turn)))
       (expect (= 3 (:current (:iteration turn))))
@@ -130,7 +130,7 @@
       (expect (= :telegram (:channel conversation)))
       (expect (= 0 (:turn-count conversation)))))
 
-  (it "turns include goal/outcome/answer when present"
+  (it "turns include user-request/outcome/answer when present"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
       (vis/db-update-conversation-turn! s conversation-turn-id
@@ -138,7 +138,7 @@
          :prior-outcome :complete})
       (let [conversation ((private-fn "foundation-conversation") (env s conversation-id))
             turn (first (:turns conversation))]
-        (expect (= "what's the plan?" (:goal turn)))
+        (expect (= "what's the plan?" (:user-request turn)))
         (expect (= "42" (:answer turn)))
         (expect (= :complete (:outcome turn))))))
 
@@ -216,7 +216,7 @@
       (expect (= 0 (:version (first rows))))
       (expect (nil? (:parent-state-id (first rows))))))
 
-  (it "surfaces every fork with parent links and per-state query counts"
+  (it "surfaces every fork with parent links and per-state turn counts"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)]
       (vis/db-fork-conversation! s conversation-id {:title "Branch A"})
@@ -244,14 +244,14 @@
       (expect (= [] rows)))))
 
 ;; -----------------------------------------------------------------------------
-;; query-retries helper — retry history introspection.
+;; turn-retries helper — retry history introspection.
 ;; -----------------------------------------------------------------------------
 
-(defdescribe meta-query-retries-test
-  (it "returns the v0 row for a query with no retries"
+(defdescribe meta-turn-retries-test
+  (it "returns the v0 row for a turn with no retries"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
-          rows ((private-fn "meta-query-retries") (env s conversation-id) conversation-turn-id)]
+          rows ((private-fn "meta-turn-retries") (env s conversation-id) conversation-turn-id)]
       (expect (vector? rows))
       (expect (= 1 (count rows)))
       (expect (= 0 (:version (first rows))))
@@ -262,7 +262,7 @@
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
       (vis/db-retry-conversation-turn! s conversation-turn-id {:status :running :model "claude-4"})
       (vis/db-retry-conversation-turn! s conversation-turn-id {:status :done    :model "gpt-4o"})
-      (let [rows ((private-fn "meta-query-retries") (env s conversation-id) conversation-turn-id)]
+      (let [rows ((private-fn "meta-turn-retries") (env s conversation-id) conversation-turn-id)]
         (expect (= 3 (count rows)))
         (expect (= [0 1 2] (mapv :version rows)))
         (expect (every? :forked-from-conversation-turn-state-id (drop 1 rows))))))
@@ -270,15 +270,15 @@
   (it "returns [] (vector, never nil) for an unknown conversation-turn-id"
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)
-          rows ((private-fn "meta-query-retries") (env s conversation-id) (random-uuid))]
+          rows ((private-fn "meta-turn-retries") (env s conversation-id) (random-uuid))]
       (expect (vector? rows))
       (expect (= [] rows))))
 
   (it "returns [] (vector, never nil) when env or conversation-turn-id missing"
-    (expect (= [] ((private-fn "meta-query-retries") {} (random-uuid))))
+    (expect (= [] ((private-fn "meta-turn-retries") {} (random-uuid))))
     (let [s (h/store)
           {:keys [conversation-id]} (bootstrap s)]
-      (expect (= [] ((private-fn "meta-query-retries") (env s conversation-id) nil))))))
+      (expect (= [] ((private-fn "meta-turn-retries") (env s conversation-id) nil))))))
 
 ;; -----------------------------------------------------------------------------
 ;; failures and diagnosis helpers — no raw SQLite needed for triage
@@ -363,7 +363,7 @@
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           second-conversation-turn-id (vis/db-store-conversation-turn! s
                                         {:parent-conversation-id conversation-id
-                                         :query "second turn"
+                                         :user-request "second turn"
                                          :status :running})]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(v/rg \"x\\|y\" \"z\")"
@@ -376,7 +376,7 @@
       (let [failures ((private-fn "foundation-failures") (env s conversation-id) conversation-id)]
         (expect (= 2 (count failures)))
         (expect (every? :turn-id failures))
-        (expect (every? :goal failures)))))
+        (expect (every? :user-request failures)))))
 
   (it "returns [] (vector, never nil) when the current turn has no failures"
     (let [s (h/store)
@@ -421,13 +421,14 @@
          :llm-provider :test-provider
          :llm-model "test-model"
          :llm-raw-response raw-response
-         :llm-selected-blocks [{:lang "clojure" :source "(+ 1 2)"}]})
+         :llm-executable-code "(+ 1 2)"
+         :llm-executable-blocks [{:lang "clojure" :source "(+ 1 2)"}]})
       (let [data ((private-fn "foundation-inspect") (env s conversation-id))
             diagnostic (first (:llm-diagnostics data))
             transcript-iter (get-in data [:transcript :turns 0 :iterations 0])]
         (expect (= 1 (count (:llm-diagnostics data))))
         (expect (= conversation-turn-id (:turn-id diagnostic)))
-        (expect (= "what's the plan?" (:goal diagnostic)))
+        (expect (= "what's the plan?" (:user-request diagnostic)))
         (expect (= (:id transcript-iter) (:iteration-id diagnostic)))
         (expect (= 0 (:iteration diagnostic)))
         (expect (= :done (:status diagnostic)))
@@ -437,6 +438,9 @@
         (expect (= (count raw-response) (get-in diagnostic [:raw-response :length])))
         (expect (= (:llm-raw-response-sha256 transcript-iter)
                   (get-in diagnostic [:raw-response :sha256])))
+        (expect (= "(+ 1 2)" (get-in diagnostic [:raw-response :executable-code])))
+        (expect (= [{:lang "clojure" :source "(+ 1 2)"}]
+                  (get-in diagnostic [:raw-response :executable-blocks])))
         (expect (= 1 (get-in diagnostic [:raw-response :block-count])))
         (expect (= ["clojure"] (get-in diagnostic [:raw-response :block-langs]))))))
 
@@ -451,11 +455,12 @@
          :llm-provider :test-provider
          :llm-model "test-model"
          :llm-raw-response raw-response
-         :llm-selected-blocks [{:lang "clojure" :source "(+ 1 2)"}]})
+         :llm-executable-code "(+ 1 2)"
+         :llm-executable-blocks [{:lang "clojure" :source "(+ 1 2)"}]})
       (let [out ((private-fn "foundation-report") (env s conversation-id))]
         (expect (string? out))
         (expect (str/includes? out (str "conversation `" conversation-id "`")))
-        (expect (str/includes? out "Goal:** what's the plan?"))
+        (expect (str/includes? out "User request:** what's the plan?"))
         (expect (str/includes? out "Raw LLM response diagnostics"))
         (expect (str/includes? out "Raw chars"))
         (expect (str/includes? out (str "| `" conversation-turn-id "` | 0 | done |")))
@@ -471,14 +476,14 @@
       (let [out ((private-fn "foundation-report") (env s conversation-id))]
         (expect (string? out))
         (expect (str/includes? out (str "conversation `" conversation-id "`")))
-        (expect (str/includes? out "Goal:** what's the plan?")))))
+        (expect (str/includes? out "User request:** what's the plan?")))))
 
   (it "exports only inspect/report plus extension discovery symbols for introspection"
     (let [symbols (set (map :ext.symbol/sym com.blockether.vis.ext.foundation.introspection/all-symbols))]
       (expect (contains? symbols 'inspect))
       (expect (contains? symbols 'report))
       (doseq [removed ['turn 'conversation 'conversations 'conversation-forks
-                       'query-retries 'var-history 'find-attempts
+                       'turn-retries 'var-history 'find-attempts
                        'find-attempts-everywhere 'failures
                        'failures-everywhere 'diagnose]]
         (expect (not (contains? symbols removed)))))))
@@ -626,8 +631,8 @@
         (expect (empty-result? ((private-fn "foundation-conversation-forks") environment)))
         (expect (vector? ((private-fn "foundation-conversation-forks") environment)))
         (expect (empty-result? ((private-fn "foundation-conversation-forks") environment (random-uuid))))
-        (expect (empty-result? ((private-fn "meta-query-retries") environment (random-uuid))))
-        (expect (vector? ((private-fn "meta-query-retries") environment (random-uuid))))
+        (expect (empty-result? ((private-fn "meta-turn-retries") environment (random-uuid))))
+        (expect (vector? ((private-fn "meta-turn-retries") environment (random-uuid))))
         (expect (empty-result? ((private-fn "foundation-failures") environment)))
         (expect (vector? ((private-fn "foundation-failures") environment)))
         (expect (= 0 (:failure-count ((private-fn "foundation-diagnose") environment))))

@@ -5,7 +5,7 @@
    Foundation utilities (storage facade, extension specs, format helpers,
    etc.) live across `com.blockether.vis.internal.{persistance,extension,config,registry}`. Channels and extensions never
    reach into here; they go through the public iteration entry points
-   in `com.blockether.vis.internal.loop` (`send!`, `create!`, `query!`, …)."
+   in `com.blockether.vis.internal.loop` (`send!`, `create!`, `turn!`, …)."
   (:require
    [clojure.set]
    [clojure.spec.alpha]
@@ -284,7 +284,7 @@
    iteration's `<var_index>` context block to reflect the new binding, they
    MUST also call `bump-var-index!` on the env — the var-index is cached and
    only rebuilds when `:current-revision` advances. Every past cache-staleness
-   bug (4-iteration `(restore-vars …)` spin, turn-3 `*query*=\"Siema\"` replay)
+   bug (4-iteration `(restore-vars …)` spin, turn-3 stale request replay)
    traces back to forgetting this pair. Prefer `bind-and-bump!` below."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
@@ -689,12 +689,11 @@
 ;; agent. Three lifetime tiers, each tagged by its prefix:
 ;;
 ;;   TURN_*         frozen at turn start, immutable for the whole turn
-;;     TURN_USER_REQUEST           user's current message text (string)
-;;     TURN_CONVERSATION_TURN_ID               UUID of THIS in-flight turn (== query soul)
+;;     TURN_USER_REQUEST           exact human-authored turn text (string)
+;;     TURN_CONVERSATION_TURN_ID   UUID of THIS in-flight turn soul
 ;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under
 ;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
-;;                                 turn start (the row this query was attached
-;;                                 to). Stable for the whole turn even if a
+;;                                 turn start. Stable for the whole turn even if a
 ;;                                 sibling write changes title; only an
 ;;                                 explicit fork bumps the state id.
 ;;     TURN_SYSTEM_PROMPT          full assembled system prompt that drove THIS

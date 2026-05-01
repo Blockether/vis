@@ -2,7 +2,7 @@
   "Persistence facade: backend registry, connection lifecycle, every
    delegated `store-*`/`db-*` fn, error translation, the process-wide
    shared connection, and the orphan-sweep that reconciles `:running`
-   queries on process restart.
+   turns on process restart.
 
    Backends register themselves via `register-backend!` at namespace
    load. The facade dispatches each delegated call by resolving the
@@ -281,7 +281,7 @@
 (defdelegate db-list-conversation-states         [db-info conversation-id])
 (defdelegate db-latest-conversation-state-id     [db-info conversation-id])
 
-;; --- Query lifecycle ---
+;; --- Turn lifecycle ---
 (defdelegate db-store-conversation-turn!                  [db-info opts])
 (defdelegate db-update-conversation-turn!                 [db-info conversation-turn-id opts])
 (defdelegate db-list-conversation-turns-by-status     [db-info status])
@@ -311,7 +311,7 @@
   ([db-info conversation-ref opts] ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref opts)))
 
 (defdelegate db-var-history    [db-info conversation-ref sym])
-(defdelegate db-query-history  [db-info conversation-ref])
+(defdelegate db-turn-history   [db-info conversation-ref])
 
 ;; --- Dependencies ---
 (defdelegate db-store-dependency!     [db-info opts])
@@ -428,11 +428,11 @@
 (def ^:private ORPHAN_INTERRUPTED_ANSWER
   "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry.")
 
-(defn db-sweep-orphaned-running-queries!
-  "Mark every `:running` query as `:interrupted`. Run at process start
-   to clean up queries that crashed or were killed mid-write so the
+(defn db-sweep-orphaned-running-turns!
+  "Mark every `:running` turn as `:interrupted`. Run at process start
+   to clean up turns that crashed or were killed mid-write so the
    next turn's handover digest renders the right outcome instead of
-   guessing. Returns the number of queries swept."
+   guessing. Returns the number of turns swept."
   [db-info]
   (let [orphans (try (db-list-conversation-turns-by-status db-info :running)
                   (catch Exception _ []))]

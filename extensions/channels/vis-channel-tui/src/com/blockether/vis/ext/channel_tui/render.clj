@@ -2325,7 +2325,7 @@
    `extra` carries:
      :now-ms         — `System/currentTimeMillis` from the render thread
                        (drives the spinner frame); defaults to current ms
-     :query-start-ms — wall-clock start, used for elapsed time
+     :turn-start-ms — wall-clock start, used for elapsed time
      :cancelling?    — true once Esc was pressed"
   ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
   ([progress bubble-w settings extra]
@@ -2334,10 +2334,10 @@
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
          show-iteration-headers?  (get settings :show-iteration-headers false)
-         {:keys [now-ms query-start-ms cancelling?]} extra
+         {:keys [now-ms turn-start-ms cancelling?]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
-         elapsed-ms       (when query-start-ms
-                            (max 0 (- now-ms (long query-start-ms))))
+         elapsed-ms       (when turn-start-ms
+                            (max 0 (- now-ms (long turn-start-ms))))
          elapsed-str      (or (vis/format-duration elapsed-ms) "0ms")
          spinner-line     (str (spinner-frame now-ms) "  "
                             (progress-phase iterations cancelling?) "…  "

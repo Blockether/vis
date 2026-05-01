@@ -32,7 +32,7 @@
                      :tokens {:input :output :reasoning :cached}
                      :cost-usd D}
       :turns
-       [{:id :goal :status :prior-outcome :provider :model
+       [{:id :user-request :status :prior-outcome :provider :model
          :iteration-count :failure-count
          :tokens :cost-usd :answer
          :iterations
@@ -41,9 +41,9 @@
             :tokens :cost-usd
             :answer-form-idx :returned-empty-blocks?
             :llm-system-prompt :llm-user-prompt
-            :llm-raw-response-preview :llm-raw-response-length
+            :llm-raw-response :llm-raw-response-preview :llm-raw-response-length
             :llm-raw-response-sha256
-            :llm-selected-block-count :llm-selected-block-langs
+            :llm-executable-code :llm-executable-blocks
             :metadata
             :vars
             [{:name :code :value :version}]
@@ -107,25 +107,25 @@
 (defn- build-turn
   "Pure projection: one conversation_turn_soul row + its iterations → the
    turn-shaped data map the public `transcript` returns."
-  [db-info query]
-  (let [raw-iters (try (vis/db-list-conversation-turn-iterations db-info (:id query))
+  [db-info turn]
+  (let [raw-iters (try (vis/db-list-conversation-turn-iterations db-info (:id turn))
                     (catch Throwable _ []))
         iters     (mapv (partial enrich-iteration db-info) raw-iters)
         totals    (iteration-rollup iters)
         provider  (some #(some-> % :provider name) iters)
         model     (some :model iters)]
-    (cond-> {:id              (:id query)
-             :goal            (or (:text query) (:goal query) "")
-             :status          (:status query)
-             :prior-outcome   (:prior-outcome query)
+    (cond-> {:id              (:id turn)
+             :user-request    (or (:user-request turn) "")
+             :status          (:status turn)
+             :prior-outcome   (:prior-outcome turn)
              :iteration-count (count iters)
              :failure-count   (reduce + 0 (map :failure-count iters))
              :iterations      iters
              :tokens          (:tokens totals)
              :cost-usd        (:cost-usd totals)}
-      provider        (assoc :provider provider)
-      model           (assoc :model model)
-      (:answer query) (assoc :answer (:answer query)))))
+      provider       (assoc :provider provider)
+      model          (assoc :model model)
+      (:answer turn) (assoc :answer (:answer turn)))))
 
 (defn- conversation-totals
   "Sum tokens + cost + iteration counts across every turn."
@@ -194,9 +194,9 @@
   (when-let [resolved-id (resolve-conversation-ref db-info conversation-id)]
     (when-let [conv (try (vis/db-get-conversation db-info resolved-id)
                       (catch Throwable _ nil))]
-      (let [queries (try (vis/db-list-conversation-turns db-info resolved-id)
-                      (catch Throwable _ []))
-            turns   (mapv (partial build-turn db-info) queries)
+      (let [turn-rows (try (vis/db-list-conversation-turns db-info resolved-id)
+                        (catch Throwable _ []))
+            turns     (mapv (partial build-turn db-info) turn-rows)
             totals  (conversation-totals turns)]
         {:conversation (cond-> {:id         resolved-id
                                 :title      (:title conv)
@@ -374,7 +374,7 @@
 (defn- raw-diagnostic-rows
   "Flatten transcript turns/iterations into compact raw-response
    diagnostic rows. Rows exist only when the iteration has persisted
-   raw-response or selected-block forensic data. This is presentation
+   raw-response or executable-block forensic data. This is presentation
    support for `v/report`; `v/inspect` builds its public convenience
    view from the same underlying transcript fields."
   [turns]
@@ -384,16 +384,19 @@
                       (when (or (some? (:llm-raw-response-preview iter))
                               (some? (:llm-raw-response-length iter))
                               (some? (:llm-raw-response-sha256 iter))
-                              (some? (:llm-selected-block-count iter))
-                              (seq (:llm-selected-block-langs iter)))
-                        {:turn-id     (:id turn)
-                         :iteration   (:position iter)
-                         :status      (:status iter)
-                         :raw-preview (:llm-raw-response-preview iter)
-                         :raw-length  (:llm-raw-response-length iter)
-                         :raw-sha256  (:llm-raw-response-sha256 iter)
-                         :block-count (:llm-selected-block-count iter)
-                         :block-langs (:llm-selected-block-langs iter)}))
+                              (some? (:llm-executable-code iter))
+                              (seq (:llm-executable-blocks iter)))
+                        (let [executable-blocks (vec (:llm-executable-blocks iter))]
+                          {:turn-id           (:id turn)
+                           :iteration         (:position iter)
+                           :status            (:status iter)
+                           :raw-preview       (:llm-raw-response-preview iter)
+                           :raw-length        (:llm-raw-response-length iter)
+                           :raw-sha256        (:llm-raw-response-sha256 iter)
+                           :executable-code   (:llm-executable-code iter)
+                           :executable-blocks executable-blocks
+                           :block-count       (count executable-blocks)
+                           :block-langs       (mapv :lang executable-blocks)})))
                 (:iterations turn)))
       turns)))
 
@@ -412,12 +415,19 @@
     " |\n"))
 
 (defn- render-raw-diagnostic-details
-  [{:keys [turn-id iteration raw-preview raw-length]}]
+  [{:keys [turn-id iteration raw-preview raw-length executable-code executable-blocks]}]
   (render-collapsible
     (str "Raw LLM response preview for turn " turn-id
       " / iteration " iteration
       (when raw-length (str " (" raw-length " chars total)")))
-    (render-fenced "text" raw-preview)))
+    (str
+      (render-fenced "text" raw-preview)
+      (when (not (str/blank? (str executable-code)))
+        (str "\n\nExecutable code selected by svar:\n\n"
+          (render-fenced "clojure" executable-code)))
+      (when (seq executable-blocks)
+        (str "\n\nExecutable fenced blocks selected by svar:\n\n"
+          (render-fenced "clojure" (pr-str executable-blocks)))))))
 
 (defn- render-raw-diagnostics
   "Compact raw LLM response diagnostics for the whole report. The
@@ -475,12 +485,12 @@
       (render-fenced "text" answer))))
 
 (defn- render-turn-block
-  [{:keys [id goal status prior-outcome provider model
+  [{:keys [id user-request status prior-outcome provider model
            iteration-count failure-count
            iterations tokens cost-usd answer]}]
   (str
     "### Turn `" id "`\n"
-    "- **Goal:** " (one-line goal) "\n"
+    "- **User request:** " (one-line user-request) "\n"
     "- **Status:** " (or (some-> status name) "—")
     (when prior-outcome (str " (" (name prior-outcome) ")")) "\n"
     "- **Provider/model:** "
