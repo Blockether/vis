@@ -3,18 +3,16 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.util Base64]))
-
-(defn- base64url [s]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
-    (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- jwt [payload]
-  (str (base64url (json/write-json-str {:alg "none"}))
-    "."
-    (base64url (json/write-json-str payload))
-    ".sig"))
+  (let [->b64 (fn [s]
+                (#'codex/base64url
+                 (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))]
+    (str (->b64 (json/write-json-str {:alg "none"}))
+      "."
+      (->b64 (json/write-json-str payload))
+      ".sig")))
 
 (defdescribe authorization-input-test
   (it "parses full callback URLs, query strings, code#state, and bare codes"
@@ -91,55 +89,17 @@
                                          "http://localhost:1455/auth/callback?code=abc&state=state")})))
           (expect (= "acct_123" (:account-id @saved))))))))
 
-(defdescribe codex-transport-test
-  (it "resolves the Responses endpoint even when svar passes a chat URL"
-    (expect (= "https://chatgpt.com/backend-api/codex/responses"
-              (#'codex/codex-responses-url "https://chatgpt.com/backend-api/chat/completions")))
-    (expect (= "https://chatgpt.com/backend-api/codex/responses"
-              (#'codex/codex-responses-url "https://chatgpt.com/backend-api/codex"))))
-
-  (it "builds a Codex Responses request body with required instructions"
-    (let [body (#'codex/codex-request-body [{:role "user" :content "2+2"}]
-                                           "gpt-5.5"
-                                           {})]
-      (expect (= "gpt-5.5" (:model body)))
-      (expect (= "You are a helpful assistant." (:instructions body)))
-      (expect (= "low" (get-in body [:text :verbosity])))
-      (expect (= [{:role "user"
-                   :content [{:type "input_text" :text "2+2"}]}]
-                (:input body)))))
-
-  (it "honors caller-specified Codex verbosity"
-    (let [body (#'codex/codex-request-body [{:role "user" :content "2+2"}]
-                                           "gpt-5.5"
-                                           {:text {:verbosity :high}})]
-      (expect (= "high" (get-in body [:text :verbosity])))))
-
-  (it "extracts reasoning from response.completed when no streaming reasoning delta arrived"
-    (let [content            (StringBuilder.)
-          reasoning          (StringBuilder.)
-          usage              (volatile! nil)
-          completed-response (volatile! nil)
-          chunks             (atom [])
-          response           {:output [{:type "reasoning"
-                                        :summary [{:type "summary_text"
-                                                   :text "Need to inspect the TUI rendering path."}]}
-                                       {:type "message"
-                                        :content [{:type "output_text"
-                                                   :text "(answer :ok)"}]}]
-                              :usage {:input_tokens 11
-                                      :output_tokens 17
-                                      :total_tokens 28
-                                      :output_tokens_details {:reasoning_tokens 9}}}]
-      (#'codex/process-codex-event!
-       {:type "response.completed" :response response}
-       content reasoning usage completed-response
-       #(swap! chunks conj %))
-      (expect (= "Need to inspect the TUI rendering path." (str reasoning)))
-      (expect (= "Need to inspect the TUI rendering path."
-                (:reasoning (last @chunks))))
-      (expect (= true (:done? (last @chunks))))
-      (expect (= 9 (get-in @usage [:completion_tokens_details :reasoning_tokens]))))))
+(defdescribe codex-token-test
+  (it "returns the header shape svar's native Responses transport needs"
+    (let [token (jwt {(keyword "https://api.openai.com/auth")
+                      {:chatgpt_account_id "acct_123"}})]
+      (with-redefs-fn {#'codex/load-auth-file (constantly {:access-token token
+                                                           :expires-at-ms (+ (System/currentTimeMillis) 600000)})}
+        (fn []
+          (expect (= {:token token
+                      :api-url "https://chatgpt.com/backend-api"
+                      :llm-headers {"chatgpt-account-id" "acct_123"}}
+                    (codex/get-openai-codex-token!))))))))
 
 (defdescribe provider-registration-test
   (it "registers the OpenAI Codex auth provider"

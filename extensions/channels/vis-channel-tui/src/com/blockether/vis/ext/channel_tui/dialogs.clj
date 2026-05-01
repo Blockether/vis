@@ -3,7 +3,8 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.theme :as t])
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.internal.file-picker :as picker])
   (:import [com.googlecode.lanterna TextColor$RGB]
            [com.googlecode.lanterna Symbols]
            [com.googlecode.lanterna.input KeyType]
@@ -310,62 +311,43 @@
 
 ;;; ── File picker dialog ──────────────────────────────────────────────────────
 
-(def ^:private file-picker-max-results 200)
-(def ^:private file-picker-ignored-prefixes
-  [".git/" "target/" "docs/book/" ".clj-kondo/" ".verification/" "node_modules/"])
+(def ^:private file-picker-max-visible 10)
 
-(defn- ignored-file-picker-path?
-  [path]
-  (or (some #(str/starts-with? path %) file-picker-ignored-prefixes)
-    (str/includes? path "/node_modules/")))
-
-(defn- repo-file-paths
-  []
-  (let [cwd  (java.io.File. (System/getProperty "user.dir"))
-        root (.toPath cwd)]
-    (->> (file-seq cwd)
-      (filter #(.isFile ^java.io.File %))
-      (map (fn [^java.io.File f]
-             (str (.relativize root (.toPath f)))))
-      (remove ignored-file-picker-path?)
-      sort
-      vec)))
-
-(defn- file-picker-rank
-  [path query]
-  (let [path-lc (str/lower-case path)
-        query-lc (str/lower-case (or query ""))
-        file-name (last (str/split path-lc #"/"))]
-    (cond
-      (str/blank? query-lc)                     [3 path-lc]
-      (= path-lc query-lc)                      [0 path-lc]
-      (str/starts-with? file-name query-lc)     [1 file-name path-lc]
-      (str/includes? file-name query-lc)        [2 (.indexOf ^String file-name query-lc) path-lc]
-      (str/includes? path-lc query-lc)          [3 (.indexOf ^String path-lc query-lc) path-lc]
-      :else                                     nil)))
-
-(defn- file-picker-items
-  [paths query]
-  (->> paths
-    (keep (fn [path]
-            (when-let [rank (file-picker-rank path query)]
-              {:label path :path path :rank rank})))
-    (sort-by (juxt :rank :path))
-    (take file-picker-max-results)
-    vec))
+(defn- draw-file-picker-item!
+  [g left row inner-w selected? {:keys [status-label name parent size-label age-label]}]
+  (let [meta-text (str size-label "  " age-label)
+        text-x    (+ left 2)
+        text-w    (max 1 (- inner-w 2))
+        right-w   (count meta-text)
+        gap-w     (if (str/blank? meta-text) 0 2)
+        left-w    (max 1 (- text-w right-w gap-w))
+        path-text (if (= parent ".")
+                    (str "[" status-label "] " name)
+                    (str "[" status-label "] " name " · " parent))]
+    (if selected?
+      (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+      (p/set-colors! g t/dialog-fg t/dialog-bg))
+    (p/fill-rect! g (inc left) row inner-w 1)
+    (p/put-str! g text-x row (ellipsize path-text left-w))
+    (when-not (str/blank? meta-text)
+      (p/put-str! g (+ text-x (- text-w right-w)) row meta-text))))
 
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
-   the selected relative path, Esc cancels."
+   the selected relative path, Esc cancels. `I` toggles ignored files;
+   `S` cycles sort mode."
   [^TerminalScreen screen]
-  (let [paths     (repo-file-paths)
-        query     (atom "")
-        selected  (atom 0)
-        scroll    (atom 0)]
+  (let [entries          (picker/collect-file-picker-entries)
+        query            (atom "")
+        include-ignored? (atom false)
+        sort-mode        (atom :auto)
+        selected         (atom 0)
+        scroll           (atom 0)]
     (loop []
-      (let [items         (file-picker-items paths @query)
+      (let [items         (picker/file-picker-items entries @query {:include-ignored? @include-ignored?
+                                                                    :sort-mode @sort-mode})
             total         (count items)
-            content-lines (+ 2 (max 1 (min total 10)))
+            content-lines (+ 3 (max 1 (min total file-picker-max-visible)))
             size          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols          (.getColumns size)
             rows          (.getRows size)
@@ -373,30 +355,34 @@
             bounds        (draw-dialog-chrome! g cols rows "Attach File" content-lines)
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds content-lines)
-            list-top      (+ content-top 2)
-            list-h        (max 1 (- content-h 2))
-            visible       (min total list-h)
             _             (swap! selected #(clamp % 0 (max 0 (dec total))))
-            _             (swap! scroll #(visible-window-start @selected % list-h total))]
+            list-top      (+ content-top 3)
+            list-h        (max 1 (- content-h 3))
+            visible       (min total list-h)
+            _             (swap! scroll #(visible-window-start @selected % list-h total))
+            mode-line     (str "Ignored: " (if @include-ignored? "on" "off")
+                            "   Sort: " (picker/sort-label @sort-mode @query))]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (p/put-str! g (+ left 2) content-top
-          (ellipsize (str "Filter: " @query) (max 1 (- inner-w 2))))
+        (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
+          (p/set-colors! g t/dialog-hint t/dialog-bg)
+          (p/put-str! g (+ left 2) (inc content-top) (ellipsize mode-line (max 1 (- inner-w 2))))
 
-        (if (zero? total)
-          (do
-            (p/set-colors! g t/dialog-hint t/dialog-bg)
-            (p/put-str! g (+ left 2) list-top "No matching files."))
-          (dotimes [i visible]
-            (let [idx (+ @scroll i)
-                  row (+ list-top i)]
-              (when (< idx total)
-                (draw-list-item! g left row inner-w (= idx @selected)
-                  (:label (nth items idx)))))))
+          (if (zero? total)
+            (do
+              (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g (+ left 2) list-top "No matching files."))
+            (dotimes [i visible]
+              (let [idx (+ @scroll i)
+                    row (+ list-top i)]
+                (when (< idx total)
+                  (draw-file-picker-item! g left row inner-w (= idx @selected)
+                    (nth items idx))))))
 
-        (draw-hint-bar! g left hint-row inner-w [["type" "filter"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
-        (.setCursorPosition screen (p/cursor-pos 0 0))
+          (draw-hint-bar! g left hint-row inner-w
+            [["type" "filter"] ["I" "ignored"] ["S" "sort"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
+          (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
 
         (let [key (.readInput screen)]
@@ -411,9 +397,24 @@
                                   (recur))
               KeyType/Enter (when (pos? total) (:path (nth items @selected)))
               KeyType/Character
-              (let [c (.getCharacter key)]
-                (if (Character/isISOControl c)
+              (let [c (Character/toLowerCase (.getCharacter key))]
+                (cond
+                  (= c \i)
+                  (do (swap! include-ignored? not)
+                    (reset! selected 0)
+                    (reset! scroll 0)
+                    (recur))
+
+                  (= c \s)
+                  (do (swap! sort-mode picker/cycle-sort-mode)
+                    (reset! selected 0)
+                    (reset! scroll 0)
+                    (recur))
+
+                  (Character/isISOControl c)
                   (recur)
+
+                  :else
                   (do (swap! query str c)
                     (reset! selected 0)
                     (reset! scroll 0)

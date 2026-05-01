@@ -66,7 +66,7 @@
           (expect (= "123e4567-e89b-12d3-a456-426614174000"
                     (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied conversation ID" [:level :success :ttl-ms 1500]]
-                    @notified))))))
+                    @notified)))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

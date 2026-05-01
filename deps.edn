@@ -52,7 +52,7 @@
   ;;   honeysql / next.jdbc    → vis-persistance-sqlite
   ;;   nippy                    → vis-persistance-sqlite
   ;;   org.babashka/http-client → vis-channel-telegram + vis-provider-github-copilot
-  ;;   re2j / jgit              → vis-foundation
+  ;;   re2j                     → vis-foundation
   ;;   rewrite-clj              → vis-language-clojure
   ;;   lanterna                 → vis-channel-tui
   com.blockether/svar              {:local/root "../svar"}
@@ -66,7 +66,10 @@
   io.github.noahtheduke/lazytest   {:mvn/version "2.0.0"}
   zprint/zprint                    {:mvn/version "1.3.0"}
   io.github.tonsky/fast-edn        {:mvn/version "1.1.3"}
-  com.cnuernber/charred            {:mvn/version "1.038"}}
+  com.cnuernber/charred            {:mvn/version "1.038"}
+  ;; JGit is now used by root-internal picker plumbing too, not just the
+  ;; foundation extension.
+  org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}
 
  :aliases
  {  ;; Primary alias — the `vis` CLI.

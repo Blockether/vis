@@ -539,6 +539,17 @@
       (assoc provider :base-url resolved-base-url)
       provider)))
 
+(defn- persisted-provider-config
+  "Convert an in-memory dialog provider entry to the durable on-disk shape.
+   Do NOT route through `vis/->svar-provider` here — that resolves runtime
+   Codex fields (`:api-key`, `:llm-headers`, `:api-style`, …) that must not be
+   written back to config.edn."
+  [provider]
+  (let [provider (ensure-base-url provider)]
+    (if (= :openai-codex (:id provider))
+      (dissoc provider :api-key :llm-headers :responses-path :api-style)
+      provider)))
+
 (defn show-provider-dialog!
   "Provider manager dialog.
    Esc saves and closes, returning {:providers [...]} in priority order.
@@ -595,8 +606,7 @@
                (cond
                  (= ktype KeyType/Escape)
                  (let [cfg {:providers (->> @items
-                                         (map ensure-base-url)
-                                         (map vis/->svar-provider)
+                                         (map persisted-provider-config)
                                          vec)}]
                    (vis/save-config! cfg)
                    cfg)

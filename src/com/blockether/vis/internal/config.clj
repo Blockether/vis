@@ -296,10 +296,25 @@
           (when (map? raw) raw))
         (catch Exception _ nil)))))
 
+(defn- sanitize-openai-codex-provider
+  "Strip legacy persisted fields from OpenAI Codex config entries.
+
+   Codex credentials live in `~/.vis/openai-codex-auth.json` and are resolved
+   dynamically via the provider token fn. The on-disk provider config should
+   keep only durable user choices (id, models, optional base-url).
+
+   Also removes the old private `:api-style :openai-codex` marker so runtime
+   metadata can backfill svar's native `:openai-compatible-responses` style."
+  [provider]
+  (if (= :openai-codex (:id provider))
+    (dissoc provider :api-key :llm-headers :responses-path :api-style)
+    provider))
+
 (defn- apply-provider-metadata
   "Backfill runtime-only metadata for provider configs already stored on disk."
   [provider]
-  (let [template (provider-template (:id provider))]
+  (let [provider (sanitize-openai-codex-provider provider)
+        template (provider-template (:id provider))]
     (cond-> provider
       (and (nil? (:base-url provider)) (:base-url template))
       (assoc :base-url (:base-url template))
@@ -320,9 +335,14 @@
     (blockether-env-config)))
 
 (defn save-config!
-  "Persist svar-native config to `~/.vis/config.edn`."
+  "Persist provider config to `~/.vis/config.edn`.
+
+   Before writing, strips legacy OpenAI Codex runtime fields so the file
+   remains a durable user config rather than a transient resolved-router
+   snapshot."
   [config]
-  (let [dir (io/file config-dir)]
+  (let [dir    (io/file config-dir)
+        config (update config :providers #(mapv sanitize-openai-codex-provider %))]
     (when-not (.exists dir) (.mkdirs dir))
     (spit config-path (pr-str config))))
 

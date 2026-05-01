@@ -29,11 +29,11 @@
       (setCharacter [_ _ _] this))))
 
 (defdescribe right-block-text-test
-  (it "uses the same icon + Copy label as the message bubble"
-    (expect (= "4b1ed602 ⧉ Copy" (right-block-text "4b1ed602")))))
+  (it "shows the compact copy icon before the short id"
+    (expect (= "⧉ 4b1ed602" (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
-  (it "registers a click region covering the short id and the full Copy label"
+  (it "registers a click region covering the copy icon and the short id"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
           short-id      "123e4567"
           rendered      (right-block-text short-id)
