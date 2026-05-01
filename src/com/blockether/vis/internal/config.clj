@@ -149,9 +149,9 @@
                     :base-url "https://api.githubcopilot.com"
                     :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini" "gemini-2.0-flash-001"]}
    :openai-codex   {:label "OpenAI Codex (ChatGPT OAuth)"
-                    :default-models ["gpt-5.1" "gpt-5.1-codex-mini" "gpt-5.1-codex-max"
-                                     "gpt-5.2" "gpt-5.2-codex" "gpt-5.3-codex"
-                                     "gpt-5.4" "gpt-5.5"]}})
+                    :default-models ["gpt-5.5" "gpt-5.4" "gpt-5.2" "gpt-5.1"
+                                     "gpt-5.1-codex-mini" "gpt-5.1-codex-max"
+                                     "gpt-5.2-codex" "gpt-5.3-codex"]}})
 
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used

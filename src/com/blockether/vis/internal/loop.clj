@@ -1043,12 +1043,22 @@
 
 (defonce ^:private router-atom (atom nil))
 
+(defn- runtime-router-providers
+  "Resolve durable provider config into the svar runtime shape.
+
+   On-disk config intentionally omits ephemeral credentials for OAuth-backed
+   providers such as OpenAI Codex. Resolve those fields immediately before
+   constructing a router so each provider can refresh tokens and attach any
+   provider-specific headers."
+  [config]
+  (mapv config/->svar-provider (:providers config)))
+
 (defn get-router
   "Get or create the shared LLM router."
   []
   (or @router-atom
     (let [cfg (config/resolve-config)
-          r   (svar/make-router (:providers cfg))]
+          r   (svar/make-router (runtime-router-providers cfg))]
       (reset! router-atom r)
       r)))
 
@@ -1059,7 +1069,7 @@
 (defn rebuild-router!
   "Rebuild the router from the given config. Used when provider settings change."
   [config]
-  (let [r (svar/make-router (:providers config))]
+  (let [r (svar/make-router (runtime-router-providers config))]
     (reset! router-atom r)
     r))
 
