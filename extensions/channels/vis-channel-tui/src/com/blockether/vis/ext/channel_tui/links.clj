@@ -20,7 +20,7 @@
    for the OS opener to do with an in-document anchor on a chat
    surface that doesn't render anchors."
   (:require
-   [com.blockether.vis.ext.channel-tui.external-opener :as opener]))
+   [com.blockether.vis.internal.external-opener :as opener]))
 
 (set! *warn-on-reflection* true)
 

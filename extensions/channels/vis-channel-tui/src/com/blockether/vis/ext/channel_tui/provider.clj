@@ -10,12 +10,12 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis.ext.channel-tui.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
-            [com.blockether.vis.ext.provider-openai-codex :as codex])
+            [com.blockether.vis.ext.provider-openai-codex :as codex]
+            [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
            [java.net URI]

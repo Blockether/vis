@@ -459,10 +459,15 @@
                            (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
                              (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
                            (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
-        execution-time (- (System/currentTimeMillis) start-time)]
-    (if (:timeout? execution-result)
-      (assoc execution-result :execution-time-ms execution-time :timeout? true)
-      (assoc execution-result :execution-time-ms execution-time :timeout? false))))
+        finished-time    (System/currentTimeMillis)
+        execution-time   (- finished-time start-time)]
+    (cond-> execution-result
+      true (assoc :engine :sci
+             :execution-started-at-ms start-time
+             :execution-finished-at-ms finished-time
+             :execution-time-ms execution-time)
+      (:timeout? execution-result) (assoc :timeout? true)
+      (not (:timeout? execution-result)) (assoc :timeout? false))))
 
 (def ^:private parse-rescue-max-iterations
   "Hard cap on rescue retries. Bounds pathological hooks that keep
@@ -759,6 +764,29 @@
       "OR (b) keep the trailing forms in this iteration and emit "
       "`(answer …)` as the only form of the next iteration.")))
 
+(defn- eval-provenance
+  "Generic provenance for every top-level form that passes through the
+   Vis eval pipeline. Tool calls can add nested provenance inside their
+   returned envelope; this records the outer regular form evaluation so
+   plain calls and tool calls share a common block-level trace."
+  [iteration form-idx form-of result]
+  (let [finished (long (or (:execution-finished-at-ms result)
+                         (System/currentTimeMillis)))
+        duration (long (or (:execution-time-ms result) 0))
+        started  (long (or (:execution-started-at-ms result)
+                         (max 0 (- finished duration))))]
+    (extension/normalize-provenance
+      {:op             :vis/eval
+       :started-at-ms  started
+       :finished-at-ms finished
+       :duration-ms    duration
+       :engine         (or (:engine result) :sci)
+       :iteration      iteration
+       :form-idx       form-idx
+       :form-of        form-of
+       :timeout?       (boolean (:timeout? result))
+       :repaired?      (boolean (:repaired? result))})))
+
 ;; ---------------------------------------------------------------------------
 ;; run-iteration
 ;; ---------------------------------------------------------------------------
@@ -848,10 +876,12 @@
                                  raw-result (cond
                                               parse-error
                                               {:result nil :error (str "Parse error: " parse-error)
-                                               :stdout "" :stderr "" :execution-time-ms 0}
+                                               :stdout "" :stderr "" :execution-time-ms 0
+                                               :engine :edamame}
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
-                                                {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0}
+                                                {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
+                                                 :engine :vis/guard}
                                                 (let [r (execute-code environment expr)]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
@@ -865,7 +895,9 @@
                                  ;; rescue); both paths converge on
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
-                                          form-repaired? (assoc :repaired? true))]
+                                          form-repaired? (assoc :repaired? true))
+                                 provenance (eval-provenance iteration idx total-blocks result)
+                                 result* (assoc result :provenance provenance)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; form lands so the channel can render
@@ -874,7 +906,7 @@
                              ;; envelope on success and error —
                              ;; consumers branch on `:error nil?`,
                              ;; not on shape.
-                             (when (and on-chunk (not= :vis/silent (:result result)))
+                             (when (and on-chunk (not= :vis/silent (:result result*)))
                                (on-chunk {:phase             :form-result
                                           :iteration         iteration
                                           :form-idx          idx
@@ -882,14 +914,15 @@
                                           :iteration-id      iteration-id
                                           :code              expr
                                           :comment           form-comment
-                                          :result            (:result result)
-                                          :error             (:error result)
-                                          :stdout            (:stdout result)
-                                          :stderr            (:stderr result)
-                                          :execution-time-ms (:execution-time-ms result)
-                                          :timeout?          (boolean (:timeout? result))
-                                          :repaired?         (boolean (:repaired? result))}))
-                             {:block expr :result result :form-comment form-comment}))
+                                          :result            (:result result*)
+                                          :error             (:error result*)
+                                          :stdout            (:stdout result*)
+                                          :stderr            (:stderr result*)
+                                          :execution-time-ms (:execution-time-ms result*)
+                                          :provenance        (:provenance result*)
+                                          :timeout?          (boolean (:timeout? result*))
+                                          :repaired?         (boolean (:repaired? result*))}))
+                             {:block expr :result result* :form-comment form-comment}))
                      (range) code-entries)
           code-blocks (mapv :block executed)
           block-results (mapv :result executed)
@@ -902,6 +935,7 @@
                                   :stderr (:stderr result)
                                   :error (:error result)
                                   :execution-time-ms (:execution-time-ms result)
+                                  :provenance (:provenance result)
                                   :timeout? (:timeout? result)
                                   :repaired? (:repaired? result)}
                            form-comment (assoc :comment form-comment)))
@@ -972,6 +1006,7 @@
                                :stdout            (:stdout b)
                                :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)
+                               :provenance        (:provenance b)
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
               model-name       (some-> (:name resolved-model) str)

@@ -79,6 +79,22 @@
       (expect (str/includes? out "(+ 1 2)"))
       (expect (str/includes? out "i0.1"))))
 
+  (it "renders block-level provenance in <journal> for regular evaluated forms"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")}
+                {:active-extensions   NO_EXTENSIONS
+                 :blocks-by-iteration [[0 {:thinking nil
+                                           :blocks   [{:code "(+ 1 2)"
+                                                       :result 3
+                                                       :provenance {:op :vis/eval
+                                                                    :engine :sci
+                                                                    :duration-ms 7}}]}]]
+                 :iteration           1})]
+      (expect (string? out))
+      (expect (str/includes? out ":provenance"))
+      (expect (str/includes? out ":op :vis/eval"))
+      (expect (str/includes? out ":engine :sci"))))
+
   ;; Helpers ------------------------------------------------------------------
   ;;
   ;; New `:blocks-by-iteration` shape is `[[pos {:thinking :blocks}]]`
@@ -210,6 +226,21 @@
       (expect (str/includes? p "ACT"))
       (expect (str/includes? p "VERIFY"))
       (expect (str/includes? p "ANSWER"))))
+
+  (it "centers Vis on a Nucleus palette and VSM operating stack without prompt attribution"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "λ engage(nucleus)."))
+      (expect (str/includes? p "[phi fractal euler tao pi mu ∃ ∀]"))
+      (expect (str/includes? p "ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other"))
+      (expect (str/includes? p "Human ⊗ Vis ⊗ Workspace"))
+      (expect (str/includes? p "VSM operating stack"))
+      (expect (str/includes? p "S5 identity"))
+      (expect (str/includes? p "S4 intelligence"))
+      (expect (str/includes? p "S3 control"))
+      (expect (str/includes? p "S2 coordination"))
+      (expect (str/includes? p "S1 operations"))
+      (expect (not (str/includes? p "Michael Whitford")))
+      (expect (not (str/includes? p "github.com/michaelwhitford/nucleus")))))
 
   (it "requires Markdown final answers by default and prefers v/ helpers"
     (let [p prompt/CORE_SYSTEM_PROMPT]
