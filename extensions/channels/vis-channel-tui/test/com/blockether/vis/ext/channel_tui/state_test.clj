@@ -11,7 +11,9 @@
       (expect (= :balanced
                 (get-in @state/app-db [:settings :reasoning-level])))
       (expect (= :low
-                (get-in @state/app-db [:settings :openai-codex-verbosity])))))
+                (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (expect (true?
+                (get-in @state/app-db [:settings :mouse-selection-copy])))))
 
   (it "normalizes low/medium/high aliases from persisted config"
     (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:reasoning-level "HIGH"}})]
@@ -52,7 +54,8 @@
                                    :show-iterations true
                                    :reasoning-level :balanced
                                    :openai-codex-verbosity :low
-                                   :show-timestamps false}}
+                                   :show-timestamps false
+                                   :mouse-selection-copy true}}
                   @saved))
         (expect (= ["Reasoning: balanced" [:level :info :ttl-ms 1500]]
                   @notified)))))

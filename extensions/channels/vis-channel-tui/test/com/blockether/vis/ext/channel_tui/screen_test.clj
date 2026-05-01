@@ -23,6 +23,9 @@
 (def ^:private copy-conversation-id!
   (deref #'screen/copy-conversation-id!))
 
+(def ^:private copy-selection!
+  (deref #'screen/copy-selection!))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
    the contract the channel entry point relies on to print a clean
@@ -76,6 +79,20 @@
           (expect (= "123e4567-e89b-12d3-a456-426614174000"
                     (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied conversation ID" [:level :success :ttl-ms 1500]]
+                    @notified))))))
+
+  (it "mouse selection copy uses the shared success notification contract"
+    (let [copied   (promise)
+          notified (atom nil)]
+      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify!           (fn [text & kvs]
+                                                 (reset! notified [text kvs]))}
+        (fn []
+          (copy-selection! "selected text")
+          (expect (= "selected text" (deref copied 1000 ::timeout)))
+          (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]]
                     @notified)))))))
 
 (defdescribe parse-args-test

@@ -9,11 +9,12 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna SGR TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType
             MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
@@ -117,6 +118,34 @@
       (catch Throwable _ nil)))
   (vis/notify! "✓ Copied conversation ID"
     :level :success :ttl-ms copy-success-ttl-ms))
+
+(defn- copy-selection! [text]
+  (future
+    (try (input/clipboard-copy! (or text ""))
+      (catch Throwable _ nil)))
+  (vis/notify! "✓ Copied selection"
+    :level :success :ttl-ms copy-success-ttl-ms))
+
+(defn- capture-screen-cells
+  "Read the current Lanterna back-buffer as per-cell strings.
+
+   The snapshot is captured before selection highlighting is overlaid, so the
+   copy payload is the visible text, not an artifact of the reverse-video pass."
+  [^TerminalScreen screen cols rows]
+  (vec
+    (for [row (range rows)]
+      (vec
+        (for [col (range cols)]
+          (let [tc (.getBackCharacter screen (int col) (int row))]
+            (or (some-> tc .getCharacterString) " ")))))))
+
+(defn- paint-selection!
+  "Overlay reverse-video on the selected back-buffer cells."
+  [^TerminalScreen screen selection cols rows]
+  (doseq [{:keys [row col width]} (selection/selected-ranges selection cols rows)
+          x (range col (+ col width))]
+    (when-let [tc (.getBackCharacter screen (int x) (int row))]
+      (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE)))))
 
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
@@ -252,10 +281,14 @@
     ;; regions, which is the correct fallback — the previous frame
     ;; matches what's actually still on the user's screen up to this
     ;; instant.
-    (cr/commit-frame!)
-    (.refresh screen Screen$RefreshType/DELTA)
-    {:cols cols :rows rows :total-h total-h :inner-h inner-h
-     :messages-top messages-top}))
+    (let [screen-cells (capture-screen-cells screen cols rows)]
+      (when-let [sel (:mouse-selection db)]
+        (paint-selection! screen sel cols rows))
+      (cr/commit-frame!)
+      (.refresh screen Screen$RefreshType/DELTA)
+      {:cols cols :rows rows :total-h total-h :inner-h inner-h
+       :messages-top messages-top
+       :screen-cells screen-cells})))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
@@ -619,6 +652,11 @@
                ;; DOWN+RELEASE pair would double-fire (open the
                ;; link twice, copy twice).
                click-action-fired?   (volatile! false)
+               ;; App-side drag selection. Native terminal selection is
+               ;; unavailable while mouse reporting is enabled, so Vis tracks
+               ;; drag coordinates, highlights the range during render, then
+               ;; copies the visible text when the button is released.
+               mouse-selection-anchor (volatile! nil)
                ;; `paste-buffer` accumulates every keystroke received
                ;; between `paste-start?` and `paste-end?`. We treat
                ;; the whole block as one paste — newlines included —
@@ -758,7 +796,8 @@
                                    (>= mx (- cols render/MESSAGE_MARGIN_RIGHT))
                                    (< mx cols)
                                    (>= my (long thumb-top))
-                                   (< my (+ (long thumb-top) thumb-h)))]
+                                   (< my (+ (long thumb-top) thumb-h)))
+                       selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))]
                    (cond
                      (= atype MouseActionType/SCROLL_UP)
                      (do (state/dispatch [:scroll-up 3 total-h inner-h])
@@ -822,6 +861,15 @@
                             bar-top inner-h total-h inner-h])
                        (recur))
 
+                     (and selection-copy?
+                       (= atype MouseActionType/DRAG)
+                       (some? @mouse-selection-anchor))
+                     (do (state/dispatch
+                           [:set-mouse-selection
+                            {:anchor @mouse-selection-anchor
+                             :focus  (selection/point mx my)}])
+                       (recur))
+
                      ;; CLICK_RELEASE — ends a drag, and serves as
                      ;; a FALLBACK click trigger for terminals that
                      ;; deliver clicks as a single CLICK_RELEASE
@@ -835,22 +883,33 @@
                      ;; the id twice, open the link twice).
                      (= atype MouseActionType/CLICK_RELEASE)
                      (let [was-dragging?    (some? @scrollbar-drag-offset)
-                           already-handled? @click-action-fired?]
+                           already-handled? @click-action-fired?
+                           anchor           @mouse-selection-anchor]
                        (vreset! scrollbar-drag-offset nil)
                        (vreset! click-action-fired? false)
-                       (when (and (not was-dragging?) (not already-handled?))
-                         (when-let [hit (cr/lookup mx my)]
-                           (case (:kind hit)
-                             :copy-message-markdown
-                             (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
+                       (vreset! mouse-selection-anchor nil)
+                       (if (and selection-copy? anchor)
+                         (let [sel     {:anchor anchor
+                                        :focus  (selection/point mx my)}
+                               payload (selection/selected-text
+                                         (get-in db [:layout :screen-cells]) sel)]
+                           (state/dispatch [:clear-mouse-selection])
+                           (when (and (not= anchor (:focus sel))
+                                   (not (str/blank? payload)))
+                             (copy-selection! payload)))
+                         (when (and (not was-dragging?) (not already-handled?))
+                           (when-let [hit (cr/lookup mx my)]
+                             (case (:kind hit)
+                               :copy-message-markdown
+                               (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
 
-                             :copy-id
-                             (copy-conversation-id! (:text hit))
-                             :toggle-details
-                             (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
-                             (future
-                               (try (opener/open! (:url hit))
-                                 (catch Throwable _ nil))))))
+                               :copy-id
+                               (copy-conversation-id! (:text hit))
+                               :toggle-details
+                               (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+                               (future
+                                 (try (opener/open! (:url hit))
+                                   (catch Throwable _ nil)))))))
                        (recur))
 
                      ;; MOVE — hover. We want the chat link-chrome
@@ -874,12 +933,13 @@
                      ;; on a side thread — a slow `xdg-open` cannot
                      ;; freeze the input loop's redraw cadence.
                      (= atype MouseActionType/CLICK_DOWN)
-                     (do (when-let [hit (cr/lookup mx my)]
-                           ;; Tell the matching CLICK_RELEASE in
-                           ;; the same gesture pair to skip the
-                           ;; fallback fire — we just handled it.
-                           (vreset! click-action-fired? true)
-                           (case (:kind hit)
+                     (do (if-let [hit (cr/lookup mx my)]
+                           (do
+                             ;; Tell the matching CLICK_RELEASE in
+                             ;; the same gesture pair to skip the
+                             ;; fallback fire — we just handled it.
+                             (vreset! click-action-fired? true)
+                             (case (:kind hit)
                              ;; Header copy-id affordance: drop the
                              ;; FULL UUID onto the system clipboard,
                              ;; then push a host notification — the
@@ -890,23 +950,29 @@
                              ;; TUI-specific flash state; the
                              ;; cross-channel notifications system
                              ;; carries the feedback.
-                             :copy-message-markdown
-                             (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
+                               :copy-message-markdown
+                               (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
 
-                             :copy-id
-                             (copy-conversation-id! (:text hit))
+                               :copy-id
+                               (copy-conversation-id! (:text hit))
 
-                             :toggle-details
-                             (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+                               :toggle-details
+                               (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
 
                              ;; Default (markdown link / image /
                              ;; file-link chrome): hand the URL to
                              ;; the OS opener on a side thread —
                              ;; a slow `xdg-open` cannot freeze the
                              ;; input loop's redraw cadence.
-                             (future
-                               (try (opener/open! (:url hit))
-                                 (catch Throwable _ nil)))))
+                               (future
+                                 (try (opener/open! (:url hit))
+                                   (catch Throwable _ nil)))))
+                           (when selection-copy?
+                             (let [anchor (selection/point mx my)]
+                               (vreset! mouse-selection-anchor anchor)
+                               (state/dispatch
+                                 [:set-mouse-selection
+                                  {:anchor anchor :focus anchor}]))))
                        (recur))
 
                      ;; Every other click — inside the input box,

@@ -158,7 +158,8 @@
     (update :openai-codex-verbosity normalize-codex-verbosity)
     (update :show-thinking boolean)
     (update :show-iterations boolean)
-    (update :show-timestamps boolean)))
+    (update :show-timestamps boolean)
+    (update :mouse-selection-copy boolean)))
 
 (def default-settings
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
@@ -178,6 +179,10 @@
      show-timestamps — chrome control. Default OFF because timestamps
          duplicate info already on screen.
 
+     mouse-selection-copy — app-side terminal selection. Default ON so
+         drag-selecting visible text copies it on mouse release even while
+         the fullscreen TUI has mouse reporting enabled.
+
    The previous `:show-iteration-headers` and `:show-final-answer-header`
    toggles were removed: the ITERATION N / CODE N / STDOUT / ERROR /
    FINAL ANSWER superscripts they controlled have been deleted from
@@ -187,7 +192,8 @@
    :show-iterations        true
    :reasoning-level        :balanced
    :openai-codex-verbosity :low
-   :show-timestamps        false})
+   :show-timestamps        false
+   :mouse-selection-copy   true})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over
@@ -427,6 +433,14 @@
     ;; Used by the mouse handler when a hover-state change needs the
     ;; chrome row repainted with its hover background.
     db))
+
+(reg-event-db :set-mouse-selection
+  (fn [db [_ selection]]
+    (assoc db :mouse-selection selection)))
+
+(reg-event-db :clear-mouse-selection
+  (fn [db _]
+    (dissoc db :mouse-selection)))
 
 (reg-event-db :set-provider-limits
   (fn [db [_ provider-id report]]
