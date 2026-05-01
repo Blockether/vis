@@ -644,7 +644,11 @@
                 {:key :show-timestamps
                  :type :toggle
                  :label "Show per-message timestamps"
-                 :description "Date+time next to every 'You' / 'Vis' label"}]})
+                 :description "Date+time next to every 'You' / 'Vis' label"}
+                {:key :mouse-selection-copy
+                 :type :toggle
+                 :label "Mouse selection auto-copy"
+                 :description "Drag-select visible text; copied automatically on mouse release"}]})
 
 (defn- settings-rows
   []

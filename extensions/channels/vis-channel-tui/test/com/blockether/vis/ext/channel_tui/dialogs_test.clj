@@ -50,7 +50,8 @@
       (is (= ["Extensions" "UI"]
             (->> (settings-rows)
               (filter #(= :section (:type %)))
-              (mapv :label)))))
+              (mapv :label))))
+      (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
 
     (testing "command palette exposes Providers outside Settings"
       (is (= ["Providers"
@@ -58,4 +59,3 @@
               "Copy Messages"
               "Copy Conversation as Markdown"]
             (mapv :label palette-commands))))))
-

@@ -123,7 +123,7 @@ Do this:
 
 `Ctrl+Y` sends `SIGTSTP` (or `DSUSP` on macOS) -> **suspends entire process**, drops the user to a stopped-job shell prompt. The kernel acts before Lanterna can intercept. **Leave `Ctrl+Y` unbound everywhere** — clipboard, yank, anything else. Reject any PR that introduces a `Ctrl+Y` binding in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`.
 
-Use the copy dialog (`Ctrl+K` → Copy) for clipboard ops.
+Use the copy dialog (`Ctrl+K` → Copy), per-message copy buttons, or the TUI mouse-selection auto-copy flow for clipboard ops.
 
 ### Avoid AWT entirely
 
