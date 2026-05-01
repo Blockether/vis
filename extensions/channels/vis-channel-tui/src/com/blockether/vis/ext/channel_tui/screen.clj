@@ -80,7 +80,8 @@
 ;; Cancelling            → progress message + quit.
 ;;
 ;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
-;; remain available for transcript scrolling.
+;; remain available for transcript scrolling. Model/reasoning/verbosity
+;; shortcuts live in the footer next to the values they change.
 (def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+K menu ")
 (def ^:private hint-idle-typed " Ctrl+K menu ")
 (def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
@@ -988,6 +989,18 @@
 
                        :history-down
                        (do (state/dispatch [:history-down])
+                         (recur))
+
+                       :cycle-reasoning
+                       (do (state/dispatch [:cycle-reasoning-level])
+                         (recur))
+
+                       :cycle-verbosity
+                       (do (state/dispatch [:cycle-codex-verbosity])
+                         (recur))
+
+                       :cycle-model
+                       (do (state/dispatch [:cycle-model])
                          (recur))
 
                        :pick-file

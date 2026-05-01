@@ -34,6 +34,127 @@
       (expect (= :low
                 (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
 
+(defdescribe settings-shortcut-test
+  (it "cycles reasoning level and persists the updated TUI settings"
+    (let [saved    (atom nil)
+          notified (atom nil)]
+      (with-redefs [vis/load-config-raw (fn [] {:kept true})
+                    vis/save-config! (fn [config] (reset! saved config))
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:settings {:reasoning-level :quick
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-reasoning-level])
+        (expect (= :balanced
+                  (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= {:kept true
+                    :tui-settings {:show-thinking true
+                                   :show-iterations true
+                                   :reasoning-level :balanced
+                                   :openai-codex-verbosity :low
+                                   :show-timestamps false}}
+                  @saved))
+        (expect (= ["Reasoning: balanced" [:level :info :ttl-ms 1500]]
+                  @notified)))))
+
+  (it "commits shortcut settings before notification watchers dispatch render bumps"
+    (with-redefs [vis/load-config-raw (fn [] {})
+                  vis/save-config! (fn [_])
+                  vis/notify! (fn [& _]
+                                (state/dispatch [:bump-render-version]))]
+      (reset! state/app-db {:settings {:reasoning-level :deep
+                                       :openai-codex-verbosity :low}
+                            :render-version 0})
+      (let [result (future
+                     (state/dispatch [:cycle-reasoning-level])
+                     :done)]
+        (expect (= :done (deref result 1000 :timeout)))
+        (expect (= :quick
+                  (get-in @state/app-db [:settings :reasoning-level]))))))
+
+  (it "wraps reasoning level from deep back to quick"
+    (with-redefs [vis/load-config-raw (fn [] {})
+                  vis/save-config! (fn [_])
+                  vis/notify! (fn [& _])]
+      (reset! state/app-db {:settings {:reasoning-level :deep
+                                       :openai-codex-verbosity :low}
+                            :render-version 0})
+      (state/dispatch [:cycle-reasoning-level])
+      (expect (= :quick
+                (get-in @state/app-db [:settings :reasoning-level])))))
+
+  (it "cycles Codex verbosity low -> medium -> high -> low"
+    (with-redefs [vis/load-config-raw (fn [] {})
+                  vis/save-config! (fn [_])
+                  vis/notify! (fn [& _])]
+      (reset! state/app-db {:settings {:reasoning-level :balanced
+                                       :openai-codex-verbosity :low}
+                            :render-version 0})
+      (state/dispatch [:cycle-codex-verbosity])
+      (expect (= :medium
+                (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (state/dispatch [:cycle-codex-verbosity])
+      (expect (= :high
+                (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (state/dispatch [:cycle-codex-verbosity])
+      (expect (= :low
+                (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
+
+(defdescribe model-shortcut-test
+  (it "cycles the primary provider model, preserves non-provider config, and rebuilds routers"
+    (let [saved     (atom nil)
+          rebuilt   (atom nil)
+          refreshed (atom nil)
+          notified  (atom nil)]
+      (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking false}
+                                                :db-spec {:backend :sqlite :path "vis.db"}})
+                    vis/save-config! (fn [config] (reset! saved config))
+                    vis/reload-config! (fn [] @saved)
+                    vis/rebuild-router! (fn [config]
+                                          (reset! rebuilt config)
+                                          :router)
+                    vis/refresh-cached-routers! (fn [router]
+                                                  (reset! refreshed router))
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:config {:providers [{:id :openai
+                                                    :models [{:name "gpt-5"}
+                                                             {:name "gpt-5-mini"}]}]}
+                              :settings {:reasoning-level :balanced
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-model])
+        (expect (= "gpt-5-mini"
+                  (get-in @state/app-db [:config :providers 0 :models 0 :name])))
+        (expect (= {:tui-settings {:show-thinking false}
+                    :db-spec {:backend :sqlite :path "vis.db"}
+                    :providers [{:id :openai
+                                 :models [{:name "gpt-5-mini"}
+                                          {:name "gpt-5"}]}]}
+                  @saved))
+        (expect (= @saved @rebuilt))
+        (expect (= :router @refreshed))
+        (expect (= ["Model: gpt-5-mini" [:level :info :ttl-ms 1500]]
+                  @notified)))))
+
+  (it "reports when there is no alternate configured model"
+    (let [saved    (atom nil)
+          notified (atom nil)]
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/save-config! (fn [config] (reset! saved config))
+                    vis/reload-config! (fn [] {})
+                    vis/rebuild-router! (fn [_] :router)
+                    vis/refresh-cached-routers! (fn [_])
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:config {:providers [{:id :openai
+                                                    :models [{:name "gpt-5"}]}]}
+                              :render-version 0})
+        (state/dispatch [:cycle-model])
+        (expect (nil? @saved))
+        (expect (= "gpt-5"
+                  (get-in @state/app-db [:config :providers 0 :models 0 :name])))
+        (expect (= ["No alternate models configured" [:level :warn :ttl-ms 1500]]
+                  @notified))))))
+
 (defdescribe send-message-test
   (it "keeps @mentions compact in chat while expanding them for the agent"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)

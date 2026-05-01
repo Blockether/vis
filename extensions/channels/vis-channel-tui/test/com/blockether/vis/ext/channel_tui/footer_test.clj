@@ -9,7 +9,7 @@
                                                           :provider :openai
                                                           :reasoning? true})}
         (fn []
-          (expect (= ["openai/gpt-5" "(reasoning:deep)"]
+          (expect (= ["openai/gpt-5" "(Ctrl+T)" "reasoning: deep" "(Ctrl+R)"]
                     (->> (build-segments {:messages []
                                           :settings {:reasoning-level :deep}}
                            0)
@@ -22,7 +22,9 @@
                                                           :provider :openai-codex
                                                           :reasoning? true})}
         (fn []
-          (expect (= ["openai-codex/gpt-5.5" "(reasoning:balanced)" "(verbosity:high)"]
+          (expect (= ["openai-codex/gpt-5.5" "(Ctrl+T)"
+                      "reasoning: balanced" "(Ctrl+R)"
+                      "verbosity: high" "(Ctrl+L)"]
                     (->> (build-segments {:messages []
                                           :settings {:reasoning-level :balanced
                                                      :openai-codex-verbosity :high}}
@@ -36,9 +38,18 @@
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
-          (expect (= ["openai/gpt-4o"]
+          (expect (= ["openai/gpt-4o" "(Ctrl+T)"]
                     (->> (build-segments {:messages []
                                           :settings {:reasoning-level :deep}}
                            0)
                       (filter #(= :left (:region %)))
-                      (mapv :text)))))))))
+                      (mapv :text))))))))
+
+  (it "joins shortcuts to their labels without separator dots"
+    (let [spans-width @#'footer/spans-width]
+      (expect (= (count "model (Ctrl+T) · reasoning: deep (Ctrl+R)")
+                (spans-width [{:text "model"}
+                              {:text "(Ctrl+T)" :join-left? true}
+                              {:text "reasoning: deep"}
+                              {:text "(Ctrl+R)" :join-left? true}]
+                  " · "))))))

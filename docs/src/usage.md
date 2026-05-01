@@ -94,6 +94,11 @@ vis channels tui --conversation-id <UUID>         # resume a specific one (full 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
 Typing `@` opens the file picker for inline file references; inside the
 picker, `Alt+I` toggles ignored files and `Alt+S` cycles sort mode.
+On the main chat screen, `Ctrl+R` cycles reasoning effort, `Ctrl+L`
+cycles OpenAI Codex verbosity, and `Ctrl+T` cycles the primary provider's
+configured models; changes apply to the next request and are persisted
+with the rest of the TUI settings. These shortcuts are shown in the footer
+next to the model/reasoning/verbosity values they change.
 The provider picker can also launch the OpenAI Codex browser OAuth
 flow directly from the TUI.
 **Never bind `Ctrl+Y`** — the kernel intercepts it and suspends
