@@ -128,10 +128,26 @@
     :deep     :deep
     :balanced))
 
+(defn- normalize-codex-verbosity
+  "Canonical OpenAI Codex verbosity level for persisted TUI settings.
+
+   Accepts `:low/:medium/:high` plus strings; unknown values fall back
+   to `:low`, matching the provider's current default."
+  [v]
+  (case (cond
+          (keyword? v) v
+          (string? v)  (keyword (str/lower-case (str/trim v)))
+          :else        nil)
+    :low    :low
+    :medium :medium
+    :high   :high
+    :low))
+
 (defn- normalize-settings
   [settings]
   (-> settings
     (update :reasoning-level normalize-reasoning-level)
+    (update :openai-codex-verbosity normalize-codex-verbosity)
     (update :show-thinking boolean)
     (update :show-iterations boolean)
     (update :show-timestamps boolean)))
@@ -146,7 +162,10 @@
 
      reasoning-level — base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via
-         Ctrl+K → Toggles.
+         Ctrl+K → Settings → Agent.
+
+     openai-codex-verbosity — Codex-only output detail knob.
+         Default `:low`; users can cycle it via Ctrl+K → Settings → Agent.
 
      show-timestamps — chrome control. Default OFF because timestamps
          duplicate info already on screen.
@@ -156,10 +175,11 @@
    FINAL ANSWER superscripts they controlled have been deleted from
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
-  {:show-thinking   true
-   :show-iterations true
-   :reasoning-level :balanced
-   :show-timestamps false})
+  {:show-thinking          true
+   :show-iterations        true
+   :reasoning-level        :balanced
+   :openai-codex-verbosity :low
+   :show-timestamps        false})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over
@@ -412,6 +432,17 @@
             new-scroll (long (Math/round (* fraction max-scroll)))]
         (assoc db :messages-scroll (max 0 (min max-scroll new-scroll)))))))
 
+(defn- current-provider-id
+  []
+  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
+    (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
+      :provider)))
+
+(defn- query-extra-body
+  [{:keys [settings]}]
+  (when (= :openai-codex (current-provider-id))
+    {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
+
 (reg-event-fx :send-message
   ;; `text` is the input-buffer string — it carries `[Pasted #N: …]`
   ;; placeholder tokens for any large clipboard payloads the user
@@ -422,8 +453,9 @@
   ;; with no referent), and the agent sees what the user actually
   ;; meant to paste.
   (fn [db [_ text]]
-    (let [expanded (input/expand-paste-placeholders text (:pastes db))
-          token    (vis/cancellation-token)]
+    (let [expanded   (input/expand-paste-placeholders text (:pastes db))
+          token      (vis/cancellation-token)
+          extra-body (query-extra-body db)]
       {:db (-> db
              (update :messages conj (chat/user-message expanded))
              (update :messages conj (chat/assistant-message "Sending request to provider…"))
@@ -438,7 +470,7 @@
                :input-history-index nil
                :input-history-draft nil))
        :fx [[:rlm-query (:conversation db) expanded token
-             (get-in db [:settings :reasoning-level])]]})))
+             (get-in db [:settings :reasoning-level]) extra-body]]})))
 
 (reg-event-fx :cancel-query
   (fn [db _]
@@ -490,7 +522,7 @@
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
 (reg-fx :rlm-query
-  (fn [conversation text token reasoning-level]
+  (fn [conversation text token reasoning-level extra-body]
     (let [fut (future
                 (try
                   (let [{:keys [on-chunk]}
@@ -501,7 +533,8 @@
                         result (chat/query! conversation text
                                  {:on-chunk          on-chunk
                                   :cancel-atom       (vis/cancellation-atom token)
-                                  :reasoning-default reasoning-level})]
+                                  :reasoning-default reasoning-level
+                                  :extra-body        extra-body})]
                     (if (:error result)
                       (dispatch [:message-received (vis/format-error (:error result))])
                       (dispatch [:message-received (:answer result)

@@ -166,14 +166,17 @@
                           it to true causes the current query to terminate at
                           the next safe point and return `{:status :cancelled}`.
      :reasoning-default — base reasoning effort (`:quick`, `:balanced`, `:deep`)
-                          forwarded to `vis/send!` for reasoning-capable models."
+                          forwarded to `vis/send!` for reasoning-capable models.
+     :extra-body        — provider-specific request-body overrides forwarded to
+                          `vis/send!` unchanged."
   ([conversation text] (query! conversation text {}))
-  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body]}]
    (try
      (let [send-opts (cond-> {}
                        on-chunk          (assoc :hooks {:on-chunk on-chunk})
                        cancel-atom       (assoc :cancel-atom cancel-atom)
-                       reasoning-default (assoc :reasoning-default reasoning-default))
+                       reasoning-default (assoc :reasoning-default reasoning-default)
+                       extra-body        (assoc :extra-body extra-body))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; Plain text — the bubble renderer dims it via the

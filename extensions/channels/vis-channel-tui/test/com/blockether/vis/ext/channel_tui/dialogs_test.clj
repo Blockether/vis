@@ -13,7 +13,8 @@
 
 (deftest apply-settings-option-test
   (let [apply-settings-option (var-get #'dlg/apply-settings-option)
-        settings-option-label (var-get #'dlg/settings-option-label)]
+        settings-option-label (var-get #'dlg/settings-option-label)
+        palette-commands      (var-get #'dlg/palette-commands)]
     (testing "toggle rows flip booleans"
       (is (= {:show-thinking false}
             (apply-settings-option {:show-thinking true}
@@ -25,7 +26,10 @@
               {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
       (is (= {:reasoning-level :quick}
             (apply-settings-option {:reasoning-level :deep}
-              {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]}))))
+              {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
+      (is (= {:openai-codex-verbosity :high}
+            (apply-settings-option {:openai-codex-verbosity :medium}
+              {:key :openai-codex-verbosity :type :choice :choices [:low :medium :high]}))))
 
     (testing "choice labels surface the live value"
       (is (= "Reasoning effort: deep"
@@ -33,4 +37,14 @@
                                     :type :choice
                                     :choices [:quick :balanced :deep]
                                     :label "Reasoning effort"}
-              {:reasoning-level :deep}))))))
+              {:reasoning-level :deep})))
+      (is (= "OpenAI Codex verbosity: high"
+            (settings-option-label {:key :openai-codex-verbosity
+                                    :type :choice
+                                    :choices [:low :medium :high]
+                                    :label "OpenAI Codex verbosity"}
+              {:openai-codex-verbosity :high}))))
+
+    (testing "command palette exposes a single Settings entry"
+      (is (= ["Settings" "Copy Messages" "Copy Conversation as Markdown"]
+            (mapv :label palette-commands))))))

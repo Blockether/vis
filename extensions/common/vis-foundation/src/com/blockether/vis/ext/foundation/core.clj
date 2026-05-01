@@ -9,8 +9,8 @@
                                  v/diagnose, v/var-history,
                                  v/find-attempts, v/failures,
                                  v/extensions, v/extension-doc, \u2026)
-     editing/core.clj          (v/cat, v/ls, v/rg, v/edit,
-                                 v/write)
+     editing/core.clj          (v/cat, v/ls, v/rg,
+                                 thin babashka.fs wrappers)
      environment/core.clj       (v/snapshot,
                                  v/git,
                                  v/languages,
@@ -19,7 +19,7 @@
                                  v/refresh!)\n
    Plus a live `<environment>` block in the system prompt, owned by
    `environment/core.clj`'s `environment-prompt`.\n
-   The legacy `fs/` alias (babashka.fs path-math wrappers) was\n   dropped: the `v/` editing tools resolve every path internally\n   against `(fs/cwd)` already, and the model has no need to do path\n   math directly inside the sandbox. If it ever does, the host's\n   `clojure.java.io` namespace is still available."
+   The legacy `fs/` alias was dropped, but the useful babashka.fs\n   surface is now inlined back under `v/` as thin cwd-safe wrappers\n   (`v/read-all-lines`, `v/write-lines`, `v/update-file`, `v/glob`,\n   `v/list-dir`, ...). The model still gets one short alias, but it\n   acts through normal Clojure code instead of bespoke edit DSLs."
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.doctor :as doctor]
@@ -48,7 +48,7 @@
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg / edit / write), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt and the `vis doctor` CLI command."
+     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt and the `vis doctor` CLI command."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

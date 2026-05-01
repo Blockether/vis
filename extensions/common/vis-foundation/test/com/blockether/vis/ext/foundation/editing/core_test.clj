@@ -2,18 +2,15 @@
   "Tests for the editing extension.
 
    Smoke-checks the loaded extension surface (symbol vector, doc
-   strings, prompt fragment) plus behavioral coverage of the two
-   tools that returned strings under the legacy contract — v/cat
-   and v/rg — now that both ship pure structured maps. The
-   structured contracts are stable enough to assert key-by-key:
+   strings, prompt fragment) plus behavioral coverage of the
+   structured preview/search helpers (`v/cat`, `v/rg`) and the new
+   thin babashka.fs wrappers (`v/read-all-lines`, `v/write-lines`,
+   `v/update-file`, `v/list-dir`, `v/glob`, ...).
 
-     (v/cat path)             -> {:path :offset :total-lines :truncated-by :lines}
-     (v/rg patterns path)     -> {:hits :truncated-by}
-
-   Tests reach `read-file` / `grep-files` directly through the
-   private-fn registry to avoid bringing up a full SCI sandbox.
-   Temp files land under `target/editing-test/` (always inside the
-   repo cwd, so `safe-path` accepts them)."
+   Tests reach private fns directly through the registry to avoid
+   bringing up a full SCI sandbox. Temp files land under
+   `target/editing-test/` (always inside the repo cwd, so
+   `safe-path` accepts them)."
   (:require
    [babashka.fs :as fs]
    [clojure.string :as string]
@@ -49,10 +46,15 @@
     rel))
 
 (defdescribe editing-extension-loads-test
-  (it "exposes the canonical five-tool symbol vector"
-    ;; cat / ls / rg / edit / write. zedit moved to vis-language-clojure.
+  (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 5 (count editing/editing-symbols))))
+    (expect (= 14 (count editing/editing-symbols)))
+    (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (some #{'read-all-lines}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (some #{'update-file}
+              (map :ext.symbol/sym editing/editing-symbols))))
 
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
     (doseq [s editing/editing-symbols
@@ -157,3 +159,46 @@
           out  (grep ["definitely-not-present"] (temp-dir-path "rgmiss"))]
       (expect (= [] (:hits out)))
       (expect (= :end-of-results (:truncated-by out))))))
+
+(defdescribe thin-bbfs-wrapper-test
+  (it "read-all-lines returns raw line strings"
+    (let [path           (write-temp! "bbfs/read.txt" "alpha\nbeta\n")
+          read-all-lines (private-fn "read-all-lines-safe")]
+      (expect (= ["alpha" "beta"]
+                (read-all-lines path)))))
+
+  (it "write-lines creates parent dirs and writes text"
+    (let [path        "bbfs/write/out.txt"
+          rooted-path (str (temp-root) "/" path)
+          write-lines (private-fn "write-lines-safe")]
+      (expect (= rooted-path
+                (write-lines rooted-path ["a" "b"])))
+      (expect (= "a\nb\n"
+                (slurp rooted-path)))))
+
+  (it "update-file mutates existing text and returns the new contents"
+    (let [path        (write-temp! "bbfs/update.txt" "hello")
+          update-file (private-fn "update-file-safe")]
+      (expect (= "HELLO"
+                (update-file path string/upper-case)))
+      (expect (= "HELLO" (slurp path)))))
+
+  (it "list-dir and glob return cwd-relative path strings"
+    (let [_        (write-temp! "bbfs/tree/a.clj" "(ns a)")
+          _        (write-temp! "bbfs/tree/b.txt" "b")
+          list-dir (private-fn "list-dir-safe")
+          glob     (private-fn "glob-safe")
+          root     (str (temp-root) "/bbfs/tree")]
+      (expect (= #{"target/editing-test/bbfs/tree/a.clj"
+                   "target/editing-test/bbfs/tree/b.txt"}
+                (set (list-dir root))))
+      (expect (= ["target/editing-test/bbfs/tree/a.clj"]
+                (glob root "*.clj")))))
+
+  (it "exists? and delete-if-exists work on cwd-relative paths"
+    (let [path             (write-temp! "bbfs/meta/x.txt" "x")
+          exists?          (private-fn "exists-safe?")
+          delete-if-exists (private-fn "delete-if-exists-safe")]
+      (expect (true? (exists? path)))
+      (expect (true? (delete-if-exists path)))
+      (expect (false? (exists? path))))))

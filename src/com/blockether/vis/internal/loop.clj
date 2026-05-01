@@ -750,7 +750,7 @@
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
-  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk]}]]
+  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
@@ -794,7 +794,8 @@
                                   :routing  (or routing {})
                                   :check-context? false}
                            effective-reasoning (assoc :reasoning effective-reasoning)
-                           streaming-fn        (assoc :on-chunk streaming-fn))))
+                           streaming-fn        (assoc :on-chunk streaming-fn)
+                           extra-body          (assoc :extra-body extra-body))))
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
@@ -1284,7 +1285,7 @@
            conversation-turn-id history-messages
            max-consecutive-errors max-restarts
            hooks cancel-atom current-iteration-atom
-           reasoning-default routing]}]
+           reasoning-default routing extra-body]}]
   (let [;; Tightened from 5 to 3. Three consecutive failures is enough
         ;; signal that the current approach is wrong; the nudge fires
         ;; at CONSECUTIVE_ERROR_NUDGE_AT (= 2) so the model gets a
@@ -1575,7 +1576,8 @@
                                            {:iteration iteration :reasoning-level reasoning-level
                                             :routing effective-routing
                                             :resolved-model resolved-model
-                                            :on-chunk on-chunk})
+                                            :on-chunk on-chunk
+                                            :extra-body extra-body})
                                          (catch Exception e
                                            (handle-iteration-exception! e
                                              {:iteration iteration :messages effective-messages
@@ -1882,7 +1884,7 @@
   (let [{:keys [spec model
                 max-context-tokens
                 system-prompt debug? hooks cancel-atom eval-timeout-ms
-                reasoning-default routing]
+                reasoning-default routing extra-body]
          :or   {debug? false}} opts]
     (when-not (:db-info env)
       (anomaly/incorrect! "Invalid RLM environment" {:type :vis/invalid-env}))
@@ -1972,6 +1974,7 @@
        :eval-timeout-ms        eval-timeout-ms
        :reasoning-default      reasoning-default
        :routing                routing
+       :extra-body             extra-body
        :messages               messages
        :history-messages       history-messages})))
 
@@ -1985,7 +1988,7 @@
   [{:keys [environment query-str history-messages spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
-           reasoning-default routing]}]
+           reasoning-default routing extra-body]}]
   (let [iteration-result (run-query! environment query-str
                            (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
@@ -1995,7 +1998,8 @@
                                     :current-iteration-atom current-iteration-atom
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
-                             routing (assoc :routing routing)))
+                             routing    (assoc :routing routing)
+                             extra-body (assoc :extra-body extra-body)))
         conversation-turn-id         (:conversation-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result
@@ -2111,6 +2115,8 @@
         code evaluation, LLM responses at :info level with :rlm-phase context.
       - :reasoning-default - Optional base reasoning effort for reasoning-capable models.
         Accepts :low/:medium/:high or low/medium/high strings. Adaptive escalation still applies.
+      - :extra-body - Optional provider-specific request-body params merged into the
+        upstream LLM call after auto max_tokens + reasoning translation.
 
     Returns:
    Map with:

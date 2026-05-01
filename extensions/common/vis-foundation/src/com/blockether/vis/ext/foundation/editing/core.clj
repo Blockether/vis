@@ -1,30 +1,39 @@
 (ns com.blockether.vis.ext.foundation.editing.core
-  "Editing tools exposed under the `v/` alias in the SCI sandbox.
+  "Filesystem tools exposed under the `v/` alias in the SCI sandbox.
 
-   Surface (intentionally small) — every tool returns pure
-   structured data, no English prose smuggled into return values:
+   Two layers:
 
-     (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines}
-     (v/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
-     (v/ls path)             ; -> nested {:name :path :type :size :children} tree
-     (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
-     (v/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
-     (v/edit path search replace)   ; -> {:path :bytes-before :bytes-after}
-     (v/write path content)         ; -> {:path :bytes}
+   1. Structured helpers for preview / tree / search:
 
-   Plus the babashka.fs surface bound under `fs/` (cwd, exists?, glob,
-   parent, components, file-name, extension, expand-home, list-dir,
-   relativize). Use the fs primitives for path math; reach for a
-   higher-level v/ symbol when you also need to read or mutate the
-   file's contents.
+        (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines}
+        (v/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
+        (v/ls path)             ; -> nested {:name :path :type :size :children} tree
+        (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
+        (v/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
+
+   2. Thin cwd-safe wrappers over the babashka.fs file API, so the
+      model acts via normal Clojure code instead of bespoke edit DSLs:
+
+        (v/read-all-lines path)
+        (v/write-lines path lines)
+        (v/update-file path f & xs)
+        (v/create-dirs path)
+        (v/list-dir path)
+        (v/glob root pattern)
+        (v/copy src dest)
+        (v/move src dest)
+        (v/delete path)
+        (v/delete-if-exists path)
+        (v/exists? path)
+        (v/cwd)
+        (v/parent path)
+        (v/file-name path)
+        (v/extension path)
+        (v/relativize from to)
 
    Clojure-specific structured editing (`z/zedit` plus the `z/`
    rewrite-clj zipper API) lives in the `vis-language-clojure`
    extension under `extensions/languages/clojure/`.
-
-   No patch DSL, no parse-error rescue stack. Read once,
-   bind to a `(def ...)` if you need it across iterations, edit in
-   one call.
 
    Hard guard: every path must stay inside the conversation's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
@@ -76,6 +85,18 @@
   (let [cwd (.toAbsolutePath (fs/path (fs/cwd)))
         p   (.toAbsolutePath (.toPath f))]
     (str (.relativize cwd p))))
+
+(defn- display-path [p]
+  (let [cwd  (.normalize (.toAbsolutePath (fs/path (fs/cwd))))
+        path (.normalize (.toAbsolutePath (fs/path p)))]
+    (if (= path cwd)
+      "."
+      (str (.relativize cwd path)))))
+
+(defn- ensure-parent-dirs! [^File f]
+  (when-let [parent (.getParentFile f)]
+    (.mkdirs parent))
+  f)
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)
@@ -334,100 +355,80 @@
       :truncated-by (if @capped? :limit :end-of-results)})))
 
 ;; =============================================================================
-;; edit / write
+;; Thin babashka.fs wrappers
 ;; =============================================================================
 
-(defn- write-file
-  "Overwrite (or create) the file at `path` with `content`. Creates parent
-   directories as needed."
-  [path content]
+(defn- read-all-lines-safe
+  ([path]
+   (vec (fs/read-all-lines (ensure-existing-file! (safe-path path)))))
+  ([path opts]
+   (vec (fs/read-all-lines (ensure-existing-file! (safe-path path))
+          (or opts {})))))
+
+(defn- write-lines-safe
+  ([path lines]
+   (write-lines-safe path lines nil))
+  ([path lines opts]
+   (let [f (safe-path path)]
+     (ensure-parent-dirs! f)
+     (fs/write-lines f lines (or opts {}))
+     (rel-path f))))
+
+(defn- update-file-safe
+  [path & more]
+  (let [file (ensure-existing-file! (safe-path path))]
+    (if (map? (first more))
+      (let [[opts f & xs] more]
+        (apply fs/update-file file (or opts {}) f xs))
+      (let [[f & xs] more]
+        (apply fs/update-file file f xs)))))
+
+(defn- create-dirs-safe [path]
   (let [f (safe-path path)]
-    (when-let [parent (.getParentFile f)]
-      (.mkdirs parent))
-    (spit f (str content))
-    {:path (rel-path f) :bytes (count (str content))}))
+    (fs/create-dirs f)
+    (rel-path f)))
 
-(defn- match-context
-  "Return up to `n` matches of `s` in `original` with line numbers and
-   surrounding line context, so an ambiguous edit can be disambiguated
-   without another v/cat round-trip."
-  [original s n]
-  (let [matches (loop [from 0 acc []]
-                  (let [idx (.indexOf original s from)]
-                    (cond
-                      (neg? idx) acc
-                      (>= (count acc) n) acc
-                      :else (recur (+ idx (count s)) (conj acc idx)))))]
-    (mapv (fn [idx]
-            (let [pre  (subs original 0 idx)
-                  line (inc (count (re-seq #"\n" pre)))
-                  ;; pull a one-line slice around the match
-                  start (or (some-> (str/last-index-of original "\n" idx) inc) 0)
-                  end   (let [after-end (+ idx (count s))
-                              nl        (str/index-of original "\n" after-end)]
-                          (or nl (count original)))]
-              {:line line
-               :context (subs original start end)}))
-      matches)))
+(defn- list-dir-safe
+  ([path]
+   (mapv display-path (fs/list-dir (safe-path path))))
+  ([path glob-or-accept]
+   (mapv display-path (fs/list-dir (safe-path path) glob-or-accept))))
 
-(defn- char-offset-of-line
-  [^String s line]
-  (loop [i 0 idx 0]
-    (cond
-      (>= i (dec line)) idx
-      (>= idx (count s)) idx
-      :else (let [next-nl (.indexOf s "\n" idx)]
-              (if (neg? next-nl) (count s) (recur (inc i) (inc next-nl)))))))
+(defn- glob-safe
+  ([root pattern]
+   (glob-safe root pattern nil))
+  ([root pattern opts]
+   (mapv display-path (fs/glob (safe-path root) pattern (or opts {})))))
 
-(defn- edit-file
-  "Replace ONE occurrence of `search` with `replace` in `path`.
+(defn- copy-safe
+  ([src dest]
+   (copy-safe src dest nil))
+  ([src dest opts]
+   (let [src-file  (safe-path src)
+         dest-file (safe-path dest)]
+     (ensure-parent-dirs! dest-file)
+     (fs/copy src-file dest-file (or opts {}))
+     (rel-path dest-file))))
 
-   3-arg form replaces the FIRST occurrence; throws when ambiguous.
-   4-arg form takes opts — supported keys:
-     :line N  pick the occurrence on or after line N (the same number
-              `v/cat` printed). No ambiguity check; nearest match wins.
+(defn- move-safe
+  ([src dest]
+   (move-safe src dest nil))
+  ([src dest opts]
+   (let [src-file  (safe-path src)
+         dest-file (safe-path dest)]
+     (ensure-parent-dirs! dest-file)
+     (fs/move src-file dest-file (or opts {}))
+     (rel-path dest-file))))
 
-   When ambiguous (no :line given), the error embeds matched line
-   numbers + surrounding context so the model can disambiguate without
-   re-reading the file."
-  ([path search replace] (edit-file path search replace nil))
-  ([path search replace opts]
-   (let [f (ensure-existing-file! (safe-path path))
-         original (slurp f)
-         s (str search)
-         r (str replace)
-         line (:line opts)]
-     (when (str/blank? s)
-       (throw (ex-info "v/edit :search must be non-blank. Use v/write to overwrite a whole file."
-                {:type :ext.foundation.editing/blank-search})))
-     (let [start-from (if line (char-offset-of-line original line) 0)
-           first-idx (.indexOf original s start-from)
-           second-idx (when (and (not line) (>= first-idx 0))
-                        (.indexOf original s (+ first-idx (count s))))]
-       (cond
-         (neg? first-idx)
-         (throw (ex-info (str "v/edit :search not found in " (rel-path f)
-                           (when line (str " (searching from line " line " onward)")))
-                  {:type :ext.foundation.editing/search-not-found
-                   :path (rel-path f)
-                   :search (subs s 0 (min 200 (count s)))}))
-         (and second-idx (>= second-idx 0))
-         (let [hits (match-context original s 5)]
-           (throw (ex-info (str "v/edit :search appears " (count hits)
-                             " times in " (rel-path f)
-                             ". Either add surrounding lines until the match is unique, or pass {:line N} to pick the occurrence on or after that line. Hits: "
-                             (pr-str (mapv (fn [h] (str "L" (:line h) ": " (str/trim (:context h)))) hits)))
-                    {:type :ext.foundation.editing/search-ambiguous
-                     :path (rel-path f)
-                     :hits hits})))
-         :else
-         (let [updated (str (subs original 0 first-idx)
-                         r
-                         (subs original (+ first-idx (count s))))]
-           (spit f updated)
-           {:path (rel-path f)
-            :bytes-before (count original)
-            :bytes-after  (count updated)}))))))
+(defn- delete-safe [path]
+  (fs/delete (safe-path path))
+  true)
+
+(defn- delete-if-exists-safe [path]
+  (fs/delete-if-exists (safe-path path)))
+
+(defn- exists-safe? [path]
+  (fs/exists? (safe-path path)))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -468,30 +469,132 @@
                 "(:hits (v/rg [\"defn render\"] \"src\"))"
                 "(v/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
 
-(def edit-symbol
-  (vis/symbol 'edit edit-file
-    {:doc "Replace the FIRST occurrence of `search` with `replace` in `path`. Throws if `search` is missing or non-unique. Pass {:line N} as a 4th arg to pick the occurrence on or after line N when context-anchoring is hard."
-     :arglists '([path search replace] [path search replace opts])
-     :examples ["(v/edit \"src/main.clj\" \"(def OLD 1)\" \"(def NEW 2)\")"
-                "(v/edit \"src/main.clj\" \"foo\" \"bar\" {:line 142})"]}))
+(def read-all-lines-symbol
+  (vis/symbol 'read-all-lines read-all-lines-safe
+    {:doc "Read a whole text file as a vec of raw strings. Thin cwd-safe wrapper over babashka.fs/read-all-lines. opts currently supports :charset."
+     :arglists '([path] [path opts])
+     :examples ["(v/read-all-lines \"src/main.clj\")"
+                "(str/join \"\\n\" (v/read-all-lines \"src/main.clj\"))"]}))
 
-(def write-symbol
-  (vis/symbol 'write write-file
-    {:doc "Overwrite or create a file with the given content. Creates parent directories as needed."
-     :arglists '([path content])
-     :examples ["(v/write \"new.txt\" \"hello\")"]}))
+(def write-lines-symbol
+  (vis/symbol 'write-lines write-lines-safe
+    {:doc "Write a seqable of strings to path. Creates parent directories as needed. Returns the cwd-relative path string. Thin wrapper over babashka.fs/write-lines."
+     :arglists '([path lines] [path lines opts])
+     :examples ["(v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])"
+                "(v/write-lines \"src/main.clj\" (v/read-all-lines \"src/main.clj\"))"]}))
+
+(def update-file-symbol
+  (vis/symbol 'update-file update-file-safe
+    {:doc "Update a text file by applying f to its old contents. Returns the new contents. Thin cwd-safe wrapper over babashka.fs/update-file."
+     :arglists '([path f & xs] [path opts f & xs])
+     :examples ["(v/update-file \"README.md\" #(str % \"\\nnew line\\n\"))"
+                "(v/update-file \"x.txt\" {} str/upper-case)"]}))
+
+(def create-dirs-symbol
+  (vis/symbol 'create-dirs create-dirs-safe
+    {:doc "Create a directory and any missing parents. Returns the cwd-relative path string."
+     :arglists '([path])
+     :examples ["(v/create-dirs \"target/tmp/cache\")"]}))
+
+(def list-dir-symbol
+  (vis/symbol 'list-dir list-dir-safe
+    {:doc "List a directory as cwd-relative path strings. 2-arg form takes a glob string or accept fn, mirroring babashka.fs/list-dir."
+     :arglists '([path] [path glob-or-accept])
+     :examples ["(v/list-dir \"src\")"
+                "(v/list-dir \"src\" \"*.clj\")"]}))
+
+(def glob-symbol
+  (vis/symbol 'glob glob-safe
+    {:doc "Glob under root and return cwd-relative path strings. Thin cwd-safe wrapper over babashka.fs/glob."
+     :arglists '([root pattern] [root pattern opts])
+     :examples ["(v/glob \"src\" \"**.clj\")"
+                "(v/glob \"resources\" \"**.edn\" {:hidden true})"]}))
+
+(def copy-symbol
+  (vis/symbol 'copy copy-safe
+    {:doc "Copy src to dest. Creates parent directories for dest. Returns the cwd-relative dest path string."
+     :arglists '([src dest] [src dest opts])
+     :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]}))
+
+(def move-symbol
+  (vis/symbol 'move move-safe
+    {:doc "Move or rename src to dest. Creates parent directories for dest. Returns the cwd-relative dest path string."
+     :arglists '([src dest] [src dest opts])
+     :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]}))
+
+(def delete-symbol
+  (vis/symbol 'delete delete-safe
+    {:doc "Delete path. Returns true on success; throws when the path is missing or undeletable."
+     :arglists '([path])
+     :examples ["(v/delete \"tmp.txt\")"]}))
+
+(def delete-if-exists-symbol
+  (vis/symbol 'delete-if-exists delete-if-exists-safe
+    {:doc "Delete path if it exists. Returns true when deleted, false when absent."
+     :arglists '([path])
+     :examples ["(v/delete-if-exists \"tmp.txt\")"]}))
+
+(def exists?-symbol
+  (vis/symbol 'exists? exists-safe?
+    {:doc "True when path exists inside the workspace cwd."
+     :arglists '([path])
+     :examples ["(v/exists? \"src/main.clj\")"]}))
 
 (def editing-symbols
-  [cat-symbol ls-symbol rg-symbol edit-symbol write-symbol])
+  [cat-symbol
+   ls-symbol
+   rg-symbol
+   read-all-lines-symbol
+   write-lines-symbol
+   update-file-symbol
+   create-dirs-symbol
+   list-dir-symbol
+   glob-symbol
+   copy-symbol
+   move-symbol
+   delete-symbol
+   delete-if-exists-symbol
+   exists?-symbol])
 
 (def editing-prompt
-  "`v/` = file I/O (5 tools). EVERY tool returns pure structured data — maps with explicit keys, never English-prose strings. Compose display text yourself when you need it.
-  (v/cat path)             -> {:path :offset :total-lines :truncated-by :lines}. :lines = vec of raw line strings. Default char-limit 6000; opts {:offset :limit :char-limit}. Pagination: `(v/cat p {:offset (+ (:offset r) (count (:lines r)))})`.
-  (v/ls path)              -> nested {:name :path :type :size :children} tree. opts {:depth :hidden? :respect-gitignore?}.
-  (v/rg [\"a\" \"b\"] path)  -> {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}. patterns = non-empty vec of literal strings (no regex DSL). For real regex: (re-seq #\"...\" (str/join \"\\n\" (:lines (v/cat path)))).
-  (v/edit path s r)        -> {:path :bytes-before :bytes-after}. Replace FIRST `s`->`r`. `s` must be unique. 4th arg {:line N} disambiguates by line.
-  (v/write path content)   -> {:path :bytes}. Overwrite/create.
+  "`v/` = browse with helpers, act via normal Clojure code.
 
-For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).
+Browse / inspect:
+  (v/cat path)                  -> paginated preview map {:path :offset :total-lines :truncated-by :lines}
+  (v/ls path)                   -> directory tree map
+  (v/rg [\"foo\" \"bar\"] path) -> CONTENT search inside files
+  (v/glob root pattern)         -> PATH search for matching file names
 
-Read once, reuse. Cross-iter? `(def x (v/cat ...))`. Identical re-reads run again on every call — bind once, reuse via the var.")
+Act via code (whole-file / path operations):
+  (v/read-all-lines path)       -> [\"line\" ...]      ; code-first full-file read
+  (v/write-lines path lines)    -> \"path\"            ; whole-file replace/create
+  (v/update-file path f & xs)   -> new-string         ; read-modify-write
+  (v/create-dirs path)          -> \"path\"
+  (v/list-dir path)             -> [\"child\" ...]
+  (v/copy src dest) / (v/move src dest)
+  (v/delete path) / (v/delete-if-exists path)
+  (v/exists? path)
+
+Usage patterns:
+  Browse a large file:
+    (def preview (v/cat \"src/main.clj\" {:offset 1 :limit 80}))
+
+  Rewrite a file via code:
+    (v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])
+
+  Transform a file via code:
+    (v/update-file \"README.md\" #(str % \"\\nNew section\\n\"))
+
+  Find files vs find text:
+    (v/glob \"src\" \"**.clj\")        ; which files?
+    (v/rg [\"defn render\"] \"src\")  ; where in contents?
+
+Rule of thumb:
+  - `v/cat` = preview/browse
+  - `v/read-all-lines` = full-file read for code
+  - `v/write-lines` = whole-file replace/create
+  - `v/update-file` = mutate old contents with a function
+  - `v/glob` = path search
+  - `v/rg` = content search
+
+For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).")
