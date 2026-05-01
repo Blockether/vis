@@ -55,6 +55,64 @@
     (let [s (str uuid-or-string)]
       (subs s 0 (min SHORT_ID_CHARS (count s))))))
 
+(defn normalize-chat-markdown
+  "Repair a narrow class of malformed fenced-code Markdown emitted by
+   LLM answers.
+
+   High-confidence fixes only:
+
+   1. Opening fence glued to preceding prose:
+        `Intro:```text` -> `Intro:\n```text`
+
+   2. Closing fence glued to following prose while already inside a
+      fenced block:
+        ` ```Done.` -> ` ```\nDone.`
+
+   This preserves the visible prose while making the answer renderable
+   in chat/export surfaces. Forensic transcript views intentionally
+   keep the stored raw text and do NOT call this helper."
+  [text]
+  (if (or (not (string? text))
+        (not (str/includes? text "```")))
+    text
+    (letfn [(split-glued-opening-fence [line]
+              (when-let [[_ before fence]
+                         (and (string? line)
+                           (re-matches #"^(.*\S)(```[A-Za-z0-9_+-]*)\s*$" line))]
+                [before fence]))
+            (split-glued-closing-fence [line]
+              (when-let [trimmed (some-> line str/trim)]
+                (when (str/starts-with? trimmed "```")
+                  (let [tail (subs trimmed 3)]
+                    (when (and (not (str/blank? tail))
+                            (or (re-find #"\s" tail)
+                              (str/includes? tail ":")))
+                      ["```" tail])))))]
+      (->> (loop [remaining (seq (str/split-lines text))
+                  in-code?  false
+                  acc       []]
+             (if-not remaining
+               acc
+               (let [line (first remaining)
+                     rst  (next remaining)]
+                 (cond
+                   (and (not in-code?)
+                     (split-glued-opening-fence line))
+                   (let [[before fence] (split-glued-opening-fence line)]
+                     (recur (cons fence rst) in-code? (conj acc before)))
+
+                   (and in-code?
+                     (split-glued-closing-fence line))
+                   (let [[fence tail] (split-glued-closing-fence line)]
+                     (recur (cons tail rst) false (conj acc fence)))
+
+                   :else
+                   (let [trimmed (str/trim line)]
+                     (if (str/starts-with? trimmed "```")
+                       (recur rst (not in-code?) (conj acc line))
+                       (recur rst in-code? (conj acc line))))))))
+        (str/join "\n"))))
+
 (defn- comma-int
   "Group-3 thousands separator for integers, US locale-style. Used by
    the token line so a 12,345-prompt-token export reads naturally.
@@ -143,7 +201,7 @@
   (let [meta        (when include-meta? (format-turn-meta turn))
         user-block  (or (blockquote (:text turn)) "> *(empty user request)*")
         answer-text (cond
-                      (:answer turn) (:answer turn)
+                      (:answer turn) (normalize-chat-markdown (:answer turn))
                       (= :error (:status turn)) "*(turn errored \u2014 no answer recorded)*"
                       :else "*(no answer recorded yet)*")
         sections    [(str "## Turn " (inc index))

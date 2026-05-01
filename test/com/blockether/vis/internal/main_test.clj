@@ -95,3 +95,13 @@
         (when (and row (seq cmds) (= "channels" (:kind row)))
           (doseq [cmd cmds]
             (expect (str/includes? (:group row) cmd))))))))
+
+(defdescribe root-command-test
+  (it "mounts the top-level providers command"
+    (let [root        (main/root-command)
+          subcommands ((:cmd/subcommands root))]
+      (expect (= "providers"
+                (some->> subcommands
+                  (filter #(= "providers" (:cmd/name %)))
+                  first
+                  :cmd/name))))))

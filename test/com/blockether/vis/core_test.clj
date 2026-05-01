@@ -2006,20 +2006,29 @@
       (expect (zero? exit))
       (expect (contains-all? out ["vis run" "FLAGS" "--json" "--model"])))))
 
-(defdescribe vis-auth-help
-  (it "shows the auth command tree"
-    (let [{:keys [exit out]} (run-vis "auth")]
+(defdescribe vis-providers-help
+  (it "shows the providers command tree"
+    (let [{:keys [exit out]} (run-vis "providers")]
       (expect (zero? exit))
-      ;; github-copilot provider auto-registers and should appear
-      (expect (str/includes? out "github-copilot"))))
+      (expect (contains-all? out ["vis providers"
+                                  "auth"
+                                  "status"
+                                  "limits"
+                                  "logout"]))))
 
-  (it "shows status/logout flags and Codex examples in provider help"
-    (let [{:keys [exit out]} (run-vis "auth" "openai-codex" "--help")]
+  (it "shows auth subcommand examples"
+    (let [{:keys [exit out]} (run-vis "providers" "auth" "--help")]
       (expect (zero? exit))
-      (expect (contains-all? out ["FLAGS"
-                                  "--status"
-                                  "--logout"
-                                  "vis auth openai-codex --status"])))))
+      (expect (contains-all? out ["vis providers auth <provider>"
+                                  "vis providers auth github-copilot"
+                                  "vis providers auth openai-codex"]))))
+
+  (it "shows limits subcommand examples"
+    (let [{:keys [exit out]} (run-vis "providers" "limits" "--help")]
+      (expect (zero? exit))
+      (expect (contains-all? out ["vis providers limits [provider]"
+                                  "vis providers limits openai-codex"
+                                  "vis providers limits ollama"])))))
 
 (defdescribe vis-unknown-command
   (it "returns non-zero (or routes to `run` fallback gracefully)"

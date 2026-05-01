@@ -24,7 +24,7 @@ slot to its matching sub-registry as a side effect.
 | `:ext/symbols`     | Functions / constants bound into the SCI sandbox under an alias. | LLM `:code` calls `(alias/fn …)`. |
 | `:ext/cli`         | CLI subcommands the extension contributes. **Always auto-mount under `vis extensions <cmd>`**; deeper nests like `vis extensions git status` are allowed via `:cmd/parent ["extensions" "git"]`. | `vis extensions <name>`. |
 | `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
-| `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis auth <id>`. |
+| `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis providers auth <id>`. |
 | `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `db-create-connection!`. |
 
 Alongside those surfaces, every extension may also:
@@ -314,7 +314,7 @@ defaults `:cmd/parent` for entries that omit it. Three forms work:
 
 Any `:cmd/parent` that doesn't start with `"extensions"` is rejected
 at registration time with `:type :ext/cli-bad-parent`. Top-level
-binary commands (`vis run`, `vis auth`, …) are NOT extension
+binary commands (`vis run`, `vis providers`, …) are NOT extension
 commands; they call `registry/register-cmd!` directly inside the
 host runtime (see `src/com/blockether/vis/internal/main.clj`).
 

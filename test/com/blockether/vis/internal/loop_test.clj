@@ -9,6 +9,11 @@
     (expect (= :balanced (loop/normalize-reasoning-level "medium")))
     (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
 
+(defdescribe answer-str-test
+  (it "repairs glued fence boundaries before the answer leaves the loop"
+    (expect (= "Here's the top-level directory structure of this repo:\n```text\n\n```\nSo: I'm a language model."
+              (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")))))
+
 (defdescribe prepare-query-context-test
   (it "preserves provider-specific extra-body opts for downstream LLM calls"
     (with-redefs [env/bump-var-index! (fn [_] nil)

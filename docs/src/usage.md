@@ -32,10 +32,10 @@ Configure at least one LLM provider before the first turn. Vis
 ships with OAuth providers out of the box:
 
 ```bash
-vis auth github-copilot           # GitHub device-flow auth
-vis auth openai-codex             # ChatGPT/Codex browser OAuth
-vis auth openai-codex --status    # show whether tokens are present + valid
-vis auth openai-codex --logout    # forget tokens
+vis providers auth github-copilot    # GitHub device-flow auth
+vis providers auth openai-codex      # ChatGPT/Codex browser OAuth
+vis providers status openai-codex    # show auth state + limits
+vis providers logout openai-codex    # forget tokens
 ```
 
 You can also start the same OpenAI Codex browser OAuth flow from the
@@ -184,7 +184,7 @@ To author your own extension, see [Extension System](extensions/overview.md).
 | `vis run "prompt"`         | One-shot agent turn (CLI agent).                                         |
 | `vis channels tui […]`     | Lanterna TUI chat.                                                       |
 | `vis channels telegram`    | Telegram long-poll bot.                                                  |
-| `vis auth <provider>`      | Provider OAuth flow.                                                     |
+| `vis providers …`          | Provider auth / status / limits / logout commands.                       |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.                      |
 | `vis doctor`               | Environment diagnostics.                                                 |
 | `vis extensions list`      | List registered extensions.                                              |

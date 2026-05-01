@@ -34,7 +34,7 @@
         (expect (= 2000000 (get-in report [:static :tpm])))
         (expect (s/valid? ::limits/report report)))))
 
-  (it "returns :unsupported when the provider exposes no limits function"
+  (it "returns :unsupported when the provider exposes no limit metadata at all"
     (with-redefs [registry/provider-by-id
                   (fn [pid]
                     (when (= pid :plain)
@@ -42,6 +42,14 @@
       (let [report (limits/provider-limits :plain)]
         (expect (= :unsupported (:status report)))
         (expect (= [] (get-in report [:dynamic :limits])))
+        (expect (s/valid? ::limits/report report)))))
+
+  (it "returns :ok for static-only providers even when no runtime limits fn exists"
+    (with-redefs [registry/provider-by-id (constantly nil)]
+      (let [report (limits/provider-limits :openai-codex)]
+        (expect (= :ok (:status report)))
+        (expect (= 500 (get-in report [:static :rpm])))
+        (expect (= 2000000 (get-in report [:static :tpm])))
         (expect (s/valid? ::limits/report report)))))
 
   (it "wraps invalid provider output in a valid :error envelope"

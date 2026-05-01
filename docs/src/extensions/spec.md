@@ -126,7 +126,7 @@ Mount entries at any depth under `vis extensions …` by specifying a
 placements (the binary's own built-ins, custom command trees), call
 `com.blockether.vis.core/register-cmd!` directly. See
 `src/com/blockether/vis/internal/main.clj` for an example: `vis run`,
-`vis auth`, `vis doctor`, `vis conversations` are registered with
+`vis providers`, `vis doctor`, `vis conversations` are registered with
 `registry/register-cmd!`; only the `vis extensions list` subcommand
 goes through `:ext/cli`.
 

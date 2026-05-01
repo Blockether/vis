@@ -39,6 +39,7 @@
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.lifecycle :as lifecycle]
+   [com.blockether.vis.internal.markdown :as markdown]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
@@ -192,8 +193,9 @@
     :else :deep))
 
 (defn answer-str [answer]
-  (let [v (:result answer answer)]
-    (if (string? v) v (str v))))
+  (let [v (:result answer answer)
+        s (if (string? v) v (str v))]
+    (markdown/normalize-chat-markdown s)))
 
 (def edamame-opts
   {:all true

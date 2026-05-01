@@ -292,7 +292,7 @@
        ;; Need to refresh
        (let [oauth-token (or (:oauth-token cached)
                            (:oauth-token (detect-oauth-token))
-                           (throw (ex-info "No GitHub Copilot OAuth token found. Run `vis auth github-copilot` to authenticate."
+                           (throw (ex-info "No GitHub Copilot OAuth token found. Run `vis providers auth github-copilot` to authenticate."
                                     {:type :vis/copilot-not-authenticated})))
              fresh (exchange-for-copilot-token! oauth-token opts)]
          (reset! token-cache (assoc fresh :oauth-token oauth-token))
@@ -367,7 +367,7 @@
 ;; Provider registration
 ;;
 ;; Loading this namespace plugs the GitHub Copilot provider into the
-;; generic registry. The CLI's `vis auth` lists every registered
+;; generic registry. The CLI's `vis providers` tree lists every registered
 ;; provider; the runtime's token-resolution path looks providers up
 ;; by id. Drop this jar (or pick another `vis-provider-*` package)
 ;; to swap providers without touching vis-runtime.
@@ -383,8 +383,8 @@
   (let [print! (or printer-fn (constantly nil))]
     (if (detect-oauth-token)
       (do (print! "  Already authenticated with GitHub Copilot.")
-        (print! "  Run `vis auth github-copilot --status` for details.")
-        (print! "  Run `vis auth github-copilot --logout` first to re-authenticate.")
+        (print! "  Run `vis providers status github-copilot` for details.")
+        (print! "  Run `vis providers logout github-copilot` first to re-authenticate.")
         :already-authenticated)
       (let [{:keys [user-code verification-uri device-code interval expires-in]}
             (start-device-flow!)]

@@ -1,4 +1,4 @@
 ;; OpenAI Codex (ChatGPT OAuth) provider. Loading the ns registers
-;; the provider under `vis auth openai-codex`.
+;; the provider under `vis providers auth openai-codex`.
 {openai-codex
  {:nses [com.blockether.vis.ext.provider-openai-codex]}}
