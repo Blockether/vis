@@ -824,14 +824,43 @@
         (:api-key provider))
       (conj {:id :logout :label "Log Out"}))))
 
+(def ^:private api-key-prompt-cancelled ::api-key-prompt-cancelled)
+
+(defn- trim-blank-lines
+  [lines]
+  (->> lines
+    (drop-while str/blank?)
+    reverse
+    (drop-while str/blank?)
+    reverse
+    vec))
+
+(defn- provider-auth-prompt-body
+  [provider]
+  (let [registered (vis/provider-by-id (:id provider))]
+    (if-let [prompt-fn (:provider/auth-prompt-fn registered)]
+      (not-empty (trim-blank-lines (prompt-fn)))
+      (when-let [auth-fn (:provider/auth-fn registered)]
+        (let [lines (atom [])]
+          (try
+            (auth-fn #(swap! lines conj %))
+            (not-empty (trim-blank-lines @lines))
+            (catch Throwable e
+              (not-empty
+                (trim-blank-lines
+                  (conj @lines "" (str "Authentication info failed: " (or (ex-message e) (str e)))))))))))))
+
 (defn- prompt-for-api-key!
   [^TerminalScreen screen provider]
   (let [raw (dlg/text-input-dialog! screen
               (str (vis/display-label (:id provider)) " Authentication")
               "API Key:"
-              :mask \*)]
-    (when-not (str/blank? raw)
-      (assoc provider :api-key raw))))
+              :mask \*
+              :body (provider-auth-prompt-body provider))]
+    (cond
+      (nil? raw) api-key-prompt-cancelled
+      (str/blank? raw) nil
+      :else (assoc provider :api-key raw))))
 
 (defn- run-generic-provider-auth!
   [^TerminalScreen screen provider]
@@ -863,8 +892,11 @@
     :openai-codex   (when (codex-oauth-ready! screen true) provider)
     :ollama         nil
     :lmstudio       nil
-    (or (prompt-for-api-key! screen provider)
-      (run-generic-provider-auth! screen provider))))
+    (let [prompted (prompt-for-api-key! screen provider)]
+      (cond
+        (= api-key-prompt-cancelled prompted) nil
+        prompted prompted
+        :else (run-generic-provider-auth! screen provider)))))
 
 (defn logout-provider!
   [^TerminalScreen screen provider]

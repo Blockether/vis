@@ -454,29 +454,56 @@
 
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
 
+(defn- text-input-body-lines
+  [body]
+  (cond
+    (nil? body) []
+    (string? body) (str/split-lines body)
+    (sequential? body) (mapv str body)
+    :else [(str body)]))
+
 (defn text-input-dialog!
   "Show a text input dialog. Returns string or nil on Esc.
-   Options: :mask char (e.g. \\* for passwords), :initial string."
-  [^TerminalScreen screen title label & {:keys [mask initial] :or {initial ""}}]
+   Options: :mask char (e.g. \\* for passwords), :initial string,
+   :body string-or-lines rendered above the input label."
+  [^TerminalScreen screen title label & {:keys [mask initial body] :or {initial ""}}]
   (let [text         (atom (vec initial))
         cursor       (atom (count initial))
+        body-lines   (text-input-body-lines body)
         paste-buffer (volatile! nil)]
     (loop []
       (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
-            ;; Content: label row + spacer + 3-row bordered input box.
+            ;; Content: optional body rows + label row + spacer + 3-row bordered input box.
             bounds (draw-dialog-chrome! g cols rows title 5)
             {:keys [left inner-w]} bounds
-            {:keys [content-top hint-row]} (dialog-layout bounds 5)
-            label-row  content-top
-            input-row  (+ content-top 2)
+            text-w     (max 1 (- inner-w 2))
+            wrapped-body (->> body-lines
+                           (mapcat (fn [line]
+                                     (if (str/blank? line)
+                                       [""]
+                                       (render/wrap-text line text-w))))
+                           vec)
+            body-gap   (if (seq wrapped-body) 1 0)
+            content-count (+ 4 body-gap (count wrapped-body))
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds content-count)
+            max-body-lines (max 0 (- content-h 4 body-gap))
+            visible-body (if (<= (count wrapped-body) max-body-lines)
+                           wrapped-body
+                           (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "…"))
+            label-row  (+ content-top (count visible-body) body-gap)
+            input-row  (inc label-row)
             txt        (apply str @text)
             display    (if mask (apply str (repeat (count txt) mask)) txt)
             cursor-pos (draw-text-input-field! g left input-row inner-w display @cursor)]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (doseq [[idx line] (map-indexed vector visible-body)]
+          (let [row (+ content-top idx)]
+            (p/fill-rect! g (inc left) row inner-w 1)
+            (p/put-str! g (+ left 2) row (ellipsize line text-w))))
         (p/fill-rect! g (inc left) label-row inner-w 1)
         (p/put-str! g (+ left 2) label-row (ellipsize label (max 0 (- inner-w 2))))
 
