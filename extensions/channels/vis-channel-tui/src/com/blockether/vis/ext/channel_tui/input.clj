@@ -2,8 +2,8 @@
   "Keyboard / paste / clipboard surface for the TUI channel.
 
    Important: this namespace MUST NOT import any `java.awt.*` class.
-   Loading AWT on macOS — even just touching `Toolkit` from a JVM
-   subprocess — spawns a full Cocoa application, registers a Dock
+   Loading AWT on macOS - even just touching `Toolkit` from a JVM
+   subprocess - spawns a full Cocoa application, registers a Dock
    icon, and steals focus from the user's terminal. We saw it in
    the wild: a single `verify.sh` run popped the Java rocket onto
    the Dock and switched the front window away from the shell.
@@ -11,7 +11,7 @@
    Clipboard read/write therefore goes through OS shell helpers
    only: `pbcopy` / `pbpaste` on macOS (always present since 10.0),
    `wl-copy` / `wl-paste` on Wayland, `xclip` / `xsel` on X11. AWT
-   is gone for good — not a fallback, not a comment, not an
+   is gone for good - not a fallback, not a comment, not an
    import."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -58,14 +58,14 @@
 ;;
 ;; so the host can tell "this is a paste" apart from "the user
 ;; manually typed Enter". Without it, every newline in a pasted block
-;; fires KeyType/Enter — which the input handler treats as "send the
-;; message" — and the message ships before the user can react.
+;; fires KeyType/Enter - which the input handler treats as "send the
+;; message" - and the message ships before the user can react.
 ;;
 ;; We surface the brackets to the input loop as two KeyStrokes carrying
 ;; PUA marker characters (`PASTE_START_CHAR` / `PASTE_END_CHAR`). The
 ;; screen poll loop sees those markers, flips a buffering mode on/off,
 ;; accumulates every keystroke between them into one string, and feeds
-;; that string to `paste-text`. Same code path as Ctrl+V — we just
+;; that string to `paste-text`. Same code path as Ctrl+V - we just
 ;; reused the bracketed-paste sequences as the trigger.
 ;;
 ;; Enabling / disabling the mode is a separate concern: the terminal
@@ -86,7 +86,7 @@
   \uE201)
 
 (defn- bracket-pattern-prefix-match?
-  "True when the sequence `s` is a prefix of `target` — used by the
+  "True when the sequence `s` is a prefix of `target` - used by the
    bracket patterns to return NOT_YET while the user-typed `ESC[`
    could still complete into one of our triggers."
   [^java.util.List s ^String target]
@@ -154,7 +154,7 @@
 ;; offset 32. The moment a column or row exceeds 95, the byte rises
 ;; above 0x7F and the JVM's UTF-8 input decoder treats it as an
 ;; invalid byte, replacing it with U+FFFD (65533). Lanterna then
-;; subtracts 33 — producing a phantom column of `65500` that of
+;; subtracts 33 - producing a phantom column of `65500` that of
 ;; course doesn't match any click region. The header copy-id
 ;; affordance lives near the right edge of the screen, where this
 ;; bug fires every single time on a terminal wider than ~100
@@ -164,7 +164,7 @@
 ;; encoding the same payload as PURE ASCII text:
 ;;
 ;;     ESC [ < Cb ; Cx ; Cy M     (button-down / drag / move / scroll)
-;;     ESC [ < Cb ; Cx ; Cy m     (button-release — lowercase `m`)
+;;     ESC [ < Cb ; Cx ; Cy m     (button-release - lowercase `m`)
 ;;
 ;; Cx/Cy are 1-based decimal numbers. We register a custom
 ;; `CharacterPattern` that recognises this shape and emits a proper
@@ -175,7 +175,7 @@
 (defn- digits->int ^long [digits]
   ;; Parses a non-empty decimal sequence held in a vector of
   ;; java.lang.Character. Used for the SGR Cb / Cx / Cy fields.
-  ;; Allocation-free over the input — no temp String created.
+  ;; Allocation-free over the input - no temp String created.
   (loop [i 0 acc 0]
     (if (>= i (count digits))
       acc
@@ -215,7 +215,7 @@
         bits   (bit-and button 0x03)]
     (cond
       wheel? (if (zero? bits) 4 5)
-      ;; bits == 3 in non-wheel modes means \"no button held\" —
+      ;; bits == 3 in non-wheel modes means \"no button held\" -
       ;; that's the SGR convention for plain motion. Report 0 to
       ;; match what Lanterna's parser does for legacy MOVE events.
       (= bits 3) 0
@@ -292,7 +292,7 @@
                           (MouseAction. atype (int btn) pos)))
                       nil)
 
-                    ;; Anything else — stray byte mid-sequence —
+                    ;; Anything else - stray byte mid-sequence -
                     ;; rejects this pattern. Lanterna will hand the
                     ;; chars to the next pattern in the profile.
                     :else nil))))))))))
@@ -303,7 +303,7 @@
    mode-1003 enable Lanterna already issues via
    `setMouseCaptureMode`; both can be active at once and the
    terminal will use whichever the remote consumer claims to
-   support — every modern emulator (Apple Terminal 2.10+, iTerm2,
+   support - every modern emulator (Apple Terminal 2.10+, iTerm2,
    alacritty, kitty, wezterm, foot, gnome-terminal, mintty,
    vscode integrated terminal) honours 1006."
   [^java.io.OutputStream out]
@@ -323,7 +323,7 @@
     (catch Throwable _ nil)))
 
 (defn enable-bracketed-paste!
-  "Tell the terminal to wrap subsequent pastes in `ESC[200~ … ESC[201~`.
+  "Tell the terminal to wrap subsequent pastes in `ESC[200~ ... ESC[201~`.
    Bytes go straight to the controlling TTY; safe to call inside the
    screen lifecycle."
   [^java.io.OutputStream out]
@@ -347,7 +347,7 @@
    the terminal's input decoder. Without `sgr-mouse-pattern` the
    stock Lanterna parser handles only legacy X10 mouse events,
    whose raw-byte coordinate encoding clashes with the JVM's
-   UTF-8 input decoder for any column/row beyond 95 — producing
+   UTF-8 input decoder for any column/row beyond 95 - producing
    a phantom `mx=65500` from a U+FFFD replacement byte."
   [^UnixTerminal terminal]
   (.addProfile (.getInputDecoder terminal)
@@ -362,7 +362,7 @@
 ;; Why no AWT, anywhere: importing `java.awt.Toolkit` on a macOS JVM
 ;; is enough to register a Dock icon and steal focus from the user's
 ;; terminal the first time the AWT subsystem initialises. We saw it
-;; on a normal `verify.sh` run — a single class-load triggered the
+;; on a normal `verify.sh` run - a single class-load triggered the
 ;; Cocoa bridge and yanked the foreground app away. Even guarding
 ;; the call sites isn't enough; the side effect is at the JVM /
 ;; class-init layer, well below our control. The only safe choice
@@ -448,7 +448,7 @@
 (defn clipboard-paste
   "Read the system clipboard as a UTF-8 string. Returns the captured
    text or `nil` when no helper produced output. Pure shell pipeline
-   — no AWT, no Cocoa init, no Dock icon."
+   - no AWT, no Cocoa init, no Dock icon."
   []
   (try (shell-clipboard-paste!) (catch Throwable _ nil)))
 
@@ -549,7 +549,7 @@
 ;; ── Paste placeholders (pi-style)  ───────────────────────────────────────
 ;;
 ;; A multi-line / large clipboard payload doesn't go inline into the
-;; input box — it would scroll the typing area off the user's screen
+;; input box - it would scroll the typing area off the user's screen
 ;; and force them to navigate around hundreds of unwanted rows. Pi /
 ;; Claude Code's UX (and what we mirror here): the screen loop stashes
 ;; the payload in `app-db :pastes` keyed by an auto-incrementing id,
@@ -558,14 +558,14 @@
 ;;     [Pasted #1: 42 lines]
 ;;
 ;; The user keeps typing around it, hits Enter, and the send path
-;; substitutes every `[Pasted #N: …]` with its content via
+;; substitutes every `[Pasted #N: ...]` with its content via
 ;; `expand-paste-placeholders` before the message reaches the agent.
 ;; Backspace right after the closing `]` deletes the whole token (and
 ;; the screen loop drops that entry from `:pastes` so memory tracks
 ;; what's actually still referenced).
 
 (def placeholder-regex
-  "Anchored shape `[Pasted #N: …]`. The non-greedy negated-bracket
+  "Anchored shape `[Pasted #N: ...]`. The non-greedy negated-bracket
    body keeps the regex idempotent against nested-bracket text the
    user may have typed adjacent to the placeholder."
   #"\[Pasted #(\d+): [^\]]*?\]")
@@ -588,7 +588,7 @@
    send path needs to re-derive the canonical shape.
 
    Always carries BOTH the line count AND the human-readable byte
-   weight — the user wants to see both at a glance:
+   weight - the user wants to see both at a glance:
 
      [Pasted #1: 42 lines, 1.2KB]
      [Pasted #2: 1 line, 73B]
@@ -604,7 +604,7 @@
       (format-bytes char-count) "]")))
 
 (def ^:const PASTE_INLINE_MAX_CHARS
-  "Threshold below which we DON'T use a placeholder — a short
+  "Threshold below which we DON'T use a placeholder - a short
    single-line paste like `git rev-parse HEAD` reads naturally
    inline and a placeholder would just be noise."
   80)
@@ -620,17 +620,17 @@
       (> (count text) PASTE_INLINE_MAX_CHARS))))
 
 (defn expand-paste-placeholders
-  "Substitute every `[Pasted #N: …]` token in `text` with its content
+  "Substitute every `[Pasted #N: ...]` token in `text` with its content
    from `pastes-map`. Used by the send path so the agent receives
    the user's full payload, not the cosmetic token.
 
-   `pastes-map` shape: `{<id-int> {:id N :content \"…\"}}`.
+   `pastes-map` shape: `{<id-int> {:id N :content \"...\"}}`.
    Tokens whose id has no entry in the map (e.g. the user typed the
    bracket text manually) pass through unchanged.
 
    NOTE: `clojure.string/replace` with a fn already runs the fn's
    return through `Matcher/quoteReplacement` internally, so a
-   payload carrying `$` or `\\` is handled verbatim — we don't
+   payload carrying `$` or `\\` is handled verbatim - we don't
    double-quote here."
   [^String text pastes-map]
   (str/replace text placeholder-regex
@@ -665,7 +665,7 @@
    start of where the token was). Caller is responsible for dropping
    the matching `:pastes` entry from app-db.
 
-   No-op when no placeholder ends at the cursor — the screen loop
+   No-op when no placeholder ends at the cursor - the screen loop
    guards via `placeholder-id-before-cursor` first."
   [{:keys [lines crow ccol] :as state}]
   (let [line   (nth lines crow "")
@@ -681,16 +681,24 @@
       state)))
 
 (def ^:private file-mention-regex
-  #"(?<!\S)@([A-Za-z0-9][A-Za-z0-9._/\-]*)")
+  #"(?<!\S)@(?:\"([^\"]+)\"|([A-Za-z0-9][A-Za-z0-9._/\-]*))")
 
 (def ^:private file-mention-max-lines 200)
 (def ^:private file-mention-max-chars 24000)
 
-(defn format-file-mention
-  "Visible inline file mention token inserted by the `@` picker. Kept
-   plain so the user can still edit the path manually if needed."
+(defn- file-mention-needs-quotes?
   [path]
-  (str "@" path))
+  (boolean (re-find #"\s" (str path))))
+
+(defn format-file-mention
+  "Visible inline file mention token inserted by the `@` picker.
+   Paths containing whitespace are quoted so send-time expansion can
+   still recover the exact filename."
+  [path]
+  (let [path* (str path)]
+    (if (file-mention-needs-quotes? path*)
+      (str "@\"" path* "\"")
+      (str "@" path*))))
 
 (defn- resolve-local-file
   [path]
@@ -730,18 +738,18 @@
     (try
       (let [text (slurp f)]
         (if (str/includes? text "\u0000")
-          (str "[Attached file: " path " — binary content omitted]")
+          (str "[Attached file: " path " - binary content omitted]")
           (let [{:keys [text shown-lines total-lines truncated?]}
                 (truncate-file-content text)
                 suffix (when truncated?
-                         (str " — showing " shown-lines "/" total-lines " lines"))]
+                         (str " - showing " shown-lines "/" total-lines " lines"))]
             (str "[Attached file: " path suffix "]\n"
               "----- BEGIN FILE -----\n"
               text
               (when-not (str/ends-with? text "\n") "\n")
               "----- END FILE -----"))))
       (catch Throwable _
-        (str "[Attached file: " path " — unreadable, content omitted]")))
+        (str "[Attached file: " path " - unreadable, content omitted]")))
     (format-file-mention path)))
 
 (defn expand-file-mentions
@@ -753,8 +761,8 @@
    pass through unchanged."
   [^String text]
   (str/replace text file-mention-regex
-    (fn [[_ path]]
-      (file-mention->prompt-block path))))
+    (fn [[_ quoted-path bare-path]]
+      (file-mention->prompt-block (or quoted-path bare-path)))))
 
 (defn paste-text [{:keys [lines crow ccol] :as st} text]
   (let [paste-lines  (str/split text #"\r?\n" -1)
@@ -782,7 +790,7 @@
   [^KeyStroke key state]
   (let [ktype (.getKeyType key)]
     (condp = ktype
-      ;; Esc — the screen loop turns this into a cancel when a query is
+      ;; Esc - the screen loop turns this into a cancel when a query is
       ;; in flight; otherwise it's a no-op (no dialog is open here, the
       ;; dialog code intercepts Esc itself).
       KeyType/Escape
@@ -819,7 +827,7 @@
       KeyType/Backspace  {:action :continue :state (delete-backward state)}
       KeyType/ArrowLeft  {:action :continue :state (move-left state)}
       KeyType/ArrowRight {:action :continue :state (move-right state)}
-      ;; Arrow Up/Down — input history
+      ;; Arrow Up/Down - input history
       KeyType/ArrowUp    {:action :history-up :state state}
       KeyType/ArrowDown  {:action :history-down :state state}
       KeyType/PageUp     {:action :scroll-up :state state}

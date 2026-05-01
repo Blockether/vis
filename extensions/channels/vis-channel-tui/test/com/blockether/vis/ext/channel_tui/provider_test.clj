@@ -21,6 +21,19 @@
       (expect (= [{:name "beta"} {:name "alpha"} {:name "gamma"}]
                 (move-model-to-front [{:name "alpha"} {:name "beta"} {:name "gamma"}] 1))))))
 
+(defdescribe persisted-provider-config-test
+  (it "strips transient OpenAI Codex runtime fields before saving config"
+    (let [persisted-provider-config @#'provider/persisted-provider-config]
+      (expect (= {:id :openai-codex
+                  :models [{:name "gpt-5.5"}]
+                  :base-url "https://chatgpt.com/backend-api"}
+                (persisted-provider-config {:id :openai-codex
+                                            :models [{:name "gpt-5.5"}]
+                                            :base-url "https://chatgpt.com/backend-api"
+                                            :api-key "tok"
+                                            :api-style :openai-compatible-responses
+                                            :llm-headers {"chatgpt-account-id" "acct_123"}}))))))
+
 (defdescribe codex-oauth-ready-test
   (it "returns true immediately when Codex credentials already exist"
     (let [login-called? (atom false)]

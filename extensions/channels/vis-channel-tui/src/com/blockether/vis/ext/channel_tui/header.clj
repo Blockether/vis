@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          d8d6a0a1 ⧉ Copy
+       ✓ Copied!                 Conversation title          ⧉ d8d6a0a1
        (notification banner)     (or fallback placeholder)   (id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -18,9 +18,9 @@
      the row never looks broken on a fresh run.
    - RIGHT: short conversation id (first 8 chars of the UUID, the
      same convention `vis conversations` uses) + a clickable
-     `⧉ Copy` affordance that drops the FULL UUID onto the system
-     clipboard. The click target covers the id label and the
-     whole `⧉ Copy` label so the user has a forgiving target. Visual
+     `⧉` affordance that drops the FULL UUID onto the system
+     clipboard. The click target covers BOTH the id label and the
+     trailing `⧉` icon so the user has a forgiving target. Visual
      feedback is the LEFT-slot `✓ Copied!` notification — same
      mechanism every other cross-channel signal flows through.
 
@@ -63,14 +63,9 @@
    compact, and already liked by the user in the bubble UI."
   "⧉")
 
-(def ^:private copy-label
-  "Visible text after the copy glyph so the affordance reads as an
-   actual button, not an unlabeled ornament."
-  "Copy")
-
 (def ^:private copy-affordance
-  "Full header affordance painted right of the short conversation id."
-  (str copy-icon " " copy-label))
+  "Compact header affordance painted right of the short conversation id."
+  copy-icon)
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -116,12 +111,12 @@
   (p/clear-styles! g))
 
 (defn- right-block-text
-  "Compose the right-side text: \"4b1ed602 ⧉ Copy\" when a conversation
+  "Compose the right-side text: \"⧉ 4b1ed602\" when a conversation
    id exists, otherwise empty. Single place that knows the layout
    so `draw-header!` can stay focused on placement math."
   [id-short]
   (if id-short
-    (str id-short " " copy-affordance)
+    (str copy-affordance " " id-short)
     ""))
 
 (defn draw-header!
@@ -131,13 +126,13 @@
    every frame.
 
    Layout per the namespace doc: notification banner LEFT, centered
-   conversation title CENTER, short conversation id + `⧉ Copy`
+   conversation title CENTER, short conversation id + `⧉`
    RIGHT. When the title would overlap either edge block, the title
    is truncated with an ellipsis so the diagnostically-important id
    stays readable.
 
    Side effect: registers ONE click region for the right-block
-   covering both the id label AND the `⧉ Copy` affordance, so the
+   covering both the id label AND the trailing `⧉`, so the
    click target is forgiving. The screen mouse handler (in
    `screen.clj`) recognises `:kind :copy-id` and drops the FULL
    UUID onto the system clipboard, then pushes a host notification

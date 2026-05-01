@@ -1431,24 +1431,74 @@
       (setCharacter [_ _ _] this))))
 
 (defdescribe message-copy-control-test
-  (it "renders the copy control as icon + label"
+  (it "renders the copy control as an inline affordance, not a boxed modal button"
     (expect (= "⧉ Copy" copy-message-control-text)))
 
-  (it "registers the copy control on the bottom-left row of the bubble"
+  (it "registers the copy control in absolute screen coordinates"
     (cr/reset!)
     (cr/begin-frame!)
-    (let [message {:role :assistant :text "hello world"}
-          start   4
-          left    2
-          width   36
-          height  (render/draw-chat-bubble! (dummy-text-graphics) message start left width)
-          hit     (do (cr/commit-frame!)
-                    (some #(when (= :copy-message-markdown (:kind %)) %) (cr/current)))]
-      (expect (= (+ start height -2) (get-in hit [:bounds :row])))
-      (expect (= (+ left 2) (get-in hit [:bounds :col])))
+    (let [message      {:role :assistant :text "hello world"}
+          start        4
+          left         2
+          width        36
+          viewport-top 7
+          height       (render/draw-chat-bubble! (dummy-text-graphics) message start left width
+                         {:viewport-top viewport-top :viewport-h 40})
+          hit-row      (+ viewport-top start height -2)
+          hit-col      left
+          hit          (do (cr/commit-frame!)
+                         (cr/lookup hit-col hit-row))]
+      (expect (= :copy-message-markdown (:kind hit)))
+      (expect (= hit-row (get-in hit [:bounds :row])))
+      (expect (= hit-col (get-in hit [:bounds :col])))
       (expect (= (p/display-width copy-message-control-text)
                 (get-in hit [:bounds :width])))
-      (expect (= "hello world" (:markdown hit))))))
+      (expect (= "hello world" (:markdown hit)))))
+
+  (it "keeps the user-bubble background above the copy-control row"
+    (let [fills    (atom [])
+          active   (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString
+                       ([_ _ _] this))
+                     (fillRectangle [_ pos size]
+                       (swap! fills conj {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                                          :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                                          :w   (.getColumns ^com.googlecode.lanterna.TerminalSize size)
+                                          :h   (.getRows ^com.googlecode.lanterna.TerminalSize size)})
+                       this)
+                     (setCharacter [_ _ _] this))
+          message      {:role :user :text "hello world"}
+          start        4
+          left         2
+          width        36
+          viewport-top 7
+          height       (render/draw-chat-bubble! graphics message start left width
+                         {:viewport-top viewport-top :viewport-h 40})
+          copy-row     (+ viewport-top start height -2)
+          bubble-fill  (some (fn [fill]
+                               (when (and (= left (:col fill))
+                                       (= width (:w fill))
+                                       (> (:h fill) 1))
+                                 fill))
+                         @fills)
+          bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)]
+      (expect (< bubble-last-row copy-row)))))
 
 (defdescribe message-copy-markdown-test
   (it "copies explicit markdown when present"
