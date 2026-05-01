@@ -12,6 +12,24 @@
     (expect (= :balanced (loop/normalize-reasoning-level "medium")))
     (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
 
+(defdescribe iteration-block-spec-test
+  (it "rejects iteration blocks without required provenance"
+    (let [thrown? (try
+                    (#'loop/validate-iteration-blocks!
+                     [{:id 0
+                       :code "(+ 1 2)"
+                       :result 3
+                       :stdout ""
+                       :stderr ""
+                       :error nil
+                       :execution-time-ms 1
+                       :timeout? false
+                       :repaired? false}])
+                    false
+                    (catch clojure.lang.ExceptionInfo e
+                      (= :vis/invalid-iteration-block (:type (ex-data e)))))]
+      (expect (true? thrown?)))))
+
 (defdescribe iteration-exception-handling-test
   (it "marks provider HTTP failures as terminal turn errors"
     (let [result (#'loop/handle-iteration-exception!
@@ -68,7 +86,7 @@
               (expect (= 0 (:iteration prov)))
               (expect (= 0 (:form-idx prov)))
               (expect (= 1 (:form-of prov)))
-              (expect (= :sci (:engine prov))))))))))
+              (expect (= :vis/sci (:engine prov))))))))))
 
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"

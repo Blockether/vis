@@ -28,6 +28,7 @@
   (:refer-clojure)
   (:require
    [clojure.set :as set]
+   [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
@@ -462,7 +463,7 @@
         finished-time    (System/currentTimeMillis)
         execution-time   (- finished-time start-time)]
     (cond-> execution-result
-      true (assoc :engine :sci
+      true (assoc :engine :vis/sci
              :execution-started-at-ms start-time
              :execution-finished-at-ms finished-time
              :execution-time-ms execution-time)
@@ -780,12 +781,53 @@
        :started-at-ms  started
        :finished-at-ms finished
        :duration-ms    duration
-       :engine         (or (:engine result) :sci)
+       :engine         (or (:engine result) :vis/sci)
        :iteration      iteration
        :form-idx       form-idx
        :form-of        form-of
        :timeout?       (boolean (:timeout? result))
        :repaired?      (boolean (:repaired? result))})))
+
+(def ^:private eval-provenance-engines
+  #{:vis/sci :vis/edamame :vis/guard})
+
+(s/def ::id nat-int?)
+(s/def ::code string?)
+(s/def ::stdout string?)
+(s/def ::stderr string?)
+(s/def ::error (s/nilable string?))
+(s/def ::execution-time-ms nat-int?)
+(s/def ::timeout? (s/nilable boolean?))
+(s/def ::repaired? (s/nilable boolean?))
+(s/def ::comment string?)
+(s/def ::block-provenance
+  (s/and
+    ::extension/provenance
+    #(= :vis/eval (:op %))
+    #(contains? eval-provenance-engines (:engine %))
+    #(integer? (:iteration %))
+    #(nat-int? (:form-idx %))
+    #(pos-int? (:form-of %))))
+(s/def ::provenance ::block-provenance)
+(s/def ::iteration-block
+  (s/keys :req-un [::id ::code ::stdout ::stderr ::error
+                   ::execution-time-ms ::provenance]
+    :opt-un [::result ::timeout? ::repaired? ::comment]))
+
+(defn validate-iteration-blocks!
+  "Fail fast if a stored/evaluated block lost mandatory provenance.
+   Tool-result envelopes enforce their nested provenance separately;
+   this spec enforces the outer block-level eval provenance for every
+   regular top-level form."
+  [blocks]
+  (let [blocks (vec (or blocks []))]
+    (doseq [block blocks]
+      (when-not (s/valid? ::iteration-block block)
+        (throw (ex-info "Invalid iteration block"
+                 {:type :vis/invalid-iteration-block
+                  :block block
+                  :explain (s/explain-data ::iteration-block block)}))))
+    blocks))
 
 ;; ---------------------------------------------------------------------------
 ;; run-iteration
@@ -877,7 +919,7 @@
                                               parse-error
                                               {:result nil :error (str "Parse error: " parse-error)
                                                :stdout "" :stderr "" :execution-time-ms 0
-                                               :engine :edamame}
+                                               :engine :vis/edamame}
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
@@ -927,19 +969,20 @@
           code-blocks (mapv :block executed)
           block-results (mapv :result executed)
           block-comments (mapv :form-comment executed)
-          blocks (mapv (fn [idx code result form-comment]
-                         (cond-> {:id idx
-                                  :code code
-                                  :result (:result result)
-                                  :stdout (:stdout result)
-                                  :stderr (:stderr result)
-                                  :error (:error result)
-                                  :execution-time-ms (:execution-time-ms result)
-                                  :provenance (:provenance result)
-                                  :timeout? (:timeout? result)
-                                  :repaired? (:repaired? result)}
-                           form-comment (assoc :comment form-comment)))
-                   (range) code-blocks block-results block-comments)
+          blocks (validate-iteration-blocks!
+                   (mapv (fn [idx code result form-comment]
+                           (cond-> {:id idx
+                                    :code code
+                                    :result (:result result)
+                                    :stdout (:stdout result)
+                                    :stderr (:stderr result)
+                                    :error (:error result)
+                                    :execution-time-ms (:execution-time-ms result)
+                                    :provenance (:provenance result)
+                                    :timeout? (:timeout? result)
+                                    :repaired? (:repaired? result)}
+                             form-comment (assoc :comment form-comment)))
+                     (range) code-blocks block-results block-comments))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx r] (when (= :vis/silent (:result r)) idx)))
                              block-results)]

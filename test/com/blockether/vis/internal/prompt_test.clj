@@ -87,13 +87,13 @@
                                            :blocks   [{:code "(+ 1 2)"
                                                        :result 3
                                                        :provenance {:op :vis/eval
-                                                                    :engine :sci
+                                                                    :engine :vis/sci
                                                                     :duration-ms 7}}]}]]
                  :iteration           1})]
       (expect (string? out))
       (expect (str/includes? out ":provenance"))
       (expect (str/includes? out ":op :vis/eval"))
-      (expect (str/includes? out ":engine :sci"))))
+      (expect (str/includes? out ":engine :vis/sci"))))
 
   ;; Helpers ------------------------------------------------------------------
   ;;
