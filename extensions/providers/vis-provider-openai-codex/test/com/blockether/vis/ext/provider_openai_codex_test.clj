@@ -2,9 +2,9 @@
   (:require [charred.api :as json]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
+            [com.blockether.vis.internal.external-opener :as opener]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.sun.net.httpserver HttpHandler]
-           [java.util Base64]))
+  (:import [java.util Base64]))
 
 (defn- base64url [s]
   (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
@@ -34,9 +34,62 @@
                       {:chatgpt_account_id "acct_123"}})]
       (expect (= "acct_123" (codex/account-id token))))))
 
-(defdescribe callback-server-test
-  (it "builds a JDK HttpHandler for the localhost OAuth callback"
-    (expect (instance? HttpHandler (#'codex/oauth-callback-handler "state" (promise))))))
+(defdescribe browser-open-test
+  (it "uses Vis's shared external opener instead of java.awt Desktop"
+    (let [seen (atom nil)]
+      (with-redefs [opener/open! (fn [url]
+                                   (reset! seen url)
+                                   {:status :ok :target url})]
+        (expect (= true (#'codex/open-browser! "https://auth.openai.com/x")))
+        (expect (= "https://auth.openai.com/x" @seen)))))
+
+  (it "surfaces opener failure as false"
+    (with-redefs [opener/open! (constantly {:status :spawn-failed :error "nope"})]
+      (expect (= false (#'codex/open-browser! "https://auth.openai.com/x"))))))
+
+(defdescribe login-flow-test
+  (it "fails fast when manual redirect collection is disabled"
+    (with-redefs-fn {#'codex/detect-credentials        (constantly nil)
+                     #'codex/create-authorization-flow (fn [_]
+                                                         {:verifier "verifier"
+                                                          :state    "state"
+                                                          :url      "https://auth.openai.com/x"})
+                     #'codex/open-browser!            (constantly true)}
+      (fn []
+        (try
+          (codex/login! (constantly nil)
+            {:originator "vis-tui"
+             :manual-code-fn nil})
+          (expect false)
+          (catch Exception e
+            (expect (= :vis/openai-codex-manual-entry-disabled
+                      (-> e ex-data :type))))))))
+
+  (it "accepts a pasted redirect URL and persists exchanged credentials"
+    (let [saved (atom nil)]
+      (with-redefs-fn {#'codex/detect-credentials        (constantly nil)
+                       #'codex/create-authorization-flow (fn [_]
+                                                           {:verifier "verifier"
+                                                            :state    "state"
+                                                            :url      "https://auth.openai.com/x"})
+                       #'codex/open-browser!            (constantly true)
+                       #'codex/exchange-authorization-code! (fn [code verifier]
+                                                              (expect (= "abc" code))
+                                                              (expect (= "verifier" verifier))
+                                                              {:access-token  "tok"
+                                                               :refresh-token "ref"
+                                                               :account-id    "acct_123"
+                                                               :expires-at-ms 42})
+                       #'codex/save-auth-file!          (fn [creds]
+                                                          (reset! saved creds)
+                                                          creds)}
+        (fn []
+          (expect (= :ok
+                    (codex/login! (constantly nil)
+                      {:originator     "vis-tui"
+                       :manual-code-fn (fn [_]
+                                         "http://localhost:1455/auth/callback?code=abc&state=state")})))
+          (expect (= "acct_123" (:account-id @saved))))))))
 
 (defdescribe codex-transport-test
   (it "resolves the Responses endpoint even when svar passes a chat URL"

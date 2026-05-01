@@ -444,24 +444,26 @@
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
 
 (reg-event-fx :send-message
-  ;; `text` is the input-buffer string — it carries `[Pasted #N: …]`
-  ;; placeholder tokens for any large clipboard payloads the user
-  ;; pasted this turn. Substitute every token with its content from
-  ;; the `:pastes` registry BEFORE the message reaches either the
-  ;; chat history or the agent: the chat shows the full materialised
-  ;; text (so re-reading the conversation later doesn't show a token
-  ;; with no referent), and the agent sees what the user actually
-  ;; meant to paste.
+  ;; `text` is the input-buffer string — it may carry two shorthand
+  ;; surfaces:
+  ;;
+  ;;   1. `[Pasted #N: …]` tokens for large clipboard payloads. These
+  ;;      are expanded for BOTH the visible transcript and the agent.
+  ;;   2. `@path/to/file` mentions inserted by the file picker. Those
+  ;;      stay concise in the visible transcript, but expand into
+  ;;      bounded prompt blocks for the AGENT so the file content is
+  ;;      available immediately.
   (fn [db [_ text]]
-    (let [expanded   (input/expand-paste-placeholders text (:pastes db))
-          token      (vis/cancellation-token)
-          extra-body (query-extra-body db)]
+    (let [visible-text (input/expand-paste-placeholders text (:pastes db))
+          agent-text   (input/expand-file-mentions visible-text)
+          token        (vis/cancellation-token)
+          extra-body   (query-extra-body db)]
       {:db (-> db
-             (update :messages conj (chat/user-message expanded))
+             (update :messages conj (chat/user-message visible-text))
              (update :messages conj (chat/assistant-message "Sending request to provider…"))
              (update :input-history (fn [xs]
                                       (let [xs (vec (or xs []))]
-                                        (if (= expanded (last xs)) xs (conj xs expanded)))))
+                                        (if (= visible-text (last xs)) xs (conj xs visible-text)))))
              (assoc :messages-scroll nil :loading? true
                :cancel-token token
                :cancelling? false
@@ -469,7 +471,7 @@
                :query-start-ms (System/currentTimeMillis)
                :input-history-index nil
                :input-history-draft nil))
-       :fx [[:rlm-query (:conversation db) expanded token
+       :fx [[:rlm-query (:conversation db) agent-text token
              (get-in db [:settings :reasoning-level]) extra-body]]})))
 
 (reg-event-fx :cancel-query

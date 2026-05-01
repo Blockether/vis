@@ -151,13 +151,13 @@ broken-area
 
 
 ```clojure
-(answer (md/join
-  (md/h2 "REPRODUCTION.md Written")
-  (md/p "5 real failure modes with:")
-  (md/ul
-    [(md/join "Exact code that failed (copied from " (md/code "v/failures") " data)")
-     (md/join "Error messages verbatim")
-     (md/join "Root cause analysis")
-     (md/join "Reproduction steps")
-     (md/join "Fix + prevention for each")])
-  (md/p (md/file-link "REPRODUCTION.md"))))
+(answer (v/join
+  (v/h2 "REPRODUCTION.md Written")
+  (v/p "5 real failure modes with:")
+  (v/ul
+    [(v/join "Exact code that failed (copied from " (v/code "v/failures") " data)")
+     (v/join "Error messages verbatim")
+     (v/join "Root cause analysis")
+     (v/join "Reproduction steps")
+     (v/join "Fix + prevention for each")])
+  (v/p (v/file-link "REPRODUCTION.md"))))

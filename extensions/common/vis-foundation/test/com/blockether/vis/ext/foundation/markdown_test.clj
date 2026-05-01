@@ -1,7 +1,8 @@
 (ns com.blockether.vis.ext.foundation.markdown-test
-  "Smoke tests for the `md/` extension. Every fn is a pure string
-   builder, so the assertions are pure equality / substring checks
-   against the rendered output."
+  "Smoke tests for the markdown builder implementation that is now
+   re-exported under `v/`. Every fn is a pure string builder, so the
+   assertions are pure equality / substring checks against the
+   rendered output."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.markdown :as md]
@@ -428,23 +429,19 @@
                   'join 'lines 'section 'escape}]
       (expect (= names syms))))
 
-  (it "system prompt deliberately stays silent on md/summary"
-    ;; Intentional: md/summary is a low-level HTML-tag helper for
+  (it "system prompt deliberately stays silent on v/summary"
+    ;; Intentional: v/summary is a low-level HTML-tag helper for
     ;; users who already know what they want. Advertising it in the
     ;; system prompt would push every model toward collapsible UI
     ;; for normal answers. Discoverable via symbol-info, hidden from
     ;; the prompt surface.
-    (expect (not (str/includes? md/markdown-prompt "md/summary"))))
+    (expect (not (str/includes? md/markdown-prompt "v/summary"))))
 
-  (it "extension descriptor declares the `md` alias"
-    (expect (= 'md (get-in md/markdown-extension [:ext/ns-alias :alias])))
-    (expect (= 'vis.ext.md (get-in md/markdown-extension [:ext/ns-alias :ns]))))
-
-  (it "prompt fragment lists the surface"
-    (expect (str/includes? md/markdown-prompt "md/h1"))
-    (expect (str/includes? md/markdown-prompt "md/table"))
-    (expect (str/includes? md/markdown-prompt "md/join"))
-    (expect (str/includes? md/markdown-prompt "md/link"))
-    (expect (str/includes? md/markdown-prompt "md/image"))
-    (expect (str/includes? md/markdown-prompt "md/file-link"))
-    (expect (str/includes? md/markdown-prompt "md/anchor"))))
+  (it "prompt fragment lists the unified v/ surface"
+    (expect (str/includes? md/markdown-prompt "v/h1"))
+    (expect (str/includes? md/markdown-prompt "v/table"))
+    (expect (str/includes? md/markdown-prompt "v/join"))
+    (expect (str/includes? md/markdown-prompt "v/link"))
+    (expect (str/includes? md/markdown-prompt "v/image"))
+    (expect (str/includes? md/markdown-prompt "v/file-link"))
+    (expect (str/includes? md/markdown-prompt "v/anchor"))))

@@ -13,7 +13,8 @@
    `wl-copy` / `wl-paste` on Wayland, `xclip` / `xsel` on X11. AWT
    is gone for good — not a fallback, not a comment, not an
    import."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input
@@ -679,6 +680,82 @@
           (assoc :ccol new-ccol)))
       state)))
 
+(def ^:private file-mention-regex
+  #"(?<!\S)@([A-Za-z0-9][A-Za-z0-9._/\-]*)")
+
+(def ^:private file-mention-max-lines 200)
+(def ^:private file-mention-max-chars 24000)
+
+(defn format-file-mention
+  "Visible inline file mention token inserted by the `@` picker. Kept
+   plain so the user can still edit the path manually if needed."
+  [path]
+  (str "@" path))
+
+(defn- resolve-local-file
+  [path]
+  (try
+    (let [cwd         (.getCanonicalFile (io/file "."))
+          cwd-path    (.getPath cwd)
+          prefix      (str cwd-path java.io.File/separator)
+          candidate   (.getCanonicalFile (io/file cwd path))
+          candidate-p (.getPath candidate)]
+      (when (and (.isFile candidate)
+              (or (= candidate-p cwd-path)
+                (str/starts-with? candidate-p prefix)))
+        candidate))
+    (catch Throwable _ nil)))
+
+(defn- truncate-file-content
+  [text]
+  (let [all-lines        (str/split text #"\n" -1)
+        total-lines      (count all-lines)
+        visible-lines    (take file-mention-max-lines all-lines)
+        line-limited-text (str/join "\n" visible-lines)
+        char-truncated?  (> (count line-limited-text) file-mention-max-chars)
+        shown-text       (if char-truncated?
+                           (subs line-limited-text 0 file-mention-max-chars)
+                           line-limited-text)
+        shown-lines      (count (str/split shown-text #"\n" -1))
+        truncated?       (or (> total-lines file-mention-max-lines)
+                           char-truncated?)]
+    {:text        shown-text
+     :shown-lines shown-lines
+     :total-lines total-lines
+     :truncated?  truncated?}))
+
+(defn- file-mention->prompt-block
+  [path]
+  (if-let [f (resolve-local-file path)]
+    (try
+      (let [text (slurp f)]
+        (if (str/includes? text "\u0000")
+          (str "[Attached file: " path " — binary content omitted]")
+          (let [{:keys [text shown-lines total-lines truncated?]}
+                (truncate-file-content text)
+                suffix (when truncated?
+                         (str " — showing " shown-lines "/" total-lines " lines"))]
+            (str "[Attached file: " path suffix "]\n"
+              "----- BEGIN FILE -----\n"
+              text
+              (when-not (str/ends-with? text "\n") "\n")
+              "----- END FILE -----"))))
+      (catch Throwable _
+        (str "[Attached file: " path " — unreadable, content omitted]")))
+    (format-file-mention path)))
+
+(defn expand-file-mentions
+  "Replace inline `@path/to/file` mentions with bounded prompt blocks so
+   the agent sees the file content immediately.
+
+   The visible chat transcript can keep the concise `@path` token; this
+   expansion is meant for the outbound agent prompt only. Unknown paths
+   pass through unchanged."
+  [^String text]
+  (str/replace text file-mention-regex
+    (fn [[_ path]]
+      (file-mention->prompt-block path))))
+
 (defn paste-text [{:keys [lines crow ccol] :as st} text]
   (let [paste-lines  (str/split text #"\r?\n" -1)
         current-line (nth lines crow)
@@ -728,6 +805,8 @@
           ;; Unbound control chords are ignored instead of inserting their
           ;; letter payload into the prompt.
           ctrl {:action :continue :state state}
+
+          (= c \@) {:action :pick-file :state state}
 
           :else {:action :continue :state (insert-char state c)}))
 

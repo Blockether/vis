@@ -78,7 +78,7 @@ no expression in the same iteration errored — commits the captured
 string as the turn's final answer.
 
 The canonical way to build the answer body is the `v/` surface
-(see [Markdown extension](../extensions/common/markdown.md)):
+(see [Markdown builders under `v/`](../extensions/common/markdown.md)):
 
 ```clojure
 (answer

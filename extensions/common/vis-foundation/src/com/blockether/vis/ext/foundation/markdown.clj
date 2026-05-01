@@ -46,7 +46,7 @@
     (nil? x)        ""
     (string? x)     x
     (sequential? x) (throw (ex-info
-                             (str "md helper got a sequential collection where a string was expected. "
+                             (str "v helper got a sequential collection where a string was expected. "
                                "Splice with (v/join …) / (v/lines …), or build the row eagerly: "
                                "(mapv v/p xs), (into [] (map render) xs), (str/join \"\\n\" xs).")
                              {:value-class (.getName (class x))

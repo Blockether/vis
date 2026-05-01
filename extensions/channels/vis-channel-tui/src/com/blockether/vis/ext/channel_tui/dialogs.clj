@@ -308,6 +308,118 @@
               KeyType/Enter     (when (pos? total) (nth items @selected))
               (recur))))))))
 
+;;; ── File picker dialog ──────────────────────────────────────────────────────
+
+(def ^:private file-picker-max-results 200)
+(def ^:private file-picker-ignored-prefixes
+  [".git/" "target/" "docs/book/" ".clj-kondo/" ".verification/" "node_modules/"])
+
+(defn- ignored-file-picker-path?
+  [path]
+  (or (some #(str/starts-with? path %) file-picker-ignored-prefixes)
+    (str/includes? path "/node_modules/")))
+
+(defn- repo-file-paths
+  []
+  (let [cwd  (java.io.File. (System/getProperty "user.dir"))
+        root (.toPath cwd)]
+    (->> (file-seq cwd)
+      (filter #(.isFile ^java.io.File %))
+      (map (fn [^java.io.File f]
+             (str (.relativize root (.toPath f)))))
+      (remove ignored-file-picker-path?)
+      sort
+      vec)))
+
+(defn- file-picker-rank
+  [path query]
+  (let [path-lc (str/lower-case path)
+        query-lc (str/lower-case (or query ""))
+        file-name (last (str/split path-lc #"/"))]
+    (cond
+      (str/blank? query-lc)                     [3 path-lc]
+      (= path-lc query-lc)                      [0 path-lc]
+      (str/starts-with? file-name query-lc)     [1 file-name path-lc]
+      (str/includes? file-name query-lc)        [2 (.indexOf ^String file-name query-lc) path-lc]
+      (str/includes? path-lc query-lc)          [3 (.indexOf ^String path-lc query-lc) path-lc]
+      :else                                     nil)))
+
+(defn- file-picker-items
+  [paths query]
+  (->> paths
+    (keep (fn [path]
+            (when-let [rank (file-picker-rank path query)]
+              {:label path :path path :rank rank})))
+    (sort-by (juxt :rank :path))
+    (take file-picker-max-results)
+    vec))
+
+(defn file-picker-dialog!
+  "Interactive `@` file picker. Type to filter repo files, Enter inserts
+   the selected relative path, Esc cancels."
+  [^TerminalScreen screen]
+  (let [paths     (repo-file-paths)
+        query     (atom "")
+        selected  (atom 0)
+        scroll    (atom 0)]
+    (loop []
+      (let [items         (file-picker-items paths @query)
+            total         (count items)
+            content-lines (+ 2 (max 1 (min total 10)))
+            size          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols          (.getColumns size)
+            rows          (.getRows size)
+            g             (.newTextGraphics screen)
+            bounds        (draw-dialog-chrome! g cols rows "Attach File" content-lines)
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds content-lines)
+            list-top      (+ content-top 2)
+            list-h        (max 1 (- content-h 2))
+            visible       (min total list-h)
+            _             (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _             (swap! scroll #(visible-window-start @selected % list-h total))]
+
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (p/put-str! g (+ left 2) content-top
+          (ellipsize (str "Filter: " @query) (max 1 (- inner-w 2))))
+
+        (if (zero? total)
+          (do
+            (p/set-colors! g t/dialog-hint t/dialog-bg)
+            (p/put-str! g (+ left 2) list-top "No matching files."))
+          (dotimes [i visible]
+            (let [idx (+ @scroll i)
+                  row (+ list-top i)]
+              (when (< idx total)
+                (draw-list-item! g left row inner-w (= idx @selected)
+                  (:label (nth items idx)))))))
+
+        (draw-hint-bar! g left hint-row inner-w [["type" "filter"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+
+        (let [key (.readInput screen)]
+          (when key
+            (condp = (.getKeyType key)
+              KeyType/Escape nil
+              KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+              KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                                  (reset! selected 0)
+                                  (reset! scroll 0)
+                                  (recur))
+              KeyType/Enter (when (pos? total) (:path (nth items @selected)))
+              KeyType/Character
+              (let [c (.getCharacter key)]
+                (if (Character/isISOControl c)
+                  (recur)
+                  (do (swap! query str c)
+                    (reset! selected 0)
+                    (reset! scroll 0)
+                    (recur))))
+              (recur))))))))
+
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
 
 (defn text-input-dialog!
