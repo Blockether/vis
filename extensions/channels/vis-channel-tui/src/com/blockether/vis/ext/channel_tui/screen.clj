@@ -909,14 +909,15 @@
                          (fn [cmd]
                            (when-not (:dialog-open? @state/app-db)
                              (case cmd
+                               :providers
+                               (when-let [c (with-dialog-lock
+                                              #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                                 (state/dispatch [:set-config c]))
+
                                :settings
                                (when-let [s (with-dialog-lock
                                               #(dlg/settings-dialog! screen
-                                                 (:settings @state/app-db)
-                                                 {:configure-provider
-                                                  (fn [_]
-                                                    (when-let [c (provider/show-provider-dialog! screen (:config @state/app-db))]
-                                                      (state/dispatch [:set-config c])))}))]
+                                                 (:settings @state/app-db)))]
                                  (state/dispatch [:update-settings s]))
 
                                :copy

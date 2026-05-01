@@ -29,6 +29,9 @@
   {:provider/id    :test
    :provider/label "Test provider"})
 
+(def ^:private provider-with-limits
+  (assoc base-provider :provider/limits-fn (fn [] {:provider-id :test})))
+
 (defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"
     (let [e (ext/extension
@@ -36,6 +39,13 @@
                :ext/doc       "Provider-only extension."
                :ext/providers [base-provider]})]
       (expect (= "providers" (:ext/kind e)))))
+
+  (it "accepts provider entries carrying an optional :provider/limits-fn"
+    (let [e (ext/extension
+              {:ext/namespace 'test.provider-with-limits
+               :ext/doc       "Provider extension with a limits fn."
+               :ext/providers [provider-with-limits]})]
+      (expect (ifn? (get-in e [:ext/providers 0 :provider/limits-fn])))))
 
   (it "derives \"channels\" for extensions exporting :ext/channels"
     (let [e (ext/extension

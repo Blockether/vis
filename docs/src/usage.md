@@ -92,6 +92,8 @@ vis channels tui --conversation-id <UUID>         # resume a specific one (full 
 ```
 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
+Typing `@` opens the file picker for inline file references; inside the
+picker, `Alt+I` toggles ignored files and `Alt+S` cycles sort mode.
 The provider picker can also launch the OpenAI Codex browser OAuth
 flow directly from the TUI.
 **Never bind `Ctrl+Y`** — the kernel intercepts it and suspends

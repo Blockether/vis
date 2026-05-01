@@ -134,7 +134,15 @@
             (virtual/layout msgs bubble-w settings nil inner-h {})]
         (expect (= eff-scroll (max 0 (- total-h inner-h))))
         ;; visible includes at least the last message
-        (expect (some #(= (dec (count msgs)) (:idx %)) visible)))))
+        (expect (some #(= (dec (count msgs)) (:idx %)) visible))))
+
+    (it "marks the live loading placeholder as non-copyable"
+      (let [m {:role :assistant :text "Sending request to provider…"}
+            {:keys [visible]}
+            (virtual/layout [m] bubble-w settings nil 20
+              {:loading? true :progress {:iterations []}})
+            projected (:projected (first visible))]
+        (expect (true? (:hide-copy? projected))))))
 
   (describe "fixed scroll offset (scroll = some long)"
     (it "clamps to [0, max-scroll]"

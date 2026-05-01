@@ -34,6 +34,38 @@
                                             :api-style :openai-compatible-responses
                                             :llm-headers {"chatgpt-account-id" "acct_123"}}))))))
 
+(defdescribe configured-provider-status-test
+  (it "treats persisted api-key providers as authenticated from config"
+    (expect (= {:authenticated? true
+                :source :config}
+              (select-keys (@#'provider/configured-provider-status {:id :openai
+                                                                    :api-key "sk-test"
+                                                                    :models [{:name "gpt-5"}]})
+                [:authenticated? :source]))))
+
+  (it "delegates to the registered provider status fn when no api-key is persisted"
+    (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (constantly {:authenticated? true
+                                                                                   :source :local
+                                                                                   :model-count 3})})]
+      (expect (= {:authenticated? true
+                  :source :local
+                  :model-count 3}
+                (select-keys (@#'provider/configured-provider-status {:id :ollama})
+                  [:authenticated? :source :model-count]))))))
+
+(defdescribe provider-action-items-test
+  (it "offers auth actions for remote providers and only status for local providers"
+    (with-redefs [vis/provider-by-id (fn [provider-id]
+                                       (case provider-id
+                                         :openai {:provider/status-fn (constantly {:authenticated? true})}
+                                         :ollama {:provider/status-fn (constantly {:authenticated? true})}
+                                         nil))]
+      (expect (= [:models :authenticate :status :logout]
+                (mapv :id (provider/provider-action-items {:id :openai
+                                                           :api-key "sk-test"}))))
+      (expect (= [:models :status]
+                (mapv :id (provider/provider-action-items {:id :ollama})))))))
+
 (defdescribe codex-oauth-ready-test
   (it "returns true immediately when Codex credentials already exist"
     (let [login-called? (atom false)]

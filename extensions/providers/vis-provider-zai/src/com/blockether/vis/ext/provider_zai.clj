@@ -185,6 +185,18 @@
                :msg   (str "Cleared persisted Z.ai key for plan " plan-tag)})
     :logged-out))
 
+(defn- make-limits-fn [plan-tag]
+  (fn []
+    (let [{:keys [provider-id label]} (get PLANS plan-tag)
+          detected (detect-key plan-tag)]
+      {:provider-id   provider-id
+       :status        (if detected :ok :unauthenticated)
+       :fetched-at-ms (System/currentTimeMillis)
+       :dynamic       {:limits []
+                       :note (if detected
+                               (str label " does not expose a dynamic quota endpoint yet.")
+                               (str label " is not authenticated."))}})))
+
 (defn- make-auth-fn
   "Interactive auth flow. The runtime invokes this with a single
    `printer-fn` arg (an `(fn [line] ...)` that writes one line of
@@ -234,7 +246,7 @@
           (doseq [name* env-keys]
             (print! (str "         export " name* "=<your-zai-api-key>")))
           (print! "")
-          (print! "    2. Add the provider through the TUI (Ctrl+K → Settings → Providers).")
+          (print! "    2. Add the provider through the TUI (Ctrl+K → Providers).")
           (print! "       The TUI prompts for the key directly and writes it to the config.")
           (print! "")
           (print! (str "  Endpoint: " base-url))
@@ -288,7 +300,8 @@
      :provider/logout-fn    (make-logout-fn plan-tag)
      :provider/detect-fn    (make-detect-fn plan-tag)
      :provider/auth-fn      (make-auth-fn plan-tag)
-     :provider/get-token-fn (make-get-token-fn plan-tag)}))
+     :provider/get-token-fn (make-get-token-fn plan-tag)
+     :provider/limits-fn    (make-limits-fn plan-tag)}))
 
 (vis/register-extension!
   (vis/extension

@@ -10,11 +10,13 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.ext.channel-tui.external-opener :as opener]
+            [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex])
-  (:import [com.googlecode.lanterna.input KeyType]
+  (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
            [java.net URI]
            [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
@@ -119,6 +121,111 @@
 
 ;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
 
+(defn- copilot-auth-instructions!
+  [^TerminalScreen screen verification-uri user-code]
+  (loop [status nil]
+    (let [size        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+          cols        (.getColumns size)
+          rows        (.getRows size)
+          g           (.newTextGraphics screen)
+          bounds      (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Authenticate" 10)
+          {:keys [left inner-w]} bounds
+          {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)
+          text-x      (+ left 2)
+          text-w      (max 1 (- inner-w 2))
+          url-label   "Open this URL in your browser:"
+          code-label  "Enter this code in the browser:"
+          help-lines  ["After authorizing, press Enter here to continue."
+                       "Click the URL to open it. Click the code to copy it."]
+          url-row     (min (+ content-top 1) (+ content-top content-h -1))
+          code-row    (min (+ content-top 4) (+ content-top content-h -1))
+          status-row  (min (+ content-top 8) (+ content-top content-h -1))
+          url-col     text-x
+          code-col    text-x]
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g (inc left) content-top inner-w content-h)
+
+      (doseq [[idx line] (map-indexed vector
+                           [url-label
+                            verification-uri
+                            ""
+                            code-label
+                            user-code
+                            ""
+                            (first help-lines)
+                            (second help-lines)])]
+        (let [row (+ content-top idx)]
+          (when (< row (+ content-top content-h))
+            (p/fill-rect! g (inc left) row inner-w 1)
+            (cond
+              (= row url-row)
+              (do
+                (p/set-colors! g t/link-chrome-fg t/dialog-bg)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g url-col row (dlg/ellipsize verification-uri text-w))))
+
+              (= row code-row)
+              (do
+                (p/set-colors! g t/link-chrome-fg t/dialog-bg)
+                (p/styled g [p/BOLD]
+                  (p/put-str! g code-col row (dlg/ellipsize user-code text-w))))
+
+              :else
+              (do
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/put-str! g text-x row (dlg/ellipsize line text-w)))))))
+
+      (when status
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/put-str! g text-x status-row (dlg/ellipsize status text-w)))
+
+      (dlg/draw-hint-bar! g left hint-row inner-w
+        [["Enter" "continue"] ["Click URL" "open"] ["Click code" "copy"] ["Esc" "cancel"]])
+      (.setCursorPosition screen (p/cursor-pos 0 0))
+      (.refresh screen Screen$RefreshType/DELTA)
+
+      (let [key (.readInput screen)]
+        (when key
+          (cond
+            (instance? MouseAction key)
+            (let [^MouseAction ma key
+                  atype (.getActionType ma)
+                  pos   (.getPosition ma)
+                  mx    (.getColumn pos)
+                  my    (.getRow pos)
+                  on-url?  (and (= atype MouseActionType/CLICK_DOWN)
+                             (= my url-row)
+                             (>= mx url-col)
+                             (< mx (+ url-col (count verification-uri))))
+                  on-code? (and (= atype MouseActionType/CLICK_DOWN)
+                             (= my code-row)
+                             (>= mx code-col)
+                             (< mx (+ code-col (count user-code))))]
+              (cond
+                on-url?
+                (do (opener/open! verification-uri)
+                  (recur "Opened browser URL."))
+
+                on-code?
+                (do (input/clipboard-copy! user-code)
+                  (recur "Copied device code to clipboard."))
+
+                :else
+                (recur status)))
+
+            :else
+            (case (.getKeyType key)
+              KeyType/Enter  true
+              KeyType/Escape nil
+              KeyType/Character
+              (case (Character/toLowerCase (.getCharacter key))
+                \o (do (opener/open! verification-uri)
+                     (recur "Opened browser URL."))
+                \c (do (input/clipboard-copy! user-code)
+                     (recur "Copied device code to clipboard."))
+                (recur status))
+              (recur status))))))))
+
 (defn- copilot-oauth-flow!
   "Run the GitHub Copilot OAuth device flow inside the TUI.
    Shows the user code + URL, waits for authorization, returns the API key or nil.
@@ -142,26 +249,19 @@
       (try
         (let [{:keys [user-code verification-uri device-code interval expires-in]}
               (start-fn)]
-            ;; Show the code to the user
-          (dlg/confirm-dialog! screen "GitHub Copilot - Authenticate"
-            [(str "1. Open:  " verification-uri)
-             (str "2. Enter: " user-code)
-             ""
-             "Press Enter, then authorize in your browser."
-             "Vis will wait for you."])
+          (when (copilot-auth-instructions! screen verification-uri user-code)
             ;; Poll in background, show waiting message
-          (let [result (future (poll-fn device-code interval expires-in))]
-              ;; Simple blocking wait with a confirm dialog
-              ;; The poll runs in background; once authorized it returns
-            (loop [attempt 0]
-              (if (realized? result)
-                (let [{:keys [token]} (exchange-fn)]
-                  (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
-                  token)
-                (do
-                  (Thread/sleep 2000)
-                  (when (< attempt 180) ;; 6 min max
-                    (recur (inc attempt))))))))
+            (let [result (future (poll-fn device-code interval expires-in))]
+              ;; The poll runs in background; once authorized it returns.
+              (loop [attempt 0]
+                (if (realized? result)
+                  (let [{:keys [token]} (exchange-fn)]
+                    (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
+                    token)
+                  (do
+                    (Thread/sleep 2000)
+                    (when (< attempt 180) ;; 6 min max
+                      (recur (inc attempt)))))))))
         (catch Exception e
           (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
           nil)))))
@@ -217,8 +317,8 @@
               has-key?   (some? (:api-key preset))
               ;; OAuth providers store credentials outside config.
               oauth?     (contains? #{:github-copilot :openai-codex} pid)
-              ;; Ollama needs no key
-              needs-key? (not (or has-key? oauth? (= pid :ollama)))
+              ;; Local providers need no key
+              needs-key? (not (or has-key? oauth? (contains? #{:ollama :lmstudio} pid)))
               api-key    (cond
                            has-key?   (:api-key preset)
                            (= pid :github-copilot) (copilot-oauth-flow! screen)
@@ -280,12 +380,12 @@
   "Draw a 2-line provider card.
     Line 1: ① Label  url.host  ●
     Line 2:    ★ root-model  (+N models)"
-  [g left row inner-w idx selected? provider]
+  [g left row inner-w idx selected? provider status]
   (let [text-w  (max 0 (- inner-w 2))
         text-x  (+ left 2)
         pri     (priority-label idx)
         host    (url-host (or (vis/provider-base-url provider) ""))
-        ok?     (some? (:api-key provider))
+        ok?     (boolean (:authenticated? status))
         label   (vis/display-label (:id provider))
         models  (or (:models provider) [])
         model-count (count (or models []))
@@ -550,6 +650,189 @@
       (dissoc provider :api-key :llm-headers :responses-path :api-style)
       provider)))
 
+(def ^:private local-no-auth-provider-ids
+  #{:ollama :lmstudio})
+
+(defn- safe-provider-status
+  [provider]
+  (try
+    (cond
+      (:provider/status-fn provider) ((:provider/status-fn provider))
+      (:provider/detect-fn provider) {:authenticated? (boolean ((:provider/detect-fn provider)))}
+      :else                          nil)
+    (catch Throwable e
+      {:authenticated? false
+       :error          (or (ex-message e) (str e))})))
+
+(defn- configured-provider-status
+  [provider]
+  (let [registered (vis/provider-by-id (:id provider))]
+    (cond
+      (some? (:api-key provider))
+      {:authenticated? true
+       :source         :config}
+
+      registered
+      (or (safe-provider-status registered)
+        {:authenticated? false})
+
+      :else
+      {:authenticated? false})))
+
+(defn- provider-authenticated?
+  [provider]
+  (boolean (:authenticated? (configured-provider-status provider))))
+
+(defn- status-entry-label
+  [k]
+  (-> (name k)
+    (str/replace #"-" " ")
+    (str/capitalize)))
+
+(defn- provider-status-text
+  [provider]
+  (let [status (configured-provider-status provider)
+        title  (str (vis/display-label (:id provider)) " Authentication")
+        rows   (->> status
+                 (remove (fn [[k _]] (= k :authenticated?)))
+                 (sort-by (comp str key))
+                 (map (fn [[k v]]
+                        (str (status-entry-label k) ": " v))))]
+    (str/join "\n"
+      (concat [title
+               ""
+               (str "Authenticated: " (if (:authenticated? status) "yes" "no"))]
+        (when-let [e (:error status)]
+          ["" (str "Error: " e)])
+        (when (seq rows)
+          (concat [""] rows))))))
+
+(defn show-provider-status!
+  [^TerminalScreen screen provider]
+  (dlg/text-viewer-dialog! screen
+    (str (vis/display-label (:id provider)) " Status")
+    (provider-status-text provider)))
+
+(defn- provider-supports-auth?
+  [provider]
+  (not (contains? local-no-auth-provider-ids (:id provider))))
+
+(defn provider-action-items
+  [provider]
+  (let [registered (vis/provider-by-id (:id provider))
+        auth-label (if (provider-authenticated? provider)
+                     "Re-authenticate"
+                     "Authenticate")]
+    (cond-> [{:id :models :label "Configure Models"}]
+      (provider-supports-auth? provider)
+      (conj {:id :authenticate :label auth-label})
+
+      (or (:provider/status-fn registered)
+        (:provider/detect-fn registered)
+        (:api-key provider))
+      (conj {:id :status :label "Show Status"})
+
+      (or (:provider/logout-fn registered)
+        (:api-key provider))
+      (conj {:id :logout :label "Log Out"}))))
+
+(defn- prompt-for-api-key!
+  [^TerminalScreen screen provider]
+  (let [raw (dlg/text-input-dialog! screen
+              (str (vis/display-label (:id provider)) " Authentication")
+              "API Key:"
+              :mask \*)]
+    (when-not (str/blank? raw)
+      (assoc provider :api-key raw))))
+
+(defn- run-generic-provider-auth!
+  [^TerminalScreen screen provider]
+  (let [registered (vis/provider-by-id (:id provider))]
+    (if-let [auth-fn (:provider/auth-fn registered)]
+      (let [lines (atom [])
+            print! #(swap! lines conj %)]
+        (try
+          (auth-fn print!)
+          (dlg/text-viewer-dialog! screen
+            (str (vis/display-label (:id provider)) " Authentication")
+            (str/join "\n" (or (seq @lines)
+                             [(str (vis/display-label (:id provider)) " authenticated.")])))
+          provider
+          (catch Throwable e
+            (dlg/text-viewer-dialog! screen
+              (str (vis/display-label (:id provider)) " Authentication")
+              (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
+            nil)))
+      (do
+        (dlg/confirm-dialog! screen "Authenticate Provider"
+          [(str (vis/display-label (:id provider)) " does not expose an interactive auth flow.")])
+        nil))))
+
+(defn authenticate-provider!
+  [^TerminalScreen screen provider]
+  (case (:id provider)
+    :github-copilot (when (copilot-oauth-flow! screen) provider)
+    :openai-codex   (when (codex-oauth-ready! screen) provider)
+    :ollama         nil
+    :lmstudio       nil
+    (or (prompt-for-api-key! screen provider)
+      (run-generic-provider-auth! screen provider))))
+
+(defn logout-provider!
+  [^TerminalScreen screen provider]
+  (let [registered (vis/provider-by-id (:id provider))]
+    (when (dlg/confirm-dialog! screen
+            (str (vis/display-label (:id provider)) " Authentication")
+            [(str "Log out of " (vis/display-label (:id provider)) "?")])
+      (when-let [logout-fn (:provider/logout-fn registered)]
+        (logout-fn))
+      (let [updated (dissoc provider :api-key)]
+        (dlg/confirm-dialog! screen
+          (str (vis/display-label (:id provider)) " Authentication")
+          [(str "Logged out of " (vis/display-label (:id provider)) ".")])
+        updated))))
+
+(defn auth-provider-items
+  []
+  (->> (vis/registered-providers)
+    (remove #(contains? local-no-auth-provider-ids (:provider/id %)))
+    (map (fn [provider]
+           (let [status (safe-provider-status provider)]
+             {:provider-id (:provider/id provider)
+              :provider    provider
+              :label       (str (:provider/label provider)
+                             " · "
+                             (if (:authenticated? status)
+                               "authenticated"
+                               "not authenticated"))})))
+    (sort-by :label)
+    vec))
+
+(defn show-provider-auth-dialog!
+  [^TerminalScreen screen]
+  (when-let [item (dlg/select-dialog! screen "Authenticate Provider" (auth-provider-items))]
+    (let [provider (or (:provider item)
+                     (vis/provider-by-id (:provider-id item)))]
+      (case (:provider/id provider)
+        :github-copilot (boolean (copilot-oauth-flow! screen))
+        :openai-codex   (boolean (codex-oauth-ready! screen))
+        (if-let [auth-fn (:provider/auth-fn provider)]
+          (let [lines (atom [])
+                print! #(swap! lines conj %)]
+            (try
+              (let [result (auth-fn print!)]
+                (dlg/text-viewer-dialog! screen
+                  (str (:provider/label provider) " Authentication")
+                  (str/join "\n" (or (seq @lines)
+                                   [(str (:provider/label provider) " authenticated.")])))
+                result)
+              (catch Throwable e
+                (dlg/text-viewer-dialog! screen
+                  (str (:provider/label provider) " Authentication")
+                  (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
+                nil)))
+          nil)))))
+
 (defn show-provider-dialog!
   "Provider manager dialog.
    Esc saves and closes, returning {:providers [...]} in priority order.
@@ -559,6 +842,10 @@
   ([^TerminalScreen screen current-config]
    (let [seed      (or current-config (vis/load-config) {:providers []})
          items     (atom (vec (or (:providers seed) [])))
+         statuses  (atom (into {}
+                           (map (fn [provider]
+                                  [(:id provider) (configured-provider-status provider)]))
+                           @items))
          selected  (atom 0)]
      (loop []
        (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -593,10 +880,11 @@
                (when (and (< card-y (+ content-top content-h))
                        (>= (+ card-y card-rows) content-top))
                  (draw-provider-card! g left card-y inner-w idx (= idx @selected)
-                   (nth @items idx))))))
+                   (nth @items idx)
+                   (get @statuses (:id (nth @items idx))))))))
 
          (dlg/draw-hint-bar! g left hint-row inner-w
-           [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "models"] ["Esc" "done"]])
+           [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
@@ -605,9 +893,10 @@
              (let [ktype (.getKeyType key)]
                (cond
                  (= ktype KeyType/Escape)
-                 (let [cfg {:providers (->> @items
-                                         (map persisted-provider-config)
-                                         vec)}]
+                 (let [cfg (assoc (or (vis/load-config-raw) {})
+                             :providers (->> @items
+                                          (map persisted-provider-config)
+                                          vec))]
                    (vis/save-config! cfg)
                    cfg)
 
@@ -630,14 +919,34 @@
                    (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
                      (recur)))
 
-                   ;; Enter — open model manager for selected provider
+                   ;; Enter — open action menu for selected provider
                  (= ktype KeyType/Enter)
                  (do
                    (when (pos? total)
-                     (when-let [updated-models (show-model-manager! screen (nth @items @selected))]
-                       (swap! items assoc @selected
-                         (assoc (nth @items @selected)
-                           :models (:models updated-models)))))
+                     (let [provider (nth @items @selected)]
+                       (when-let [action (dlg/select-dialog! screen
+                                           (str (vis/display-label (:id provider)) " Actions")
+                                           (provider-action-items provider))]
+                         (case (:id action)
+                           :models
+                           (when-let [updated-models (show-model-manager! screen provider)]
+                             (swap! items assoc @selected
+                               (assoc provider :models (:models updated-models))))
+
+                           :authenticate
+                           (when-let [updated (authenticate-provider! screen provider)]
+                             (swap! items assoc @selected updated))
+
+                           :status
+                           (show-provider-status! screen provider)
+
+                           :logout
+                           (when-let [updated (logout-provider! screen provider)]
+                             (swap! items assoc @selected updated))
+
+                           nil)
+                         (let [provider* (nth @items @selected)]
+                           (swap! statuses assoc (:id provider*) (configured-provider-status provider*))))))
                    (recur))
 
                  (= ktype KeyType/Character)
@@ -647,6 +956,7 @@
                      (= c \a)
                      (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]
                            (swap! items conj p)
+                           (swap! statuses assoc (:id p) (configured-provider-status p))
                            (reset! selected (dec (count @items))))
                        (recur))
 
@@ -657,9 +967,11 @@
                                (dlg/confirm-dialog! screen
                                  "Remove"
                                  [(str "Remove " (vis/display-label (:id (nth @items @selected))) "?")]))
-                         (swap! items #(vec (concat (subvec % 0 @selected)
-                                              (subvec % (inc @selected)))))
-                         (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items))))))
+                         (let [provider-id (:id (nth @items @selected))]
+                           (swap! items #(vec (concat (subvec % 0 @selected)
+                                                (subvec % (inc @selected)))))
+                           (swap! statuses dissoc provider-id)
+                           (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items)))))))
                        (recur))
 
                      :else (recur)))

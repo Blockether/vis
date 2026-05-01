@@ -371,6 +371,22 @@
   (delete-auth-file!)
   :logged-out)
 
+(defn limits
+  "Normalized limits envelope for the OpenAI Codex provider.
+
+   Static RPM/TPM metadata comes from svar's provider catalog; this fn
+   reports authentication state plus any future provider-specific dynamic
+   quota payload."
+  []
+  (let [detected (detect-credentials)]
+    {:provider-id   :openai-codex
+     :status        (if detected :ok :unauthenticated)
+     :fetched-at-ms (System/currentTimeMillis)
+     :dynamic       {:limits []
+                     :note (if detected
+                             "OpenAI Codex does not expose a dynamic quota endpoint yet."
+                             "OpenAI Codex is not authenticated.")}}))
+
 ;; =============================================================================
 ;; Provider registration
 ;; =============================================================================
@@ -392,4 +408,5 @@
        :provider/logout-fn    #'logout!
        :provider/detect-fn    #'detect-credentials
        :provider/auth-fn      #'login!
-       :provider/get-token-fn #'get-openai-codex-token!}]}))
+       :provider/get-token-fn #'get-openai-codex-token!
+       :provider/limits-fn    #'limits}]}))

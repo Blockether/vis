@@ -46,13 +46,16 @@
                                     :label "OpenAI Codex verbosity"}
               {:openai-codex-verbosity :high}))))
 
-    (testing "settings rows are grouped under Providers / Extensions / UI"
-      (is (= ["Providers" "Extensions" "UI"]
+    (testing "settings rows are grouped under Extensions / UI"
+      (is (= ["Extensions" "UI"]
             (->> (settings-rows)
               (filter #(= :section (:type %)))
               (mapv :label)))))
 
-    (testing "command palette exposes a single Settings entry"
-      (is (= ["Settings" "Copy Messages" "Copy Conversation as Markdown"]
+    (testing "command palette exposes Providers outside Settings"
+      (is (= ["Providers"
+              "Settings"
+              "Copy Messages"
+              "Copy Conversation as Markdown"]
             (mapv :label palette-commands))))))
 

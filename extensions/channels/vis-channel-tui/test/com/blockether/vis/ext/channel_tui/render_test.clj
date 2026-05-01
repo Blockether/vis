@@ -1445,7 +1445,7 @@
           height       (render/draw-chat-bubble! (dummy-text-graphics) message start left width
                          {:viewport-top viewport-top :viewport-h 40})
           hit-row      (+ viewport-top start height -2)
-          hit-col      left
+          hit-col      (+ left 2)
           hit          (do (cr/commit-frame!)
                          (cr/lookup hit-col hit-row))]
       (expect (= :copy-message-markdown (:kind hit)))
@@ -1454,6 +1454,22 @@
       (expect (= (p/display-width copy-message-control-text)
                 (get-in hit [:bounds :width])))
       (expect (= "hello world" (:markdown hit)))))
+
+  (it "can suppress the copy control entirely for non-final bubbles"
+    (cr/reset!)
+    (cr/begin-frame!)
+    (let [message      {:role :assistant :text "still thinking" :hide-copy? true}
+          start        4
+          left         2
+          width        36
+          viewport-top 7
+          height       (render/draw-chat-bubble! (dummy-text-graphics) message start left width
+                         {:viewport-top viewport-top :viewport-h 40})
+          hit-col      (+ left 2)]
+      (cr/commit-frame!)
+      (expect (every? nil?
+                (map #(cr/lookup hit-col %)
+                  (range viewport-top (+ viewport-top start height)))))))
 
   (it "keeps the user-bubble background above the copy-control row"
     (let [fills    (atom [])
@@ -1476,7 +1492,7 @@
                      (setBackgroundColor [_] this)
                      (putString
                        ([_ _ _] this))
-                     (fillRectangle [_ pos size]
+                     (fillRectangle [pos size _ch]
                        (swap! fills conj {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
                                           :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
                                           :w   (.getColumns ^com.googlecode.lanterna.TerminalSize size)
@@ -1497,8 +1513,10 @@
                                        (> (:h fill) 1))
                                  fill))
                          @fills)
-          bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)]
-      (expect (< bubble-last-row copy-row)))))
+          bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)
+          copy-row-rel   (- copy-row viewport-top)]
+      (expect (= 3 (:h bubble-fill)))
+      (expect (= bubble-last-row (dec copy-row-rel))))))
 
 (defdescribe message-copy-markdown-test
   (it "copies explicit markdown when present"
