@@ -17,7 +17,6 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.vis.internal.external-opener :as opener]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
@@ -35,8 +34,6 @@
 (def ^:private SCOPE "openid profile email offline_access")
 (def ^:private JWT_CLAIM_PATH "https://api.openai.com/auth")
 (def ^:private CODEX_BASE_URL "https://chatgpt.com/backend-api")
-(def ^:private CODEX_RESPONSES_PATH "/codex/responses")
-(def ^:private CODEX_OPENAI_BETA "responses=experimental")
 (def ^:private AUTH_FILE (str (System/getProperty "user.home")
                            "/.vis/openai-codex-auth.json"))
 (def ^:private REFRESH_MARGIN_MS (* 5 60 1000))
@@ -236,7 +233,7 @@
 
 (defn get-openai-codex-token!
   "Return a fresh Codex access token in the provider-token shape used by
-   Vis: `{:token access-token :api-url CODEX_BASE_URL}`."
+   Vis: `{:token access-token :api-url CODEX_BASE_URL :llm-headers {...}}`."
   []
   (let [auth (load-auth-file)
         now  (System/currentTimeMillis)]
@@ -244,7 +241,14 @@
       (and (:access-token auth)
         (:expires-at-ms auth)
         (> (long (:expires-at-ms auth)) (+ now REFRESH_MARGIN_MS)))
-      {:token (:access-token auth) :api-url CODEX_BASE_URL}
+      (let [token      (:access-token auth)
+            account-id (or (:account-id auth) (account-id token))]
+        (when (str/blank? account-id)
+          (throw (ex-info "OpenAI Codex token is missing a ChatGPT account id"
+                   {:type :vis/openai-codex-missing-account-id})))
+        {:token token
+         :api-url CODEX_BASE_URL
+         :llm-headers {"chatgpt-account-id" account-id}})
 
       (:refresh-token auth)
       (let [fresh (refresh-access-token! (:refresh-token auth))]
@@ -253,7 +257,9 @@
                    :data  {:expires-in-ms (- (:expires-at-ms fresh) now)
                            :account-id     (:account-id fresh)}
                    :msg   "OpenAI Codex token refreshed"})
-        {:token (:access-token fresh) :api-url CODEX_BASE_URL})
+        {:token (:access-token fresh)
+         :api-url CODEX_BASE_URL
+         :llm-headers {"chatgpt-account-id" (:account-id fresh)}})
 
       :else
       (throw (ex-info "No OpenAI Codex credentials found. Run `vis auth openai-codex` to authenticate."
@@ -366,340 +372,10 @@
   :logged-out)
 
 ;; =============================================================================
-;; svar Codex transport adapter
-;; =============================================================================
-
-(defonce ^:private original-svar-chat-completion (atom nil))
-
-(defn- codex-responses-url [base-url]
-  (let [raw        (or (some-> base-url str str/trim not-empty) CODEX_BASE_URL)
-        normalized (-> raw
-                     (str/replace #"/+$" "")
-                     ;; svar computes a chat-completions URL before invoking
-                     ;; chat-completion; Codex is a Responses endpoint instead.
-                     (str/replace #"/chat/completions$" ""))]
-    (cond
-      (str/ends-with? normalized CODEX_RESPONSES_PATH)
-      normalized
-
-      (str/ends-with? normalized "/codex")
-      (str normalized "/responses")
-
-      :else
-      (str normalized CODEX_RESPONSES_PATH))))
-
-(defn- text-content [content]
-  (cond
-    (string? content)
-    content
-
-    (sequential? content)
-    (->> content
-      (keep (fn [block]
-              (cond
-                (string? block) block
-                (= "text" (:type block)) (:text block)
-                (= "input_text" (:type block)) (:text block)
-                (= "output_text" (:type block)) (:text block)
-                :else nil)))
-      (str/join "\n"))
-
-    :else
-    (str content)))
-
-(defn- responses-content-blocks [role content]
-  (let [text-type (if (= role "assistant") "output_text" "input_text")]
-    (cond
-      (string? content)
-      [{:type text-type :text content}]
-
-      (sequential? content)
-      (->> content
-        (keep (fn [block]
-                (cond
-                  (string? block)
-                  {:type text-type :text block}
-
-                  (contains? #{"text" "input_text" "output_text"} (:type block))
-                  {:type text-type :text (:text block)}
-
-                  (= "image_url" (:type block))
-                  (when-let [url (get-in block [:image_url :url])]
-                    {:type "input_image" :image_url url})
-
-                  :else nil)))
-        vec)
-
-      :else
-      [{:type text-type :text (str content)}])))
-
-(defn- normalize-codex-verbosity
-  [v]
-  (case (cond
-          (keyword? v) v
-          (string? v)  (keyword (str/lower-case (str/trim v)))
-          :else        nil)
-    :low    "low"
-    :medium "medium"
-    :high   "high"
-    "low"))
-
-(defn- codex-request-body [messages model extra-body]
-  (let [system-text (->> messages
-                      (filter #(= "system" (:role %)))
-                      (map (comp text-content :content))
-                      (remove str/blank?)
-                      (str/join "\n\n"))
-        input       (->> messages
-                      (remove #(= "system" (:role %)))
-                      (mapv (fn [{:keys [role content]}]
-                              {:role    (if (= "assistant" role) "assistant" "user")
-                               :content (responses-content-blocks role content)})))
-        effort      (:reasoning_effort extra-body)
-        verbosity   (normalize-codex-verbosity (get-in extra-body [:text :verbosity]))]
-    (cond-> {:model  model
-             :store  false
-             :stream true
-             :input  input
-             :text   {:verbosity verbosity}
-             :include ["reasoning.encrypted_content"]}
-      true (assoc :instructions (if (str/blank? system-text)
-                                  "You are a helpful assistant."
-                                  system-text))
-      effort (assoc :reasoning {:effort effort :summary "auto"})
-      (:temperature extra-body) (assoc :temperature (:temperature extra-body))
-      (:service_tier extra-body) (assoc :service_tier (:service_tier extra-body))
-      (:top_p extra-body) (assoc :top_p (:top_p extra-body)))))
-
-(defn- normalize-codex-usage [usage]
-  (when usage
-    (let [input-details  (:input_tokens_details usage)
-          output-details (:output_tokens_details usage)]
-      (cond-> {:prompt_tokens     (:input_tokens usage)
-               :completion_tokens (:output_tokens usage)
-               :total_tokens      (:total_tokens usage)}
-        (:cached_tokens input-details)
-        (assoc :prompt_tokens_details
-          {:cached_tokens (:cached_tokens input-details)})
-
-        (:reasoning_tokens output-details)
-        (assoc :completion_tokens_details
-          {:reasoning_tokens (:reasoning_tokens output-details)})))))
-
-(defn- output-content-text [content]
-  (->> content
-    (keep (fn [block]
-            (cond
-              (= "output_text" (:type block)) (:text block)
-              (= "text" (:type block)) (:text block)
-              (string? (:text block)) (:text block)
-              :else nil)))
-    (str/join "")))
-
-(defn- response-output-text [response]
-  (->> (:output response)
-    (keep (fn [item]
-            (when (= "message" (:type item))
-              (output-content-text (:content item)))))
-    (remove str/blank?)
-    (str/join "\n")))
-
-(defn- reasoning-part-text [part]
-  (cond
-    (string? part)
-    (when-not (str/blank? part) part)
-
-    (map? part)
-    (some-> (or (:text part) (:delta part)) reasoning-part-text)
-
-    (sequential? part)
-    (let [s (->> part (keep reasoning-part-text) (str/join ""))]
-      (when-not (str/blank? s) s))
-
-    :else nil))
-
-(defn- response-reasoning-text [response]
-  (letfn [(item-text [item]
-            (let [content-text (some-> (:content item) reasoning-part-text)
-                  summary-text (some-> (:summary item) reasoning-part-text)]
-              (cond
-                (not (str/blank? (or content-text ""))) content-text
-                (not (str/blank? (or summary-text ""))) summary-text
-                :else nil)))]
-    (->> (:output response)
-      (keep (fn [item]
-              (when (= "reasoning" (:type item))
-                (item-text item))))
-      (remove str/blank?)
-      (str/join "\n\n"))))
-
-(defn- codex-error-message [event]
-  (or (get-in event [:response :error :message])
-    (get-in event [:error :message])
-    (:message event)
-    (:code event)
-    (json/write-json-str event)))
-
-(defn- maybe-emit-chunk!
-  ([on-chunk content reasoning usage]
-   (maybe-emit-chunk! on-chunk content reasoning usage false))
-  ([on-chunk content reasoning usage done?]
-   (when on-chunk
-     (on-chunk {:content   (let [s (str content)] (when-not (str/blank? s) s))
-                :reasoning (let [s (str reasoning)] (when-not (str/blank? s) s))
-                :api-usage @usage
-                :done?     (boolean done?)}))))
-
-(defn- process-codex-event! [event content reasoning usage completed-response on-chunk]
-  (let [event-type (:type event)]
-    (cond
-      (= "error" event-type)
-      (throw (ex-info (str "OpenAI Codex error: " (codex-error-message event))
-               {:type :svar.core/http-error :event event}))
-
-      (= "response.failed" event-type)
-      (throw (ex-info (str "OpenAI Codex response failed: " (codex-error-message event))
-               {:type :svar.core/http-error :event event}))
-
-      (= "response.output_text.delta" event-type)
-      (do
-        (.append ^StringBuilder content (or (:delta event) ""))
-        (maybe-emit-chunk! on-chunk content reasoning usage))
-
-      (contains? #{"response.reasoning.delta"
-                   "response.reasoning.done"
-                   "response.reasoning_text.delta"
-                   "response.reasoning_text.done"
-                   "response.reasoning_summary.delta"
-                   "response.reasoning_summary.done"
-                   "response.reasoning_summary_text.delta"
-                   "response.reasoning_summary_text.done"} event-type)
-      (do
-        (when-let [delta-text (or (reasoning-part-text (:delta event))
-                                (reasoning-part-text (:text event)))]
-          (.append ^StringBuilder reasoning delta-text))
-        (maybe-emit-chunk! on-chunk content reasoning usage
-          (str/ends-with? event-type ".done")))
-
-      (or (= "response.completed" event-type)
-        (= "response.done" event-type)
-        (= "response.incomplete" event-type))
-      (let [response           (:response event)
-            fallback-reasoning (when (str/blank? (str reasoning))
-                                 (response-reasoning-text response))]
-        (vreset! completed-response response)
-        (when-let [u (:usage response)]
-          (vreset! usage (normalize-codex-usage u)))
-        (when fallback-reasoning
-          (.append ^StringBuilder reasoning fallback-reasoning))
-        (maybe-emit-chunk! on-chunk content reasoning usage true)))))
-
-(defn- parse-codex-sse! [stream content reasoning usage completed-response on-chunk]
-  (letfn [(process-data! [data-lines]
-            (when (seq data-lines)
-              (let [data (str/trim (str/join "\n" data-lines))]
-                (when-not (or (str/blank? data) (= "[DONE]" data))
-                  (when-let [event (try (json/read-json data :key-fn keyword)
-                                     (catch Exception _ nil))]
-                    (process-codex-event!
-                      event content reasoning usage completed-response on-chunk))))))]
-    (with-open [reader (io/reader stream)]
-      (loop [data-lines []]
-        (if-let [line (.readLine ^java.io.BufferedReader reader)]
-          (cond
-            (str/blank? line)
-            (do
-              (process-data! data-lines)
-              (recur []))
-
-            (str/starts-with? line "data:")
-            (recur (conj data-lines (str/trim (subs line 5))))
-
-            :else
-            (recur data-lines))
-          (process-data! data-lines))))))
-
-(defn- codex-headers [api-key]
-  (let [account-id* (account-id api-key)]
-    (when (str/blank? account-id*)
-      (throw (ex-info "OpenAI Codex token is missing a ChatGPT account id"
-               {:type :svar.core/http-error})))
-    {"Authorization"      (str "Bearer " api-key)
-     "chatgpt-account-id" account-id*
-     "originator"         "vis"
-     "OpenAI-Beta"        CODEX_OPENAI_BETA
-     "Accept"             "text/event-stream"
-     "Content-Type"       "application/json"
-     "User-Agent"         "vis"}))
-
-(defn- codex-http-error! [url status body]
-  (let [parsed (try (json/read-json body :key-fn keyword) (catch Exception _ nil))
-        detail (or (:detail parsed) (get-in parsed [:error :message]))]
-    (throw (ex-info (str "OpenAI Codex HTTP " status
-                      (when detail (str ": " detail)))
-             {:type :svar.core/http-error
-              :url url
-              :status status
-              :body body}))))
-
-(defn- codex-chat-completion [messages model api-key base-url opts]
-  (let [timeout-ms (long (get opts :timeout-ms 300000))
-        on-chunk   (:on-chunk opts)
-        body       (codex-request-body messages model (:extra-body opts))
-        url        (codex-responses-url base-url)
-        resp       (http/post url
-                     {:headers (codex-headers api-key)
-                      :body    (json/write-json-str body)
-                      :timeout timeout-ms
-                      :throw   false
-                      :as      :stream})
-        status     (:status resp)]
-    (if-not (<= 200 status 299)
-      (with-open [stream (:body resp)]
-        (codex-http-error! url status (slurp stream)))
-      (let [content            (StringBuilder.)
-            reasoning          (StringBuilder.)
-            usage              (volatile! nil)
-            completed-response (volatile! nil)]
-        (with-open [stream (:body resp)]
-          (parse-codex-sse!
-            stream content reasoning usage completed-response on-chunk))
-        (let [fallback-content   (when-let [response @completed-response]
-                                   (response-output-text response))
-              fallback-reasoning (when-let [response @completed-response]
-                                   (response-reasoning-text response))
-              content-text       (let [s (str content)]
-                                   (if (str/blank? s) fallback-content s))
-              reasoning-text     (let [s (str reasoning)]
-                                   (cond
-                                     (not (str/blank? s)) s
-                                     (not (str/blank? (or fallback-reasoning ""))) fallback-reasoning
-                                     :else nil))]
-          {:content       (when-not (str/blank? content-text) content-text)
-           :reasoning     reasoning-text
-           :api-usage     @usage
-           :http-response {:url url :streaming? true :status status}})))))
-
-(defn- install-svar-codex-chat-completion! []
-  (let [original (or @original-svar-chat-completion @#'svar-llm/chat-completion)]
-    (reset! original-svar-chat-completion original)
-    (alter-var-root #'svar-llm/chat-completion
-      (constantly
-        (fn
-          ([messages model api-key base-url]
-           (original messages model api-key base-url))
-          ([messages model api-key base-url opts]
-           (if (= :openai-codex (:api-style opts))
-             (codex-chat-completion messages model api-key base-url opts)
-             (original messages model api-key base-url opts))))))))
-
-;; =============================================================================
 ;; Provider registration
 ;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis])
-
-(install-svar-codex-chat-completion!)
 
 (vis/register-extension!
   (vis/extension

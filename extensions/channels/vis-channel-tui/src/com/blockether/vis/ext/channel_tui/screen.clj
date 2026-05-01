@@ -101,6 +101,22 @@
     (input-empty? input) hint-idle-empty
     :else               hint-idle-typed))
 
+(def ^:private copy-success-ttl-ms 1500)
+
+(defn- copy-message-markdown! [markdown]
+  (future
+    (try (input/clipboard-copy! (or markdown ""))
+      (catch Throwable _ nil)))
+  (vis/notify! "✓ Copied message markdown"
+    :level :success :ttl-ms copy-success-ttl-ms))
+
+(defn- copy-conversation-id! [text]
+  (future
+    (try (input/clipboard-copy! text)
+      (catch Throwable _ nil)))
+  (vis/notify! "✓ Copied conversation ID"
+    :level :success :ttl-ms copy-success-ttl-ms))
+
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
    whole session. Holding the lock blocks the render thread cleanly
@@ -784,20 +800,10 @@
                          (when-let [hit (cr/lookup mx my)]
                            (case (:kind hit)
                              :copy-message-markdown
-                             (let [markdown (or (:markdown hit) (:text hit) "")]
-                               (try (input/clipboard-copy! markdown)
-                                 (catch Throwable _ nil))
-                               (vis/notify! "✓ Copied message markdown"
-                                 :level :success)
-                               (state/dispatch [:bump-render-version]))
+                             (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
 
                              :copy-id
-                             (let [text (:text hit)]
-                               (future
-                                 (try (input/clipboard-copy! text)
-                                   (catch Throwable _)))
-                               (vis/notify! "✓ Copied conversation ID"
-                                 :level :success :ttl-ms 1500))
+                             (copy-conversation-id! (:text hit))
                              :toggle-details
                              (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
                              (future
@@ -843,20 +849,10 @@
                              ;; cross-channel notifications system
                              ;; carries the feedback.
                              :copy-message-markdown
-                             (let [markdown (or (:markdown hit) (:text hit) "")]
-                               (try (input/clipboard-copy! markdown)
-                                 (catch Throwable _ nil))
-                               (vis/notify! "✓ Copied message markdown"
-                                 :level :success)
-                               (state/dispatch [:bump-render-version]))
+                             (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
 
                              :copy-id
-                             (let [text (:text hit)]
-                               (future
-                                 (try (input/clipboard-copy! text)
-                                   (catch Throwable _)))
-                               (vis/notify! "✓ Copied conversation ID"
-                                 :level :success :ttl-ms 1500))
+                             (copy-conversation-id! (:text hit))
 
                              :toggle-details
                              (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])

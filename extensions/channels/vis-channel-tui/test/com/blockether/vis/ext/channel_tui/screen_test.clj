@@ -6,6 +6,7 @@
    accept of unknown flags previously masked typos like
    `--conversations-id`."
   (:require
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.input :as input]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
    [lazytest.core :refer [defdescribe it expect]]))
@@ -15,6 +16,12 @@
 
 (def ^:private current-hint
   (deref #'screen/current-hint))
+
+(def ^:private copy-message-markdown!
+  (deref #'screen/copy-message-markdown!))
+
+(def ^:private copy-conversation-id!
+  (deref #'screen/copy-conversation-id!))
 
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
@@ -30,6 +37,36 @@
     (let [hint (current-hint {:input (input/empty-input)})]
       (expect (re-find #"↑↓ history" hint))
       (expect (not (re-find #"Ctrl\+P/N" hint))))))
+
+(defdescribe clipboard-copy-actions-test
+  (it "message copy uses the shared success notification contract"
+    (let [copied   (promise)
+          notified (atom nil)]
+      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify!           (fn [text & kvs]
+                                                 (reset! notified [text kvs]))}
+        (fn []
+          (copy-message-markdown! "**bold**")
+          (expect (= "**bold**" (deref copied 1000 ::timeout)))
+          (expect (= ["✓ Copied message markdown" [:level :success :ttl-ms 1500]]
+                    @notified))))))
+
+  (it "conversation-id copy uses the same icon-era notification TTL"
+    (let [copied   (promise)
+          notified (atom nil)]
+      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify!           (fn [text & kvs]
+                                                 (reset! notified [text kvs]))}
+        (fn []
+          (copy-conversation-id! "123e4567-e89b-12d3-a456-426614174000")
+          (expect (= "123e4567-e89b-12d3-a456-426614174000"
+                    (deref copied 1000 ::timeout)))
+          (expect (= ["✓ Copied conversation ID" [:level :success :ttl-ms 1500]]
+                    @notified))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

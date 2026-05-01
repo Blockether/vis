@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render-test
   (:require
+   [com.blockether.vis.ext.channel-tui.click-regions :as cr]
    [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
@@ -12,6 +13,7 @@
 (def ^:private md->lines @#'render/markdown->lines)
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private message->markdown @#'render/message->markdown)
+(def ^:private copy-message-control-text @#'render/copy-message-control-text)
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -1399,6 +1401,54 @@
         (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
                          (str/includes? % "No remaining source references"))
                   lines))))))
+
+(defn- dummy-text-graphics
+  "Lenient TextGraphics stub for layout tests that care about click
+   regions, not actual painted glyphs. Implements the subset of the
+   Lanterna interface that `draw-chat-bubble!` touches on a plain-text
+   bubble with the copy control enabled."
+  []
+  (let [active (atom #{})]
+    (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+      (clearModifiers []
+        (reset! active #{})
+        this)
+      (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+        (swap! active into (seq arr))
+        this)
+      (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+        (apply swap! active disj (seq arr))
+        this)
+      (getActiveModifiers []
+        (if (empty? @active)
+          (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+          (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+      (setForegroundColor [_] this)
+      (setBackgroundColor [_] this)
+      (putString
+        ([_ _ _] this))
+      (fillRectangle [_ _ _] this)
+      (setCharacter [_ _ _] this))))
+
+(defdescribe message-copy-control-test
+  (it "renders the copy control as icon + label"
+    (expect (= "⧉ Copy" copy-message-control-text)))
+
+  (it "registers the copy control on the bottom-left row of the bubble"
+    (cr/reset!)
+    (cr/begin-frame!)
+    (let [message {:role :assistant :text "hello world"}
+          start   4
+          left    2
+          width   36
+          height  (render/draw-chat-bubble! (dummy-text-graphics) message start left width)
+          hit     (do (cr/commit-frame!)
+                    (some #(when (= :copy-message-markdown (:kind %)) %) (cr/current)))]
+      (expect (= (+ start height -2) (get-in hit [:bounds :row])))
+      (expect (= (+ left 2) (get-in hit [:bounds :col])))
+      (expect (= (p/display-width copy-message-control-text)
+                (get-in hit [:bounds :width])))
+      (expect (= "hello world" (:markdown hit))))))
 
 (defdescribe message-copy-markdown-test
   (it "copies explicit markdown when present"
