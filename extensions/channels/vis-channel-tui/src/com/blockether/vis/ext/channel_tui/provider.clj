@@ -119,6 +119,21 @@
                    vec)]
     (select-model! screen (vis/provider-base-url provider) (:api-key provider) defaults)))
 
+(defn- default-model-configs
+  [preset]
+  (->> (:default-models preset)
+    (keep (fn [model]
+            (when-let [name (some-> model str str/trim not-empty)]
+              {:name name})))
+    distinct
+    vec))
+
+(defn- provider-config-with-models
+  [preset models]
+  (cond-> {:id (:id preset)
+           :models models}
+    (:base-url preset) (assoc :base-url (:base-url preset))))
+
 ;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
 
 (defn- copilot-auth-instructions!
@@ -335,17 +350,14 @@
                            needs-key? (some? api-key)
                            :else      true)]
           (when auth-ok?
-            (when-let [model (select-provider-model! screen (cond-> {:id (:id preset)
-                                                                     :base-url base-url
-                                                                     :default-models (:default-models preset)}
-                                                              api-key (assoc :api-key api-key)))]
-              (cond-> {:id (:id preset)
-                       :base-url base-url
-                       :models [{:name model}]}
-                ;; For Copilot, leave the short-lived API token out of
-                ;; the persisted config — config.clj resolves it
-                ;; dynamically from the OAuth token on each request.
-                (and api-key (not oauth?)) (assoc :api-key api-key)))))))))
+            (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
+              (provider-config-with-models preset oauth-models)
+              (when-let [model (select-provider-model! screen (cond-> {:id (:id preset)
+                                                                       :base-url base-url
+                                                                       :default-models (:default-models preset)}
+                                                                api-key (assoc :api-key api-key)))]
+                (cond-> (provider-config-with-models preset [{:name model}])
+                  (and api-key (not oauth?)) (assoc :api-key api-key))))))))))
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,

@@ -120,3 +120,21 @@
                                        (throw (ex-info "boom" {})))
                   dlg/confirm-dialog! (fn [& _] nil)]
       (expect (= false (@#'provider/codex-oauth-ready! nil))))))
+
+(defdescribe add-provider-test
+  (it "connects OpenAI Codex OAuth without forcing a single model selection"
+    (let [model-picker-called? (atom false)]
+      (with-redefs [vis/provider-presets (constantly [{:id :openai-codex
+                                                       :label "OpenAI Codex"
+                                                       :default-models ["gpt-5.1" "gpt-5.2"]}])
+                    provider/codex-oauth-ready! (constantly true)
+                    dlg/select-dialog! (fn [_ title items]
+                                         (case title
+                                           "Add Provider" (first items)
+                                           "Select Model" (do
+                                                            (reset! model-picker-called? true)
+                                                            (first items))))]
+        (expect (= {:id :openai-codex
+                    :models [{:name "gpt-5.1"} {:name "gpt-5.2"}]}
+                  (@#'provider/add-provider! nil #{})))
+        (expect (= false @model-picker-called?))))))
