@@ -4,7 +4,7 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, four cooperating surfaces — introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt and replaces the old multi-alias split."
+    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, four cooperating surfaces — introspection (inspect data / report Markdown / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt and replaces the old multi-alias split."
     :content
     "# vis-foundation
 
@@ -17,20 +17,11 @@ ONE alias `v/` bundles everything the agent needs to read its own state, work th
 
 ### Introspection (read your own state)
 
-Pure reads off the same DB tables the projection layer uses; failures return nil/[] never throw.
+Pure reads off the same DB tables the projection layer uses; failures return nil/[] never throw. Conversation-state introspection is intentionally a deep two-call surface: one canonical data map, one Markdown renderer over the same data.
 
 ```clojure
-(v/turn)                        ; in-flight turn snapshot
-(v/conversation cid?)           ; conversation tree (turns / iterations / cost)
-(v/conversations channel?)      ; list every conversation
-(v/conversation-forks cid?)     ; every conversation_state row (trunk + forks)
-(v/query-retries qid)           ; every conversation_turn_state row (original + retries)
-(v/var-history 'sym)            ; version timeline for a SCI def
-(v/find-attempts pat cid?)      ; regex search over executed code
-(v/find-attempts-everywhere pat) ; same, across EVERY conversation in the DB (heavy)
-(v/failures cid?)               ; classify failed iterations
-(v/failures-everywhere)         ; same, DB-wide (heavy)
-(v/diagnose cid?)               ; counts + repetition-loop detection + next actions
+(v/inspect cid?)                ; canonical state data {:conversation :current-turn :failures :diagnosis :transcript ...}
+(v/report cid?)                 ; Markdown report rendered from the same state data
 (v/extensions)                  ; loaded ext catalog incl. author/owner/license/source markers
 (v/extension-docs ext-ref)      ; declared doc summaries (no content)
 (v/extension-doc ext-ref name)  ; full doc descriptor incl. :content

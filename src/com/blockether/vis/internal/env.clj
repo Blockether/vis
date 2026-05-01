@@ -13,13 +13,13 @@
    [clojure.walk]
    [clojure+.core]
    [clojure+.walk]
+   [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.tool-result :as tool-result]
    [lazytest.core :as lazytest]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
-   [taoensso.telemere :as tel]
-   [zprint.core :as zprint]))
+   [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; SCI sandbox + var-index
@@ -479,15 +479,20 @@
                                                                           {:exclude-when-meta []})
                                                     'fast-edn.core (ns->sci-map 'fast-edn.core)
                                                     'clojure.edn (ns->sci-map 'fast-edn.core)
-                                                    'zprint.core {'zprint-str    zprint/zprint-str
-                                                                  'zprint        zprint/zprint
-                                                                  'czprint-str   zprint/czprint-str
-                                                                  'czprint       zprint/czprint
-                                                                  'zprint-file-str zprint/zprint-file-str
-                                                                  'set-options!  zprint/set-options!
-                                                                  'configure-all! zprint/configure-all!}
-                                                    'clojure.pprint {'pprint     zprint/zprint
-                                                                     'pprint-str zprint/zprint-str}
+                                                    ;; Sandbox pretty-printing shares the SAME global zprint gate
+                                                    ;; as the TUI render path (`format/format-clojure`). Without
+                                                    ;; that, a model calling `(pp/pprint-str x)` could race the
+                                                    ;; renderer formatting a code block and trip zprint's global
+                                                    ;; re-entrancy guard (`Attempted to run zprint with type ...`).
+                                                    'zprint.core {'zprint-str      fmt/safe-zprint-str
+                                                                  'zprint          fmt/safe-zprint
+                                                                  'czprint-str     fmt/safe-czprint-str
+                                                                  'czprint         fmt/safe-czprint
+                                                                  'zprint-file-str fmt/safe-zprint-file-str
+                                                                  'set-options!    fmt/safe-set-zprint-options!
+                                                                  'configure-all!  fmt/safe-configure-zprint!}
+                                                    'clojure.pprint {'pprint     fmt/safe-pprint
+                                                                     'pprint-str fmt/safe-pprint-str}
                                                     'lazytest.core {'expect-fn       lazytest/expect-fn
                                                                     'ok?              lazytest/ok?
                                                                     'throws?          lazytest/throws?

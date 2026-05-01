@@ -58,7 +58,7 @@
   (deref (resolve (symbol "com.blockether.vis.ext.foundation.introspection" name))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/turn) — single rich snapshot of the current turn
+;; current-turn helper — single rich snapshot of the current turn
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-turn-test
@@ -93,7 +93,7 @@
         (expect (= "boom" (-> turn :errors first :error))))))
 
   (it "omits the dropped :redundancy key from the snapshot"
-    ;; The dedup cache + redundancy metric were removed; (v/turn)
+    ;; The dedup cache + redundancy metric were removed; current-turn snapshots
     ;; no longer surfaces a `:redundancy` key. Asserting absence here
     ;; pins the contract so a future addition is a deliberate decision,
     ;; not a silent regression.
@@ -108,7 +108,7 @@
         (expect (not (contains? turn :redundancy)))))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/conversation [id]) — current or specific conversation
+;; conversation helper — current or specific conversation
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversation-test
@@ -172,7 +172,7 @@
       (expect (nil? (:in-flight-turn-id conversation))))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/conversations [channel]) — list across one or all channels
+;; conversations helper — list across one or all channels
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversations-test
@@ -203,28 +203,7 @@
       (expect (= 1 (:turn-count this))))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/var-history sym [conversation-id])
-;; -----------------------------------------------------------------------------
-
-(defdescribe foundation-var-history-test
-  (it "returns [] for an unknown sym"
-    (let [s (h/store)
-          {:keys [conversation-id]} (bootstrap s)]
-      (expect (= [] ((private-fn "foundation-var-history") (env s conversation-id) 'never-defined)))))
-
-  (it "tolerates string sym names"
-    (let [s (h/store)
-          {:keys [conversation-id]} (bootstrap s)]
-      (expect (= [] ((private-fn "foundation-var-history") (env s conversation-id) "still-undefined")))))
-
-  (it "explicit conversation-id form queries a different conversation"
-    (let [s (h/store)
-          {:keys [conversation-id]} (bootstrap s)
-          other (vis/db-store-conversation! s {:channel :tui :title "other"})]
-      (expect (= [] ((private-fn "foundation-var-history") (env s conversation-id) 'foo other))))))
-
-;; -----------------------------------------------------------------------------
-;; (v/conversation-forks [conversation-id]) — fork tree introspection.
+;; conversation-forks helper — fork tree introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-conversation-forks-test
@@ -265,7 +244,7 @@
       (expect (= [] rows)))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/query-retries conversation-turn-id) — retry history introspection.
+;; query-retries helper — retry history introspection.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-query-retries-test
@@ -302,110 +281,7 @@
       (expect (= [] ((private-fn "meta-query-retries") (env s conversation-id) nil))))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/find-attempts pattern [conversation-id])
-;; -----------------------------------------------------------------------------
-
-(defdescribe foundation-find-attempts-test
-  (it "one-arg form regex-searches the current turn"
-    (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
-      (db-store-iteration! s conversation-turn-id
-        {:blocks [{:id 0 :code "(+ 1 2)"        :result 3 :execution-time-ms 1}
-                  {:id 1 :code "(grep \"FOO\")" :result [] :execution-time-ms 1}
-                  {:id 2 :code "(grep \"BAR\")" :result [] :execution-time-ms 1}]})
-      (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) "grep")]
-        (expect (= 2 (count hits)))
-        (expect (every? #(re-find #"grep" (:code %)) hits))
-        ;; :turn-id resolves to the latest query of the conversation — a
-        ;; UUID identifying the turn the attempt belongs to.
-        (expect (= conversation-turn-id (-> hits first :turn-id)))
-        (expect (every? #(= conversation-turn-id (:turn-id %)) hits)))))
-
-  (it "accepts a Pattern object directly"
-    (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
-      (db-store-iteration! s conversation-turn-id
-        {:blocks [{:id 0 :code "(defn foo [x] x)" :result nil :execution-time-ms 1}]})
-      (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) #"\bdefn\b")]
-        (expect (= 1 (count hits))))))
-
-  (it "two-arg form scans every turn of the given conversation"
-    (let [s (h/store)
-          {:keys [conversation-id]} (bootstrap s)
-          q2 (vis/db-store-conversation-turn! s
-               {:parent-conversation-id conversation-id
-                :query "second turn" :status :running})]
-      ;; Leave q1 empty; fill q2.
-      (db-store-iteration! s q2
-        {:blocks [{:id 0 :code "(grep \"target\")" :result [] :execution-time-ms 1}]})
-      (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) "grep" conversation-id)]
-        (expect (= 1 (count hits))))))
-
-  (it "returns [] (vector, never nil) when the current turn has no matches"
-    (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
-      (db-store-iteration! s conversation-turn-id
-        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
-      (let [hits ((private-fn "foundation-find-attempts") (env s conversation-id) #"Unmatched delimiter")]
-        ;; Defensive default: agents commonly do `(first hits)` /
-        ;; `(:code (first hits))`. Returning [] keeps that path nil-safe
-        ;; instead of crashing improvised helpers downstream.
-        (expect (vector? hits))
-        (expect (= [] hits)))))
-
-  (it "returns [] (vector, never nil) when the env is missing handles"
-    (let [hits ((private-fn "foundation-find-attempts") {} "anything")]
-      (expect (vector? hits))
-      (expect (= [] hits)))
-    (let [hits ((private-fn "foundation-find-attempts") {} "anything" "some-uuid")]
-      (expect (vector? hits))
-      (expect (= [] hits)))))
-
-;; -----------------------------------------------------------------------------
-;; (v/find-attempts-everywhere pattern) — cross-conversation regex search.
-;; -----------------------------------------------------------------------------
-
-(defdescribe foundation-find-attempts-everywhere-test
-  (it "scans every conversation in the DB"
-    (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
-          other-conversation-id (vis/db-store-conversation! s
-                                  {:channel :tui :title "other turn"})
-          other-conversation-turn-id (vis/db-store-conversation-turn! s
-                                       {:parent-conversation-id other-conversation-id
-                                        :query "other goal" :status :running})]
-      (db-store-iteration! s conversation-turn-id
-        {:blocks [{:id 0 :code "(grep \"alpha\")" :result [] :execution-time-ms 1}]})
-      (db-store-iteration! s other-conversation-turn-id
-        {:blocks [{:id 0 :code "(grep \"beta\")" :result [] :execution-time-ms 1}]})
-      (let [hits ((private-fn "foundation-find-attempts-everywhere") (env s conversation-id) #"grep")]
-        (expect (= 2 (count hits)))
-        ;; Each hit carries the originating :conversation-id so callers
-        ;; can drill in without a second meta call.
-        (expect (every? :conversation-id hits))
-        (expect (= #{conversation-id other-conversation-id}
-                  (set (map :conversation-id hits)))))))
-
-  (it "returns [] (vector, never nil) when nothing matches"
-    (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
-      (db-store-iteration! s conversation-turn-id
-        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
-      ;; Reproduces the exact diagnose-loop failure: agent searches for
-      ;; an error that doesn't exist in the DB, expects an empty vec
-      ;; back, must NOT receive nil.
-      (let [hits ((private-fn "foundation-find-attempts-everywhere")
-                  (env s conversation-id) #"Unmatched delimiter")]
-        (expect (vector? hits))
-        (expect (= [] hits)))))
-
-  (it "returns [] (vector, never nil) when the env has no :db-info"
-    (let [hits ((private-fn "foundation-find-attempts-everywhere") {} #"x")]
-      (expect (vector? hits))
-      (expect (= [] hits)))))
-
-;; -----------------------------------------------------------------------------
-;; (v/failures) and (v/diagnose) — no raw SQLite needed for triage
+;; failures and diagnosis helpers — no raw SQLite needed for triage
 ;; -----------------------------------------------------------------------------
 
 (defdescribe meta-failure-diagnostics-test
@@ -512,47 +388,47 @@
         (expect (= [] failures))))))
 
 ;; -----------------------------------------------------------------------------
-;; (v/failures-everywhere) — cross-conversation failure scan.
+;; (v/inspect) and (v/report) — one data surface + one Markdown renderer
 ;; -----------------------------------------------------------------------------
 
-(defdescribe foundation-failures-everywhere-test
-  (it "aggregates failures across every conversation in the DB"
-    (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
-          other-conversation-id (vis/db-store-conversation! s
-                                  {:channel :tui :title "other turn"})
-          other-conversation-turn-id (vis/db-store-conversation-turn! s
-                                       {:parent-conversation-id other-conversation-id
-                                        :query "other goal" :status :running})]
-      (db-store-iteration! s conversation-turn-id
-        {:blocks [{:id 0 :code "(v/rg \"x\\|y\" \"z\")"
-                   :error "Unsupported escape character: \\|"
-                   :execution-time-ms 1}]})
-      (db-store-iteration! s other-conversation-turn-id
-        {:blocks [{:id 0 :code "(v/patch [{:path \"x\"}])"
-                   :error "SEARCH block 1 not found in x"
-                   :execution-time-ms 1}]})
-      (let [failures ((private-fn "foundation-failures-everywhere") (env s conversation-id))]
-        (expect (= 2 (count failures)))
-        (expect (every? :conversation-id failures))
-        (expect (every? :turn-id failures))
-        (expect (every? :goal failures))
-        (expect (= #{conversation-id other-conversation-id}
-                  (set (map :conversation-id failures)))))))
-
-  (it "returns [] (vector, never nil) when no failures exist"
+(defdescribe foundation-inspect-report-test
+  (it "returns the canonical single-map introspection surface"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
-      (let [failures ((private-fn "foundation-failures-everywhere") (env s conversation-id))]
-        (expect (vector? failures))
-        (expect (= [] failures)))))
+      (let [data ((private-fn "foundation-inspect") (env s conversation-id))]
+        (expect (= 1 (:schema-version data)))
+        (expect (= :conversation (:scope data)))
+        (expect (= conversation-id (:conversation-id data)))
+        (expect (= conversation-id (get-in data [:conversation :id])))
+        (expect (= conversation-id (get-in data [:transcript :conversation :id])))
+        (expect (vector? (:conversation-index data)))
+        (expect (map? (:current-turn data)))
+        (expect (vector? (:failures data)))
+        (expect (map? (:diagnosis data)))
+        (expect (vector? (:conversation-forks data)))
+        (expect (map? (:turn-retries data))))))
 
-  (it "returns [] (vector, never nil) when the env has no :db-info"
-    (let [failures ((private-fn "foundation-failures-everywhere") {})]
-      (expect (vector? failures))
-      (expect (= [] failures)))))
+  (it "renders Markdown from the same inspected transcript data"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+      (let [out ((private-fn "foundation-report") (env s conversation-id))]
+        (expect (string? out))
+        (expect (str/includes? out (str "conversation `" conversation-id "`")))
+        (expect (str/includes? out "Goal:** what's the plan?")))))
+
+  (it "exports only inspect/report plus extension discovery symbols for introspection"
+    (let [symbols (set (map :ext.symbol/sym com.blockether.vis.ext.foundation.introspection/all-symbols))]
+      (expect (contains? symbols 'inspect))
+      (expect (contains? symbols 'report))
+      (doseq [removed ['turn 'conversation 'conversations 'conversation-forks
+                       'query-retries 'var-history 'find-attempts
+                       'find-attempts-everywhere 'failures
+                       'failures-everywhere 'diagnose]]
+        (expect (not (contains? symbols removed)))))))
 
 ;; -----------------------------------------------------------------------------
 ;; (v/extensions), (v/extension-docs ...), (v/extension-doc ...),
@@ -573,6 +449,8 @@
       (expect (vector? (:symbols this)))
       ;; Unified vis ext bundles introspection + editing + environment
       ;; under one alias. Spot-check one symbol from each area.
+      (expect (contains? (set (:symbols this)) 'inspect))
+      (expect (contains? (set (:symbols this)) 'report))
       (expect (contains? (set (:symbols this)) 'extensions))
       (expect (contains? (set (:symbols this)) 'cat))
       (expect (contains? (set (:symbols this)) 'snapshot))
@@ -660,12 +538,12 @@
   (it "resolves by id symbol"
     (let [text ((private-fn "foundation-extension-readme") {} 'v)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "v/extensions"))))
+      (expect (clojure.string/includes? text "v/inspect"))))
 
   (it "resolves by id keyword"
     (let [text ((private-fn "foundation-extension-readme") {} :v)]
       (expect (string? text))
-      (expect (clojure.string/includes? text "v/extension-readme"))))
+      (expect (clojure.string/includes? text "v/report"))))
 
   (it "resolves by full extension namespace"
     (let [text ((private-fn "foundation-extension-readme") {} 'com.blockether.vis.ext.foundation.core)]
@@ -692,21 +570,16 @@
         (expect (empty-result? ((private-fn "foundation-turn") environment)))
         (expect (empty-result? ((private-fn "foundation-conversation") environment)))
         (expect (empty-result? ((private-fn "foundation-conversations") environment)))
-        (expect (empty-result? ((private-fn "foundation-var-history") environment 'foo)))
         (expect (empty-result? ((private-fn "foundation-conversation-forks") environment)))
         (expect (vector? ((private-fn "foundation-conversation-forks") environment)))
         (expect (empty-result? ((private-fn "foundation-conversation-forks") environment (random-uuid))))
         (expect (empty-result? ((private-fn "meta-query-retries") environment (random-uuid))))
         (expect (vector? ((private-fn "meta-query-retries") environment (random-uuid))))
-        (expect (empty-result? ((private-fn "foundation-find-attempts") environment "grep")))
-        (expect (vector? ((private-fn "foundation-find-attempts") environment "grep")))
-        (expect (empty-result? ((private-fn "foundation-find-attempts-everywhere") environment "grep")))
-        (expect (vector? ((private-fn "foundation-find-attempts-everywhere") environment "grep")))
         (expect (empty-result? ((private-fn "foundation-failures") environment)))
         (expect (vector? ((private-fn "foundation-failures") environment)))
-        (expect (empty-result? ((private-fn "foundation-failures-everywhere") environment)))
-        (expect (vector? ((private-fn "foundation-failures-everywhere") environment)))
         (expect (= 0 (:failure-count ((private-fn "foundation-diagnose") environment))))
+        (expect (map? ((private-fn "foundation-inspect") environment)))
+        (expect (string? ((private-fn "foundation-report") environment)))
         (expect (vector? ((private-fn "foundation-extensions") environment)))
         (expect (map? ((private-fn "foundation-extension-docs") environment)))
         (expect (nil? ((private-fn "foundation-extension-docs") environment 'no.such.ext)))

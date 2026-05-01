@@ -40,7 +40,7 @@
   "Rolling-window size for <journal> entries. 12 carries the last
    dozen iterations of the conversation (cross-turn) so a follow-up
    turn sees the immediate context of the prior turn's work without
-   re-fetching via `(v/conversation)`.
+   re-fetching via `(v/inspect)`.
 
    When the iteration's prompt token count crosses
    `CONTEXT_PRESSURE_THRESHOLD` of the model's context window the
@@ -267,7 +267,7 @@
           used-tokens " / " limit-tokens " tokens). Older <journal>\n"
           "  iterations will roll off the rolling window soon. Curate the\n"
           "  insight you've earned BEFORE that happens — emit a structured\n"
-          "  `(def …)` so the value lands in <var_index> + var-history and\n"
+          "  `(def …)` so the value lands in <var_index> + persisted history and\n"
           "  survives the roll. Chain-of-Density-style recipe (use only\n"
           "  facts that already appeared in the journal; no new\n"
           "  characterizations / evaluative adjectives):\n"
@@ -282,9 +282,9 @@
           "  Keys above are illustrative — use whatever shape fits the\n"
           "  task. Atoms preferred (file paths, symbol names, error keys,\n"
           "  iN.K refs) over prose. Raw history stays reachable via\n"
-          "  `(v/find-attempts \"…\")` and `(v/conversation)` after\n"
-          "  iterations roll off; use those when you genuinely need\n"
-          "  precision your `(def …)` didn't capture.")))))
+          "  `(v/inspect)` after iterations roll off; use its :transcript\n"
+          "  and :failures keys when you genuinely need precision your\n"
+          "  `(def …)` didn't capture.")))))
 
 (defn- title-nudge
   "Built-in `[system_nudge]` line that fires when:

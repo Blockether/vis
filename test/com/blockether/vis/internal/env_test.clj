@@ -24,8 +24,11 @@
         behaviour."
   (:require
    [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.format :as fmt]
    [sci.core :as sci]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+   [lazytest.core :refer [defdescribe describe expect it]])
+  (:import
+   [java.util.concurrent CountDownLatch]))
 
 (defn- fresh-ctx
   "A pristine sandbox per test. Spec definitions write to the
@@ -37,6 +40,32 @@
 (defn- eval-in [ctx-map src]
   (let [{:keys [sci-ctx sandbox-ns]} ctx-map]
     (:val (sci/eval-string+ sci-ctx src {:ns sandbox-ns}))))
+
+(defn- run-concurrently!
+  "Run `f` and `g` from the same start gate, return a vec of any thrown
+   messages tagged with the worker label. The zprint regression needs real
+   overlap — sequential calls never tickle the library's global in-flight
+   guard."
+  [f g]
+  (let [gate (CountDownLatch. 1)
+        errs (atom [])
+        spawn (fn [label thunk]
+                (doto
+                  (Thread.
+                    ^Runnable
+                    (fn []
+                      (.await gate)
+                      (try
+                        (thunk)
+                        (catch Throwable t
+                          (swap! errs conj (str label ": " (or (ex-message t) (str t))))))))
+                  (.start)))
+        t1   (spawn "f" f)
+        t2   (spawn "g" g)]
+    (.countDown gate)
+    (.join ^Thread t1)
+    (.join ^Thread t2)
+    @errs))
 
 (defdescribe stdlib-aliases-resolve-in-sandbox-test
   (describe "the short-form aliases the system prompt advertises"
@@ -98,6 +127,36 @@
     (it "`c+/` -> clojure+.core"
       (let [ctx (fresh-ctx)]
         (expect (= :a (eval-in ctx "(c+/cond+ true :a :else :b)")))))))
+
+(defdescribe zprint-concurrency-regression-test
+  (describe "sandbox pretty-printing shares the render path's zprint lock"
+    ;; The user's conversation hit exactly this race: sandbox
+    ;; `(pp/pprint-str …)` formatted a data structure while the TUI
+    ;; render thread formatted code with `:parse-string? true`, and
+    ;; zprint exploded with `Attempted to run zprint with type ...`.
+    ;;
+    ;; The regression net below hits the SAME mixed-mode pair:
+    ;;   * sandbox alias surface (`pp/pprint-str`) -> structure mode
+    ;;   * host render helper (`format-clojure`)  -> zipper mode
+    ;;
+    ;; Pre-fix, this test reliably produced BOTH symptoms the user
+    ;; saw in diagnostics:
+    ;;   1. sandbox side throws the re-entrancy exception
+    ;;   2. format-clojure swallows its own zprint exception and falls
+    ;;      back to the raw unformatted source string
+    (it "`pp/pprint-str` can race `format-clojure` without re-entrancy failures"
+      (let [ctx       (fresh-ctx)
+            src       "(defn f[x](let[a 1](+ a x)))"
+            expected  (fmt/format-clojure src 20)
+            outputs   (atom [])
+            errs      (run-concurrently!
+                        #(eval-in ctx
+                           "(dotimes [i 200]
+                              (pp/pprint-str {:label :sandbox :i i :data (vec (range 100))}))")
+                        #(dotimes [_ 200]
+                           (swap! outputs conj (fmt/format-clojure src 20))))]
+        (expect (= [] errs))
+        (expect (= #{expected} (set @outputs)))))))
 
 (defdescribe spec-alpha-end-to-end-test
   (describe "clojure.spec.alpha is fully usable from the sandbox"

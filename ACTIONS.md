@@ -114,11 +114,11 @@ Then per `conversation_turn_state`, pull `iteration` rows + decode `iteration.bl
 
 ---
 
-## P1 — `vis diagnose <conv-id>` CLI subcommand
+## P1 — `vis report <conv-id>` CLI subcommand
 
 ### What
 Wrap the P0 generator behind a CLI verb so we don't rely on an agent
-session to emit diagnostics. `bin/vis diagnose eeaf9651-… > out.md`.
+session to emit diagnostics. `bin/vis report eeaf9651-… > out.md`.
 
 ### Why
 Agent-authored diagnostics fail under the same pathologies they're
@@ -132,7 +132,7 @@ deterministic, auditable, and runnable from CI.
 
 ### Verify
 - `./verify.sh` smoke step: extend `bin/vis` smoke to also accept
-  `--help` listing `diagnose`.
+  `--help` listing `report`.
 - Unit: golden-file test against a seeded SQLite fixture in
   `extensions/persistance/vis-persistance-sqlite/test/`.
 

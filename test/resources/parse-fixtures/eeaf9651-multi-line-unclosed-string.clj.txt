@@ -155,7 +155,7 @@ broken-area
   (v/h2 "REPRODUCTION.md Written")
   (v/p "5 real failure modes with:")
   (v/ul
-    [(v/join "Exact code that failed (copied from " (v/code "v/failures") " data)")
+    [(v/join "Exact code that failed (copied from " (v/code "(:failures (v/inspect))") " data)")
      (v/join "Error messages verbatim")
      (v/join "Root cause analysis")
      (v/join "Reproduction steps")

@@ -5,9 +5,7 @@
    middle of a form. Four sources, each contributing its
    `:ext/symbols` vec and its share of the merged `:ext/prompt`:
 
-     introspection.clj          (v/turn, v/conversation,
-                                 v/diagnose, v/var-history,
-                                 v/find-attempts, v/failures,
+     introspection.clj          (v/inspect, v/report,
                                  v/extensions, v/extension-doc, …)
      editing/core.clj           (v/cat, v/ls, v/rg,
                                  thin babashka.fs wrappers)
@@ -57,7 +55,7 @@
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt and the `vis doctor` CLI command."
+     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (inspect data / report Markdown / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt plus the `vis doctor` and `vis report` CLI commands."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -66,7 +64,6 @@
      :ext/kind           "foundation"
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
-                                [transcript/transcript-symbol]
                                 editing/editing-symbols
                                 markdown/markdown-symbols
                                 environment/environment-symbols))
@@ -80,8 +77,8 @@
 ;; command must live at the top of the tree, not under `vis extensions`.
 (doctor/register-cli!)
 
-;; Register the top-level `vis diagnose <CONVERSATION-ID>` CLI
-;; command. Same pattern as `vis doctor` — the data + Markdown
-;; renderer + CLI surface are one cohesive feature owned by
-;; foundation, not host plumbing.
+;; Register the top-level `vis report <CONVERSATION-ID>` CLI command.
+;; Same pattern as `vis doctor` — the data + Markdown renderer + CLI
+;; surface are one cohesive feature owned by foundation, not host
+;; plumbing.
 (transcript/register-cli!)
