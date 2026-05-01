@@ -36,7 +36,17 @@
   (it "empty input advertises arrow-key history instead of removed Ctrl+P/N chords"
     (let [hint (current-hint {:input (input/empty-input)})]
       (expect (re-find #"↑↓ history" hint))
-      (expect (not (re-find #"Ctrl\+P/N" hint))))))
+      (expect (not (re-find #"Ctrl\+P/N" hint)))))
+
+  (it "idle hints leave model/reasoning/verbosity shortcuts to the footer"
+    (let [empty-hint (current-hint {:input (input/empty-input)})
+          typed-hint (current-hint {:input (input/paste-text (input/empty-input) "hello")})]
+      (expect (not (re-find #"Ctrl\+R reasoning" empty-hint)))
+      (expect (not (re-find #"Ctrl\+L verbosity" empty-hint)))
+      (expect (not (re-find #"Ctrl\+T model" empty-hint)))
+      (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
+      (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
+      (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
 
 (defdescribe clipboard-copy-actions-test
   (it "message copy uses the shared success notification contract"

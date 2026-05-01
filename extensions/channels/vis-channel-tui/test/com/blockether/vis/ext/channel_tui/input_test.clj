@@ -120,7 +120,23 @@
   (it "@ opens the fuzzy file picker instead of inserting a literal char"
     (let [state (input/empty-input)]
       (expect (= {:action :pick-file :state state}
-                (input/handle-key (char-key (Character. \@)) state))))))
+                (input/handle-key (char-key (Character. \@)) state)))))
+
+  (it "Ctrl+R, Ctrl+L, and Ctrl+T cycle settings without editing the prompt"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "keep"))]
+      (expect (= {:action :cycle-reasoning :state state}
+                (input/handle-key (ctrl-key (Character. \r)) state)))
+      (expect (= {:action :cycle-reasoning :state state}
+                (input/handle-key (ctrl-key (Character. \R)) state)))
+      (expect (= {:action :cycle-verbosity :state state}
+                (input/handle-key (ctrl-key (Character. \l)) state)))
+      (expect (= {:action :cycle-verbosity :state state}
+                (input/handle-key (ctrl-key (Character. \L)) state)))
+      (expect (= {:action :cycle-model :state state}
+                (input/handle-key (ctrl-key (Character. \t)) state)))
+      (expect (= {:action :cycle-model :state state}
+                (input/handle-key (ctrl-key (Character. \T)) state))))))
 
 (defdescribe bracketed-paste-helpers-test
   (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"

@@ -108,6 +108,14 @@
 ;;  :dialog-open? false}         ;; dialog singleton guard
 ;;
 
+(def ^:private settings-notification-ttl-ms 1500)
+
+(def ^:private reasoning-level-order
+  [:quick :balanced :deep])
+
+(def ^:private codex-verbosity-order
+  [:low :medium :high])
+
 (defn- normalize-reasoning-level
   "Canonical reasoning level for persisted TUI settings.
 
@@ -204,6 +212,58 @@
       (vis/save-config! (assoc raw :tui-settings settings)))
     (catch Throwable _ nil)))
 
+(defn- apply-settings-update!
+  [db new-settings]
+  ;; Settings (show-thinking?, show-iterations?, etc.) are part of
+  ;; every format-answer cache key, so toggling them already
+  ;; invalidates cache entries naturally. But the OLD entries
+  ;; linger until the cache fills — which on a quiet conversation
+  ;; never happens. Drop them now so memory stays bounded across
+  ;; many toggles.
+  (render/invalidate-cache!)
+  (let [merged (normalize-settings (merge default-settings (:settings db) new-settings))]
+    (persist-settings! merged)
+    (assoc db :settings merged)))
+
+(defn- cycle-choice
+  [choices current]
+  (let [choices (vec choices)
+        idx     (.indexOf ^java.util.List choices current)]
+    (nth choices (mod (inc (if (neg? idx) 0 idx)) (count choices)))))
+
+(defn- rotate-models
+  [models]
+  (let [models (vec (or models []))]
+    (if (< (count models) 2)
+      models
+      (conj (subvec models 1) (first models)))))
+
+(defn- cycle-primary-model
+  [config]
+  (let [providers (vec (or (:providers config) []))
+        provider  (first providers)
+        models    (vec (or (:models provider) []))]
+    (cond
+      (empty? providers)
+      {:config config
+       :message "No providers configured"
+       :level :warn}
+
+      (< (count models) 2)
+      {:config config
+       :message "No alternate models configured"
+       :level :warn}
+
+      :else
+      (let [rotated-models (rotate-models models)
+            next-model     (vis/model-name (first rotated-models))
+            config'        (assoc config :providers
+                             (assoc providers 0 (assoc provider :models rotated-models)))]
+        {:config config'
+         :changed? true
+         :message (str "Model: " next-model)
+         :level :info}))))
+
 (defn init!
   "Initialize app-db with default state."
   []
@@ -260,16 +320,30 @@
 
 (reg-event-db :update-settings
   (fn [db [_ new-settings]]
-    ;; Settings (show-thinking?, show-iterations?, etc.) are part of
-    ;; every format-answer cache key, so toggling them already
-    ;; invalidates cache entries naturally. But the OLD entries
-    ;; linger until the cache fills — which on a quiet conversation
-    ;; never happens. Drop them now so memory stays bounded across
-    ;; many toggles.
-    (render/invalidate-cache!)
-    (let [merged (normalize-settings (merge (:settings db) new-settings))]
-      (persist-settings! merged)
-      (assoc db :settings merged))))
+    (apply-settings-update! db new-settings)))
+
+(reg-event-fx :cycle-reasoning-level
+  (fn [db _]
+    (let [current (normalize-reasoning-level (get-in db [:settings :reasoning-level]))
+          next    (cycle-choice reasoning-level-order current)]
+      {:db (apply-settings-update! db {:reasoning-level next})
+       :fx [[:notify (str "Reasoning: " (name next)) :info settings-notification-ttl-ms]]})))
+
+(reg-event-fx :cycle-codex-verbosity
+  (fn [db _]
+    (let [current (normalize-codex-verbosity (get-in db [:settings :openai-codex-verbosity]))
+          next    (cycle-choice codex-verbosity-order current)]
+      {:db (apply-settings-update! db {:openai-codex-verbosity next})
+       :fx [[:notify (str "Codex verbosity: " (name next)) :info settings-notification-ttl-ms]]})))
+
+(reg-event-fx :cycle-model
+  (fn [db _]
+    (let [base-config (or (:config db) (vis/load-config) {:providers []})
+          {:keys [config changed? message level]} (cycle-primary-model base-config)]
+      {:db (assoc db :config config)
+       :fx (cond-> []
+             changed? (conj [:apply-config config])
+             message  (conj [:notify message level settings-notification-ttl-ms]))})))
 
 (reg-event-db :set-layout
   (fn [db [_ layout]]
@@ -522,6 +596,19 @@
         (dissoc :query-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
+
+(reg-fx :notify
+  (fn [text level ttl-ms]
+    (vis/notify! text :level level :ttl-ms ttl-ms)))
+
+(reg-fx :apply-config
+  (fn [config]
+    (let [raw        (or (vis/load-config-raw) {})
+          persistent (assoc raw :providers (vec (:providers config)))]
+      (vis/save-config! persistent)
+      (let [resolved (or (vis/reload-config!) config)
+            router   (vis/rebuild-router! resolved)]
+        (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-query
   (fn [conversation text token reasoning-level extra-body]

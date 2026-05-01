@@ -84,7 +84,8 @@
      1  run-state spinner, cancelling…
      2  model name, elapsed (running)
      3  iter counter, model reasoning suffix
-     4  cost"
+     4  cost
+     5  keyboard shortcut hints"
   [db _now-ms]
   (let [{:keys [messages cancelling? settings]} db
         info       (chosen-model-info)
@@ -109,15 +110,33 @@
              :fg t/footer-fg-strong :bold? true
              :region :left :priority 2})
 
+      model-display
+      (conj {:text "(Ctrl+T)"
+             :join-left? true
+             :fg t/footer-fg-muted :bold? false
+             :region :left :priority 5})
+
       reasoning?
-      (conj {:text (str "(reasoning:" (name reasoning-level) ")")
+      (conj {:text (str "reasoning: " (name reasoning-level))
+             :fg t/footer-fg-muted :bold? false
+             :region :left :priority 3})
+
+      reasoning?
+      (conj {:text "(Ctrl+R)"
+             :join-left? true
+             :fg t/footer-fg-muted :bold? false
+             :region :left :priority 5})
+
+      codex-provider?
+      (conj {:text (str "verbosity: " (name codex-verbosity))
              :fg t/footer-fg-muted :bold? false
              :region :left :priority 3})
 
       codex-provider?
-      (conj {:text (str "(verbosity:" (name codex-verbosity) ")")
+      (conj {:text "(Ctrl+L)"
+             :join-left? true
              :fg t/footer-fg-muted :bold? false
-             :region :left :priority 3})
+             :region :left :priority 5})
 
       ;; ── CENTER ────────────────────────────────────────────────────────────
       cancelling?
@@ -147,11 +166,18 @@
 (defn- region-spans [segments region]
   (filterv #(= region (:region %)) segments))
 
+(defn- separator-before
+  [span separator]
+  (if (:join-left? span) " " separator))
+
 (defn- spans-width [spans separator]
-  (if (empty? spans)
+  (reduce
+    (fn [w [i span]]
+      (+ w
+        (if (zero? i) 0 (count (separator-before span separator)))
+        (count (:text span))))
     0
-    (+ (reduce + 0 (map #(count (:text %)) spans))
-      (* (dec (count spans)) (count separator)))))
+    (map-indexed vector spans)))
 
 (defn- total-width
   "Width of all three regions plus mandatory inter-region gaps and edge
@@ -208,10 +234,12 @@
     (fn [c [i s]]
       (let [c (if (zero? i)
                 c
-                (do (p/clear-styles! g)
+                (do
+                  (p/clear-styles! g)
                   (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-                  (p/put-str! g c row separator)
-                  (+ c (count separator))))]
+                  (let [separator (separator-before s separator)]
+                    (p/put-str! g c row separator)
+                    (+ c (count separator)))))]
         (p/clear-styles! g)
         (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
         (when (:bold? s) (p/enable! g p/BOLD))

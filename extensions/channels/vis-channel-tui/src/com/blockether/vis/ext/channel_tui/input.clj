@@ -810,6 +810,15 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
+          (and ctrl (= (Character/toLowerCase c) \r))
+          {:action :cycle-reasoning :state state}
+
+          (and ctrl (= (Character/toLowerCase c) \l))
+          {:action :cycle-verbosity :state state}
+
+          (and ctrl (= (Character/toLowerCase c) \t))
+          {:action :cycle-model :state state}
+
           ;; Unbound control chords are ignored instead of inserting their
           ;; letter payload into the prompt.
           ctrl {:action :continue :state state}

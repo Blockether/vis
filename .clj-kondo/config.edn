@@ -1,5 +1,9 @@
 ;; Project-level clj-kondo config.
-{:hooks
+{:lint-as
+ {lazytest.core/defdescribe clojure.test/deftest
+  lazytest.core/around-each clojure.core/fn}
+
+ :hooks
  {:analyze-call
   {;; Macro that wraps a runtime backend lookup behind a defn.
    ;; Without this hook every `defdelegate` call shows up as an
