@@ -18,7 +18,7 @@
 
    Built-in commands registered here:
      vis run                — one-shot agent query (CLI agent helper)
-     vis auth               — provider authentication
+     vis providers          — provider inspection, auth, and limits
      vis conversations      — list persisted conversations
      vis extensions list    — list registered extensions
      vis channels <name>    — auto-mounted via the channel registry
@@ -41,6 +41,7 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.progress :as progress]
+   [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
    [taoensso.telemere :as tel]))
 
@@ -758,75 +759,251 @@
           (stdout! ""))
         (cli-list-conversations! ch)))))
 
-;;; ── `vis auth` ──────────────────────────────────────────────────────────
+;;; ── `vis providers` ─────────────────────────────────────────────────────
 
-(defn- print-auth-status! [provider]
-  (let [s ((:provider/status-fn provider))]
-    (stdout! (str "\n  " (:provider/label provider) " Auth Status"))
+(def ^:private providers-table-cols
+  [{:key :id       :label "ID"       :width 18 :align :left}
+   {:key :label    :label "Label"    :width 28 :align :left}
+   {:key :auth     :label "Auth"     :width  6 :align :left}
+   {:key :rpm      :label "RPM"      :width  8 :align :right}
+   {:key :tpm      :label "TPM"      :width 12 :align :right}
+   {:key :base-url :label "Base URL" :width 36 :align :left}])
+
+(defn- safe-provider-status
+  [provider]
+  (try
+    (cond
+      (:provider/status-fn provider) ((:provider/status-fn provider))
+      (:provider/detect-fn provider) {:authenticated? (boolean ((:provider/detect-fn provider)))}
+      :else                          nil)
+    (catch Throwable e
+      {:authenticated? false
+       :error          (or (ex-message e) (str e))})))
+
+(defn- provider-label-for-id
+  [provider-id]
+  (or (some-> (registry/provider-by-id provider-id) :provider/label)
+    (some-> (config/provider-template provider-id) :label)
+    (str/capitalize (name provider-id))))
+
+(defn- status-entry-label
+  [k]
+  (-> (name k)
+    (str/replace #"-" " ")
+    (str/capitalize)))
+
+(defn- format-status-value
+  [v]
+  (cond
+    (keyword? v) (name v)
+    :else        (str v)))
+
+(defn- format-limit-window
+  [{:keys [kind unit size resets-at-ms]}]
+  (when kind
+    (str (name kind)
+      (when unit
+        (str " " (or size 1) "/" (name unit)))
+      (when resets-at-ms
+        (str ", resets " (fmt/format-date (java.util.Date. (long resets-at-ms))))))))
+
+(defn- format-limit-row
+  [{:keys [label scope kind unlimited? used limit remaining note window]}]
+  (let [quota (cond
+                unlimited?      "unlimited"
+                (number? limit) (str (when (number? used) (str used "/")) limit
+                                  (when (number? remaining)
+                                    (str " (" remaining " left)")))
+                (number? used)  (str "used " used)
+                :else           nil)
+        attrs (->> [(some-> scope name)
+                    (some-> kind name)
+                    (format-limit-window window)]
+                (remove nil?))]
+    (str label
+      (when (seq attrs)
+        (str " [" (str/join ", " attrs) "]"))
+      (when quota
+        (str ": " quota))
+      (when note
+        (str " — " note)))))
+
+(defn- provider-limit-lines
+  [provider-id]
+  (let [report   (provider-limits/provider-limits provider-id)
+        static   (:static report)
+        dynamic  (get-in report [:dynamic :limits])
+        note     (get-in report [:dynamic :note])
+        error*   (:error report)]
+    (vec
+      (concat [(str "  Limits status: " (name (:status report)))]
+        (when-let [rpm (:rpm static)]
+          [(str "  Static RPM:     " rpm)])
+        (when-let [tpm (:tpm static)]
+          [(str "  Static TPM:     " tpm)])
+        (if (seq dynamic)
+          (concat ["  Dynamic limits:"]
+            (map #(str "    - " (format-limit-row %)) dynamic))
+          ["  Dynamic limits: none reported"])
+        (when note
+          [(str "  Note:           " note)])
+        (when error*
+          [(str "  Error:          " (:message error*))])))))
+
+(defn- print-provider-status!
+  [provider]
+  (let [status   (or (safe-provider-status provider) {:authenticated? false})
+        provider-id (:provider/id provider)
+        base-url (some-> provider-id config/provider-template :base-url)
+        rows     (->> status
+                   (remove (fn [[k _]] (= k :authenticated?)))
+                   (sort-by (comp str key)))]
+    (stdout! (str "\n  " (:provider/label provider) " Provider Status"))
     (stdout! "  ─────────────────────────────────")
-    (if (:authenticated? s)
-      (do (stdout! "  Authenticated: yes")
-        (when-let [src (:source s)]
-          (stdout! (str "  Source:        " (name src))))
-        (when-let [tp (:oauth-token-preview s)]
-          (stdout! (str "  Token:         " tp)))
-        (when (contains? s :copilot-token-valid?)
-          (stdout! (str "  API token:     "
-                     (if (:copilot-token-valid? s) "valid" "expired")))
-          (when (:copilot-token-valid? s)
-            (stdout! (str "  Expires in:    "
-                       (int (/ (:expires-in-ms s) 60000)) " min")))))
-      (stdout! "  Authenticated: no"))
+    (when base-url
+      (stdout! (str "  Base URL:       " base-url)))
+    (stdout! (str "  Authenticated:  " (if (:authenticated? status) "yes" "no")))
+    (doseq [[k v] rows]
+      (stdout! (str "  " (commandline/pad-right (str (status-entry-label k) ":") 15)
+                 (format-status-value v))))
+    (doseq [line (provider-limit-lines provider-id)]
+      (stdout! line))
     (stdout! "")))
 
-(defn- cli-auth!
-  "Look the requested provider up through the registry and dispatch
-   --status / --logout / interactive auth via its registered fns.
-   Concrete providers live in their own packages
-   (`vis-provider-github-copilot`, future `vis-provider-anthropic`,
-   …); vis-runtime never references them by namespace."
-  [parsed residual]
+(defn- print-provider-limits!
+  [provider-id]
+  (stdout! (str "\n  " (provider-label-for-id provider-id) " Limits"))
+  (stdout! "  ─────────────────────────────────")
+  (doseq [line (provider-limit-lines provider-id)]
+    (stdout! line))
+  (stdout! ""))
+
+(defn- providers-list-rows
+  []
+  (->> (registry/registered-providers)
+    (sort-by :provider/id)
+    (mapv (fn [provider]
+            (let [status   (safe-provider-status provider)
+                  report   (provider-limits/provider-limits (:provider/id provider))
+                  base-url (some-> (:provider/id provider) config/provider-template :base-url)]
+              {:id       (name (:provider/id provider))
+               :label    (:provider/label provider)
+               :auth     (if (:authenticated? status) "yes" "no")
+               :rpm      (or (some-> report :static :rpm str) "—")
+               :tpm      (or (some-> report :static :tpm str) "—")
+               :base-url (or base-url "—")})))))
+
+(defn- print-registered-providers!
+  []
+  (let [all (registry/registered-providers)]
+    (if (seq all)
+      (do (stdout! "Available providers:")
+        (doseq [p (sort-by :provider/id all)]
+          (stdout! (str "  " (commandline/pad-right (name (:provider/id p)) 22)
+                     (:provider/label p)))))
+      (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath."))))
+
+(defn- cli-providers-list! [_parsed _residual]
   (config/init-cli!)
-  (let [provider-name (or (get parsed "provider")
-                        (first (remove #(str/starts-with? % "--") residual)))
+  (let [rows (providers-list-rows)]
+    (if (empty? rows)
+      (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")
+      (do (stdout! "\n  Providers\n")
+        (print-table! providers-table-cols rows)
+        (stdout! (str "\n  " (count rows) " provider(s)\n")))))
+  (shutdown-agents))
+
+(defn- cli-providers-status! [_parsed residual]
+  (config/init-cli!)
+  (let [provider-name (first residual)
         provider-id   (some-> provider-name keyword)
-        flags         (set (rest residual))
-        status?       (or (true? (get parsed "status")) (contains? flags "--status"))
-        logout?       (or (true? (get parsed "logout")) (contains? flags "--logout"))
         provider      (when provider-id (registry/provider-by-id provider-id))
-        all           (registry/registered-providers)]
+        providers     (if provider-name
+                        (if provider [provider] [])
+                        (sort-by :provider/id (registry/registered-providers)))]
     (cond
-      (nil? provider-id)
-      (do (stdout! "Usage: vis auth <provider> [--status | --logout]")
+      (and provider-name (nil? provider))
+      (do (stdout! (str "Unknown provider: " provider-name))
         (stdout! "")
-        (if (seq all)
-          (do (stdout! "Available providers:")
-            (doseq [p (sort-by :provider/id all)]
-              (stdout! (str "  " (commandline/pad-right (name (:provider/id p)) 22)
-                         (:provider/label p)))))
-          (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")))
+        (print-registered-providers!))
 
-      (nil? provider)
-      (do (stdout! (str "Unknown auth provider: " (name provider-id)))
-        (when (seq all)
-          (stdout! (str "Available: "
-                     (str/join ", " (map (comp name :provider/id)
-                                      (sort-by :provider/id all)))))))
-
-      status?
-      (when (:provider/status-fn provider)
-        (print-auth-status! provider))
-
-      logout?
-      (when-let [f (:provider/logout-fn provider)]
-        (f)
-        (stdout! (str "  Logged out of " (:provider/label provider) ". Tokens cleared.")))
+      (empty? providers)
+      (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")
 
       :else
-      (when-let [auth-fn (:provider/auth-fn provider)]
-        (try (auth-fn stdout!)
-          (catch Exception e
-            (stdout! (error/format-error (str "Authentication failed: " (ex-message e)))))))))
+      (doseq [p providers]
+        (print-provider-status! p))))
+  (shutdown-agents))
+
+(defn- cli-providers-limits! [_parsed residual]
+  (config/init-cli!)
+  (let [provider-name (first residual)
+        registered    (sort-by :provider/id (registry/registered-providers))]
+    (if provider-name
+      (let [provider-id (keyword provider-name)
+            known?      (or (registry/provider-by-id provider-id)
+                          (config/provider-template provider-id)
+                          (seq (:static (provider-limits/provider-limits provider-id))))]
+        (if known?
+          (print-provider-limits! provider-id)
+          (do (stdout! (str "Unknown provider: " provider-name))
+            (stdout! "")
+            (print-registered-providers!))))
+      (if (seq registered)
+        (doseq [provider registered]
+          (print-provider-limits! (:provider/id provider)))
+        (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath."))))
+  (shutdown-agents))
+
+(defn- cli-providers-auth! [parsed residual]
+  (config/init-cli!)
+  (let [provider-name (or (get parsed "provider") (first residual))
+        provider-id   (some-> provider-name keyword)
+        provider      (when provider-id (registry/provider-by-id provider-id))]
+    (cond
+      (nil? provider-id)
+      (do (stdout! "Usage: vis providers auth <provider>")
+        (stdout! "")
+        (print-registered-providers!))
+
+      (nil? provider)
+      (do (stdout! (str "Unknown provider: " provider-name))
+        (stdout! "")
+        (print-registered-providers!))
+
+      (nil? (:provider/auth-fn provider))
+      (stdout! (str "Provider " (:provider/label provider) " does not expose an interactive auth flow."))
+
+      :else
+      (try
+        ((:provider/auth-fn provider) stdout!)
+        (catch Exception e
+          (stdout! (error/format-error (str "Authentication failed: " (ex-message e))))))))
+  (shutdown-agents))
+
+(defn- cli-providers-logout! [parsed residual]
+  (config/init-cli!)
+  (let [provider-name (or (get parsed "provider") (first residual))
+        provider-id   (some-> provider-name keyword)
+        provider      (when provider-id (registry/provider-by-id provider-id))]
+    (cond
+      (nil? provider-id)
+      (do (stdout! "Usage: vis providers logout <provider>")
+        (stdout! "")
+        (print-registered-providers!))
+
+      (nil? provider)
+      (do (stdout! (str "Unknown provider: " provider-name))
+        (stdout! "")
+        (print-registered-providers!))
+
+      (nil? (:provider/logout-fn provider))
+      (stdout! (str "Provider " (:provider/label provider) " does not persist credentials."))
+
+      :else
+      (do
+        ((:provider/logout-fn provider))
+        (stdout! (str "  Logged out of " (:provider/label provider) ". Tokens cleared.")))))
   (shutdown-agents))
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────
@@ -874,7 +1051,7 @@
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
-;; `run`, `auth`, `conversations`, `doctor` are the binary's own
+;; `run`, `providers`, `conversations`, `doctor` are the binary's own
 ;; commands. They live at the top of the command tree -- `vis run
 ;; "..."`, NOT `vis extensions run "..."` -- so they bypass
 ;; `:ext/cli` (the extensions-subcommand slot, see below).
@@ -898,22 +1075,10 @@
                          "vis run --no-persist \"Throwaway one-shot probe\""]
           :cmd/run-fn cli-run!}
 
-         {:cmd/name  "auth"
-          :cmd/doc   "Authenticate with an LLM provider."
-          :cmd/usage "vis auth <provider> [--status | --logout]"
-          :cmd/args  [{:name "provider" :kind :positional :type :string
-                       :doc  "Provider id (for example: github-copilot or openai-codex)."}
-                      {:name "status" :kind :flag :type :boolean
-                       :doc  "Show current authentication state without logging in."}
-                      {:name "logout" :kind :flag :type :boolean
-                       :doc  "Clear saved credentials for the provider."}]
-          :cmd/examples ["vis auth github-copilot"
-                         "vis auth github-copilot --status"
-                         "vis auth github-copilot --logout"
-                         "vis auth openai-codex"
-                         "vis auth openai-codex --status"
-                         "vis auth openai-codex --logout"]
-          :cmd/run-fn cli-auth!}
+         {:cmd/name  "providers"
+          :cmd/doc   "Inspect, authenticate, and introspect LLM providers."
+          :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
+          :cmd/subcommands #(registry/registered-under ["providers"])}
 
          {:cmd/name  "conversations"
           :cmd/doc   "List conversations stored on disk, or fork one."
@@ -938,14 +1103,54 @@
 ;; a HOST-owned built-in, NOT a third-party contribution -- vis core
 ;; is the host, never an extension. So it registers directly via
 ;; `registry/register-cmd!` with `:cmd/parent ["extensions"]`, the
-;; same plumbing the four top-level built-ins above use.
+;; same plumbing the top-level built-ins above use.
 
-(registry/register-cmd!
-  {:cmd/name   "list"
-   :cmd/parent ["extensions"]
-   :cmd/doc    "List every registered extension with metadata."
-   :cmd/usage  "vis extensions list"
-   :cmd/run-fn cli-extensions!})
+(doseq [spec
+        [{:cmd/name   "list"
+          :cmd/parent ["providers"]
+          :cmd/doc    "List registered providers with auth state, static limits, and base URLs."
+          :cmd/usage  "vis providers list"
+          :cmd/run-fn cli-providers-list!}
+         {:cmd/name   "status"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Show provider authentication status together with static/dynamic limits."
+          :cmd/usage  "vis providers status [provider]"
+          :cmd/examples ["vis providers status"
+                         "vis providers status github-copilot"
+                         "vis providers status openai-codex"]
+          :cmd/run-fn cli-providers-status!}
+         {:cmd/name   "limits"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Show provider rate-limit metadata and any dynamic quota report."
+          :cmd/usage  "vis providers limits [provider]"
+          :cmd/examples ["vis providers limits"
+                         "vis providers limits openai-codex"
+                         "vis providers limits ollama"]
+          :cmd/run-fn cli-providers-limits!}
+         {:cmd/name   "auth"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Run a provider's interactive authentication flow."
+          :cmd/usage  "vis providers auth <provider>"
+          :cmd/args   [{:name "provider" :kind :positional :type :string
+                        :doc  "Registered provider id (for example: github-copilot or openai-codex)."}]
+          :cmd/examples ["vis providers auth github-copilot"
+                         "vis providers auth openai-codex"]
+          :cmd/run-fn cli-providers-auth!}
+         {:cmd/name   "logout"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Clear saved credentials for a provider."
+          :cmd/usage  "vis providers logout <provider>"
+          :cmd/args   [{:name "provider" :kind :positional :type :string
+                        :doc  "Registered provider id."}]
+          :cmd/examples ["vis providers logout github-copilot"
+                         "vis providers logout openai-codex"]
+          :cmd/run-fn cli-providers-logout!}
+         {:cmd/name   "list"
+          :cmd/parent ["extensions"]
+          :cmd/doc    "List every registered extension with metadata."
+          :cmd/usage  "vis extensions list"
+          :cmd/run-fn cli-extensions!}]]
+  (registry/register-cmd! spec))
 
 ;; =============================================================================
 ;; Dispatcher entry point (-main)

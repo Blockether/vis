@@ -1471,7 +1471,7 @@
                 (map #(cr/lookup hit-col %)
                   (range viewport-top (+ viewport-top start height)))))))
 
-  (it "keeps the user-bubble background above the copy-control row"
+  (it "keeps one plain terminal row between the user bubble and the copy-control row"
     (let [fills    (atom [])
           active   (atom #{})
           graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
@@ -1516,7 +1516,7 @@
           bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)
           copy-row-rel   (- copy-row viewport-top)]
       (expect (= 3 (:h bubble-fill)))
-      (expect (= bubble-last-row (dec copy-row-rel))))))
+      (expect (= bubble-last-row (- copy-row-rel 2))))))
 
 (defdescribe message-copy-markdown-test
   (it "copies explicit markdown when present"

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.provider-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
@@ -63,8 +64,27 @@
       (expect (= [:models :authenticate :status :logout]
                 (mapv :id (provider/provider-action-items {:id :openai
                                                            :api-key "sk-test"}))))
+      (expect (= ["Configure Models" "Authenticate" "Show Status + Limits" "Log Out"]
+                (mapv :label (provider/provider-action-items {:id :openai
+                                                              :api-key "sk-test"}))))
       (expect (= [:models :status]
                 (mapv :id (provider/provider-action-items {:id :ollama})))))))
+
+(defdescribe provider-status-text-test
+  (it "renders static limits in the provider status dialog"
+    (with-redefs [vis/provider-limits (constantly {:provider-id :openai-codex
+                                                   :status :ok
+                                                   :static {:rpm 500 :tpm 2000000}
+                                                   :dynamic {:limits []
+                                                             :note "Static-only for now."}})]
+      (let [text (@#'provider/provider-status-text {:id :openai-codex
+                                                    :base-url "https://chatgpt.com/backend-api"
+                                                    :api-key "tok"})]
+        (expect (str/includes? text "Base URL: https://chatgpt.com/backend-api"))
+        (expect (str/includes? text "Authenticated: yes"))
+        (expect (str/includes? text "Static RPM: 500"))
+        (expect (str/includes? text "Static TPM: 2000000"))
+        (expect (str/includes? text "Note: Static-only for now."))))))
 
 (defdescribe codex-oauth-ready-test
   (it "returns true immediately when Codex credentials already exist"

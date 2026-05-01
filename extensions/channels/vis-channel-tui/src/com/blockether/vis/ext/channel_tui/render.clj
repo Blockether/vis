@@ -808,9 +808,10 @@
     ;; padding above the typed text (otherwise the yellow band
     ;; hugs the first character and reads as a single-row strip).
     ;; User bubbles also keep one breathing row BELOW the typed text,
-    ;; then place the copy affordance on the next line, outside the
-    ;; warm-yellow fill. Mirror this in `bubble-height*` so the math
-    ;; stays in sync.
+    ;; then leave one additional plain terminal row before the copy
+    ;; affordance so the control does not visually stick to the yellow
+    ;; bubble. Mirror this in `bubble-height*` so the math stays in
+    ;; sync.
     (let [top-pad    (if user? 1 0)
           bottom-pad (if user? 1 0)
           btop       (+ start-row 1 top-pad)]
@@ -1390,7 +1391,8 @@
         ;;   final row                : single blank gap before the next message
         (p/clear-styles! g)
         (let [footer?    (or show-copy? meta-str)
-              footer-row (+ chrome-top chrome-rows)]
+              footer-gap (if (and user? show-copy?) 1 0)
+              footer-row (+ chrome-top chrome-rows footer-gap)]
           (when footer?
             (when meta-str
               (p/set-colors! g t/dialog-hint t/terminal-bg)
@@ -1401,8 +1403,9 @@
           ;; Return: rows consumed
           ;;   = label(1) + top-pad(user only) + content(N)
           ;;     + bottom-pad(user only) + chrome(M)
-          ;;     + footer(copy and/or meta)(0|1) + gap(1)
-          (+ 1 top-pad bubble-h bottom-pad chrome-rows (if footer? 1 0) 1))))))
+          ;;     + optional user footer-gap(1) + footer(copy and/or meta)(0|1)
+          ;;     + gap(1)
+          (+ 1 top-pad bubble-h bottom-pad chrome-rows footer-gap (if footer? 1 0) 1))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Link / image / file-link chrome
@@ -1573,7 +1576,8 @@
   "Uncached calculation: rows a chat message will consume without drawing.
    label(1) + optional top-pad(1, user only) + wrapped-lines
    + optional bottom-pad(1, user only) + link-chrome(refs)
-   + footer(copy and/or optional meta)(0|1) + gap(1).
+   + optional user footer-gap(1, before copy) + footer(copy and/or optional meta)(0|1)
+   + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
   [{:keys [text role prewrapped-lines hide-copy? iteration-count duration-ms tokens cost status] :as message} max-w]
@@ -1583,6 +1587,7 @@
         lines      (or prewrapped-lines (wrap-text text content-w))
         top-pad    (if (= role :user) 1 0)
         bottom-pad (if (= role :user) 1 0)
+        show-copy? (not hide-copy?)
         cancelled? (= :cancelled status)
         meta-str   (when (and (not= role :user) (not cancelled?))
                      (let [line (vis/format-meta-line
@@ -1592,8 +1597,9 @@
                                    :cost cost})]
                        (when-not (str/blank? line) line)))
         refs       (extract-link-refs message bubble-w)
-        footer?    (or (not hide-copy?) meta-str)]
-    (+ 1 top-pad (count lines) bottom-pad (count refs) (if footer? 1 0) 1)))
+        footer?    (or show-copy? meta-str)
+        footer-gap (if (and (= role :user) show-copy?) 1 0)]
+    (+ 1 top-pad (count lines) bottom-pad (count refs) footer-gap (if footer? 1 0) 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by `:text` identity + role +

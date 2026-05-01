@@ -50,7 +50,8 @@
      Prompt builders     active-extensions, assemble-system-prompt,
                          build-iteration-context, safe-pr-str
      Provider registry   provider, register-provider!, registered-providers,
-                         provider-by-id
+                         provider-by-id, provider-limits,
+                         all-provider-limits
      SCI sandbox         create-sci-context, build-var-index,
                          restore-sandbox!, system-var-sym?, SYSTEM_VAR_NAMES
 
@@ -73,6 +74,7 @@
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
+   [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry     :as registry]))
 
 ;; =============================================================================
@@ -175,6 +177,8 @@
 (def deregister-provider!  registry/deregister-provider!)
 (def registered-providers  registry/registered-providers)
 (def provider-by-id        registry/provider-by-id)
+(def provider-limits       provider-limits/provider-limits)
+(def all-provider-limits   provider-limits/all-provider-limits)
 
 ;; =============================================================================
 ;; Persistance facade
