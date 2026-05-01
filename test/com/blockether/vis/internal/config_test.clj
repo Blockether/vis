@@ -9,7 +9,14 @@
       (expect (= "OpenAI Codex (ChatGPT OAuth)" (:label preset)))
       (expect (= "https://chatgpt.com/backend-api" (:base-url preset)))
       (expect (= :openai-compatible-responses (:api-style preset)))
-      (expect (some #{"gpt-5.1"} (:default-models preset))))))
+      (expect (some #{"gpt-5.1"} (:default-models preset)))))
+
+  (it "keeps local provider base URLs while letting Ollama discover models dynamically"
+    (let [ollama   (config/provider-template :ollama)
+          lmstudio (config/provider-template :lmstudio)]
+      (expect (= "http://localhost:11434/v1" (:base-url ollama)))
+      (expect (nil? (:default-models ollama)))
+      (expect (= "http://localhost:1234/v1" (:base-url lmstudio))))))
 
 (defdescribe load-config-test
   (it "backfills OpenAI Codex runtime metadata for existing config files"

@@ -112,6 +112,11 @@
                               :ext/symbols [sym]})]
       (expect (map? (vis/invoke-symbol-wrapper ext sym [] {}))))))
 
+(defdescribe provider-limits-api-test
+  (it "re-exports provider limits helpers from the public vis.core surface"
+    (expect (ifn? vis/provider-limits))
+    (expect (ifn? vis/all-provider-limits))))
+
 ;; =============================================================================
 ;; try-rescue-parse-error
 ;;

@@ -286,7 +286,7 @@
            "address bar and paste it into the next dialog."
            ""
            "Fallback if needed:"
-           "  vis auth openai-codex"])
+           "  vis providers auth openai-codex"])
         (try
           (let [result (codex/login! (constantly nil)
                          {:originator     "vis-tui"
@@ -302,7 +302,7 @@
               [(str "Auth failed: " (ex-message e))
                ""
                "If browser auth still fails here, run:"
-               "  vis auth openai-codex"])
+               "  vis providers auth openai-codex"])
             false))))))
 
 (defn- add-provider!
@@ -379,8 +379,8 @@
 (defn- draw-provider-card!
   "Draw a 2-line provider card.
     Line 1: ① Label  url.host  ●
-    Line 2:    ★ root-model  (+N models)"
-  [g left row inner-w idx selected? provider status]
+    Line 2:    ★ root-model  (+N models) · RPM/TMP summary"
+  [g left row inner-w idx selected? provider status limits]
   (let [text-w  (max 0 (- inner-w 2))
         text-x  (+ left 2)
         pri     (priority-label idx)
@@ -393,6 +393,12 @@
         suffix      (if (<= model-count 1)
                       "(1 model)"
                       (str "(+" (dec model-count) " models)"))
+        limit-summary (->> [(when-let [rpm (get-in limits [:static :rpm])]
+                              (str "RPM " rpm))
+                            (when-let [tpm (get-in limits [:static :tpm])]
+                              (str "TPM " tpm))]
+                        (remove nil?)
+                        (str/join " · "))
         ;; Layout line 1:  "① Label" ... "host  ●"
         left-part  (str pri " " (or label "?"))
         right-part (str host "  ●")
@@ -422,12 +428,15 @@
       (p/set-fg! g (if ok? t/status-ok t/status-bad))
       (p/put-str! g dot-col row "●"))
 
-    ;; Line 2 — model (indented)
+    ;; Line 2 — model + static limits summary
     (if selected?
       (p/set-fg! g t/dialog-title-fg)
       (p/set-fg! g t/dialog-fg))
     (p/put-str! g text-x (inc row)
-      (dlg/ellipsize (str "   ★ " root-name "  " suffix) text-w))))
+      (dlg/ellipsize (str "   ★ " root-name "  " suffix
+                       (when (seq limit-summary)
+                         (str " · " limit-summary)))
+        text-w))))
 
 (defn- draw-model-card!
   "Two-line model card. Mirrors `draw-provider-card!` layout:
@@ -679,6 +688,17 @@
       :else
       {:authenticated? false})))
 
+(defn- safe-provider-limits
+  [provider]
+  (try
+    (vis/provider-limits (:id provider))
+    (catch Throwable e
+      {:provider-id (:id provider)
+       :status      :error
+       :static      {}
+       :dynamic     {:limits []}
+       :error       {:message (or (ex-message e) (str e))}})))
+
 (defn- provider-authenticated?
   [provider]
   (boolean (:authenticated? (configured-provider-status provider))))
@@ -689,28 +709,81 @@
     (str/replace #"-" " ")
     (str/capitalize)))
 
+(defn- format-status-value
+  [v]
+  (cond
+    (keyword? v) (name v)
+    :else        (str v)))
+
+(defn- format-limit-window
+  [{:keys [kind unit size resets-at-ms]}]
+  (when kind
+    (str (name kind)
+      (when unit
+        (str " " (or size 1) "/" (name unit)))
+      (when resets-at-ms
+        (str ", resets " (vis/format-date (java.util.Date. (long resets-at-ms))))))))
+
+(defn- format-limit-row
+  [{:keys [label scope kind unlimited? used limit remaining note window]}]
+  (let [quota (cond
+                unlimited?      "unlimited"
+                (number? limit) (str (when (number? used) (str used "/")) limit
+                                  (when (number? remaining)
+                                    (str " (" remaining " left)")))
+                (number? used)  (str "used " used)
+                :else           nil)
+        attrs (->> [(some-> scope name)
+                    (some-> kind name)
+                    (format-limit-window window)]
+                (remove nil?))]
+    (str label
+      (when (seq attrs)
+        (str " [" (str/join ", " attrs) "]"))
+      (when quota
+        (str ": " quota))
+      (when note
+        (str " — " note)))))
+
 (defn- provider-status-text
   [provider]
-  (let [status (configured-provider-status provider)
-        title  (str (vis/display-label (:id provider)) " Authentication")
-        rows   (->> status
-                 (remove (fn [[k _]] (= k :authenticated?)))
-                 (sort-by (comp str key))
-                 (map (fn [[k v]]
-                        (str (status-entry-label k) ": " v))))]
+  (let [status  (configured-provider-status provider)
+        limits  (safe-provider-limits provider)
+        title   (str (vis/display-label (:id provider)) " Status")
+        rows    (->> status
+                  (remove (fn [[k _]] (= k :authenticated?)))
+                  (sort-by (comp str key))
+                  (map (fn [[k v]]
+                         (str (status-entry-label k) ": " (format-status-value v)))))
+        dynamic (get-in limits [:dynamic :limits])]
     (str/join "\n"
       (concat [title
                ""
+               (str "Base URL: " (or (vis/provider-base-url provider) "—"))
                (str "Authenticated: " (if (:authenticated? status) "yes" "no"))]
         (when-let [e (:error status)]
           ["" (str "Error: " e)])
         (when (seq rows)
-          (concat [""] rows))))))
+          (concat [""] rows))
+        ["" "Limits"
+         (str "Status: " (name (:status limits)))]
+        (when-let [rpm (get-in limits [:static :rpm])]
+          [(str "Static RPM: " rpm)])
+        (when-let [tpm (get-in limits [:static :tpm])]
+          [(str "Static TPM: " tpm)])
+        (if (seq dynamic)
+          (concat ["Dynamic limits:"]
+            (map #(str "- " (format-limit-row %)) dynamic))
+          ["Dynamic limits: none reported"])
+        (when-let [note (get-in limits [:dynamic :note])]
+          [(str "Note: " note)])
+        (when-let [message (get-in limits [:error :message])]
+          [(str "Limits error: " message)])))))
 
 (defn show-provider-status!
   [^TerminalScreen screen provider]
   (dlg/text-viewer-dialog! screen
-    (str (vis/display-label (:id provider)) " Status")
+    (str (vis/display-label (:id provider)) " Status & Limits")
     (provider-status-text provider)))
 
 (defn- provider-supports-auth?
@@ -730,7 +803,7 @@
       (or (:provider/status-fn registered)
         (:provider/detect-fn registered)
         (:api-key provider))
-      (conj {:id :status :label "Show Status"})
+      (conj {:id :status :label "Show Status + Limits"})
 
       (or (:provider/logout-fn registered)
         (:api-key provider))
@@ -846,6 +919,10 @@
                            (map (fn [provider]
                                   [(:id provider) (configured-provider-status provider)]))
                            @items))
+         limits    (atom (into {}
+                           (map (fn [provider]
+                                  [(:id provider) (safe-provider-limits provider)]))
+                           @items))
          selected  (atom 0)]
      (loop []
        (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -881,7 +958,8 @@
                        (>= (+ card-y card-rows) content-top))
                  (draw-provider-card! g left card-y inner-w idx (= idx @selected)
                    (nth @items idx)
-                   (get @statuses (:id (nth @items idx))))))))
+                   (get @statuses (:id (nth @items idx)))
+                   (get @limits (:id (nth @items idx))))))))
 
          (dlg/draw-hint-bar! g left hint-row inner-w
            [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
@@ -946,7 +1024,8 @@
 
                            nil)
                          (let [provider* (nth @items @selected)]
-                           (swap! statuses assoc (:id provider*) (configured-provider-status provider*))))))
+                           (swap! statuses assoc (:id provider*) (configured-provider-status provider*))
+                           (swap! limits assoc (:id provider*) (safe-provider-limits provider*))))))
                    (recur))
 
                  (= ktype KeyType/Character)
@@ -957,6 +1036,7 @@
                      (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]
                            (swap! items conj p)
                            (swap! statuses assoc (:id p) (configured-provider-status p))
+                           (swap! limits assoc (:id p) (safe-provider-limits p))
                            (reset! selected (dec (count @items))))
                        (recur))
 
@@ -971,6 +1051,7 @@
                            (swap! items #(vec (concat (subvec % 0 @selected)
                                                 (subvec % (inc @selected)))))
                            (swap! statuses dissoc provider-id)
+                           (swap! limits dissoc provider-id)
                            (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items)))))))
                        (recur))
 

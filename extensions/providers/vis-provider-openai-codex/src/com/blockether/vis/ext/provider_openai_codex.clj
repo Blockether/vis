@@ -262,7 +262,7 @@
          :llm-headers {"chatgpt-account-id" (:account-id fresh)}})
 
       :else
-      (throw (ex-info "No OpenAI Codex credentials found. Run `vis auth openai-codex` to authenticate."
+      (throw (ex-info "No OpenAI Codex credentials found. Run `vis providers auth openai-codex` to authenticate."
                {:type :vis/openai-codex-not-authenticated})))))
 
 ;; =============================================================================
@@ -317,8 +317,8 @@
      (if (detect-credentials)
        (do
          (print! "  Already authenticated with OpenAI Codex.")
-         (print! "  Run `vis auth openai-codex --status` for details.")
-         (print! "  Run `vis auth openai-codex --logout` first to re-authenticate.")
+         (print! "  Run `vis providers status openai-codex` for details.")
+         (print! "  Run `vis providers logout openai-codex` first to re-authenticate.")
          :already-authenticated)
        (let [{:keys [verifier state url]} (create-authorization-flow originator)]
          (print! "")
@@ -331,7 +331,7 @@
            (print! "  Browser opened. After login, copy the final browser URL and paste it here.")
            (print! "  Browser auto-open failed; open the URL manually, then paste the final browser URL here."))
          (when-not manual-code-fn
-           (throw (ex-info "Manual code entry is disabled for this flow. Run `vis auth openai-codex` in a terminal or use a frontend that can collect the redirect URL."
+           (throw (ex-info "Manual code entry is disabled for this flow. Run `vis providers auth openai-codex` in a terminal or use a frontend that can collect the redirect URL."
                     {:type :vis/openai-codex-manual-entry-disabled})))
          (let [input  (manual-code-fn print!)
                parsed (parse-authorization-input input)

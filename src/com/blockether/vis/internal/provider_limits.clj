@@ -135,13 +135,20 @@
 
    The provider's optional `:provider/limits-fn` supplies the dynamic
    portion. This host wrapper backfills static svar metadata and always
-   returns a valid `::report` envelope, even when the provider is
-   unsupported, missing, throws, or returns malformed data."
+   returns a valid `::report` envelope, even when the provider-specific
+   implementation is absent, missing, throws, or returns malformed data.
+
+   Providers that only have static svar catalog metadata still return a
+   usable `:ok` report so callers can surface RPM / TPM without needing a
+   registered runtime extension."
   [provider-id]
-  (if-let [provider (registry/provider-by-id provider-id)]
-    (if-let [limits-fn (:provider/limits-fn provider)]
+  (let [provider      (registry/provider-by-id provider-id)
+        static-report (base-report provider-id :ok)
+        has-static?   (seq (:static static-report))]
+    (cond
+      (and provider (:provider/limits-fn provider))
       (try
-        (let [report (merge-report (base-report provider-id :ok) (or (limits-fn) {}))]
+        (let [report (merge-report static-report (or ((:provider/limits-fn provider)) {}))]
           (if (s/valid? ::report report)
             report
             (invalid-report provider-id report)))
@@ -150,10 +157,20 @@
             :provider/limits-error
             (or (ex-message t) (.getName (class t)))
             {:class (.getName (class t))})))
+
+      has-static?
+      (base-report provider-id :ok
+        (if provider
+          "Provider exposes static catalog limits only."
+          "Provider is not registered; showing static catalog limits only."))
+
+      provider
       (base-report provider-id :unsupported
-        "Provider does not expose a limits function."))
-    (base-report provider-id :unknown-provider
-      "Provider is not registered.")))
+        "Provider does not expose limit metadata.")
+
+      :else
+      (base-report provider-id :unknown-provider
+        "Provider is not registered."))))
 
 (defn all-provider-limits
   "Return normalized limits reports for every registered provider in

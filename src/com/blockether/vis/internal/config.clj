@@ -133,8 +133,7 @@
                     :default-models ["openai/gpt-4o" "google/gemini-2.5-pro"
                                      "anthropic/claude-sonnet-4-5"
                                      "meta-llama/llama-3.1-70b-instruct"]}
-   :ollama         {:label "Ollama"
-                    :default-models ["llama3.1" "mistral" "codellama" "phi3"]}
+   :ollama         {:label "Ollama"}
    :lmstudio       {:label "LM Studio"}
    :blockether     {:label "Blockether"
                     :default-models ["glm-5-turbo" "glm-5.1" "gpt-5-mini" "gpt-4o"
