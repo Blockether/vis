@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.markdown :as md-repair]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -3137,7 +3138,8 @@
   ([text max-w mode] (markdown->entries text max-w mode nil))
   ([text max-w mode opts]
    (when (and text (not (str/blank? text)))
-     (let [segments (parse-detail-segments (coalesce-loose-list-items (str/split-lines text)))]
+     (let [text     (md-repair/normalize-chat-markdown text)
+           segments (parse-detail-segments (coalesce-loose-list-items (str/split-lines text)))]
        (vec (render-detail-segments segments max-w mode opts))))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} markdown->lines

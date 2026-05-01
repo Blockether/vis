@@ -449,7 +449,11 @@
 (defn join
   "Stitch block pieces with one BLANK line (`\\n\\n`). nil dropped.
    Seqs splice one level — `(v/join (mapv render xs))` and
-   `(v/join (v/h1 \"…\") (map render xs))` both Just Work."
+   `(v/join (v/h1 \"…\") (map render xs))` both Just Work.
+
+   Use this to compose block helpers for `(answer …)`. Do NOT glue
+   `v/p` / `v/code-block` / `v/table` / headings with raw `str` unless
+   you are manually inserting the separating newlines yourself."
   ^String [& parts]
   (->> (expand-parts parts)
     (mapv ->str)
@@ -638,7 +642,7 @@
                  "(v/table [\"k\" \"v\"] [[\"x\" 1]] {:align [:left :right]})"]})
 
    (vis/symbol 'join join
-     {:doc "Stitch block pieces with one BLANK line (`\\n\\n`)."
+     {:doc "Stitch block pieces with one BLANK line (`\\n\\n`). Use this to compose block helpers for `(answer …)`; do NOT raw-`str` block helpers together unless you insert separators manually."
       :arglists '([& parts])
       :examples ["(v/join (v/h1 \"x\") (v/p \"y\"))"]})
    (vis/symbol 'lines lines
@@ -679,7 +683,7 @@
     "             (v/ul items) (v/ol items) (v/checklist [[t done?] …])\n"
     "  Tables     (v/table headers rows) (v/table headers rows {:align [:left :center :right]})\n"
     "  Compose    (v/join …blocks) (v/lines …lines) (v/section title body) (v/escape s)\n"
-    "Block fns return text WITHOUT trailing newline. Stitch with (v/join …), feed to (answer …).\n"
+    "Block fns return text WITHOUT trailing newline. Stitch block helpers with (v/join …), feed to (answer …). Do NOT raw-`str` block helpers together unless you insert separators manually.\n"
     "Cite source via (v/file-link path line) -> TUI jumps to line. (v/link …) for URLs, (v/image alt url) for diagrams. Hand-rolled `[…](…)` drifts from channel conventions; the helpers stay aligned."))
 
 ;; NOTE: this ns is implementation-only now. The actual sandbox surface

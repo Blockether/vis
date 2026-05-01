@@ -121,6 +121,24 @@
                     p/MARKER_MD_H3 p/MARKER_MD_H3 p/MARKER_MD_H3]
                   (mapv marker-of lines)))))))
 
+(defdescribe malformed-fence-answer-repro-test
+  (describe "glued fence repair for malformed final answers"
+    ;; Faithful reduction of conversation bbc79960's broken final
+    ;; answer shape: prose glued to an opening fence, then a closing
+    ;; fence glued to a trailing paragraph. Before the repair pass the
+    ;; TUI rendered the first fence literally and swallowed the final
+    ;; paragraph into an unterminated code block. We now normalize the
+    ;; fence boundaries before markdown parsing so the paragraph stays
+    ;; visible.
+    (it "keeps the trailing paragraph visible instead of swallowing it into code"
+      (let [src   "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model."
+            lines (md->lines src 80 :answer)]
+        (expect (= "Here's the top-level directory structure of this repo:"
+                  (first lines)))
+        (expect (some #(= p/MARKER_MD_CODE (marker-of %)) lines))
+        (expect (some #(= "So: I'm a language model." %) lines))
+        (expect (not-any? #(str/includes? % "```text") lines))))))
+
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"
     (it "renders reasoning / code / reasoning in event order"

@@ -29,6 +29,7 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.tool-result :as tool-result]
    [taoensso.telemere :as tel]))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
@@ -63,6 +64,10 @@
 ;; Error decorator: (fn [err env f args] → map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
 
+;; Optional parse-error rescue: (fn [{:keys [code error sym environment]}] → string|nil).
+;; Runs BEFORE dispatch when SCI/edamame cannot parse the source.
+(s/def :ext.symbol/on-parse-error-fn fn?)
+
 ;; Optional result contract enforced on the final public return value
 ;; after `:before-fn` / call / `:after-fn` complete.
 (s/def :ext.symbol/result-spec some?)
@@ -75,7 +80,8 @@
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists :ext.symbol/examples]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
-          :ext.symbol/on-error-fn :ext.symbol/result-spec]))
+          :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
+          :ext.symbol/result-spec]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/sym :ext.symbol/val :ext.symbol/doc]))
@@ -237,6 +243,25 @@
     #(s/valid? :ext.ns-alias/ns    (:ns %))
     #(s/valid? :ext.ns-alias/alias (:alias %))))
 
+;; Canonical source markers attached to registered extensions via the
+;; sidecar atom. Also surfaced in TURN_ACTIVE_EXTENSIONS / v/extensions
+;; and stamped onto tool-result provenance.
+(s/def ::alias symbol?)
+(s/def ::namespace symbol?)
+(s/def ::doc non-blank-string?)
+(s/def ::source-paths (s/coll-of string? :kind vector?))
+(s/def ::source-mtime-max integer?)
+(s/def ::source-hash-sha256
+  (s/nilable (s/and string? #(= 64 (count %)))))
+(s/def ::registry-id symbol?)
+
+(s/def ::source-markers
+  (s/keys :req-un [::source-paths ::source-mtime-max ::source-hash-sha256]))
+
+(s/def ::extension-provenance
+  (s/keys :req-un [::namespace ::source-paths ::source-mtime-max ::source-hash-sha256]
+    :opt-un [::alias ::doc ::kind ::version ::author ::owner ::license ::registry-id]))
+
 (defn- ns-alias-required-when-symbols?
   [ext]
   (or (empty? (:ext/symbols ext))
@@ -308,6 +333,7 @@
         (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
+        (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
         (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts))))))
 
 (defn value
@@ -818,6 +844,13 @@
                    :data  {:ext ns-sym :error (ex-message t)}})))
     ext))
 
+(declare extension-id-of-ns)
+
+(def ^:private empty-source-markers
+  {:source-paths       []
+   :source-mtime-max   -1
+   :source-hash-sha256 nil})
+
 (defn extension-source-markers-of
   "Lookup the source markers stored for `ns-sym`. Returns the marker
    map (`{:source-paths :source-mtime-max :source-hash-sha256}`) or
@@ -825,6 +858,57 @@
    computation failed at register time)."
   [ns-sym]
   (get @extension-source-markers ns-sym))
+
+(defn- source-markers-for-extension
+  [ext]
+  (or (extension-source-markers-of (:ext/namespace ext))
+    (try
+      ((requiring-resolve
+         'com.blockether.vis.internal.extension.source-markers/resolve-markers-for-extension)
+       ext)
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::source-markers-on-demand-failed
+                   :data  {:ext (:ext/namespace ext)
+                           :error (ex-message t)}})
+        empty-source-markers))
+    empty-source-markers))
+
+(defn extension-provenance
+  "Canonical extension provenance map.
+
+   Merges author-declared extension metadata with source markers:
+     {:namespace :alias? :doc? :kind? :version? :author? :owner?
+      :license? :registry-id? :source-paths :source-mtime-max
+      :source-hash-sha256}
+
+   This is the single provenance shape used by TURN_ACTIVE_EXTENSIONS,
+   `v/extensions`, and tool-result enrichment."
+  [ext]
+  (let [ext-ns     (:ext/namespace ext)
+        alias      (get-in ext [:ext/ns-alias :alias])
+        registry-id (or (try (extension-id-of-ns ext-ns)
+                          (catch Throwable _ nil))
+                      alias)
+        markers    (source-markers-for-extension ext)
+        prov       (cond-> {:namespace          ext-ns
+                            :source-paths       (:source-paths markers)
+                            :source-mtime-max   (:source-mtime-max markers)
+                            :source-hash-sha256 (:source-hash-sha256 markers)}
+                     alias                (assoc :alias alias)
+                     (:ext/doc ext)       (assoc :doc (:ext/doc ext))
+                     (:ext/kind ext)      (assoc :kind (:ext/kind ext))
+                     (:ext/version ext)   (assoc :version (:ext/version ext))
+                     (:ext/author ext)    (assoc :author (:ext/author ext))
+                     (:ext/owner ext)     (assoc :owner (:ext/owner ext))
+                     (:ext/license ext)   (assoc :license (:ext/license ext))
+                     registry-id          (assoc :registry-id registry-id))]
+    (when-not (s/valid? ::extension-provenance prov)
+      (throw (ex-info "Invalid extension provenance"
+               {:type      :extension/invalid-provenance
+                :namespace ext-ns
+                :value     prov
+                :explain   (s/explain-data ::extension-provenance prov)})))
+    prov))
 
 (defn deregister-extension!
   "Drop an extension from the global registry AND reverse every side

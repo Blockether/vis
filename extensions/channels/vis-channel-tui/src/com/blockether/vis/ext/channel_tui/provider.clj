@@ -679,7 +679,8 @@
     (cond
       (some? (:api-key provider))
       {:authenticated? true
-       :source         :config}
+       :source         :config
+       :config-path    vis/config-path}
 
       registered
       (or (safe-provider-status registered)
@@ -768,15 +769,17 @@
         ["" "Limits"
          (str "Status: " (name (:status limits)))]
         (when-let [rpm (get-in limits [:static :rpm])]
-          [(str "Static RPM: " rpm)])
+          [(str "Catalog RPM: " rpm)])
         (when-let [tpm (get-in limits [:static :tpm])]
-          [(str "Static TPM: " tpm)])
+          [(str "Catalog TPM: " tpm)])
         (if (seq dynamic)
           (concat ["Dynamic limits:"]
             (map #(str "- " (format-limit-row %)) dynamic))
           ["Dynamic limits: none reported"])
         (when-let [note (get-in limits [:dynamic :note])]
           [(str "Note: " note)])
+        (when (seq (:static limits))
+          ["Catalog RPM / TPM come from the provider catalog, not live account quota usage."])
         (when-let [message (get-in limits [:error :message])]
           [(str "Limits error: " message)])))))
 

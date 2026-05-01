@@ -72,6 +72,18 @@
 
 ;; -----------------------------------------------------------------------------
 
+(def ^:private broken-fence-answer
+  "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")
+
+(defdescribe normalize-chat-markdown-test
+  (it "repairs the exact glued-fence shape from conversation bbc79960"
+    (expect (= "Here's the top-level directory structure of this repo:\n```text\n\n```\nSo: I'm a language model."
+              (md/normalize-chat-markdown broken-fence-answer))))
+
+  (it "leaves already-valid fenced markdown unchanged"
+    (let [valid "Intro\n```text\nbody\n```\nTail"]
+      (expect (= valid (md/normalize-chat-markdown valid))))))
+
 (defdescribe conversation->markdown-test
   (describe "Header"
     (it "Renders the title as a top-level H1"
@@ -121,6 +133,12 @@
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
           (expect (str/includes? out "\n\n4"))
           (expect (str/includes? out "Multi-line\n\nanswer body.")))))
+
+    (it "repairs glued fence boundaries inside exported answers"
+      (with-stubbed-persistance fixed-conversation
+        [{:text "show ls" :answer broken-fence-answer :status :ok}]
+        (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
+          (expect (str/includes? out "repo:\n```text\n\n```\nSo: I'm a language model.")))))
 
     (it "Separates turns with a horizontal rule by default"
       (with-stubbed-persistance fixed-conversation fixed-turns

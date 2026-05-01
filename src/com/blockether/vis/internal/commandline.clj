@@ -414,7 +414,7 @@
          ;; Strict-flag check fires only when the command actually
          ;; declares flags. Commands without `:cmd/args` (or with only
          ;; positionals) keep the loose, layer-your-own-flags posture
-         ;; — `vis auth <provider> --status` and similar bespoke
+         ;; — `vis providers status <provider>` and similar bespoke
          ;; handlers stay working without forcing every command to
          ;; declare its full surface up front.
          (let [arg-specs (:cmd/args command)

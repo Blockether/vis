@@ -27,11 +27,44 @@
 
 (def ^:private max-trace-frames 12)
 
+(defn- now-ms [] (System/currentTimeMillis))
+
 (s/def ::ok? boolean?)
 (s/def ::result any?)
 (s/def ::result-shape map?)
-(s/def ::provenance map?)
 (s/def ::markdown (s/and string? #(not (str/blank? %))))
+
+(s/def ::op keyword?)
+(s/def ::started-at-ms integer?)
+(s/def ::finished-at-ms integer?)
+(s/def ::duration-ms nat-int?)
+
+(s/def ::sym symbol?)
+(s/def ::alias symbol?)
+(s/def ::call (s/and string? #(not (str/blank? %))))
+(s/def ::tool (s/keys :req-un [::sym ::call]
+                :opt-un [::alias]))
+
+(s/def ::namespace symbol?)
+(s/def ::registry-id symbol?)
+(s/def ::kind (s/and string? #(not (str/blank? %))))
+(s/def ::doc (s/and string? #(not (str/blank? %))))
+(s/def ::version (s/and string? #(not (str/blank? %))))
+(s/def ::author (s/and string? #(not (str/blank? %))))
+(s/def ::owner (s/and string? #(not (str/blank? %))))
+(s/def ::license (s/and string? #(not (str/blank? %))))
+(s/def ::extension (s/keys :req-un [::namespace]
+                     :opt-un [::registry-id ::kind ::doc ::version
+                              ::author ::owner ::license]))
+
+(s/def ::paths (s/coll-of string? :kind vector?))
+(s/def ::mtime-max integer?)
+(s/def ::hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
+(s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
+
+(s/def ::provenance
+  (s/keys :req-un [::op ::started-at-ms ::finished-at-ms ::duration-ms]
+    :opt-un [::tool ::extension ::source]))
 
 (s/def ::type (s/and string? #(not (str/blank? %))))
 (s/def ::message string?)
@@ -79,6 +112,40 @@
 (defn presentation
   [x]
   (:vis/presentation (meta x)))
+
+(defn normalize-provenance
+  "Fill the common provenance clock keys when absent.
+
+   Required by the tool-result contract:
+     :op
+     :started-at-ms
+     :finished-at-ms
+     :duration-ms
+
+   Callers may pass richer maps (tool / extension / source metadata);
+   this helper only normalizes the shared timing surface."
+  [provenance]
+  (let [provenance (or provenance {})
+        t          (now-ms)
+        started    (long (or (:started-at-ms provenance) t))
+        finished   (long (or (:finished-at-ms provenance) t))
+        duration   (long (or (:duration-ms provenance)
+                           (max 0 (- finished started))))]
+    (assoc provenance
+      :started-at-ms started
+      :finished-at-ms finished
+      :duration-ms duration)))
+
+(defn merge-provenance
+  "Merge `extra` into an already-valid tool-result envelope, re-check
+   the contract, and preserve metadata. Used by the extension wrapper
+   to stamp extension/source provenance onto tool-like returns."
+  [tool-result extra]
+  (let [meta*  (meta tool-result)
+        merged (-> tool-result
+                 (update :provenance #(merge (or % {}) extra))
+                 assert-tool-result!)]
+    (with-meta merged meta*)))
 
 (defn- simple-shape
   [v depth]
@@ -171,7 +238,7 @@
   (-> {:ok?          true
        :result       result
        :result-shape (or (:result-shape m) (result-shape result))
-       :provenance   provenance
+       :provenance   (normalize-provenance provenance)
        :markdown     markdown
        :error        nil}
     assert-tool-result!))
@@ -183,7 +250,7 @@
     (-> {:ok?          false
          :result       result
          :result-shape (or (:result-shape m) (result-shape result))
-         :provenance   provenance
+         :provenance   (normalize-provenance provenance)
          :markdown     markdown
          :error        err}
       assert-tool-result!)))

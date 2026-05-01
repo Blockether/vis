@@ -20,7 +20,7 @@
                          registered-commands, registered-under
      Configuration       init!, init-cli!, shutdown!, load-config,
                          load-config-raw, save-config!, reload-config!,
-                         tty-in, tty-out, original-stdout,
+                         config-path, tty-in, tty-out, original-stdout,
                          display-label, model-name, provider-base-url,
                          provider-presets, provider-template
      Error formatting    error-message, db-error->user-message, format-error,
@@ -294,6 +294,7 @@
 (def init!                               config/init!)
 (def init-cli!                           config/init-cli!)
 (def shutdown!                           config/shutdown!)
+(def config-path                         config/config-path)
 (def tty-in                              config/tty-in)
 (def tty-out                             config/tty-out)
 (def original-stdout                     config/original-stdout)
