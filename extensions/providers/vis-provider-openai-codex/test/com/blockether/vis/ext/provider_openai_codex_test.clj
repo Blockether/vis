@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.provider-limits.codex :as codex-limits]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- jwt [payload]
@@ -129,13 +130,29 @@
                     (codex/get-openai-codex-token!))))))))
 
 (defdescribe codex-limits-test
-  (it "reports :ok when Codex credentials exist"
-    (with-redefs-fn {#'codex/detect-credentials (constantly {:account-id "acct_123"})}
+  (it "reports dynamic usage windows when Codex credentials exist"
+    (with-redefs-fn {#'codex/detect-credentials (constantly {:access-token "stale"
+                                                             :account-id "acct_123"})
+                     #'codex/get-openai-codex-token! (constantly {:token "tok"
+                                                                  :llm-headers {"chatgpt-account-id" "acct_123"}})
+                     #'codex-limits/dynamic-limits! (fn [token account-id]
+                                                      (expect (= "tok" token))
+                                                      (expect (= "acct_123" account-id))
+                                                      {:limits [{:id :codex-5h
+                                                                 :label "Codex 5h quota (%)"
+                                                                 :scope :account
+                                                                 :kind :rate
+                                                                 :precision :exact
+                                                                 :source :provider-api
+                                                                 :unlimited? false
+                                                                 :used 20.0
+                                                                 :limit 100.0
+                                                                 :remaining 80.0}]})}
       (fn []
         (let [report (codex/limits)]
           (expect (= :openai-codex (:provider-id report)))
           (expect (= :ok (:status report)))
-          (expect (= [] (get-in report [:dynamic :limits])))))))
+          (expect (= 80.0 (get-in report [:dynamic :limits 0 :remaining])))))))
 
   (it "reports :unauthenticated when Codex credentials are absent"
     (with-redefs-fn {#'codex/detect-credentials (constantly nil)}
@@ -143,6 +160,19 @@
         (let [report (codex/limits)]
           (expect (= :openai-codex (:provider-id report)))
           (expect (= :unauthenticated (:status report)))
+          (expect (= [] (get-in report [:dynamic :limits])))))))
+
+  (it "reports :error when the usage endpoint fails"
+    (with-redefs-fn {#'codex/detect-credentials (constantly {:access-token "stale"
+                                                             :account-id "acct_123"})
+                     #'codex/get-openai-codex-token! (constantly {:token "tok"
+                                                                  :llm-headers {"chatgpt-account-id" "acct_123"}})
+                     #'codex-limits/dynamic-limits! (fn [& _]
+                                                      (throw (ex-info "boom" {})))}
+      (fn []
+        (let [report (codex/limits)]
+          (expect (= :error (:status report)))
+          (expect (= :provider/openai-codex-usage-error (get-in report [:error :type])))
           (expect (= [] (get-in report [:dynamic :limits]))))))))
 
 (defdescribe provider-registration-test

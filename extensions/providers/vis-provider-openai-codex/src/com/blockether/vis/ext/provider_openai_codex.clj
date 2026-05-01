@@ -18,6 +18,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.provider-limits.codex :as codex-limits]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
            [java.security MessageDigest SecureRandom]
@@ -377,17 +378,42 @@
   "Normalized limits envelope for the OpenAI Codex provider.
 
    Static RPM/TPM metadata comes from svar's provider catalog; this fn
-   reports authentication state plus any future provider-specific dynamic
-   quota payload."
+   reports authentication state and live ChatGPT/Codex quota windows
+   when credentials are available."
   []
   (let [detected (detect-credentials)]
-    {:provider-id   :openai-codex
-     :status        (if detected :ok :unauthenticated)
-     :fetched-at-ms (System/currentTimeMillis)
-     :dynamic       {:limits []
-                     :note (if detected
-                             "OpenAI Codex does not expose a dynamic quota endpoint yet."
-                             "OpenAI Codex is not authenticated.")}}))
+    (cond
+      (nil? detected)
+      {:provider-id   :openai-codex
+       :status        :unauthenticated
+       :fetched-at-ms (System/currentTimeMillis)
+       :dynamic       {:limits []
+                       :note "OpenAI Codex is not authenticated."}}
+
+      :else
+      (try
+        (let [{:keys [token llm-headers]} (get-openai-codex-token!)
+              account-id (get llm-headers "chatgpt-account-id")]
+          (if (or (str/blank? token) (str/blank? account-id))
+            {:provider-id   :openai-codex
+             :status        :error
+             :fetched-at-ms (System/currentTimeMillis)
+             :dynamic       {:limits []
+                             :note "OpenAI Codex credentials are missing usage request fields."}
+             :error         {:type :provider/openai-codex-missing-usage-credentials
+                             :message "OpenAI Codex credentials are missing access token or account id"}}
+            {:provider-id   :openai-codex
+             :status        :ok
+             :fetched-at-ms (System/currentTimeMillis)
+             :dynamic       (codex-limits/dynamic-limits! token account-id)}))
+        (catch Throwable t
+          {:provider-id   :openai-codex
+           :status        :error
+           :fetched-at-ms (System/currentTimeMillis)
+           :dynamic       {:limits []
+                           :note "OpenAI Codex usage is unavailable."}
+           :error         {:type :provider/openai-codex-usage-error
+                           :message (or (ex-message t) (.getName (class t)))}})))))
 
 ;; =============================================================================
 ;; Provider registration
