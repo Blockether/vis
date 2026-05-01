@@ -176,10 +176,8 @@
     (min input-max-lines (max input-min-lines n))))
 
 (defn- render-frame!
-  "Draw one frame: background, messages area (bubbles), input box.
-   The input box's top border carries keybinding hints and the bottom
-   border carries either the live model/context status line (idle) or
-   an animated spinner + phase + elapsed time (loading).
+  "Draw one frame: background, messages area (bubbles), input box,
+   and two footer rows.
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -194,15 +192,15 @@
         g            (.newTextGraphics screen)
         text-rows    (input-text-rows input cols)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
-        ;; Reserve the bottom-most row for the dedicated footer
-        ;; (model / run-state) and the top-most band for
-        ;; the dedicated header (top rule + title row + bottom rule).
-        ;; The input box sits directly above the footer; the messages
-        ;; area fills everything from `messages-top` down to the
+        ;; Reserve the bottom-most two rows for the dedicated footer
+        ;; (model/status first, provider limits second) and the top-most
+        ;; band for the dedicated header (top rule + title row + bottom
+        ;; rule). The input box sits directly above the footer; the
+        ;; messages area fills everything from `messages-top` down to the
         ;; input-box top.
         header-top   0
-        footer-row   (dec rows)
-        input-top    (- rows input-box-h 1)
+        footer-row   (- rows 2)
+        input-top    (- rows input-box-h 2)
         messages-top    header/HEADER_ROWS
         messages-bottom input-top
         ;; Single source of truth for the gutter math lives in
@@ -346,6 +344,47 @@
     (.start t)
     t))
 
+(def ^:private provider-limits-refresh-ms
+  60000)
+
+(defn- active-provider-id
+  []
+  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
+    (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
+      :provider)))
+
+(defn- start-provider-limits-thread!
+  "Refresh provider limit metadata outside the render thread."
+  ^Thread []
+  (let [t (Thread.
+            ^Runnable
+            (fn []
+              (loop [last-provider-id nil last-refresh-ms 0]
+                (when-not (:shutdown? @state/app-db)
+                  (let [now-ms      (System/currentTimeMillis)
+                        provider-id (active-provider-id)
+                        changed?    (not= provider-id last-provider-id)
+                        stale?      (>= (- now-ms (long last-refresh-ms)) provider-limits-refresh-ms)]
+                    (try
+                      (cond
+                        (nil? provider-id)
+                        (when last-provider-id
+                          (state/dispatch [:clear-provider-limits]))
+
+                        (or changed? stale?)
+                        (state/dispatch [:set-provider-limits provider-id (vis/provider-limits provider-id)]))
+                      (catch Throwable t
+                        (tel/log! {:level :warn :id ::provider-limits-refresh-failed
+                                   :data  {:provider provider-id
+                                           :error    (or (ex-message t) (str t))}
+                                   :msg   "Provider limits refresh failed"})))
+                    (try (Thread/sleep 1000) (catch InterruptedException _ nil))
+                    (recur provider-id (if (or changed? stale?) now-ms last-refresh-ms))))))
+            "vis-channel-tui-provider-limits")]
+    (.setDaemon t true)
+    (.start t)
+    t))
+
 (defn- format-conversation-not-found
   "Build a friendly multi-line message for `--conversation-id` misses,
    listing the most recent :tui conversations so the user has
@@ -467,7 +506,8 @@
            ;; in the background so the FIRST scroll-up doesn't pay
            ;; ~500 ms / big-trace-bubble on the render thread.
            ;; Stays nil for fresh conversations (nothing to warm).
-           prewarm-thread (volatile! nil)]
+           prewarm-thread (volatile! nil)
+           provider-limits-thread (volatile! nil)]
        (.startScreen screen)
        (try
       ;; Show provider dialog on first launch if no config
@@ -525,6 +565,7 @@
       ;; the first frame as soon as `:render-version` is non-zero (every
       ;; init dispatch above bumps it).
          (vreset! render-thread (start-render-thread! screen))
+         (vreset! provider-limits-thread (start-provider-limits-thread!))
          ;; Local UI state that lives only in the input thread.
          ;;
          ;; `scrollbar-drag-offset` is `nil` when no drag is in
@@ -1064,6 +1105,8 @@
            ;; that we'd rather drop than wait on.
            (virtual/stop-pre-warm! @prewarm-thread)
            (when-let [t @render-thread]
+             (try (.join ^Thread t 500) (catch Throwable _ nil)))
+           (when-let [t @provider-limits-thread]
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
            (when-let [conversation (:conversation @state/app-db)]
              (chat/dispose! conversation))
