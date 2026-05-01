@@ -7,7 +7,7 @@
 
      introspection.clj          (v/inspect, v/report,
                                  v/extensions, v/extension-doc, …)
-     editing/core.clj           (v/cat, v/ls, v/rg,
+     editing/core.clj           (v/cat, v/ls, v/rg, v/bash,
                                  thin babashka.fs wrappers)
      markdown.clj               (v/h1, v/p, v/table,
                                  v/file-link, v/join, …)
@@ -55,7 +55,7 @@
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (inspect data / report Markdown / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt plus the `vis doctor` and `vis report` CLI commands."
+     :ext/doc            "Foundation `v/`: inspect/report, file I/O, bash, markdown answer builders (h1/p/table/file-link/join/code-block/details), env snapshot, project guidance, skills, scan warnings, doctor/report CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

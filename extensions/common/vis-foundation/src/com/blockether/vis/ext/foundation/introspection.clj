@@ -811,18 +811,7 @@
 
 (def inspect-symbol
   (vis/symbol 'inspect foundation-inspect
-    {:doc       (str "Canonical introspection data as ONE Clojure map. "
-                  "Default = current conversation; pass an id or "
-                  "unambiguous prefix to inspect another. Shape: "
-                  "{:schema-version :scope :conversation-id "
-                  ":conversation-index :conversation :current-turn "
-                  ":failures :diagnosis :conversation-forks "
-                  ":turn-retries :transcript}. The :transcript key "
-                  "contains the full forensic record "
-                  "{:conversation :totals :turns}; :diagnosis is the "
-                  "compact failure summary; :failures is the normalized "
-                  "failure stream. Prefer this single data surface over "
-                  "old per-view calls.")
+    {:doc       "Conversation introspection map. Default current conversation; pass id/prefix for another."
      :arglists  '([] [conversation-id])
      :examples  ["(v/inspect)"
                  "(get-in (v/inspect) [:diagnosis :next-actions])"
@@ -832,11 +821,7 @@
 
 (def report-symbol
   (vis/symbol 'report foundation-report
-    {:doc       (str "Markdown report rendered from the same canonical "
-                  "data returned by `(v/inspect)`. Default = current "
-                  "conversation; pass an id or unambiguous prefix to "
-                  "render another conversation. Use this for human "
-                  "handoffs; use `(v/inspect)` for programmatic analysis.")
+    {:doc       "Markdown report from `(v/inspect)`. Default current conversation; pass id/prefix for another."
      :arglists  '([] [conversation-id])
      :examples  ["(v/report)"
                  "(v/report \"3a7b2c…\")"]
@@ -849,12 +834,7 @@
 
 (def extensions-symbol
   (vis/symbol 'extensions foundation-extensions
-    {:doc       (str "Catalog of every loaded extension: "
-                  "[{:namespace :alias :kind :version :doc :symbols "
-                  ":docs} …]. `:docs` is a vector of {:name :description} "
-                  "descriptors for every doc the extension declares. "
-                  "Use this to discover what surfaces are available "
-                  "before reaching for a specific tool.")
+    {:doc       "Loaded extension catalog: {:namespace :alias :kind :version :doc :symbols :docs}."
      :arglists  '([])
      :examples  ["(v/extensions)"
                  "(map :namespace (v/extensions))"
@@ -863,13 +843,7 @@
 
 (def extension-docs-symbol
   (vis/symbol 'extension-docs foundation-extension-docs
-    {:doc       (str "Doc index for an extension as a vector of "
-                  "summaries: {:name :created-at :description :links "
-                  ":reflinks} (no :content -- pull that with "
-                  "v/extension-doc when needed). Scan descriptions "
-                  "first to decide which full body is worth a fetch. "
-                  "With no arg, returns the full registry keyed by "
-                  "extension id symbol.")
+    {:doc       "Extension doc index. No arg returns registry; one arg returns summaries without `:content`."
      :arglists  '([] [extension-ref])
      :examples  ["(v/extension-docs)"
                  "(v/extension-docs 'vis)"
@@ -879,16 +853,7 @@
 
 (def extension-doc-symbol
   (vis/symbol 'extension-doc foundation-extension-doc
-    {:doc       (str "Full descriptor map for one declared extension "
-                  "doc: {:name :created-at :description :content :links "
-                  ":reflinks}. The first arg is the extension "
-                  "reference (id symbol, alias symbol/keyword, or full "
-                  "extension namespace); the second arg is the doc "
-                  "filename (e.g. \"README.md\"). The Markdown body is "
-                  "at :content; :links are author-declared outgoing "
-                  "references; :reflinks are auto-derived inbound "
-                  "references. Returns nil when the extension is not "
-                  "registered or declares no doc by that name.")
+    {:doc       "Full extension doc descriptor: {:name :description :content :links :reflinks}. Nil when missing."
      :arglists  '([extension-ref doc-name])
      :examples  ["(v/extension-doc 'vis \"README.md\")"
                  "(:content (v/extension-doc :vis \"README.md\"))"
@@ -898,12 +863,7 @@
 
 (def extension-readme-symbol
   (vis/symbol 'extension-readme foundation-extension-readme
-    {:doc       (str "Convenience: full Markdown text of an extension's "
-                  "canonical README. Equivalent to "
-                  "`(v/extension-doc ref \"README.md\")`. The arg may "
-                  "be the full namespace symbol, the alias symbol or "
-                  "keyword, or the alias-ns symbol. Returns nil when the "
-                  "extension is not registered or ships no README.")
+    {:doc       "Extension README Markdown text. Nil when missing."
      :arglists  '([extension-ref])
      :examples  ["(v/extension-readme 'vis)"
                  "(v/extension-readme 'com.blockether.vis.ext.foundation.introspection)"
@@ -920,13 +880,13 @@
    extension-readme-symbol])
 
 (def introspection-prompt
-  (str "`v/` introspection (READ-ONLY; one data surface + one renderer):\n"
-    "  (v/inspect cid?)              canonical data {:conversation :current-turn :failures :diagnosis :conversation-forks :turn-retries :transcript ...}\n"
-    "  (v/report cid?)               Markdown rendered from the same canonical data; use for human handoff/export\n"
-    "  (v/extensions)                loaded ext catalog\n"
-    "  (v/extension-docs ext-ref)    declared doc summaries (no content)\n"
-    "  (v/extension-doc ext-ref name) full doc descriptor incl. :content\n"
-    "  (v/extension-readme ext-ref)  README :content shortcut\n"))
+  (str "`v/` introspection:\n"
+    "  (v/inspect cid?)              conversation data\n"
+    "  (v/report cid?)               Markdown report\n"
+    "  (v/extensions)                loaded extension catalog\n"
+    "  (v/extension-docs ext-ref)    doc summaries\n"
+    "  (v/extension-doc ext-ref name) doc incl. :content\n"
+    "  (v/extension-readme ext-ref)  README text\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

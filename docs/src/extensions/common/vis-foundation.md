@@ -2,7 +2,7 @@
 
 Package: `com.blockether/vis-foundation`. Source: `extensions/common/vis-foundation/`.
 
-`vis-foundation` ships one SCI alias: `v/`. It bundles the agent-facing foundation surface: conversation-state introspection, file I/O helpers, Markdown answer builders, and environment awareness.
+`vis-foundation` ships one SCI alias: `v/`. It bundles the agent-facing foundation surface: conversation-state introspection, file I/O helpers, bounded bash execution, Markdown answer builders, and environment awareness.
 
 ## Introspection
 
@@ -33,6 +33,20 @@ The full reference is in the extension's canonical README. Read it from inside t
 ```
 
 Or load it from disk at `extensions/common/vis-foundation/resources/META-INF/vis-extension/vis.edn` under `[v :docs "README.md" :content]`.
+
+## File I/O and bounded bash
+
+The editing surface exposes structured browse/search helpers, whole-file path operations, and bounded shell execution under the same alias:
+
+```clojure
+(v/cat "src/main.clj" {:offset 1 :limit 80})
+(v/rg ["needle"] "src")
+(v/read-all-lines "README.md")
+(v/write-lines "notes.txt" ["alpha" "beta"])
+(v/bash "./verify.sh --quick" {:timeout-ms 120000})
+```
+
+`v/bash` runs `/usr/bin/env bash -lc` inside the working tree. Its opts are `{:cwd path :timeout-ms n :max-output-chars n :stdin string}` and its result map carries `:exit`, `:timed-out?`, `:stdout`, `:stderr`, and truncation flags.
 
 ## Answer construction in the same alias
 

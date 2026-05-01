@@ -24,32 +24,34 @@ Path safety: `path` resolved against `(fs/cwd)`. `..` traversal escaping cwd is 
 
 ## z/ navigation + edit ops
 
-Most useful publics (full set bound at extension load — any future rewrite-clj release auto-lights new symbols):
+Observed rewrite-clj behavior to rely on:
 
-  (z/sexpr zloc)              s-expr at node
-  (z/node zloc)               raw node
-  (z/value zloc)              leaf value (number/string/symbol)
-  (z/tag zloc)                :list :vector :map :token ...
+- `z/zedit` passes a zipper created with position tracking; `(z/position-span hit)` works.
+- `z/of-string` / `z/of-file` start at the first non-whitespace/non-comment form.
+- `z/of-string*` / `z/of-file*` start at the raw root; use `z/next*` only when whitespace/comment nodes matter.
+- `(z/find-value zloc v)` searches right siblings. For whole-file search, use `(z/find-value zloc z/next v)`.
+- Normal movement (`z/right`, `z/down`, `z/next`, …) skips whitespace/comments while `z/root-string` preserves them.
 
-  (z/find zloc move pred)     walk till pred truthy
-  (z/find-value zloc move v)  walk till value = v
-  (z/find-value zloc v)       default move = z/next
-  (z/find-next-value zloc move v)  step then find-value
+Most useful publics:
 
-  (z/right) (z/left)          siblings
-  (z/down) (z/up)             descend/ascend
-  (z/next) (z/prev)           depth-first
+  inspect: z/sexpr z/tag z/value z/node z/position z/position-span z/sexpr-able?
+  find:    z/find z/find-value z/find-next-value
+  move:    z/right z/left z/down z/up z/next z/prev
+  raw:     z/right* z/left* z/down* z/up* z/next* z/prev*
+  edit:    z/replace z/edit z/insert-right z/insert-left z/append-child z/remove z/remove-preserve-newline
+  scope:   z/subedit-> z/subedit->>
+  render:  z/root-string
 
-  (z/replace zloc x)          replace node
-  (z/edit zloc f & args)      apply f, replace
-  (z/insert-right zloc x)     sibling right
-  (z/insert-left zloc x)      sibling left
-  (z/append-child zloc x)     append into list/vector/map
-  (z/remove zloc)             drop node
+If `(v/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/1.2.54/doc/user-guide.
 
-  (z/root-string zloc)        render whole tree
+## Strategy
 
-If `(v/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/.
+1. Probe the zipper path on a small source string in nREPL when unsure.
+2. Find with `(z/find-value zl z/next 'symbol-or-keyword)` for file-wide lookup.
+3. Verify with `(z/sexpr hit)`, `(z/tag hit)`, `(z/position-span hit)`.
+4. Move structurally to the exact node (`z/right`, `z/up`, `z/down`, `z/next`).
+5. Mutate with `z/replace`, `z/edit`, `z/append-child`, or `z/remove`.
+6. Return the final zipper. Never return nil from `z/zedit`.
 
 ## Examples
 
@@ -58,10 +60,9 @@ Swap a const:
 ```clojure
 (z/zedit \"src/foo.clj\"
   (fn [zl]
-    (-> zl
-        (z/find-value z/next 'JOURNAL_KEEP_ITERS)
-        z/right
-        (z/replace 4))))
+    (if-let [hit (z/find-value zl z/next 'JOURNAL_KEEP_ITERS)]
+      (-> hit z/right (z/replace 4))
+      zl)))
 ```
 
 Add `:require`:
@@ -69,10 +70,9 @@ Add `:require`:
 ```clojure
 (z/zedit \"src/foo.clj\"
   (fn [zl]
-    (-> zl
-        (z/find-value z/next :require)
-        z/up
-        (z/append-child '[clojure.string :as str]))))
+    (if-let [req (z/find-value zl z/next :require)]
+      (-> req z/up (z/append-child '[clojure.string :as str]))
+      zl)))
 ```
 
 Rename every occurrence:
@@ -80,10 +80,24 @@ Rename every occurrence:
 ```clojure
 (z/zedit \"src/foo.clj\"
   (fn [zl]
-    (loop [z zl]
-      (if-let [hit (z/find-value z z/next 'old-name)]
+    (loop [zloc zl]
+      (if-let [hit (z/find-value zloc z/next 'old-name)]
         (recur (z/replace hit 'new-name))
-        z))))
+        zloc))))
+```
+
+Edit inside one found form:
+
+```clojure
+(z/zedit \"src/foo.clj\"
+  (fn [zl]
+    (if-let [let-sym (z/find-value zl z/next 'let)]
+      (-> let-sym
+          z/up
+          (z/subedit->
+            (z/find-value z/next 'old-local)
+            (z/replace 'new-local)))
+      zl)))
 ```
 
 ## Use when

@@ -80,31 +80,15 @@
 
 (def zedit-symbol
   (vis/symbol 'zedit zedit-file
-    {:doc      "Structured edit of a Clojure file. zfn gets a rewrite-clj zipper at file root and MUST return a zipper. Sibling z/ ops navigate/edit: z/find-value, z/replace, z/right, z/sexpr, ..."
+    {:doc      "Structured Clojure edit. zfn gets root zipper, returns zipper, file is rewritten."
      :arglists '([path zfn])
      :examples ["(z/zedit \"src/x.clj\" (fn [zl] (z/edit zl str/upper-case)))"
                 "(z/zedit \"src/x.clj\" (fn [zl] (-> zl (z/find-value z/next 'OLD) (z/replace 'NEW))))"]}))
 
 (def z-prompt
-  "`z/` = Clojure structured editing (rewrite-clj.zip + zedit entry). Survives whitespace / comment / format drift. Inside zfn: nav z/right z/left z/down z/up z/next z/prev. Find z/find-value z/find. Inspect z/sexpr z/node z/value z/tag. Edit z/replace z/edit z/insert-right z/insert-left z/append-child z/remove. Serialize z/root-string.
-
-  (z/zedit path zfn)   open .clj file, zfn gets zipper at root, MUST return zipper, written back.
-
-Patterns:
-  ;; swap a const
-  (z/zedit \"src/foo.clj\"
-    (fn [zl] (-> zl (z/find-value z/next 'NAME) z/right (z/replace 4))))
-
-  ;; add :require
-  (z/zedit \"src/foo.clj\"
-    (fn [zl] (-> zl (z/find-value z/next :require) z/up
-                    (z/append-child '[clojure.string :as str]))))
-
-  ;; rename every occurrence
-  (z/zedit \"src/foo.clj\"
-    (fn [zl] (loop [z zl]
-               (if-let [hit (z/find-value z z/next 'OLD)]
-                 (recur (z/replace hit 'NEW))
-                 z))))
-
-Full rewrite-clj.zip API bound under z/. Stick to the bound symbols. Missing fn? `(v/extension-readme 'clj)` for full reference, or https://cljdoc.org/d/rewrite-clj/rewrite-clj/.")
+  "`z/` Clojure structured edit:
+  (z/zedit path (fn [zl] ...)) ; zl=root zipper, return zipper, file rewritten
+  nav: z/right z/left z/down z/up z/next z/prev
+  find: z/find-value z/find | inspect: z/sexpr z/node z/value z/tag
+  edit: z/replace z/edit z/insert-right z/insert-left z/append-child z/remove
+Example: (z/zedit \"src/foo.clj\" #(-> % (z/find-value z/next 'OLD) (z/replace 'NEW)))")

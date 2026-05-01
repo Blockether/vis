@@ -25,6 +25,8 @@
         (v/delete path)
         (v/delete-if-exists path)
         (v/exists? path)
+        (v/bash command)
+        (v/bash command opts)
         (v/cwd)
         (v/parent path)
         (v/file-name path)
@@ -45,7 +47,8 @@
    [com.blockether.vis.internal.tool-result :as tool])
   (:import
    (com.google.re2j Pattern)
-   (java.io File)
+   (java.io File InputStream Reader Writer)
+   (java.util.concurrent TimeUnit)
    (org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult)))
 
 ;; =============================================================================
@@ -55,6 +58,8 @@
 (def ^:private default-grep-limit 200)
 (def ^:private default-read-char-limit 6000)
 (def ^:private default-list-depth 5)
+(def ^:private default-bash-timeout-ms 30000)
+(def ^:private default-bash-max-output-chars 20000)
 
 ;; =============================================================================
 ;; Path safety
@@ -80,6 +85,15 @@
   (when (.isDirectory f)
     (throw (ex-info (str "Path is a directory, not a file: " (.getPath f))
              {:type :ext.foundation.editing/path-is-dir :path (.getPath f)})))
+  f)
+
+(defn- ensure-existing-dir! [^File f]
+  (when-not (.exists f)
+    (throw (ex-info (str "Directory not found: " (.getPath f))
+             {:type :ext.foundation.editing/dir-not-found :path (.getPath f)})))
+  (when-not (.isDirectory f)
+    (throw (ex-info (str "Path is a file, not a directory: " (.getPath f))
+             {:type :ext.foundation.editing/path-is-file :path (.getPath f)})))
   f)
 
 (defn- rel-path [^File f]
@@ -493,6 +507,99 @@
 (defn- exists-safe? [path]
   (fs/exists? (safe-path path)))
 
+(defn- coerce-bash-opts [opts]
+  (when (and (some? opts) (not (map? opts)))
+    (throw (ex-info "v/bash opts must be a map"
+             {:type :ext.foundation.editing/invalid-bash-opts :opts opts})))
+  (let [timeout-ms       (long (or (:timeout-ms opts) default-bash-timeout-ms))
+        max-output-chars (long (or (:max-output-chars opts) default-bash-max-output-chars))
+        cwd              (or (:cwd opts) ".")
+        stdin            (:stdin opts)]
+    (when-not (pos? timeout-ms)
+      (throw (ex-info "v/bash :timeout-ms must be a positive integer"
+               {:type :ext.foundation.editing/invalid-bash-opts
+                :opt  :timeout-ms :got (:timeout-ms opts)})))
+    (when-not (pos? max-output-chars)
+      (throw (ex-info "v/bash :max-output-chars must be a positive integer"
+               {:type :ext.foundation.editing/invalid-bash-opts
+                :opt  :max-output-chars :got (:max-output-chars opts)})))
+    (when (and (some? stdin) (not (string? stdin)))
+      (throw (ex-info "v/bash :stdin must be a string when provided"
+               {:type :ext.foundation.editing/invalid-bash-opts
+                :opt  :stdin :got (type stdin)})))
+    {:timeout-ms       timeout-ms
+     :max-output-chars max-output-chars
+     :cwd              cwd
+     :stdin            stdin}))
+
+(defn- read-stream-limited
+  [^InputStream in max-output-chars]
+  (let [limit (long max-output-chars)]
+    (with-open [^Reader reader (io/reader in)]
+      (let [^StringBuilder out (StringBuilder.)
+            ^chars buffer (char-array 4096)]
+        (loop [total 0]
+          (let [n (.read reader buffer 0 (alength buffer))]
+            (if (neg? n)
+              {:text       (str out)
+               :chars      total
+               :truncated? (> total limit)}
+              (do
+                (let [appended (.length out)
+                      remaining (- limit appended)
+                      take-n (int (max 0 (min n remaining)))]
+                  (when (pos? take-n)
+                    (.append out buffer 0 take-n)))
+                (recur (+ total n))))))))))
+
+(defn- write-stdin-and-close!
+  [^Process process stdin]
+  (with-open [^Writer writer (io/writer (.getOutputStream process))]
+    (when (some? stdin)
+      (.write writer ^String stdin))))
+
+(defn- run-bash-safe
+  ([command]
+   (run-bash-safe command nil))
+  ([command opts]
+   (when-not (string? command)
+     (throw (ex-info "v/bash command must be a string"
+              {:type :ext.foundation.editing/invalid-bash-command
+               :got  (type command)})))
+   (when (str/blank? command)
+     (throw (ex-info "v/bash command must be non-blank"
+              {:type :ext.foundation.editing/invalid-bash-command})))
+   (let [{:keys [cwd timeout-ms max-output-chars stdin]} (coerce-bash-opts opts)
+         cwd-file (ensure-existing-dir! (safe-path cwd))
+         cwd-rel  (display-path cwd-file)
+         argv     (java.util.ArrayList. ^java.util.Collection ["/usr/bin/env" "bash" "-lc" command])
+         pb       (doto (ProcessBuilder. ^java.util.List argv)
+                    (.directory cwd-file))
+         started  (now-ms)
+         ^Process process (.start pb)
+         stdout-f (future (read-stream-limited (.getInputStream process) max-output-chars))
+         stderr-f (future (read-stream-limited (.getErrorStream process) max-output-chars))
+         stdin-f  (future (write-stdin-and-close! process stdin))
+         done?    (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
+         _        (when-not done?
+                    (.destroyForcibly process)
+                    (.waitFor process))
+         finished (now-ms)
+         stdout   @stdout-f
+         stderr   @stderr-f
+         _        (try @stdin-f (catch Throwable _ nil))]
+     {:command           command
+      :cwd               cwd-rel
+      :exit              (if done? (.exitValue process) 124)
+      :timed-out?        (not done?)
+      :duration-ms       (long (max 0 (- finished started)))
+      :stdout            (:text stdout)
+      :stderr            (:text stderr)
+      :stdout-chars      (:chars stdout)
+      :stderr-chars      (:chars stderr)
+      :stdout-truncated? (:truncated? stdout)
+      :stderr-truncated? (:truncated? stderr)})))
+
 ;; =============================================================================
 ;; Tool-result facades
 ;; =============================================================================
@@ -707,16 +814,34 @@
                    (str "`" path "` does not exist."))
        :provenance {:exists? exists?}})))
 
+(defn- bash-tool
+  ([command]
+   (bash-tool command nil))
+  ([command opts]
+   (let [out (run-bash-safe command opts)]
+     (tool-success
+       {:op :v/bash
+        :path (:cwd out)
+        :kind :dir
+        :result out
+        :markdown (str "Ran bash in `" (:cwd out) "` — exit `" (:exit out) "`, "
+                    (:duration-ms out) " ms"
+                    (when (:timed-out? out) ", timed out") ".")
+        :provenance {:command command
+                     :cwd (:cwd out)
+                     :exit (:exit out)
+                     :timed-out? (:timed-out? out)
+                     :stdout-truncated? (:stdout-truncated? out)
+                     :stderr-truncated? (:stderr-truncated? out)
+                     :opts (dissoc opts :stdin)}}))))
+
 ;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
 
 (def cat-symbol
   (vis/symbol 'cat cat-tool
-    {:doc (str "Browse a file slice as a TOOL RESULT envelope. `:result` carries "
-            "{:path :offset :total-lines :truncated-by :lines}; top-level keys also include "
-            "`:ok?`, `:result-shape`, `:provenance`, `:markdown`, `:error`. "
-            "Use `v/cat` for paginated preview/browse, not whole-file code transforms.")
+    {:doc "Preview file slice. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}. Use for browse, not whole-file edits."
      :arglists '([path] [path opts])
      :examples ["(:result (v/cat \"src/main.clj\"))"
                 "(get-in (v/cat \"src/main.clj\") [:result :lines])"
@@ -726,7 +851,7 @@
 
 (def ls-symbol
   (vis/symbol 'ls ls-tool
-    {:doc "Browse a directory tree as a TOOL RESULT envelope. `:result` is the nested tree; `:provenance` records the listing options."
+    {:doc "Preview directory tree. Tool result; `:result` = nested tree."
      :arglists '([path] [path opts])
      :examples ["(:result (v/ls \".\"))"
                 "(v/ls \"src\" {:depth 3})"]
@@ -735,8 +860,7 @@
 
 (def rg-symbol
   (vis/symbol 'rg rg-tool
-    {:doc (str "Search FILE CONTENTS for any of N literal substrings (OR'd). Returns a TOOL RESULT envelope; `:result` is the hit payload and `:provenance` records patterns/hit-count/truncation. "
-            "For PATH search use `v/glob`, not `v/rg`.")
+    {:doc "Search file contents for literal substrings. Tool result. For path search use `v/glob`."
      :arglists '([patterns path] [patterns path opts])
      :examples ["(:result (v/rg [\"defn render\"] \"src\"))"
                 "(get-in (v/rg [\"defn render\"] \"src\") [:result :hits])"
@@ -746,7 +870,7 @@
 
 (def read-all-lines-symbol
   (vis/symbol 'read-all-lines read-all-lines-tool
-    {:doc "Read a whole text file for CODE-FIRST transforms. Returns a TOOL RESULT envelope; `:result` is the raw line vector."
+    {:doc "Read whole text file. Tool result; `:result` = line vector."
      :arglists '([path] [path opts])
      :examples ["(:result (v/read-all-lines \"src/main.clj\"))"
                 "(str/join \"\\n\" (:result (v/read-all-lines \"src/main.clj\")))"]
@@ -755,7 +879,7 @@
 
 (def write-lines-symbol
   (vis/symbol 'write-lines write-lines-tool
-    {:doc "Whole-file replace/create. Returns a TOOL RESULT envelope with path-level provenance and required markdown summary."
+    {:doc "Replace/create whole file. Tool result."
      :arglists '([path lines] [path lines opts])
      :examples ["(v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])"
                 "(v/write-lines \"src/main.clj\" (:result (v/read-all-lines \"src/main.clj\")))"]
@@ -764,7 +888,7 @@
 
 (def update-file-symbol
   (vis/symbol 'update-file update-file-tool
-    {:doc "Read-modify-write for text files. Returns a TOOL RESULT envelope; `:result` is the new full contents and `:provenance` records change facts."
+    {:doc "Read-modify-write text file. Tool result; `:result` = new contents."
      :arglists '([path f & xs] [path opts f & xs])
      :examples ["(v/update-file \"README.md\" #(str % \"\\nnew line\\n\"))"
                 "(v/update-file \"x.txt\" str/upper-case)"]
@@ -773,7 +897,7 @@
 
 (def create-dirs-symbol
   (vis/symbol 'create-dirs create-dirs-tool
-    {:doc "Ensure a directory exists. Returns a TOOL RESULT envelope."
+    {:doc "Ensure dir exists. Tool result."
      :arglists '([path])
      :examples ["(v/create-dirs \"target/tmp/cache\")"]
      :result-spec tool-result-spec
@@ -781,7 +905,7 @@
 
 (def list-dir-symbol
   (vis/symbol 'list-dir list-dir-tool
-    {:doc "Flat directory listing for code. Returns a TOOL RESULT envelope; `:result` is the cwd-relative path vector."
+    {:doc "Flat directory listing. Tool result; `:result` = cwd-relative paths."
      :arglists '([path] [path glob-or-accept])
      :examples ["(:result (v/list-dir \"src\"))"
                 "(v/list-dir \"src\" \"*.clj\")"]
@@ -790,7 +914,7 @@
 
 (def glob-symbol
   (vis/symbol 'glob glob-tool
-    {:doc "Search PATHS, not file contents. Returns a TOOL RESULT envelope; `:result` is the matching path vector. Use `v/rg` for content search."
+    {:doc "Search paths, not contents. Tool result; `:result` = matching paths."
      :arglists '([root pattern] [root pattern opts])
      :examples ["(:result (v/glob \"src\" \"**.clj\"))"
                 "(v/glob \"resources\" \"**.edn\" {:hidden true})"]
@@ -799,7 +923,7 @@
 
 (def copy-symbol
   (vis/symbol 'copy copy-tool
-    {:doc "Copy one path to another. Returns a TOOL RESULT envelope."
+    {:doc "Copy path. Tool result."
      :arglists '([src dest] [src dest opts])
      :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]
      :result-spec tool-result-spec
@@ -807,7 +931,7 @@
 
 (def move-symbol
   (vis/symbol 'move move-tool
-    {:doc "Move or rename one path to another. Returns a TOOL RESULT envelope."
+    {:doc "Move/rename path. Tool result."
      :arglists '([src dest] [src dest opts])
      :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]
      :result-spec tool-result-spec
@@ -815,7 +939,7 @@
 
 (def delete-symbol
   (vis/symbol 'delete delete-tool
-    {:doc "Delete a path. Returns a TOOL RESULT envelope."
+    {:doc "Delete path. Tool result."
      :arglists '([path])
      :examples ["(v/delete \"tmp.txt\")"]
      :result-spec tool-result-spec
@@ -823,7 +947,7 @@
 
 (def delete-if-exists-symbol
   (vis/symbol 'delete-if-exists delete-if-exists-tool
-    {:doc "Delete a path if present. Returns a TOOL RESULT envelope."
+    {:doc "Delete path if present. Tool result."
      :arglists '([path])
      :examples ["(v/delete-if-exists \"tmp.txt\")"]
      :result-spec tool-result-spec
@@ -831,11 +955,20 @@
 
 (def exists?-symbol
   (vis/symbol 'exists? exists-tool
-    {:doc "Existence probe. Returns a TOOL RESULT envelope; `:result` is the boolean."
+    {:doc "Existence check. Tool result; `:result` = boolean."
      :arglists '([path])
      :examples ["(:result (v/exists? \"src/main.clj\"))"]
      :result-spec tool-result-spec
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
+
+(def bash-symbol
+  (vis/symbol 'bash bash-tool
+    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result; opts {:cwd :timeout-ms :max-output-chars :stdin}."
+     :arglists '([command] [command opts])
+     :examples ["(:result (v/bash \"pwd && ls\"))"
+                "(v/bash \"grep -R needle src\" {:timeout-ms 10000 :max-output-chars 8000})"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
 
 (def editing-symbols
   [cat-symbol
@@ -851,47 +984,13 @@
    move-symbol
    delete-symbol
    delete-if-exists-symbol
-   exists?-symbol])
+   exists?-symbol
+   bash-symbol])
 
 (def editing-prompt
-  "`v/` = browse with helpers, act via normal Clojure code.
-
-Browse / inspect:
-  (v/cat path)                  -> paginated preview map {:path :offset :total-lines :truncated-by :lines}
-  (v/ls path)                   -> directory tree map
-  (v/rg [\"foo\" \"bar\"] path) -> CONTENT search inside files
-  (v/glob root pattern)         -> PATH search for matching file names
-
-Act via code (whole-file / path operations):
-  (v/read-all-lines path)       -> [\"line\" ...]      ; code-first full-file read
-  (v/write-lines path lines)    -> \"path\"            ; whole-file replace/create
-  (v/update-file path f & xs)   -> new-string         ; read-modify-write
-  (v/create-dirs path)          -> \"path\"
-  (v/list-dir path)             -> [\"child\" ...]
-  (v/copy src dest) / (v/move src dest)
-  (v/delete path) / (v/delete-if-exists path)
-  (v/exists? path)
-
-Usage patterns:
-  Browse a large file:
-    (def preview (v/cat \"src/main.clj\" {:offset 1 :limit 80}))
-
-  Rewrite a file via code:
-    (v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])
-
-  Transform a file via code:
-    (v/update-file \"README.md\" #(str % \"\\nNew section\\n\"))
-
-  Find files vs find text:
-    (v/glob \"src\" \"**.clj\")        ; which files?
-    (v/rg [\"defn render\"] \"src\")  ; where in contents?
-
-Rule of thumb:
-  - `v/cat` = preview/browse
-  - `v/read-all-lines` = full-file read for code
-  - `v/write-lines` = whole-file replace/create
-  - `v/update-file` = mutate old contents with a function
-  - `v/glob` = path search
-  - `v/rg` = content search
-
-For structured Clojure edits use `(z/zedit path zfn)` (vis-language-clojure ext, alias `z/`).")
+  "`v/` file + shell tools:
+  browse: (v/cat path opts?) (v/ls path opts?) (v/rg [literals] path opts?) (v/glob root pattern opts?)
+  edit:   (v/read-all-lines path) (v/write-lines path lines opts?) (v/update-file path f & xs)
+  paths:  (v/create-dirs path) (v/list-dir path) (v/copy src dest) (v/move src dest) (v/delete path) (v/delete-if-exists path) (v/exists? path)
+  shell:  (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s})
+Use `v/cat` for preview, `v/read-all-lines` for full-file transforms, `v/glob` for paths, `v/rg` for contents. Clojure structure edits: `z/zedit`.")

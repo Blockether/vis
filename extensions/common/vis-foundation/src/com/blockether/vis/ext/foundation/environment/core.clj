@@ -173,7 +173,7 @@
 
 (def main-agent-instructions-symbol
   (vis/symbol 'main-agent-instructions agents/instructions
-    {:doc      "Project guidance loaded from <repo>/AGENTS.md (or <repo>/CLAUDE.md fallback). Always returns a map. {:found? true :source :repo|:repo:claude-md-fallback :path \"...\" :bytes N :content \"...\" :truncated? bool :original-bytes N} OR {:found? false}."
+    {:doc      "Project guidance from AGENTS.md or CLAUDE.md fallback. Returns {:found? ...}."
      :arglists '([])
      :examples ["(v/main-agent-instructions)"
                 "(:content (v/main-agent-instructions))"]}))
@@ -193,7 +193,7 @@
 
 (def load-skill-symbol
   (vis/symbol 'load-skill skills/lookup
-    {:doc      "Load one skill's full body by name. This is the activation step — TURN_ACCESSIBLE_SKILLS only carries `:name`/`:description` summaries; `(v/load-skill name)` returns the full SKILL.md content under `:body`. Always returns a map. Present: {:found? true :name :description :path :source :body :extra}. Absent: {:found? false :name <queried>}."
+    {:doc      "Load skill body by name. Returns {:found? true :body ...} or {:found? false}."
      :arglists '([skill-name])
      :examples ["(v/load-skill \"diagnose\")"
                 "(:body (v/load-skill \"caveman\"))"]}))
@@ -221,26 +221,26 @@
 
 (def scan-warnings-symbol
   (vis/symbol 'scan-warnings combined-scan-warnings
-    {:doc      "Vec of warnings detected scanning project guidance + skills frontmatter. Each entry: {:source :reason :path}. Empty vec when clean. Cleared on next reload after fixing the file."
+    {:doc      "Scan warnings vec: {:source :reason :path}. Empty when clean."
      :arglists '([])
      :examples ["(v/scan-warnings)"
                 "(when (seq (v/scan-warnings)) :issues)"]}))
 
 (def reload-instructions!-symbol
   (vis/symbol 'reload-instructions! agents/reload!
-    {:doc      "Re-scan AGENTS.md / CLAUDE.md from disk and update the cache. Returns the fresh map. Use after editing the file mid-session."
+    {:doc      "Reload AGENTS.md / CLAUDE.md cache."
      :arglists '([])
      :examples ["(v/reload-instructions!)"]}))
 
 (def reload-skills!-symbol
   (vis/symbol 'reload-skills! skills/reload!
-    {:doc      "Re-scan SKILL.md files from disk and update the cache. Returns {:scanned N :loaded M :dropped K :warnings [...]}. Use after editing skill files / installing new skills mid-session."
+    {:doc      "Reload SKILL.md cache. Returns {:scanned :loaded :dropped :warnings}."
      :arglists '([])
      :examples ["(v/reload-skills!)"]}))
 
 (def reload-extensions!-symbol
   (vis/symbol 'reload-extensions! vis/reload-extensions!
-    {:doc      "Re-discover extensions on the classpath, diff against current registry, surgically apply :added / :removed / :reloaded. F1-lite: every still-present extension is re-required + re-registered (no change-detection in v1). Continue-on-error per-extension; the calling env's reseat is deferred until the current iteration completes. Returns the diff summary: {:added :removed :reloaded :errors :envs-reseated :env-reseat-deferred :env-reseat-skipped :duration-ms :blocked-ms}."
+    {:doc      "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
      :arglists '([] [{:reload/timeout-ms n}])
      :examples ["(v/reload-extensions!)"
                 "(v/reload-extensions! {:reload/timeout-ms 5000})"]}))
@@ -260,9 +260,8 @@
    prompt text — see
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
-  (str "`v/` environment fns: (v/snapshot) (v/git) (v/languages) "
-    "(v/monorepo) (v/render) (v/refresh!)"
-    " | project-guidance + skills: (v/main-agent-instructions) (v/load-skill \"name\") (v/scan-warnings)"
+  (str "`v/` env: (v/snapshot) (v/git) (v/languages) (v/monorepo) (v/render) (v/refresh!)"
+    " | guidance/skills: (v/main-agent-instructions) (v/load-skill \"name\") (v/scan-warnings)"
     " | reload: (v/reload-instructions!) (v/reload-skills!) (v/reload-extensions!)"))
 
 (defn environment-prompt

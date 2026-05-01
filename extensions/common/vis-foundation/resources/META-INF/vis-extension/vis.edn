@@ -4,7 +4,7 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, four cooperating surfaces — introspection (inspect data / report Markdown / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt and replaces the old multi-alias split."
+    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, four cooperating surfaces — introspection (inspect data / report Markdown / extensions catalog), file I/O (cat / ls / rg / bash plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt and replaces the old multi-alias split."
     :content
     "# vis-foundation
 
@@ -40,6 +40,8 @@ Structured helpers return tool-result envelopes; the thin babashka.fs wrappers r
 (v/rg [\"a\" \"b\"] path)       ; -> {:ok? :result {:hits [...]} ...}
                                   ; patterns = non-empty vec of LITERAL substrings (PCRE metacharacters auto-escaped)
                                   ; for genuine regex: (re-seq #\"...\" (str/join \"\\n\" (v/read-all-lines path)))
+(v/bash command)                ; -> {:ok? true :result {:exit :stdout :stderr ...} ...}
+(v/bash command opts)           ; opts {:cwd :timeout-ms :max-output-chars :stdin}
 
 (v/read-all-lines path)         ; -> {:ok? true :result [\"line\" ...] ...}
 (v/write-lines path lines)      ; -> {:ok? true :result \"path\" ...}

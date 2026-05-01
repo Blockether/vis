@@ -13,6 +13,8 @@ Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
 - Eval with `clj-nrepl-eval -p <port> "<clojure-code>"`.
 - Always use `:reload` after edits: `clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload)"`.
 - Prefer nREPL eval over fresh JVM startup for checks.
+- Runtime investigation is **nREPL data-first**. Use the running process to exercise the same code paths Vis uses, inspect Clojure data, then turn the finding into a focused repro/test.
+- Bash is for file discovery, process control, and launching `clj-nrepl-eval`; Clojure state and behavior checks belong in nREPL.
 - Run CLI entrypoints with `dev/cli!`, e.g. `clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"`.
 - Start TUI with `dev/tui!`, e.g. `clj-nrepl-eval -p 7888 "(dev/tui!)"`.
 - `dev/tui!` must open a separate macOS Terminal.app window running `bin/dev terminal-tui`.
@@ -23,32 +25,97 @@ Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
 - If Clojure delimiters break, do **not** manually rebalance parens. Run `clj-paren-repair <files>`.
 - Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
 
-### Run `./verify.sh` before every commit
+### Runtime investigation strategy — nREPL data-first
 
-`./verify.sh` (repo root) = single pre-commit gate. 8 checks, stops at first failure. **Every PR / commit / agent-authored change ships only on a green run.** Overrides convenience, scope creep, "just a one-line fix."
+Do this:
 
-Gates:
+1. Attach to the live nREPL and reload namespaces before inspection.
+2. Use Vis Clojure APIs, not storage files, to inspect runtime state.
+3. For conversations, start with `com.blockether.vis.ext.foundation.transcript/transcript` and inspect the returned Clojure map.
+4. For providers, inspect `vis/active-provider`, `vis/provider-ids`, `vis/registered-providers`, `vis/provider-template`, and `vis/->svar-provider`.
+5. Reproduce at the smallest app seam: transcript helper, provider config/coercion, iteration-loop harness, or pure TUI render/state test.
+6. If the needed diagnostic view does not exist, add a Clojure helper and a test instead of bypassing the app.
 
-1. **Format** — `cljfmt check` over `src/`, `extensions/`, `build.clj`. Recursive globs cover the host package + every category subdir under `extensions/`. Fix: `cljfmt fix src/ extensions/ build.clj`.
-2. **Lint** — `clj-kondo` across every src tree (host + every extension). Errors + warnings fatal; info advisory.
-3. **GraalVM safety** — walks every production source tree (`src/` + `extensions/*/*/src/`), loads each `.clj` with `*warn-on-reflection*` + `*unchecked-math* :warn-on-boxed`, counts warnings on project source paths only. **Ratchet**: fails when count grows beyond `.verification-baseline/graal-warnings.count` (tracked file). Improvements ratchet down via `./verify.sh --update-baseline`. `benchmarks/` excluded — dev/research, off the default classpath, off the runtime jar.
-4. **Tests** — `clojure -M:test` (lazytest, aggregate suite — host `test/` + every extension's `test/` directory).
-5. **Docs build** — `cd docs && mdbook build`. The "update `docs/` when touching architecture or public API" rule below depends on docs that compile.
-6. **Smoke** — `bin/vis` prints help banner. Leaves user DB untouched.
-7. **Git hygiene** — `git diff --check HEAD` (trailing whitespace, conflict markers).
-8. **Secret scan** — diff against `origin/main` for `sk_*`, `lin_api_*`, `nvapi-*`, `AIzaSy*`, `ghp_*`, hardcoded `password = "..."`.
+Useful snippets:
 
-Modes:
+```bash
+clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.core :as vis] :reload)"
+```
 
-- `./verify.sh` — full pipeline (default).
-- `./verify.sh --quick` — format + lint only (~10s) for tight loops.
-- `./verify.sh --graal` — graal step only.
-- `./verify.sh --strict` — graal demands ZERO warnings (no ratchet); confirm clean-up before updating baseline.
-- `./verify.sh --update-baseline` — snapshot current graal warning count as new lower bound. Commit `.verification-baseline/graal-warnings.count` change with the same PR that drove it down.
+```clojure
+(require '[com.blockether.vis.core :as vis] :reload)
+(require '[com.blockether.vis.ext.foundation.transcript :as tr] :reload)
+(let [db (vis/db-info)
+      cid (vis/db-resolve-conversation-id db "faf9b353")]
+  (tr/transcript db cid))
+```
 
-Logs: `.verification/<step>.log` + `.verification/summary.log` (gitignored).
+```clojure
+{:active-provider (vis/active-provider)
+ :provider-ids (vis/provider-ids)
+ :registered-provider-ids (mapv :provider/id (vis/registered-providers))
+ :runtime-provider (vis/->svar-provider (vis/active-provider))}
+```
 
-Baseline = **ratchet, not ceiling** — moves down only. Any PR that adds reflection / boxed-math warnings without justification = bug.
+### Clojure source edits — use `z/` structured editing
+
+Do this for non-trivial `.clj` / `.cljc` / `.cljs` / `.edn` edits:
+
+1. Use `z/zedit` when changing forms, symbols, requires, map entries, vectors, or nested Clojure data.
+2. Reproduce the edit on a small string in nREPL first when the zipper path is not obvious: `(z/of-string source {:track-position? true})`, find the target, inspect it, then apply the same path in `z/zedit`.
+3. Treat the zipper as immutable: every movement/edit returns the next `zloc`; return the final zipper from the `z/zedit` function.
+4. Find symbols by value with an explicit depth-first move: `(z/find-value zloc z/next 'some-symbol)`. The short form searches right siblings only; do not use it for whole-file scans.
+5. Verify the hit before changing it: inspect `(z/sexpr hit)`, `(z/tag hit)`, and `(z/position-span hit)` when location matters. `z/zedit` creates zippers with position tracking enabled.
+6. Change the current node with `(z/replace hit new-form)` or `(z/edit hit f & args)`.
+7. Move structurally, not by text offsets: `z/down`, `z/up`, `z/right`, `z/left`, `z/next`, `z/prev` skip whitespace/comments and preserve them in output.
+8. Use the `*` variants (`z/right*`, `z/next*`, `z/of-file*`) only when whitespace/comment nodes themselves matter. Normal navigation intentionally skips whitespace/comments while keeping them in `z/root-string`.
+9. Use `z/subedit->` / `z/subedit->>` when editing inside one found form and you want the final location to remain at that form.
+10. If there is no reliable structural target, first add a helper/predicate that finds the right form, then edit through that helper.
+
+Useful patterns:
+
+```clojure
+;; Replace a symbol everywhere.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (loop [zloc zl]
+      (if-let [hit (z/find-value zloc z/next 'old-sym)]
+        (recur (z/replace hit 'new-sym))
+        zloc))))
+
+;; Replace the value to the right of a key in a map/vector-ish form.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (if-let [k (z/find-value zl z/next :some-key)]
+      (-> k z/right (z/replace :new-value))
+      zl)))
+
+;; Add a require without hand-editing whitespace.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (if-let [req (z/find-value zl z/next :require)]
+      (-> req z/up (z/append-child '[clojure.string :as str]))
+      zl)))
+
+;; Edit inside one found form, then return to that form's location.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (if-let [let-sym (z/find-value zl z/next 'let)]
+      (-> let-sym
+          z/up
+          (z/subedit->
+            (z/find-value z/next 'old-local)
+            (z/replace 'new-local)))
+      zl)))
+```
+
+### Verification cadence
+
+Do this:
+
+- Documentation-only changes, including `AGENTS.md`, do not require `verify.sh`.
+- During code edits, use `./verify.sh --quick` for the loop.
+- Run full `./verify.sh` only before committing or handing off a code change as commit-ready.
 
 ### Ctrl+Y stays unbound in the TUI
 
