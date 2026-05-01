@@ -32,6 +32,31 @@
                       (filter #(= :left (:region %)))
                       (mapv :text))))))))
 
+  (it "shows Codex dynamic quota windows on the second footer line"
+    (let [build-limits-segments @#'footer/build-limits-segments
+          now-ms                1000000000000
+          report                {:dynamic {:limits [{:id :codex-5h
+                                                     :label "Codex 5h quota (%)"
+                                                     :remaining 76.0
+                                                     :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
+                                                    {:id :codex-7d
+                                                     :label "Codex 7d quota (%)"
+                                                     :remaining 85.0
+                                                     :window {:resets-at-ms (+ now-ms (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5.5"
+                                                          :provider :openai-codex})}
+        (fn []
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :openai-codex
+                                                                    :report report}}
+                            now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
+            (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
+            (expect (re-find #"7d 85% left ↺3d18h @" text)))))))
+
   (it "omits the reasoning suffix for non-reasoning models"
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"

@@ -29,10 +29,13 @@
    `embed-in-bar`, which forced single-color rendering and was the
    reason run-state had to live inside the assistant bubble; this
    namespace replaces that whole path."
-  (:require [com.blockether.vis.core :as lp]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t])
-  (:import [java.util Locale]))
+  (:import [java.time Instant ZoneId]
+           [java.time.format DateTimeFormatter]
+           [java.util Locale]))
 
 ;;; ── Number formatting (locale-safe) ────────────────────────────────────────
 
@@ -74,6 +77,83 @@
                 0.0 messages)]
     (when (pos? total) total)))
 
+(def ^:private one-week-ms
+  (* 7 24 60 60 1000))
+
+(def ^:private short-reset-formatter
+  (DateTimeFormatter/ofPattern "EEE h:mm a" Locale/ROOT))
+
+(def ^:private long-reset-formatter
+  (DateTimeFormatter/ofPattern "MMM d h:mm a" Locale/ROOT))
+
+(defn- format-relative-reset
+  [now-ms reset-ms]
+  (when reset-ms
+    (let [total-seconds (max 0 (quot (- (long reset-ms) (long now-ms)) 1000))
+          days          (quot total-seconds 86400)
+          hours         (quot (mod total-seconds 86400) 3600)
+          minutes       (quot (mod total-seconds 3600) 60)]
+      (cond
+        (pos? days)    (str days "d" hours "h")
+        (pos? hours)   (str hours "h" minutes "m")
+        (pos? minutes) (str minutes "m")
+        :else          (str total-seconds "s")))))
+
+(defn- format-absolute-reset
+  [now-ms reset-ms]
+  (when reset-ms
+    (let [zoned     (.atZone (Instant/ofEpochMilli (long reset-ms)) (ZoneId/systemDefault))
+          formatter (if (and (>= (- (long reset-ms) (long now-ms)) 0)
+                          (< (- (long reset-ms) (long now-ms)) one-week-ms))
+                      short-reset-formatter
+                      long-reset-formatter)]
+      (.format formatter zoned))))
+
+(defn- format-reset
+  [now-ms reset-ms]
+  (let [relative (format-relative-reset now-ms reset-ms)
+        absolute (format-absolute-reset now-ms reset-ms)]
+    (cond
+      (and relative absolute) (str "↺" relative " @ " absolute)
+      relative               (str "↺" relative)
+      absolute               (str "↺" absolute)
+      :else                  "↺--")))
+
+(defn- format-percent-left
+  [remaining]
+  (if (number? remaining)
+    (str (long (Math/round (double remaining))) "% left")
+    "-- left"))
+
+(defn- codex-limit-label
+  [row first?]
+  (case (:id row)
+    :codex-5h (if first? "Codex 5h" "5h")
+    :codex-7d (if first? "Codex 7d" "7d")
+    (or (:label row) "Codex")))
+
+(defn- format-codex-limit-row
+  [now-ms first? row]
+  (str (codex-limit-label row first?) " "
+    (format-percent-left (:remaining row)) " "
+    (format-reset now-ms (get-in row [:window :resets-at-ms]))))
+
+(defn- codex-limits-footer-text
+  [db now-ms]
+  (let [report (get-in db [:provider-limits :report])
+        rows   (->> (get-in report [:dynamic :limits])
+                 (filter #(contains? #{:codex-5h :codex-7d} (:id %)))
+                 (sort-by (fn [row]
+                            (case (:id row)
+                              :codex-5h 0
+                              :codex-7d 1
+                              2))))]
+    (when (seq rows)
+      (str/join " "
+        (map-indexed (fn [idx row]
+                       (format-codex-limit-row now-ms (zero? idx) row))
+          rows)))))
+
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 
 (defn- build-segments
@@ -82,7 +162,7 @@
    `:priority` semantics: 1 = critical (never drop), higher = drop first
    when the row overflows. The full priority hierarchy:
      1  run-state spinner, cancelling…
-     2  model name, elapsed (running)
+     2  model name, provider dynamic limits
      3  iter counter, model reasoning suffix
      4  cost
      5  keyboard shortcut hints"
@@ -157,6 +237,17 @@
       (conj {:text cost-str
              :fg t/footer-fg-muted :bold? false
              :region :right :priority 4}))))
+
+(defn- build-limits-segments
+  [db now-ms]
+  (let [provider (some-> (chosen-model-info) :provider)
+        text     (when (= :openai-codex provider)
+                   (codex-limits-footer-text db now-ms))]
+    (cond-> []
+      text
+      (conj {:text text
+             :fg t/footer-fg-muted :bold? false
+             :region :left :priority 1}))))
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 
@@ -249,18 +340,9 @@
     start-col
     (map-indexed vector spans)))
 
-(defn draw-footer!
-  "Paint the footer row at `footer-row`, full width `cols`. Pure draw —
-   reads `db` once, computes segments, fits to width, writes cells.
-   Safe to call every frame (cheap; no allocations on the hot path
-   beyond the spans vector)."
-  [g db footer-row cols now-ms]
-  ;; Background fill: default footer fg on terminal bg, full row.
-  (p/clear-styles! g)
-  (p/set-colors! g t/footer-fg t/terminal-bg)
-  (p/fill-rect! g 0 footer-row cols 1)
-
-  (let [[segs separator] (shrink-to-fit (build-segments db now-ms) cols)
+(defn- draw-footer-row!
+  [g db row cols now-ms build-fn]
+  (let [[segs separator] (shrink-to-fit (build-fn db now-ms) cols)
         l        (region-spans segs :left)
         c        (region-spans segs :center)
         r        (region-spans segs :right)
@@ -274,9 +356,22 @@
         l-end    (+ l-col l-w)
         c-col    (max (+ l-end (if (seq l) 2 0))
                    (- (quot (+ l-end r-col) 2) (quot c-w 2)))]
-    (when (seq l) (draw-spans! g l-col   footer-row l separator))
-    (when (seq c) (draw-spans! g c-col   footer-row c separator))
-    (when (seq r) (draw-spans! g r-col   footer-row r separator)))
+    (when (seq l) (draw-spans! g l-col row l separator))
+    (when (seq c) (draw-spans! g c-col row c separator))
+    (when (seq r) (draw-spans! g r-col row r separator))))
+
+(defn draw-footer!
+  "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw —
+   reads `db` once, computes segments, fits to width, writes cells.
+   Safe to call every frame (cheap; no allocations on the hot path
+   beyond the spans vector)."
+  [g db footer-row cols now-ms]
+  ;; Background fill: default footer fg on terminal bg, full row.
+  (p/clear-styles! g)
+  (p/set-colors! g t/footer-fg t/terminal-bg)
+  (p/fill-rect! g 0 footer-row cols 2)
+  (draw-footer-row! g db footer-row cols now-ms build-segments)
+  (draw-footer-row! g db (inc footer-row) cols now-ms build-limits-segments)
 
   ;; Restore neutral state for whatever paints next.
   (p/clear-styles! g)

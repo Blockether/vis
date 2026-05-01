@@ -290,6 +290,7 @@
                   :cancelling? false
                   :progress   nil
                   :settings   (load-persisted-settings)
+                  :provider-limits nil
                   :detail-expansions {}
                   :dialog-open? false
                   ;; Render thread coordination — see render-monitor docstring.
@@ -372,6 +373,16 @@
     ;; Used by the mouse handler when a hover-state change needs the
     ;; chrome row repainted with its hover background.
     db))
+
+(reg-event-db :set-provider-limits
+  (fn [db [_ provider-id report]]
+    (assoc db :provider-limits {:provider-id provider-id
+                                :report report
+                                :updated-at-ms (System/currentTimeMillis)})))
+
+(reg-event-db :clear-provider-limits
+  (fn [db _]
+    (assoc db :provider-limits nil)))
 
 (reg-event-db :shutdown
   (fn [db _]
