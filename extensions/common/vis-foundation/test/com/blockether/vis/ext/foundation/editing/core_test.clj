@@ -68,7 +68,15 @@
 
   (it "exposes a non-blank prompt fragment"
     (expect (string? editing/editing-prompt))
-    (expect (not (string/blank? editing/editing-prompt)))))
+    (expect (not (string/blank? editing/editing-prompt))))
+
+  (it "teaches the model that v/bash stdout and exit live under the tool envelope :result"
+    (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
+                        editing/editing-symbols)]
+      (expect (string/includes? editing/editing-prompt "(get-in run [:result :stdout])"))
+      (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
+      (expect (some #(string/includes? % "[:result :exit]")
+                (:ext.symbol/examples bash-symbol))))))
 
 (defdescribe vis-cat-structured-shape-test
   (it "returns a 5-key map: :path :offset :total-lines :truncated-by :lines"

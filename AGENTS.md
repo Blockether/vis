@@ -27,6 +27,22 @@ Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
 - If Clojure delimiters break, do **not** manually rebalance parens. Run `clj-paren-repair <files>`.
 - Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
 
+### Bug work requires reproduction first — Vis and svar
+
+**Absolute requirement:** every bug investigation starts by finding a concrete reproduction. If there is no reproduction, the bug is not diagnosed and the fix does not count.
+
+Applies equally to Vis code, svar behavior, provider integration, TUI state, CLI flows, persistence, tests, and any cross-project seam.
+
+Required order:
+
+1. Reproduce the failure before changing code.
+2. Capture the smallest reliable reproduction at the closest seam: pure function, transcript helper, provider config/coercion, svar call, iteration-loop harness, CLI helper, persistence call, or pure TUI render/state test.
+3. If the bug is reported from another project or dependency such as svar, reproduce it through the real integration path first, then reduce it to the smallest local or upstream seam.
+4. Only after the reproduction is understood may code be changed.
+5. Convert the reproduction into a regression test or documented diagnostic helper before considering the bug fixed.
+
+No repro -> no diagnosis. No repro -> no fix. No repro -> work is incomplete.
+
 ### Runtime investigation strategy — nREPL data-first
 
 Do this:

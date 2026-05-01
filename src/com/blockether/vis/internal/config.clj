@@ -369,12 +369,50 @@
         apply-config-metadata)
     (blockether-env-config)))
 
+(defn- active-provider-entry [config]
+  (first (:providers config)))
+
+(defn- provider-selection-changed?
+  [previous-provider selected-provider]
+  (and selected-provider
+    (not= (:id previous-provider) (:id selected-provider))))
+
+(defn- emit-provider-selected!
+  [{:keys [previous-provider provider config source]}]
+  (when-let [hook (some-> (:id provider) registry/provider-by-id :provider/on-selected-fn)]
+    (try
+      (hook {:previous-provider previous-provider
+             :provider          provider
+             :config            config
+             :source            source})
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::provider-on-selected-failed
+                   :data  {:provider (:id provider)
+                           :source   source
+                           :error    (ex-message t)
+                           :ex-class (.getName (class t))}
+                   :msg   (str "Provider on-selected hook for " (:id provider)
+                            " threw; selection continues")})))))
+
 (defn save-config!
-  "Persist provider config to `~/.vis/config.edn`."
-  [config]
-  (let [dir (io/file config-dir)]
-    (when-not (.exists dir) (.mkdirs dir))
-    (spit config-path (pr-str config))))
+  "Persist provider config to `~/.vis/config.edn`.
+
+   When the first provider (the active provider) changes, the newly
+   selected provider's optional `:provider/on-selected-fn` is invoked
+   after the file write. Hook failures are logged and never prevent
+   config persistence."
+  ([config] (save-config! config nil))
+  ([config source]
+   (let [previous-provider (active-provider-entry (load-config-raw))
+         selected-provider (active-provider-entry config)
+         dir (io/file config-dir)]
+     (when-not (.exists dir) (.mkdirs dir))
+     (spit config-path (pr-str config))
+     (when (provider-selection-changed? previous-provider selected-provider)
+       (emit-provider-selected! {:previous-provider previous-provider
+                                 :provider          selected-provider
+                                 :config            config
+                                 :source            source})))))
 
 (defn resolve-config
   "Resolve provider config: explicit → `~/.vis/config.edn` → BLOCKETHER_* env.

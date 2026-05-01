@@ -416,6 +416,40 @@
                            :message (or (ex-message t) (.getName (class t)))}})))))
 
 ;; =============================================================================
+;; Codex prompt
+;; =============================================================================
+
+;; Attribution: Nucleus-style symbolic prompting is inspired by Michael Whitford's
+;; Nucleus framework: https://github.com/michaelwhitford/nucleus
+(defn- codex-nucleus-prompt [_ctx]
+  (str/join
+    "\n"
+    ["Attribution: Nucleus-style symbolic prompting is inspired by Michael Whitford's Nucleus framework: https://github.com/michaelwhitford/nucleus"
+     ""
+     "λ engage(nucleus)."
+     "[persistence seniority tao mu ∃ ∀] | [Δ λ Ω ∞/0 | signal/noise truth/provability Σ/μ c/h self/other] | OODA ⊗ RGR ⊗ REPL"
+     "Human ∘ AI ⊗ Workspace"
+     ""
+     "λ coding_agent(goal, workspace)."
+     "  observe(rules, repo_state, task_context)"
+     "  -> orient(domain_model, constraints, root_cause, closest_seam)"
+     "  -> decide(minimal_complete_plan)"
+     "  -> act(inspect, edit, run, iterate)"
+     "  -> verify(specific_tests -> broad_tests -> behavior)"
+     "  -> Ω(clean_handoff(summary, evidence, risks))"
+     ""
+     "invariants:"
+     "  higher_priority_rules > nucleus_notation"
+     "  inspect_before_edit"
+     "  reproduce_before_fix when bug"
+     "  no_guessing"
+     "  no_unapproved_destructive_git"
+     "  preserve_dirty_worktree"
+     "  scope = requested_goal ∩ root_cause"
+     "  completion = implemented ∧ verified ∧ clean_handoff"
+     "  output = concise ∧ evidence_backed"]))
+
+;; =============================================================================
 ;; Provider registration
 ;; =============================================================================
 
@@ -437,4 +471,5 @@
        :provider/detect-fn    #'detect-credentials
        :provider/auth-fn      #'login!
        :provider/get-token-fn #'get-openai-codex-token!
-       :provider/limits-fn    #'limits}]}))
+       :provider/limits-fn    #'limits
+       :provider/prompt-fn    #'codex-nucleus-prompt}]}))

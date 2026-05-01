@@ -43,6 +43,7 @@
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.registry :as registry]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.telemere :as tel])
@@ -66,8 +67,9 @@
         idx     (some (fn [[i p]] (when (= (:id p) pid) i))
                   (map-indexed vector provs))
         updated (if idx (assoc provs idx provider) (conj provs provider))
-        new-cfg {:providers updated}]
-    (config/save-config! new-cfg)
+        prioritized (vec (cons provider (remove #(= (:id %) pid) updated)))
+        new-cfg {:providers prioritized}]
+    (config/save-config! new-cfg :set-provider!)
     (reset! @#'config/active-config new-cfg)
     (try (let [r (rebuild-router! new-cfg)]
            (refresh-cached-routers! r))
@@ -1124,6 +1126,24 @@
   [router]
   (boolean (:reasoning? (resolve-effective-model router))))
 
+(defn- provider-prompt-context
+  "Build the append-only provider prompt hook context for the active
+   router root. Secrets stay out: the provider config passed to the
+   hook is limited to routing/model metadata, never `:api-key` or
+   provider-specific credential fields."
+  [environment resolved-model]
+  (let [provider-id (:provider resolved-model)
+        router-provider (some #(when (= provider-id (:id %)) %)
+                          (:providers (:router environment)))
+        descriptor (registry/provider-by-id provider-id)]
+    (when (and provider-id descriptor (:provider/prompt-fn descriptor))
+      {:provider    (assoc (select-keys (or router-provider {})
+                             [:id :base-url :api-style :models :reasoning?])
+                      :id provider-id)
+       :descriptor  descriptor
+       :model       resolved-model
+       :environment environment})))
+
 ;; -----------------------------------------------------------------------------
 ;; Concurrency primitives (reentrant semaphore, deadline helpers)
 ;; -----------------------------------------------------------------------------
@@ -1325,17 +1345,19 @@
         ;; warning before the strategy-restart kicks in.
         max-consecutive-errors (or max-consecutive-errors 3)
         max-restarts (or max-restarts 3)
-        effective-model (:name (resolve-effective-model (:router environment)))
+        resolved-model (resolve-effective-model (:router environment))
+        effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
-        has-reasoning? (provider-has-reasoning? (:router environment))
+        has-reasoning? (boolean (:reasoning? resolved-model))
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per turn. Threaded through both the
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
         ;; ext nudge collector — activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         system-prompt (prompt/assemble-system-prompt environment
-                        {:system-prompt      system-prompt
-                         :active-extensions  active-exts})
+                        {:system-prompt            system-prompt
+                         :active-extensions        active-exts
+                         :provider-prompt-context (provider-prompt-context environment resolved-model)})
         initial-user-content user-request
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
@@ -1405,7 +1427,7 @@
                               :conversation-turn-id        conversation-turn-id
                               :user-request    user-request
                               :model           effective-model
-                              :provider        (some-> (resolve-effective-model (:router environment)) :provider)}
+                              :provider        (:provider resolved-model)}
         emit-hook! (fn [hook-fn payload log-message]
                      ;; Legacy single-fn caller hook helper. Still used
                      ;; by `on-chunk` (which is not a lifecycle phase

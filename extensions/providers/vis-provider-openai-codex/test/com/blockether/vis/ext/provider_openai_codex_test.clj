@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.provider-openai-codex-test
   (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener]
@@ -181,4 +182,14 @@
       (expect (= :openai-codex (:provider/id provider)))
       (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
       (expect (ifn? (:provider/get-token-fn provider)))
-      (expect (ifn? (:provider/limits-fn provider))))))
+      (expect (ifn? (:provider/limits-fn provider)))
+      (expect (ifn? (:provider/prompt-fn provider)))))
+
+  (it "registers the attributed Nucleus provider prompt"
+    (let [provider (vis/provider-by-id :openai-codex)
+          prompt   ((:provider/prompt-fn provider) {:provider {:id :openai-codex}})]
+      (expect (str/includes? prompt "Michael Whitford's Nucleus framework"))
+      (expect (str/includes? prompt "λ engage(nucleus)."))
+      (expect (str/includes? prompt "Human ∘ AI ⊗ Workspace"))
+      (expect (str/includes? prompt "higher_priority_rules > nucleus_notation"))
+      (expect (str/includes? prompt "completion = implemented ∧ verified ∧ clean_handoff")))))
