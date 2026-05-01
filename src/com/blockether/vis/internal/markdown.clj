@@ -46,7 +46,7 @@
 (def ^:private SHORT_ID_CHARS
   "How many leading characters of a UUID to surface in the header.
    Matches the convention `vis conversations`, the TUI header, and
-   `(v/conversation)` already use \u2014 keeps copy-pasted exports
+   `v/inspect` conversation data \u2014 keeps copy-pasted exports
    trivially correlatable with other tooling."
   8)
 

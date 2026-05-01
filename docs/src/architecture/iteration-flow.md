@@ -127,9 +127,8 @@ between iterations. Continuity is delivered by:
   from inside a fenced code block.
 
 For deeper introspection, the opt-in `vis-foundation` extension
-exposes `(v/turn)`, `(v/conversation)`, `(v/conversations)`,
-`(v/var-history 'sym)`, `(v/find-attempts pattern)`,
-`(v/failures)`, and `(v/diagnose)`. See
+exposes `(v/inspect)` as the canonical state data map and `(v/report)`
+as the Markdown renderer over the same data. See
 [Meta extension](../extensions/common/vis-foundation.md).
 
 ## SYSTEM vars
@@ -167,8 +166,8 @@ when the model evaluates the symbol explicitly.
 only.
 
 Rendering is **type-aware**: cheap values get their actual content
-inlined so the model never has to round-trip via `(var-history 'sym)`
-just to read what's in a var. Expensive values fall back to a schema
+inlined so the model never has to call a history helper just to read
+what's in a var. Expensive values fall back to a schema
 preview. Stats live in a `;;` comment line, **never** as reader-macro
 metadata onto the symbol.
 
@@ -200,4 +199,4 @@ There is no `<vars_archive>` block. Vars that get auto-forgotten
 (see `auto-forget-stale-vars!` in `internal/loop.clj`) drop out of
 the sandbox and are no longer rendered. The DB still carries their
 full history; the agent recovers prior versions on demand via
-`(v/var-history 'sym)` (from `vis-foundation`).
+`(v/inspect)` (from `vis-foundation`).

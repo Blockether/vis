@@ -1,27 +1,29 @@
 (ns com.blockether.vis.ext.foundation.transcript
   "Full conversation transcript — DATA first, presentation second.
 
-   `(v/transcript [conversation-id])` returns one canonical Clojure
-   map with every turn, every iteration, every executed block plus
-   the LLM-side context (system prompt, message envelope, reasoning
-   trace, top-level provider error, per-iteration vars, answer-form
-   pointer, returned-empty-blocks flag) and the per-block forensic
-   detail (code, comment, result, error, stdout, stderr, duration,
-   timeout?, repaired?). Pure data. The agent can pattern-match on
-   it; the CLI renders Markdown on top; a future TUI screen, JSON
-   exporter, or analytics extension consumes the same shape.
+   `transcript` returns one canonical Clojure map with every turn,
+   every iteration, every executed block plus the LLM-side context
+   (system prompt, message envelope, reasoning trace, top-level
+   provider error, per-iteration vars, answer-form pointer,
+   returned-empty-blocks flag) and the per-block forensic detail
+   (code, comment, result, error, stdout, stderr, duration, timeout?,
+   repaired?). Pure data. The agent can pattern-match on it; the CLI
+   renders Markdown on top; a future TUI screen, JSON exporter, or
+   analytics extension consumes the same shape.
 
-   Lives in foundation (alongside `v/turn`, `v/conversation`,
-   `v/diagnose`) because it's an introspection surface, not host
-   plumbing.
+   Lives in foundation because it's an introspection surface, not host
+   plumbing. The sandbox-visible public surface is now `(v/inspect)`
+   for data and `(v/report)` for Markdown; this namespace owns the
+   transcript portion behind that deeper interface.
 
-   Public surface:
+   Public Clojure surface:
 
-     `(transcript    db-info conv-id)`  → data map (canonical shape)
-     `(transcript-md db-info conv-id)`  → Markdown string
+     `(transcript      db-info conv-id)`  → transcript data map
+     `(transcript->md  data)`             → Markdown string
+     `(transcript-md   db-info conv-id)`  → DB lookup + Markdown string
 
-     `register-cli!` mounts `vis diagnose <CONVERSATION-ID>` at the
-     top of the command tree, mirroring the `vis doctor` pattern.
+     `register-cli!` mounts `vis report <CONVERSATION-ID>` at the top
+     of the command tree, mirroring the `vis doctor` pattern.
 
    Canonical data shape:
 
@@ -446,6 +448,14 @@
     "- **Total tokens (in/out):** " (format-tokens (:tokens totals)) "\n"
     "\n"))
 
+(defn transcript->md
+  "Render transcript data as Markdown. Pure transformation over
+   `transcript`'s canonical data shape. Returns a string."
+  [data]
+  (str (render-header data)
+    "## Turn-by-turn breakdown\n\n"
+    (apply str (map render-turn-block (:turns data)))))
+
 (defn transcript-md
   "Render the conversation as Markdown. Single transformation over
    `transcript`'s data. Returns a string; returns
@@ -453,53 +463,11 @@
    shell pipelines stay clean."
   [db-info conversation-id]
   (if-let [data (transcript db-info conversation-id)]
-    (str (render-header data)
-      "## Turn-by-turn breakdown\n\n"
-      (apply str (map render-turn-block (:turns data))))
+    (transcript->md data)
     (str "Conversation not found: " conversation-id "\n")))
 
 ;; =============================================================================
-;; Sandbox symbol — hooked into foundation's `:ext/symbols` vec via
-;; `core.clj`.
-;; =============================================================================
-
-(defn- sandbox-transcript
-  "SCI-bound entry point. Pulls the env-injected `:db-info` and
-   defaults `conversation-id` to the current conversation when the
-   agent calls `(v/transcript)` with no arg."
-  ([env]
-   (sandbox-transcript env (:conversation-id env)))
-  ([env conversation-id]
-   (when (and (:db-info env) conversation-id)
-     (transcript (:db-info env) conversation-id))))
-
-(def transcript-symbol
-  (vis/symbol 'transcript sandbox-transcript
-    {:doc       (str "Full conversation transcript as ONE Clojure data map: "
-                  "{:conversation :totals :turns}. Each turn carries every "
-                  "iteration; each iteration carries thinking, top-level "
-                  "error, vars, answer-form-idx, returned-empty-blocks?, "
-                  ":llm-system-prompt, :llm-user-prompt, :metadata, plus "
-                  "every executed block (:code :comment :result :error "
-                  ":stdout :stderr :duration-ms :timeout? :repaired?) and "
-                  "the per-iteration :tokens / :cost-usd. Default = "
-                  "current conversation; pass an id (or unambiguous "
-                  "prefix) to inspect another. Pure data — the CLI's "
-                  "`vis diagnose` renders Markdown on top of this.")
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/transcript)"
-                 "(map :goal (:turns (v/transcript)))"
-                 "(:cost-usd (:totals (v/transcript)))"
-                 "(map :thinking (mapcat :iterations (:turns (v/transcript))))"
-                 "(filter :error (mapcat :blocks (mapcat :iterations (:turns (v/transcript)))))"]
-     :before-fn (fn [env _f args]
-                 ;; inject-environment pattern: prepend env so impl fns receive (env & user-args).
-                 ;; transcript fn takes [db-info conversation-id], so we must extract db-info
-                 ;; from env and resolve optional conversation-id from env when not provided.
-                  {:args (vec (cons (:db-info env) (or (seq args) [(:conversation-id env)])))})}))
-
-;; =============================================================================
-;; CLI command — `vis diagnose <CONVERSATION-ID>`. Foundation owns it
+;; CLI command — `vis report <CONVERSATION-ID>`. Foundation owns it
 ;; (mirrors the `vis doctor` pattern in doctor.clj).
 ;; =============================================================================
 
@@ -508,13 +476,13 @@
   (.println ^java.io.PrintStream vis/original-stdout s)
   (.flush ^java.io.PrintStream vis/original-stdout))
 
-(defn- cli-diagnose-run!
+(defn- cli-report-run!
   [_parsed residual]
   (vis/init-cli!)
   (let [cid-input (some-> (first residual) str/trim not-empty)]
     (cond
       (nil? cid-input)
-      (do (println-original! "Usage: vis diagnose <CONVERSATION-ID>")
+      (do (println-original! "Usage: vis report <CONVERSATION-ID>")
         (println-original! "")
         (println-original! "List conversations with:  vis conversations")
         (System/exit 1))
@@ -531,12 +499,12 @@
 
 (defn register-cli! []
   (vis/register-cmd!
-    {:cmd/name  "diagnose"
+    {:cmd/name  "report"
      :cmd/doc   "Print a forensic Markdown report for a conversation: every turn, every iteration, every executed code block (code, comment, result, stdout, stderr, error, duration), every (def ...) var, plus the LLM reasoning trace and the final answer. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
-     :cmd/usage "vis diagnose <CONVERSATION-ID>"
+     :cmd/usage "vis report <CONVERSATION-ID>"
      :cmd/args  [{:name "conversation-id" :kind :positional :type :string
                   :doc  "Conversation id (full UUID or unambiguous prefix)."}]
-     :cmd/examples ["vis diagnose eeaf9651-06c7-4dda-9e97-877fcef06337"
-                    "vis diagnose eeaf9651"
-                    "vis diagnose eeaf9651 > REPRODUCTION.md"]
-     :cmd/run-fn cli-diagnose-run!}))
+     :cmd/examples ["vis report eeaf9651-06c7-4dda-9e97-877fcef06337"
+                    "vis report eeaf9651"
+                    "vis report eeaf9651 > REPRODUCTION.md"]
+     :cmd/run-fn cli-report-run!}))

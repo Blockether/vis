@@ -1,15 +1,18 @@
 (ns com.blockether.vis.ext.foundation.introspection
-  "Meta extension — programmatic introspection of the agent's own
-   state from inside `:code`. Ten functions, all returning maps or
-   vectors so the agent can manipulate the data structurally:
+  "Programmatic introspection of the agent's own state from inside
+   `:code`. The public state surface is deliberately small:
 
-   - `(v/turn)`                       → current turn snapshot (one map)
-   - `(v/conversation [id])`          → current or specific conversation
-   - `(v/conversations [channel])`    → list every conversation, optionally filtered
-   - `(v/var-history sym [id])`       → version timeline for a var
-   - `(v/find-attempts pattern [id])` → regex search over executed code
-   - `(v/failures [id])`              → provider + code failures as data
-   - `(v/diagnose [id])`              → counts and next actions for stalled turns
+   - `(v/inspect [conversation-id])` → canonical data map
+   - `(v/report [conversation-id])`  → Markdown rendered from that data
+
+   Everything else in this namespace is implementation behind that
+   deeper interface. The agent gets the data once, manipulates it via
+   plain Clojure (`get-in`, `filter`, `map`, etc.), and renders the
+   same data to Markdown only when presentation is needed.
+
+   Extension catalog/doc access remains public because it is discovery,
+   not conversation-state introspection:
+
    - `(v/extensions)`                 → catalog of every loaded extension
    - `(v/extension-docs [ref])`       → docs declared by an extension with descriptions
    - `(v/extension-doc ref name)`     → full Markdown body of a declared doc
@@ -20,21 +23,18 @@
    Failures return nil/[], never throw, so a misbehaving introspection
    call cannot break iteration execution.
 
-   The agent gets the data once, manipulates it via plain Clojure
-   (`(filter …)`, `(map :code (:attempts turn))`, etc.) instead of
-   making 7 separate function calls.
-
    Opt-in: not auto-loaded by default. Add this jar to the classpath
    to enable."
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis.core :as vis]))
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation.transcript :as transcript]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
 ;; registry (`vis/registered-channels`) so any third-party channel jar
-;; on the classpath surfaces in `(v/conversations)` automatically —
+;; on the classpath surfaces in the inspect conversation index automatically —
 ;; no edits to this file when a new front-end ships.
 ;;
 ;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
@@ -61,13 +61,6 @@
 (defn- safe-deref [a]
   (when a (try (deref a) (catch Throwable _ nil))))
 
-(defn- as-sym [x]
-  (cond
-    (nil? x)     nil
-    (symbol? x)  x
-    (string? x)  (symbol x)
-    :else        (symbol (str x))))
-
 (defn- current-conversation-id [env]
   (:conversation-id env))
 
@@ -77,7 +70,7 @@
    Internally the turn is persisted as a `query` row — hence the
    `:current-conversation-turn-id-atom` env key and this helper's `conversation-turn-id`
    suffix. The product concept is *turn*; everywhere this id is
-   surfaced to the model (e.g. `(v/turn)` results, the
+   surfaced to the model (e.g. inspect current-turn results, the
    `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
    SCI-visible `TURN_CONVERSATION_TURN_ID` SYSTEM var so meta-fns can filter
    it without round-tripping through SCI."
@@ -114,7 +107,7 @@
 
 (defn- attempts-from-iterations
   "Walk `iterations` (in DB order) and collect every executed
-   expression. Used by `(v/turn)` and by `find-attempts`."
+   expression. Used by the current-turn snapshot and by attempt search."
   [db-info iterations]
   (vec
     (mapcat (fn [iteration]
@@ -329,7 +322,7 @@
             (catch Throwable _ [])))))
 
 (defn- turn-snapshot
-  "The single-call rich snapshot returned by `(v/turn)`. Aggregates
+  "The single-call rich current-turn snapshot. Aggregates
    the per-iteration data the prompt projection does NOT carry
    (attempts, provider/code failures, cost, elapsed-ms) plus the
    iteration pointer. The agent picks what it needs by map key
@@ -352,7 +345,7 @@
 (defn- conversation-snapshot
   "Map for a single conversation: identity + every turn rolled up to a
    compact `{:id :goal :outcome :answer :iteration-count :status}`
-   shape. Used by `(v/conversation [id])`.
+   shape. Used by the conversation-summary portion of inspect.
 
    `:iteration-count` is the integer number of LLM rounds the turn
    consumed. Spelled out so it never gets confused with the vector
@@ -388,7 +381,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Meta fns — each takes `env` as first arg via the shared
 ;; `:before-fn` injector below. The agent never sees `env`; it calls
-;; e.g. `(v/turn)` with zero args.
+;; e.g. current-turn snapshot with zero args.
 ;; ---------------------------------------------------------------------------
 
 (defn- foundation-turn [env]
@@ -452,66 +445,6 @@
        (catch Throwable _ []))
      [])))
 
-(defn- foundation-var-history
-  "Full version timeline for `sym`: `[{:value :code :version} …]`
-   oldest-first. Defaults to the current conversation; pass a
-   `conversation-id` to inspect a different one. Returns `[]` (never
-   nil) when the env is missing required handles."
-  ([env sym]
-   (foundation-var-history env sym (current-conversation-id env)))
-  ([env sym conversation-id]
-   (if (and (:db-info env) conversation-id sym)
-     (try
-       (vec (vis/db-var-history (:db-info env) conversation-id (as-sym sym)))
-       (catch Throwable _ []))
-     [])))
-
-(defn- ->pattern
-  "Coerce a regex argument into a `java.util.regex.Pattern`. Strings
-   become `(re-pattern s)`; anything else falls back to its string
-   representation. Centralizes the coercion so `re-find` never sees a
-   non-Pattern (it would throw `ClassCastException`)."
-  [x]
-  (cond
-    (instance? java.util.regex.Pattern x) x
-    (string? x) (re-pattern x)
-    :else       (re-pattern (str x))))
-
-(defn- code-matches? [pattern attempt]
-  ;; `re-find` is `(pattern, string)` — call it positionally; threading
-  ;; would flip the args.
-  (let [code (:code attempt)]
-    (and (string? code) (re-find pattern code))))
-
-(defn- foundation-find-attempts
-  "Regex search over executed `:code` strings. With one arg, searches
-   the CURRENT TURN's attempts only. With two args, searches every turn
-   of the given conversation. To scan EVERY conversation in the DB use
-   `v/find-attempts-everywhere` instead. Returns
-   `[{:turn-id :iteration-id :iteration :code :result :error} …]` —
-   `[]` (never nil) when nothing matches or the env is missing handles."
-  ([env pattern]
-   (let [pattern (->pattern pattern)
-         turn    (turn-snapshot env)]
-     (if turn
-       (->> (:attempts turn)
-         (filterv #(code-matches? pattern %))
-         (mapv #(assoc % :turn-id (:id turn))))
-       [])))
-  ([env pattern conversation-id]
-   (if (and (:db-info env) conversation-id)
-     (let [pattern (->pattern pattern)
-           queries (try (vis/db-list-conversation-turns (:db-info env) conversation-id)
-                     (catch Throwable _ []))]
-       (vec
-         (mapcat (fn [query]
-                   (let [iterations (iteration-rows (:db-info env) (:id query))]
-                     (->> (attempts-from-iterations (:db-info env) iterations)
-                       (filter #(code-matches? pattern %))
-                       (mapv #(assoc % :turn-id (:id query))))))
-           queries)))
-     [])))
-
 (defn- foundation-conversation-forks
   "List every `conversation_state` row for the conversation soul behind
    `conversation-id`, oldest version first. Each row maps to
@@ -539,8 +472,8 @@
      :provider :model :created-at :iteration-count}`. Version 0 with
    `:forked-from-query-state-id nil` is the original run; any higher
    version is a retry. `conversation-turn-id` is a `conversation_turn_soul` UUID — the same id
-   surfaced as `:turn-id` by `v/find-attempts`, `:id` by `v/turn`,
-   or `:turns[].id` by `v/conversation`. Returns `[]` (never nil)
+   surfaced as `:turn-id` by attempt search, `:id` by the current-turn
+   snapshot, or `:turns[].id` by the conversation summary. Returns `[]` (never nil)
    when the query is unknown or the env is missing handles."
   [env conversation-turn-id]
   (if (and (:db-info env) conversation-turn-id)
@@ -549,27 +482,11 @@
       (catch Throwable _ []))
     []))
 
-(defn- foundation-find-attempts-everywhere
-  "Regex search over executed `:code` strings across EVERY conversation
-   the DB knows about. Same hit shape as `foundation-find-attempts`, plus a
-   `:conversation-id` key on each entry so callers can group / drill
-   in. Heavy: walks every persisted turn + iteration on disk. Returns
-   `[]` (never nil) when nothing matches or the env has no
-   `:db-info`."
-  [env pattern]
-  (if (:db-info env)
-    (vec
-      (mapcat (fn [{:keys [id]}]
-                (mapv #(assoc % :conversation-id id)
-                  (foundation-find-attempts env pattern id)))
-        (foundation-conversations env)))
-    []))
-
 (defn- foundation-failures
   "Provider/schema and code/tool failures, normalized into one
    chronological vector. No arg = current turn. Pass a conversation id
    to scan every turn in that conversation. To scan EVERY conversation
-   in the DB use `v/failures-everywhere` instead. Returns `[]`
+   in the DB use the DB-wide helper instead. Returns `[]`
    (never nil) when there is nothing to report or the env is missing
    handles."
   ([env]
@@ -586,22 +503,6 @@
            (vis/db-list-conversation-turns (:db-info env) conversation-id)))
        (catch Throwable _ []))
      [])))
-
-(defn- foundation-failures-everywhere
-  "Provider/schema and code/tool failures across EVERY conversation the
-   DB knows about. Same shape as `foundation-failures` (each entry already
-   carries `:turn-id` and `:goal`), with `:conversation-id` added so
-   callers can group / drill in. Heavy: walks every persisted turn +
-   iteration on disk. Returns `[]` (never nil) when there is nothing
-   to report or the env has no `:db-info`."
-  [env]
-  (if (:db-info env)
-    (vec
-      (mapcat (fn [{:keys [id]}]
-                (mapv #(assoc % :conversation-id id)
-                  (foundation-failures env id)))
-        (foundation-conversations env)))
-    []))
 
 (defn- classification-counts [failures]
   (into {}
@@ -670,7 +571,7 @@
             clusters))
 
         (contains? classes :provider-schema-rejected)
-        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from v/failures and retry/switch model only if it repeats.")
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/inspect)) and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
         (conj (str "v/rg now takes a non-empty vector of LITERAL substrings, not a regex string. "
@@ -687,7 +588,7 @@
         (conj "Use any :near-match hint, then re-read the smallest file slice and emit an exact SEARCH block.")))))
 
 (defn- foundation-diagnose
-  "Compact current-turn diagnosis built from v/failures. Returns a
+  "Compact current-turn diagnosis built from failure data. Returns a
    map with counts, repetition-loop detection, and next actions so the
    agent can stop burning iterations on DB spelunking. Pass a
    conversation id to diagnose all turns in that conversation.
@@ -720,6 +621,61 @@
       :repetition-clusters clusters
       :failures            failures
       :next-actions        (next-actions failures clusters)})))
+
+(defn- safe-call
+  [f default]
+  (try
+    (let [v (f)]
+      (if (nil? v) default v))
+    (catch Throwable _ default)))
+
+(defn- retries-by-turn
+  [env turns]
+  (into {}
+    (keep (fn [{:keys [id]}]
+            (when id
+              [id (meta-query-retries env id)])))
+    turns))
+
+(defn- foundation-inspect
+  "Canonical conversation-state data surface. One read returns the
+   navigation summary, live current turn, classified failures,
+   diagnosis, fork/retry metadata, and the full transcript payload.
+   Default target is the current conversation; pass a conversation id
+   or unambiguous prefix to inspect another conversation."
+  ([env]
+   (foundation-inspect env (:conversation-id env)))
+  ([env conversation-id]
+   (let [target-id            (or conversation-id (:conversation-id env))
+         transcript-data      (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+         resolved-id          (or (get-in transcript-data [:conversation :id]) target-id)
+         conversation-summary (safe-call #(foundation-conversation env resolved-id) nil)
+         failures             (safe-call #(foundation-failures env resolved-id) [])
+         diagnosis            (safe-call #(foundation-diagnose env resolved-id) {})
+         forks                (safe-call #(foundation-conversation-forks env resolved-id) [])
+         turn-retries         (safe-call #(retries-by-turn env (:turns transcript-data)) {})]
+     {:schema-version      1
+      :scope               :conversation
+      :conversation-id     resolved-id
+      :conversation-index  (safe-call #(foundation-conversations env) [])
+      :conversation        conversation-summary
+      :current-turn        (safe-call #(foundation-turn env) nil)
+      :failures            failures
+      :diagnosis           diagnosis
+      :conversation-forks  forks
+      :turn-retries        turn-retries
+      :transcript          transcript-data})))
+
+(defn- foundation-report
+  "Render the same canonical data returned by `foundation-inspect` as
+   Markdown. Returns a string and never throws."
+  ([env]
+   (foundation-report env (:conversation-id env)))
+  ([env conversation-id]
+   (let [data (foundation-inspect env conversation-id)]
+     (if-let [transcript-data (:transcript data)]
+       (transcript/transcript->md transcript-data)
+       (str "Conversation not found: " (:conversation-id data) "\n")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Extension catalog + README / doc access
@@ -853,168 +809,43 @@
 ;; the auto-generated extension prompt).
 ;; ---------------------------------------------------------------------------
 
-(def turn-symbol
-  (vis/symbol 'turn foundation-turn
-    {:doc       (str "Snapshot of the current turn as a single map: "
-                  "{:id :goal :status :attempts :errors :failures "
-                  ":iteration :cost :elapsed-ms}. The agent "
-                  "reads keys directly: (filter :error (:attempts (v/turn))), etc.")
-     :arglists  '([])
-     :examples  ["(v/turn)"
-                 "(count (:attempts (v/turn)))"
-                 "(filter #(re-find #\"grep\" (:code %)) (:attempts (v/turn)))"]
-     :before-fn inject-environment}))
-
-(def conversation-symbol
-  (vis/symbol 'conversation foundation-conversation
-    {:doc       (str "Conversation snapshot: {:id :channel :title :provider "
-                  ":model :provider-model :created-at :turns :turn-count}. "
-                  "`:provider-model` is a `\"provider/model\"` display string "
-                  "(e.g. `\"openai/gpt-4o\"`); the raw `:provider` and `:model` "
-                  "are kept as separate canonical keys. Default = current "
-                  "conversation; pass an id to inspect any other. "
-                  "The in-flight turn (= `TURN_CONVERSATION_TURN_ID`) is auto-excluded "
-                  "from `:turns` because its `:iteration-count` / `:total-cost` are "
-                  "not finalized yet; the excluded id is returned as "
-                  "`:in-flight-turn-id` so callers can opt into seeing it.")
+(def inspect-symbol
+  (vis/symbol 'inspect foundation-inspect
+    {:doc       (str "Canonical introspection data as ONE Clojure map. "
+                  "Default = current conversation; pass an id or "
+                  "unambiguous prefix to inspect another. Shape: "
+                  "{:schema-version :scope :conversation-id "
+                  ":conversation-index :conversation :current-turn "
+                  ":failures :diagnosis :conversation-forks "
+                  ":turn-retries :transcript}. The :transcript key "
+                  "contains the full forensic record "
+                  "{:conversation :totals :turns}; :diagnosis is the "
+                  "compact failure summary; :failures is the normalized "
+                  "failure stream. Prefer this single data surface over "
+                  "old per-view calls.")
      :arglists  '([] [conversation-id])
-     :examples  ["(v/conversation)"
-                 "(v/conversation \"3a7b2c…\")"
-                 "(map :answer (:turns (v/conversation)))"]
+     :examples  ["(v/inspect)"
+                 "(get-in (v/inspect) [:diagnosis :next-actions])"
+                 "(get-in (v/inspect) [:transcript :totals :cost-usd])"
+                 "(map :goal (get-in (v/inspect) [:transcript :turns]))"]
      :before-fn inject-environment}))
 
-(def conversations-symbol
-  (vis/symbol 'conversations foundation-conversations
-    {:doc       (str "Vector of every known conversation, newest-first: "
-                  "[{:id :channel :title :created-at :turn-count} …]. "
-                  "No arg = all channels; pass :tui / :telegram / :cli / "
-                  ":vis to filter to one.")
-     :arglists  '([] [channel])
-     :examples  ["(v/conversations)"
-                 "(v/conversations :telegram)"
-                 "(filter #(= :telegram (:channel %)) (v/conversations))"]
-     :before-fn inject-environment}))
-
-(def var-history-symbol
-  (vis/symbol 'var-history foundation-var-history
-    {:doc       (str "Full version timeline for a var: "
-                  "[{:value :code :version} …] oldest-first. Defaults to "
-                  "the current conversation; pass an id to read from another.")
-     :arglists  '([sym] [sym conversation-id])
-     :examples  ["(v/var-history 'callers)"
-                 "(v/var-history \"foo-fn\")"
-                 "(v/var-history 'foo \"3a7b2c…\")"]
-     :before-fn inject-environment}))
-
-(def find-attempts-symbol
-  (vis/symbol 'find-attempts foundation-find-attempts
-    {:doc       (str "Regex search over executed :code strings. One-arg "
-                  "form scans the CURRENT TURN only; two-arg form scans "
-                  "every turn of the given conversation. To scan every "
-                  "conversation in the DB use `v/find-attempts-everywhere`. "
-                  "Returns [{:turn-id :iteration-id :iteration :code :result :error} …] "
-                  "— [] (never nil) when nothing matches.")
-     :arglists  '([pattern] [pattern conversation-id])
-     :examples  ["(v/find-attempts \"grep\")"
-                 "(v/find-attempts #\"\\bdef\\b\" \"3a7b2c…\")"
-                 "(map :code (v/find-attempts \"foo-fn\"))"]
-     :before-fn inject-environment}))
-
-(def conversation-forks-symbol
-  (vis/symbol 'conversation-forks foundation-conversation-forks
-    {:doc       (str "Vector of every conversation_state row for the soul "
-                  "behind `conversation-id`, oldest version first: "
-                  "[{:state-id :version :parent-state-id :title :system-prompt "
-                  ":provider :model :created-at :query-count} …]. "
-                  "Trunk = :version 0 with :parent-state-id nil; forks point "
-                  "at another :state-id in the same vector via :parent-state-id. "
-                  "No-arg form = current conversation. Returns [] (never nil) "
-                  "when the conversation has no rows or no fork tree.")
+(def report-symbol
+  (vis/symbol 'report foundation-report
+    {:doc       (str "Markdown report rendered from the same canonical "
+                  "data returned by `(v/inspect)`. Default = current "
+                  "conversation; pass an id or unambiguous prefix to "
+                  "render another conversation. Use this for human "
+                  "handoffs; use `(v/inspect)` for programmatic analysis.")
      :arglists  '([] [conversation-id])
-     :examples  ["(v/conversation-forks)"
-                 "(v/conversation-forks \"3a7b2c…\")"
-                 "(group-by :parent-state-id (v/conversation-forks))"
-                 "(filter :parent-state-id (v/conversation-forks))"]
+     :examples  ["(v/report)"
+                 "(v/report \"3a7b2c…\")"]
      :before-fn inject-environment}))
 
-(def query-retries-symbol
-  (vis/symbol 'query-retries meta-query-retries
-    {:doc       (str "Vector of every conversation_turn_state row (one per retry version) "
-                  "for the soul behind `conversation-turn-id`, oldest first: "
-                  "[{:state-id :version :forked-from-query-state-id :status "
-                  ":prior-outcome :provider :model :created-at :iteration-count} …]. "
-                  "Version 0 = the original run; higher versions are retries "
-                  "with :forked-from-query-state-id pointing at the previous :state-id. "
-                  "`conversation-turn-id` = the conversation_turn_soul UUID surfaced as :turn-id by "
-                  "find-attempts / :id by (v/turn) / :turns[].id by (v/conversation). "
-                  "Returns [] (never nil) when the query has no rows.")
-     :arglists  '([conversation-turn-id])
-     :examples  ["(v/query-retries (:id (v/turn)))"
-                 "(v/query-retries \"3a7b2c…\")"
-                 "(filter :forked-from-query-state-id (v/query-retries qid))"]
-     :before-fn inject-environment}))
-
-(def find-attempts-everywhere-symbol
-  (vis/symbol 'find-attempts-everywhere foundation-find-attempts-everywhere
-    {:doc       (str "Regex search over executed :code strings across EVERY "
-                  "conversation in the DB. Same hit shape as `find-attempts` "
-                  "plus `:conversation-id`. Heavy: walks every persisted turn "
-                  "+ iteration on disk — prefer `find-attempts` with a "
-                  "specific id when you already know the target. Returns "
-                  "[] (never nil) when nothing matches.")
-     :arglists  '([pattern])
-     :examples  ["(v/find-attempts-everywhere #\"Unmatched delimiter\")"
-                 "(map :conversation-id (v/find-attempts-everywhere \"v/rg\"))"]
-     :before-fn inject-environment}))
-
-(def failures-symbol
-  (vis/symbol 'failures foundation-failures
-    {:doc       (str "Current-turn provider/schema and code/tool failures as "
-                  "data. Includes classifications for schema rejections, "
-                  "v/rg escaping mistakes, malformed v/patch payloads, "
-                  "and SEARCH block misses. Pass a conversation id to scan "
-                  "every turn of one conversation; use `v/failures-everywhere` "
-                  "to scan every conversation in the DB. Returns [] (never nil) "
-                  "when there is nothing to report.")
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/failures)"
-                 "(filter #(= :patch-no-match (:classification %)) (v/failures))"
-                 "(v/failures \"3a7b2c…\")"]
-     :before-fn inject-environment}))
-
-(def failures-everywhere-symbol
-  (vis/symbol 'failures-everywhere foundation-failures-everywhere
-    {:doc       (str "Provider/schema and code/tool failures across EVERY "
-                  "conversation in the DB. Same shape as `failures` plus "
-                  "`:conversation-id`. Heavy: walks every persisted turn + "
-                  "iteration on disk — prefer `failures` with a specific id "
-                  "when you already know the target. Returns [] (never nil) "
-                  "when there is nothing to report.")
-     :arglists  '([])
-     :examples  ["(v/failures-everywhere)"
-                 "(frequencies (map :classification (v/failures-everywhere)))"]
-     :before-fn inject-environment}))
-
-(def diagnose-symbol
-  (vis/symbol 'diagnose foundation-diagnose
-    {:doc       (str "Summarize current-turn failures into counts, "
-                  "repetition-loop detection, and next actions: "
-                  "{:failure-count :by-classification :repetition-loop? "
-                  ":repetition-clusters :failures :next-actions}. "
-                  ":repetition-loop? = true when the same root-cause "
-                  "error has fired "
-                  REPETITION_THRESHOLD
-                  "+ times this turn — read it before retrying. "
-                  "Pass a conversation id to diagnose all turns. "
-                  "First stop for stalled-agent triage, not raw "
-                  "SQLite checks.")
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/diagnose)"
-                 "(:repetition-loop? (v/diagnose))"
-                 "(:repetition-clusters (v/diagnose))"
-                 "(:next-actions (v/diagnose))"
-                 "(v/diagnose \"3a7b2c…\")"]
-     :before-fn inject-environment}))
+;; Legacy per-view sandbox symbols were removed from the public surface.
+;; The private implementation functions above remain as building blocks for
+;; `v/inspect` so tests and internal composition can target the real seams
+;; without re-exposing shallow API peers.
 
 (def extensions-symbol
   (vis/symbol 'extensions foundation-extensions
@@ -1081,45 +912,21 @@
      :before-fn inject-environment}))
 
 (def all-symbols
-  [turn-symbol
-   conversation-symbol
-   conversations-symbol
-   conversation-forks-symbol
-   var-history-symbol
-   find-attempts-symbol
-   find-attempts-everywhere-symbol
-   failures-symbol
-   failures-everywhere-symbol
-   query-retries-symbol
-   diagnose-symbol
-   ;; `v/transcript` lives in the sibling `transcript.clj` ns; the
-   ;; var is referenced by symbol-resolution at registration time so
-   ;; this ns doesn't need to require it (avoids a load-order coupling
-   ;; between introspection and transcript). The aggregator in
-   ;; `core.clj` does the wiring.
+  [inspect-symbol
+   report-symbol
    extensions-symbol
    extension-docs-symbol
    extension-doc-symbol
    extension-readme-symbol])
 
 (def introspection-prompt
-  (str "`v/` introspection (READ-ONLY; returns maps/vecs; errors -> nil/[]):\n"
-    "  (v/turn)                       in-flight turn snapshot {:id :goal :status :attempts :errors :failures :iteration :cost :elapsed-ms}\n"
-    "  (v/conversation cid?)          conversation tree (turns/iterations/cost). AUTO-EXCLUDES in-flight turn (= TURN_CONVERSATION_TURN_ID).\n"
-    "  (v/conversations channel?)     list conversations\n"
-    "  (v/conversation-forks cid?)    list every conversation_state row (trunk + forks)\n"
-    "  (v/query-retries qid)          list every conversation_turn_state row (original + retries)\n"
-    "  (v/var-history 'sym)           prior versions of a SCI def\n"
-    "  (v/find-attempts pat cid?)     grep prior :code attempts (current turn or one conversation)\n"
-    "  (v/find-attempts-everywhere pat) grep :code across EVERY conversation in DB (heavy)\n"
-    "  (v/failures cid?)              classify failed iterations (current turn or one conversation)\n"
-    "  (v/failures-everywhere)        classify failed iterations across EVERY conversation (heavy)\n"
-    "  (v/diagnose cid?)              {:repetition-loop? :repetition-clusters :by-classification :next-actions ...}\n"
-    "  (v/transcript cid?)            full transcript {:conversation :totals :turns} — every iteration + every block (code, comment, result, stdout, stderr, error)\n"
-    "  (v/extensions)                 loaded ext catalog\n"
-    "  (v/extension-docs ext-ref)     declared doc summaries (no content)\n"
+  (str "`v/` introspection (READ-ONLY; one data surface + one renderer):\n"
+    "  (v/inspect cid?)              canonical data {:conversation :current-turn :failures :diagnosis :conversation-forks :turn-retries :transcript ...}\n"
+    "  (v/report cid?)               Markdown rendered from the same canonical data; use for human handoff/export\n"
+    "  (v/extensions)                loaded ext catalog\n"
+    "  (v/extension-docs ext-ref)    declared doc summaries (no content)\n"
     "  (v/extension-doc ext-ref name) full doc descriptor incl. :content\n"
-    "  (v/extension-readme ext-ref)   README :content shortcut\n"))
+    "  (v/extension-readme ext-ref)  README :content shortcut\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

@@ -343,7 +343,7 @@ shipped to readers as broken rendering or unreadable noise.
    humans, not an API index entry.
 
    - Bad: `## \`:before-fn\` — entry decorator`,
-     `### \`(vis/turn)\``,
+     `### \`(v/inspect)\``,
      `### 1) \`conversation_soul\``,
      `### Embedded \`:cmd/subcommands\` vector`,
      `### Render caches (\`ext/channel_tui/render.clj :: fmt-cache\`)`,
@@ -354,7 +354,7 @@ shipped to readers as broken rendering or unreadable noise.
 
    The keyword / function name / table name / file path that the
    section documents goes in the **first line of the body** as a
-   short "Slot key: \`:before-fn\`" / "Call: \`(vis/turn)\`" /
+   short "Slot key: \`:before-fn\`" / "Call: \`(v/inspect)\`" /
    "Table: \`conversation_soul\`" / "Lives in:
    \`ext/channel_tui/render.clj\`" lead. The reader still gets the
    identifier; it just isn't load-bearing on the heading.
@@ -879,7 +879,7 @@ Full reference: `docs/src/architecture/database.md`.
 - `conversation_soul` → `conversation_state` → `conversation_turn_soul` → `conversation_turn_state` → `iteration` → `expression_state`
 - `expression_soul` (var/call/literal identity, branch-local)
 
-Every `(def ...)` is persisted as a versioned `expression_state` row. `var-history` inspects prior versions on demand.
+Every `(def ...)` is persisted as a versioned `expression_state` row. `v/inspect` exposes the conversation record that can be used for deeper state inspection.
 
 **Investigating DB state:**
 ```clojure
@@ -933,11 +933,9 @@ previous turn's bounded digest (`{:goal :counts :outcome
 :abandon-reason}`) lands in `<system_state>.PRIOR_TURN`.
 
 When the agent genuinely needs older reasonings, the (opt-in)
-`vis-foundation` extension exposes `(vis/diagnose)`, `(vis/failures)`,
-`(vis/turn)`, `(vis/conversation)`, `(vis/find-attempts pattern)`,
-and `(vis/var-history 'sym)`.
-The deprecated built-in `var-history` still works for backwards
-compatibility.
+`vis-foundation` extension exposes `(v/inspect)` for canonical
+conversation-state data and `(v/report)` for Markdown rendered from the
+same data.
 
 The `<prior_thinking>` blob, the lossy summarization chain it produced,
 and the `HANDOVER_KEEP_LAST=2` cross-query special case were deleted

@@ -23,6 +23,70 @@
   (:import
    [java.util Locale]))
 
+;; Single process-wide gate for every zprint entry point Vis uses.
+;;
+;; Why it exists: zprint keeps global in-flight state and throws
+;; `Attempted to run zprint with type ... when 1 invocations were
+;; already running with type ...` when a plain data pretty-print races a
+;; parse-string / zipper format. Vis does exactly that: sandbox
+;; `pp/pprint-str` renders data while the TUI render path formats code
+;; blocks with `:parse-string? true`. One lock across BOTH surfaces keeps
+;; the library's global state coherent.
+(defonce ^:private zprint-lock (Object.))
+
+(defn- locked-zprint-apply [f args]
+  (locking zprint-lock
+    (apply f args)))
+
+(defn safe-zprint-str
+  "Serialized wrapper around `zprint.core/zprint-str`."
+  [& args]
+  (locked-zprint-apply zprint/zprint-str args))
+
+(defn safe-zprint
+  "Serialized wrapper around `zprint.core/zprint`."
+  [& args]
+  (locked-zprint-apply zprint/zprint args))
+
+(defn safe-czprint-str
+  "Serialized wrapper around `zprint.core/czprint-str`."
+  [& args]
+  (locked-zprint-apply zprint/czprint-str args))
+
+(defn safe-czprint
+  "Serialized wrapper around `zprint.core/czprint`."
+  [& args]
+  (locked-zprint-apply zprint/czprint args))
+
+(defn safe-zprint-file-str
+  "Serialized wrapper around `zprint.core/zprint-file-str`."
+  [& args]
+  (locked-zprint-apply zprint/zprint-file-str args))
+
+(defn safe-set-zprint-options!
+  "Serialized wrapper around `zprint.core/set-options!`."
+  [& args]
+  (locked-zprint-apply zprint/set-options! args))
+
+(defn safe-configure-zprint!
+  "Serialized wrapper around `zprint.core/configure-all!`."
+  [& args]
+  (locked-zprint-apply zprint/configure-all! args))
+
+(defn safe-pprint
+  "Serialized wrapper for the sandbox's `clojure.pprint/pprint` alias.
+
+   Vis intentionally routes `pp/` through zprint so the model sees the
+   same stable formatting everywhere; this wrapper keeps that alias safe
+   under concurrent render activity."
+  [& args]
+  (apply safe-zprint args))
+
+(defn safe-pprint-str
+  "Serialized wrapper for the sandbox's `clojure.pprint/pprint-str` alias."
+  [& args]
+  (apply safe-zprint-str args))
+
 (defn format-date
   "Format a `java.util.Date` as `dd-MM-yyyy HH:mm` in local timezone."
   [^java.util.Date d]
@@ -36,7 +100,7 @@
    the original string on any error."
   [code-str width]
   (try
-    (let [formatted (zprint/zprint-str code-str width
+    (let [formatted (safe-zprint-str code-str width
                       {:parse-string? true :style :community})]
       (if (str/blank? formatted) code-str (str/trimr formatted)))
     (catch Exception _ code-str)))

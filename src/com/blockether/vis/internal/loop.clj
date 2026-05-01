@@ -1214,9 +1214,9 @@
 
 (defn inject-system-var-snapshots
   "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
-   `SYSTEM_VAR_NAMES` on EVERY iteration. The model's
-   `(v/var-history 'X)` then returns ONE row per iteration
-   for each X, even when the value is unchanged or blank.
+   `SYSTEM_VAR_NAMES` on EVERY iteration. The inspect transcript and
+   persisted var history then have ONE row per iteration for each X,
+   even when the value is unchanged or blank.
 
    Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_CONVERSATION_TURN_ID,
    TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
@@ -1322,7 +1322,7 @@
                                     (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
         ;; Per-iteration token + cost projection. The schema's
         ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
-        ;; carry one row per iteration so a future `vis diagnose`
+        ;; carry one row per iteration so a future `vis report`
         ;; query can sum or break down cost without re-walking
         ;; provider envelopes. Returns nil when the call surfaced no
         ;; usage (e.g. iteration-level error before a response
@@ -1697,10 +1697,9 @@
                                                                     (:conversation-id environment))
                                            :system-prompt      system-prompt
                                          ;; Same frozen snapshots bound in SCI.
-                                         ;; Re-stamped every iteration so
-                                         ;; v/var-history 'TURN_ACTIVE_EXTENSIONS /
-                                         ;; 'TURN_ACCESSIBLE_SKILLS returns one row
-                                         ;; per iter, not just iter 0.
+                                         ;; Re-stamped every iteration so inspect
+                                         ;; transcript data returns one row per
+                                         ;; iter, not just iter 0.
                                            :extensions-snapshot        (prompt/extensions-snapshot active-exts)
                                            :accessible-skills-snapshot (prompt/accessible-skills-snapshot)
                                          ;; Live conversation title; same value
