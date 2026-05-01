@@ -4,7 +4,7 @@ Single SQLite DB for everything: `~/.vis/vis.mdb/vis.db`.
 
 Schema source of truth: `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`.
 
-> This document defines the **turn model** and intentionally replaces the old query model.
+> This document defines the **turn model**.
 > Canonical hierarchy: `conversation -> turn -> iteration -> block`.
 
 Flyway migration location: `classpath:db/sqlite/migration`.
@@ -26,7 +26,7 @@ log     — optional FKs to: conversation_soul, conversation_state,
                             conversation_turn_soul, conversation_turn_state,
                             iteration, expression_soul, expression_state
 search  — FTS5 virtual table; populated by triggers on:
-                            conversation_turn_soul.turn_text,
+                            conversation_turn_soul.user_request,
                             expression_state.expr
 ```
 
@@ -37,7 +37,7 @@ search  — FTS5 virtual table; populated by triggers on:
 - **Iteration**: one internal LLM/eval cycle inside a turn.
 - **Block**: one executed code block entry inside an iteration.
 
-The old `query_*` terminology is removed from architecture docs.
+Conversation turns use canonical turn/user-request terminology.
 
 ## Tables
 
@@ -78,7 +78,7 @@ Table: `conversation_turn_soul`. Immutable identity of one turn.
 | `id` | TEXT PK | canonical `conversation-turn-id` |
 | `conversation_state_id` | TEXT FK | → `conversation_state.id`, cascade delete |
 | `title` | TEXT | optional turn title |
-| `turn_text` | TEXT | user ask text |
+| `user_request` | TEXT | raw human-authored turn text |
 | `metadata` | TEXT | JSON-encoded |
 | `created_at` | INTEGER | |
 
@@ -214,7 +214,7 @@ Table: `log`. Structured logs with optional scope references.
 Table: `search` (FTS5 virtual table).
 
 Indexed sources:
-- `conversation_turn_soul.turn_text`
+- `conversation_turn_soul.user_request`
 - `expression_state.expr`
 
 ## Persistence rules

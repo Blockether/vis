@@ -1036,7 +1036,7 @@
     ;; Parinfer doesn't change paren TYPES but it does close+open
     ;; based on indentation, which produces a parseable program.
     ;; (Semantics may shift slightly from what the model meant; the
-    ;; goal is \"parses cleanly\" not \"reads model's mind\".)
+    ;; objective is \"parses cleanly\" not \"reads model's mind\".)
     (let [src "(def x (let [y 1]\n  (str y])"
           fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))))
@@ -1280,7 +1280,7 @@
 
 (defdescribe system-var-exclusion-test
   (it "does not render TURN_USER_REQUEST/CONVERSATION_PREVIOUS_ANSWER/ITERATION_PREVIOUS_REASONING in the live block"
-    (let [out (index {'TURN_USER_REQUEST            "user query"
+    (let [out (index {'TURN_USER_REQUEST            "user request"
                       'CONVERSATION_PREVIOUS_ANSWER "prior answer"
                       'ITERATION_PREVIOUS_REASONING "thinking"
                       'user-var  42})]
@@ -1937,11 +1937,39 @@
   (str "bin/vis not found at " vis-bin
     " — run smoke tests from the repo root via `clojure -M:test`."))
 
+(defn- make-temp-db-dir
+  [prefix]
+  (doto (.toFile (java.nio.file.Files/createTempDirectory prefix
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+    (.deleteOnExit)))
+
 (defn- run-vis
   "Invoke `bin/vis` with `args`. Returns `{:exit int :out str :err str}`.
-   Wallclock-bounded by a hard 60s timeout via clojure.java.shell."
+   Wallclock-bounded by a hard 60s timeout via clojure.java.shell.
+
+   The smoke suite pins VIS_DB_PATH to a temp DB so local developer
+   migration history cannot make CLI tests pass/fail depending on
+   ~/.vis state. Pass an initial opts map with :env to override it."
   [& args]
-  (apply sh/sh vis-bin args))
+  (let [[opts args] (if (map? (first args))
+                      [(first args) (rest args)]
+                      [{} args])
+        db-dir      (make-temp-db-dir "vis-cli-smoke-db-")
+        env         (merge (into {} (System/getenv))
+                      {"VIS_DB_PATH" (.getAbsolutePath db-dir)}
+                      (:env opts))]
+    (apply sh/sh (concat [vis-bin] args [:env env]))))
+
+(defn- seed-bad-flyway-db!
+  [^java.io.File dir]
+  (Class/forName "org.sqlite.JDBC")
+  (with-open [conn (java.sql.DriverManager/getConnection
+                     (str "jdbc:sqlite:" (io/file dir "vis.db")))]
+    (doseq [sql ["CREATE TABLE flyway_schema_history (installed_rank INT NOT NULL PRIMARY KEY, version VARCHAR(50), description VARCHAR(200) NOT NULL, type VARCHAR(20) NOT NULL, script VARCHAR(1000) NOT NULL, checksum INT, installed_by VARCHAR(100) NOT NULL, installed_on TEXT NOT NULL, execution_time INT NOT NULL, success BOOLEAN NOT NULL)"
+                 "CREATE INDEX flyway_schema_history_s_idx ON flyway_schema_history (success)"
+                 "INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, checksum, installed_by, installed_on, execution_time, success) VALUES (1, '1', 'schema', 'SQL', 'V1__schema.sql', 1, 'test', '2026-01-01 00:00:00.000', 1, 1)"]]
+      (with-open [stmt (.createStatement conn)]
+        (.execute stmt sql)))))
 
 (defn- contains-all? [s substrs]
   (every? #(str/includes? s %) substrs))
@@ -2005,9 +2033,19 @@
       (expect (contains-all? out ["tui" "telegram"])))))
 
 (defdescribe vis-conversations
-  (it "exits 0 even when no conversations exist"
-    (let [{:keys [exit]} (run-vis "conversations")]
-      (expect (zero? exit))))
+  (it "prints an empty-list message when no conversations exist"
+    (let [{:keys [exit out]} (run-vis "conversations")]
+      (expect (zero? exit))
+      (expect (str/includes? out "No tui conversations found."))))
+
+  (it "prints database bootstrap user errors instead of failing silently"
+    (let [bad-dir (make-temp-db-dir "vis-cli-bad-flyway-db-")]
+      (seed-bad-flyway-db! bad-dir)
+      (let [{:keys [exit out err]} (run-vis {:env {"VIS_DB_PATH" (.getAbsolutePath bad-dir)}}
+                                     "conversations")]
+        (expect (not (zero? exit)))
+        (expect (str/includes? out "Database schema mismatch"))
+        (expect (str/blank? err)))))
 
   (it "--help renders the new fork flag in the FLAGS section"
     (let [{:keys [exit out]} (run-vis "conversations" "--help")]

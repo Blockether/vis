@@ -23,11 +23,11 @@
 ;; and `db-list-conversation-turns`. We bypass the registry by binding
 ;; the dispatch fn to a synthetic backend keyed off `db-info :stub`.
 
-(defmacro ^:private with-stubbed-persistance [conversation queries & body]
+(defmacro ^:private with-stubbed-persistance [conversation turns & body]
   `(with-redefs [persistance/db-get-conversation
                  (fn [~'_ ~'_] ~conversation)
                  persistance/db-list-conversation-turns
-                 (fn [~'_ ~'_] ~queries)]
+                 (fn [~'_ ~'_] ~turns)]
      ~@body))
 
 (def ^:private stub-db {:type :stub})
@@ -44,8 +44,8 @@
 
 (def ^:private fixed-turns
   [{:id              (java.util.UUID/randomUUID)
-    :type            :query
-    :text            "What is 2+2?"
+    :type            :turn
+    :user-request    "What is 2+2?"
     :answer          "4"
     :status          :ok
     :iteration-count 1
@@ -58,8 +58,8 @@
     :reasoning-tokens 5
     :cached-tokens   0}
    {:id              (java.util.UUID/randomUUID)
-    :type            :query
-    :text            "Multi-line\nuser request\nwith blanks\n\ninside."
+    :type            :turn
+    :user-request    "Multi-line\nuser request\nwith blanks\n\ninside."
     :answer          "Multi-line\n\nanswer body."
     :status          :ok
     :iteration-count 3
@@ -136,7 +136,7 @@
 
     (it "repairs glued fence boundaries inside exported answers"
       (with-stubbed-persistance fixed-conversation
-        [{:text "show ls" :answer broken-fence-answer :status :ok}]
+        [{:user-request "show ls" :answer broken-fence-answer :status :ok}]
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
           (expect (str/includes? out "repo:\n```text\n\n```\nSo: I'm a language model.")))))
 
@@ -153,13 +153,13 @@
 
     (it "Falls back to a placeholder when a turn has no answer (in-flight)"
       (with-stubbed-persistance fixed-conversation
-        [{:text "still working" :status :running :iteration-count 1}]
+        [{:user-request "still working" :status :running :iteration-count 1}]
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
           (expect (str/includes? out "*(no answer recorded yet)*")))))
 
     (it "Falls back to an error placeholder when a turn errored without an answer"
       (with-stubbed-persistance fixed-conversation
-        [{:text "boom" :status :error}]
+        [{:user-request "boom" :status :error}]
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
           (expect (str/includes? out "*(turn errored \u2014 no answer recorded)*"))))))
 
@@ -180,7 +180,7 @@
 
     (it "Drops zero / nil token components instead of emitting empty units"
       (with-stubbed-persistance fixed-conversation
-        [{:text  "q" :answer "a" :status :ok
+        [{:user-request  "q" :answer "a" :status :ok
           :input-tokens 100 :output-tokens 0 :reasoning-tokens nil :cached-tokens 0}]
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
           (expect (str/includes? out "100 in"))

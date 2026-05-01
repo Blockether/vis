@@ -198,7 +198,7 @@
 ;; pins the failure shape so the gap is visible.
 ;;
 ;; Source: conversation eeaf9651-06c7-4dda-9e97-877fcef06337,
-;;         query 760d9435-…, iter 0 (status :done, no answer).
+;;         turn 760d9435-…, iter 0 (status :done, no answer).
 ;; The verbatim 5 KB block lives at
 ;; `test/resources/parse-fixtures/eeaf9651-multi-line-unclosed-string.clj.txt`
 ;; — don't pretty-print or auto-balance it; the broken byte sequence

@@ -37,7 +37,7 @@
 (defdescribe run-iteration-diagnostics-test
   (it "carries raw LLM response diagnostics from svar to the iteration result"
     (let [raw "```clojure\n(+ 1 1)\n```"
-          selected-blocks [{:lang "clojure" :source "(+ 1 1)"}]
+          executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
           environment {:router ::router
                        :answer-atom (atom nil)
                        :current-form-idx-atom (atom nil)}]
@@ -45,7 +45,7 @@
                                           (expect (= ::router router))
                                           (expect (= "clojure" (:lang opts)))
                                           {:raw raw
-                                           :blocks selected-blocks
+                                           :blocks executable-blocks
                                            :result "(+ 1 1)"
                                            :tokens {:input 1 :output 1}
                                            :duration-ms 1})
@@ -61,7 +61,8 @@
                          {:iteration 0
                           :resolved-model {:provider :test :name "model"}})]
             (expect (= raw (:llm-raw-response result)))
-            (expect (= selected-blocks (:llm-selected-blocks result)))))))))
+            (expect (= "(+ 1 1)" (:llm-executable-code result)))
+            (expect (= executable-blocks (:llm-executable-blocks result)))))))))
 
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"
@@ -72,11 +73,11 @@
       (expect (not (re-find #"StackOverflowError" (:error result))))
       (expect (= 0 (:execution-time-ms result))))))
 
-(defdescribe prepare-query-context-test
+(defdescribe prepare-turn-context-test
   (it "preserves provider-specific extra-body opts for downstream LLM calls"
     (with-redefs [env/bump-var-index! (fn [_] nil)
                   env/sci-update-binding! (fn [& _] nil)]
-      (let [ctx (#'loop/prepare-query-context
+      (let [ctx (#'loop/prepare-turn-context
                  {:db-info         :db
                   :conversation-id "c1"
                   :environment-id  "e1"

@@ -186,7 +186,7 @@
    it twice per frame, which doubled cost on long traces."
   [^TerminalScreen screen cols rows
    {:keys [messages messages-scroll input progress loading? cancelling?
-           query-start-ms settings] :as db}
+           turn-start-ms settings] :as db}
    now-ms]
   (let [now-ms       (long now-ms)
         g            (.newTextGraphics screen)
@@ -213,7 +213,7 @@
         ;; mismatch. Use the const, never the value.
         bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
         progress-extra {:now-ms         now-ms
-                        :query-start-ms query-start-ms
+                        :turn-start-ms turn-start-ms
                         :cancelling?    (boolean cancelling?)}
         inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
         ;; Single virtualized layout pass: cheap height estimate for
@@ -260,7 +260,7 @@
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
 (def ^:private spinner-tick-ms
-  "How often the spinner advances while a query is in flight. Drives
+  "How often the spinner advances while a turn is in flight. Drives
    both the wait-timeout cap and the animate? predicate, so a quiet
    render thread still repaints on the same cadence as the spinner."
   100)
@@ -1065,7 +1065,7 @@
 
                        :cancel
                        (do (when (:loading? @state/app-db)
-                             (state/dispatch [:cancel-query]))
+                             (state/dispatch [:cancel-turn]))
                          (recur))
 
                        :scroll-up

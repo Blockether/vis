@@ -96,7 +96,7 @@
 ;;  :cancel-token nil            ;; channels.cancellation token for the
 ;;                               ;; in-flight turn (nil when idle). Holds
 ;;                               ;; the cooperative flag + the worker
-;;                               ;; future so :cancel-query can hit both.
+;;                               ;; future so :cancel-turn can hit both.
 ;;  :cancelling? false           ;; true once Esc was pressed; cleared on :message-received
 ;;  :progress   nil              ;; live per-iteration timeline while loading:
 ;;                               ;;   {:iterations [{:iteration int
@@ -120,7 +120,7 @@
   "Canonical reasoning level for persisted TUI settings.
 
    Accepts the native UI vocabulary (`:quick/:balanced/:deep`) plus the
-   low/medium/high aliases the shared query engine already accepts.
+   low/medium/high aliases the shared turn engine already accepts.
    Unknown values fall back to `:balanced` so a hand-edited config never
    wedges the TUI into an invalid state."
   [v]
@@ -359,7 +359,7 @@
     (when (seq (:providers config))
       ;; rebuild-router! only swaps the global singleton; cached envs
       ;; keep the snapshot they were created with. Reseat them too,
-      ;; otherwise the next query runs against the previous model
+      ;; otherwise the next turn runs against the previous model
       ;; even though the status bar already shows the new one.
       (let [r (vis/rebuild-router! config)]
         (vis/refresh-cached-routers! r)))
@@ -577,7 +577,7 @@
     (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
       :provider)))
 
-(defn- query-extra-body
+(defn- turn-extra-body
   [{:keys [settings]}]
   (when (= :openai-codex (current-provider-id))
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
@@ -596,7 +596,7 @@
     (let [visible-text (input/expand-paste-placeholders text (:pastes db))
           agent-text   (input/expand-file-mentions visible-text)
           token        (vis/cancellation-token)
-          extra-body   (query-extra-body db)]
+          extra-body   (turn-extra-body db)]
       {:db (-> db
              (update :messages conj (chat/user-message visible-text))
              (update :messages conj (chat/assistant-message "Sending request to provider…"))
@@ -607,13 +607,13 @@
                :cancel-token token
                :cancelling? false
                :progress {:iterations []}
-               :query-start-ms (System/currentTimeMillis)
+               :turn-start-ms (System/currentTimeMillis)
                :input-history-index nil
                :input-history-draft nil))
-       :fx [[:rlm-query (:conversation db) agent-text token
+       :fx [[:rlm-turn (:conversation db) agent-text token
              (get-in db [:settings :reasoning-level]) extra-body]]})))
 
-(reg-event-fx :cancel-query
+(reg-event-fx :cancel-turn
   (fn [db _]
     (if-not (:loading? db)
       {:db db}
@@ -632,7 +632,7 @@
 
 (reg-event-db :message-received
   (fn [db [_ answer & [{:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status]}]]]
-    (let [start    (:query-start-ms db)
+    (let [start    (:turn-start-ms db)
           wall-ms  (when start (- (System/currentTimeMillis) start))
           trace    (get-in db [:progress :iterations])
           ;; Cancelled turns get a `:status :cancelled` flag on the
@@ -658,7 +658,7 @@
         (update :messages conj response)
         (assoc :messages-scroll nil :loading? false :progress nil
           :cancel-token nil :cancelling? false)
-        (dissoc :query-start-ms)))))
+        (dissoc :turn-start-ms)))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
@@ -675,7 +675,7 @@
             router   (vis/rebuild-router! resolved)]
         (vis/refresh-cached-routers! router)))))
 
-(reg-fx :rlm-query
+(reg-fx :rlm-turn
   (fn [conversation text token reasoning-level extra-body]
     (let [fut (future
                 (try
@@ -684,7 +684,7 @@
                           {:on-update (fn [timeline _chunk]
                                         (try (dispatch [:set-progress-iterations timeline])
                                           (catch Throwable _ nil)))})
-                        result (chat/query! conversation text
+                        result (chat/turn! conversation text
                                  {:on-chunk          on-chunk
                                   :cancel-atom       (vis/cancellation-atom token)
                                   :reasoning-default reasoning-level

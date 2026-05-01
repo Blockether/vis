@@ -3,7 +3,7 @@
    built-in CLI commands, and the `-main` dispatcher entry point.
 
    Everything in this file is binary-only. The library surface
-   (iteration loop, query engine, environment lifecycle, conversation
+   (iteration loop, turn engine, environment lifecycle, conversation
    cache) lives in `com.blockether.vis.internal.loop`; this namespace requires
    that one and wires it into the command tree the `vis` binary
    exposes.
@@ -17,7 +17,7 @@
                         the resolved command's `:cmd/run-fn`.
 
    Built-in commands registered here:
-     vis run                — one-shot agent query (CLI agent helper)
+     vis run                — one-shot agent turn (CLI agent helper)
      vis providers          — provider inspection, auth, and limits
      vis conversations      — list persisted conversations
      vis extensions list    — list registered extensions
@@ -76,7 +76,7 @@
              :event event
              :data  data}
       (:conversation-soul-id ctx) (assoc :conversation-soul-id (:conversation-soul-id ctx))
-      (:conversation-turn-id ctx)             (assoc :query-soul-id (:conversation-turn-id ctx))
+      (:conversation-turn-id ctx) (assoc :conversation-turn-soul-id (:conversation-turn-id ctx))
       (:iteration-id ctx)         (assoc :iteration-id (:iteration-id ctx)))))
 
 ;; =============================================================================
@@ -354,9 +354,9 @@
 ;;; ── Execution ────────────────────────────────────────────────────────────
 
 (defn run!
-  "Execute a one-shot agent query.
+  "Execute a one-shot agent turn.
 
-   Creates a conversation → runs the query → returns result.
+   Creates a conversation → runs the turn → returns result.
 
    Returns map with:
    - :conversation-id — Conversation ID (UUID string)
@@ -378,7 +378,7 @@
    - :config      — Provider config override (skips ~/.vis/config.edn)
    - :no-persist? — Run without writing anything to disk. Spins up an
                     ephemeral environment backed by an in-memory SQLite
-                    DB (`:db :memory`), runs the query, disposes the
+                    DB (`:db :memory`), runs the turn, disposes the
                     env (which vaporizes the DB). Result has
                     `:conversation-id nil`. Useful for CI, scripting,
                     sensitive prompts.
@@ -412,10 +412,10 @@
       ;; SQLite handle) on purpose. We use `:memory` instead of nil
       ;; because the iteration loop requires a non-nil `:db-info` (it
       ;; persists turns + iterations + expression history; nil would
-      ;; reject in `prepare-query-context`).
+      ;; reject in `prepare-turn-context`).
       (let [env (lp/create-environment (lp/get-router) {:db :memory})]
         (try
-          (let [result (lp/query! env messages q-opts)]
+          (let [result (lp/turn! env messages q-opts)]
             (cond-> {:conversation-id nil
                      :answer          (:answer result)
                      :iteration-count (:iteration-count result)
@@ -1087,7 +1087,7 @@
 
 (doseq [spec
         [{:cmd/name  "run"
-          :cmd/doc   "Run a one-shot agent query and print the answer."
+          :cmd/doc   "Run a one-shot agent turn and print the answer."
           :cmd/usage "vis run [FLAGS] \"prompt\""
           :cmd/args  [{:name "json"       :kind :flag :type :boolean :doc "Output result as JSON."}
                       {:name "edn"        :kind :flag :type :boolean :doc "Output result as EDN."}
@@ -1349,6 +1349,19 @@
         (seq residual)
         (not-any? #{"--help" "-h"} residual)))))
 
+(defn- exit-with-user-error!
+  [^Throwable t]
+  (stdout! (str "vis: " (or (ex-message t) "error")))
+  (shutdown-agents)
+  (System/exit 2))
+
+(defn- exit-with-fatal-error!
+  [^Throwable t]
+  (stdout! (str "vis: fatal error — " (or (ex-message t) (.getName (class t)))))
+  (stdout! "See ~/.vis/vis.log for details.")
+  (shutdown-agents)
+  (System/exit 1))
+
 (defn -main
   "Discover extensions, walk the command tree, dispatch.
 
@@ -1363,42 +1376,47 @@
    ergonomics can register a `:cmd/run-fn` on the root via a custom
    extension."
   [& args]
-  ;; Quiet stdout BEFORE any extension load triggers Telemere registration
-  ;; spam — the user only sees logs when they pass --debug / --verbose / -v
-  ;; (or set VIS_DEBUG=1).
-  (configure-logging! args)
-  (discover-all!)
-  (pre-redirect-stderr! args)
-  (let [root      (root-command)
-        full-args (cons "vis" args)]
-    (cond
-      (empty? args)
-      (println (commandline/render-tree root))
+  (try
+    ;; Quiet stdout BEFORE any extension load triggers Telemere registration
+    ;; spam — the user only sees logs when they pass --debug / --verbose / -v
+    ;; (or set VIS_DEBUG=1).
+    (configure-logging! args)
+    (discover-all!)
+    (pre-redirect-stderr! args)
+    (let [root      (root-command)
+          full-args (cons "vis" args)]
+      (cond
+        (empty? args)
+        (println (commandline/render-tree root))
 
-      ;; `vis help` is a universal synonym for `vis --help`. Without
-      ;; this branch the dispatcher would treat `help` as an unknown
-      ;; command, print the tree, AND tag it with "Unknown command:
-      ;; help" + exit 1 -- which surprised everyone who tried it.
-      (= ["help"] (vec args))
-      (println (commandline/render-tree root))
+        ;; `vis help` is a universal synonym for `vis --help`. Without
+        ;; this branch the dispatcher would treat `help` as an unknown
+        ;; command, print the tree, AND tag it with "Unknown command:
+        ;; help" + exit 1 -- which surprised everyone who tried it.
+        (= ["help"] (vec args))
+        (println (commandline/render-tree root))
 
-      (unknown-command? root args)
-      (do (println (commandline/render-tree root))
-        (println)
-        (println (str "Unknown command: " (str/join " " args)))
-        (System/exit 1))
+        (unknown-command? root args)
+        (do (println (commandline/render-tree root))
+          (println)
+          (println (str "Unknown command: " (str/join " " args)))
+          (System/exit 1))
 
-      :else
-      ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
-      ;; `:error` covers spec-validation failures (missing required
-      ;; args, unknown flags). Without an explicit `System/exit 1` here
-      ;; the process exited 0 even though the user-visible output was
-      ;; an error message + help text -- so any shell pipeline like
-      ;; `vis foo --bogus && echo ok` printed `ok`. Map `:error` to
-      ;; exit code 2 (POSIX convention for usage errors); `:no-match`
-      ;; can't actually fire here because `unknown-command?` above
-      ;; already short-circuited that case.
-      (let [{:keys [status]} (commandline/dispatch! root full-args)]
-        (case status
-          :error (System/exit 2)
-          nil)))))
+        :else
+        ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
+        ;; `:error` covers spec-validation failures (missing required
+        ;; args, unknown flags). Without an explicit `System/exit 1` here
+        ;; the process exited 0 even though the user-visible output was
+        ;; an error message + help text -- so any shell pipeline like
+        ;; `vis foo --bogus && echo ok` printed `ok`. Map `:error` to
+        ;; exit code 2 (POSIX convention for usage errors); `:no-match`
+        ;; can't actually fire here because `unknown-command?` above
+        ;; already short-circuited that case.
+        (let [{:keys [status]} (commandline/dispatch! root full-args)]
+          (case status
+            :error (System/exit 2)
+            nil))))
+    (catch Throwable t
+      (if (:vis/user-error (ex-data t))
+        (exit-with-user-error! t)
+        (exit-with-fatal-error! t)))))

@@ -289,7 +289,7 @@
 ;; One-liner description shown in the sandbox var's docstring.
 (s/def :ext.symbol/doc non-blank-string?)
 
-;; Argument signatures, e.g. '([query] [query opts]).
+;; Argument signatures, e.g. '([term] [term opts]).
 ;; Shown in var meta :arglists and used to derive :examples when missing.
 (s/def :ext.symbol/arglists (s/and vector? seq))
 
@@ -351,7 +351,7 @@
 ;; the `extension` builder auto-derives it.
 (s/def :ext/kind non-blank-string?)
 
-;; Guard evaluated at each query boundary. (fn [env] -> bool).
+;; Guard evaluated at each turn boundary. (fn [env] -> bool).
 ;; Default: (constantly true).
 (s/def :ext/activation-fn fn?)
 
@@ -1207,7 +1207,7 @@
   ;; Sidecar atom holding source-file markers per registered extension.
   ;; Keyed by :ext/namespace. Populated at register-time, dropped at
   ;; deregister-time. Read by `iteration-metadata` (first iteration of
-  ;; each query, see plan Q15) and by `reload-extensions!`'s diff. Kept
+  ;; each turn) and by `reload-extensions!`'s diff. Kept
   ;; OUT of the extension map itself so `extension/validate!` doesn't have
   ;; to know about runtime-derived fields. Plan §5.5.
   (atom {}))

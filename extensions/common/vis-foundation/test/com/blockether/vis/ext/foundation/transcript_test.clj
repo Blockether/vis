@@ -23,7 +23,7 @@
                                            :model "gpt-4o"
                                            :system-prompt "sys"})
         q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                :query "First turn"
+                                                :user-request "First turn"
                                                 :status :running})]
     ;; Turn 1: terminal iteration with a `(def …)` var, an `(answer …)`
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
@@ -48,13 +48,14 @@
                                 :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
                                                {:role "user"   :content "USER_TURN_TEXT_FIXTURE"}]
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
-                                :llm-selected-blocks [{:lang "clojure" :source "(+ 1 1)"}]
+                                :llm-executable-code "(+ 1 1)"
+                                :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cost-usd 0.0042})
     (vis/db-update-conversation-turn! s q1 {:status :done :answer "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
     (let [q2 (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                 :query "Second turn that fails"
+                                                 :user-request "Second turn that fails"
                                                  :status :running})]
       (vis/db-store-iteration! s {:conversation-turn-id q2
                                   :blocks [{:code              "Let"
@@ -140,18 +141,18 @@
             (str "actual: " (:cost-usd totals))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "carries every turn with goal / status / iteration count / failures"
+  (it "carries every turn with user request / status / iteration count / failures"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid   (seed! s)
               turns (:turns (transcript/transcript s cid))]
           (expect (= 2 (count turns)))
-          (expect (= "First turn"             (:goal (first turns))))
-          (expect (= "Second turn that fails" (:goal (second turns))))
+          (expect (= "First turn"             (:user-request (first turns))))
+          (expect (= "Second turn that fails" (:user-request (second turns))))
           (expect (= :done  (:status (first turns))))
           (expect (= :error (:status (second turns))))
           ;; Failure count comes from block-level :error keys, not a
-          ;; query-level flag \u2014 the failing turn must report exactly 1.
+          ;; turn-level flag \u2014 the failing turn must report exactly 1.
           (expect (= 0 (:failure-count (first turns))))
           (expect (= 1 (:failure-count (second turns)))))
         (finally (vis/db-dispose-connection! s)))))
@@ -212,12 +213,14 @@
         (let [cid  (seed! s)
               iter (-> (transcript/transcript s cid)
                      :turns first :iterations first)]
+          (expect (= "```clojure\n(+ 1 1)\n```" (:llm-raw-response iter)))
           (expect (= "```clojure\n(+ 1 1)\n```" (:llm-raw-response-preview iter)))
           (expect (= 22 (:llm-raw-response-length iter)))
           (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                     (:llm-raw-response-sha256 iter)))
-          (expect (= 1 (:llm-selected-block-count iter)))
-          (expect (= ["clojure"] (:llm-selected-block-langs iter))))
+          (expect (= "(+ 1 1)" (:llm-executable-code iter)))
+          (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
+                    (:llm-executable-blocks iter))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "surfaces :returned-empty-blocks? as a typed boolean"
@@ -225,7 +228,7 @@
       (try
         (let [cid (vis/db-store-conversation! s {:channel :tui :title "empty" :model "x"})
               q   (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                      :query "empty turn"
+                                                      :user-request "empty turn"
                                                       :status :running})
               _   (vis/db-store-iteration! s {:conversation-turn-id q :blocks []
                                               :duration-ms 1
@@ -273,7 +276,7 @@
           (expect (str/includes? out "Total turns:** 2"))
           (expect (str/includes? out "Total iterations:** 2"))
           ;; Per-turn header.
-          (expect (str/includes? out "Goal:** First turn"))
+          (expect (str/includes? out "User request:** First turn"))
           (expect (str/includes? out "Provider/model:** blockether/gpt-4o"))
           ;; Per-iteration header.
           (expect (str/includes? out "#### Iteration 0"))

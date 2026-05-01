@@ -10,8 +10,8 @@
    Canonical runtime language:
      Conversation -> Turn -> Iteration -> Block.
 
-   A Turn is one user ask plus assistant answer inside a Conversation.
-   New code and documentation should say turn, not query.
+   A Turn is one user request plus assistant answer inside a Conversation.
+   New code and documentation should use turn/user-request language.
 
    Primary surfaces:
      - Conversation / turn runtime: create!, send!, turn!, by-id,
@@ -217,7 +217,7 @@
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
 (def db-var-history                      persistance/db-var-history)
-(def db-turn-history                     persistance/db-query-history)
+(def db-turn-history                     persistance/db-turn-history)
 
 ;; Dependencies
 (def db-store-dependency!                   persistance/db-store-dependency!)
@@ -227,7 +227,7 @@
 (def db-restore-blocks              persistance/db-restore-blocks)
 
 ;; Process-restart cleanup
-(def db-sweep-orphaned-running-turns!       persistance/db-sweep-orphaned-running-queries!)
+(def db-sweep-orphaned-running-turns!       persistance/db-sweep-orphaned-running-turns!)
 
 ;; =============================================================================
 ;; Extension contract

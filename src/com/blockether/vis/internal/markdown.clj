@@ -199,7 +199,7 @@
    placeholder so the export stays diff-friendly across re-exports."
   [{:keys [user-label assistant-label include-meta?] :as _opts} index turn]
   (let [meta        (when include-meta? (format-turn-meta turn))
-        user-block  (or (blockquote (:text turn)) "> *(empty user request)*")
+        user-block  (or (blockquote (:user-request turn)) "> *(empty user request)*")
         answer-text (cond
                       (:answer turn) (normalize-chat-markdown (:answer turn))
                       (= :error (:status turn)) "*(turn errored \u2014 no answer recorded)*"

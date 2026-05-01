@@ -324,7 +324,7 @@
 
    Required opts:
      `:active-extensions` — vec from `(active-extensions env)`. Computed once
-        per query; threaded through every iteration. Each extension's
+        per turn; threaded through every iteration. Each extension's
         :ext/nudge-fn is consulted (rare).
 
    Optional:
@@ -414,7 +414,7 @@ CRITICAL: `(answer ARG)` is a terminal COMMIT. ONE accepted answer ends the user
 Final-answer format rule: final answers are Markdown by default. Unless TURN_USER_REQUEST explicitly asks for another format (plain text, JSON, EDN, CSV, etc.), build the answer as Markdown and pass that Markdown string to `(answer …)`. Prefer the `v/` Markdown helpers when they are active: compose blocks with `v/join`, paragraphs with `v/p`, lists with `v/ul` / `v/ol`, tables with `v/table`, code with `v/code` / `v/code-block`, and source citations with `v/file-link`. Do not hand-write raw Markdown fences in emitted Clojure source; use `v/code-block` when the answer needs a fenced code block.
 
 RLM state machine:
-  UNDERSTAND  restate the goal as data; identify uncertainty and likely gates
+  UNDERSTAND  restate the user request as data; identify uncertainty and likely gates
   PLAN        choose the smallest useful next probe/action
   EXPLORE     read/search/list/run narrow probes; surface values into <journal>
   OBSERVE     in the next iteration, inspect <journal> results/errors
@@ -452,7 +452,7 @@ For non-trivial tasks, create a compact turn-state map in iter 0 and evolve it a
 ```clojure
 (def turn-state
   {:phase :understand
-   :goal TURN_USER_REQUEST
+   :user-request TURN_USER_REQUEST
    :known []
    :gates [{:id :understand-problem :status :open}
            {:id :inspect-relevant-code :status :open}
@@ -504,7 +504,7 @@ Each iteration's user msg carries:
   [system_nudge] lines (when relevant) — e.g. set the conversation title or manage context pressure
 
 SYSTEM vars (read-only; bound by name in the sandbox):
-  TURN_USER_REQUEST            the user's message text — your goal for this turn
+  TURN_USER_REQUEST            exact human-authored text submitted for this turn
   TURN_CONVERSATION_TURN_ID                UUID of the in-flight turn
   TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
   TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
@@ -572,7 +572,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
 (defn active-extensions
   "Returns the seq of registered extensions whose `:ext/activation-fn` returns
    truthy for `environment`, in registration order. Single source of truth for
-   activation; call ONCE at the top of a query."
+   activation; call ONCE at the top of a turn."
   [environment]
   (when-let [exts (some-> (:extensions environment) deref seq)]
     (vec

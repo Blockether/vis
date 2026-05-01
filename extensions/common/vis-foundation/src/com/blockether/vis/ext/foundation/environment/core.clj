@@ -39,7 +39,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Snapshot cache. Keyed by canonical cwd so we recompute on
 ;; directory change. Recomputation is cheap (the language scan is
-;; bounded) but redundant on every iteration of the same query, so
+;; bounded) but redundant on every iteration of the same turn, so
 ;; we memoize at the extension boundary.
 ;; ---------------------------------------------------------------------------
 

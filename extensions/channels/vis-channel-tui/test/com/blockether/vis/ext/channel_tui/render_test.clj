@@ -604,7 +604,7 @@
 
 (defdescribe render-table-width-test
   (describe "User's exact pathological table renders with monomorphic row width"
-    ;; Reproduces the table from query 71794c5e: 16 file rows, every
+    ;; Reproduces the table from turn 71794c5e: 16 file rows, every
     ;; row has [icon, name, size, type] and one row uses 🏷️ (VS-16).
     ;; Pre-fix: that row was 1 col narrower than the others, every `┃`
     ;; on it drifted, the whole grid broke. Post-fix: every line is
@@ -1049,7 +1049,7 @@
                   "\n"
                   " and \n"
                   "\n"
-                  "`effective-system-prompt-for-query`\n"
+                  "`effective-system-prompt-for-turn`\n"
                   "\n"
                   " exports + docstring mention\n"
                   "- `loop.clj`\n"
@@ -1060,7 +1060,7 @@
                   "\n"
                   ", \n"
                   "\n"
-                  "`effective-system-prompt-for-query`\n"
+                  "`effective-system-prompt-for-turn`\n"
                   "\n"
                   ")\n"
                   "- `CLAUDE.md`\n"
@@ -1246,7 +1246,7 @@
 ;; regression
 ;;
 ;; Faithful reconstruction of the FIRST `(answer …)` block in conversation
-;; eeaf9651-06c7-4dda-9e97-877fcef06337, query 363de6c6-…, position 1.
+;; eeaf9651-06c7-4dda-9e97-877fcef06337, turn 363de6c6-…, position 1.
 ;; The agent built a bullet's body via `md/join`, which inserts `\n\n`
 ;; between every part. With the naive bullet-coalesce that earlier
 ;; treated every `**...**`-starting line as a structural break, the

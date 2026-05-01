@@ -2,7 +2,7 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(v/inspect [conversation-id])` → canonical data map
+   - `(v/inspect [conversation-id])` → canonical data map, including raw LLM diagnostics
    - `(v/report [conversation-id])`  → Markdown rendered from that data
 
    Everything else in this namespace is implementation behind that
@@ -67,7 +67,7 @@
 (defn- current-conversation-turn-id
   "UUID of the in-flight turn, or nil when no turn is running yet.
 
-   Internally the turn is persisted as a `query` row — hence the
+   Internally this is the `conversation_turn_soul` id — hence the
    `:current-conversation-turn-id-atom` env key and this helper's `conversation-turn-id`
    suffix. The product concept is *turn*; everywhere this id is
    surfaced to the model (e.g. inspect current-turn results, the
@@ -140,7 +140,7 @@
       provider-str                 provider-str
       :else                        nil)))
 
-(defn- query-cost-summary
+(defn- turn-cost-summary
   "Pull the token / cost / provider / model map persisted on
    `conversation_turn_state.metadata` (with `llm_root_provider` /
    `llm_root_model` as the canonical typed columns). Returns a map
@@ -151,26 +151,26 @@
    `:provider-model` is a derived `\"provider/model\"` display string
    (e.g. `\"openai/gpt-4o\"`) so callers render it directly — the
    canonical data still lives in `:provider` and `:model` separately."
-  [query]
-  (let [provider-model (format-provider-model (:provider query) (:model query))]
+  [turn]
+  (let [provider-model (format-provider-model (:provider turn) (:model turn))]
     (cond-> {}
-      (:input-tokens query)     (assoc :input-tokens     (:input-tokens query))
-      (:output-tokens query)    (assoc :output-tokens    (:output-tokens query))
-      (:reasoning-tokens query) (assoc :reasoning-tokens (:reasoning-tokens query))
-      (:cached-tokens query)    (assoc :cached-tokens    (:cached-tokens query))
-      (:total-cost query)       (assoc :total-cost       (:total-cost query))
-      (:provider query)         (assoc :provider         (:provider query))
-      (:model query)            (assoc :model            (:model query))
-      provider-model            (assoc :provider-model   provider-model))))
+      (:input-tokens turn)     (assoc :input-tokens     (:input-tokens turn))
+      (:output-tokens turn)    (assoc :output-tokens    (:output-tokens turn))
+      (:reasoning-tokens turn) (assoc :reasoning-tokens (:reasoning-tokens turn))
+      (:cached-tokens turn)    (assoc :cached-tokens    (:cached-tokens turn))
+      (:total-cost turn)       (assoc :total-cost       (:total-cost turn))
+      (:provider turn)         (assoc :provider         (:provider turn))
+      (:model turn)            (assoc :model            (:model turn))
+      provider-model           (assoc :provider-model   provider-model))))
 
 (defn- elapsed-ms
   "Wall-clock duration for a turn in milliseconds. Read from
    `:duration-ms` when persisted; otherwise computed from the
-   underlying query row's `:created-at` so the model can self-pace
+   underlying turn row's `:created-at` so the model can self-pace
    mid-turn."
-  [query]
-  (or (:duration-ms query)
-    (when-let [created (:created-at query)]
+  [turn]
+  (or (:duration-ms turn)
+    (when-let [created (:created-at turn)]
       (try
         (- (System/currentTimeMillis)
           (cond
@@ -316,7 +316,7 @@
                 (concat provider (expression-failures-for-iteration db-info iteration))))
       iterations)))
 
-(defn- latest-query [db-info conversation-id]
+(defn- latest-turn [db-info conversation-id]
   (when (and db-info conversation-id)
     (last (try (vis/db-list-conversation-turns db-info conversation-id)
             (catch Throwable _ [])))))
@@ -329,22 +329,22 @@
    instead of querying SQLite manually."
   [env]
   (let [{:keys [db-info conversation-id]} env]
-    (when-let [query (latest-query db-info conversation-id)]
-      (let [iterations (iteration-rows db-info (:id query))
+    (when-let [turn (latest-turn db-info conversation-id)]
+      (let [iterations (iteration-rows db-info (:id turn))
             attempts   (attempts-from-iterations db-info iterations)]
-        (cond-> {:id          (:id query)
-                 :goal        (:text query)
-                 :status      (:status query)
-                 :attempts    attempts
-                 :errors      (filterv :error attempts)
-                 :failures    (failures-from-iterations db-info iterations)
-                 :iteration   (iteration-pointer env)
-                 :cost        (query-cost-summary query)}
-          (elapsed-ms query) (assoc :elapsed-ms (elapsed-ms query)))))))
+        (cond-> {:id           (:id turn)
+                 :user-request (:user-request turn)
+                 :status       (:status turn)
+                 :attempts     attempts
+                 :errors       (filterv :error attempts)
+                 :failures     (failures-from-iterations db-info iterations)
+                 :iteration    (iteration-pointer env)
+                 :cost         (turn-cost-summary turn)}
+          (elapsed-ms turn) (assoc :elapsed-ms (elapsed-ms turn)))))))
 
 (defn- conversation-snapshot
   "Map for a single conversation: identity + every turn rolled up to a
-   compact `{:id :goal :outcome :answer :iteration-count :status}`
+   compact `{:id :user-request :outcome :answer :iteration-count :status}`
    shape. Used by the conversation-summary portion of inspect.
 
    `:iteration-count` is the integer number of LLM rounds the turn
@@ -354,16 +354,16 @@
   (when (and db-info conversation-id)
     (try
       (when-let [conversation (vis/db-get-conversation db-info conversation-id)]
-        (let [queries (vis/db-list-conversation-turns db-info conversation-id)
-              turns (mapv (fn [query]
-                            (cond-> {:id (:id query)
-                                     :outcome (or (:prior-outcome query)
-                                                (:status query))}
-                              (:text query)            (assoc :goal            (:text query))
-                              (:answer query)          (assoc :answer          (:answer query))
-                              (:iteration-count query) (assoc :iteration-count (:iteration-count query))
-                              (:total-cost query)      (assoc :total-cost      (:total-cost query))))
-                      queries)]
+        (let [turn-rows (vis/db-list-conversation-turns db-info conversation-id)
+              turns (mapv (fn [turn]
+                            (cond-> {:id (:id turn)
+                                     :outcome (or (:prior-outcome turn)
+                                                (:status turn))}
+                              (:user-request turn)     (assoc :user-request    (:user-request turn))
+                              (:answer turn)           (assoc :answer          (:answer turn))
+                              (:iteration-count turn)  (assoc :iteration-count (:iteration-count turn))
+                              (:total-cost turn)       (assoc :total-cost      (:total-cost turn))))
+                      turn-rows)]
           (cond-> {:id          conversation-id
                    :channel     (:channel conversation)
                    :title       (:title conversation)
@@ -433,13 +433,13 @@
      (try
        (mapv (fn [conversation]
                (let [conversation-id (:id conversation)
-                     queries (try (vis/db-list-conversation-turns (:db-info env) conversation-id)
-                               (catch Throwable _ []))]
+                     turns (try (vis/db-list-conversation-turns (:db-info env) conversation-id)
+                             (catch Throwable _ []))]
                  (cond-> {:id          conversation-id
                           :channel     (:channel conversation)
                           :title       (:title conversation)
                           :created-at  (:created-at conversation)
-                          :turn-count  (count queries)}
+                          :turn-count  (count turns)}
                    (:external-id conversation) (assoc :external-id (:external-id conversation)))))
          (vis/db-list-conversations (:db-info env) channel))
        (catch Throwable _ []))
@@ -449,7 +449,7 @@
   "List every `conversation_state` row for the conversation soul behind
    `conversation-id`, oldest version first. Each row maps to
    `{:state-id :version :parent-state-id :title :system-prompt :provider
-     :model :created-at :query-count}`. The trunk is `:version 0` with
+     :model :created-at :turn-count}`. The trunk is `:version 0` with
    `:parent-state-id nil`; any later row with non-nil `:parent-state-id`
    is a fork off the referenced state. Returns `[]` (never nil) when
    the conversation has no rows OR the env is missing handles — lets
@@ -465,16 +465,16 @@
        (catch Throwable _ []))
      [])))
 
-(defn- meta-query-retries
-  "List every `conversation_turn_state` row (= every retry version) for the query
+(defn- meta-turn-retries
+  "List every `conversation_turn_state` row (= every retry version) for the turn
    soul behind `conversation-turn-id`, oldest version first. Each row maps to
-   `{:state-id :version :forked-from-query-state-id :status :prior-outcome
+   `{:state-id :version :forked-from-conversation-turn-state-id :status :prior-outcome
      :provider :model :created-at :iteration-count}`. Version 0 with
-   `:forked-from-query-state-id nil` is the original run; any higher
+   `:forked-from-conversation-turn-state-id nil` is the original run; any higher
    version is a retry. `conversation-turn-id` is a `conversation_turn_soul` UUID — the same id
    surfaced as `:turn-id` by attempt search, `:id` by the current-turn
    snapshot, or `:turns[].id` by the conversation summary. Returns `[]` (never nil)
-   when the query is unknown or the env is missing handles."
+   when the turn is unknown or the env is missing handles."
   [env conversation-turn-id]
   (if (and (:db-info env) conversation-turn-id)
     (try
@@ -495,10 +495,10 @@
    (if (and (:db-info env) conversation-id)
      (try
        (vec
-         (mapcat (fn [query]
-                   (let [iterations (iteration-rows (:db-info env) (:id query))]
-                     (mapv #(assoc % :turn-id (:id query)
-                              :goal (:text query))
+         (mapcat (fn [turn]
+                   (let [iterations (iteration-rows (:db-info env) (:id turn))]
+                     (mapv #(assoc % :turn-id (:id turn)
+                              :user-request (:user-request turn))
                        (failures-from-iterations (:db-info env) iterations))))
            (vis/db-list-conversation-turns (:db-info env) conversation-id)))
        (catch Throwable _ []))
@@ -603,7 +603,7 @@
          failures (vec (:failures turn))
          clusters (repetition-clusters failures)]
      {:turn-id             (:id turn)
-      :goal                (:goal turn)
+      :user-request        (:user-request turn)
       :status              (:status turn)
       :failure-count       (count failures)
       :by-classification   (classification-counts failures)
@@ -634,29 +634,33 @@
   (into {}
     (keep (fn [{:keys [id]}]
             (when id
-              [id (meta-query-retries env id)])))
+              [id (meta-turn-retries env id)])))
     turns))
 
 (defn- raw-response-map
   [iteration]
-  (cond-> {}
-    (some? (:llm-raw-response-preview iteration))
-    (assoc :preview (:llm-raw-response-preview iteration))
-    (some? (:llm-raw-response-length iteration))
-    (assoc :length (:llm-raw-response-length iteration))
-    (some? (:llm-raw-response-sha256 iteration))
-    (assoc :sha256 (:llm-raw-response-sha256 iteration))
-    (some? (:llm-selected-block-count iteration))
-    (assoc :block-count (:llm-selected-block-count iteration))
-    (seq (:llm-selected-block-langs iteration))
-    (assoc :block-langs (:llm-selected-block-langs iteration))))
+  (let [blocks (when (seq (:llm-executable-blocks iteration))
+                 (vec (:llm-executable-blocks iteration)))]
+    (cond-> {}
+      (some? (:llm-raw-response-preview iteration))
+      (assoc :preview (:llm-raw-response-preview iteration))
+      (some? (:llm-raw-response-length iteration))
+      (assoc :length (:llm-raw-response-length iteration))
+      (some? (:llm-raw-response-sha256 iteration))
+      (assoc :sha256 (:llm-raw-response-sha256 iteration))
+      (some? (:llm-executable-code iteration))
+      (assoc :executable-code (:llm-executable-code iteration))
+      blocks
+      (assoc :executable-blocks blocks
+        :block-count (count blocks)
+        :block-langs (mapv :lang blocks)))))
 
 (defn- llm-diagnostic-row
   [turn iteration]
   (let [raw-response (raw-response-map iteration)]
     (when (seq raw-response)
       (cond-> {:turn-id      (:id turn)
-               :goal         (:goal turn)
+               :user-request (:user-request turn)
                :iteration-id (:id iteration)
                :iteration    (:position iteration)
                :status       (:status iteration)
@@ -677,9 +681,10 @@
 (defn- foundation-inspect
   "Canonical conversation-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
-   diagnosis, fork/retry metadata, and the full transcript payload.
-   Default target is the current conversation; pass a conversation id
-   or unambiguous prefix to inspect another conversation."
+   diagnosis, fork/retry metadata, raw LLM diagnostics, and the full
+   transcript payload. Default target is the current conversation;
+   pass a conversation id or unambiguous prefix to inspect another
+   conversation."
   ([env]
    (foundation-inspect env (:conversation-id env)))
   ([env conversation-id]
@@ -855,7 +860,7 @@
                  "(get-in (v/inspect) [:diagnosis :next-actions])"
                  "(-> (v/inspect) :llm-diagnostics last :raw-response :preview)"
                  "(get-in (v/inspect) [:transcript :totals :cost-usd])"
-                 "(map :goal (get-in (v/inspect) [:transcript :turns]))"]
+                 "(map :user-request (get-in (v/inspect) [:transcript :turns]))"]
      :before-fn inject-environment}))
 
 (def report-symbol
@@ -920,8 +925,8 @@
 
 (def introspection-prompt
   (str "`v/` introspection:\n"
-    "  (v/inspect cid?)              conversation data\n"
-    "  (v/report cid?)               Markdown report\n"
+    "  (v/inspect cid?)              conversation data incl. :llm-diagnostics\n"
+    "  (v/report cid?)               Markdown report incl. raw LLM diagnostics\n"
     "  (v/extensions)                loaded extension catalog\n"
     "  (v/extension-docs ext-ref)    doc summaries\n"
     "  (v/extension-doc ext-ref name) doc incl. :content\n"

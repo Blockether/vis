@@ -73,14 +73,14 @@ CREATE INDEX idx_conv_state_parent
   ON conversation_state(parent_state_id);
 
 -- =============================================================================
--- Query soul — immutable identity of a user ask, branch-local.
+-- Turn soul — immutable identity of a user request, branch-local.
 -- =============================================================================
 CREATE TABLE conversation_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
   title                  TEXT,
-  turn_text              TEXT,
+  user_request           TEXT,
   metadata               TEXT,             -- JSON-encoded object/string
   created_at             INTEGER NOT NULL
 );
@@ -111,7 +111,7 @@ CREATE TABLE conversation_turn_state (
   -- handover digest say "previous turn complete | abandoned | cancelled
   -- | error" without scanning every iteration. Set by the iteration
   -- loop on the terminal iteration and by
-  -- sweep-orphaned-running-queries! for cancelled / orphaned turns.
+  -- sweep-orphaned-running-turns! for cancelled / orphaned turns.
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
                                       prior_outcome IN ('complete', 'abandoned',
@@ -151,6 +151,19 @@ CREATE TABLE iteration (
   llm_error                       TEXT,
   llm_returned_empty_blocks  INTEGER NOT NULL DEFAULT 0
                                   CHECK (llm_returned_empty_blocks IN (0, 1)),
+
+  -- Raw-response diagnostics for provider / extraction forensics.
+  -- Full raw text is persisted so investigations can query the DB
+  -- instead of grepping process logs. Preview / length / hash keep
+  -- cheap list views and evidence comparison available too.
+  llm_raw_response                TEXT,
+  llm_raw_response_preview        TEXT,
+  llm_raw_response_length         INTEGER CHECK (
+                                    llm_raw_response_length IS NULL OR llm_raw_response_length >= 0
+                                  ),
+  llm_raw_response_sha256         TEXT,
+  llm_executable_code             TEXT,
+  llm_executable_blocks           TEXT,    -- JSON vec of executable fenced blocks selected by svar: [{:lang :source} ...]
 
   -- Per-iteration token accounting + estimated USD cost. NULL when
   -- the provider response did not surface usage (e.g. the LLM call
@@ -482,7 +495,7 @@ CREATE INDEX idx_log_expression_state
   WHERE expression_state_id IS NOT NULL;
 
 -- =============================================================================
--- FTS5 — full-text search over turn text + expression state expr snapshots.
+-- FTS5 — full-text search over user requests + expression state expr snapshots.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,
@@ -492,18 +505,18 @@ CREATE VIRTUAL TABLE search USING fts5(
   tokenize='porter unicode61 remove_diacritics 2'
 );
 
--- Query soul indexing
+-- Turn soul indexing
 CREATE TRIGGER trg_conversation_turn_soul_ai AFTER INSERT ON conversation_turn_soul BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'conversation_turn_soul', new.id, 'turn_text', new.turn_text
-    WHERE new.turn_text IS NOT NULL AND new.turn_text <> '';
+    SELECT 'conversation_turn_soul', new.id, 'user_request', new.user_request
+    WHERE new.user_request IS NOT NULL AND new.user_request <> '';
 END;
 
 CREATE TRIGGER trg_conversation_turn_soul_au AFTER UPDATE ON conversation_turn_soul BEGIN
   DELETE FROM search WHERE owner_table='conversation_turn_soul' AND owner_id=old.id;
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'conversation_turn_soul', new.id, 'turn_text', new.turn_text
-    WHERE new.turn_text IS NOT NULL AND new.turn_text <> '';
+    SELECT 'conversation_turn_soul', new.id, 'user_request', new.user_request
+    WHERE new.user_request IS NOT NULL AND new.user_request <> '';
 END;
 
 CREATE TRIGGER trg_conversation_turn_soul_ad AFTER DELETE ON conversation_turn_soul BEGIN
