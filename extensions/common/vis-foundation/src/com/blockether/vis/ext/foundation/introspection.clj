@@ -637,6 +637,43 @@
               [id (meta-query-retries env id)])))
     turns))
 
+(defn- raw-response-map
+  [iteration]
+  (cond-> {}
+    (some? (:llm-raw-response-preview iteration))
+    (assoc :preview (:llm-raw-response-preview iteration))
+    (some? (:llm-raw-response-length iteration))
+    (assoc :length (:llm-raw-response-length iteration))
+    (some? (:llm-raw-response-sha256 iteration))
+    (assoc :sha256 (:llm-raw-response-sha256 iteration))
+    (some? (:llm-selected-block-count iteration))
+    (assoc :block-count (:llm-selected-block-count iteration))
+    (seq (:llm-selected-block-langs iteration))
+    (assoc :block-langs (:llm-selected-block-langs iteration))))
+
+(defn- llm-diagnostic-row
+  [turn iteration]
+  (let [raw-response (raw-response-map iteration)]
+    (when (seq raw-response)
+      (cond-> {:turn-id      (:id turn)
+               :goal         (:goal turn)
+               :iteration-id (:id iteration)
+               :iteration    (:position iteration)
+               :status       (:status iteration)
+               :raw-response raw-response}
+        (:provider iteration) (assoc :provider (:provider iteration))
+        (:model iteration)    (assoc :model (:model iteration))))))
+
+(defn- llm-diagnostics
+  "Flatten the full transcript into the raw LLM diagnostics view exposed
+   by `v/inspect`. This is a convenience index over the canonical
+   transcript payload, not another storage read."
+  [transcript-data]
+  (vec
+    (mapcat (fn [turn]
+              (keep #(llm-diagnostic-row turn %) (:iterations turn)))
+      (:turns transcript-data))))
+
 (defn- foundation-inspect
   "Canonical conversation-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
@@ -664,6 +701,7 @@
       :diagnosis           diagnosis
       :conversation-forks  forks
       :turn-retries        turn-retries
+      :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
       :transcript          transcript-data})))
 
 (defn- foundation-report
@@ -815,6 +853,7 @@
      :arglists  '([] [conversation-id])
      :examples  ["(v/inspect)"
                  "(get-in (v/inspect) [:diagnosis :next-actions])"
+                 "(-> (v/inspect) :llm-diagnostics last :raw-response :preview)"
                  "(get-in (v/inspect) [:transcript :totals :cost-usd])"
                  "(map :goal (get-in (v/inspect) [:transcript :turns]))"]
      :before-fn inject-environment}))
