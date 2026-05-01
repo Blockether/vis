@@ -114,6 +114,19 @@
           :jvm-opts    ["-Xmx8g"]
           :main-opts   ["-m" "com.blockether.vis.bench.runner"]}
 
+  ;; Development entry path. Starts an nREPL on `$NREPL_PORT` (default
+  ;; 7888), writes `.nrepl-port` for `clj-nrepl-eval --discover-ports`,
+  ;; and exposes helpers for launching entry points. `tui` opens
+  ;; Terminal.app running `terminal-tui`, where nREPL and the TUI live
+  ;; in the same JVM/process.
+  ;;
+  ;;   clojure -M:dev              # nREPL + wait
+  ;;   clojure -M:dev tui          # Terminal.app attached nREPL+TUI JVM
+  ;;   clojure -M:dev cli help     # nREPL + run a CLI entry point
+  :dev {:extra-paths ["dev" "test"]
+        :extra-deps  {nrepl/nrepl {:mvn/version "1.3.1"}}
+        :main-opts   ["-m" "com.blockether.vis.dev"]}
+
   ;; Microbenchmarks live next to the code they exercise, in
   ;; `*_bench_test.clj` files under each extension's `test/` tree.
   ;; They are NOT lazytest cases (so the default suite stays fast)

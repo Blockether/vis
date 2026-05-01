@@ -26,6 +26,43 @@ clojure -M:vis help       # same
 from the repo root. Add `bin/` to your `PATH` and every example below
 works with `vis` instead of `clojure -M:vis`.
 
+## Development nREPL path
+
+For Clojure-style live development, use the `:dev` alias. It starts an
+nREPL, writes `.nrepl-port` for discovery, and keeps the JVM alive while
+you drive code through `clj-nrepl-eval`.
+
+```bash
+bin/dev                         # same as clojure -M:dev; nREPL + wait
+bin/dev tui                     # open Terminal.app with nREPL + TUI in one JVM
+bin/dev terminal-tui            # internal target run inside Terminal.app
+bin/dev cli providers list      # nREPL + run a CLI entry point, then wait
+NREPL_PORT=7890 bin/dev         # override default port 7888
+```
+
+From another terminal or an LLM shell tool:
+
+```bash
+clj-nrepl-eval --discover-ports
+clj-nrepl-eval -p 7888 "(+ 1 2 3"   # delimiters are auto-repaired
+clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload) (dev/cli! \"providers\" \"list\")"
+clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload) (dev/tui! \"--resume\")"
+```
+
+`dev/tui!` opens a new macOS Terminal.app window running
+`bin/dev terminal-tui`. That Terminal process starts its own nREPL and
+then runs `vis channels tui` in the same JVM, so the TUI process remains
+REPL-controllable. Terminal.app cannot attach an already-running JVM as
+its controlling terminal; the JVM that owns the TUI must be launched by
+Terminal.app.
+
+If a Clojure edit leaves delimiters unbalanced, do not hand-repair the
+paren pile; run the repair tool on the file:
+
+```bash
+clj-paren-repair src/com/blockether/vis/core.clj
+```
+
 ## First-time auth
 
 Configure at least one LLM provider before the first turn. Vis

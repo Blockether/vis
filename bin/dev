@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Vis development launcher.
+#
+# Starts the project dev nREPL (`clojure -M:dev`) and optionally launches
+# development entry points. See `clojure -M:dev --help`.
+
+set -euo pipefail
+
+# Resolve the directory of this script, following symlinks.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ "$src" != /* ]] && src="$dir/$src"
+done
+bin_dir="$(cd -P "$(dirname "$src")" && pwd)"
+repo_root="$(cd -P "$bin_dir/.." && pwd)"
+
+cd "$repo_root"
+exec clojure -M:dev "$@"

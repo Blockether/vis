@@ -41,6 +41,8 @@ packages/vis-benchmark/swebench-harness/
 # Sessions / runtime data
 .omc/
 .agents/
+.nrepl-port
+.nrepl-session
 docs/book/
 # mdbook-mermaid install assets — regenerable via `mdbook-mermaid install docs`
 docs/mermaid.min.js
