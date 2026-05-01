@@ -29,6 +29,7 @@
    [taoensso.nippy :as nippy])
   (:import
    (com.zaxxer.hikari HikariConfig HikariDataSource)
+   (java.security MessageDigest)
    (java.util UUID)
    (java.util.concurrent.atomic AtomicLong)
    (javax.sql DataSource)
@@ -81,6 +82,16 @@
   "Deserialize a Nippy byte array from a BLOB column back to a Clojure value."
   [^bytes bs]
   (when bs (nippy/thaw bs)))
+
+(def ^:private raw-response-preview-chars 4000)
+
+(defn- sha256-hex [^String s]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                 (.getBytes s "UTF-8"))]
+    (apply str (map #(format "%02x" (bit-and 0xff %)) digest))))
+
+(defn- raw-response-preview [^String s]
+  (subs s 0 (min raw-response-preview-chars (count s))))
 
 ;; =============================================================================
 ;; Schema install
@@ -711,7 +722,8 @@
    Nippy blob in `iteration.blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
   [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
-                   llm-messages llm-provider llm-model tokens cost-usd]}]
+                   llm-messages llm-provider llm-model llm-raw-response llm-selected-blocks
+                   tokens cost-usd]}]
   (when (ds db-info)
     (let [iteration-id   (UUID/randomUUID)
           iteration-id-s (str iteration-id)
@@ -744,7 +756,8 @@
                                       :next_position]]
                             :from   :iteration
                             :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
-                      0)]
+                      0)
+          raw-response-s (some-> llm-raw-response str)]
       ;; 1. Iteration row — includes the full block log inline as
       ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Replaces
       ;;    the legacy expression_soul kind='call' + expression_state
@@ -767,10 +780,18 @@
                              :llm_returned_empty_blocks (if (empty? blocks) 1 0)
                              :metadata             (when metadata (->json metadata))
                              :blocks               (->blob blocks-vec)
+                             :llm_selected_block_count (when (some? llm-selected-blocks)
+                                                         (count llm-selected-blocks))
+                             :llm_selected_block_langs (when (some? llm-selected-blocks)
+                                                         (->json (mapv :lang llm-selected-blocks)))
                              :created_at           now
                              :finished_at          now}
                       (some? answer-form-idx)
                       (assoc :answer_form_idx answer-form-idx)
+                      raw-response-s
+                      (assoc :llm_raw_response_preview (raw-response-preview raw-response-s)
+                        :llm_raw_response_length  (count raw-response-s)
+                        :llm_raw_response_sha256  (sha256-hex raw-response-s))
                       ;; Token / cost columns — omitted when nil so the
                       ;; row keeps NULL (the schema marks them nullable
                       ;; for exactly this reason: an LLM call that
@@ -910,6 +931,16 @@
     ;; the data shape even when callers don't render them by default.
     (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
     (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json (:llm_user_prompt row)))
+    (some? (:llm_raw_response_preview row))
+    (assoc :llm-raw-response-preview (:llm_raw_response_preview row))
+    (some? (:llm_raw_response_length row))
+    (assoc :llm-raw-response-length (:llm_raw_response_length row))
+    (some? (:llm_raw_response_sha256 row))
+    (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
+    (some? (:llm_selected_block_count row))
+    (assoc :llm-selected-block-count (:llm_selected_block_count row))
+    (some? (:llm_selected_block_langs row))
+    (assoc :llm-selected-block-langs (<-json (:llm_selected_block_langs row)))
     (some? (:answer_form_idx row))      (assoc :answer-form-idx   (:answer_form_idx row))
     (some? (:llm_returned_empty_blocks row))
     (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_blocks row))))

@@ -303,34 +303,6 @@
          {:token (:token fresh) :api-url (:api-url fresh)})))))
 
 ;; =============================================================================
-;; Provider integration — dynamic api-key supplier for svar
-;; =============================================================================
-
-(defn make-api-key-fn
-  "Returns a 0-arg fn that always returns a fresh Copilot API token.
-   Use as the `:api-key-fn` in svar provider config.
-
-   Opts:
-     :enterprise-domain — for GHE"
-  ([] (make-api-key-fn nil))
-  ([opts]
-   (fn []
-     (:token (get-copilot-token! opts)))))
-
-(defn copilot-provider-config
-  "Build a svar-native provider config map for GitHub Copilot.
-   Resolves a fresh Copilot API token (auto-refreshes from cached OAuth token).
-
-   `models` — vec of model name strings, e.g. [\"gpt-4o\" \"gpt-4o-mini\"]
-   `opts`   — {:enterprise-domain str} for GHE"
-  [models & [opts]]
-  (let [{:keys [token api-url]} (get-copilot-token! opts)]
-    {:id       :github-copilot
-     :base-url (or api-url "https://api.githubcopilot.com")
-     :api-key  token
-     :models   (mapv (fn [m] {:name m}) models)}))
-
-;; =============================================================================
 ;; CLI helpers
 ;; =============================================================================
 

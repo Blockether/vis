@@ -14,8 +14,8 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.tool-result :as tool-result]
    [lazytest.core :as lazytest]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
@@ -921,7 +921,7 @@
                    (truncate-string
                      (-> (str doc) str/split-lines first str/trim)
                      DOCSTRING_FIRST_LINE_CHARS))
-        body  (if (tool-result/tool-result? val)
+        body  (if (extension/tool-result? val)
                 (bounded-pr-str {:tool-result  true
                                  :ok?          (:ok? val)
                                  :markdown     (:markdown val)

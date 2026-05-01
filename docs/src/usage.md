@@ -165,15 +165,14 @@ For embedding Vis in your own Clojure program, require
 
 ```clojure
 (require '[com.blockether.vis.core :as vis]
-         '[com.blockether.vis.core :as cfg]
          '[com.blockether.svar.internal.llm :as llm])
 
-(def env (v/create-environment (cfg/make-router) {:db :memory}))
+(def env (vis/create-environment (vis/get-router) {:db :memory}))
 
-(v/query! env [(llm/user "What is 2+2?")])
+(vis/turn! env [(llm/user "What is 2+2?")])
 ;; => {:answer "4" :iterations 1 :duration-ms 312 :tokens {...} :cost {...}}
 
-(v/dispose-environment! env)
+(vis/dispose-environment! env)
 ```
 
 Full API reference: [Public API](architecture/packages.md#package-map).

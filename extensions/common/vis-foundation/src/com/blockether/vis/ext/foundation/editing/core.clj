@@ -44,7 +44,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.tool-result :as tool])
+   [com.blockether.vis.internal.extension :as extension])
   (:import
    (com.google.re2j Pattern)
    (java.io File InputStream Reader Writer)
@@ -113,7 +113,7 @@
     (.mkdirs parent))
   f)
 
-(def ^:private tool-result-spec ::tool/tool-result)
+(def ^:private tool-result-spec ::extension/tool-result)
 
 (defn- now-ms []
   (System/currentTimeMillis))
@@ -135,8 +135,8 @@
 (defn- tool-success
   [{:keys [op path kind result markdown provenance]}]
   (let [t (now-ms)]
-    (tool/with-presentation
-      (tool/success
+    (extension/with-presentation
+      (extension/success
         {:result     result
          :provenance (merge {:op             op
                              :target         (path->target path kind)
@@ -161,8 +161,8 @@
           target (path->target path kind)
           t (now-ms)
           markdown ((or markdown-fn default-error-markdown) op path err target)]
-      {:result (tool/with-presentation
-                 (tool/failure
+      {:result (extension/with-presentation
+                 (extension/failure
                    {:result     nil
                     :provenance {:op             op
                                  :target         target

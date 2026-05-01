@@ -320,15 +320,13 @@
 
 (defn- blockether-env-config
   "Bootstrap a `:blockether` provider config from `BLOCKETHER_*` env
-   vars. Base URL prefers `BLOCKETHER_OPENAI_BASE_URL` (back-compat
-   override), falling back to whatever svar's catalog has for
-   `:blockether`. Models seed from the curated `:default-models` so
-   first-boot UX has a working list without a config edit."
+   vars. The base URL comes from svar's provider catalog. Models seed
+   from the curated `:default-models` so first-boot UX has a working
+   list without a config edit."
   []
   (when-let [api-key (blockether-env-api-key)]
-    (let [be      (provider-template :blockether)
-          env-url (System/getenv "BLOCKETHER_OPENAI_BASE_URL")
-          url     (or env-url (:base-url be))]
+    (let [be  (provider-template :blockether)
+          url (:base-url be)]
       (when url
         {:providers [(cond-> {:id       :blockether
                               :api-key  api-key
@@ -347,25 +345,11 @@
           (when (map? raw) raw))
         (catch Exception _ nil)))))
 
-(defn- sanitize-openai-codex-provider
-  "Strip legacy persisted fields from OpenAI Codex config entries.
-
-   Codex credentials live in `~/.vis/openai-codex-auth.json` and are resolved
-   dynamically via the provider token fn. The on-disk provider config should
-   keep only durable user choices (id, models, optional base-url).
-
-   Also removes the old private `:api-style :openai-codex` marker so runtime
-   metadata can backfill svar's native `:openai-compatible-responses` style."
-  [provider]
-  (if (= :openai-codex (:id provider))
-    (dissoc provider :api-key :llm-headers :responses-path :api-style)
-    provider))
-
 (defn- apply-provider-metadata
-  "Backfill runtime-only metadata for provider configs already stored on disk."
+  "Attach catalog metadata needed by the runtime while preserving the
+   user's provider map exactly otherwise."
   [provider]
-  (let [provider (sanitize-openai-codex-provider provider)
-        template (provider-template (:id provider))]
+  (let [template (provider-template (:id provider))]
     (cond-> provider
       (and (nil? (:base-url provider)) (:base-url template))
       (assoc :base-url (:base-url template))
@@ -386,14 +370,9 @@
     (blockether-env-config)))
 
 (defn save-config!
-  "Persist provider config to `~/.vis/config.edn`.
-
-   Before writing, strips legacy OpenAI Codex runtime fields so the file
-   remains a durable user config rather than a transient resolved-router
-   snapshot."
+  "Persist provider config to `~/.vis/config.edn`."
   [config]
-  (let [dir    (io/file config-dir)
-        config (update config :providers #(mapv sanitize-openai-codex-provider %))]
+  (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir))
     (spit config-path (pr-str config))))
 

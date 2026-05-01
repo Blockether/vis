@@ -4,7 +4,7 @@
    cases. Plan §5.5 + §6."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.extension.source-markers :as sm]
+   [com.blockether.vis.internal.extension :as sm]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe resolve-markers-test

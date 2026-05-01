@@ -25,7 +25,6 @@
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.tool-result :as tool-result]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -107,7 +106,7 @@
 
 (defn- tool-result-journal-text
   [v]
-  (let [presentation (tool-result/presentation v)]
+  (let [presentation (extension/presentation v)]
     (cond
       (= :hide (:journal presentation)) "<tool result hidden>"
       :else (or (:markdown v) "<tool result>"))))
@@ -131,7 +130,7 @@
                         (str " (" time-ms "ms)"))
         value-part    (if error
                         (str "ERROR: " (truncate error 600))
-                        (if (tool-result/tool-result? result)
+                        (if (extension/tool-result? result)
                           (tool-result-journal-text result)
                           (let [v (realize-value result)
                                 [value-str truncated?] (truncated-pr-str v)]
@@ -408,9 +407,11 @@
     emit Clojure forms -> host evaluates them -> results/errors enter <journal>
     -> next iteration observes <journal> -> repeat until terminal answer.
 
-Reply each iteration with one or more ```clojure … ``` fences. Their source concatenates into top-level forms; each form runs in order. Think in Clojure data: build small values, transform maps/vectors/sets, surface state into the journal, then act or answer.
+Reply each iteration with one or more ```clojure … ``` fences. Their source concatenates into top-level forms; each form runs in order. The text INSIDE each fence must be executable Clojure forms only: no nested Markdown fences, no raw ``` markers, no prose outside Clojure comments. Think in Clojure data: build small values, transform maps/vectors/sets, surface state into the journal, then act or answer.
 
 CRITICAL: `(answer ARG)` is a terminal COMMIT. ONE accepted answer ends the user turn. Call it only when the task is complete, verified when relevant, or concretely blocked with evidence. Never use `(answer …)` for progress messages like \"scanned\", \"done\", \"I will inspect next\", or \"found files\".
+
+Final-answer format rule: final answers are Markdown by default. Unless TURN_USER_REQUEST explicitly asks for another format (plain text, JSON, EDN, CSV, etc.), build the answer as Markdown and pass that Markdown string to `(answer …)`. Prefer the `v/` Markdown helpers when they are active: compose blocks with `v/join`, paragraphs with `v/p`, lists with `v/ul` / `v/ol`, tables with `v/table`, code with `v/code` / `v/code-block`, and source citations with `v/file-link`. Do not hand-write raw Markdown fences in emitted Clojure source; use `v/code-block` when the answer needs a fenced code block.
 
 RLM state machine:
   UNDERSTAND  restate the goal as data; identify uncertainty and likely gates
@@ -489,11 +490,11 @@ Then iter 1+ observes `hits` in <journal>, updates state, acts, verifies, or ans
 
 Error rule: errors are evidence. They appear in <journal>. In the next iteration, inspect the error, narrow/retry, or explicitly block a gate with the reason. Do not hide unresolved tool errors behind a final answer.
 
-Answer shapes. `(answer …)` is the LAST top-level form of its iteration (last or only):
+Answer shapes. `(answer …)` is the LAST top-level form of its iteration (last or only). Prefer Markdown helper composition unless the user requested a non-Markdown format:
 ```clojure
-(answer \"final report\")
-(let [s (build-summary turn-state*)] (answer s))
-(let [report (build-summary turn-state*)] (answer report))
+(answer (v/p \"Done.\"))
+(answer (v/join (v/h2 \"Summary\") (v/p \"Patched three files.\")))
+(let [report (build-markdown-report turn-state*)] (answer report))
 ```
 If you need trailing work after an answer, do not answer yet; do the work, surface results, and answer in a later iteration.
 

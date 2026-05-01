@@ -666,14 +666,10 @@
 
 (defn- persisted-provider-config
   "Convert an in-memory dialog provider entry to the durable on-disk shape.
-   Do NOT route through `vis/->svar-provider` here — that resolves runtime
-   Codex fields (`:api-key`, `:llm-headers`, `:api-style`, …) that must not be
-   written back to config.edn."
+   This path saves the provider selected in the dialog; runtime credential
+   resolution belongs to the router construction path."
   [provider]
-  (let [provider (ensure-base-url provider)]
-    (if (= :openai-codex (:id provider))
-      (dissoc provider :api-key :llm-headers :responses-path :api-style)
-      provider)))
+  (ensure-base-url provider))
 
 (def ^:private local-no-auth-provider-ids
   #{:ollama :lmstudio})

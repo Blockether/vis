@@ -3,8 +3,7 @@
 
      :zai-coding → coding-plan subscription
                    (https://api.z.ai/api/coding/paas/v4).
-                   Env var: `ZAI_CODING_API_KEY` (falls back to
-                   `ZAI_API_KEY` so single-key setups keep working).
+                   Env var: `ZAI_CODING_API_KEY`.
 
      :zai        → pay-as-you-go / `Pass` gateway
                    (https://api.z.ai/api/paas/v4).
@@ -50,13 +49,12 @@
    the local tag stable so future schema upgrades skip a file-key
    migration.
 
-   `:env-keys` mirrors svar's catalog ordering: `ZAI_CODING_API_KEY`
-   takes precedence for the coding plan, with `ZAI_API_KEY` as the
-   fallback so users with one umbrella key keep working."
+   `:env-keys` is plan-specific. Keep the coding and pass credentials
+   separate so one plan never silently authenticates as the other."
   {:coding {:provider-id :zai-coding
             :label       "Z.ai (Coding Plan)"
             :base-url    "https://api.z.ai/api/coding/paas/v4"
-            :env-keys    ["ZAI_CODING_API_KEY" "ZAI_API_KEY"]}
+            :env-keys    ["ZAI_CODING_API_KEY"]}
    :pass   {:provider-id :zai
             :label       "Z.ai (Pass)"
             :base-url    "https://api.z.ai/api/paas/v4"
@@ -136,9 +134,8 @@
   [plan-tag]
   (let [{:keys [provider-id base-url]} (get PLANS plan-tag)]
     (if-let [{:keys [api-key]} (detect-key plan-tag)]
-      ;; Match the GitHub Copilot return shape so `config.clj`'s
-      ;; `->svar-provider` destructure (`{:keys [token api-url]}`)
-      ;; works uniformly across providers.
+      ;; Provider extensions expose runtime credentials as a uniform
+      ;; token envelope consumed by the central router adapter.
       {:token api-key :api-url base-url}
       (throw (ex-info (str "No Z.ai API key for plan " plan-tag
                         ". Run `vis providers auth " (name provider-id) "` to authenticate, "

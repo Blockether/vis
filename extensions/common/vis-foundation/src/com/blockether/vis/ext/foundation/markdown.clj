@@ -336,18 +336,31 @@
   [& parts]
   (str "- " (compose-text parts)))
 
+(defn- unordered-marker? [s]
+  (or (str/starts-with? s "- ")
+    (str/starts-with? s "* ")
+    (str/starts-with? s "+ ")))
+
+(defn- ul-item-line [x]
+  (let [text (item-text x)]
+    (if (unordered-marker? text)
+      text
+      (str "- " text))))
+
 (defn ul
   "Unordered list. Accepts a single seq or variadic args.
-   Each item may be a string or a sequential of parts (strings +
-   inline helpers) composed into one item text.
+   Each item may be a string, a preformatted `(v/li ...)`, or a
+   sequential of parts (strings + inline helpers) composed into one
+   item text.
 
      (v/ul [\"a\" \"b\"])
+     (v/ul [(v/li \"a\") (v/li \"b\")])
      (v/ul [[\"The \" (v/code \"foo\") \" works\"] \"plain\"])
 
    One `- item` per element, newline-joined, no trailing newline."
   [& items]
   (->> (normalize-list-items items)
-    (map #(str "- " (item-text %)))
+    (map ul-item-line)
     (str/join "\n")))
 
 (defn ol
@@ -669,7 +682,7 @@
     "  inline:   (v/bold …) (v/italic …) (v/code …) (v/kbd …) (v/strike …)\n"
     "  links:    (v/link text url) (v/image alt url) (v/file-link path line?) (v/anchor text slug?)\n"
     "  blocks:   (v/p …) (v/code-block s lang?) (v/blockquote s) v/hr v/br (v/details …)\n"
-    "  lists:    (v/li …) (v/ul items) (v/ol items) (v/checklist items)\n"
+    "  lists:    (v/li …) (v/ul items) (v/ol items) (v/checklist items); v/ul adds bullets and also accepts v/li output\n"
     "  table:    (v/table headers rows opts?)\n"
     "  compose:  (v/join …blocks) (v/lines …lines) (v/section title body) (v/escape s)\n"
     "Use `v/join` for block spacing. Cite source with `v/file-link`."))

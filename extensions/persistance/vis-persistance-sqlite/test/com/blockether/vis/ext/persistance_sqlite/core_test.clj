@@ -409,6 +409,24 @@
         (expect (= 0   (:cached-tokens iter)))
         (expect (= 0.0 (:cost-usd iter))))))
 
+  (it "persists raw LLM response diagnostics and selected code-block metadata"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :query "x" :status :running})
+          raw "```clojure\n(+ 1 1)\n```"]
+      (vis/db-store-iteration! s {:conversation-turn-id qid
+                                  :blocks [{:code "(+ 1 1)" :result 2}]
+                                  :duration-ms 5
+                                  :llm-raw-response raw
+                                  :llm-selected-blocks [{:lang "clojure" :source "(+ 1 1)"}]})
+      (let [iter (first (vis/db-list-conversation-turn-iterations s qid))]
+        (expect (= raw (:llm-raw-response-preview iter)))
+        (expect (= (count raw) (:llm-raw-response-length iter)))
+        (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
+                  (:llm-raw-response-sha256 iter)))
+        (expect (= 1 (:llm-selected-block-count iter)))
+        (expect (= ["clojure"] (:llm-selected-block-langs iter))))))
+
   (it "rejects negative token counts via the schema CHECK"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -533,17 +551,17 @@
       (expect (= 0 (raw-count s :expression_state))))))
 
 ;; =============================================================================
-;; Query history
+;; Turn history
 ;; =============================================================================
 
-(defdescribe query-history-test
+(defdescribe turn-history-test
   (it "builds ordered history with iteration counts"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :query "What?" :status :done})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :answer "A Lisp" :duration-ms 100})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :answer "JVM Lisp" :duration-ms 50})
-          h   (vis/db-query-history s cid)]
+          h   (vis/db-turn-history s cid)]
       (expect (= 1 (count h)))
       (expect (= "What?" (:query (first h))))
       (expect (= 2 (:iteration-count (first h)))))))

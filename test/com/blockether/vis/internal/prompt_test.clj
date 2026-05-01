@@ -197,6 +197,8 @@
       (expect (str/includes? p "recursive language model (RLM)"))
       (expect (str/includes? p "read/eval/observe loop"))
       (expect (str/includes? p "terminal COMMIT"))
+      (expect (str/includes? p "no nested Markdown fences"))
+      (expect (str/includes? p "no raw ``` markers"))
       (expect (str/includes? p "TURN_USER_REQUEST is fully satisfied"))
       (expect (str/includes? p "host automatically continues the SAME user turn"))
       (expect (str/includes? p "Not every iteration needs an answer"))
@@ -208,6 +210,15 @@
       (expect (str/includes? p "ACT"))
       (expect (str/includes? p "VERIFY"))
       (expect (str/includes? p "ANSWER"))))
+
+  (it "requires Markdown final answers by default and prefers v/ helpers"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "final answers are Markdown by default"))
+      (expect (str/includes? p "Unless TURN_USER_REQUEST explicitly asks for another format"))
+      (expect (str/includes? p "Prefer the `v/` Markdown helpers"))
+      (expect (str/includes? p "v/join"))
+      (expect (str/includes? p "v/file-link"))
+      (expect (str/includes? p "use `v/code-block`"))))
 
   (it "teaches functional state surfacing and gates"
     (let [p prompt/CORE_SYSTEM_PROMPT]
