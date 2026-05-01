@@ -105,13 +105,6 @@
 
 (def ^:private copy-success-ttl-ms 1500)
 
-(defn- copy-message-markdown! [markdown]
-  (future
-    (try (input/clipboard-copy! (or markdown ""))
-      (catch Throwable _ nil)))
-  (vis/notify! "✓ Copied message markdown"
-    :level :success :ttl-ms copy-success-ttl-ms))
-
 (defn- copy-conversation-id! [text]
   (future
     (try (input/clipboard-copy! text)
@@ -900,9 +893,6 @@
                          (when (and (not was-dragging?) (not already-handled?))
                            (when-let [hit (cr/lookup mx my)]
                              (case (:kind hit)
-                               :copy-message-markdown
-                               (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
-
                                :copy-id
                                (copy-conversation-id! (:text hit))
                                :toggle-details
@@ -950,9 +940,6 @@
                              ;; TUI-specific flash state; the
                              ;; cross-channel notifications system
                              ;; carries the feedback.
-                               :copy-message-markdown
-                               (copy-message-markdown! (or (:markdown hit) (:text hit) ""))
-
                                :copy-id
                                (copy-conversation-id! (:text hit))
 
