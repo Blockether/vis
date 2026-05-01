@@ -16,6 +16,7 @@
         \u2014 only `:ext/nudge-fn` results land in the output."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.prompt :as prompt]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -175,6 +176,20 @@
                    :iteration           period})]
         (expect (str/includes? out "[system_nudge]"))
         (expect (str/includes? out (str "You're " period " iterations")))))))
+
+(defdescribe extensions-snapshot-test
+  (it "includes full extension provenance plus symbols/docs"
+    (let [ext (or (some #(when (= 'com.blockether.vis.core (:ext/namespace %)) %)
+                    (extension/registered-extensions))
+                (extension/extension {:ext/namespace 'com.blockether.vis.core
+                                      :ext/doc       "vis core"}))
+          [entry] (prompt/extensions-snapshot [ext])]
+      (expect (= 'com.blockether.vis.core (:namespace entry)))
+      (expect (contains? entry :source-paths))
+      (expect (contains? entry :source-mtime-max))
+      (expect (contains? entry :source-hash-sha256))
+      (expect (contains? entry :symbols))
+      (expect (contains? entry :docs)))))
 
 (defdescribe core-system-prompt-test
   (it "front-loads the RLM control-flow contract"

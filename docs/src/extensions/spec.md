@@ -21,6 +21,7 @@ The constructor and registrar both live on the public facade
 Every authoring helper an extension needs is on that namespace:
 `extension`, `symbol`, `value`, `register-extension!`,
 `install-extension!` (per-env companion), `render-prompt`,
+`extension-provenance`, `extension-source-markers-of`,
 `load-extension!`, `discover-extensions!`. Composition helpers used
 by the runtime itself (`active-extensions`, `assemble-system-prompt`)
 live there too, so an embedder needs only one require.
@@ -205,9 +206,51 @@ an extension's symbols to a live env:
 ```
 
 Wraps every function symbol through `invoke-symbol-wrapper`
-(before → fn → after, with on-error recovery). Value symbols
-are returned as `{sym → value}`. Each wrapped fn closes over
-the extension, symbol entry, and environment.
+(before → fn → after, with on-error recovery). When the public return
+value is a tool-result envelope, the wrapper also stamps canonical
+extension provenance onto `[:provenance :tool]`, `[:provenance :extension]`,
+and `[:provenance :source]`. Value symbols are returned as `{sym → value}`.
+Each wrapped fn closes over the extension, symbol entry, and environment.
+
+## Provenance helpers
+
+`extension-provenance` returns the canonical extension-level provenance
+map the runtime reuses everywhere:
+
+```clojure
+(sdk/extension-provenance ext)
+;; => {:namespace 'com.acme.ext.git
+;;     :alias 'git
+;;     :doc "Git integration"
+;;     :kind "vcs"
+;;     :version "1.2.3"
+;;     :author "Acme"
+;;     :owner "acme-suite"
+;;     :license "Apache-2.0"
+;;     :registry-id 'git
+;;     :source-paths ["/abs/.../core.clj" ...]
+;;     :source-mtime-max 1714403520000
+;;     :source-hash-sha256 "abc..."}
+```
+
+The same map feeds:
+
+- `TURN_ACTIVE_EXTENSIONS`
+- `(v/extensions)`
+- tool-result enrichment in `invoke-symbol-wrapper`
+
+`extension-source-markers-of` reads the cached source-marker sidecar
+for a registered extension:
+
+```clojure
+(sdk/extension-source-markers-of 'com.acme.ext.git)
+;; => {:source-paths [...]
+;;     :source-mtime-max ...
+;;     :source-hash-sha256 ...}
+```
+
+Source markers are resolved from the classpath source/jar entries and
+are deterministic across reloads for unchanged content.
 
 ## Standalone validation
 

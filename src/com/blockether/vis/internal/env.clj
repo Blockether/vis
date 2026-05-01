@@ -704,13 +704,20 @@
 ;;                                 a stable view (`(filter …) TURN_ACTIVE_EXTENSIONS`)
 ;;                                 without round-tripping through
 ;;                                 `(v/extensions)`. Shape per element:
-;;                                   {:alias    'vis
-;;                                    :namespace 'com.blockether.vis.ext.foundation.introspection
-;;                                    :doc      "..."
-;;                                    :version  "..."            ;; when present
-;;                                    :kind     "..."            ;; when present
-;;                                    :symbols  [sym1 sym2 ...]
-;;                                    :docs     ["README.md" ...]}
+;;                                   {:alias              'vis
+;;                                    :namespace          'com.blockether.vis.ext.foundation.introspection
+;;                                    :doc                "..."
+;;                                    :kind               "..."            ;; when present
+;;                                    :version            "..."            ;; when present
+;;                                    :author             "..."            ;; when present
+;;                                    :owner              "..."            ;; when present
+;;                                    :license            "..."            ;; when present
+;;                                    :registry-id        'v               ;; when present
+;;                                    :source-paths       ["..."]
+;;                                    :source-mtime-max   1714403520000
+;;                                    :source-hash-sha256 "abc..."|nil
+;;                                    :symbols            [sym1 sym2 ...]
+;;                                    :docs               ["README.md" ...]}
 ;;
 ;;   ITERATION_*    rebound at every iteration boundary
 ;;     ITERATION_ID                  UUID of the most recently persisted iteration

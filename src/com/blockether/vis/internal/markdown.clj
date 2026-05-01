@@ -111,7 +111,7 @@
                      (if (str/starts-with? trimmed "```")
                        (recur rst (not in-code?) (conj acc line))
                        (recur rst in-code? (conj acc line))))))))
-        (str/join "\n"))))
+        (str/join "\n")))))
 
 (defn- comma-int
   "Group-3 thousands separator for integers, US locale-style. Used by

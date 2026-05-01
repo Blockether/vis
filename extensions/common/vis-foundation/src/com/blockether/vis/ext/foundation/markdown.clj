@@ -595,6 +595,7 @@
      {:doc "Fenced code block. 1-arg = no language; 2-arg embeds it."
       :arglists '([code] [code lang])
       :examples ["(v/code-block \"(println :ok)\" \"clojure\")"
+                 "(v/code-block (pp/pprint-str {:k 1}) \"clojure\")"
                  "(v/code-block \"plain text\")"]})
    (vis/symbol 'blockquote blockquote
      {:doc "Quote each line with `> `. Variadic — parts concatenated then split on \"\\n\"."
@@ -678,7 +679,7 @@
     "             (v/file-link path) (v/file-link path line)  ; CITE source files this way\n"
     "             (v/anchor text) (v/anchor text slug)         ; same-doc heading link\n"
     "  Block      (v/p …parts) (v/code-block s lang?) (v/blockquote s) v/hr v/br (v/details …parts)\n"
-    "             ; v/p joins parts with single space; nil dropped; seqs spliced (like v/join / v/lines).\n"
+    "             ; v/p joins parts with single space; nil dropped; seqs spliced (like v/join / v/lines). For pretty data blocks prefer (pp/pprint-str x) over (with-out-str (pp/pprint x)).\n"
     "  Lists      (v/li parts…)                  ; single list item: \"- text\"\n"
     "             (v/ul items) (v/ol items) (v/checklist [[t done?] …])\n"
     "  Tables     (v/table headers rows) (v/table headers rows {:align [:left :center :right]})\n"

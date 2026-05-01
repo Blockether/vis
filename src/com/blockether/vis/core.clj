@@ -27,7 +27,8 @@
                          final-answer-code-error-message
      Extension contract  extension, symbol, value, register-extension!,
                          registered-extensions, registered-extension-ids,
-                         extension-id-of-ns, extension-doc, extension-docs,
+                         extension-id-of-ns, extension-provenance,
+                         extension-doc, extension-docs,
                          render-prompt, invoke-symbol-wrapper,
                          try-rescue-parse-error, discover-extensions!
      Format helpers      format-clojure, format-date, format-duration
@@ -256,6 +257,7 @@
 (def registered-extension-ids            extension/registered-extension-ids)
 (def extension-namespaces                extension/extension-namespaces)
 (def extension-id-of-ns                  extension/extension-id-of-ns)
+(def extension-provenance               extension/extension-provenance)
 (def extension-doc                       extension/extension-doc)
 (def extension-docs                      extension/extension-docs)
 (def extension-doc-content               extension/extension-doc-content)

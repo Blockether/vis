@@ -14,7 +14,9 @@
         neither requires it nor injects it.
      4. The `:ext/symbols` -> `:ext/kind` requirement still bites
         when an extension exports sandbox symbols without a kind.
-     5. `:ext/owner` round-trips and coexists with `:ext/author`."
+     5. `:ext/owner` round-trips and coexists with `:ext/author`.
+     6. Symbol-level parse rescue is part of the validated builder surface.
+     7. Extension provenance includes cached source markers."
   (:require
    [com.blockether.vis.internal.extension :as ext]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -31,6 +33,15 @@
 
 (def ^:private provider-with-limits
   (assoc base-provider :provider/limits-fn (fn [] {:provider-id :test})))
+
+(defdescribe symbol-parse-rescue-test
+  (it "symbol carries optional :on-parse-error-fn"
+    (let [hook (fn [_] "repaired")
+          s    (ext/symbol 'cat (fn [& _] nil)
+                 {:doc "Read a file."
+                  :arglists '([path])
+                  :on-parse-error-fn hook})]
+      (expect (= hook (:ext.symbol/on-parse-error-fn s))))))
 
 (defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"
@@ -101,6 +112,35 @@
                :ext/doc       "No owner declared."
                :ext/channels  [base-channel]})]
       (expect (not (contains? e :ext/owner))))))
+
+(defdescribe extension-provenance-test
+  (it "resolves source markers from the extension namespace when available"
+    (let [prov (ext/extension-provenance
+                 (ext/extension {:ext/namespace 'com.blockether.vis.core
+                                 :ext/doc       "vis core"}))]
+      (expect (= 'com.blockether.vis.core (:namespace prov)))
+      (expect (vector? (:source-paths prov)))
+      (expect (or (= -1 (:source-mtime-max prov))
+                (pos? (:source-mtime-max prov))))
+      (expect (or (nil? (:source-hash-sha256 prov))
+                (= 64 (count (:source-hash-sha256 prov)))))))
+
+  (it "keeps declared authoring metadata"
+    (let [prov (ext/extension-provenance
+                 (ext/extension {:ext/namespace 'test.provenance
+                                 :ext/doc       "Fixture"
+                                 :ext/kind      "fixture"
+                                 :ext/version   "1.2.3"
+                                 :ext/author    "Acme"
+                                 :ext/owner     "Suite"
+                                 :ext/license   "Apache-2.0"}))]
+      (expect (= "1.2.3" (:version prov)))
+      (expect (= "Acme" (:author prov)))
+      (expect (= "Suite" (:owner prov)))
+      (expect (= "Apache-2.0" (:license prov)))
+      (expect (= [] (:source-paths prov)))
+      (expect (= -1 (:source-mtime-max prov)))
+      (expect (nil? (:source-hash-sha256 prov))))))
 
 (defdescribe subgroup-removed-test
   (it "the builder never injects an :ext/subgroup key"

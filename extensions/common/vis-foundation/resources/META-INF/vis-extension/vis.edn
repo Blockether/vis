@@ -31,7 +31,7 @@ Pure reads off the same DB tables the projection layer uses; failures return nil
 (v/failures cid?)               ; classify failed iterations
 (v/failures-everywhere)         ; same, DB-wide (heavy)
 (v/diagnose cid?)               ; counts + repetition-loop detection + next actions
-(v/extensions)                  ; loaded ext catalog
+(v/extensions)                  ; loaded ext catalog incl. author/owner/license/source markers
 (v/extension-docs ext-ref)      ; declared doc summaries (no content)
 (v/extension-doc ext-ref name)  ; full doc descriptor incl. :content
 (v/extension-readme ext-ref)    ; README :content shortcut

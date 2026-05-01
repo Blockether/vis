@@ -6,7 +6,12 @@
      {:ok?          boolean
       :result       any
       :result-shape map
-      :provenance   map
+      :provenance   {:op :started-at-ms :finished-at-ms :duration-ms
+                     ;; optional richer context:
+                     :tool {:sym :alias? :call}
+                     :extension {:namespace :registry-id? :kind? :version?
+                                 :author? :owner? :license? :doc?}
+                     :source {:paths :mtime-max :hash-sha256}}
       :markdown     string
       :error        nil | {:type :message :trace}}
 

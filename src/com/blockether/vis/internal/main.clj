@@ -762,12 +762,12 @@
 ;;; ── `vis providers` ─────────────────────────────────────────────────────
 
 (def ^:private providers-table-cols
-  [{:key :id       :label "ID"       :width 18 :align :left}
-   {:key :label    :label "Label"    :width 28 :align :left}
-   {:key :auth     :label "Auth"     :width  6 :align :left}
-   {:key :rpm      :label "RPM"      :width  8 :align :right}
-   {:key :tpm      :label "TPM"      :width 12 :align :right}
-   {:key :base-url :label "Base URL" :width 36 :align :left}])
+  [{:key :id       :label "ID"          :width 18 :align :left}
+   {:key :label    :label "Label"       :width 28 :align :left}
+   {:key :auth     :label "Auth"        :width  6 :align :left}
+   {:key :rpm      :label "Catalog RPM" :width 11 :align :right}
+   {:key :tpm      :label "Catalog TPM" :width 12 :align :right}
+   {:key :base-url :label "Base URL"    :width 36 :align :left}])
 
 (defn- safe-provider-status
   [provider]
@@ -779,6 +779,31 @@
     (catch Throwable e
       {:authenticated? false
        :error          (or (ex-message e) (str e))})))
+
+(defn- configured-provider-entry
+  [provider-id]
+  (->> (or (:providers (config/current-config)) [])
+    (filter #(= provider-id (:id %)))
+    first))
+
+(defn- configured-provider-status
+  [provider]
+  (let [provider-id (:provider/id provider)
+        configured  (configured-provider-entry provider-id)]
+    (cond
+      (some? (:api-key configured))
+      {:authenticated? true
+       :source         :config
+       :config-path    config/config-path}
+
+      :else
+      (or (safe-provider-status provider)
+        {:authenticated? false}))))
+
+(defn- configured-provider-base-url
+  [provider-id]
+  (or (:base-url (configured-provider-entry provider-id))
+    (some-> provider-id config/provider-template :base-url)))
 
 (defn- provider-label-for-id
   [provider-id]
@@ -838,23 +863,25 @@
     (vec
       (concat [(str "  Limits status: " (name (:status report)))]
         (when-let [rpm (:rpm static)]
-          [(str "  Static RPM:     " rpm)])
+          [(str "  Catalog RPM:    " rpm)])
         (when-let [tpm (:tpm static)]
-          [(str "  Static TPM:     " tpm)])
+          [(str "  Catalog TPM:    " tpm)])
         (if (seq dynamic)
           (concat ["  Dynamic limits:"]
             (map #(str "    - " (format-limit-row %)) dynamic))
           ["  Dynamic limits: none reported"])
         (when note
           [(str "  Note:           " note)])
+        (when (seq static)
+          ["  Catalog RPM / TPM come from svar metadata, not live account quota usage."])
         (when error*
           [(str "  Error:          " (:message error*))])))))
 
 (defn- print-provider-status!
   [provider]
-  (let [status   (or (safe-provider-status provider) {:authenticated? false})
-        provider-id (:provider/id provider)
-        base-url (some-> provider-id config/provider-template :base-url)
+  (let [status      (or (configured-provider-status provider) {:authenticated? false})
+        provider-id  (:provider/id provider)
+        base-url     (configured-provider-base-url provider-id)
         rows     (->> status
                    (remove (fn [[k _]] (= k :authenticated?)))
                    (sort-by (comp str key)))]
@@ -883,9 +910,9 @@
   (->> (registry/registered-providers)
     (sort-by :provider/id)
     (mapv (fn [provider]
-            (let [status   (safe-provider-status provider)
+            (let [status   (configured-provider-status provider)
                   report   (provider-limits/provider-limits (:provider/id provider))
-                  base-url (some-> (:provider/id provider) config/provider-template :base-url)]
+                  base-url (configured-provider-base-url (:provider/id provider))]
               {:id       (name (:provider/id provider))
                :label    (:provider/label provider)
                :auth     (if (:authenticated? status) "yes" "no")
