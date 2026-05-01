@@ -14,6 +14,7 @@
 (deftest apply-settings-option-test
   (let [apply-settings-option (var-get #'dlg/apply-settings-option)
         settings-option-label (var-get #'dlg/settings-option-label)
+        settings-rows         (var-get #'dlg/settings-rows)
         palette-commands      (var-get #'dlg/palette-commands)]
     (testing "toggle rows flip booleans"
       (is (= {:show-thinking false}
@@ -44,6 +45,12 @@
                                     :choices [:low :medium :high]
                                     :label "OpenAI Codex verbosity"}
               {:openai-codex-verbosity :high}))))
+
+    (testing "settings rows are grouped under Providers / Extensions / UI"
+      (is (= ["Providers" "Extensions" "UI"]
+            (->> (settings-rows)
+              (filter #(= :section (:type %)))
+              (mapv :label)))))
 
     (testing "command palette exposes a single Settings entry"
       (is (= ["Settings" "Copy Messages" "Copy Conversation as Markdown"]

@@ -41,7 +41,8 @@
    [babashka.fs :as fs]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as vis])
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.tool-result :as tool])
   (:import
    (com.google.re2j Pattern)
    (java.io File)
@@ -97,6 +98,68 @@
   (when-let [parent (.getParentFile f)]
     (.mkdirs parent))
   f)
+
+(def ^:private tool-result-spec ::tool/tool-result)
+
+(defn- now-ms []
+  (System/currentTimeMillis))
+
+(defn- path->target
+  [requested kind]
+  (try
+    (let [f (safe-path requested)]
+      {:requested (str requested)
+       :resolved  (rel-path f)
+       :absolute  (.getPath f)
+       :kind      kind})
+    (catch Throwable _
+      {:requested (str requested)
+       :resolved  nil
+       :absolute  nil
+       :kind      kind})))
+
+(defn- tool-success
+  [{:keys [op path kind result markdown provenance]}]
+  (let [t (now-ms)]
+    (tool/with-presentation
+      (tool/success
+        {:result     result
+         :provenance (merge {:op             op
+                             :target         (path->target path kind)
+                             :started-at-ms  t
+                             :finished-at-ms t
+                             :duration-ms    0}
+                       provenance)
+         :markdown   markdown})
+      {:journal :markdown
+       :var-index :compact
+       :transcript :full})))
+
+(defn- default-error-markdown
+  [op path err _target]
+  (str "`" (name op) "` failed for `" (or path "<nil>") "` — `"
+    (.getName (class err)) "`: " (or (ex-message err) "")))
+
+(defn- tool-failure-on-error
+  [op kind markdown-fn]
+  (fn [err _env _f args]
+    (let [path (first args)
+          target (path->target path kind)
+          t (now-ms)
+          markdown ((or markdown-fn default-error-markdown) op path err target)]
+      {:result (tool/with-presentation
+                 (tool/failure
+                   {:result     nil
+                    :provenance {:op             op
+                                 :target         target
+                                 :started-at-ms  t
+                                 :finished-at-ms t
+                                 :duration-ms    0}
+                    :markdown   markdown
+                    :throwable  err})
+                 {:journal :markdown
+                  :var-index :compact
+                  :transcript :full})})))
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)
@@ -431,114 +494,348 @@
   (fs/exists? (safe-path path)))
 
 ;; =============================================================================
+;; Tool-result facades
+;; =============================================================================
+
+(defn- cat-tool
+  ([path]
+   (cat-tool path nil))
+  ([path opts]
+   (let [out (read-file path opts)]
+     (tool-success
+       {:op :v/cat
+        :path path
+        :kind :file
+        :result out
+        :markdown (str "Read `" (:path out) "` — returned "
+                    (count (:lines out)) " line(s), offset " (:offset out)
+                    ", total " (:total-lines out)
+                    ", truncated-by `" (name (:truncated-by out)) "`.")
+        :provenance {:lines-returned (count (:lines out))
+                     :offset (:offset out)
+                     :total-lines (:total-lines out)
+                     :truncated-by (:truncated-by out)
+                     :opts opts}}))))
+
+(defn- ls-tool
+  ([path]
+   (ls-tool path nil))
+  ([path opts]
+   (let [out (list-files path opts)]
+     (tool-success
+       {:op :v/ls
+        :path path
+        :kind :dir
+        :result out
+        :markdown (str "Listed `" (:path out) "` as a " (name (:type out)) " tree.")
+        :provenance {:depth (:depth opts)
+                     :hidden? (:hidden? opts)
+                     :respect-gitignore? (get opts :respect-gitignore? true)}}))))
+
+(defn- rg-tool
+  ([patterns path]
+   (rg-tool patterns path nil))
+  ([patterns path opts]
+   (let [out (grep-files patterns path opts)]
+     (tool-success
+       {:op :v/rg
+        :path path
+        :kind :dir
+        :result out
+        :markdown (str "Searched `" path "` for " (count patterns) " literal pattern(s) — "
+                    (count (:hits out)) " hit(s), truncated-by `" (name (:truncated-by out)) "`.")
+        :provenance {:patterns patterns
+                     :hit-count (count (:hits out))
+                     :truncated-by (:truncated-by out)
+                     :opts opts}}))))
+
+(defn- read-all-lines-tool
+  ([path]
+   (read-all-lines-tool path nil))
+  ([path opts]
+   (let [lines (if opts (read-all-lines-safe path opts) (read-all-lines-safe path))]
+     (tool-success
+       {:op :v/read-all-lines
+        :path path
+        :kind :file
+        :result lines
+        :markdown (str "Read `" path "` fully — " (count lines) " line(s).")
+        :provenance {:lines (count lines)
+                     :opts opts}}))))
+
+(defn- write-lines-tool
+  ([path lines]
+   (write-lines-tool path lines nil))
+  ([path lines opts]
+   (let [before (when (fs/exists? (safe-path path)) (slurp (safe-path path)))
+         out    (write-lines-safe path lines opts)
+         after  (slurp (safe-path path))]
+     (tool-success
+       {:op :v/write-lines
+        :path path
+        :kind :file
+        :result out
+        :markdown (str "Wrote `" out "` — " (count lines) " line(s), changed? `" (not= before after) "`.")
+        :provenance {:changed? (not= before after)
+                     :lines-before (count (str/split-lines (or before "")))
+                     :lines-after (count (str/split-lines after))
+                     :opts opts}}))))
+
+(defn- update-file-tool
+  [path & more]
+  (let [before (slurp (safe-path path))
+        after  (apply update-file-safe path more)]
+    (tool-success
+      {:op :v/update-file
+       :path path
+       :kind :file
+       :result after
+       :markdown (str "Updated `" path "` — changed? `" (not= before after) "`, "
+                   (count (str/split-lines before)) " -> " (count (str/split-lines after)) " line(s).")
+       :provenance {:changed? (not= before after)
+                    :lines-before (count (str/split-lines before))
+                    :lines-after (count (str/split-lines after))}})))
+
+(defn- create-dirs-tool
+  [path]
+  (let [before (fs/exists? (safe-path path))
+        out    (create-dirs-safe path)]
+    (tool-success
+      {:op :v/create-dirs
+       :path path
+       :kind :dir
+       :result out
+       :markdown (str "Ensured directory `" out "` exists — created? `" (not before) "`.")
+       :provenance {:created? (not before)
+                    :already-existed? before}})))
+
+(defn- list-dir-tool
+  ([path]
+   (list-dir-tool path nil))
+  ([path glob-or-accept]
+   (let [out (if (some? glob-or-accept)
+               (list-dir-safe path glob-or-accept)
+               (list-dir-safe path))]
+     (tool-success
+       {:op :v/list-dir
+        :path path
+        :kind :dir
+        :result out
+        :markdown (str "Listed directory `" path "` — " (count out) " entr" (if (= 1 (count out)) "y" "ies") ".")
+        :provenance {:entry-count (count out)
+                     :filter glob-or-accept}}))))
+
+(defn- glob-tool
+  ([root pattern]
+   (glob-tool root pattern nil))
+  ([root pattern opts]
+   (let [out (glob-safe root pattern opts)]
+     (tool-success
+       {:op :v/glob
+        :path root
+        :kind :dir
+        :result out
+        :markdown (str "Globbed `" root "` with `" pattern "` — " (count out) " match(es).")
+        :provenance {:pattern pattern
+                     :match-count (count out)
+                     :opts opts}}))))
+
+(defn- copy-tool
+  ([src dest]
+   (copy-tool src dest nil))
+  ([src dest opts]
+   (let [out (copy-safe src dest opts)]
+     (tool-success
+       {:op :v/copy
+        :path dest
+        :kind :path
+        :result out
+        :markdown (str "Copied `" src "` to `" out "`.")
+        :provenance {:src (path->target src :path)
+                     :dest (path->target dest :path)
+                     :opts opts}}))))
+
+(defn- move-tool
+  ([src dest]
+   (move-tool src dest nil))
+  ([src dest opts]
+   (let [out (move-safe src dest opts)]
+     (tool-success
+       {:op :v/move
+        :path dest
+        :kind :path
+        :result out
+        :markdown (str "Moved `" src "` to `" out "`.")
+        :provenance {:src (path->target src :path)
+                     :dest (path->target dest :path)
+                     :opts opts}}))))
+
+(defn- delete-tool
+  [path]
+  (delete-safe path)
+  (tool-success
+    {:op :v/delete
+     :path path
+     :kind :path
+     :result nil
+     :markdown (str "Deleted `" path "`.")
+     :provenance {:deleted? true}}))
+
+(defn- delete-if-exists-tool
+  [path]
+  (let [deleted? (delete-if-exists-safe path)]
+    (tool-success
+      {:op :v/delete-if-exists
+       :path path
+       :kind :path
+       :result deleted?
+       :markdown (if deleted?
+                   (str "Deleted `" path "`.")
+                   (str "`" path "` was already absent."))
+       :provenance {:deleted? deleted?}})))
+
+(defn- exists-tool
+  [path]
+  (let [exists? (exists-safe? path)]
+    (tool-success
+      {:op :v/exists?
+       :path path
+       :kind :path
+       :result exists?
+       :markdown (if exists?
+                   (str "`" path "` exists.")
+                   (str "`" path "` does not exist."))
+       :provenance {:exists? exists?}})))
+
+;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
 
 (def cat-symbol
-  (vis/symbol 'cat read-file
-    {:doc (str "Read a file slice as pure structured data: "
-            "{:path :offset :total-lines :truncated-by :lines}. "
-            ":lines is a vec of raw line strings (no line-number "
-            "prefix). :offset is the 1-based line number of (:lines 0). "
-            ":truncated-by is :end-of-file | :line-limit | :char-limit. "
-            "Default char-limit 6000; opts {:offset N :limit M :char-limit C}. "
-            "Compose display text yourself: (str/join \"\\n\" (:lines r)).")
+  (vis/symbol 'cat cat-tool
+    {:doc (str "Browse a file slice as a TOOL RESULT envelope. `:result` carries "
+            "{:path :offset :total-lines :truncated-by :lines}; top-level keys also include "
+            "`:ok?`, `:result-shape`, `:provenance`, `:markdown`, `:error`. "
+            "Use `v/cat` for paginated preview/browse, not whole-file code transforms.")
      :arglists '([path] [path opts])
-     :examples ["(v/cat \"src/main.clj\")"
-                "(:lines (v/cat \"src/main.clj\"))"
-                "(v/cat \"big.log\" {:offset 5000 :limit 200})"
-                "(str/join \"\\n\" (:lines (v/cat \"src/main.clj\")))"]}))
+     :examples ["(:result (v/cat \"src/main.clj\"))"
+                "(get-in (v/cat \"src/main.clj\") [:result :lines])"
+                "(v/cat \"big.log\" {:offset 5000 :limit 200})"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
 
 (def ls-symbol
-  (vis/symbol 'ls list-files
-    {:doc "List a directory tree. opts {:depth :hidden? :respect-gitignore?}."
+  (vis/symbol 'ls ls-tool
+    {:doc "Browse a directory tree as a TOOL RESULT envelope. `:result` is the nested tree; `:provenance` records the listing options."
      :arglists '([path] [path opts])
-     :examples ["(v/ls \".\")"
-                "(v/ls \"src\" {:depth 3})"]}))
+     :examples ["(:result (v/ls \".\"))"
+                "(v/ls \"src\" {:depth 3})"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
 
 (def rg-symbol
-  (vis/symbol 'rg grep-files
-    {:doc (str "Search files for any of N literal substrings (OR'd). "
-            "`patterns` is a non-empty vector of strings; each element "
-            "is matched LITERALLY (no regex). `path` is the search root. "
-            "Returns {:hits [{:path :line :text} ...] :truncated-by :limit | :end-of-results}. "
-            "opts {:limit :hidden? :respect-gitignore?}. "
-            "For genuine regex needs use (re-seq #\"...\" (some file-text-source)).")
+  (vis/symbol 'rg rg-tool
+    {:doc (str "Search FILE CONTENTS for any of N literal substrings (OR'd). Returns a TOOL RESULT envelope; `:result` is the hit payload and `:provenance` records patterns/hit-count/truncation. "
+            "For PATH search use `v/glob`, not `v/rg`.")
      :arglists '([patterns path] [patterns path opts])
-     :examples ["(v/rg [\"defn render\"] \"src\")"
-                "(:hits (v/rg [\"defn render\"] \"src\"))"
-                "(v/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]}))
+     :examples ["(:result (v/rg [\"defn render\"] \"src\"))"
+                "(get-in (v/rg [\"defn render\"] \"src\") [:result :hits])"
+                "(v/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
 
 (def read-all-lines-symbol
-  (vis/symbol 'read-all-lines read-all-lines-safe
-    {:doc "Read a whole text file as a vec of raw strings. Thin cwd-safe wrapper over babashka.fs/read-all-lines. opts currently supports :charset."
+  (vis/symbol 'read-all-lines read-all-lines-tool
+    {:doc "Read a whole text file for CODE-FIRST transforms. Returns a TOOL RESULT envelope; `:result` is the raw line vector."
      :arglists '([path] [path opts])
-     :examples ["(v/read-all-lines \"src/main.clj\")"
-                "(str/join \"\\n\" (v/read-all-lines \"src/main.clj\"))"]}))
+     :examples ["(:result (v/read-all-lines \"src/main.clj\"))"
+                "(str/join \"\\n\" (:result (v/read-all-lines \"src/main.clj\")))"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/read-all-lines :file nil)}))
 
 (def write-lines-symbol
-  (vis/symbol 'write-lines write-lines-safe
-    {:doc "Write a seqable of strings to path. Creates parent directories as needed. Returns the cwd-relative path string. Thin wrapper over babashka.fs/write-lines."
+  (vis/symbol 'write-lines write-lines-tool
+    {:doc "Whole-file replace/create. Returns a TOOL RESULT envelope with path-level provenance and required markdown summary."
      :arglists '([path lines] [path lines opts])
      :examples ["(v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])"
-                "(v/write-lines \"src/main.clj\" (v/read-all-lines \"src/main.clj\"))"]}))
+                "(v/write-lines \"src/main.clj\" (:result (v/read-all-lines \"src/main.clj\")))"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/write-lines :file nil)}))
 
 (def update-file-symbol
-  (vis/symbol 'update-file update-file-safe
-    {:doc "Update a text file by applying f to its old contents. Returns the new contents. Thin cwd-safe wrapper over babashka.fs/update-file."
+  (vis/symbol 'update-file update-file-tool
+    {:doc "Read-modify-write for text files. Returns a TOOL RESULT envelope; `:result` is the new full contents and `:provenance` records change facts."
      :arglists '([path f & xs] [path opts f & xs])
      :examples ["(v/update-file \"README.md\" #(str % \"\\nnew line\\n\"))"
-                "(v/update-file \"x.txt\" {} str/upper-case)"]}))
+                "(v/update-file \"x.txt\" str/upper-case)"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/update-file :file nil)}))
 
 (def create-dirs-symbol
-  (vis/symbol 'create-dirs create-dirs-safe
-    {:doc "Create a directory and any missing parents. Returns the cwd-relative path string."
+  (vis/symbol 'create-dirs create-dirs-tool
+    {:doc "Ensure a directory exists. Returns a TOOL RESULT envelope."
      :arglists '([path])
-     :examples ["(v/create-dirs \"target/tmp/cache\")"]}))
+     :examples ["(v/create-dirs \"target/tmp/cache\")"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
 
 (def list-dir-symbol
-  (vis/symbol 'list-dir list-dir-safe
-    {:doc "List a directory as cwd-relative path strings. 2-arg form takes a glob string or accept fn, mirroring babashka.fs/list-dir."
+  (vis/symbol 'list-dir list-dir-tool
+    {:doc "Flat directory listing for code. Returns a TOOL RESULT envelope; `:result` is the cwd-relative path vector."
      :arglists '([path] [path glob-or-accept])
-     :examples ["(v/list-dir \"src\")"
-                "(v/list-dir \"src\" \"*.clj\")"]}))
+     :examples ["(:result (v/list-dir \"src\"))"
+                "(v/list-dir \"src\" \"*.clj\")"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/list-dir :dir nil)}))
 
 (def glob-symbol
-  (vis/symbol 'glob glob-safe
-    {:doc "Glob under root and return cwd-relative path strings. Thin cwd-safe wrapper over babashka.fs/glob."
+  (vis/symbol 'glob glob-tool
+    {:doc "Search PATHS, not file contents. Returns a TOOL RESULT envelope; `:result` is the matching path vector. Use `v/rg` for content search."
      :arglists '([root pattern] [root pattern opts])
-     :examples ["(v/glob \"src\" \"**.clj\")"
-                "(v/glob \"resources\" \"**.edn\" {:hidden true})"]}))
+     :examples ["(:result (v/glob \"src\" \"**.clj\"))"
+                "(v/glob \"resources\" \"**.edn\" {:hidden true})"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
 
 (def copy-symbol
-  (vis/symbol 'copy copy-safe
-    {:doc "Copy src to dest. Creates parent directories for dest. Returns the cwd-relative dest path string."
+  (vis/symbol 'copy copy-tool
+    {:doc "Copy one path to another. Returns a TOOL RESULT envelope."
      :arglists '([src dest] [src dest opts])
-     :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]}))
+     :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
 
 (def move-symbol
-  (vis/symbol 'move move-safe
-    {:doc "Move or rename src to dest. Creates parent directories for dest. Returns the cwd-relative dest path string."
+  (vis/symbol 'move move-tool
+    {:doc "Move or rename one path to another. Returns a TOOL RESULT envelope."
      :arglists '([src dest] [src dest opts])
-     :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]}))
+     :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/move :path nil)}))
 
 (def delete-symbol
-  (vis/symbol 'delete delete-safe
-    {:doc "Delete path. Returns true on success; throws when the path is missing or undeletable."
+  (vis/symbol 'delete delete-tool
+    {:doc "Delete a path. Returns a TOOL RESULT envelope."
      :arglists '([path])
-     :examples ["(v/delete \"tmp.txt\")"]}))
+     :examples ["(v/delete \"tmp.txt\")"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
 
 (def delete-if-exists-symbol
-  (vis/symbol 'delete-if-exists delete-if-exists-safe
-    {:doc "Delete path if it exists. Returns true when deleted, false when absent."
+  (vis/symbol 'delete-if-exists delete-if-exists-tool
+    {:doc "Delete a path if present. Returns a TOOL RESULT envelope."
      :arglists '([path])
-     :examples ["(v/delete-if-exists \"tmp.txt\")"]}))
+     :examples ["(v/delete-if-exists \"tmp.txt\")"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
 
 (def exists?-symbol
-  (vis/symbol 'exists? exists-safe?
-    {:doc "True when path exists inside the workspace cwd."
+  (vis/symbol 'exists? exists-tool
+    {:doc "Existence probe. Returns a TOOL RESULT envelope; `:result` is the boolean."
      :arglists '([path])
-     :examples ["(v/exists? \"src/main.clj\")"]}))
+     :examples ["(:result (v/exists? \"src/main.clj\"))"]
+     :result-spec tool-result-spec
+     :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 
 (def editing-symbols
   [cat-symbol

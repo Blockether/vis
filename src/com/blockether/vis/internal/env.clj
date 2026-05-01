@@ -14,6 +14,7 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.tool-result :as tool-result]
    [lazytest.core :as lazytest]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
@@ -908,38 +909,43 @@
                    (truncate-string
                      (-> (str doc) str/split-lines first str/trim)
                      DOCSTRING_FIRST_LINE_CHARS))
-        body  (case type
-                ;; Scalars: pr-str output is bounded by the type. A
-                ;; literal `true` / `42` / `:foo` cannot blow up.
-                :nil     "nil"
-                :bool    (pr-str val)
-                :int     (pr-str val)
-                :float   (pr-str val)
-                :keyword (pr-str val)
-                :symbol  (pr-str val)
-                ;; Strings: capped before pr-str, so the printed form is
-                ;; bounded by STRING_HEAD_PREVIEW_CHARS + quotes.
-                :string  (let [s val]
-                           (if (<= (count s) STRING_INLINE_MAX_CHARS)
-                             (pr-str s)
-                             (pr-str {:string-size (count s)
-                                      :head (truncate-string s STRING_HEAD_PREVIEW_CHARS)})))
-                ;; Collections route through bounded-pr-str so an inline
-                ;; render of a 5-element vec of 1000-char strings can't
-                ;; produce a 5000+ char body.
-                :map     (let [{:keys [inline? keys keys-sample total]} (map-keys-preview val)]
-                           (if inline?
-                             (bounded-pr-str {:keys keys})
-                             (bounded-pr-str {:n total :keys-sample keys-sample})))
-                (:vector :set :list :seq)
-                (let [{:keys [total head]} (seq-head-preview val)]
-                  (cond
-                    (and (number? total) (<= total SEQ_INLINE_MAX_ELEMS))
-                    (bounded-pr-str (vec val))
-                    :else
-                    (bounded-pr-str {:n total :head head})))
-                ;; unknown type — punt to a value-only stub
-                (pr-str {:type type}))]
+        body  (if (tool-result/tool-result? val)
+                (bounded-pr-str {:tool-result  true
+                                 :ok?          (:ok? val)
+                                 :markdown     (:markdown val)
+                                 :result-shape (:result-shape val)})
+                (case type
+                  ;; Scalars: pr-str output is bounded by the type. A
+                  ;; literal `true` / `42` / `:foo` cannot blow up.
+                  :nil     "nil"
+                  :bool    (pr-str val)
+                  :int     (pr-str val)
+                  :float   (pr-str val)
+                  :keyword (pr-str val)
+                  :symbol  (pr-str val)
+                  ;; Strings: capped before pr-str, so the printed form is
+                  ;; bounded by STRING_HEAD_PREVIEW_CHARS + quotes.
+                  :string  (let [s val]
+                             (if (<= (count s) STRING_INLINE_MAX_CHARS)
+                               (pr-str s)
+                               (pr-str {:string-size (count s)
+                                        :head (truncate-string s STRING_HEAD_PREVIEW_CHARS)})))
+                  ;; Collections route through bounded-pr-str so an inline
+                  ;; render of a 5-element vec of 1000-char strings can't
+                  ;; produce a 5000+ char body.
+                  :map     (let [{:keys [inline? keys keys-sample total]} (map-keys-preview val)]
+                             (if inline?
+                               (bounded-pr-str {:keys keys})
+                               (bounded-pr-str {:n total :keys-sample keys-sample})))
+                  (:vector :set :list :seq)
+                  (let [{:keys [total head]} (seq-head-preview val)]
+                    (cond
+                      (and (number? total) (<= total SEQ_INLINE_MAX_ELEMS))
+                      (bounded-pr-str (vec val))
+                      :else
+                      (bounded-pr-str {:n total :head head})))
+                  ;; unknown type — punt to a value-only stub
+                  (pr-str {:type type})))]
     (str stats
       "\n(def " sym
       (when doc-line (str " \"" doc-line "\""))

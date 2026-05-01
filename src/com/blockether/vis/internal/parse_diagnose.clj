@@ -12,7 +12,7 @@
 
    Today the catalogue covers ONE class of error — the most common
    one we've seen in real agent traces: UNBALANCED DOUBLE-QUOTE
-   STRING. The model writes a multi-line `(answer (md/join …))` and
+   STRING. The model writes a multi-line `(answer (v/join …))` and
    accidentally drops or doubles a `\\` + `\"` escape somewhere in
    the middle. edamame's response is `Invalid symbol: <text>` at a
    row far BELOW the actual broken line — because the unbalanced

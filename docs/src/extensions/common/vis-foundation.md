@@ -21,14 +21,15 @@ Or load it from disk at
 `extensions/common/vis-foundation/resources/META-INF/vis-extension/vis.edn`
 under `[environment :docs "README.md" :content]`.
 
-## Sibling extensions in this jar
+## Answer construction in the same alias
 
-The `vis-foundation` jar ships two SCI aliases. The `v/` alias
-covers introspection, file I/O, and environment awareness (above).
-The second alias is for answer construction:
+The `vis-foundation` jar now ships **one** SCI alias: `v/`.
+Introspection, file I/O, environment awareness, and answer
+construction all live under that single prefix.
 
-- [Markdown surface (`md/`)](markdown.md) — programmatic markdown
-  builders for `(answer …)` bodies. Headings, lists, tables, code
-  blocks, and — importantly — link helpers (`md/link`, `md/image`,
-  `md/file-link`, `md/anchor`) so answers can cite source files,
-  URLs, and in-document anchors uniformly across channels.
+- [Markdown builders under `v/`](markdown.md) — programmatic
+  markdown builders for `(answer …)` bodies. Headings, lists,
+  tables, code blocks, and — importantly — link helpers
+  (`v/link`, `v/image`, `v/file-link`, `v/anchor`) so answers can
+  cite source files, URLs, and in-document anchors uniformly across
+  channels.

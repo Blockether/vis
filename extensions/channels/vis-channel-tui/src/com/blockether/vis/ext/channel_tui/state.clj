@@ -162,10 +162,10 @@
 
      reasoning-level — base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via
-         Ctrl+K → Settings → Agent.
+         Ctrl+K → Settings → Extensions.
 
      openai-codex-verbosity — Codex-only output detail knob.
-         Default `:low`; users can cycle it via Ctrl+K → Settings → Agent.
+         Default `:low`; users can cycle it via Ctrl+K → Settings → Extensions.
 
      show-timestamps — chrome control. Default OFF because timestamps
          duplicate info already on screen.

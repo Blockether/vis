@@ -12,6 +12,7 @@
    [clojure.java.shell :as sh]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.tool-result :as tool-result]
    [lazytest.core :refer [defdescribe expect it throws?]]
    [sci.core :as sci]))
 
@@ -55,6 +56,13 @@
       (expect (= "Read a file." (:ext.symbol/doc s)))
       (expect (= ["(cat path)"] (:ext.symbol/examples s)))))
 
+  (it "extension/symbol carries optional :result-spec"
+    (let [s (vis/symbol 'cat (fn [& _] nil)
+              {:doc "Read a file."
+               :arglists '([path])
+               :result-spec ::tool-result/tool-result})]
+      (expect (= ::tool-result/tool-result (:ext.symbol/result-spec s)))))
+
   (it "extension/value carries doc + value"
     (let [v (vis/value 'cap 42 {:doc "Cap."})]
       (expect (= 42 (:ext.symbol/val v)))
@@ -72,6 +80,37 @@
       (expect (true? ((:ext/activation-fn e) {})))
       (expect (= {} (:ext/classes e)))
       (expect (= {} (:ext/imports e))))))
+
+(defdescribe invoke-symbol-wrapper-result-spec-test
+  (it "rejects a function result that violates :result-spec"
+    (let [sym (vis/symbol 'bad (fn [& _] :not-a-tool-result)
+                {:doc "bad"
+                 :arglists '([])
+                 :result-spec ::tool-result/tool-result})
+          ext (vis/extension {:ext/namespace 'com.acme.ext.bad
+                              :ext/doc "bad"
+                              :ext/kind "filesystem"
+                              :ext/prompt "placeholder"
+                              :ext/ns-alias {:ns 'vis.ext.bad :alias 'b}
+                              :ext/symbols [sym]})]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(vis/invoke-symbol-wrapper ext sym [] {})))))
+
+  (it "accepts a function result that satisfies :result-spec"
+    (let [sym (vis/symbol 'good (fn [& _]
+                                  (tool-result/success {:result true
+                                                        :provenance {:op :demo}
+                                                        :markdown "ok"}))
+                {:doc "good"
+                 :arglists '([])
+                 :result-spec ::tool-result/tool-result})
+          ext (vis/extension {:ext/namespace 'com.acme.ext.good
+                              :ext/doc "good"
+                              :ext/kind "filesystem"
+                              :ext/prompt "placeholder"
+                              :ext/ns-alias {:ns 'vis.ext.good :alias 'g}
+                              :ext/symbols [sym]})]
+      (expect (map? (vis/invoke-symbol-wrapper ext sym [] {}))))))
 
 ;; =============================================================================
 ;; try-rescue-parse-error

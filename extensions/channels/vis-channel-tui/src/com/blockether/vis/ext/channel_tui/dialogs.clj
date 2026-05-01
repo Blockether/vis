@@ -475,33 +475,49 @@
   [:low :medium :high])
 
 (def ^:private settings-sections
-  [{:id :providers :label "Providers"}
-   {:id :agent     :label "Agent"}
-   {:id :ui        :label "UI"}])
+  [{:id :providers  :label "Providers"}
+   {:id :extensions :label "Extensions"}
+   {:id :ui         :label "UI"}])
 
 (def ^:private settings-options-by-section
-  {:agent [{:key :reasoning-level
-            :type :choice
-            :choices reasoning-choice-order
-            :label "Reasoning effort"
-            :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}
-           {:key :openai-codex-verbosity
-            :type :choice
-            :choices codex-verbosity-choice-order
-            :label "OpenAI Codex verbosity"
-            :description "Output detail for OpenAI Codex only: low / medium / high"}]
-   :ui    [{:key :show-thinking
-            :type :toggle
-            :label "Show thinking / reasoning"
-            :description "LLM's chain-of-thought reasoning above each iteration"}
-           {:key :show-iterations
-            :type :toggle
-            :label "Show full execution trace"
-            :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
-           {:key :show-timestamps
-            :type :toggle
-            :label "Show per-message timestamps"
-            :description "Date+time next to every 'You' / 'Vis' label"}]})
+  {:extensions [{:key :reasoning-level
+                 :type :choice
+                 :choices reasoning-choice-order
+                 :label "Reasoning effort"
+                 :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}
+                {:key :openai-codex-verbosity
+                 :type :choice
+                 :choices codex-verbosity-choice-order
+                 :label "OpenAI Codex verbosity"
+                 :description "Output detail for OpenAI Codex only: low / medium / high"}]
+   :ui         [{:key :show-thinking
+                 :type :toggle
+                 :label "Show thinking / reasoning"
+                 :description "LLM's chain-of-thought reasoning above each iteration"}
+                {:key :show-iterations
+                 :type :toggle
+                 :label "Show full execution trace"
+                 :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
+                {:key :show-timestamps
+                 :type :toggle
+                 :label "Show per-message timestamps"
+                 :description "Date+time next to every 'You' / 'Vis' label"}]})
+
+(defn- settings-rows
+  []
+  (->> settings-sections
+    (mapcat (fn [{:keys [id label]}]
+              (case id
+                :providers [{:type :section
+                             :label label}
+                            {:id :configure-provider
+                             :type :action
+                             :label "Configure providers"
+                             :description "Add, remove, and reorder providers and models"}]
+                (into [{:type :section
+                        :label label}]
+                  (get settings-options-by-section id [])))))
+    vec))
 
 (defn- settings-option-label
   [{:keys [key label type choices]} values]
@@ -519,113 +535,150 @@
   [values {:keys [key type choices]}]
   (case type
     :choice (update values key #(cycle-choice choices %))
-    (update values key not)))
+    :toggle (update values key not)
+    values))
 
-(defn settings-category-dialog!
-  "Pick a top-level settings category. Returns one of
-   `:providers`, `:agent`, `:ui`, or nil on Esc."
-  [^TerminalScreen screen]
-  (let [items (mapv (fn [{:keys [label]}] {:label label}) settings-sections)]
-    (when-let [choice (select-dialog! screen "Settings" items)]
-      (:id (nth settings-sections
-             (.indexOf ^java.util.List (mapv :label items) (:label choice)))))))
+(defn- settings-selectable?
+  [{:keys [type]}]
+  (contains? #{:toggle :choice :action} type))
+
+(defn- first-selectable-index
+  [rows]
+  (or (first (keep-indexed (fn [i row]
+                             (when (settings-selectable? row) i))
+               rows))
+    0))
+
+(defn- move-settings-selection
+  [rows selected delta]
+  (let [n (count rows)]
+    (loop [idx (clamp (+ selected delta) 0 (max 0 (dec n)))]
+      (cond
+        (= idx selected) idx
+        (settings-selectable? (nth rows idx)) idx
+        (and (neg? delta) (zero? idx)) selected
+        (and (pos? delta) (= idx (dec n))) selected
+        :else (recur (clamp (+ idx delta) 0 (max 0 (dec n))))))))
+
+(defn- activate-settings-row!
+  [values callbacks row]
+  (case (:type row)
+    :action (when-let [f (get callbacks (:id row))]
+              (f @values))
+    (swap! values apply-settings-option row)))
+
+(defn- settings-section-text
+  [label inner-w]
+  (let [prefix    (str "── " label " ")
+        available (max 0 (- inner-w 2))
+        filler    (apply str (repeat (max 0 (- available (count prefix))) \─))]
+    (ellipsize (str prefix filler) available)))
 
 (defn settings-dialog!
-  "Show a settings dialog with configurable rows as a 3-column table:
-   state marker, label, description.
+  "Show one settings dialog with category headers for Providers, Extensions,
+   and UI.
 
    Toggle rows render `[✓]` / `[ ]`. Choice rows render `[→]` and cycle
-   through their allowed values with Space or Enter.
+   through their allowed values with Space or Enter. Action rows render
+   `[↗]` and invoke a callback from `callbacks`.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). Esc closes the dialog and returns the
    current settings map.
 
-   Two-arity form renders all non-provider settings under one dialog.
-   Three-arity form narrows to one section id (`:agent` or `:ui`)."
+   `callbacks` is an optional map keyed by row `:id` (currently
+   `:configure-provider`)."
   ([^TerminalScreen screen settings]
    (settings-dialog! screen settings nil))
-  ([^TerminalScreen screen settings section-id]
-   (let [options (if section-id
-                   (vec (get settings-options-by-section section-id []))
-                   (->> settings-sections
-                     (remove #(= :providers (:id %)))
-                     (mapcat #(get settings-options-by-section (:id %)))
-                     vec))
-         title   (case section-id
-                   :agent "Agent Settings"
-                   :ui    "UI Settings"
-                   "Settings")
-         n        (count options)
-         selected (atom 0)
+  ([^TerminalScreen screen settings callbacks]
+   (let [rows     (settings-rows)
+         n        (count rows)
+         selected (atom (first-selectable-index rows))
          values   (atom (or settings {}))
          check-w  4
          gap      "  "
          gap-w    (count gap)]
      (loop []
-       (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-             cols    (.getColumns size)
-             rows    (.getRows size)
-             g       (.newTextGraphics screen)
-             bounds  (draw-dialog-chrome! g cols rows title n)
+       (let [size          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+             cols          (.getColumns size)
+             screen-rows   (.getRows size)
+             g             (.newTextGraphics screen)
+             bounds        (draw-dialog-chrome! g cols screen-rows "Settings" n)
              {:keys [left inner-w]} bounds
              {:keys [content-top content-h hint-row]} (dialog-layout bounds n)
-             labels   (mapv #(settings-option-label % @values) options)
-             label-w  (apply max (map count labels))
+             labels        (mapv #(settings-option-label % @values) rows)
+             label-w       (apply max (map count labels))
              actual-desc-w (max 1 (- inner-w 2 check-w label-w gap-w))]
 
          (dotimes [i n]
-           (let [{:keys [key type description]} (nth options i)
-                 row        (+ content-top i)
+           (let [{:keys [key type description]} (nth rows i)
+                 row-y      (+ content-top i)
                  label      (nth labels i)
                  selected?  (= i @selected)
                  state-mark (case type
-                              :choice "[→] "
+                              :section "    "
+                              :action  "[↗] "
+                              :choice  "[→] "
                               (if (get @values key true) "[✓] " "[ ] "))
                  label-pad  (str label
                               (apply str (repeat (max 0 (- label-w (count label))) \space)))
-                 desc-trunc (if (<= (count description) actual-desc-w)
-                              description
-                              (str (subs description 0 (max 0 (dec actual-desc-w))) "…"))]
-             (when (< row (+ content-top content-h))
-               (if selected?
-                 (do (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-                   (p/fill-rect! g (inc left) row inner-w 1)
-                   (p/put-str! g (+ left 2) row
-                     (str state-mark label-pad gap desc-trunc)))
+                 desc       (or description "")
+                 desc-trunc (if (<= (count desc) actual-desc-w)
+                              desc
+                              (str (subs desc 0 (max 0 (dec actual-desc-w))) "…"))]
+             (when (< row-y (+ content-top content-h))
+               (if (= :section type)
                  (do
-                   (p/set-colors! g t/dialog-fg t/dialog-bg)
-                   (p/fill-rect! g (inc left) row inner-w 1)
-                   (p/put-str! g (+ left 2) row (str state-mark label-pad))
-                   (p/set-colors! g t/dialog-hint t/dialog-bg)
-                   (p/put-str! g (+ left 2 check-w label-w gap-w) row desc-trunc))))))
+                   (p/set-colors! g t/dialog-border t/dialog-bg)
+                   (p/fill-rect! g (inc left) row-y inner-w 1)
+                   (p/put-str! g (+ left 2) row-y (settings-section-text label inner-w))
+                   (p/set-fg! g t/dialog-hint-key)
+                   (p/styled g [p/BOLD]
+                     (p/put-str! g (+ left 5) row-y label)))
+                 (if selected?
+                   (do
+                     (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+                     (p/fill-rect! g (inc left) row-y inner-w 1)
+                     (p/put-str! g (+ left 2) row-y
+                       (str state-mark label-pad gap desc-trunc)))
+                   (do
+                     (p/set-colors! g t/dialog-fg t/dialog-bg)
+                     (p/fill-rect! g (inc left) row-y inner-w 1)
+                     (p/put-str! g (+ left 2) row-y (str state-mark label-pad))
+                     (p/set-colors! g t/dialog-hint t/dialog-bg)
+                     (p/put-str! g (+ left 2 check-w label-w gap-w) row-y desc-trunc)))))))
 
-         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Space/Enter" "toggle/cycle"] ["Esc" "done"]])
+         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Space/Enter" "toggle/select"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
-         (let [key (.readInput screen)]
+         (let [key          (.readInput screen)
+               selected-row (nth rows @selected)]
            (when key
              (condp = (.getKeyType key)
                KeyType/Escape @values
 
                KeyType/ArrowUp
-               (do (swap! selected #(clamp (dec %) 0 (max 0 (dec n))))
+               (do
+                 (swap! selected #(move-settings-selection rows % -1))
                  (recur))
 
                KeyType/ArrowDown
-               (do (swap! selected #(clamp (inc %) 0 (max 0 (dec n))))
+               (do
+                 (swap! selected #(move-settings-selection rows % 1))
                  (recur))
 
                KeyType/Character
                (let [c (.getCharacter key)]
                  (if (= c \space)
-                   (do (swap! values apply-settings-option (nth options @selected))
+                   (do
+                     (activate-settings-row! values callbacks selected-row)
                      (recur))
                    (recur)))
 
                KeyType/Enter
-               (do (swap! values apply-settings-option (nth options @selected))
+               (do
+                 (activate-settings-row! values callbacks selected-row)
                  (recur))
 
                (recur)))))))))

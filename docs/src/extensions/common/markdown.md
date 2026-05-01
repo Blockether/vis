@@ -1,25 +1,28 @@
-# Markdown extension (`md/`)
+# Markdown builders under `v/`
 
 Package: `com.blockether/vis-foundation`. Source:
 [`extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj`](https://github.com/blockether/vis/blob/main/extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj).
-SCI alias: `md/`.
+SCI alias: `v/`.
 
-`md/` is the only supported way the agent constructs an answer body.
+This page documents the markdown-builder subset of the unified `v/`
+surface.
+
+`v/` is the only supported way the agent constructs an answer body.
 No Mustache, no template language, no `{{var}}` interpolation —
-every fn is a pure string builder. Whatever `(answer (md/join …))`
+every fn is a pure string builder. Whatever `(answer (v/join …))`
 produces *is* the answer markdown verbatim, no post-processing.
 
 Why programmatic over templating:
 
-- **Composable.** `(md/join (md/h1 …) (md/p …) (md/table …))` is a
+- **Composable.** `(v/join (v/h1 …) (v/p …) (v/table …))` is a
   Clojure expression. `let`, `for`, `cond`, `into` — every
   iteration tool the model already uses for data work works for
   output too.
 - **No new failure modes.** Templating fails by silent variable
   miss, quoting bug, HTML-vs-Markdown escape surprise. Plain `str`
   has none of those.
-- **Channel-aware citations.** `md/link`, `md/image`, `md/file-link`,
-  `md/anchor` produce hyperlinks the TUI / web / Telegram channels
+- **Channel-aware citations.** `v/link`, `v/image`, `v/file-link`,
+  `v/anchor` produce hyperlinks the TUI / web / Telegram channels
   render as clickable jumps. Hand-rolled `[…](…)` drifts out of
   sync; the helpers stay aligned.
 
@@ -27,19 +30,19 @@ Why programmatic over templating:
 
 ```clojure
 (answer
-  (md/join
-    (md/h1 "Patch report")
-    (md/p "Three files touched.")
-    (md/table ["file" "+/-"]
+  (v/join
+    (v/h1 "Patch report")
+    (v/p "Three files touched.")
+    (v/table ["file" "+/-"]
               [["core.clj" "+12 / -4"]
                ["loop.clj" "+0 / -38"]])
-    (md/h2 "Next")
-    (md/ul ["Run verify.sh" "Update CHANGELOG"])
-    (md/code-block "(println :done)" "clojure")))
+    (v/h2 "Next")
+    (v/ul ["Run verify.sh" "Update CHANGELOG"])
+    (v/code-block "(println :done)" "clojure")))
 ```
 
 Block fns **return text without a trailing newline**. Stitch with
-`(md/join …)` (blank line between blocks) or `(md/lines …)` (single
+`(v/join …)` (blank line between blocks) or `(v/lines …)` (single
 newline between lines), then hand the final string to `(answer …)`.
 See [Iteration flow](../../architecture/iteration-flow.md) for how
 `(answer …)` interacts with the loop.
@@ -50,24 +53,24 @@ See [Iteration flow](../../architecture/iteration-flow.md) for how
 
 | Form | Output |
 |------|--------|
-| `(md/h1 "Title")` | `# Title` |
-| `(md/h2 "Title")` | `## Title` |
-| `(md/h3 "Title")` | `### Title` |
-| `(md/h4 "Title")` | `#### Title` |
-| `(md/h5 "Title")` | `##### Title` |
-| `(md/h6 "Title")` | `###### Title` |
-| `(md/h n "Title")` | `n` clamped to `[1, 6]` |
+| `(v/h1 "Title")` | `# Title` |
+| `(v/h2 "Title")` | `## Title` |
+| `(v/h3 "Title")` | `### Title` |
+| `(v/h4 "Title")` | `#### Title` |
+| `(v/h5 "Title")` | `##### Title` |
+| `(v/h6 "Title")` | `###### Title` |
+| `(v/h n "Title")` | `n` clamped to `[1, 6]` |
 
 ### Inline emphasis
 
 | Form | Output |
 |------|--------|
-| `(md/bold "x")`         | `**x**` |
-| `(md/italic "x")`       | `*x*` |
-| `(md/bold-italic "x")`  | `***x***` |
-| `(md/strike "x")`       | `~~x~~` |
-| `(md/code "x")`         | `` `x` `` |
-| `(md/kbd "Ctrl+K")`     | `<kbd>Ctrl+K</kbd>` |
+| `(v/bold "x")`         | `**x**` |
+| `(v/italic "x")`       | `*x*` |
+| `(v/bold-italic "x")`  | `***x***` |
+| `(v/strike "x")`       | `~~x~~` |
+| `(v/code "x")`         | `` `x` `` |
+| `(v/kbd "Ctrl+K")`     | `<kbd>Ctrl+K</kbd>` |
 
 ### Hyperlinks, images, citations
 
@@ -75,35 +78,35 @@ Reach for this section whenever an answer references something the
 user can click.
 
 ```clojure
-(md/link text url)             ; [text](url)
-(md/link text url title)       ; [text](url "title")  — hover tooltip
+(v/link text url)             ; [text](url)
+(v/link text url title)       ; [text](url "title")  — hover tooltip
 
-(md/image alt url)             ; ![alt](url)
-(md/image alt url title)       ; ![alt](url "title")
+(v/image alt url)             ; ![alt](url)
+(v/image alt url title)       ; ![alt](url "title")
 
-(md/file-link path)            ; [src/foo.clj](src/foo.clj)
-(md/file-link path line)       ; [src/foo.clj:142](src/foo.clj#L142)
+(v/file-link path)            ; [src/foo.clj](src/foo.clj)
+(v/file-link path line)       ; [src/foo.clj:142](src/foo.clj#L142)
 
-(md/anchor text)               ; auto-slug — [Patch report](#patch-report)
-(md/anchor text slug)          ; explicit slug — [Jump](#summary)
+(v/anchor text)               ; auto-slug — [Patch report](#patch-report)
+(v/anchor text slug)          ; explicit slug — [Jump](#summary)
 ```
 
 Conventions:
 
-- **Cite source code via `md/file-link`.** 2-arg embeds a `#Lline`
+- **Cite source code via `v/file-link`.** 2-arg embeds a `#Lline`
   anchor so the channel resolves the click to that exact line.
   Hand-rolling `(str "[" path ":" line "](" path "#L" line ")")`
   matches today and drifts the moment the channel layer adds (e.g.)
   a `?branch=main` suffix.
-- **`md/link` and `md/image` share the 3-arg shape.** Third arg =
+- **`v/link` and `v/image` share the 3-arg shape.** Third arg =
   tooltip / `title` attr. Embedded `"` is escaped.
-- **`md/anchor`** is for in-document jumps — linking to a later
+- **`v/anchor`** is for in-document jumps — linking to a later
   section of the same answer.
 
 ## Clicking links in the TUI
 
-The Lanterna TUI renders every `md/link` / `md/image` /
-`md/file-link` reference in the assistant’s answer as a one-row
+The Lanterna TUI renders every `v/link` / `v/image` /
+`v/file-link` reference in the assistant’s answer as a one-row
 clickable strip at the bottom of the bubble:
 
 ```text
@@ -151,31 +154,31 @@ click affordance IS the picker.
 
 | Form | Output |
 |------|--------|
-| `(md/p …parts)`                | parts space-joined; nil dropped; seqs spliced |
-| `(md/code-block "code")`       | unfenced \`\`\` block |
-| `(md/code-block "code" "lang")`| \`\`\`lang fenced block |
-| `(md/blockquote "a\nb")`       | `> a\n> b` |
-| `md/hr`                        | `---` (constant) |
-| `md/br`                        | `"  "` — CommonMark trailing-spaces line break |
-| `(md/details …parts)`          | GitHub-style collapsible block (variadic) |
+| `(v/p …parts)`                | parts space-joined; nil dropped; seqs spliced |
+| `(v/code-block "code")`       | unfenced \`\`\` block |
+| `(v/code-block "code" "lang")`| \`\`\`lang fenced block |
+| `(v/blockquote "a\nb")`       | `> a\n> b` |
+| `v/hr`                        | `---` (constant) |
+| `v/br`                        | `"  "` — CommonMark trailing-spaces line break |
+| `(v/details …parts)`          | GitHub-style collapsible block (variadic) |
 
 ### Lists
 
 ```clojure
-(md/ul ["a" "b" "c"])
+(v/ul ["a" "b" "c"])
 ;; - a
 ;; - b
 ;; - c
 
-(md/ol ["first" "second"])
+(v/ol ["first" "second"])
 ;; 1. first
 ;; 2. second
 
-(md/checklist [["done" true] ["todo" false]])
+(v/checklist [["done" true] ["todo" false]])
 ;; - [x] done
 ;; - [ ] todo
 
-(md/checklist [{:text "done" :done? true}
+(v/checklist [{:text "done" :done? true}
                {:text "todo" :done? false}])
 ;; same output; map shape lets you build entries from `assoc`
 ```
@@ -183,7 +186,7 @@ click affordance IS the picker.
 ### Tables
 
 ```clojure
-(md/table ["file" "lines"]
+(v/table ["file" "lines"]
           [["core.clj" 12]
            ["loop.clj" 30]])
 
@@ -198,31 +201,32 @@ values: `:left`, `:center`, `:right`, `:default`. Pipes and embedded
 newlines in cells are escaped automatically.
 
 ```clojure
-(md/table ["k" "v"] [["x" 1]] {:align [:left :right]})
+(v/table ["k" "v"] [["x" 1]] {:align [:left :right]})
 ```
 
 ### Composing
 
 | Form | Joins with | Drops nils |
 |------|-----------|------------|
-| `(md/join …blocks)` | `\n\n` (blank line)   | yes |
-| `(md/lines …lines)` | `\n` (single newline) | yes |
-| `(md/section title body)`         | heading + blank line + body | level 2 default |
-| `(md/section level title body)`   | same, custom level          | n/a |
+| `(v/join …blocks)` | `\n\n` (blank line)   | yes |
+| `(v/lines …lines)` | `\n` (single newline) | yes |
+| `(v/section title body)`         | heading + blank line + body | level 2 default |
+| `(v/section level title body)`   | same, custom level          | n/a |
 
-`(md/escape s)` backslash-escapes every CommonMark special character
+`(v/escape s)` backslash-escapes every CommonMark special character
 in `s` so the string renders as literal text — useful when echoing
 user input back into the answer.
 
 ## Discovery from inside the agent
 
-Every `md/` symbol is registered through the standard extension
-machinery, so the model can introspect the surface:
+The markdown builders are part of the unified `vis-foundation`
+extension, so introspection goes through the `v` extension id:
 
 ```clojure
-(v/extensions)                            ; -> includes :md
-(v/extension-doc 'md 'file-link)          ; full descriptor
-(v/extension-doc 'md 'link)               ; arglists, examples, doc
+(v/extensions)                           ; -> includes :v
+(v/extension-doc 'v 'file-link)          ; full descriptor
+(v/extension-doc 'v 'link)               ; arglists, examples, doc
+(v/extension-readme 'v)                  ; unified README
 ```
 
 See [Extension overview](../overview.md) for the underlying
@@ -249,7 +253,7 @@ map. Three things made it wrong:
    the answer body. Templating was a second way to do the same
    thing, only worse.
 
-`md/` replaces all of that with one rule: build the answer string
+`v/` replaces all of that with one rule: build the answer string
 yourself, in Clojure, using these helpers. See [Iteration
 flow](../../architecture/iteration-flow.md#answer-protocol) for the
 end-to-end shape.
