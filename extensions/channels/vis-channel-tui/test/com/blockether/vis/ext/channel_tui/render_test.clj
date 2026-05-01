@@ -12,8 +12,6 @@
 
 (def ^:private md->lines @#'render/markdown->lines)
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
-(def ^:private message->markdown @#'render/message->markdown)
-(def ^:private copy-message-control-text @#'render/copy-message-control-text)
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -1424,7 +1422,7 @@
   "Lenient TextGraphics stub for layout tests that care about click
    regions, not actual painted glyphs. Implements the subset of the
    Lanterna interface that `draw-chat-bubble!` touches on a plain-text
-   bubble with the copy control enabled."
+   bubble."
   []
   (let [active (atom #{})]
     (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
@@ -1448,11 +1446,8 @@
       (fillRectangle [_ _ _] this)
       (setCharacter [_ _ _] this))))
 
-(defdescribe message-copy-control-test
-  (it "renders the copy control as an inline affordance, not a boxed modal button"
-    (expect (= "⧉ Copy" copy-message-control-text)))
-
-  (it "registers the copy control in absolute screen coordinates"
+(defdescribe message-footer-test
+  (it "does not register a per-message copy button"
     (cr/reset!)
     (cr/begin-frame!)
     (let [message      {:role :assistant :text "hello world"}
@@ -1462,34 +1457,14 @@
           viewport-top 7
           height       (render/draw-chat-bubble! (dummy-text-graphics) message start left width
                          {:viewport-top viewport-top :viewport-h 40})
-          hit-row      (+ viewport-top start height -2)
-          hit-col      (+ left 2)
-          hit          (do (cr/commit-frame!)
-                         (cr/lookup hit-col hit-row))]
-      (expect (= :copy-message-markdown (:kind hit)))
-      (expect (= hit-row (get-in hit [:bounds :row])))
-      (expect (= hit-col (get-in hit [:bounds :col])))
-      (expect (= (p/display-width copy-message-control-text)
-                (get-in hit [:bounds :width])))
-      (expect (= "hello world" (:markdown hit)))))
-
-  (it "can suppress the copy control entirely for non-final bubbles"
-    (cr/reset!)
-    (cr/begin-frame!)
-    (let [message      {:role :assistant :text "still thinking" :hide-copy? true}
-          start        4
-          left         2
-          width        36
-          viewport-top 7
-          height       (render/draw-chat-bubble! (dummy-text-graphics) message start left width
-                         {:viewport-top viewport-top :viewport-h 40})
           hit-col      (+ left 2)]
       (cr/commit-frame!)
+      (expect (= 3 height))
       (expect (every? nil?
                 (map #(cr/lookup hit-col %)
                   (range viewport-top (+ viewport-top start height)))))))
 
-  (it "keeps one plain terminal row between the user bubble and the copy-control row"
+  (it "leaves only the final gap after the user bubble fill"
     (let [fills    (atom [])
           active   (atom #{})
           graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
@@ -1524,24 +1499,14 @@
           viewport-top 7
           height       (render/draw-chat-bubble! graphics message start left width
                          {:viewport-top viewport-top :viewport-h 40})
-          copy-row     (+ viewport-top start height -2)
+          gap-row      (+ start height -1)
           bubble-fill  (some (fn [fill]
                                (when (and (= left (:col fill))
                                        (= width (:w fill))
                                        (> (:h fill) 1))
                                  fill))
                          @fills)
-          bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)
-          copy-row-rel   (- copy-row viewport-top)]
+          bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)]
+      (expect (= 5 height))
       (expect (= 3 (:h bubble-fill)))
-      (expect (= bubble-last-row (- copy-row-rel 2))))))
-
-(defdescribe message-copy-markdown-test
-  (it "copies explicit markdown when present"
-    (expect (= "**bold**" (message->markdown {:text "plain" :markdown "**bold**"}))))
-
-  (it "falls back to message text"
-    (expect (= "plain" (message->markdown {:text "plain"}))))
-
-  (it "uses an empty string for missing payloads"
-    (expect (= "" (message->markdown {})))))
+      (expect (= bubble-last-row (dec gap-row))))))

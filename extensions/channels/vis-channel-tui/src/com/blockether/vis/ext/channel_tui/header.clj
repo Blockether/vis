@@ -58,9 +58,7 @@
   "Untitled conversation")
 
 (def ^:private copy-icon
-  "Shared copy glyph used by both the per-message bubble control and
-   the conversation-id affordance in the header. ASCII-adjacent,
-   compact, and already liked by the user in the bubble UI."
+  "Compact copy glyph used by the conversation-id affordance in the header."
   "⧉")
 
 (def ^:private copy-affordance

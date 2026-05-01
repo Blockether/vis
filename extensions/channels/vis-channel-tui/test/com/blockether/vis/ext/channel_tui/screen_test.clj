@@ -17,9 +17,6 @@
 (def ^:private current-hint
   (deref #'screen/current-hint))
 
-(def ^:private copy-message-markdown!
-  (deref #'screen/copy-message-markdown!))
-
 (def ^:private copy-conversation-id!
   (deref #'screen/copy-conversation-id!))
 
@@ -52,20 +49,6 @@
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
 
 (defdescribe clipboard-copy-actions-test
-  (it "message copy uses the shared success notification contract"
-    (let [copied   (promise)
-          notified (atom nil)]
-      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
-                                                 (deliver copied text)
-                                                 true)
-                       #'vis/notify!           (fn [text & kvs]
-                                                 (reset! notified [text kvs]))}
-        (fn []
-          (copy-message-markdown! "**bold**")
-          (expect (= "**bold**" (deref copied 1000 ::timeout)))
-          (expect (= ["✓ Copied message markdown" [:level :success :ttl-ms 1500]]
-                    @notified))))))
-
   (it "conversation-id copy uses the same icon-era notification TTL"
     (let [copied   (promise)
           notified (atom nil)]
