@@ -231,38 +231,88 @@
         idx     (.indexOf ^java.util.List choices current)]
     (nth choices (mod (inc (if (neg? idx) 0 idx)) (count choices)))))
 
-(defn- rotate-models
-  [models]
-  (let [models (vec (or models []))]
-    (if (< (count models) 2)
-      models
-      (conj (subvec models 1) (first models)))))
+(defn- move-to-front
+  [pred coll]
+  (let [items (vec (or coll []))
+        idx   (first (keep-indexed (fn [idx item]
+                                     (when (pred item) idx))
+                       items))]
+    (if (nil? idx)
+      items
+      (vec (concat [(nth items idx)]
+             (subvec items 0 idx)
+             (subvec items (inc idx)))))))
+
+(defn- model-entry
+  [provider model]
+  (when-let [model-name (and model (vis/model-name model))]
+    (when (:id provider)
+      {:provider-id (:id provider)
+       :model       model-name})))
+
+(defn- model-cycle-entries
+  [config]
+  (->> (:providers config)
+    (mapcat (fn [provider]
+              (keep #(model-entry provider %) (:models provider))))
+    vec))
+
+(defn- active-model-entry
+  [config]
+  (when-let [provider (first (:providers config))]
+    (model-entry provider (first (:models provider)))))
+
+(defn- same-model-cycle?
+  [a b]
+  (= (frequencies a) (frequencies b)))
+
+(defn- select-model-entry
+  [config {:keys [provider-id model]}]
+  (update config :providers
+    (fn [providers]
+      (mapv (fn [provider]
+              (if (= provider-id (:id provider))
+                (update provider :models
+                  #(move-to-front (fn [candidate]
+                                    (= model (vis/model-name candidate)))
+                     %))
+                provider))
+        (move-to-front #(= provider-id (:id %)) providers)))))
 
 (defn- cycle-primary-model
-  [config]
-  (let [providers (vec (or (:providers config) []))
-        provider  (first providers)
-        models    (vec (or (:models provider) []))]
-    (cond
-      (empty? providers)
-      {:config config
-       :message "No providers configured"
-       :level :warn}
+  ([config]
+   (cycle-primary-model config nil))
+  ([config cycle-order]
+   (let [providers (vec (or (:providers config) []))
+         entries   (model-cycle-entries config)
+         order     (if (and (seq cycle-order)
+                         (same-model-cycle? cycle-order entries))
+                     (vec cycle-order)
+                     entries)]
+     (cond
+       (empty? providers)
+       {:config config
+        :message "No providers configured"
+        :level :warn}
 
-      (< (count models) 2)
-      {:config config
-       :message "No alternate models configured"
-       :level :warn}
+       (< (count entries) 2)
+       {:config config
+        :message "No alternate models configured"
+        :level :warn}
 
-      :else
-      (let [rotated-models (rotate-models models)
-            next-model     (vis/model-name (first rotated-models))
-            config'        (assoc config :providers
-                             (assoc providers 0 (assoc provider :models rotated-models)))]
-        {:config config'
-         :changed? true
-         :message (str "Model: " next-model)
-         :level :info}))))
+       :else
+       (let [active          (active-model-entry config)
+             idx             (.indexOf ^java.util.List order active)
+             next-entry      (nth order (mod (inc (if (neg? idx) -1 idx))
+                                          (count order)))
+             provider-prefix (when (< 1 (count (distinct (map :provider-id entries))))
+                               (str (name (:provider-id next-entry)) "/"))
+             config'         (select-model-entry config next-entry)]
+         {:config config'
+          :cycle-order order
+          :changed? true
+          :message (str "Model: " provider-prefix (:model next-entry))
+          :level :info})))))
 
 (defn init!
   "Initialize app-db with default state."
@@ -313,7 +363,9 @@
       ;; even though the status bar already shows the new one.
       (let [r (vis/rebuild-router! config)]
         (vis/refresh-cached-routers! r)))
-    (assoc db :config config)))
+    (-> db
+      (assoc :config config)
+      (dissoc :model-cycle-order))))
 
 (reg-event-db :set-dialog-open
   (fn [db [_ open?]]
@@ -340,8 +392,10 @@
 (reg-event-fx :cycle-model
   (fn [db _]
     (let [base-config (or (:config db) (vis/load-config) {:providers []})
-          {:keys [config changed? message level]} (cycle-primary-model base-config)]
-      {:db (assoc db :config config)
+          {:keys [config cycle-order changed? message level]}
+          (cycle-primary-model base-config (:model-cycle-order db))]
+      {:db (cond-> (assoc db :config config)
+             cycle-order (assoc :model-cycle-order cycle-order))
        :fx (cond-> []
              changed? (conj [:apply-config config])
              message  (conj [:notify message level settings-notification-ttl-ms]))})))
