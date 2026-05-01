@@ -143,7 +143,7 @@ prefix-tagged lifetime tiers:
   - `TURN_CONVERSATION_SOUL_ID` — UUID of the `conversation_soul` row.
   - `TURN_CONVERSATION_STATE_ID` — UUID of the latest `conversation_state` row at turn start.
   - `TURN_SYSTEM_PROMPT` — the full assembled system prompt driving THIS turn.
-  - `TURN_ACTIVE_EXTENSIONS` — frozen vec of compact extension descriptors.
+  - `TURN_ACTIVE_EXTENSIONS` — frozen vec of compact extension descriptors (`:alias`, `:namespace`, `:doc`, `:kind`, `:version`, `:author`, `:owner`, `:license`, `:registry-id`, `:source-paths`, `:source-mtime-max`, `:source-hash-sha256`, `:symbols`, `:docs`).
 - **`ITERATION_*`** — rebound at every iteration boundary:
   - `ITERATION_ID` — UUID of the most recently persisted iteration (nil before iter 1).
   - `ITERATION_PREVIOUS_REASONING` — last iteration's `:thinking` text.

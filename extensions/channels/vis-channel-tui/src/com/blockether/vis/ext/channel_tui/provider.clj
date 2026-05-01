@@ -394,9 +394,9 @@
                       "(1 model)"
                       (str "(+" (dec model-count) " models)"))
         limit-summary (->> [(when-let [rpm (get-in limits [:static :rpm])]
-                              (str "RPM " rpm))
+                              (str "catalog RPM " rpm))
                             (when-let [tpm (get-in limits [:static :tpm])]
-                              (str "TPM " tpm))]
+                              (str "catalog TPM " tpm))]
                         (remove nil?)
                         (str/join " · "))
         ;; Layout line 1:  "① Label" ... "host  ●"

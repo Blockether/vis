@@ -784,21 +784,18 @@
           (registered-extensions))))))
 
 (defn- extension-summary [extension]
-  (let [ext-ns   (:ext/namespace extension)
-        alias    (get-in extension [:ext/ns-alias :alias])
-        id       (or alias (vis/extension-id-of-ns ext-ns))
+  (let [prov     (vis/extension-provenance extension)
+        id       (:registry-id prov)
         doc-list (when id (vis/extension-docs id))]
-    (cond-> {:namespace ext-ns
-             :symbols   (mapv :ext.symbol/sym (:ext/symbols extension))
-             :docs      (or doc-list [])}
-      alias                    (assoc :alias alias)
-      (:ext/kind extension)    (assoc :kind    (:ext/kind extension))
-      (:ext/version extension) (assoc :version (:ext/version extension))
-      (:ext/doc extension)     (assoc :doc     (:ext/doc extension)))))
+    (assoc prov
+      :symbols (mapv :ext.symbol/sym (:ext/symbols extension))
+      :docs    (or doc-list []))))
 
 (defn- foundation-extensions
   "Catalog every loaded extension as data. Returns a vector of
-   `{:namespace :alias :kind :version :doc :symbols :docs}` maps.
+   `{:namespace :alias :kind :version :author :owner :license
+     :registry-id :source-paths :source-mtime-max :source-hash-sha256
+     :doc :symbols :docs}` maps.
    `:docs` is a vector of `{:name :description}` descriptors for every
    doc the extension declares."
   [_env]

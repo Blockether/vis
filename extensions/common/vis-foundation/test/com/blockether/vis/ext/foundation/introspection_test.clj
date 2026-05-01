@@ -566,6 +566,10 @@
                        extensions)]
       (expect (some? this))
       (expect (= 'v (:alias this)))
+      (expect (= 'v (:registry-id this)))
+      (expect (= "vis" (:owner this)))
+      (expect (string? (:license this)))
+      (expect (vector? (:source-paths this)))
       (expect (vector? (:symbols this)))
       ;; Unified vis ext bundles introspection + editing + environment
       ;; under one alias. Spot-check one symbol from each area.
@@ -586,9 +590,12 @@
         ;; Summaries omit :content -- catalog stays small.
         (expect (not (contains? readme :content))))))
 
-  (it "every entry carries :namespace, :symbols, and :docs"
+  (it "every entry carries :namespace, source markers, :symbols, and :docs"
     (let [extensions ((private-fn "foundation-extensions") {})]
       (expect (every? :namespace extensions))
+      (expect (every? #(contains? % :source-paths) extensions))
+      (expect (every? #(contains? % :source-mtime-max) extensions))
+      (expect (every? #(contains? % :source-hash-sha256) extensions))
       (expect (every? #(contains? % :symbols) extensions))
       (expect (every? #(contains? % :docs) extensions)))))
 

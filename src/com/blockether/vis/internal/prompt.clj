@@ -508,7 +508,9 @@ SYSTEM vars (read-only; bound by name in the sandbox):
   TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
   TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
   TURN_SYSTEM_PROMPT           the assembled system prompt for this turn
-  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :version :kind :symbols :docs} for every active extension.
+  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :kind :version :author :owner :license
+                                       :registry-id :source-paths :source-mtime-max :source-hash-sha256
+                                       :symbols :docs} for every active extension.
                                \"Active\" = loaded into the sandbox; the model can call its symbols directly.
   TURN_ACCESSIBLE_SKILLS       vec of {:name :description :path :source} for every accessible skill (no body —
                                loading the body via `(v/load-skill name)` is the activation step). Use this vec
@@ -600,11 +602,18 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                   an `:ext/ns-alias`.
      :namespace — fully-qualified ns symbol of the extension.
      :doc       — one-line LLM description from `:ext/doc` (when set).
-     :version   — semver string (when set).
      :kind      — categorical bucket (providers, channels, foundation,
                   languages, persistance, …) used as the section
                   label both in this snapshot and in `vis extensions
                   list` (when set).
+     :version   — semver string (when set).
+     :author    — original author of the extension package (when set).
+     :owner     — distribution / package owner (when set).
+     :license   — SPDX license identifier (when set).
+     :registry-id — canonical manifest/docs id, usually the alias symbol.
+     :source-paths / :source-mtime-max / :source-hash-sha256
+                — deterministic source markers resolved from the
+                  classpath entry for this extension.
      :symbols   — vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
                   from `(v/extension-doc ...)` if the model wants
@@ -619,8 +628,8 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   [active-extensions]
   (->> (or active-extensions [])
     (mapv (fn [ext]
-            (let [ext-ns   (:ext/namespace ext)
-                  alias    (get-in ext [:ext/ns-alias :alias])
+            (let [provenance (extension/extension-provenance ext)
+                  registry-id (:registry-id provenance)
                   ;; Resolve doc names through the global extension
                   ;; registry. Same mapping `(v/extensions)` uses;
                   ;; we duplicate the lookup here (instead of calling
@@ -628,17 +637,17 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                   ;; upstream of every ext, including meta itself —
                   ;; TURN_ACTIVE_EXTENSIONS must work even when vis-foundation
                   ;; isn't on the classpath.
-                  registry-id (try (or alias (extension/extension-id-of-ns ext-ns))
-                                (catch Throwable _ nil))
-                  doc-names   (try (extension/extension-doc-names registry-id)
+                  doc-names   (try (if registry-id
+                                     (extension/extension-doc-names registry-id)
+                                     [])
                                 (catch Throwable _ []))]
-              (cond-> {:namespace ext-ns
-                       :symbols   (mapv :ext.symbol/sym (:ext/symbols ext))
-                       :docs      (vec doc-names)}
-                alias                (assoc :alias   alias)
-                (:ext/kind ext)      (assoc :kind    (:ext/kind ext))
-                (:ext/version ext)   (assoc :version (:ext/version ext))
-                (:ext/doc ext)       (assoc :doc     (:ext/doc ext))))))))
+              (assoc provenance
+                :symbols (mapv :ext.symbol/sym (:ext/symbols ext))
+                :docs    (vec doc-names)))))))
+
+(def active-extensions-snapshot
+  "Backwards-compatible public alias for `extensions-snapshot`."
+  extensions-snapshot)
 
 (defn accessible-skills-snapshot
   "Build the value of the `TURN_ACCESSIBLE_SKILLS` SYSTEM var: a vec of

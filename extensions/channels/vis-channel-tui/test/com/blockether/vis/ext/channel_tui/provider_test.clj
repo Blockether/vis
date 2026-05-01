@@ -38,11 +38,12 @@
 (defdescribe configured-provider-status-test
   (it "treats persisted api-key providers as authenticated from config"
     (expect (= {:authenticated? true
-                :source :config}
+                :source :config
+                :config-path vis/config-path}
               (select-keys (@#'provider/configured-provider-status {:id :openai
                                                                     :api-key "sk-test"
                                                                     :models [{:name "gpt-5"}]})
-                [:authenticated? :source]))))
+                [:authenticated? :source :config-path]))))
 
   (it "delegates to the registered provider status fn when no api-key is persisted"
     (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (constantly {:authenticated? true
@@ -64,14 +65,14 @@
       (expect (= [:models :authenticate :status :logout]
                 (mapv :id (provider/provider-action-items {:id :openai
                                                            :api-key "sk-test"}))))
-      (expect (= ["Configure Models" "Authenticate" "Show Status + Limits" "Log Out"]
+      (expect (= ["Configure Models" "Re-authenticate" "Show Status + Limits" "Log Out"]
                 (mapv :label (provider/provider-action-items {:id :openai
                                                               :api-key "sk-test"}))))
       (expect (= [:models :status]
                 (mapv :id (provider/provider-action-items {:id :ollama})))))))
 
 (defdescribe provider-status-text-test
-  (it "renders static limits in the provider status dialog"
+  (it "renders config path and catalog limits in the provider status dialog"
     (with-redefs [vis/provider-limits (constantly {:provider-id :openai-codex
                                                    :status :ok
                                                    :static {:rpm 500 :tpm 2000000}
@@ -82,8 +83,10 @@
                                                     :api-key "tok"})]
         (expect (str/includes? text "Base URL: https://chatgpt.com/backend-api"))
         (expect (str/includes? text "Authenticated: yes"))
-        (expect (str/includes? text "Static RPM: 500"))
-        (expect (str/includes? text "Static TPM: 2000000"))
+        (expect (str/includes? text (str "Config path: " vis/config-path)))
+        (expect (str/includes? text "Catalog RPM: 500"))
+        (expect (str/includes? text "Catalog TPM: 2000000"))
+        (expect (str/includes? text "Catalog RPM / TPM come from the provider catalog, not live account quota usage."))
         (expect (str/includes? text "Note: Static-only for now."))))))
 
 (defdescribe codex-oauth-ready-test

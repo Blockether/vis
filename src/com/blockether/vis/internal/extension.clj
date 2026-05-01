@@ -249,6 +249,11 @@
 (s/def ::alias symbol?)
 (s/def ::namespace symbol?)
 (s/def ::doc non-blank-string?)
+(s/def ::kind non-blank-string?)
+(s/def ::version non-blank-string?)
+(s/def ::author non-blank-string?)
+(s/def ::owner non-blank-string?)
+(s/def ::license non-blank-string?)
 (s/def ::source-paths (s/coll-of string? :kind vector?))
 (s/def ::source-mtime-max integer?)
 (s/def ::source-hash-sha256
@@ -527,6 +532,30 @@
                 :explain (s/explain-data spec-ref result)}))))
   result)
 
+(defn- tool-call-name
+  [ext sym]
+  (if-let [alias (get-in ext [:ext/ns-alias :alias])]
+    (str alias "/" sym)
+    (str sym)))
+
+(declare extension-provenance)
+
+(defn- enrich-tool-result-provenance
+  [ext sym-entry result]
+  (if (tool-result/tool-result? result)
+    (let [ext-prov (extension-provenance ext)]
+      (tool-result/merge-provenance
+        result
+        {:tool      (cond-> {:sym  (:ext.symbol/sym sym-entry)
+                             :call (tool-call-name ext (:ext.symbol/sym sym-entry))}
+                      (get-in ext [:ext/ns-alias :alias])
+                      (assoc :alias (get-in ext [:ext/ns-alias :alias])))
+         :extension (dissoc ext-prov :source-paths :source-mtime-max :source-hash-sha256)
+         :source    {:paths       (:source-paths ext-prov)
+                     :mtime-max   (:source-mtime-max ext-prov)
+                     :hash-sha256 (:source-hash-sha256 ext-prov)}}))
+    result))
+
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for a function symbol entry:
    before-fn → fn → after-fn, with on-error-fn catching :fn errors.
@@ -548,7 +577,9 @@
         before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
     (if (contains? before-out :result)
       (let [ms (elapsed-ms t0)
-            result (validate-symbol-result! sym spec-ref (:result before-out))]
+            result (->> (:result before-out)
+                     (enrich-tool-result-provenance ext sym-entry)
+                     (validate-symbol-result! sym spec-ref))]
         (log-hook! :info ::invoke-done ext-ns sym nil ms "short-circuited")
         result)
       (let [{env  :env
@@ -573,7 +604,9 @@
                                          (vec (get recovery :args args)))}))))))
 
             {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
-            result (validate-symbol-result! sym spec-ref result)
+            result (->> result
+                     (enrich-tool-result-provenance ext sym-entry)
+                     (validate-symbol-result! sym spec-ref))
             ms (elapsed-ms t0)]
         (log-hook! :info ::invoke-done ext-ns sym nil ms nil)
         result))))

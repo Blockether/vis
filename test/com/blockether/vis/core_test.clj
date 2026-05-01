@@ -63,6 +63,14 @@
                :result-spec ::tool-result/tool-result})]
       (expect (= ::tool-result/tool-result (:ext.symbol/result-spec s)))))
 
+  (it "extension/symbol carries optional :on-parse-error-fn"
+    (let [hook (fn [_] "repaired")
+          s    (vis/symbol 'cat (fn [& _] nil)
+                 {:doc "Read a file."
+                  :arglists '([path])
+                  :on-parse-error-fn hook})]
+      (expect (= hook (:ext.symbol/on-parse-error-fn s)))))
+
   (it "extension/value carries doc + value"
     (let [v (vis/value 'cap 42 {:doc "Cap."})]
       (expect (= 42 (:ext.symbol/val v)))
@@ -96,7 +104,7 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(vis/invoke-symbol-wrapper ext sym [] {})))))
 
-  (it "accepts a function result that satisfies :result-spec"
+  (it "accepts a function result that satisfies :result-spec and stamps extension provenance"
     (let [sym (vis/symbol 'good (fn [& _]
                                   (tool-result/success {:result true
                                                         :provenance {:op :demo}
@@ -107,15 +115,33 @@
           ext (vis/extension {:ext/namespace 'com.acme.ext.good
                               :ext/doc "good"
                               :ext/kind "filesystem"
+                              :ext/version "1.0.0"
+                              :ext/author "Acme"
+                              :ext/owner "suite"
+                              :ext/license "Apache-2.0"
                               :ext/prompt "placeholder"
                               :ext/ns-alias {:ns 'vis.ext.good :alias 'g}
-                              :ext/symbols [sym]})]
-      (expect (map? (vis/invoke-symbol-wrapper ext sym [] {}))))))
+                              :ext/symbols [sym]})
+          out (vis/invoke-symbol-wrapper ext sym [] {})]
+      (expect (map? out))
+      (expect (= 'good (get-in out [:provenance :tool :sym])))
+      (expect (= "g/good" (get-in out [:provenance :tool :call])))
+      (expect (= 'com.acme.ext.good (get-in out [:provenance :extension :namespace])))
+      (expect (= "Acme" (get-in out [:provenance :extension :author])))
+      (expect (= [] (get-in out [:provenance :source :paths]))))))
 
 (defdescribe provider-limits-api-test
   (it "re-exports provider limits helpers from the public vis.core surface"
     (expect (ifn? vis/provider-limits))
-    (expect (ifn? vis/all-provider-limits))))
+    (expect (ifn? vis/all-provider-limits)))
+
+  (it "re-exports extension provenance helpers from the public vis.core surface"
+    (expect (ifn? vis/extension-provenance))
+    (expect (ifn? vis/extension-source-markers-of)))
+
+  (it "re-exports the config path on the public vis.core surface"
+    (expect (= (str (System/getProperty "user.home") "/.vis/config.edn")
+              vis/config-path))))
 
 ;; =============================================================================
 ;; try-rescue-parse-error
