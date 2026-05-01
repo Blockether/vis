@@ -53,6 +53,9 @@
 (def ^:private default-reasoning-level
   :balanced)
 
+(def ^:private default-codex-verbosity
+  :low)
+
 (defn- chosen-model-info
   "Resolved model map for the configured root model, or nil."
   []
@@ -96,6 +99,8 @@
                         model)
         reasoning? (boolean (:reasoning? info))
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
+        codex-provider? (= :openai-codex provider)
+        codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
         cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -106,6 +111,11 @@
 
       reasoning?
       (conj {:text (str "(" (name reasoning-level) ")")
+             :fg t/footer-fg-muted :bold? false
+             :region :left :priority 3})
+
+      codex-provider?
+      (conj {:text (str "(verbosity:" (name codex-verbosity) ")")
              :fg t/footer-fg-muted :bold? false
              :region :left :priority 3})
 

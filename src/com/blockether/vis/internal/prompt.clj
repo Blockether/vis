@@ -25,6 +25,7 @@
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.tool-result :as tool-result]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -104,12 +105,20 @@
 ;; <journal> — last JOURNAL_KEEP_ITERS iterations of code + results
 ;; =============================================================================
 
+(defn- tool-result-journal-text
+  [v]
+  (let [presentation (tool-result/presentation v)]
+    (cond
+      (= :hide (:journal presentation)) "<tool result hidden>"
+      :else (or (:markdown v) "<tool result>"))))
+
 (defn- format-block-line
   "One iteration's single block as a `<journal>` line. Renders
    `iN.K  <code> → <value>` plus any non-blank stdout/stderr and a
    slow-suffix when execution exceeded 5s. Bare-symbol blocks read
    naturally because the `<code>` IS the symbol and `<value>` is its
-   bound content."
+   bound content. Tool-result envelopes render through their required
+   `:markdown` field instead of dumping the full map into the journal."
   [iteration-position k expr]
   (let [{:keys [code error result stdout stderr execution-time-ms]} expr
         code-str      (str/trim (or code ""))
@@ -122,10 +131,12 @@
                         (str " (" time-ms "ms)"))
         value-part    (if error
                         (str "ERROR: " (truncate error 600))
-                        (let [v (realize-value result)
-                              [value-str truncated?] (truncated-pr-str v)]
-                          (str value-str
-                            (when truncated? " :truncated? true"))))]
+                        (if (tool-result/tool-result? result)
+                          (tool-result-journal-text result)
+                          (let [v (realize-value result)
+                                [value-str truncated?] (truncated-pr-str v)]
+                            (str value-str
+                              (when truncated? " :truncated? true")))))]
     (str "  i" iteration-position "." (inc k) "  " code-str " → " value-part
       (or slow-suffix "")
       (or stdout-suffix "")
@@ -540,7 +551,7 @@ SCI is sandboxed Clojure, not an unrestricted JVM. Stdlib aliases are pre-resolv
   c+/     -> clojure+.core          e.g. (c+/cond+ …)
   s/      -> clojure.spec.alpha     e.g. (s/def ::id uuid?) (s/valid? ::id x) (s/keys :req-un [::id]) (s/conform ::shape m)
 
-Extension aliases such as v/, md/, z/ are preloaded when their extensions are active. Call their functions directly; do not write `(require …)` inside fenced code.")
+Extension aliases such as v/, z/, clj/ are preloaded when their extensions are active. Call their functions directly; do not write `(require …)` inside fenced code.")
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum.

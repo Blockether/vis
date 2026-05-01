@@ -63,6 +63,10 @@
 ;; Error decorator: (fn [err env f args] → map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
 
+;; Optional result contract enforced on the final public return value
+;; after `:before-fn` / call / `:after-fn` complete.
+(s/def :ext.symbol/result-spec some?)
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
@@ -71,7 +75,7 @@
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists :ext.symbol/examples]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
-          :ext.symbol/on-error-fn]))
+          :ext.symbol/on-error-fn :ext.symbol/result-spec]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/sym :ext.symbol/val :ext.symbol/doc]))
@@ -283,7 +287,7 @@
 
    Required: :doc, :arglists
    Optional: :examples, :before-fn, :after-fn, :on-error-fn,
-             :on-parse-error-fn
+             :on-parse-error-fn, :result-spec
 
    Defaults:
      :examples — derived from :arglists when not provided
@@ -302,7 +306,8 @@
         examples                  (assoc :ext.symbol/examples (vec examples))
         (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
+        (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
+        (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts))))))
 
 (defn value
   "Build a value symbol entry - a plain constant/data binding.
@@ -483,6 +488,18 @@
         (do (log-hook! :info ::on-error-fn-done ext-ns sym :on-error-fn ms "retrying") ret)))
     (throw err)))
 
+(defn- validate-symbol-result!
+  [sym spec-ref result]
+  (when spec-ref
+    (when-not (s/valid? spec-ref result)
+      (throw (ex-info (str "Symbol '" sym "' returned a value that does not satisfy " spec-ref)
+               {:type    :extension/invalid-symbol-result
+                :symbol  sym
+                :spec    spec-ref
+                :value   result
+                :explain (s/explain-data spec-ref result)}))))
+  result)
+
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for a function symbol entry:
    before-fn → fn → after-fn, with on-error-fn catching :fn errors.
@@ -491,17 +508,22 @@
    :before-fn can return {:result val} to short-circuit.
    :on-error-fn can return {:result val}, {:error err}, or {:fn :args :env} to retry.
 
+   When `:ext.symbol/result-spec` is present, the FINAL public return
+   value is validated against it right before control returns to SCI.
+
    Returns the final result. Throws on any unrecoverable error."
   [ext sym-entry args env]
   (let [sym    (:ext.symbol/sym sym-entry)
         ext-ns (:ext/namespace ext)
+        spec-ref (:ext.symbol/result-spec sym-entry)
         t0     (System/nanoTime)
         _      (log-hook! :info ::invoke ext-ns sym nil nil nil)
         before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
     (if (contains? before-out :result)
-      (let [ms (elapsed-ms t0)]
+      (let [ms (elapsed-ms t0)
+            result (validate-symbol-result! sym spec-ref (:result before-out))]
         (log-hook! :info ::invoke-done ext-ns sym nil ms "short-circuited")
-        (:result before-out))
+        result)
       (let [{env  :env
              f    :fn
              args :args} before-out
@@ -524,6 +546,7 @@
                                          (vec (get recovery :args args)))}))))))
 
             {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
+            result (validate-symbol-result! sym spec-ref result)
             ms (elapsed-ms t0)]
         (log-hook! :info ::invoke-done ext-ns sym nil ms nil)
         result))))

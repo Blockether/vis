@@ -77,15 +77,15 @@ form in the iteration, the loop reads the atom and — if non-nil and
 no expression in the same iteration errored — commits the captured
 string as the turn's final answer.
 
-The canonical way to build the answer body is the `md/` surface
+The canonical way to build the answer body is the `v/` surface
 (see [Markdown extension](../extensions/common/markdown.md)):
 
 ```clojure
 (answer
-  (md/join
-    (md/h1 "Done")
-    (md/p "Three files touched.")
-    (md/ul (map #(md/file-link % nil) touched-paths))))
+  (v/join
+    (v/h1 "Done")
+    (v/p "Three files touched.")
+    (v/ul (map #(v/file-link % nil) touched-paths))))
 ```
 
 Key properties:
@@ -93,7 +93,7 @@ Key properties:
 - `(answer …)` is a real Clojure call, so `(str …)`, `(format …)`,
   `(pr-str …)`, etc. all interpolate. No Mustache layer, no template
   language. Whatever `(str <arg>)` produces becomes the answer.
-- Use `md/` helpers (`md/h1`, `md/table`, `md/file-link`, …) to
+- Use `v/` helpers (`v/h1`, `v/table`, `v/file-link`, …) to
   assemble the body — they keep formatting consistent across
   channels and surface clickable links the TUI can follow.
 - Calling `(answer …)` more than once in the same iteration: the LAST

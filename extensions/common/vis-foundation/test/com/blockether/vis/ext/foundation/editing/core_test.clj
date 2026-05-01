@@ -202,3 +202,25 @@
       (expect (true? (exists? path)))
       (expect (true? (delete-if-exists path)))
       (expect (false? (exists? path))))))
+
+(defdescribe tool-envelope-test
+  (it "tool wrappers return the required contract keys"
+    (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
+          read-all-lines (private-fn "read-all-lines-tool")
+          out (read-all-lines path)]
+      (expect (= #{:ok? :result :result-shape :provenance :markdown :error}
+                (set (keys out))))
+      (expect (true? (:ok? out)))
+      (expect (= ["alpha" "beta"] (:result out)))
+      (expect (string? (:markdown out)))
+      (expect (nil? (:error out)))))
+
+  (it "tool failure contract includes structured :error with normalized trace"
+    (let [read-all-lines (private-fn "read-all-lines-symbol")
+          on-error       (:ext.symbol/on-error-fn read-all-lines)
+          out            (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
+      (expect (false? (:ok? out)))
+      (expect (= nil (:result out)))
+      (expect (= "clojure.lang.ExceptionInfo" (get-in out [:error :type])))
+      (expect (vector? (get-in out [:error :trace])))
+      (expect (string? (:markdown out))))))

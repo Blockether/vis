@@ -914,21 +914,14 @@
                            (when-not (:dialog-open? @state/app-db)
                              (case cmd
                                :settings
-                               (when-let [section (with-dialog-lock #(dlg/settings-category-dialog! screen))]
-                                 (case section
-                                   :providers
-                                   (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                                     (state/dispatch [:set-config c]))
-
-                                   :agent
-                                   (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db) :agent))]
-                                     (state/dispatch [:update-settings s]))
-
-                                   :ui
-                                   (when-let [s (with-dialog-lock #(dlg/settings-dialog! screen (:settings @state/app-db) :ui))]
-                                     (state/dispatch [:update-settings s]))
-
-                                   nil))
+                               (when-let [s (with-dialog-lock
+                                              #(dlg/settings-dialog! screen
+                                                 (:settings @state/app-db)
+                                                 {:configure-provider
+                                                  (fn [_]
+                                                    (when-let [c (provider/show-provider-dialog! screen (:config @state/app-db))]
+                                                      (state/dispatch [:set-config c])))}))]
+                                 (state/dispatch [:update-settings s]))
 
                                :copy
                                (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))

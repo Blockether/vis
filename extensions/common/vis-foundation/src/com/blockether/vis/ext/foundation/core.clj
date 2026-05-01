@@ -1,54 +1,63 @@
 (ns com.blockether.vis.ext.foundation.core
   "vis-foundation aggregator. ONE extension under ONE alias `v/`,
-   bundling the agent's read + write + introspect surface so the
-   model never has to switch alias-namespaces in the middle of a
-   form. Three sources, each contributing its `:ext/symbols` vec
-   and its share of the merged `:ext/prompt`:
+   bundling the agent's read + write + introspect + answer-build
+   surface so the model never has to switch alias-namespaces in the
+   middle of a form. Four sources, each contributing its
+   `:ext/symbols` vec and its share of the merged `:ext/prompt`:
 
      introspection.clj          (v/turn, v/conversation,
                                  v/diagnose, v/var-history,
                                  v/find-attempts, v/failures,
-                                 v/extensions, v/extension-doc, \u2026)
-     editing/core.clj          (v/cat, v/ls, v/rg,
+                                 v/extensions, v/extension-doc, …)
+     editing/core.clj           (v/cat, v/ls, v/rg,
                                  thin babashka.fs wrappers)
+     markdown.clj               (v/h1, v/p, v/table,
+                                 v/file-link, v/join, …)
      environment/core.clj       (v/snapshot,
                                  v/git,
                                  v/languages,
                                  v/monorepo,
                                  v/render,
-                                 v/refresh!)\n
+                                 v/refresh!)
+
    Plus a live `<environment>` block in the system prompt, owned by
-   `environment/core.clj`'s `environment-prompt`.\n
-   The legacy `fs/` alias was dropped, but the useful babashka.fs\n   surface is now inlined back under `v/` as thin cwd-safe wrappers\n   (`v/read-all-lines`, `v/write-lines`, `v/update-file`, `v/glob`,\n   `v/list-dir`, ...). The model still gets one short alias, but it\n   acts through normal Clojure code instead of bespoke edit DSLs."
+   `environment/core.clj`'s `environment-prompt`.
+
+   The legacy `fs/` alias was dropped, but the useful babashka.fs
+   surface is now inlined back under `v/` as thin cwd-safe wrappers
+   (`v/read-all-lines`, `v/write-lines`, `v/update-file`, `v/glob`,
+   `v/list-dir`, ...). The markdown builders were merged too, so the
+   model now uses `(answer (v/join ...))`, `(v/h1 ...)`,
+   `(v/file-link ...)`, etc. through the same `v/` prefix. One short
+   alias, normal Clojure code, no bespoke edit DSLs, no alias
+   switching mid-iteration."
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.doctor :as doctor]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
-   [com.blockether.vis.ext.foundation.transcript :as transcript]
-   ;; Side-effect require: registers the `md/` extension. The aggregator
-   ;; does not pull markdown symbols into its own `:ext/symbols` vec —
-   ;; markdown ships as a sibling extension under its own alias so
-   ;; `(md/h1 …)` lives in `vis.ext.md` instead of mingling with `v/`.
-   [com.blockether.vis.ext.foundation.markdown]))
+   [com.blockether.vis.ext.foundation.markdown :as markdown]
+   [com.blockether.vis.ext.foundation.transcript :as transcript]))
 
 (defn- combined-prompt
   "Stitch the per-area prompt fragments together. The environment
    fragment is a fn (it renders the live snapshot every time the
-   system prompt is assembled); introspection + editing fragments
-   are static strings that we concatenate directly."
+   system prompt is assembled); introspection + editing + markdown
+   fragments are static strings that we concatenate directly."
   [env]
   (str (environment/environment-prompt env)
     "\n\n"
     introspection/introspection-prompt
     "\n\n"
-    editing/editing-prompt))
+    editing/editing-prompt
+    "\n\n"
+    markdown/markdown-prompt))
 
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt and the `vis doctor` CLI command."
+     :ext/doc            "Foundation extension. ONE alias (`v/`) bundling introspection (turn / conversation / diagnose / failures / var-history / find-attempts / extensions catalog), file I/O (cat / ls / rg plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / project-guidance / skills). Owns the `<environment>`, `<project-guidance>`, `<skills>`, `<scan-warnings>` blocks in the system prompt and the `vis doctor` CLI command."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -59,6 +68,7 @@
      :ext/symbols        (vec (concat introspection/all-symbols
                                 [transcript/transcript-symbol]
                                 editing/editing-symbols
+                                markdown/markdown-symbols
                                 environment/environment-symbols))
      :ext/doctor-check-fn doctor/check-fn}))
 
