@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.file-picker :as picker])
   (:import [com.googlecode.lanterna TextColor$RGB]
            [com.googlecode.lanterna Symbols]
@@ -320,6 +321,18 @@
 
 (def ^:private file-picker-max-visible 10)
 
+(defn- open-picker-item!
+  [{:keys [path]}]
+  (future
+    (try
+      (opener/open! path)
+      (catch Throwable t
+        {:status :spawn-failed
+         :command nil
+         :scheme nil
+         :target path
+         :error (.getMessage t)}))))
+
 (defn- draw-file-picker-item!
   [g left row inner-w selected? {:keys [status-label name parent size-label age-label]}]
   (let [meta-text (str size-label "  " age-label)
@@ -341,8 +354,8 @@
 
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
-   the selected relative path, Esc cancels. `I` toggles ignored files;
-   `S` cycles sort mode."
+   the selected relative path, Esc cancels. `Alt+I` toggles ignored files;
+   `Alt+S` cycles sort mode; `Alt+O` opens the selection externally."
   [^TerminalScreen screen]
   (let [entries          (picker/collect-file-picker-entries)
         query            (atom "")
@@ -389,7 +402,7 @@
                     (nth items idx))))))
 
           (draw-hint-bar! g left hint-row inner-w
-            [["type" "filter"] ["Alt+I" "ignored"] ["Alt+S" "sort"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
+            [["type" "filter"] ["Alt+I" "ignored"] ["Alt+S" "sort"] ["Alt+O" "open"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -440,6 +453,12 @@
                     (do (swap! sort-mode picker/cycle-sort-mode)
                       (reset! selected 0)
                       (reset! scroll 0)
+                      (recur))
+
+                    (and (.isAltDown key) (= c \o))
+                    (do
+                      (when (pos? total)
+                        (open-picker-item! (nth items @selected)))
                       (recur))
 
                     (Character/isISOControl raw-c)

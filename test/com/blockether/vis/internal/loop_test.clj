@@ -62,7 +62,13 @@
                           :resolved-model {:provider :test :name "model"}})]
             (expect (= raw (:llm-raw-response result)))
             (expect (= "(+ 1 1)" (:llm-executable-code result)))
-            (expect (= executable-blocks (:llm-executable-blocks result)))))))))
+            (expect (= executable-blocks (:llm-executable-blocks result)))
+            (let [prov (:provenance (first (:blocks result)))]
+              (expect (= :vis/eval (:op prov)))
+              (expect (= 0 (:iteration prov)))
+              (expect (= 0 (:form-idx prov)))
+              (expect (= 1 (:form-of prov)))
+              (expect (= :sci (:engine prov))))))))))
 
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"

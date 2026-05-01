@@ -3,7 +3,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
-            [com.blockether.vis.ext.channel-tui.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -13,6 +12,7 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.internal.external-opener :as opener]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType

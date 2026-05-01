@@ -130,7 +130,8 @@ vis channels tui --conversation-id <UUID>         # resume a specific one (full 
 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
 Typing `@` opens the file picker for inline file references; inside the
-picker, `Alt+I` toggles ignored files and `Alt+S` cycles sort mode.
+picker, `Alt+I` toggles ignored files, `Alt+S` cycles sort mode, and
+`Alt+O` opens the selected file through the OS opener.
 On the main chat screen, `Ctrl+R` cycles reasoning effort, `Ctrl+L`
 cycles OpenAI Codex verbosity, and `Ctrl+T` cycles the primary provider's
 configured models; changes apply to the next request and are persisted

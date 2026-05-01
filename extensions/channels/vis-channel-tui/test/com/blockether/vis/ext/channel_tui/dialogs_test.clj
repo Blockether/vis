@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs-test
   (:require [clojure.test :refer [deftest testing is]]
-            [com.blockether.vis.ext.channel-tui.dialogs :as dlg]))
+            [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.internal.external-opener :as opener]))
 
 ;; The dialog functions require a live TerminalScreen, so direct unit
 ;; testing is impractical. The bracketed-paste fix in text-input-dialog!
@@ -10,6 +11,17 @@
 (deftest smoke-test
   (testing "dialogs namespace loads and text-input-dialog! is public"
     (is (fn? (var-get #'dlg/text-input-dialog!)))))
+
+(deftest file-picker-opener-test
+  (testing "file picker can hand the selected path to the shared external opener"
+    (let [calls (atom [])
+          open-picker-item! (var-get #'dlg/open-picker-item!)]
+      (with-redefs [opener/open! (fn [path]
+                                   (swap! calls conj path)
+                                   {:status :ok :target path})]
+        (is (= {:status :ok :target "deps.edn"}
+              @(open-picker-item! {:path "deps.edn"})))
+        (is (= ["deps.edn"] @calls))))))
 
 (deftest apply-settings-option-test
   (let [apply-settings-option (var-get #'dlg/apply-settings-option)

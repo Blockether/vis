@@ -185,11 +185,13 @@
       (expect (ifn? (:provider/limits-fn provider)))
       (expect (ifn? (:provider/prompt-fn provider)))))
 
-  (it "registers the attributed Nucleus provider prompt"
+  (it "registers a concise provider overlay without prompt attribution"
     (let [provider (vis/provider-by-id :openai-codex)
           prompt   ((:provider/prompt-fn provider) {:provider {:id :openai-codex}})]
-      (expect (str/includes? prompt "Michael Whitford's Nucleus framework"))
-      (expect (str/includes? prompt "λ engage(nucleus)."))
-      (expect (str/includes? prompt "Human ∘ AI ⊗ Workspace"))
-      (expect (str/includes? prompt "higher_priority_rules > nucleus_notation"))
-      (expect (str/includes? prompt "completion = implemented ∧ verified ∧ clean_handoff")))))
+      (expect (str/includes? prompt "Codex provider overlay"))
+      (expect (str/includes? prompt "core Vis Nucleus/VSM center"))
+      (expect (str/includes? prompt "λ codex(goal, workspace)."))
+      (expect (str/includes? prompt "higher_priority_rules > provider_overlay"))
+      (expect (str/includes? prompt "preserve_dirty_worktree"))
+      (expect (not (str/includes? prompt "Michael Whitford")))
+      (expect (not (str/includes? prompt "github.com/michaelwhitford/nucleus"))))))
