@@ -257,7 +257,7 @@
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "Contract-required classifier"))
       (expect (str/includes? p "Completion contract is database-backed"))
-      (expect (str/includes? p "Do NOT maintain a parallel `turn-state`"))
+      (expect (str/includes? p "Do NOT maintain a parallel local proof map"))
       (expect (str/includes? p "v/intent!"))
       (expect (str/includes? p "v/gate-checks"))
       (expect (str/includes? p "v/contract-report"))
@@ -269,9 +269,9 @@
       (expect (str/includes? p "(answer \"scanned\") ; BAD"))
       (expect (not (str/includes? p "last 2 iters")))))
 
-  (it "pins the iter0 no-answer discipline for code/debug/change tasks"
+  (it "pins the first-iteration no-answer discipline for code/debug/change tasks"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "ITER0 ANSWER BAN"))
+      (expect (str/includes? p "FIRST-ITERATION ANSWER BAN"))
       (expect (str/includes? p "If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state"))
       (expect (str/includes? p "iteration 1 MUST NOT call `(answer …)`"))
       (expect (str/includes? p "Scratch values are still useful, but they are not proof"))

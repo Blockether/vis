@@ -16,7 +16,7 @@ Intent(versioned)
 In compact Nucleus notation:
 
 ```text
-ΩVisWork :=
+ΩVisContract :=
   Intentᵛ
     → Planᵛ
       → Gateᵛ
@@ -30,6 +30,18 @@ Legend:
 - `ᵛ` — versioned.
 - `¹` — exactly one.
 - `⁺` — one or more.
+
+## What is what
+
+| Name | What it is | What it is not |
+|---|---|---|
+| Intent | The current user goal for this concrete turn run/retry. | Not a task list and not conversation history. |
+| Plan | The strategy for satisfying one intent version. | Not evidence and not proof that anything happened. |
+| Gate | A falsifiable condition that must be closed or blocked before claiming completion. | Not a vague todo like "be careful". |
+| Attestation | Exactly one proof/blocker object for exactly one gate version. | Not a free-floating note and not a second gate. |
+| Provenance ref | A pointer such as `i2.1` or `i2.1/tool` into observed timeline events. | Not a claim by itself. |
+| Timeline event | A recorded eval/tool/guard event that actually happened. | Not proof that the event satisfies a gate. |
+| `v/contract` | Read projection that returns the current turn's Intent/Plan/Gate/Attestation rows together. | Not a domain object and not something the model should maintain locally. |
 
 ## Why this exists
 
@@ -313,24 +325,12 @@ Read/check API:
 (v/attestations)
 (v/gate-checks)
 (v/gate-report)
-(v/work-state)
+(v/contract)
 ```
 
-`v/work-state` is not a domain object. It is a projection helper: the current turn's intent/plan/gate/attestation rows in one map.
+`v/contract` is not a domain object. It is a projection helper: the current turn's intent/plan/gate/attestation rows in one map.
 
-Mentally, prefer:
-
-```text
-completion contract
-```
-
-over:
-
-```text
-work state
-```
-
-The model should manage Intent, Plan, Gate, and Attestation objects. It should not maintain a parallel model-authored `turn-state` map.
+`v/contract` is the read projection of the completion contract. The model should manage Intent, Plan, Gate, and Attestation objects. It should not maintain a parallel model-authored `turn-state` map.
 
 ## Example flow
 

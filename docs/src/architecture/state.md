@@ -11,7 +11,7 @@
 | Extensions | `environment :extensions` | Conversation |
 | Var-index cache | `environment :var-index-atom` | Conversation |
 | Recursion depth | `environment :depth-atom` | Conversation |
-| Current iteration counter | `environment :current-iteration-atom` (turn-scoped internal int counter starting at 0; model-facing iteration positions start at 1) | Turn |
+| Current iteration counter | `environment :current-iteration-atom` (turn-scoped, 1-indexed current iteration position) | Turn |
 | Current iteration row id | `environment :current-iteration-id-atom` (turn-scoped, UUID of the latest `db-store-iteration!` row, or nil) | Turn |
 | Token usage | `usage-atom` (local in iteration loop) | Turn |
 | Completion contract | `intent_*`, `plan_*`, `gate_*`, `attestation*` tables rooted at `conversation_turn_state` | Turn run/retry |
@@ -32,7 +32,7 @@ conversation_turn_state
 This is intentionally scoped to a run/retry, not to the whole conversation.
 A retry gets a new `conversation_turn_state`, therefore a separate completion contract.
 
-The model-facing helper `(v/work-state)` is only a read projection of this contract. It is not a domain object and should not be confused with a local `turn-state` map. The domain objects are Intent, Plan, Gate, Attestation, Provenance refs, and Timeline events.
+The model-facing helper `(v/contract)` is only a read projection of this contract. It is not a domain object and should not be confused with a local `turn-state` map. The domain objects are Intent, Plan, Gate, Attestation, Provenance refs, and Timeline events.
 
 See [Completion Contract](completion-contract.md).
 

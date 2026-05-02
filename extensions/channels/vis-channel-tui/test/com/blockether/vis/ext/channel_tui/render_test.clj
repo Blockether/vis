@@ -19,6 +19,9 @@
   (when (and (string? s) (pos? (count s)))
     (subs s 0 1)))
 
+(defn- strip-ansi [s]
+  (str/replace (or s "") #"\u001b\[[0-9;]*m" ""))
+
 (defn- body-of
   "Drop the leading marker (PUA codepoint) and return the visible text.
    Tolerates empty input — a blank line in `:answer` mode renders as
@@ -120,13 +123,14 @@
                   (mapv marker-of lines)))))))
 
 (defdescribe live-running-code-test
-  (it "renders a code slot with no result as currently running"
-    (let [lines (format-iteration-entry {:iteration 0
-                                         :events    [{:type :form-result :form-idx 0}]
-                                         :code      ["(Thread/sleep 1000)"]}
-                  40 1)
+  (it "renders a code slot with no result as currently running with elapsed time"
+    (let [lines (format-iteration-entry {:iteration     0
+                                         :events        [{:type :form-result :form-idx 0}]
+                                         :code          ["(Thread/sleep 1000)"]
+                                         :started-at-ms [1000]}
+                  40 1 {:now-ms 2500})
           code-line (first (filter #(str/includes? % "Thread/sleep") lines))
-          status-line (first (filter #(str/includes? % "↻ running") lines))]
+          status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
       (expect (= p/MARKER_CODE (marker-of code-line)))
       (expect (= p/MARKER_CODE (marker-of status-line))))))
 
@@ -165,7 +169,7 @@
                      :successes [true]
                      :error     nil}
                     60 1 {:show-header? true})
-            body  (str/join "\n" (map body-of lines))]
+            body  (strip-ansi (str/join "\n" (map body-of lines)))]
         (expect (< (.indexOf body "alpha") (.indexOf body "(+ 1 1)")))
         (expect (< (.indexOf body "(+ 1 1)") (.lastIndexOf body "beta")))))))
 

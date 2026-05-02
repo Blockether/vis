@@ -969,14 +969,14 @@
                         t/dialog-hint t/iteration-header-bg
                         t/code-block-fg t/code-block-bg)))
 
-              ;; ── Code (success) — neutral code bg, green ✓ suffix ──
+              ;; ── Code (success) — light green bg, green ✓ suffix ──
                   (str/starts-with? line code-ok-marker)
                   (let [raw (subs line 1)]
-                    (p/set-colors! g t/code-block-fg t/code-block-bg)
+                    (p/set-colors! g t/code-block-fg t/code-ok-bg)
                     (p/fill-rect! g fbx y iw 1)
-                    (p/put-str! g x y raw)
+                    (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
                     (when-let [ci (str/index-of raw "✓")]
-                      (p/set-colors! g t/code-success-fg t/code-block-bg)
+                      (p/set-colors! g t/code-success-fg t/code-ok-bg)
                       (p/put-str! g (+ x ci) y (subs raw ci))))
 
               ;; ── Code (error) — light red bg, red ✗ suffix ──
@@ -984,16 +984,16 @@
                   (let [raw (subs line 1)]
                     (p/set-colors! g t/code-block-fg t/code-err-bg)
                     (p/fill-rect! g fbx y iw 1)
-                    (p/put-str! g x y raw)
+                    (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
                     (when-let [ci (str/index-of raw "✗")]
                       (p/set-colors! g t/code-error-fg t/code-err-bg)
                       (p/put-str! g (+ x ci) y (subs raw ci))))
 
-              ;; ── Code (streaming, no status yet) — neutral gray bg ──
+              ;; ── Code (running, no status yet) — neutral bg ──
                   (str/starts-with? line code-marker)
                   (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                     (p/fill-rect! g fbx y iw 1)
-                    (p/put-str! g x y (subs line 1)))
+                    (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
 
               ;; ── Duration annotation ──
                   (str/starts-with? line duration-marker)
@@ -1001,9 +1001,9 @@
                     (p/fill-rect! g fbx y iw 1)
                     (p/put-str! g x y (subs line 1)))
 
-              ;; ── Result (success) — dim on code bg ──
+              ;; ── Result (success) — dim on success bg ──
                   (str/starts-with? line result-marker)
-                  (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+                  (do (p/set-colors! g t/code-result-fg t/code-ok-bg)
                     (p/fill-rect! g fbx y iw 1)
                     (p/put-str! g x y (subs line 1)))
 
@@ -1031,9 +1031,14 @@
                   (do (p/set-bg! g t/stdout-bg)
                     (p/fill-rect! g fbx y iw 1))
 
-              ;; ── Code block padding (success) ──
+              ;; ── Code block padding (running / neutral) ──
                   (str/starts-with? line code-pad-marker)
                   (do (p/set-bg! g t/code-block-bg)
+                    (p/fill-rect! g fbx y iw 1))
+
+              ;; ── Code block padding (success) ──
+                  (str/starts-with? line code-ok-pad-marker)
+                  (do (p/set-bg! g t/code-ok-bg)
                     (p/fill-rect! g fbx y iw 1))
 
               ;; ── Code block padding (error) ──
@@ -2059,9 +2064,9 @@
           (subvec remaining run))))))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking events code comments results stdouts durations successes error repeat-count]}
+  [{:keys [thinking events code comments results stdouts durations successes started-at-ms error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id]
+   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms]
        :or   {show-header? true}}]]
   (let [fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
@@ -2127,10 +2132,15 @@
                 expr-label    (label-text "code" block-number)
                 expr-hdr      (let [pl (max 0 (- fill-w (count expr-label) 1))]
                                 (str (repeat-str \space pl) expr-label " "))
+                running-start (when started-at-ms (get started-at-ms idx))
+                running-ms    (when (and running-start now-ms)
+                                (max 0 (- (long now-ms) (long running-start))))
+                running-ms    (when running-ms (* 1000 (quot running-ms 1000)))
+                running-str   (or (some-> running-ms vis/format-duration) "0ms")
                 status-text   (if has-status?
                                 (str (if success? "✓" "✗")
                                   (when duration-str (str " " duration-str)))
-                                "↻ running")
+                                (str "↻ " running-str))
                 status-line   (let [s-marker (cond
                                                (not has-status?) code-marker
                                                success?          code-ok-marker
@@ -2141,7 +2151,10 @@
                                 (not has-status?) code-marker
                                 success?          code-ok-marker
                                 :else             code-err-marker)
-                c-pad         (if is-error? code-err-pad-marker code-pad-marker)
+                c-pad         (cond
+                                is-error? code-err-pad-marker
+                                success?  code-ok-pad-marker
+                                :else     code-pad-marker)
                 comment-text  (some-> comments (get idx))
                 comment-lines (when (and (string? comment-text)
                                       (not (str/blank? comment-text)))
@@ -2150,7 +2163,7 @@
                                                 (str/split-lines trimmed))]
                                   (mapv #(line-entry (str thinking-marker %)) wrapped)))
                 code-text     (str/trim (or form ""))
-                formatted     (vis/format-clojure code-text fill-w)
+                formatted     (format-clojure-ansi code-text fill-w)
                 code-lines    (str/split-lines formatted)
                 c-lines       (mapv #(line-entry (str c-marker %)) code-lines)
                 result-str    (when results (get results idx))
@@ -2369,7 +2382,8 @@
                                         (format-iteration-entry
                                           (if show-thinking? entry (dissoc entry :thinking))
                                           content-w (inc idx)
-                                          {:show-header? show-iteration-headers?})))
+                                          {:show-header? show-iteration-headers?
+                                           :now-ms       now-ms})))
                               (collapse-repeated-error-runs iterations)))]
      (if (seq trace-lines)
        (str/join "\n" (conj (conj trace-lines "") spinner-line))
