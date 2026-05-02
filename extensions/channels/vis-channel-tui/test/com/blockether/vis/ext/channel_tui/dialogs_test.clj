@@ -68,6 +68,5 @@
     (testing "command palette exposes Providers outside Settings"
       (is (= ["Providers"
               "Settings"
-              "Copy Messages"
-              "Copy Conversation as Markdown"]
+              "Copy Messages"]
             (mapv :label palette-commands))))))

@@ -1766,6 +1766,39 @@
                                          :node-id node-id))
                (when-not collapsed? entries)))))))
 
+(defn- maybe-collapse-raw-text-block
+  "Render a result/stdout-like block without wrapping huge collapsed
+   bodies first. `wrap-text` is intentionally display-width-aware and
+   expensive on long single-line data dumps; when the detail row is
+   collapsed by default, the first frame only needs the summary hint."
+  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
+           block-number kind summary summary-marker raw-text max-w]
+    :as opts}]
+  (let [raw-text (str/trim (str raw-text))]
+    (when-not (str/blank? raw-text)
+      (let [detail-ctx {:conversation-id conversation-id
+                        :conversation-turn-id conversation-turn-id
+                        :iteration-number iteration-number
+                        :block-number block-number
+                        :details-path nil
+                        :section :iteration
+                        :kind kind}
+            node-id    (detail-node-id detail-ctx)
+            collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
+        (if (and conversation-id
+              conversation-turn-id
+              collapsed?
+              (> (count raw-text) auto-collapse-char-threshold))
+          (detail-summary-entries (assoc detail-ctx
+                                    :marker summary-marker
+                                    :max-w max-w
+                                    :summary summary
+                                    :hidden-entries [{:line raw-text :meta nil}]
+                                    :collapsed? true
+                                    :node-id node-id))
+          (let [lines (wrap-text raw-text max-w)]
+            (maybe-collapse-block (assoc opts :lines lines))))))))
+
 (defn- entries->payload
   [entries]
   (let [lines     (mapv :line entries)
@@ -2187,10 +2220,8 @@
                 c-lines       (mapv #(line-entry (str c-marker %)) code-lines)
                 result-str    (when results (get results idx))
                 r-marker      (if is-error? err-result-marker result-marker)
-                r-wrapped     (when (and result-str (not (str/blank? (str result-str))))
-                                (wrap-text (str/trim (str result-str)) fill-w))
-                result-lines  (when (seq r-wrapped)
-                                (maybe-collapse-block
+                result-lines  (when (and result-str (not (str/blank? (str result-str))))
+                                (maybe-collapse-raw-text-block
                                   {:conversation-id      conversation-id
                                    :detail-expansions   detail-expansions
                                    :conversation-turn-id conversation-turn-id
@@ -2200,7 +2231,7 @@
                                    :summary             (str "RESULT (code " block-number ")")
                                    :summary-marker      md-summary-marker
                                    :body-marker         r-marker
-                                   :lines               r-wrapped
+                                   :raw-text            result-str
                                    :max-w               fill-w}))
                 code-block    (vec (concat
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])

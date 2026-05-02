@@ -1433,25 +1433,151 @@
                          :where  [:= :est2.expression_soul_id :es.id]}]]}))))
      {})))
 
+(defn- var-result-ref?
+  [v]
+  (and (map? v) (= :expr (:vis/ref v))))
+
+(defn- safe-defn-source?
+  [expr]
+  (boolean
+    (when (string? expr)
+      (re-find #"^\s*\((?:clojure.core/)?defn(?:-|\s)" expr))))
+
+(defn- var-kind
+  [value expr]
+  (cond
+    (safe-defn-source? expr) :fn
+    (var-result-ref? value)  :unavailable
+    :else                   :data))
+
+(defn- var-restorable?
+  [value expr]
+  (or (not (var-result-ref? value))
+    (safe-defn-source? expr)))
+
+(defn- row->var-provenance
+  [r]
+  (cond-> {:conversation-state-id (:conversation_state_id r)}
+    (:conversation_turn_soul_id r) (assoc :conversation-turn-id (->uuid (:conversation_turn_soul_id r)))
+    (:iteration_id r)             (assoc :iteration-id (->uuid (:iteration_id r)))
+    (:iteration_position r)       (assoc :iteration-position (:iteration_position r))))
+
+(defn- row->var-index-entry
+  [r]
+  (let [value (<-blob (:result r))]
+    (cond-> {:name        (symbol (:name r))
+             :version     (:version r)
+             :kind        (var-kind value (:expr r))
+             :restorable? (var-restorable? value (:expr r))
+             :created-at  (->date (:created_at r))
+             :provenance  (row->var-provenance r)}
+      (not (var-restorable? value (:expr r)))
+      (assoc :status :unavailable
+        :reason :unsafe-restore
+        :guidance "Recreate intentionally to persist a new version."))))
+
+(defn db-var-history-index
+  "Compact, value-free latest-version symbol index for a conversation branch.
+   Default limit is 200, newest definitions first. Values are intentionally
+   omitted; callers that know a symbol can request that symbol's history."
+  ([db-info conversation-id] (db-var-history-index db-info conversation-id {}))
+  ([db-info conversation-id {:keys [limit] :or {limit 200}}]
+   (if (and (ds db-info) conversation-id)
+     (let [state-id-s (latest-state-id db-info conversation-id)]
+       (if state-id-s
+         (mapv row->var-index-entry
+           (query! db-info
+             (cond-> {:select [:es.name :es.conversation_state_id
+                               :est.version :est.result :est.expr :est.created_at
+                               [:est.iteration_id :iteration_id]
+                               [:it.position :iteration_position]
+                               :qst.conversation_turn_soul_id]
+                      :from   [[:expression_soul :es]]
+                      :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
+                               [:iteration :it] [:= :it.id :est.iteration_id]
+                               [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
+                      :where  [:and
+                               [:= :es.conversation_state_id state-id-s]
+                               [:= :es.kind "var"]
+                               [:= :est.version
+                                {:select [[[:max :version]]]
+                                 :from   [[:expression_state :est2]]
+                                 :where  [:= :est2.expression_soul_id :es.id]}]]
+                      :order-by [[:est.created_at :desc] [:es.name :asc]]}
+               (pos-int? limit) (assoc :limit limit))))
+         []))
+     [])))
+
 (defn db-var-history [db-info conversation-id var-sym]
   (if (and (ds db-info) conversation-id)
     (let [state-id-s (latest-state-id db-info conversation-id)]
-      (when state-id-s
+      (if state-id-s
         (mapv (fn [r]
-                {:version    (:version r)
-                 :value      (<-blob (:result r))
-                 :code       (:expr r)
-                 :created-at (->date (:created_at r))})
+                (let [value (<-blob (:result r))]
+                  {:version    (:version r)
+                   :value      value
+                   :code       (:expr r)
+                   :kind       (var-kind value (:expr r))
+                   :restorable? (var-restorable? value (:expr r))
+                   :created-at (->date (:created_at r))
+                   :provenance (row->var-provenance r)}))
           (query! db-info
-            {:select [:est.version :est.result :est.expr :est.created_at]
+            {:select [:est.version :est.result :est.expr :est.created_at
+                      [:est.iteration_id :iteration_id]
+                      [:it.position :iteration_position]
+                      :es.conversation_state_id
+                      :qst.conversation_turn_soul_id]
              :from   [[:expression_state :est]]
-             :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
+             :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]
+                      [:iteration :it] [:= :it.id :est.iteration_id]
+                      [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
              :where  [:and
                       [:= :es.conversation_state_id state-id-s]
                       [:= :es.kind "var"]
                       [:= :es.name (str var-sym)]]
-             :order-by [[:est.version :asc]]}))))
+             :order-by [[:est.version :asc]]}))
+        []))
     []))
+
+(defn db-var-history-timeline
+  "Newest-first, value-free symbol-memory timeline. Definition/redefinition
+   events are persisted. Runtime archive/restore events are intentionally not
+   persisted yet; durable tombstones are future work."
+  ([db-info conversation-id] (db-var-history-timeline db-info conversation-id {}))
+  ([db-info conversation-id {:keys [limit order symbol]
+                             :or {limit 100 order :newest-first}}]
+   (if (and (ds db-info) conversation-id)
+     (let [state-id-s (latest-state-id db-info conversation-id)]
+       (if state-id-s
+         (let [direction (if (= :oldest-first order) :asc :desc)]
+           (mapv (fn [r]
+                   (let [value (<-blob (:result r))]
+                     {:event       (if (zero? (:version r)) :defined :redefined)
+                      :durability  :persisted
+                      :symbol      (clojure.core/symbol (:name r))
+                      :version     (:version r)
+                      :kind        (var-kind value (:expr r))
+                      :restorable? (var-restorable? value (:expr r))
+                      :at          (->date (:created_at r))
+                      :provenance  (row->var-provenance r)}))
+             (query! db-info
+               (cond-> {:select [:es.name :es.conversation_state_id
+                                 :est.version :est.result :est.expr :est.created_at
+                                 [:est.iteration_id :iteration_id]
+                                 [:it.position :iteration_position]
+                                 :qst.conversation_turn_soul_id]
+                        :from   [[:expression_state :est]]
+                        :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]
+                                 [:iteration :it] [:= :it.id :est.iteration_id]
+                                 [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
+                        :where  (cond-> [:and
+                                         [:= :es.conversation_state_id state-id-s]
+                                         [:= :es.kind "var"]]
+                                  symbol (conj [:= :es.name (str symbol)]))
+                        :order-by [[:est.created_at direction] [:es.name :asc] [:est.version direction]]}
+                 (pos-int? limit) (assoc :limit limit)))))
+         []))
+     [])))
 
 (defn db-turn-history [db-info conversation-id]
   (let [turns (db-list-conversation-turns db-info conversation-id)]

@@ -875,16 +875,11 @@
    palette instead of nesting it under Settings.
 
    `:copy` is the per-message picker (Space toggles, Enter copies
-   selected as plain `role: text`). `:copy-as-markdown` is the
-   one-shot “give me the whole conversation as a Markdown document
-   I can paste into a GitHub issue” action; it routes through the
-   shared host helper `com.blockether.vis.core/conversation->markdown`
-   so the CLI agent and Telegram channel can ship the same affordance
-   without re-implementing the projection."
-  [{:id :providers        :label "Providers"}
-   {:id :settings         :label "Settings"}
-   {:id :copy             :label "Copy Messages"}
-   {:id :copy-as-markdown :label "Copy Conversation as Markdown"}])
+   selected as plain `role: text`). Whole-conversation Markdown copy
+   lives in the header as an icon, not in Ctrl+K."
+  [{:id :providers :label "Providers"}
+   {:id :settings  :label "Settings"}
+   {:id :copy      :label "Copy Messages"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.

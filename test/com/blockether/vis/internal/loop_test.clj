@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
+   [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.core]
@@ -31,6 +32,18 @@
                     (catch clojure.lang.ExceptionInfo e
                       (= :vis/invalid-iteration-block (:type (ex-data e)))))]
       (expect (true? thrown?)))))
+
+(defdescribe iteration-feedback-repro-test
+  (it "includes block-level parse errors in restart feedback"
+    (let [out (#'loop/recent-errors-block
+               [{:iteration 0
+                 :blocks [{:code "(v/glob \".\" \"**/*.clj\" {:limit200})"
+                           :error (str "Parse error: The map literal starting with :limit200 "
+                                    "contains 1 form(s). Map literals must contain an even number of forms.")}]}]
+               3)]
+      (expect (string? out))
+      (expect (str/includes? out ":limit200"))
+      (expect (str/includes? out "Map literals must contain an even number")))))
 
 (defdescribe iteration-exception-handling-test
   (it "marks provider HTTP failures as terminal turn errors"
@@ -159,6 +172,69 @@
               (expect (= 1 (:form-count prov)))
               (expect (= "i1.1" (:ref prov)))
               (expect (= :vis/sci (:engine prov))))))))))
+
+(defdescribe run-iteration-answer-position-test
+  (it "rejects final answers mixed with sibling top-level forms"
+    (let [environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw "```clojure\n(def observed 1)\n(answer \"done\")\n```"
+                                           :blocks [{:lang "clojure" :source "(def observed 1)\n(answer \"done\")"}]
+                                           :result "(def observed 1)\n(answer \"done\")"
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [env code]
+                                             (if (= "(answer \"done\")" code)
+                                               (do
+                                                 (reset! (:answer-atom env)
+                                                   {:value "done"
+                                                    :form-idx @(:current-form-idx-atom env)})
+                                                 {:result :vis/answer
+                                                  :stdout ""
+                                                  :stderr ""
+                                                  :execution-time-ms 0})
+                                               {:result 1
+                                                :stdout ""
+                                                :stderr ""
+                                                :execution-time-ms 0}))}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "finish"}]
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "model"}})]
+            (expect (nil? (:final-result result)))
+            (expect (= 2 (count (:blocks result))))
+            (expect (re-find #"ONLY top-level form"
+                      (-> result :blocks second :error))))))))
+
+  (it "accepts a wrapper when it is the only top-level answer form"
+    (let [environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw "```clojure\n(let [body \"done\"] (answer body))\n```"
+                                           :blocks [{:lang "clojure" :source "(let [body \"done\"] (answer body))"}]
+                                           :result "(let [body \"done\"] (answer body))"
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [env _]
+                                             (reset! (:answer-atom env)
+                                               {:value "done"
+                                                :form-idx @(:current-form-idx-atom env)})
+                                             {:result :vis/answer
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "finish"}]
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "model"}})]
+            (expect (= {:final? true
+                        :answer "done"
+                        :answer-form-idx 0}
+                      (:final-result result)))))))))
 
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"

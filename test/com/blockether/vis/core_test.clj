@@ -694,27 +694,27 @@
       (expect (nil? (vis/answer-form-error [] 0))))))
 
 ;; -----------------------------------------------------------------------------
-;; answer-position — rule b' (\"answer is the last form, or the only form\")
+;; answer-position — rule b' (\"answer is the only form\")
 ;;
-;; `(answer …)` must fire from the LAST top-level form of its
-;; iteration (or the only one — single-form is the special case where
-;; first == last). Mid-iteration answer calls trigger a position
-;; violation: the answer is discarded and the model gets a structured
-;; nudge to either (a) move the answer to the end OR (b) emit it as
-;; its own next iteration.
+;; `(answer …)` must be the ONLY top-level form of its final iteration.
+;; Exploration/action/verification forms belong in earlier iterations;
+;; wrappers like `(let [...] (answer ...))` stay legal because they are
+;; still one top-level form. Mixed answer+work iterations trigger a
+;; position violation, the answer is discarded, and the model gets a
+;; structured nudge to answer alone in the next iteration.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe answer-position-rule-test
-  (it "single top-level form, answer in form 0 — NOT a violation (form 0 == last)"
+  (it "single top-level form, answer in form 0 — NOT a violation"
     (expect (false? (vis/answer-position-violation? 0 1))))
 
-  (it "two forms, answer in last (form 1) — NOT a violation"
-    (expect (false? (vis/answer-position-violation? 1 2))))
+  (it "two forms, answer in last (form 1) — violation because answer is not alone"
+    (expect (true? (vis/answer-position-violation? 1 2))))
 
-  (it "five forms, answer in last (form 4) — NOT a violation"
-    (expect (false? (vis/answer-position-violation? 4 5))))
+  (it "five forms, answer in last (form 4) — violation because answer is not alone"
+    (expect (true? (vis/answer-position-violation? 4 5))))
 
-  (it "two forms, answer in first (form 0) — violation (trailing work after answer)"
+  (it "two forms, answer in first (form 0) — violation because answer is not alone"
     (expect (true? (vis/answer-position-violation? 0 2))))
 
   (it "five forms, answer in middle (form 2) — violation"
@@ -728,17 +728,16 @@
     (expect (false? (vis/answer-position-violation? :one 3)))
     (expect (false? (vis/answer-position-violation? "1" 3))))
 
-  (it "position error message names the actual + required form numbers (1-based)"
+  (it "position error message tells the model to answer alone"
     (let [msg (vis/answer-position-error-message 0 3)]
       (expect (string? msg))
-      ;; 0-based form-idx 0, 1-based 1, total 3, last 3.
+      ;; 0-based form-idx 0, 1-based 1, total 3.
       (expect (re-find #"3 top-level forms" msg))
       (expect (re-find #"answer fired from form 1" msg))
-      (expect (re-find #"must fire from form 3" msg))
-      (expect (re-find #"LAST top-level form" msg))
-      ;; Both recovery paths surface in the message.
-      (expect (re-find #"move the answer call to the end" msg))
-      (expect (re-find #"only form of the next iteration" msg)))))
+      (expect (re-find #"ONLY top-level form" msg))
+      (expect (re-find #"omitting `\(answer …\)`" msg))
+      (expect (re-find #"one final top-level form" msg))
+      (expect (re-find #"`\(let \[\.\.\.\] \(answer …\)\)`" msg)))))
 
 ;; -----------------------------------------------------------------------------
 ;; make-progress-tracker — phased chunk accumulation
@@ -903,8 +902,9 @@
     ;; overwrite the slot so the TUI surfaces the rejection instead
     ;; of the original success.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
-      ;; iteration had three forms; (answer …) fired from form 1 (mid-
-      ;; iteration), violating rule b'. Forms 0 and 2 ran clean.
+      ;; iteration had three forms; (answer …) fired from form 1,
+      ;; violating rule b' because the answer was not alone. Forms 0
+      ;; and 2 ran clean.
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(def x 1)" :result 1 :stdout "" :stderr ""
                  :execution-time-ms 1 :error nil})
@@ -920,13 +920,13 @@
                  :code "(answer \"early\")" :result :vis/answer
                  :stdout "" :stderr ""
                  :execution-time-ms 1
-                 :error "(answer …) is the LAST top-level form of its iteration. …"})
+                 :error "(answer …) must be the ONLY top-level form of its final iteration. …"})
       (let [entry (first (get-timeline))]
         ;; Slots 0 + 2 stay successful; slot 1 flips to error and
         ;; carries the formatted validation message.
         (expect (= [true false true] (:successes entry)))
         (expect (re-find #"ERROR:" (nth (:results entry) 1)))
-        (expect (re-find #"LAST top-level form" (nth (:results entry) 1)))
+        (expect (re-find #"ONLY top-level form" (nth (:results entry) 1)))
         ;; Re-emit updates the existing event in place; no duplicate
         ;; code block lands in the ordered live trace.
         (expect (= [{:type :form-result :form-idx 0}
@@ -1127,6 +1127,25 @@
       ;; Must surface SOMETHING actionable; exact message is edamame's.
       (expect (pos? (count err))))))
 
+(defdescribe glued-numeric-option-keyword-repro-test
+  (it "reproduces the {:limit200} parse failure from execution 2a696007"
+    (let [src "(v/glob \".\" \"**/*.clj\" {:limit200})"
+          [forms err] (vis/split-top-level-forms src)]
+      (expect (nil? err))
+      (expect (= 1 (count forms)))
+      (expect (= "(v/glob \".\" \"**/*.clj\" {:limit 200})"
+                (:expr (first forms))))
+      (expect (:repaired? (first forms)))))
+
+  (it "reproduces the {:max-lines260} parse failure from the last persisted block"
+    (let [src "(v/cat foundation-core-path {:max-lines260})"
+          [forms err] (vis/split-top-level-forms src)]
+      (expect (nil? err))
+      (expect (= 1 (count forms)))
+      (expect (= "(v/cat foundation-core-path {:max-lines 260})"
+                (:expr (first forms))))
+      (expect (:repaired? (first forms))))))
+
 (defdescribe markdown-fence-guard-test
   (it "rejects raw markdown fence tokens before SCI eval can blow the stack"
     (let [environment (vis/create-sci-context nil)
@@ -1204,6 +1223,17 @@
   ([sandbox] (index sandbox #{}))
   ([sandbox initial-ns-keys]
    (vis/build-var-index nil initial-ns-keys sandbox nil nil nil)))
+
+(defdescribe var-index-hot-cap-test
+  (it "renders at most 100 live user vars plus a compact overflow summary"
+    (let [sandbox (into {}
+                    (map (fn [i]
+                           [(symbol (format "v%03d" i)) i])
+                      (range 105)))
+          out     (index sandbox)]
+      (expect (str/includes? out ";; overflow-live-symbols: 5"))
+      (expect (str/includes? out ";; hidden live symbols: v100, v101, v102, v103, v104"))
+      (expect (= 100 (count (re-seq #"(?m)^\(def v\d{3}" out)))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Inline scalars
@@ -1525,7 +1555,7 @@
           out     (vis/safe-pr-str billion {:print-length 3 :max-chars 200})]
       (expect (re-find #"\(0 1 2 \.\.\.\)" out)))))
 
-;; ─── from auto_forget_test.clj ───
+;; ─── from auto_archive_test.clj ───
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -1548,92 +1578,71 @@
     entries))
 
 (defn- make-registry
-  "Build a var-registry {symbol -> {:conversation-turn-id uuid ...}} from a seq of
-   [sym conversation-turn-id] pairs."
+  "Build a var-registry {symbol -> {:created-at ...}} from a seq of
+   [sym created-at-ms] pairs."
   [entries]
   (into {}
-    (map (fn [[sym qid]]
-           [sym {:conversation-turn-id qid :value nil :code "" :version 0}]))
+    (map (fn [[sym created-at-ms]]
+           [sym {:created-at created-at-ms :value nil :code "" :version 0}]))
     entries))
 
 ;; ---------------------------------------------------------------------------
-;; auto-forget-candidates (pure)
+;; auto-archive-candidates (pure)
 ;; ---------------------------------------------------------------------------
 
-(def q1 (random-uuid))
-(def q2 (random-uuid))
-(def q3 (random-uuid))
-(def q4 (random-uuid))
+(defdescribe auto-archive-candidates-test
 
-(defdescribe auto-forget-candidates-test
+  (it "empty sandbox archives nothing"
+    (expect (= #{} (vis/auto-archive-candidates {} #{} {} 80))))
 
-  (it "🫙 empty sandbox → nothing to forget, move along"
-    (expect (= #{} (vis/auto-forget-candidates {} #{} {} #{q1}))))
+  (it "does nothing while live user symbol count is at or below target"
+    (let [sandbox  (make-sandbox [['a 1] ['b 2]])
+          registry (make-registry [['a 1] ['b 2]])]
+      (expect (= #{} (vis/auto-archive-candidates sandbox #{} registry 2)))))
 
-  (it "🛡️ built-ins are untouchable — hands off initial-ns-keys"
-    (let [sandbox   (make-sandbox [['fetch 42]])
-          initials  #{'fetch}
-          registry  (make-registry [['fetch q1]])
-          recent    #{q1}]
-      (expect (= #{} (vis/auto-forget-candidates sandbox initials registry recent)))))
+  (it "archives oldest undocumented user symbols until target is reached"
+    (let [sandbox  (make-sandbox [['old-a 1]
+                                  ['old-b 2]
+                                  ['new-c 3]
+                                  ['new-d 4]])
+          registry (make-registry [['old-a 10]
+                                   ['old-b 20]
+                                   ['new-c 30]
+                                   ['new-d 40]])]
+      (expect (= #{'old-a 'old-b}
+                (vis/auto-archive-candidates sandbox #{} registry 2)))))
 
-  (it "🎧 SYSTEM vars (TURN_USER_REQUEST/CONVERSATION_PREVIOUS_ANSWER/ITERATION_PREVIOUS_REASONING) are sacred — never forgotten"
-    (let [sandbox   (make-sandbox [['TURN_USER_REQUEST "hello"]])
-          registry  (make-registry [['TURN_USER_REQUEST q1]])
-          recent    #{q2}]  ;; q1 is NOT recent — would be forgotten if not in SYSTEM_VAR_NAMES
-      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
+  (it "initial sandbox symbols and SYSTEM symbols never count as archive candidates"
+    (let [sandbox  (make-sandbox [['builtin 1]
+                                  ['TURN_USER_REQUEST "hello"]
+                                  ['old-a 1]
+                                  ['new-b 2]])
+          registry (make-registry [['builtin 1]
+                                   ['TURN_USER_REQUEST 1]
+                                   ['old-a 10]
+                                   ['new-b 20]])]
+      (expect (= #{'old-a}
+                (vis/auto-archive-candidates sandbox #{'builtin} registry 1)))))
 
-  (it "📝 documented vars survive any purge — docstrings are armor"
-    (let [sandbox   (make-sandbox [['important 99 "This var is documented"]])
-          registry  (make-registry [['important q1]])
-          recent    #{q2}]  ;; q1 is NOT recent
-      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
+  (it "docstring user symbols count toward the target but are not automatically archived"
+    (let [sandbox  (make-sandbox [['protected 1 "Durable state"]
+                                  ['old-a 2]
+                                  ['old-b 3]])
+          registry (make-registry [['protected 1]
+                                   ['old-a 2]
+                                   ['old-b 3]])]
+      (expect (= #{'old-a 'old-b}
+                (vis/auto-archive-candidates sandbox #{} registry 1)))))
 
-  (it "🕐 recently-touched vars stay alive within the recency window"
-    (let [sandbox   (make-sandbox [['scratch 1]])
-          registry  (make-registry [['scratch q2]])
-          recent    #{q1 q2 q3}]
-      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
-
-  (it "🗑️ stale undocumented scratch vars get swept without mercy"
-    (let [sandbox   (make-sandbox [['scratch 1] ['tmp 2]])
-          registry  (make-registry [['scratch q1] ['tmp q1]])
-          recent    #{q3 q4}]
-      (expect (= #{'scratch 'tmp}
-                (vis/auto-forget-candidates sandbox #{} registry recent)))))
-
-  (it "🎯 full gauntlet: stale→gone, documented→safe, recent→safe, system→safe, builtin→safe"
-    (let [sandbox   (make-sandbox [['stale-a 1]
-                                   ['stale-b 2]
-                                   ['documented 3 "keep me"]
-                                   ['recent-var 4]
-                                   ['ITERATION_PREVIOUS_REASONING 5]   ;; SYSTEM_VAR_NAMES — protected
-                                   ['builtin 6]])
-          initials  #{'builtin}
-          registry  (make-registry [['stale-a q1]
-                                    ['stale-b q1]
-                                    ['documented q1]
-                                    ['recent-var q3]
-                                    ['ITERATION_PREVIOUS_REASONING q1]
-                                    ['builtin q1]])
-          recent    #{q3 q4}]
-      (expect (= #{'stale-a 'stale-b}
-                (vis/auto-forget-candidates sandbox initials registry recent)))))
-
-  (it "👻 ephemeral vars with no DB footprint are invisible to the janitor"
-    (let [sandbox   (make-sandbox [['ephemeral 99]])
-          registry  {}
-          recent    #{q1}]
-      (expect (= #{} (vis/auto-forget-candidates sandbox #{} registry recent)))))
-
-  (it "⚡ a non-registered uppercase var (e.g. CONFIG) gets forgotten like any mortal var"
-    ;; SYSTEM_VAR_NAMES is a fixed 10-name registry (TURN_*, ITERATION_*,
-    ;; CONVERSATION_*); user-defined uppercase names (CONFIG, MAX_FOO, ...)
-    ;; are NOT system vars and get the normal stale-sweep treatment.
-    (let [sandbox   (make-sandbox [['CONFIG 42]])
-          registry  (make-registry [['CONFIG q1]])
-          recent    #{q2}]
-      (expect (= #{'CONFIG} (vis/auto-forget-candidates sandbox #{} registry recent))))))
+  (it "archives every eligible symbol when protected symbols alone exceed the target"
+    (let [sandbox  (make-sandbox [['p1 1 "Pinned"]
+                                  ['p2 2 "Pinned"]
+                                  ['scratch 3]])
+          registry (make-registry [['p1 1]
+                                   ['p2 2]
+                                   ['scratch 3]])]
+      (expect (= #{'scratch}
+                (vis/auto-archive-candidates sandbox #{} registry 1))))))
 
 ;; ─── from core_test.clj ───
 

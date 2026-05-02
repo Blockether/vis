@@ -78,7 +78,7 @@ captured answer before committing it.
 
 Validation includes:
 
-1. `(answer …)` must fire from the last top-level form of the iteration.
+1. `(answer …)` must be the only top-level form of the final iteration. A wrapper such as `(let [...] (answer ...))` is fine, but no sibling top-level forms may run in the answer iteration.
 2. The answer-bearing form itself must not have errored.
 3. If the current `conversation_turn_state` has completion gates, the
    gate contract must pass before the answer is accepted.
@@ -86,16 +86,26 @@ Validation includes:
 See [Completion Contract](completion-contract.md) for the Intent → Plan
 → Gate → Attestation → Provenance model.
 
-The canonical way to build the answer body is the `v/` surface
-(see [Markdown builders under `v/`](../extensions/common/markdown.md)):
+The canonical flow separates work iterations from the final answer iteration:
 
 ```clojure
+;; iteration N: explore / act / verify, then omit answer so the host loops
+(def touched-paths ["src/foo.clj" "test/foo_test.clj"])
+(def verification {:status :passed :cmd "./verify.sh --quick"})
+{:touched touched-paths :verification verification}
+```
+
+```clojure
+;; iteration N+1: final turn-finisher, exactly one top-level form
 (answer
   (v/join
     (v/h1 "Done")
     (v/p "Three files touched.")
-    (v/ul (map #(v/file-link % nil) touched-paths))))
+    (v/ul (map #(v/file-link % nil) touched-paths))
+    (v/p (str "Verification: " (:status verification))))))
 ```
+
+Use the `v/` surface to build the answer body (see [Markdown builders under `v/`](../extensions/common/markdown.md)).
 
 Key properties:
 
@@ -105,9 +115,7 @@ Key properties:
 - Use `v/` helpers (`v/h1`, `v/table`, `v/file-link`, …) to
   assemble the body — they keep formatting consistent across
   channels and surface clickable links the TUI can follow.
-- Calling `(answer …)` more than once in the same iteration: the LAST
-  call wins. The atom is reset to `nil` at the start of every
-  iteration.
+- Correct flow is multi-iteration: explore/act/verify first, omit `(answer …)` so the host loops, then answer alone in the final iteration.
 - If the answer-bearing form errors, the captured answer is discarded and the loop retries.
 - If completion gates exist and `(v/gate-checks)` would fail, the captured answer is discarded and the loop retries with a validation error.
 - If no gates exist, the gate guard is skipped. Trivial chat does not need a completion contract.

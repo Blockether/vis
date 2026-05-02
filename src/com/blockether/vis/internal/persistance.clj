@@ -317,8 +317,10 @@
   ([db-info conversation-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref))
   ([db-info conversation-ref opts] ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref opts)))
 
-(defdelegate db-var-history    [db-info conversation-ref sym])
-(defdelegate db-turn-history   [db-info conversation-ref])
+(defdelegate db-var-history-index    [db-info conversation-ref opts])
+(defdelegate db-var-history          [db-info conversation-ref sym])
+(defdelegate db-var-history-timeline [db-info conversation-ref opts])
+(defdelegate db-turn-history         [db-info conversation-ref])
 
 ;; --- Dependencies ---
 (defdelegate db-store-dependency!     [db-info opts])

@@ -73,12 +73,22 @@
                                            (not (str/blank? (str answer))))
                         trace (into []
                                 (map (fn [it]
-                                       (let [all-exprs   (vis/db-list-iteration-blocks d (:id it))
+                                       (let [all-exprs   (vec (vis/db-list-iteration-blocks d (:id it)))
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
-                                             exprs       (cond-> all-exprs
-                                                           answer-here? butlast)
+                                             elide-idxs  (cond-> (into #{}
+                                                                   (keep-indexed
+                                                                     (fn [idx {:keys [result]}]
+                                                                       (when (= :vis/silent result) idx)))
+                                                                   all-exprs)
+                                                           answer-here? (conj (dec (count all-exprs))))
+                                             exprs       (into []
+                                                           (keep-indexed
+                                                             (fn [idx expr]
+                                                               (when-not (contains? elide-idxs idx)
+                                                                 expr)))
+                                                           all-exprs)
                                              result-strs (mapv (fn [{:keys [result error]}]
                                                                  (if error
                                                                    (vis/format-error error)

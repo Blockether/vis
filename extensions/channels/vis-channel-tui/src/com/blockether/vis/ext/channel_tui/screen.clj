@@ -112,12 +112,37 @@
   (vis/notify! "✓ Copied conversation ID"
     :level :success :ttl-ms copy-success-ttl-ms))
 
-(defn- copy-selection! [text]
+(defn- copy-selection!
+  ([text]
+   (copy-selection! text :transcript))
+  ([text source]
+   (future
+     (try (input/clipboard-copy! (or text ""))
+       (catch Throwable _ nil)))
+   (vis/notify! (if (= source :input)
+                  "✓ Copied input selection"
+                  "✓ Copied selection")
+     :level :success :ttl-ms copy-success-ttl-ms)))
+
+(defn- copy-conversation-as-markdown! [conversation-id]
   (future
-    (try (input/clipboard-copy! (or text ""))
-      (catch Throwable _ nil)))
-  (vis/notify! "✓ Copied selection"
-    :level :success :ttl-ms copy-success-ttl-ms))
+    (try
+      (if-not conversation-id
+        (vis/notify! "No conversation to copy as Markdown"
+          :level :warn :ttl-ms copy-success-ttl-ms)
+        (let [env      (vis/env-for conversation-id)
+              markdown (when env
+                         (vis/conversation->markdown (:db-info env) conversation-id))]
+          (if (seq markdown)
+            (do (input/clipboard-copy! markdown)
+              (vis/notify! "✓ Copied conversation as Markdown"
+                :level :success :ttl-ms copy-success-ttl-ms))
+            (vis/notify! "No persisted turns to copy as Markdown"
+              :level :warn :ttl-ms copy-success-ttl-ms))))
+      (catch Throwable t
+        (vis/notify!
+          (str "Markdown copy failed: " (or (.getMessage t) (.getName (class t))))
+          :level :error :ttl-ms copy-success-ttl-ms)))))
 
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
@@ -165,6 +190,30 @@
                     to           (min bottom-limit (+ top-limit (long top) selectable-h))]
               row (range from to)]
           {:row row :col left :width width})))))
+
+(defn- input-selectable-ranges
+  "Return absolute screen-cell ranges for the visible input editor text rows.
+
+   The ranges start at the same horizontal text inset used by
+   `render/draw-input-box!`, so selection copies the user's draft text without
+   the input box padding or border chrome."
+  [input-top text-rows cols]
+  (let [cols     (long (max 0 cols))
+        text-w   (long (render/input-text-w cols))
+        left     (long (max 0 (quot (- cols text-w) 2)))
+        text-top (+ (long input-top) 1 (long render/input-pad-y))
+        n        (long (max 0 text-rows))]
+    (if (or (not (pos? text-w)) (not (pos? n)))
+      []
+      (vec
+        (for [row (range text-top (+ text-top n))]
+          {:row row :col left :width text-w})))))
+
+(defn- selectable-ranges-for-source
+  [source transcript-ranges input-ranges]
+  (if (= source :input)
+    input-ranges
+    transcript-ranges))
 
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
@@ -279,7 +328,9 @@
                         :detail-expansions (:detail-expansions db)})
         total-h      (long (:total-h layout))
         text-top     (+ messages-top render/MESSAGE_MARGIN_TOP)
-        selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)]
+        transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
+        input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
+        selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
@@ -306,7 +357,10 @@
           viewport     {:viewport-top text-top
                         :eff-scroll   (:eff-scroll layout)}]
       (when-let [sel (:mouse-selection db)]
-        (paint-selection! screen sel cols rows selectable-ranges viewport))
+        (paint-selection! screen sel cols rows
+          (selectable-ranges-for-source
+            (:source sel) transcript-selectable-ranges input-selectable-ranges)
+          viewport))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols :rows rows :total-h total-h :inner-h inner-h
@@ -314,7 +368,9 @@
        :text-top text-top
        :eff-scroll (:eff-scroll layout)
        :screen-cells screen-cells
-       :selectable-ranges selectable-ranges})))
+       :selectable-ranges selectable-ranges
+       :transcript-selectable-ranges transcript-selectable-ranges
+       :input-selectable-ranges input-selectable-ranges})))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
@@ -683,6 +739,7 @@
                ;; drag coordinates, highlights the range during render, then
                ;; copies the visible text when the button is released.
                mouse-selection-anchor (volatile! nil)
+               mouse-selection-source (volatile! nil)
                ;; `paste-buffer` accumulates every keystroke received
                ;; between `paste-start?` and `paste-end?`. We treat
                ;; the whole block as one paste — newlines included —
@@ -825,6 +882,8 @@
                                    (< my (+ (long thumb-top) thumb-h)))
                        selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
                        selectable-ranges (get-in db [:layout :selectable-ranges])
+                       transcript-selectable-ranges (get-in db [:layout :transcript-selectable-ranges])
+                       input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
                        selection-viewport {:viewport-top bar-top
                                            :eff-scroll   (get-in db [:layout :eff-scroll])}]
                    (cond
@@ -895,21 +954,24 @@
                        (some? @mouse-selection-anchor))
                      (let [screen-focus (selection/point mx my)
                            doc-focus    (selection/screen->document-point
-                                          screen-focus selection-viewport)]
+                                          screen-focus selection-viewport)
+                           source       @mouse-selection-source]
                        (state/dispatch
                          [:set-mouse-selection
                           {:anchor @mouse-selection-anchor
-                           :focus  doc-focus}])
-                       (when-let [{:keys [direction amount]}
-                                  (selection/auto-scroll-step
-                                    screen-focus {:top bar-top
-                                                  :bottom (+ bar-top inner-h)
-                                                  :edge-size 6
-                                                  :max-step 6})]
-                         (case direction
-                           :up   (state/dispatch [:scroll-up amount total-h inner-h])
-                           :down (state/dispatch [:scroll-down amount total-h inner-h])
-                           nil))
+                           :focus  doc-focus
+                           :source source}])
+                       (when-not (= source :input)
+                         (when-let [{:keys [direction amount]}
+                                    (selection/auto-scroll-step
+                                      screen-focus {:top bar-top
+                                                    :bottom (+ bar-top inner-h)
+                                                    :edge-size 6
+                                                    :max-step 6})]
+                           (case direction
+                             :up   (state/dispatch [:scroll-up amount total-h inner-h])
+                             :down (state/dispatch [:scroll-down amount total-h inner-h])
+                             nil)))
                        (recur))
 
                      ;; CLICK_RELEASE — ends a drag, and serves as
@@ -926,30 +988,38 @@
                      (= atype MouseActionType/CLICK_RELEASE)
                      (let [was-dragging?    (some? @scrollbar-drag-offset)
                            already-handled? @click-action-fired?
-                           anchor           @mouse-selection-anchor]
+                           anchor           @mouse-selection-anchor
+                           source           @mouse-selection-source]
                        (vreset! scrollbar-drag-offset nil)
                        (vreset! click-action-fired? false)
                        (vreset! mouse-selection-anchor nil)
+                       (vreset! mouse-selection-source nil)
                        (if (and selection-copy? anchor)
                          (let [sel        {:anchor anchor
                                            :focus  (selection/screen->document-point
                                                      (selection/point mx my)
-                                                     selection-viewport)}
+                                                     selection-viewport)
+                                           :source source}
                                screen-sel (selection/document->screen-selection
                                             sel selection-viewport)
                                payload    (selection/selected-text
                                             (get-in db [:layout :screen-cells])
                                             screen-sel
-                                            selectable-ranges)]
+                                            (selectable-ranges-for-source
+                                              source transcript-selectable-ranges input-selectable-ranges))]
                            (state/dispatch [:clear-mouse-selection])
                            (when (and (not= anchor (:focus sel))
                                    (not (str/blank? payload)))
-                             (copy-selection! payload)))
+                             (copy-selection! payload source)))
                          (when (and (not was-dragging?) (not already-handled?))
                            (when-let [hit (cr/lookup mx my)]
                              (case (:kind hit)
                                :copy-id
                                (copy-conversation-id! (:text hit))
+
+                               :copy-as-markdown
+                               (copy-conversation-as-markdown! (:text hit))
+
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
                                (future
@@ -998,6 +1068,9 @@
                                :copy-id
                                (copy-conversation-id! (:text hit))
 
+                               :copy-as-markdown
+                               (copy-conversation-as-markdown! (:text hit))
+
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
 
@@ -1015,11 +1088,19 @@
                                        screen-anchor selectable-ranges
                                        {:row-padding 2})
                                  (let [doc-anchor (selection/screen->document-point
-                                                    screen-anchor selection-viewport)]
+                                                    screen-anchor selection-viewport)
+                                       source     (if (selection/point-in-ranges?
+                                                        screen-anchor input-selectable-ranges
+                                                        {:row-padding 2})
+                                                    :input
+                                                    :transcript)]
                                    (vreset! mouse-selection-anchor doc-anchor)
+                                   (vreset! mouse-selection-source source)
                                    (state/dispatch
                                      [:set-mouse-selection
-                                      {:anchor doc-anchor :focus doc-anchor}]))))))
+                                      {:anchor doc-anchor
+                                       :focus  doc-anchor
+                                       :source source}]))))))
                        (recur))
 
                      ;; Every other click — inside the input box,
@@ -1077,44 +1158,6 @@
 
                                :copy
                                (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
-
-                               :copy-as-markdown
-                               ;; One-shot "give me the whole
-                               ;; conversation as Markdown on the
-                               ;; clipboard". Goes through the host
-                               ;; helper `vis/conversation->markdown`
-                               ;; so every channel renders the same
-                               ;; projection. We surface a viewer
-                               ;; dialog with the result so the user
-                               ;; can confirm what was copied (and
-                               ;; re-copy via the system shortcut if
-                               ;; the AWT clipboard write was a no-op
-                               ;; on a remote / SSH session).
-                               (with-dialog-lock
-                                 #(let [conversation-id (get-in @state/app-db [:conversation :id])
-                                        env             (when conversation-id (vis/env-for conversation-id))
-                                        markdown        (when (and env conversation-id)
-                                                          (try
-                                                            (vis/conversation->markdown
-                                                              (:db-info env) conversation-id)
-                                                            (catch Throwable t
-                                                              (str "Markdown export failed: "
-                                                                (or (.getMessage t) (.getName (class t)))))))]
-                                    (cond
-                                      (nil? conversation-id)
-                                      (dlg/text-viewer-dialog! screen "Copy Conversation as Markdown"
-                                        "(no conversation)")
-
-                                      (nil? markdown)
-                                      (dlg/text-viewer-dialog! screen "Copy Conversation as Markdown"
-                                        "(conversation has no persisted turns yet)")
-
-                                      :else
-                                      (do (input/clipboard-copy! markdown)
-                                        (dlg/text-viewer-dialog!
-                                          screen
-                                          "Copied conversation as Markdown (clipboard)"
-                                          markdown)))))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
