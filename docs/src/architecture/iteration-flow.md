@@ -140,12 +140,15 @@ Continuity is delivered by:
   — see [SYSTEM vars](#system-vars) below) the model can read directly
   from inside a fenced code block.
 
-For deeper introspection, the opt-in `vis-foundation` extension
-exposes `(v/inspect)` as the canonical state data map and `(v/report)`
-as the Markdown renderer over the same data. Completion contract helpers
-include `(v/intent!)`, `(v/plan!)`, `(v/gate!)`, `(v/attest!)`,
-`(v/block-gate!)`, `(v/gate-checks)`, and `(v/gate-report)`. See
-[Completion Contract](completion-contract.md) and
+For deeper conversation introspection, the opt-in `vis-foundation`
+extension exposes `(v/inspect)` as the canonical state data map and
+`(v/report)` as the Markdown renderer over the same data. Symbol memory
+uses `var-history`: `(var-history)` returns a compact symbol index with
+provenance, while `(var-history 'sym)` returns history for one known
+symbol. Completion contract helpers include `(v/intent!)`, `(v/plan!)`,
+`(v/gate!)`, `(v/attest!)`, `(v/block-gate!)`, `(v/gate-checks)`, and
+`(v/gate-report)`. See [RLM Memory](rlm-memory.md),
+[Completion Contract](completion-contract.md), and
 [Meta extension](../extensions/common/vis-foundation.md).
 
 ## SYSTEM vars
@@ -170,7 +173,7 @@ prefix-tagged lifetime tiers:
 UPPERCASE marks them as constants. See
 `com.blockether.vis.core/system-var-sym?` for the predicate. SYSTEM
 vars are excluded from `<var_index>` and are not subject to
-auto-forget — the model reads them as plain SCI symbols.
+automatic archive — the model reads them as plain SCI symbols.
 
 `TURN_SYSTEM_PROMPT` carries the full assembled system prompt as a
 multi-KB string; because SYSTEM vars are excluded from `<var_index>`,
@@ -212,8 +215,11 @@ Rules:
 - `:fn` → arglists + first docstring line.
 - `:nil|:bool|:int|:float|:keyword|:symbol` → inline literal.
 
-There is no `<vars_archive>` block. Vars that get auto-forgotten
-(see `auto-forget-stale-vars!` in `internal/loop.clj`) drop out of
-the sandbox and are no longer rendered. The DB still carries their
-full history; the agent recovers prior versions on demand via
-`(v/inspect)` (from `vis-foundation`).
+`<var_index>` is capped hot memory, not a full symbol archive. It renders
+at most 100 live user-defined symbols; overflow and archived symbols are
+shown only as compact names/counts. After a successful accepted final
+answer, Vis archives eligible symbols down toward an 80-symbol target.
+Archive removes a symbol from the live sandbox and prompt hot set but
+never deletes persisted history. Symbol history and provenance are read
+through `var-history`, not through `v/inspect`. See
+[RLM Memory](rlm-memory.md).
