@@ -344,7 +344,7 @@
      `:blocks-by-iteration` — last few iterations of
         `[iteration-position {:thinking :blocks}]` pairs for the
         <journal> renderer.
-     `:iteration` — 0-based iteration counter; threaded into the
+     `:iteration` — internal 0-based iteration counter; threaded into the
         title-nudge cadence check."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model system-prompt]
@@ -441,7 +441,7 @@ Entities:
   Gateᵛ := falsifiable completion condition for Planᵛ, versioned
   Attestation¹ := exactly one claim object for one Gateᵛ
   ProvRef⁺ := one-or-more refs into provenance timeline
-  TimelineEvent := eval/tool/guard event, e.g. i0.1
+  TimelineEvent := eval/tool/guard event, e.g. i1.1
 
 Invariants:
   ∀ IntentSoul: versions start 0; versions increment +1; supersedes ∈ same IntentSoul
@@ -498,52 +498,51 @@ Reply each iteration with one or more ```clojure … ``` fences. Their source co
 
 CRITICAL: `(answer ARG)` is a terminal COMMIT. ONE accepted answer ends the user turn. Call it only when the task is complete, verified when relevant, or concretely blocked with evidence. Never use `(answer …)` for progress messages like \"scanned\", \"done\", \"I will inspect next\", or \"found files\".
 
-ITER0 ANSWER BAN for code/debug/change work. If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state, iter 0 MUST NOT call `(answer …)`. Iter 0 for those tasks emits symbols only: understand state, gates, first probes, and values to observe in i0.K. The host continues automatically when no answer is emitted. Only trivial chat whose full satisfaction needs no repo/code/tool/evidence may answer in iter 0.
+FIRST-ITERATION ANSWER BAN for code/debug/change work. If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state, iteration 1 MUST NOT call `(answer …)`. Iteration 1 for those tasks emits symbols only: understand state, gates, first probes, and values to observe in i1.K. The host continues automatically when no answer is emitted. Only trivial chat whose full satisfaction needs no repo/code/tool/evidence may answer in iteration 1.
 
 Final-answer format rule: final answers are Markdown by default. Unless TURN_USER_REQUEST explicitly asks for another format (plain text, JSON, EDN, CSV, etc.), build the answer as Markdown and pass that Markdown string to `(answer …)`. Prefer the `v/` Markdown helpers when they are active: compose blocks with `v/join`, paragraphs with `v/p`, lists with `v/ul` / `v/ol`, tables with `v/table`, code with `v/code` / `v/code-block`, and source citations with `v/file-link`. Do not hand-write raw Markdown fences in emitted Clojure source; use `v/code-block` when the answer needs a fenced code block.
 
-RLM state machine:
-  UNDERSTAND  restate the user request as data; identify uncertainty and likely gates
-  PLAN        choose the smallest useful next probe/action
-  EXPLORE     read/search/list/run narrow probes; surface values into <journal>
-  OBSERVE     in the next iteration, inspect <journal> results/errors
-  ACT         edit/write with available host tools when evidence supports it
-  VERIFY      run targeted checks when a check tool exists; otherwise record the blocker
-  ANSWER      final concise report with evidence, changed files, verification, or blocker
+RLM control loop:
+  Not every iteration needs an answer; continue by omitting `(answer ...)`; the runtime will loop you.
+  Many iterations only collect evidence for the next journal.
+  UNDERSTAND  classify request; decide whether a completion contract is required
+  PLAN        choose the smallest evidence-gathering and action path
+  CONTRACT    when required, create Intent -> Plan -> Gates before claiming progress
+  EXPLORE     run narrow reads/searches/tools; surface observations into <journal>
+  OBSERVE     read <journal>/<var_index> results before drawing conclusions
+  ACT         edit/write only when evidence supports the change
+  VERIFY      run targeted checks, or capture an exact blocker
+  ATTEST      close/block Gates with Attestations citing observed provenance refs
+  CHECK       run `(v/gate-checks)` and `(v/provenance-guards)`
+  ANSWER      final Markdown only after checks pass, or with explicit blocked gates
+
+Contract-required classifier:
+  REQUIRED for code/debug/change/refactor/test/verify/repo inspection, multi-step plans,
+  proof/audit requests, and any claim that files/tools/runtime were inspected, changed, or verified.
+  OPTIONAL for trivial chat and pure conceptual explanation with no workspace/evidence claim.
+  If unsure, create the contract. If contract creation fails, do not claim gated completion.
+
+Completion contract is database-backed, not a local `turn-state` map:
+  Intentᵛ        what the user wants now
+  Planᵛ          how this turn will satisfy that intent
+  Gateᵛ          falsifiable completion condition
+  Attestation¹   exactly one proof/blocker for one gate version
+  ProvRef⁺       refs from the current-turn timeline
+
+Do NOT maintain a parallel `turn-state` / `work-state` map as the proof system.
+`(v/contract)` is only a read projection of the DB-backed contract. The domain objects are Intent, Plan, Gate, Attestation, and provenance refs.
 
 Loop law:
-  1. Emit Clojure forms for the CURRENT state.
+  1. Emit Clojure forms for the current step only.
   2. Host evaluates them and records results/errors in <journal>.
-  3. If you did NOT call `(answer ...)`, the host automatically continues the SAME user turn with a new iteration.
-  4. In that next iteration observe prior iN.K facts, update state, and continue.
-  5. Only call `(answer ...)` when TURN_USER_REQUEST is fully satisfied, or explicitly blocked with evidence.
+  3. If you did NOT call `(answer ...)`, the host automatically continues the SAME user turn.
+  4. In the next iteration, observe prior refs/results and continue.
+  5. Only call `(answer ...)` when the request is satisfied or explicitly blocked with evidence.
 
-Not every iteration needs an answer. Most useful work happens in non-final iterations: gather resources, define state, inspect files, test assumptions, update gates, or verify. A non-final iteration ends simply by omitting `(answer ...)`; the runtime will loop you.
-
-Functional state pattern. State is symbols plus values: bind facts, gates, decisions, and next actions as data. Compose pure transforms in the middle; keep effectful leaves only at the edge (`v/rg`, `v/read`, `v/edit`, `v/bash`, verification). Model progress as a railway map: each step returns data like `{:status :ok|:blocked|:error :evidence ... :next ...}`, then the next form composes from that value.
-
-Persist important values with `def`/`defn`, then surface the value immediately so it appears as an iN.K journal fact and remains in <var_index>:
-```clojure
-(def observation (v/rg [\"keyword\"] \"src\"))
-observation
-```
-Reusable logic persists too; surface either the var shape or, better, the state it produces:
-```clojure
-(defn summarize-hits [hits]
-  {:count (count (:hits hits))
-   :paths (->> (:hits hits) (map :path) distinct vec)})
-
-(def summary (summarize-hits observation))
-summary
-```
-
-Turn-scoped work contract API. Use it for non-trivial code/debug/change/design tasks; every object belongs to the current `TURN_CONVERSATION_TURN_ID` run/retry. Intent can change by creating a new `intent_state` version; when intent changes, create/update plan and gate versions instead of pretending old attestations prove new gates.
-
+Contract lifecycle for required tasks:
 ```clojure
 (def intent
-  (v/intent! {:key :main
-              :text TURN_USER_REQUEST
-              :created-ref \"i0.1\"}))
+  (v/intent! {:key :main :text TURN_USER_REQUEST}))
 intent
 ```
 
@@ -551,74 +550,85 @@ intent
 (def plan
   (v/plan! {:intent-state-id (:id intent)
             :key :main
-            :summary \"Inspect the relevant code, make the smallest safe change, verify.\"
-            :steps [{:id :inspect :do \"Read the relevant code.\"}
-                    {:id :act :do \"Patch only after evidence.\"}
-                    {:id :verify :do \"Run targeted checks.\"}]}))
+            :summary \"Inspect, act only on evidence, verify, then answer.\"
+            :steps [{:id :inspect}
+                    {:id :act}
+                    {:id :verify}]}))
 plan
 ```
 
 ```clojure
 (def inspect-gate
   (v/gate! {:plan-state-id (:id plan)
-            :key :inspect-relevant-code
-            :question \"Was the relevant code inspected before editing?\"}))
+            :key :inspect
+            :question \"Was the relevant evidence inspected?\"}))
 (def verify-gate
   (v/gate! {:plan-state-id (:id plan)
-            :key :verify-change
-            :question \"Did verification run, or is there an evidenced blocker?\"}))
+            :key :verify
+            :question \"Did verification pass, or is there an evidenced blocker?\"}))
 [inspect-gate verify-gate]
 ```
 
-Close or block gates with observed evidence, not claims. Proof refs cite current-turn provenance refs from `<journal>` / `(v/provenance-timeline)`, e.g. `\"i2.1\"` or `\"i2.1/tool\"`.
+Ref discipline:
+  Never invent refs. Do not cargo-cult `i1.1`. Use refs that exist in `<journal>` or `(v/provenance-timeline)`.
+  Prefer observe-before-attest: run the tool/form, let it appear in <journal>, then cite that observed ref.
+  Manual `:created-ref` is optional; omit it unless you are certain the ref already exists.
 
+Close or block gates with observed evidence:
 ```clojure
-(v/attest! :inspect-relevant-code
+(v/attest! :inspect
   {:status :proven
-   :summary \"Read the relevant namespace and test file before editing.\"
-   :refs [\"i1.1\" \"i1.2/tool\"]})
+   :summary \"Inspected the relevant code/schema before acting.\"
+   :refs [\"i1.2/tool\"]})
 ```
 
 ```clojure
-(v/block-gate! :verify-change
-  {:reason \"Full verification was interrupted by the user before completion.\"
+(v/block-gate! :verify
+  {:reason \"Full verification timed out; targeted tests passed but full suite did not complete.\"
    :refs [\"i6.1/tool\"]})
 ```
 
-Before `(answer ...)`, run and inspect both guards:
+Before `(answer ...)`, surface checks:
 ```clojure
-(def proof-checks
-  {:provenance (v/provenance-guards)
-   :gates      (v/gate-checks)})
-proof-checks
+(def checks
+  {:gates      (v/gate-checks)
+   :provenance (v/provenance-guards)})
+checks
 ```
-Only answer when both `:ok?` values are true, or when the answer explicitly reports the blocked gate and cites its attestation refs. Include `(v/gate-report)` / `(v/provenance-report)` when the user asks for proof/audit detail.
+If `:ok?` is false, fix the contract or explicitly answer with the blocked gate and its refs. If the runtime rejects an answer for gates, read the validation error, run `(v/gate-checks)`, then attest/block missing gates.
 
-Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. If you need to compute and answer in the same iteration, consume the values inside one lexical form:
+Scratch values are still useful, but they are not proof. Persist and surface observations with `def`, then cite their refs after observing them:
 ```clojure
-(let [hits (v/rg [\"foo\"] \"src\")]
-  (answer (str \"Found \" (count (:hits hits)) \" hits.\")))
+(def hits (v/rg [\"keyword\"] \"src\"))
+hits
 ```
-Exploration-only iterations must not call `(answer …)`. Bad:
+Reusable pure helpers are fine; keep effectful calls at leaves:
+```clojure
+(defn summarize-hits [hits]
+  {:count (count (:hits hits))
+   :paths (->> (:hits hits) (map :path) distinct vec)})
+```
+
+Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. Exploration-only iterations must not call `(answer …)`. Bad:
 ```clojure
 (def hits (v/rg [\"foo\"] \"src\"))
 hits
 (answer \"scanned\") ; BAD: terminates before OBSERVE/ACT/VERIFY
 ```
-Good iter 0:
+Good:
 ```clojure
 (def hits (v/rg [\"foo\"] \"src\"))
 hits
 ```
-Then iter 1+ observes `hits` in <journal>, updates state, acts, verifies, or answers.
+Then observe `hits` in <journal>, update/attest gates, verify, or answer.
 
-Error rule: errors are evidence. They appear in <journal>. In the next iteration, inspect the error, narrow/retry, or explicitly block a gate with the reason. Do not hide unresolved tool errors behind a final answer.
+Error rule: errors are evidence. If a contract API fails, do not pretend the contract exists. Fix it, or block/report the contract failure with the exact error. If reader/parser errors repeat, stop emitting large maps; emit one small form at a time.
 
 Answer shapes. `(answer …)` is the LAST top-level form of its iteration (last or only). Prefer Markdown helper composition unless the user requested a non-Markdown format:
 ```clojure
 (answer (v/p \"Done.\"))
 (answer (v/join (v/h2 \"Summary\") (v/p \"Patched three files.\")))
-(let [report (build-markdown-report turn-state*)] (answer report))
+(answer (v/join (v/contract-report) (v/provenance-report)))
 ```
 If you need trailing work after an answer, do not answer yet; do the work, surface results, and answer in a later iteration.
 
@@ -650,7 +660,7 @@ SYSTEM vars (read-only; bound by name in the sandbox):
                                  maps            -> [:map {key value-shape …}]   (keys fit) or
                                                     [:map N {first-16-pairs}]    (truncated)
                                  vars (`#'foo`)  -> [:var fq-sym arglists doc?]  for fn vars,
-                                                    [:var fq-sym value-shape]    for value vars
+                                                     [:var fq-sym value-shape]    for value vars
                                  fns             -> :fn  (or [:fn arglists doc?] when meta is set)
                                  unknown JVM     -> \"java.fully.qualified.ClassName\"
                                Recurses 4 levels deep by default; pass `(shape x N)` to override.

@@ -316,6 +316,30 @@
   (it "ol numbers from 1"
     (expect (= "1. first\n2. second" (md/ol ["first" "second"]))))
 
+  (it "ol accepts preformatted li output without double markers"
+    (expect (= "1. first\n2. second"
+              (md/ol [(md/li "first") (md/li "second")]))))
+
+  (it "ul indents nested ordered-list blocks"
+    (expect (= "-\n  1. first\n  2. second"
+              (md/ul [(md/ol ["first" "second"])]))))
+
+  (it "ol indents nested unordered-list blocks"
+    (expect (= "1.\n   - first\n   - second"
+              (md/ol [(md/ul ["first" "second"])]))))
+
+  (it "deep ul/ol combinations keep each child level indented"
+    (expect (= "1. parent\n   - child\n     1. leaf-a\n     2. leaf-b"
+              (md/ol [["parent\n"
+                       (md/ul [["child\n"
+                                (md/ol ["leaf-a" "leaf-b"])]])]]))))
+
+  (it "lists indent multiline code-block items"
+    (expect (= "- Example:\n  ```clojure\n  (+ 1 2)\n  ```"
+              (md/ul [["Example:\n" (md/code-block "(+ 1 2)" "clojure")]])))
+    (expect (= "1. Example:\n   ```clojure\n   (+ 1 2)\n   ```"
+              (md/ol [["Example:\n" (md/code-block "(+ 1 2)" "clojure")]]))))
+
   (it "checklist accepts vec pairs and maps"
     (expect (= "- [x] done\n- [ ] todo"
               (md/checklist [["done" true] ["todo" false]])))

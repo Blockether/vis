@@ -112,14 +112,14 @@
                        :stderr ""
                        :error nil
                        :execution-time-ms 1
-                       :provenance {:ref "i0.1" :op :vis/eval :engine :vis/sci}}]]
+                       :provenance {:ref "i1.1" :op :vis/eval :engine :vis/sci}}]]
           (vis/db-store-attestation! s {:gate-state-id (:id gate)
                                         :status :proven
                                         :summary "Verified."
-                                        :refs ["i0.1"]})
+                                        :refs ["i1.1"]})
           (expect (nil? (loop/final-answer-gate-error
                           {:db-info s :current-conversation-turn-id-atom (atom tid)}
-                          0 blocks))))
+                          1 blocks))))
         (finally
           (vis/db-dispose-connection! s))))))
 
@@ -154,10 +154,10 @@
             (expect (= executable-blocks (:llm-executable-blocks result)))
             (let [prov (:provenance (first (:blocks result)))]
               (expect (= :vis/eval (:op prov)))
-              (expect (= 0 (:iteration prov)))
+              (expect (= 1 (:iteration prov)))
               (expect (= 1 (:form-position prov)))
               (expect (= 1 (:form-count prov)))
-              (expect (= "i0.1" (:ref prov)))
+              (expect (= "i1.1" (:ref prov)))
               (expect (= :vis/sci (:engine prov))))))))))
 
 (defdescribe markdown-fence-guard-test

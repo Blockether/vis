@@ -119,6 +119,17 @@
                     p/MARKER_MD_H3 p/MARKER_MD_H3 p/MARKER_MD_H3]
                   (mapv marker-of lines)))))))
 
+(defdescribe live-running-code-test
+  (it "renders a code slot with no result as currently running"
+    (let [lines (format-iteration-entry {:iteration 0
+                                         :events    [{:type :form-result :form-idx 0}]
+                                         :code      ["(Thread/sleep 1000)"]}
+                  40 1)
+          code-line (first (filter #(str/includes? % "Thread/sleep") lines))
+          status-line (first (filter #(str/includes? % "↻ running") lines))]
+      (expect (= p/MARKER_CODE (marker-of code-line)))
+      (expect (= p/MARKER_CODE (marker-of status-line))))))
+
 (defdescribe malformed-fence-answer-repro-test
   (describe "glued fence repair for malformed final answers"
     ;; Faithful reduction of conversation bbc79960's broken final

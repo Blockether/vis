@@ -54,12 +54,17 @@
 (defdescribe bubble-selection-ranges-test
   (it "clips selectable cells to visible transcript bubbles only"
     (expect (= [{:row 4 :col 2 :width 15}
-                {:row 5 :col 2 :width 15}
-                {:row 7 :col 2 :width 15}
-                {:row 8 :col 2 :width 15}]
+                {:row 7 :col 2 :width 15}]
               (bubble-selectable-ranges
                 {:visible [{:top -2 :height 4}
                            {:top 3 :height 2}]}
+                4 5 20))))
+
+  (it "does not mark the final inter-bubble gap row as selectable"
+    (expect (= [{:row 4 :col 2 :width 15}
+                {:row 5 :col 2 :width 15}]
+              (bubble-selectable-ranges
+                {:visible [{:top 0 :height 3}]}
                 4 5 20)))))
 
 (defdescribe clipboard-copy-actions-test

@@ -71,29 +71,29 @@
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "set")}
                 {:active-extensions   NO_EXTENSIONS
-                 :blocks-by-iteration [[0 {:thinking nil
+                 :blocks-by-iteration [[1 {:thinking nil
                                            :blocks   [{:code "(+ 1 2)" :result 3}]}]]
                  :iteration           0})]
       (expect (string? out))
       (expect (str/includes? out "<journal>"))
       (expect (str/includes? out "(+ 1 2)"))
-      (expect (str/includes? out "i0.1"))))
+      (expect (str/includes? out "i1.1"))))
 
   (it "renders block-level provenance in <journal> for regular evaluated forms"
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "set")}
                 {:active-extensions   NO_EXTENSIONS
-                 :blocks-by-iteration [[0 {:thinking nil
+                 :blocks-by-iteration [[1 {:thinking nil
                                            :blocks   [{:code "(+ 1 2)"
                                                        :result 3
-                                                       :provenance {:ref "i0.1"
+                                                       :provenance {:ref "i1.1"
                                                                     :op :vis/eval
                                                                     :engine :vis/sci
                                                                     :duration-ms 7}}]}]]
                  :iteration           1})]
       (expect (string? out))
       (expect (str/includes? out ":provenance"))
-      (expect (str/includes? out ":ref \"i0.1\""))
+      (expect (str/includes? out ":ref \"i1.1\""))
       (expect (str/includes? out ":op :vis/eval"))
       (expect (str/includes? out ":engine :vis/sci"))))
 
@@ -253,13 +253,14 @@
       (expect (str/includes? p "v/file-link"))
       (expect (str/includes? p "use `v/code-block`"))))
 
-  (it "teaches functional state surfacing and gates"
+  (it "teaches the completion contract lifecycle instead of local turn-state"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "(def observation (v/rg"))
-      (expect (str/includes? p "observation"))
-      (expect (str/includes? p "ΩVisWork"))
+      (expect (str/includes? p "Contract-required classifier"))
+      (expect (str/includes? p "Completion contract is database-backed"))
+      (expect (str/includes? p "Do NOT maintain a parallel `turn-state`"))
       (expect (str/includes? p "v/intent!"))
       (expect (str/includes? p "v/gate-checks"))
+      (expect (str/includes? p "v/contract-report"))
       (expect (str/includes? p "Close or block gates with observed evidence"))))
 
   (it "rejects exploration-only terminal progress answers"
@@ -272,10 +273,10 @@
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "ITER0 ANSWER BAN"))
       (expect (str/includes? p "If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state"))
-      (expect (str/includes? p "iter 0 MUST NOT call `(answer …)`"))
-      (expect (str/includes? p "State is symbols plus values"))
-      (expect (str/includes? p "effectful leaves only"))
-      (expect (str/includes? p "railway map")))))
+      (expect (str/includes? p "iteration 1 MUST NOT call `(answer …)`"))
+      (expect (str/includes? p "Scratch values are still useful, but they are not proof"))
+      (expect (str/includes? p "Never invent refs"))
+      (expect (str/includes? p "If reader/parser errors repeat")))))
 
 (defdescribe provider-prompt-test
   (it "appends active provider prompt blocks without replacing the core prompt"

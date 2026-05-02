@@ -555,11 +555,19 @@
           state-id       (UUID/randomUUID)
           now            (now-ms)
           state-id-s     (latest-state-id db-info parent-conversation-id)
+          turn-position  (or (:next_position
+                              (query-one! db-info
+                                {:select [[[:coalesce [:+ [:max :position] 1] 1]
+                                           :next_position]]
+                                 :from   :conversation_turn_soul
+                                 :where  [:= :conversation_state_id state-id-s]}))
+                           1)
           user-request-s (or user-request "")]
       (execute! db-info
         {:insert-into :conversation_turn_soul
          :values [{:id                    (str soul-id)
                    :conversation_state_id state-id-s
+                   :position              turn-position
                    :title                 (subs user-request-s 0 (min (count user-request-s) 100))
                    :user_request          user-request-s
                    :created_at            now}]})
@@ -1123,23 +1131,23 @@
                                      {:select [:conversation_state_id]
                                       :from   :conversation_turn_soul
                                       :where  [:= :id conversation-turn-soul-id-s]})))
-          ;; Compute position (0-indexed within this conversation_turn_state)
+          ;; Compute position (1-indexed within this conversation_turn_state)
           ;; Next position is `MAX(position)+1` (monotonic and survives
           ;; row deletions), aliased as `:next_position` so the SQL
           ;; column name and the Clojure key line up. HoneySQL renders
           ;; `:row-count` as the SQL identifier `row_count`, and
           ;; `as-unqualified-lower-maps` returns `:row_count` in the
           ;; row map; reading via `:row-count` (with hyphen) was always
-          ;; `nil` and pinned every iteration to position 0, which
+          ;; `nil` and pinned every iteration to the first position, which
           ;; collided with the `UNIQUE (conversation_turn_state_id, position)`
           ;; constraint on the second iteration of every turn.
           position  (or (:next_position
                          (query-one! db-info
-                           {:select [[[:coalesce [:+ [:max :position] 1] 0]
+                           {:select [[[:coalesce [:+ [:max :position] 1] 1]
                                       :next_position]]
                             :from   :iteration
                             :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
-                      0)
+                      1)
           raw-response-s (some-> llm-raw-response str)]
       ;; 1. Iteration row — includes the full block log inline as
       ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Replaces
@@ -1243,6 +1251,7 @@
     (cond-> {:id                    (->uuid (:soul_id row))
              :type                  :turn
              :conversation-state-id (->uuid (:conversation_state_id row))
+             :position              (:position row)
              :user-request          (:user_request row)
              :status                (->kw-back (:status row))
              :created-at            (->date (:soul_created_at row))}
@@ -1261,7 +1270,7 @@
 (defn- conversation-turn-soul+state-query
   "HoneySQL fragment joining conversation_turn_soul + latest conversation_turn_state."
   [where-clause]
-  {:select [:qs.id :qs.conversation_state_id :qs.title :qs.user_request
+  {:select [:qs.id :qs.conversation_state_id :qs.position :qs.title :qs.user_request
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status :qst.metadata [:qst.metadata :state_metadata]
             :qst.llm_root_provider :qst.llm_root_model]
@@ -1295,7 +1304,7 @@
           (query! db-info
             (-> (conversation-turn-soul+state-query [:= :qs.conversation_state_id state-id-s])
               (update :select conj :qst.prior_outcome)
-              (assoc :order-by [[:qs.created_at :asc]]))))))
+              (assoc :order-by [[:qs.position :asc]]))))))
     []))
 
 (defn- row->iteration [row]

@@ -588,8 +588,9 @@
 (def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    → stdout separator line
 (def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    → stdout empty padding line
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    → answer separator (trace→answer break)
-(def MARKER_CODE_PAD   "\u206A")  ;; ISS                    → code block empty padding line
+(def MARKER_CODE_PAD   "\u206A")  ;; ISS                    → running/neutral code block padding line
 (def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   → error code block padding line
+(def MARKER_CODE_OK_PAD "\uE000") ;; PUA                    → successful code block padding line
 (def MARKER_ITERATION_PAD   "\u206C")  ;; IAFS                   → iteration zone padding (margin between blocks)
 (def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   → final answer header
 (def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   → answer text line (with answer bg)

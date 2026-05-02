@@ -12,6 +12,11 @@
      :reasoning        LLM is streaming reasoning text. Updates the
                        iteration entry's `:thinking` field.
 
+     :form-start       One top-level form is about to evaluate. Carries
+                       `:form-idx` and `:code`. The tracker writes the
+                       code immediately so channels can show the
+                       currently-running block before the result lands.
+
      :form-result      One top-level form finished evaluating. Carries
                        `:form-idx`, `:code`, `:result`/`:error`,
                        `:stdout`, `:stderr`, `:execution-time-ms`. The
@@ -50,6 +55,7 @@
       :stderrs   [str ...]
       :durations [int-ms ...]
       :successes [bool ...]
+      :started-at-ms [int-ms ...] ;; running form start timestamps
       :error     nil-or-iteration-error
       :final     nil-or-{:answer :iteration-count :status}
       :done?     bool}
@@ -73,6 +79,7 @@
    :stderrs   []
    :durations []
    :successes []
+   :started-at-ms []
    :error     nil
    :final     nil
    :done?     false})
@@ -128,6 +135,20 @@
       (assoc events hit event)
       (conj events event))))
 
+(defn- write-form-start-slot
+  "Per-form start chunks land at `:form-idx` before eval completes.
+   Only `:code` / `:comments` / `:events` are populated; result-side
+   vectors intentionally stay empty so renderers can distinguish
+   running code from completed success or failure."
+  [entry chunk]
+  (let [idx  (:form-idx chunk)
+        need (inc idx)]
+    (-> entry
+      (update :events write-form-event idx)
+      (update :code     #(assoc (pad-to % need) idx (:code chunk)))
+      (update :comments #(assoc (pad-to % need) idx (:comment chunk)))
+      (update :started-at-ms #(assoc (pad-to % need) idx (:started-at-ms chunk))))))
+
 (defn- write-form-slot
   "Per-form chunks land at `:form-idx`. Pad parallel vectors with
    nils up to that index, then assoc the chunk's data. This
@@ -159,10 +180,16 @@
 
 (defn- drop-form-events [events idx-set]
   (if (seq idx-set)
-    (into []
-      (remove #(and (= :form-result (:type %))
-                 (contains? idx-set (:form-idx %))))
-      events)
+    (let [dropped-before (fn [idx]
+                           (count (filter #(< % idx) idx-set)))]
+      (into []
+        (keep (fn [event]
+                (if (= :form-result (:type event))
+                  (let [idx (:form-idx event)]
+                    (when-not (contains? idx-set idx)
+                      (update event :form-idx - (dropped-before idx))))
+                  event)))
+        events))
     events))
 
 (defn- elide-form-slots
@@ -182,7 +209,8 @@
         (update :stdouts   drop-slot idx)
         (update :stderrs   drop-slot idx)
         (update :durations drop-slot idx)
-        (update :successes drop-slot idx)))
+        (update :successes drop-slot idx)
+        (update :started-at-ms drop-slot idx)))
     (update entry :events drop-form-events idx-set)
     (sort > idx-set)))
 
@@ -197,6 +225,9 @@
       (-> entry
         (update :events write-thinking-event (:thinking entry) next-thinking)
         (assoc :thinking next-thinking)))
+
+    :form-start
+    (write-form-start-slot entry chunk)
 
     :form-result
     (write-form-slot entry chunk)

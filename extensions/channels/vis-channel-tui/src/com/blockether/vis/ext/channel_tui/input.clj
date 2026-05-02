@@ -487,6 +487,14 @@
 (defn input->text [{:keys [lines]}]
   (str/join "\n" lines))
 
+(defn input-empty?
+  "True when the input buffer is the pristine empty prompt.
+
+   Whitespace, extra lines, or cursor state from edits count as non-empty so
+   Esc/Ctrl+C can clear the draft before they regain their quit/cancel meaning."
+  [state]
+  (= (empty-input) state))
+
 (defn insert-char [{:keys [lines crow ccol] :as st} ch]
   (let [line     (nth lines crow)
         new-line (str (subs line 0 ccol) ch (subs line ccol))]
@@ -790,17 +798,21 @@
   [^KeyStroke key state]
   (let [ktype (.getKeyType key)]
     (condp = ktype
-      ;; Esc - the screen loop turns this into a cancel when a query is
-      ;; in flight; otherwise it's a no-op (no dialog is open here, the
-      ;; dialog code intercepts Esc itself).
+      ;; Esc clears a non-empty draft first. Press Esc again on an empty input
+      ;; to keep the existing cancel-turn behaviour.
       KeyType/Escape
-      {:action :cancel :state state}
+      (if (input-empty? state)
+        {:action :cancel :state state}
+        {:action :clear-input :state (empty-input)})
 
       KeyType/Character
       (let [c    (.getCharacter key)
             ctrl (.isCtrlDown key)]
         (cond
-          (and ctrl (= c \c)) {:action :quit :state state}
+          (and ctrl (= c \c))
+          (if (input-empty? state)
+            {:action :quit :state state}
+            {:action :clear-input :state (empty-input)})
 
           (and ctrl (= c \v)) (if-let [t (clipboard-paste)]
                                 {:action :continue :state (paste-text state t)}

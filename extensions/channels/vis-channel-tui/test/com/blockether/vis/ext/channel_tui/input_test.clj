@@ -109,6 +109,21 @@
       (expect (= :scroll-down
                 (:action (input/handle-key (special-key KeyType/PageDown) state))))))
 
+  (it "Ctrl+C and Escape clear non-empty input instead of exiting"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "draft"))]
+      (expect (= {:action :clear-input :state (input/empty-input)}
+                (input/handle-key (ctrl-key (Character. \c)) state)))
+      (expect (= {:action :clear-input :state (input/empty-input)}
+                (input/handle-key (special-key KeyType/Escape) state)))))
+
+  (it "Ctrl+C and Escape keep their existing behavior when input is empty"
+    (let [state (input/empty-input)]
+      (expect (= {:action :quit :state state}
+                (input/handle-key (ctrl-key (Character. \c)) state)))
+      (expect (= {:action :cancel :state state}
+                (input/handle-key (special-key KeyType/Escape) state)))))
+
   (it "Ctrl+P and Ctrl+N are unbound and do not alter input text"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]

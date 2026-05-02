@@ -99,7 +99,7 @@ Example:
 ```clojure
 (v/intent! {:key :main
             :text TURN_USER_REQUEST
-            :created-ref "i0.1"})
+            :created-ref "i1.1"})
 ```
 
 Intent is versioned because user intent can change during a turn.
@@ -181,7 +181,7 @@ The attestation may cite multiple refs, but it belongs to exactly one gate versi
 Provenance refs point into the current turn timeline.
 
 ```text
-i0.1       first top-level form of iteration 0
+i1.1       first top-level form of iteration 1
 i2.3       third top-level form of iteration 2
 i4.1/tool  tool result nested under form i4.1
 ```
@@ -340,7 +340,7 @@ The model should manage Intent, Plan, Gate, and Attestation objects. It should n
 (def intent
   (v/intent! {:key :main
               :text TURN_USER_REQUEST
-              :created-ref "i0.1"}))
+              :created-ref "i1.1"}))
 
 (def plan
   (v/plan! {:intent-state-id (:id intent)

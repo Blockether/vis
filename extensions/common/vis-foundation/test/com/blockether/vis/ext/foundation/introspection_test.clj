@@ -452,7 +452,7 @@
         (expect (= conversation-turn-id (:turn-id diagnostic)))
         (expect (= "what's the plan?" (:user-request diagnostic)))
         (expect (= (:id transcript-iter) (:iteration-id diagnostic)))
-        (expect (= 0 (:iteration diagnostic)))
+        (expect (= 1 (:iteration diagnostic)))
         (expect (= :done (:status diagnostic)))
         (expect (= :test-provider (:provider diagnostic)))
         (expect (= "test-model" (:model diagnostic)))
@@ -513,8 +513,11 @@
       (expect (contains? symbols 'gate!))
       (expect (contains? symbols 'attest!))
       (expect (contains? symbols 'block-gate!))
+      (expect (contains? symbols 'contract))
       (expect (contains? symbols 'work-state))
       (expect (contains? symbols 'gate-checks))
+      (expect (contains? symbols 'contract-report))
+      (expect (contains? symbols 'audit-report))
       (doseq [removed ['turn 'conversation 'conversations 'conversation-forks
                        'turn-retries 'var-history 'find-attempts
                        'find-attempts-everywhere 'failures
@@ -537,7 +540,7 @@
                    :stderr ""
                    :error nil
                    :execution-time-ms 1
-                   :provenance (eval-provenance 0 1 2)}
+                   :provenance (eval-provenance 1 1 2)}
                   {:id 1
                    :code "(v/bash \"pwd\")"
                    :result (tool-result :v/bash "Ran bash in `.` — exit `0`, 5 ms.")
@@ -545,12 +548,12 @@
                    :stderr ""
                    :error nil
                    :execution-time-ms 1
-                   :provenance (eval-provenance 0 2 2)}]})
+                   :provenance (eval-provenance 1 2 2)}]})
       (let [timeline ((private-fn "foundation-provenance-timeline") (env s conversation-id))]
-        (expect (= ["i0.1" "i0.2" "i0.2/tool"] (mapv :ref timeline)))
+        (expect (= ["i1.1" "i1.2" "i1.2/tool"] (mapv :ref timeline)))
         (expect (= [:eval :eval :tool] (mapv :kind timeline)))
         (expect (= [:vis/eval :vis/eval :v/bash] (mapv :op timeline)))
-        (expect (= "i0.2" (:parent-ref (last timeline)))))))
+        (expect (= "i1.2" (:parent-ref (last timeline)))))))
 
   (it "rolls up provenance stats and failure slices"
     (let [s (h/store)
@@ -563,12 +566,12 @@
                    :stderr ""
                    :error "Unable to resolve symbol: missing"
                    :execution-time-ms 1
-                   :provenance (eval-provenance 0 1 1)}]})
+                   :provenance (eval-provenance 1 1 1)}]})
       (let [stats ((private-fn "foundation-provenance-stats") (env s conversation-id))]
         (expect (= 1 (:event-count stats)))
         (expect (= {:eval 1} (:by-kind stats)))
         (expect (= {:error 1} (:by-status stats)))
-        (expect (= "i0.1" (:ref (first (:failures stats))))))))
+        (expect (= "i1.1" (:ref (first (:failures stats))))))))
 
   (it "guards provenance integrity and reports missing block provenance"
     (let [s (h/store)
@@ -597,10 +600,10 @@
                    :stderr ""
                    :error nil
                    :execution-time-ms 1
-                   :provenance (eval-provenance 0 1 1)}]})
+                   :provenance (eval-provenance 1 1 1)}]})
       (let [out ((private-fn "foundation-provenance-report") (env s conversation-id))]
         (expect (str/includes? out "## Provenance"))
-        (expect (str/includes? out "`i0.1` eval :vis/eval"))
+        (expect (str/includes? out "`i1.1` eval :vis/eval"))
         (expect (str/includes? out "Guards: ok"))))))
 
 ;; -----------------------------------------------------------------------------
@@ -635,7 +638,7 @@
                    :code "(+ 1 2)"
                    :result 3
                    :execution-time-ms 1
-                   :provenance (eval-provenance 0 1 1)}]})
+                   :provenance (eval-provenance 1 1 1)}]})
       (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
             plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
                                                        :key :main
@@ -645,13 +648,13 @@
                                                        :question "Verified?"})]
         ((private-fn "foundation-attest!") e (:id gate)
                                            {:status :proven
-                                            :summary "Observed i0.1."
-                                            :refs ["i0.1"]})
+                                            :summary "Observed i1.1."
+                                            :refs ["i1.1"]})
         (let [checks ((private-fn "foundation-gate-checks") e)
               report ((private-fn "foundation-gate-report") e)]
           (expect (true? (:ok? checks)))
           (expect (str/includes? report "`verify` closed"))
-          (expect (str/includes? report "refs: i0.1"))))))
+          (expect (str/includes? report "refs: i1.1"))))))
 
   (it "flags attestation refs from another turn as missing from current-turn provenance"
     (let [s (h/store)
@@ -666,7 +669,7 @@
                    :code "(+ 1 2)"
                    :result 3
                    :execution-time-ms 1
-                   :provenance (eval-provenance 0 1 1)}]})
+                   :provenance (eval-provenance 1 1 1)}]})
       (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
             plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
                                                        :key :main
@@ -677,7 +680,7 @@
         ((private-fn "foundation-attest!") e (:id gate)
                                            {:status :proven
                                             :summary "Wrong turn."
-                                            :refs ["i0.1"]})
+                                            :refs ["i1.1"]})
         (let [checks ((private-fn "foundation-gate-checks") e)]
           (expect (false? (:ok? checks)))
           (expect (some #(= :attestation-ref-missing-from-current-turn-provenance (:type %))
