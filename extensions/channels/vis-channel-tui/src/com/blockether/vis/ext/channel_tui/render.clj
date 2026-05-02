@@ -5,7 +5,8 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t])
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [zprint.core :as zp])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [java.util LinkedHashMap]))
@@ -513,6 +514,7 @@
 (def ^:private stdout-pad-marker p/MARKER_STDOUT_PAD)
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
 (def ^:private code-pad-marker   p/MARKER_CODE_PAD)
+(def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
 (def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
 (def ^:private iteration-pad-marker   p/MARKER_ITERATION_PAD)
 (def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
@@ -561,6 +563,73 @@
               :thead th-md-table-head-marker :tsep th-md-table-sep-marker :trow th-md-table-row-marker
               :summary th-md-summary-marker
               :plain thinking-marker}})
+
+(defn- ansi-code->fg [code current-fg base-fg]
+  (case code
+    0 base-fg
+    30 t/code-block-fg
+    31 t/code-syntax-string-fg
+    32 t/code-success-fg
+    33 t/warning-fg
+    34 t/code-syntax-number-fg
+    35 t/code-syntax-special-fg
+    36 t/code-syntax-keyword-fg
+    37 t/text-fg
+    90 t/code-syntax-comment-fg
+    current-fg))
+
+(defn- parse-ansi-codes [s]
+  (into []
+    (keep (fn [part]
+            (try
+              (Long/parseLong part)
+              (catch NumberFormatException _ nil))))
+    (str/split (or s "") #";")))
+
+(defn- ansi-codes->fg [codes current-fg base-fg]
+  (reduce
+    (fn [fg code]
+      (if (= 0 code)
+        base-fg
+        (ansi-code->fg code fg base-fg)))
+    current-fg
+    codes))
+
+(defn- format-clojure-ansi
+  "Format Clojure source via zprint and keep zprint's ANSI syntax
+   coloring. The TUI painter translates those ANSI SGR codes to
+   Lanterna colors; raw ANSI is never written to the terminal."
+  [code-text width]
+  (try
+    (zp/czprint-str code-text width {:parse-string? true})
+    (catch Throwable _
+      (vis/format-clojure code-text width))))
+
+(defn- paint-ansi-line!
+  "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
+   ANSI foreground codes are translated to Lanterna foreground colors;
+   `bg` is always controlled by Vis so success/running/error code
+   zones keep their own background."
+  [^TextGraphics g x y ^String line base-fg bg]
+  (loop [i 0 col 0 fg base-fg]
+    (if (>= i (.length line))
+      g
+      (let [esc-idx (str/index-of line "\u001b[" i)]
+        (if (or (nil? esc-idx) (< i esc-idx))
+          (let [end   (or esc-idx (.length line))
+                chunk (subs line i end)]
+            (p/set-colors! g fg bg)
+            (p/put-str! g (+ x col) y chunk)
+            (recur end (+ col (p/display-width chunk)) fg))
+          (let [m-idx (str/index-of line "m" (+ esc-idx 2))]
+            (if (nil? m-idx)
+              (let [chunk (subs line esc-idx)]
+                (p/set-colors! g fg bg)
+                (p/put-str! g (+ x col) y chunk)
+                g)
+              (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
+                    fg*   (ansi-codes->fg codes fg base-fg)]
+                (recur (inc m-idx) col fg*)))))))))
 
 (defn- warning-message? [text]
   (and (string? text) (str/starts-with? text "Warning:")))
@@ -2058,13 +2127,16 @@
                 expr-label    (label-text "code" block-number)
                 expr-hdr      (let [pl (max 0 (- fill-w (count expr-label) 1))]
                                 (str (repeat-str \space pl) expr-label " "))
-                status-text   (when has-status?
+                status-text   (if has-status?
                                 (str (if success? "✓" "✗")
-                                  (when duration-str (str " " duration-str))))
-                status-line   (when status-text
-                                (let [s-marker (if success? code-ok-marker code-err-marker)
-                                      pl       (max 0 (- fill-w (count status-text) 1))]
-                                  (line-entry (str s-marker (repeat-str \space pl) status-text " "))))
+                                  (when duration-str (str " " duration-str)))
+                                "↻ running")
+                status-line   (let [s-marker (cond
+                                               (not has-status?) code-marker
+                                               success?          code-ok-marker
+                                               :else             code-err-marker)
+                                    pl       (max 0 (- fill-w (count status-text) 1))]
+                                (line-entry (str s-marker (repeat-str \space pl) status-text " ")))
                 c-marker      (cond
                                 (not has-status?) code-marker
                                 success?          code-ok-marker

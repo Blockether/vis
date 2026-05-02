@@ -341,38 +341,83 @@
     (str/starts-with? s "* ")
     (str/starts-with? s "+ ")))
 
-(defn- ul-item-line [x]
+(defn- ordered-marker? [s]
+  (boolean (re-find #"^\d+[.)]\s+.*" s)))
+
+(defn- list-marker? [s]
+  (or (unordered-marker? s)
+    (ordered-marker? s)))
+
+(defn- text-lines [text]
+  (str/split text #"\n" -1))
+
+(defn- root-list-block? [text]
+  (let [lines (remove str/blank? (text-lines text))]
+    (and (< 1 (count lines))
+      (every? list-marker? lines))))
+
+(defn- indent-lines [indent lines]
+  (let [pad (apply str (repeat indent " "))]
+    (map #(str pad %) lines)))
+
+(defn- render-prefixed-item [prefix text]
+  (let [[head & tail] (text-lines text)]
+    (if (seq tail)
+      (str prefix head "\n" (str/join "\n" (indent-lines (count prefix) tail)))
+      (str prefix head))))
+
+(defn- render-nested-list-block [marker-prefix text]
+  (str (str/trimr marker-prefix)
+    "\n"
+    (str/join "\n" (indent-lines (count marker-prefix) (text-lines text)))))
+
+(defn- render-unordered-item [x]
   (let [text (item-text x)]
-    (if (unordered-marker? text)
-      text
-      (str "- " text))))
+    (cond
+      (root-list-block? text) (render-nested-list-block "- " text)
+      (unordered-marker? text) (render-prefixed-item "" text)
+      :else (render-prefixed-item "- " text))))
 
 (defn ul
   "Unordered list. Accepts a single seq or variadic args.
-   Each item may be a string, a preformatted `(v/li ...)`, or a
-   sequential of parts (strings + inline helpers) composed into one
-   item text.
+   Each item may be a string, a preformatted `(v/li ...)`, a nested
+   `(v/ul ...)` / `(v/ol ...)` block, or a sequential of parts
+   (strings + inline helpers) composed into one item text.
 
      (v/ul [\"a\" \"b\"])
      (v/ul [(v/li \"a\") (v/li \"b\")])
+     (v/ul [(v/ol [\"nested\" \"ordered\"])])
      (v/ul [[\"The \" (v/code \"foo\") \" works\"] \"plain\"])
 
-   One `- item` per element, newline-joined, no trailing newline."
+   One `- item` per element, newline-joined, no trailing newline.
+   Multiline items indent continuation lines under the list marker."
   [& items]
   (->> (normalize-list-items items)
-    (map ul-item-line)
+    (map render-unordered-item)
     (str/join "\n")))
 
 (defn ol
   "Ordered list, 1-based numbering. Accepts a single seq or variadic args.
-   Each item may be a string or a sequential of parts composed into
-   one item text.
+   Each item may be a string, a preformatted `(v/li ...)`, a nested
+   `(v/ul ...)` / `(v/ol ...)` block, or a sequential of parts
+   composed into one item text.
 
      (v/ol [\"a\" \"b\"])
+     (v/ol [(v/li \"a\") (v/li \"b\")])
+     (v/ol [(v/ul [\"nested\" \"unordered\"])])
      (v/ol [[\"Step \" (v/code \"1\") \": go\"] \"done\"])"
   [& items]
   (->> (normalize-list-items items)
-    (map-indexed (fn [i x] (str (inc i) ". " (item-text x))))
+    (map-indexed (fn [i x]
+                   (let [marker-prefix (str (inc i) ". ")
+                         text          (item-text x)
+                         text          (if (and (not (root-list-block? text))
+                                             (unordered-marker? text))
+                                         (subs text 2)
+                                         text)]
+                     (if (root-list-block? text)
+                       (render-nested-list-block marker-prefix text)
+                       (render-prefixed-item marker-prefix text)))))
     (str/join "\n")))
 
 (defn checklist

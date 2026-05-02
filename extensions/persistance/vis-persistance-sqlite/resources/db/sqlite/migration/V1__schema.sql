@@ -86,14 +86,48 @@ CREATE TABLE conversation_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
+  position               INTEGER NOT NULL CHECK (position >= 1),
   title                  TEXT,
   user_request           TEXT,
   metadata               TEXT,             -- JSON-encoded object/string
-  created_at             INTEGER NOT NULL
+  created_at             INTEGER NOT NULL,
+
+  UNIQUE (conversation_state_id, position)
 );
 
 CREATE INDEX idx_conversation_turn_soul_state
-  ON conversation_turn_soul(conversation_state_id, created_at);
+  ON conversation_turn_soul(conversation_state_id, position);
+
+CREATE TRIGGER trg_conversation_turn_soul_position_ai
+BEFORE INSERT ON conversation_turn_soul
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+           SELECT 1 FROM conversation_turn_soul s
+           WHERE s.conversation_state_id = NEW.conversation_state_id)
+         AND NEW.position <> 1
+    THEN RAISE(ABORT, 'first conversation_turn_soul position must be 1')
+  END;
+
+  SELECT CASE
+    WHEN EXISTS (
+           SELECT 1 FROM conversation_turn_soul s
+           WHERE s.conversation_state_id = NEW.conversation_state_id)
+         AND NEW.position <> (
+           SELECT max(s.position) + 1 FROM conversation_turn_soul s
+           WHERE s.conversation_state_id = NEW.conversation_state_id)
+    THEN RAISE(ABORT, 'conversation_turn_soul position must increment by 1')
+  END;
+END;
+
+CREATE TRIGGER trg_conversation_turn_soul_position_au
+BEFORE UPDATE ON conversation_turn_soul
+BEGIN
+  SELECT CASE
+    WHEN NEW.conversation_state_id <> OLD.conversation_state_id OR NEW.position <> OLD.position
+    THEN RAISE(ABORT, 'conversation_turn_soul state/position are immutable')
+  END;
+END;
 
 -- =============================================================================
 -- Conversation turn state — one run of conversation_turn_soul.
@@ -141,7 +175,7 @@ CREATE TABLE iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
   conversation_turn_state_id                  TEXT NOT NULL
                                   REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  position                        INTEGER NOT NULL CHECK (position >= 0),
+  position                        INTEGER NOT NULL CHECK (position >= 1),
 
   status                          TEXT NOT NULL
                                   CHECK (status IN ('running', 'done', 'error', 'interrupted')),
@@ -242,6 +276,37 @@ CREATE INDEX idx_iteration_conversation_turn_state
 
 CREATE INDEX idx_iteration_conversation_turn_state_created
   ON iteration(conversation_turn_state_id, created_at);
+
+CREATE TRIGGER trg_iteration_position_ai
+BEFORE INSERT ON iteration
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+           SELECT 1 FROM iteration i
+           WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
+         AND NEW.position <> 1
+    THEN RAISE(ABORT, 'first iteration position must be 1')
+  END;
+
+  SELECT CASE
+    WHEN EXISTS (
+           SELECT 1 FROM iteration i
+           WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
+         AND NEW.position <> (
+           SELECT max(i.position) + 1 FROM iteration i
+           WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
+    THEN RAISE(ABORT, 'iteration position must increment by 1')
+  END;
+END;
+
+CREATE TRIGGER trg_iteration_position_au
+BEFORE UPDATE ON iteration
+BEGIN
+  SELECT CASE
+    WHEN NEW.conversation_turn_state_id <> OLD.conversation_turn_state_id OR NEW.position <> OLD.position
+    THEN RAISE(ABORT, 'iteration turn-state/position are immutable')
+  END;
+END;
 
 -- =============================================================================
 -- Work provenance domain — versioned intent -> plan -> gate -> attestation.

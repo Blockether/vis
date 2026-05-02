@@ -932,7 +932,9 @@
        "\n"))))
 
 ;; ---------------------------------------------------------------------------
-;; Work-state gates — turn-scoped intent -> plan -> gate -> attestation.
+;; Completion contract — turn-scoped intent -> plan -> gate -> attestation.
+;; `work-state` remains the low-level projection name; model-facing docs
+;; should prefer "contract" for the domain concept.
 ;; ---------------------------------------------------------------------------
 
 (defn- current-turn-work-state
@@ -996,6 +998,16 @@
    (safe-call #(vis/db-work-state (:db-info env) conversation-turn-id)
      {:conversation-turn-id conversation-turn-id
       :intents [] :plans [] :gates [] :attestations []})))
+
+(defn- foundation-contract
+  "Model-facing alias for the current completion contract projection.
+   This is intentionally a read projection, not a separate domain
+   object: the domain objects are Intent, Plan, Gate, Attestation, and
+   provenance refs."
+  ([env]
+   (foundation-work-state env))
+  ([env conversation-turn-id]
+   (foundation-work-state env conversation-turn-id)))
 
 (defn- foundation-intent!
   [env opts]
@@ -1103,12 +1115,10 @@
                :current-turn-provenance-events (count timeline)}
      :violations violations}))
 
-(defn- foundation-gate-report
-  [env]
-  (let [work-state (current-turn-work-state env)
-        checks     (foundation-gate-checks env)
-        gates      (current-gate-states work-state)
-        by-gate    (attestations-by-gate work-state)]
+(defn- gate-report-for-work-state
+  [work-state checks]
+  (let [gates   (current-gate-states work-state)
+        by-gate (attestations-by-gate work-state)]
     (str "## Gates\n\n"
       "- Scope: current conversation turn\n"
       "- Status: " (if (:ok? checks) "ok" (str "failed " (count (:violations checks)) " check(s)")) "\n\n"
@@ -1129,6 +1139,63 @@
         (str "\n\n### Violations\n"
           (str/join "\n" (map #(str "- " (pr-str (dissoc % :gate :attestation))) (:violations checks)))))
       "\n")))
+
+(defn- foundation-gate-report
+  [env]
+  (let [work-state (current-turn-work-state env)
+        checks     (foundation-gate-checks env)]
+    (gate-report-for-work-state work-state checks)))
+
+(defn- foundation-contract-report
+  "Markdown report for the current completion contract. Optional arg
+   accepts a conversation-turn id and renders that turn's latest run."
+  ([env]
+   (str "# Completion Contract\n\n"
+     (foundation-gate-report env)
+     "\n"
+     (foundation-provenance-report env (:conversation-id env))))
+  ([env conversation-turn-id]
+   (let [work-state (foundation-work-state env conversation-turn-id)
+         timeline   (->> (foundation-provenance-timeline env (:conversation-id env))
+                      (filter #(same-uuid? (:turn-id %) conversation-turn-id))
+                      vec)
+         checks     (let [violations (gate-check-violations work-state timeline)]
+                      {:ok? (empty? violations)
+                       :violations violations
+                       :checked {:gates (count (current-gate-states work-state))
+                                 :attestations (count (:attestations work-state))
+                                 :current-turn-provenance-events (count timeline)}})]
+     (str "# Completion Contract\n\n"
+       "- Turn: `" conversation-turn-id "`\n"
+       "- Turn-state: `" (:conversation-turn-state-id work-state) "`\n\n"
+       (gate-report-for-work-state work-state checks)))))
+
+(defn- foundation-audit-report
+  "Conversation-level Markdown audit report: every turn's contract
+   summary plus the conversation provenance ledger. Useful for
+   diagnosing historical conversations like a failed gating run."
+  ([env]
+   (foundation-audit-report env (:conversation-id env)))
+  ([env conversation-id]
+   (let [turns (safe-call #(vis/db-list-conversation-turns (:db-info env) conversation-id) [])]
+     (str "# Audit Report\n\n"
+       "- Conversation: `" conversation-id "`\n"
+       "- Turns: " (count turns) "\n\n"
+       (if (seq turns)
+         (str/join "\n"
+           (map (fn [turn]
+                  (let [work-state (foundation-work-state env (:id turn))
+                        gates      (current-gate-states work-state)]
+                    (str "## Turn `" (:id turn) "`\n\n"
+                      "- Status: " (name (or (:status turn) :unknown)) "\n"
+                      "- Request: " (preview (:user-request turn) 180) "\n"
+                      "- Contract: " (if (seq gates)
+                                       (str (count gates) " gate(s), " (count (:attestations work-state)) " attestation(s)")
+                                       "none") "\n")))
+             turns))
+         "_No turns found._\n")
+       "\n"
+       (foundation-provenance-report env conversation-id)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Extension catalog + README / doc access
@@ -1315,19 +1382,27 @@
                  "(answer (v/provenance-report))"]
      :before-fn inject-environment}))
 
+(def contract-symbol
+  (vis/symbol 'contract foundation-contract
+    {:doc       "Current turn completion contract projection: intents, plans, gates, attestations. Prefer this over the legacy name `work-state`."
+     :arglists  '([] [conversation-turn-id])
+     :examples  ["(v/contract)"
+                 "(:gates (v/contract))"]
+     :before-fn inject-environment}))
+
 (def work-state-symbol
   (vis/symbol 'work-state foundation-work-state
-    {:doc       "Turn-scoped work contract: intents, plans, gates, attestations for the current conversation turn."
+    {:doc       "Legacy alias/read projection for the current completion contract. Prefer `(v/contract)`."
      :arglists  '([] [conversation-turn-id])
      :examples  ["(v/work-state)"
-                 "(:gates (v/work-state))"]
+                 "(:gates (v/contract))"]
      :before-fn inject-environment}))
 
 (def intent!-symbol
   (vis/symbol 'intent! foundation-intent!
     {:doc       "Persist a new versioned intent for the current conversation turn."
      :arglists  '([{:keys [key text status created-ref metadata]}])
-     :examples  ["(def intent (v/intent! {:key :main :text TURN_USER_REQUEST :created-ref \"i0.1\"}))"]
+     :examples  ["(def intent (v/intent! {:key :main :text TURN_USER_REQUEST :created-ref \"i1.1\"}))"]
      :before-fn inject-environment}))
 
 (def plan!-symbol
@@ -1391,6 +1466,22 @@
                  "(answer (v/join (v/gate-report) (v/provenance-report)))"]
      :before-fn inject-environment}))
 
+(def contract-report-symbol
+  (vis/symbol 'contract-report foundation-contract-report
+    {:doc       "Markdown completion-contract report with gates, attestations, and provenance. Optional arg renders a specific turn."
+     :arglists  '([] [conversation-turn-id])
+     :examples  ["(v/contract-report)"
+                 "(v/contract-report TURN_CONVERSATION_TURN_ID)"]
+     :before-fn inject-environment}))
+
+(def audit-report-symbol
+  (vis/symbol 'audit-report foundation-audit-report
+    {:doc       "Conversation-level Markdown audit: per-turn contract summary plus full provenance timeline."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/audit-report)"
+                 "(v/audit-report \"cff21022-c11f-4818-a2de-b4d5c5c4630a\")"]
+     :before-fn inject-environment}))
+
 ;; Legacy per-view sandbox symbols were removed from the public surface.
 ;; The private implementation functions above remain as building blocks for
 ;; `v/inspect` so tests and internal composition can target the real seams
@@ -1442,6 +1533,7 @@
    provenance-stats-symbol
    provenance-guards-symbol
    provenance-report-symbol
+   contract-symbol
    work-state-symbol
    intent!-symbol
    plan!-symbol
@@ -1452,6 +1544,8 @@
    attestations-symbol
    gate-checks-symbol
    gate-report-symbol
+   contract-report-symbol
+   audit-report-symbol
    extensions-symbol
    extension-docs-symbol
    extension-doc-symbol
@@ -1465,12 +1559,15 @@
     "  (v/provenance-stats cid?)     counts, failures, slowest events, tools\n"
     "  (v/provenance-guards cid?)    integrity checks before citing provenance\n"
     "  (v/provenance-report cid?)    compact Markdown audit trail\n"
+    "  (v/contract turn-id?)         current-turn completion contract projection\n"
+    "  (v/contract-report turn-id?)  Markdown contract + proof report\n"
+    "  (v/audit-report cid?)         conversation audit: contracts + provenance\n"
     "  (v/intent! opts)              create current-turn intent_state version\n"
     "  (v/plan! opts)                create plan_state for an intent_state\n"
     "  (v/gate! opts)                create gate_state for a plan_state\n"
     "  (v/attest! gate opts)         prove exactly one gate version with refs\n"
     "  (v/block-gate! gate opts)     block exactly one gate version with refs + reason\n"
-    "  (v/work-state)                current-turn intent/plan/gate/attestation data\n"
+    "  (v/work-state)                legacy alias for (v/contract)\n"
     "  (v/gates)                     current active-plan gate states\n"
     "  (v/attestations)              current-turn attestations\n"
     "  (v/gate-checks)               current-turn gate contract checks\n"

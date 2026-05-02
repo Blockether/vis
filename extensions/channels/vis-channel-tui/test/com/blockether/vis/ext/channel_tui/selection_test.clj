@@ -25,7 +25,15 @@
               (selection/selected-ranges
                 {:anchor (selection/point -5 -2)
                  :focus  (selection/point 99 99)}
-                4 2)))))
+                4 2))))
+
+  (it "fills visible rows when the selection starts above the viewport"
+    (expect (= [{:row 0 :col 0 :width 10}
+                {:row 1 :col 0 :width 3}]
+              (selection/selected-ranges
+                {:anchor (selection/point 5 -10)
+                 :focus  (selection/point 2 1)}
+                10 4)))))
 
 (defdescribe selected-text-test
   (it "extracts selected visible text and trims screen padding"
@@ -58,7 +66,38 @@
     (expect (selection/point-in-ranges? (selection/point 3 1)
               [{:row 1 :col 2 :width 6}]))
     (expect (not (selection/point-in-ranges? (selection/point 1 1)
-                   [{:row 1 :col 2 :width 6}])))))
+                   [{:row 1 :col 2 :width 6}]))))
+
+  (it "accepts selection starts in a small vertical comfort zone around bubbles"
+    (expect (selection/point-in-ranges? (selection/point 3 3)
+              [{:row 5 :col 2 :width 6}]
+              {:row-padding 2}))
+    (expect (selection/point-in-ranges? (selection/point 3 7)
+              [{:row 5 :col 2 :width 6}]
+              {:row-padding 2}))
+    (expect (not (selection/point-in-ranges? (selection/point 3 2)
+                   [{:row 5 :col 2 :width 6}]
+                   {:row-padding 2}))))
+
+  (it "keeps the comfort zone within the bubble columns"
+    (expect (not (selection/point-in-ranges? (selection/point 1 5)
+                   [{:row 5 :col 2 :width 6}]
+                   {:row-padding 2})))))
+
+(defdescribe document-selection-test
+  (it "projects document-space selection into the current viewport"
+    (expect (= {:anchor (selection/point 4 2)
+                :focus  (selection/point 8 6)}
+              (selection/document->screen-selection
+                {:anchor (selection/point 4 10)
+                 :focus  (selection/point 8 14)}
+                {:viewport-top 3 :eff-scroll 11}))))
+
+  (it "converts screen points to document rows using the effective scroll"
+    (expect (= (selection/point 7 20)
+              (selection/screen->document-point
+                (selection/point 7 8)
+                {:viewport-top 3 :eff-scroll 15})))))
 
 (defdescribe auto-scroll-test
   (it "requests upward or downward scroll while selection is dragged at viewport edges"
@@ -73,4 +112,18 @@
     (expect (nil?
               (selection/auto-scroll-direction
                 (selection/point 5 6)
-                {:top 3 :bottom 10 :edge-size 1})))))
+                {:top 3 :bottom 10 :edge-size 1}))))
+
+  (it "scrolls faster the deeper the drag is in the edge zone"
+    (expect (= {:direction :up :amount 4}
+              (selection/auto-scroll-step
+                (selection/point 5 3)
+                {:top 3 :bottom 20 :edge-size 4 :max-step 6})))
+    (expect (= {:direction :up :amount 1}
+              (selection/auto-scroll-step
+                (selection/point 5 6)
+                {:top 3 :bottom 20 :edge-size 4 :max-step 6})))
+    (expect (= {:direction :down :amount 4}
+              (selection/auto-scroll-step
+                (selection/point 5 19)
+                {:top 3 :bottom 20 :edge-size 4 :max-step 6})))))

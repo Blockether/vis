@@ -936,7 +936,7 @@
     ::extension/provenance
     #(= :vis/eval (:op %))
     #(contains? eval-provenance-engines (:engine %))
-    #(integer? (:iteration %))
+    #(pos-int? (:iteration %))
     #(pos-int? (:form-position %))
     #(pos-int? (:form-count %))
     #(= (:ref %) (str "i" (:iteration %) "." (:form-position %)))))
@@ -970,7 +970,8 @@
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
-    (let [effective-reasoning (when (some? reasoning-level)
+    (let [iteration-position (inc (long (or iteration 0)))
+          effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
                                            {:type :vis/invalid-reasoning-level
@@ -995,6 +996,7 @@
           ;; thinking. Every chunk carries `:phase` — consumers
           ;; dispatch on it. Phases:
           ;;   :reasoning      — LLM streaming reasoning text
+          ;;   :form-start     — one form started evaluating (per-form)
           ;;   :form-result    — one form finished evaluating (per-form)
           ;;   :iteration-final — iteration complete (final-result
           ;;                      or normal end-of-iteration marker)
@@ -1002,10 +1004,10 @@
                          (fn [{:keys [reasoning done?]}]
                            (when (or (some? reasoning) done?)
                              (on-chunk {:phase     :reasoning
-                                        :iteration iteration
+                                        :iteration iteration-position
                                         :thinking  (some-> reasoning str)
                                         :done?     (boolean done?)}))))
-          ask-result (binding [svar-llm/*log-context* {:conversation-turn-id (:environment-id environment) :iteration iteration}]
+          ask-result (binding [svar-llm/*log-context* {:conversation-turn-id (:environment-id environment) :iteration iteration-position}]
                        (svar/ask-code! (:router environment)
                          (cond-> {:lang     "clojure"
                                   :messages messages
@@ -1041,12 +1043,21 @@
           executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
+                           (when on-chunk
+                             (on-chunk {:phase         :form-start
+                                        :iteration     iteration-position
+                                        :form-idx      idx
+                                        :form-of       total-blocks
+                                        :iteration-id  (str "i" iteration-position "." (inc idx))
+                                        :code          expr
+                                        :comment       form-comment
+                                        :started-at-ms (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
                            ;; `(answer ...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (reset! current-form-idx-atom idx)
-                           (let [iteration-id (str "i" iteration "." (inc idx))
+                           (let [iteration-id (str "i" iteration-position "." (inc idx))
                                  raw-result (cond
                                               parse-error
                                               {:result nil :error (str "Parse error: " parse-error)
@@ -1070,7 +1081,7 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
-                                 provenance (eval-provenance iteration idx total-blocks result)
+                                 provenance (eval-provenance iteration-position idx total-blocks result)
                                  result* (assoc result :provenance provenance)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
@@ -1082,7 +1093,7 @@
                              ;; not on shape.
                              (when (and on-chunk (not= :vis/silent (:result result*)))
                                (on-chunk {:phase             :form-result
-                                          :iteration         iteration
+                                          :iteration         iteration-position
                                           :form-idx          idx
                                           :form-of           total-blocks
                                           :iteration-id      iteration-id
@@ -1147,7 +1158,7 @@
               own-form-error  (when-not position-bad?
                                 (answer-form-error block-results form-idx))
               gate-error      (when (and (not position-bad?) (nil? own-form-error))
-                                (final-answer-gate-error environment iteration blocks))
+                                (final-answer-gate-error environment iteration-position blocks))
               validation-error (cond
                                  position-bad?
                                  (answer-position-error-message form-idx total-forms)
@@ -1174,10 +1185,10 @@
                         (< form-idx (count blocks*)))
                   (let [b (get blocks* form-idx)]
                     (on-chunk {:phase             :form-result
-                               :iteration         iteration
+                               :iteration         iteration-position
                                :form-idx          form-idx
                                :form-of           total-forms
-                               :iteration-id      (str "i" iteration "." (inc form-idx))
+                               :iteration-id      (str "i" iteration-position "." (inc form-idx))
                                :code              (:code b)
                                :comment           (get block-comments form-idx)
                                :result            (:result b)
@@ -1655,8 +1666,8 @@
         ;; precomputed `active-exts` (no second activation pass).
         ;;
         ;; Source markers (paths, max-mtime, sha256) are written ONLY
-        ;; on the first iteration of each turn (`iter-pos` = 0). The
-        ;; v2 change-detector reads `WHERE position = 0 ORDER BY
+        ;; on the first iteration of each turn (`iter-pos` = 0 internally,
+        ;; persisted as position 1). The v2 change-detector reads `WHERE position = 1 ORDER BY
         ;; created_at DESC LIMIT 1` to compare against current state.
         ;; Subsequent iterations omit them — cuts ~99 % redundant DB
         ;; volume vs every-iteration. See plan Q15.
@@ -1736,7 +1747,7 @@
                             (take-last prompt/JOURNAL_KEEP_ITERS)
                             vec)]
                 (mapv (fn [it]
-                        [(or (:position it) 0)
+                        [(or (:position it) 1)
                          {:thinking (:thinking it)
                           :blocks   (try (persistance/db-list-iteration-blocks d (:id it))
                                       (catch Throwable _ []))}])
@@ -1744,7 +1755,7 @@
             (catch Throwable t
               (tel/log! {:level :warn :id ::cross-turn-journal-seed-failed
                          :data  {:error (ex-message t)}
-                         :msg   "Cross-turn journal seed failed; iter 0 starts with an empty <journal>"})
+                         :msg   "Cross-turn journal seed failed; first iteration starts with an empty <journal>"})
               nil))]
       ;; Lifecycle :turn-start — fired once now that every SYSTEM_*
       ;; sandbox var is bound and BEFORE the first iteration kicks
@@ -1905,7 +1916,7 @@
                       ;; reasoning -> error transition.
                         (emit-hook! on-chunk
                           {:phase     :iteration-error
-                           :iteration iteration
+                           :iteration (inc (long iteration))
                            :thinking  empty-reasoning
                            :error     iteration-error-data
                            :done?     true}
@@ -2063,7 +2074,7 @@
                         ;; call's code above the answer text.
                           (when on-chunk
                             (on-chunk {:phase            :iteration-final
-                                       :iteration        iteration
+                                       :iteration        (inc (long iteration))
                                        :thinking         thinking
                                        :final            {:answer          (:answer final-result)
                                                           :iteration-count (inc iteration)
@@ -2103,7 +2114,7 @@
                           ;; turn isn't done yet.
                             (when on-chunk
                               (on-chunk {:phase            :iteration-final
-                                         :iteration        iteration
+                                         :iteration        (inc (long iteration))
                                          :thinking         thinking
                                          :final            nil
                                          :silent-form-idxs silent-form-idxs
@@ -2118,8 +2129,8 @@
                                 ;; is reached so the projection stays
                                 ;; bounded.
                                   next-recent (->> (conj (or journal-iters [])
-                                                     [iteration {:thinking thinking
-                                                                 :blocks   blocks}])
+                                                     [(inc (long iteration)) {:thinking thinking
+                                                                             :blocks   blocks}])
                                                 (take-last prompt/JOURNAL_KEEP_ITERS)
                                                 vec)]
                               (recur (merge loop-state

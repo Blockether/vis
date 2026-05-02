@@ -31,13 +31,13 @@ current environment, `:ext/nudge-fn` is not called at all.
 
 ```clojure
 {:environment            env    ;; the full environment map (see Environment Map)
- :iteration              int    ;; 0-indexed current iteration number
+ :iteration              int    ;; internal 0-indexed current iteration number
  :previous-blocks   [map]  ;; previous iteration's blocks:
                                 ;;   [{:code str :result any :error str?
                                 ;;     :stdout str :stderr str
                                 ;;     :execution-time-ms int
                                 ;;     :timeout? bool :repaired? bool} …]
-                                ;;   nil on iteration 0 or after error recovery
+                                ;;   nil on the first iteration or after error recovery
  :user-var-count         int}   ;; user-defined vars in the sandbox
 ```
 

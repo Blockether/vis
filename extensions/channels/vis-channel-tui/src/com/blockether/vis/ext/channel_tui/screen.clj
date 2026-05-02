@@ -134,11 +134,12 @@
 
 (defn- paint-selection!
   "Overlay reverse-video on the selected back-buffer cells."
-  [^TerminalScreen screen selection cols rows selectable-ranges]
-  (doseq [{:keys [row col width]} (selection/selected-ranges selection cols rows selectable-ranges)
-          x (range col (+ col width))]
-    (when-let [tc (.getBackCharacter screen (int x) (int row))]
-      (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE)))))
+  [^TerminalScreen screen selection cols rows selectable-ranges viewport]
+  (let [screen-selection (selection/document->screen-selection selection viewport)]
+    (doseq [{:keys [row col width]} (selection/selected-ranges screen-selection cols rows selectable-ranges)
+            x (range col (+ col width))]
+      (when-let [tc (.getBackCharacter screen (int x) (int row))]
+        (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
 
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges that belong to visible transcript bubbles.
@@ -155,8 +156,13 @@
       []
       (vec
         (for [{:keys [top height]} (:visible layout)
-              :let [from (max top-limit (+ top-limit (long top)))
-                    to   (min bottom-limit (+ top-limit (long top) (long height)))]
+              ;; `draw-chat-bubble!`'s height includes the final blank gap
+              ;; before the next bubble. That row is spacing, not selectable
+              ;; content; including it made selection show a blank band at the
+              ;; top/bottom while edge-scrolling.
+              :let [selectable-h (max 0 (dec (long height)))
+                    from         (max top-limit (+ top-limit (long top)))
+                    to           (min bottom-limit (+ top-limit (long top) selectable-h))]
               row (range from to)]
           {:row row :col left :width width})))))
 
@@ -296,13 +302,17 @@
     ;; regions, which is the correct fallback — the previous frame
     ;; matches what's actually still on the user's screen up to this
     ;; instant.
-    (let [screen-cells (capture-screen-cells screen cols rows)]
+    (let [screen-cells (capture-screen-cells screen cols rows)
+          viewport     {:viewport-top text-top
+                        :eff-scroll   (:eff-scroll layout)}]
       (when-let [sel (:mouse-selection db)]
-        (paint-selection! screen sel cols rows selectable-ranges))
+        (paint-selection! screen sel cols rows selectable-ranges viewport))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols :rows rows :total-h total-h :inner-h inner-h
        :messages-top messages-top
+       :text-top text-top
+       :eff-scroll (:eff-scroll layout)
        :screen-cells screen-cells
        :selectable-ranges selectable-ranges})))
 
@@ -814,7 +824,9 @@
                                    (>= my (long thumb-top))
                                    (< my (+ (long thumb-top) thumb-h)))
                        selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
-                       selectable-ranges (get-in db [:layout :selectable-ranges])]
+                       selectable-ranges (get-in db [:layout :selectable-ranges])
+                       selection-viewport {:viewport-top bar-top
+                                           :eff-scroll   (get-in db [:layout :eff-scroll])}]
                    (cond
                      (= atype MouseActionType/SCROLL_UP)
                      (do (state/dispatch [:scroll-up 3 total-h inner-h])
@@ -881,18 +893,23 @@
                      (and selection-copy?
                        (= atype MouseActionType/DRAG)
                        (some? @mouse-selection-anchor))
-                     (let [focus (selection/point mx my)]
+                     (let [screen-focus (selection/point mx my)
+                           doc-focus    (selection/screen->document-point
+                                          screen-focus selection-viewport)]
                        (state/dispatch
                          [:set-mouse-selection
                           {:anchor @mouse-selection-anchor
-                           :focus  focus}])
-                       (case (selection/auto-scroll-direction
-                               focus {:top bar-top
-                                      :bottom (+ bar-top inner-h)
-                                      :edge-size 1})
-                         :up   (state/dispatch [:scroll-up 1 total-h inner-h])
-                         :down (state/dispatch [:scroll-down 1 total-h inner-h])
-                         nil)
+                           :focus  doc-focus}])
+                       (when-let [{:keys [direction amount]}
+                                  (selection/auto-scroll-step
+                                    screen-focus {:top bar-top
+                                                  :bottom (+ bar-top inner-h)
+                                                  :edge-size 6
+                                                  :max-step 6})]
+                         (case direction
+                           :up   (state/dispatch [:scroll-up amount total-h inner-h])
+                           :down (state/dispatch [:scroll-down amount total-h inner-h])
+                           nil))
                        (recur))
 
                      ;; CLICK_RELEASE — ends a drag, and serves as
@@ -914,12 +931,16 @@
                        (vreset! click-action-fired? false)
                        (vreset! mouse-selection-anchor nil)
                        (if (and selection-copy? anchor)
-                         (let [sel     {:anchor anchor
-                                        :focus  (selection/point mx my)}
-                               payload (selection/selected-text
-                                         (get-in db [:layout :screen-cells])
-                                         sel
-                                         selectable-ranges)]
+                         (let [sel        {:anchor anchor
+                                           :focus  (selection/screen->document-point
+                                                     (selection/point mx my)
+                                                     selection-viewport)}
+                               screen-sel (selection/document->screen-selection
+                                            sel selection-viewport)
+                               payload    (selection/selected-text
+                                            (get-in db [:layout :screen-cells])
+                                            screen-sel
+                                            selectable-ranges)]
                            (state/dispatch [:clear-mouse-selection])
                            (when (and (not= anchor (:focus sel))
                                    (not (str/blank? payload)))
@@ -989,12 +1010,16 @@
                                  (try (opener/open! (:url hit))
                                    (catch Throwable _ nil)))))
                            (when selection-copy?
-                             (let [anchor (selection/point mx my)]
-                               (when (selection/point-in-ranges? anchor selectable-ranges)
-                                 (vreset! mouse-selection-anchor anchor)
-                                 (state/dispatch
-                                   [:set-mouse-selection
-                                    {:anchor anchor :focus anchor}])))))
+                             (let [screen-anchor (selection/point mx my)]
+                               (when (selection/point-in-ranges?
+                                       screen-anchor selectable-ranges
+                                       {:row-padding 2})
+                                 (let [doc-anchor (selection/screen->document-point
+                                                    screen-anchor selection-viewport)]
+                                   (vreset! mouse-selection-anchor doc-anchor)
+                                   (state/dispatch
+                                     [:set-mouse-selection
+                                      {:anchor doc-anchor :focus doc-anchor}]))))))
                        (recur))
 
                      ;; Every other click — inside the input box,
@@ -1096,6 +1121,10 @@
                                nil)))]
                      (case action
                        :quit nil
+
+                       :clear-input
+                       (do (state/dispatch [:reset-input])
+                         (recur))
 
                        :show-palette
                      ;; Modal stack: each command runs nested inside the

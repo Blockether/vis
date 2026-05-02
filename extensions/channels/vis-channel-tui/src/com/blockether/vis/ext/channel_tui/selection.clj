@@ -29,14 +29,16 @@
         rows (long (max 0 rows))]
     (when (and (pos? cols) (pos? rows) (:anchor selection) (:focus selection))
       (let [{:keys [start end]} (normalize selection)
-            sr (max 0 (min (dec rows) (:row start)))
-            er (max 0 (min (dec rows) (:row end)))
-            sc (max 0 (min (dec cols) (:col start)))
-            ec (max 0 (min (dec cols) (:col end)))]
+            start-row (long (:row start))
+            end-row   (long (:row end))
+            sr        (max 0 (min (dec rows) start-row))
+            er        (max 0 (min (dec rows) end-row))
+            sc        (max 0 (min (dec cols) (:col start)))
+            ec        (max 0 (min (dec cols) (:col end)))]
         (vec
           (keep (fn [row]
-                  (let [from (if (= row sr) sc 0)
-                        to   (if (= row er) ec (dec cols))
+                  (let [from (if (= row start-row) sc 0)
+                        to   (if (= row end-row) ec (dec cols))
                         w    (inc (- to from))]
                     (when (pos? w)
                       {:row row :col from :width w})))
@@ -73,16 +75,70 @@
        :else []))))
 
 (defn point-in-ranges?
-  "True when `point` lies inside at least one selectable row range."
-  [{:keys [col row]} ranges]
-  (let [col (long col)
-        row (long row)]
-    (boolean
-      (some (fn [{r :row c :col w :width}]
-              (and (= row (long r))
-                (>= col (long c))
-                (< col (+ (long c) (long w)))))
-        ranges))))
+  "True when `point` lies inside at least one selectable row range.
+
+   Optional `:row-padding` expands the vertical hitbox without expanding the
+   copied/highlighted cells. This gives mouse selection a forgiving start zone
+   above and below bubbles while preserving bubble-only copy semantics."
+  ([point ranges]
+   (point-in-ranges? point ranges nil))
+  ([{:keys [col row]} ranges {:keys [row-padding]}]
+   (let [col     (long col)
+         row     (long row)
+         row-pad (long (max 0 (or row-padding 0)))]
+     (boolean
+       (some (fn [{r :row c :col w :width}]
+               (and (>= row (- (long r) row-pad))
+                 (<= row (+ (long r) row-pad))
+                 (>= col (long c))
+                 (< col (+ (long c) (long w)))))
+         ranges)))))
+
+(defn screen->document-point
+  "Convert a visible screen point into a transcript document point.
+
+   Document rows are relative to the top of the full message scrollback, not
+   the terminal. Keeping drag anchors in this coordinate space makes selection
+   stay attached to content while the viewport auto-scrolls underneath it."
+  [{:keys [col row]} {:keys [viewport-top eff-scroll]}]
+  (point col (+ (long (or eff-scroll 0))
+               (- (long row) (long (or viewport-top 0))))))
+
+(defn document->screen-selection
+  "Project a document-space selection into the current screen viewport."
+  [{:keys [anchor focus]} {:keys [viewport-top eff-scroll]}]
+  (let [viewport-top (long (or viewport-top 0))
+        eff-scroll   (long (or eff-scroll 0))
+        ->screen     (fn [{:keys [col row]}]
+                       (point col (+ viewport-top
+                                    (- (long row) eff-scroll))))]
+    {:anchor (->screen anchor)
+     :focus  (->screen focus)}))
+
+(defn auto-scroll-step
+  "Return `{:direction :up|:down :amount n}` while a drag-selection point is in
+   a viewport edge zone, otherwise nil.
+
+   The amount ramps up toward the outermost row so selecting at the very top or
+   bottom of the messages viewport scrolls faster than hovering near the middle
+   of the edge zone."
+  [{:keys [row]} {:keys [top bottom edge-size max-step]}]
+  (let [row      (long row)
+        top      (long top)
+        bot      (long bottom)
+        edge     (long (max 0 (or edge-size 1)))
+        max-step (long (max 1 (or max-step edge 1)))]
+    (when (and (< top bot) (pos? edge))
+      (cond
+        (< row (+ top edge))
+        (let [distance (max 0 (- row top))]
+          {:direction :up
+           :amount    (min max-step (max 1 (- edge distance)))})
+
+        (>= row (- bot edge))
+        (let [distance (max 0 (- (dec bot) row))]
+          {:direction :down
+           :amount    (min max-step (max 1 (- edge distance)))})))))
 
 (defn auto-scroll-direction
   "Return `:up`, `:down`, or nil while a drag-selection point is at a
@@ -90,15 +146,8 @@
 
    `top` is inclusive, `bottom` is exclusive, and `edge-size` is the number of
    rows at either edge that should trigger auto-scroll."
-  [{:keys [row]} {:keys [top bottom edge-size]}]
-  (let [row  (long row)
-        top  (long top)
-        bot  (long bottom)
-        edge (long (max 0 (or edge-size 1)))]
-    (when (and (< top bot) (pos? edge))
-      (cond
-        (< row (+ top edge)) :up
-        (>= row (- bot edge)) :down))))
+  [point opts]
+  (:direction (auto-scroll-step point opts)))
 
 (defn- row-cells
   [row]

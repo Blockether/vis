@@ -61,6 +61,16 @@
         (expect (> l1 l2))
         (expect (> l2 l3))))))
 
+(defdescribe user-bg-test
+  (describe "User request background is visually identical to terminal-bg (no yellow zone)"
+    (it "user-bubble-bg RGB matches terminal-bg exactly"
+      ;; Per user request: the user prompt should not paint a yellow
+      ;; block. Pinning equality keeps that tint from coming back.
+      (expect (= [(.getRed t/terminal-bg) (.getGreen t/terminal-bg) (.getBlue t/terminal-bg)]
+                [(.getRed t/user-bubble-bg) (.getGreen t/user-bubble-bg) (.getBlue t/user-bubble-bg)])))
+    (it "user-bubble-fg on user-bubble-bg still passes WCAG AAA (>= 7)"
+      (expect (>= (contrast-ratio t/user-bubble-fg t/user-bubble-bg) 7.0)))))
+
 (defdescribe answer-bg-test
   (describe "Answer background is now visually identical to terminal-bg (no zone bg)"
     (it "answer-bg RGB matches terminal-bg exactly"

@@ -747,6 +747,7 @@
 ;; builds a per-iteration timeline that channels render. Key
 ;; behaviors:
 ;;   - :reasoning    appends/replaces the iteration's :thinking
+;;   - :form-start   fills :code at :form-idx before eval finishes
 ;;   - :form-result  fills parallel vectors at :form-idx
 ;;   - :iteration-final WITH :final + :answer-form-idx ELIDES the
 ;;     answer-bearing form's slot from every parallel vector (so
@@ -771,6 +772,24 @@
           (expect (= ["" "hello"] (:stdouts entry)))
           (expect (= [5 7] (:durations entry)))
           (expect (= [true true] (:successes entry)))))))
+
+  (it ":form-start exposes currently-running code before a result lands"
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
+      (on-chunk {:phase :form-start :iteration 0 :form-idx 0
+                 :form-of 2 :code "(Thread/sleep 1000)"
+                 :started-at-ms 1000})
+      (let [entry (first (get-timeline))]
+        (expect (= ["(Thread/sleep 1000)"] (:code entry)))
+        (expect (= [1000] (:started-at-ms entry)))
+        (expect (= [{:type :form-result :form-idx 0}] (:events entry)))
+        (expect (empty? (:successes entry))))
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(Thread/sleep 1000)" :result nil :stdout "" :stderr ""
+                 :execution-time-ms 1000 :error nil})
+      (let [entry (first (get-timeline))]
+        (expect (= [true] (:successes entry)))
+        (expect (= [1000] (:durations entry)))
+        (expect (= [{:type :form-result :form-idx 0}] (:events entry))))))
 
   (it "out-of-order :form-result chunks pad with nil"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
@@ -835,6 +854,34 @@
         (expect (= [true true] (:successes entry)))
         (expect (= 2 (count (:durations entry))))
         (expect (= "12 hits across 3 files" (-> entry :final :answer))))))
+
+  (it ":iteration-final remaps ordered events after eliding silent and answer slots"
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(conversation-title \"x\")" :result :vis/silent
+                 :stdout "" :stderr "" :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
+                 :code "(def checks {})" :result #:vis{:ref :expr}
+                 :stdout "" :stderr "" :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 2
+                 :code "checks" :result {:ok? true}
+                 :stdout "" :stderr "" :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 3
+                 :code "(answer \"ok\")" :result :vis/answer
+                 :stdout "" :stderr "" :execution-time-ms 1 :error nil})
+      (on-chunk {:phase :iteration-final :iteration 0
+                 :final {:answer "ok" :iteration-count 1 :status :success}
+                 :answer-form-idx 3
+                 :silent-form-idxs #{0}
+                 :done? true})
+      (let [entry (first (get-timeline))]
+        (expect (= ["(def checks {})" "checks"] (:code entry)))
+        ;; Live renderer drives off :events. If these indices are not
+        ;; remapped after slot elision, it renders an out-of-bounds
+        ;; phantom code block as `""` until the conversation is reopened.
+        (expect (= [{:type :form-result :form-idx 0}
+                    {:type :form-result :form-idx 1}]
+                  (:events entry))))))
 
   (it ":iteration-final without :final keeps every slot (non-terminal iter)"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]

@@ -22,16 +22,13 @@
 (def dialog-hint     (TextColor$RGB. 120 120 120))  ;; muted hint text
 (def dialog-hint-key (TextColor$RGB. 50 50 50))     ;; near-black key labels
 
-;; Chat messages — user (warm light-yellow block, high-contrast text)
+;; Chat messages — user (no background fill, terminal bg shows through)
 ;;
-;; Distinct from `warning-bg` (which is more saturated and means "pay
-;; attention, something went wrong"). User-bubble is a pale,
-;; paper-like tint so user input reads as its own zone without
-;; competing with warnings or with the white assistant area.
-;; Foreground is a near-black warm tone so the WCAG luminance ratio
-;; against the yellow stays above 12:1 — readable in any terminal.
-(def user-bubble-bg    (TextColor$RGB. 254 248 215))  ;; very pale warm yellow — "user said this" zone
-(def user-bubble-fg    (TextColor$RGB. 25 22 5))      ;; near-black warm — high contrast on the yellow
+;; User requests intentionally use the same white background as the
+;; terminal. The text and role label still identify the prompt; no
+;; yellow zone is painted behind it.
+(def user-bubble-bg    (TextColor$RGB. 255 255 255))  ;; identical to terminal-bg — no user-request bg tint
+(def user-bubble-fg    (TextColor$RGB. 30 30 30))     ;; near-black text on white
 (def user-role-fg      (TextColor$RGB. 130 90 0))     ;; bold amber accent for the "You" label
 
 ;; Chat messages — assistant (no background fill, terminal bg shows through)
@@ -49,7 +46,8 @@
 (def cancelled-fg (TextColor$RGB. 110 110 110))  ;; muted gray text on the cancelled bg
 
 ;; Code block styling
-(def code-block-bg     (TextColor$RGB. 240 243 248))  ;; light blue-gray — code blocks
+(def code-block-bg     (TextColor$RGB. 240 243 248))  ;; neutral bg — currently running / not-yet-executed code
+(def code-ok-bg        (TextColor$RGB. 232 248 232))  ;; light green — successful executed code
 (def code-err-bg       (TextColor$RGB. 253 235 235))  ;; very light red — failed code only
 (def code-block-fg     (TextColor$RGB. 30 30 30))     ;; near-black text in code
 (def code-success-fg   (TextColor$RGB. 40 160 60))    ;; green ✓ marker
@@ -57,6 +55,11 @@
 (def code-duration-fg  (TextColor$RGB. 130 130 130))  ;; muted duration text
 (def code-result-fg    (TextColor$RGB. 70 70 70))     ;; dim result text
 (def code-error-result-fg (TextColor$RGB. 180 40 40)) ;; red result text (on red bg)
+(def code-syntax-special-fg (TextColor$RGB. 120 70 170))  ;; purple special forms / defs
+(def code-syntax-keyword-fg (TextColor$RGB. 25 110 120))  ;; teal keywords
+(def code-syntax-string-fg  (TextColor$RGB. 150 80 40))   ;; brown strings
+(def code-syntax-number-fg  (TextColor$RGB. 30 90 180))   ;; blue numbers
+(def code-syntax-comment-fg (TextColor$RGB. 120 120 120)) ;; gray comments
 (def code-border-fg    (TextColor$RGB. 90 95 110))    ;; darker neutral — table borders / code-section dividers (heavy box-drawing chars need real contrast)
 (def stdout-bg         (TextColor$RGB. 247 244 238))  ;; warm beige — stdout output
 (def stdout-fg         (TextColor$RGB. 80 80 80))     ;; dim text in stdout

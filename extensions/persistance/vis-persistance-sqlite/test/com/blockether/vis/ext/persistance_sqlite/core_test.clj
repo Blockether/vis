@@ -222,6 +222,13 @@
         (expect (= "2+2?" (:user-request q)))
         (expect (= :running (:status q))))))
 
+  (it "assigns turn positions from 1 within the active conversation state"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})]
+      (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "one" :status :done})
+      (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "two" :status :done})
+      (expect (= [1 2] (mapv :position (vis/db-list-conversation-turns s cid))))))
+
   (it "normalizes :success to done"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -254,7 +261,7 @@
           iid    (vis/db-store-iteration! s {:conversation-turn-id tid
                                              :blocks [{:code "(+ 1 2)"
                                                        :result 3
-                                                       :provenance {:ref "i0.1"
+                                                       :provenance {:ref "i1.1"
                                                                     :op :vis/eval
                                                                     :engine :vis/sci
                                                                     :form-position 1
@@ -263,7 +270,7 @@
                                           :key :main
                                           :text "ship it"
                                           :created-iteration-id iid
-                                          :created-ref "i0.1"})
+                                          :created-ref "i1.1"})
           plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
                                         :key :main
                                         :summary "Inspect and verify."
@@ -274,7 +281,7 @@
           att    (vis/db-store-attestation! s {:gate-state-id (:id gate)
                                                :status :proven
                                                :summary "Verification passed."
-                                               :refs ["i0.1"]})
+                                               :refs ["i1.1"]})
           state  (vis/db-work-state s tid)]
       (expect (= 1 (raw-count s :intent_soul)))
       (expect (= 1 (raw-count s :intent_state)))
@@ -284,7 +291,7 @@
       (expect (= 1 (raw-count s :attestation_provenance_ref)))
       (expect (= :closed (:status (first (:gates state)))))
       (expect (= :proven (:status att)))
-      (expect (= [{:ref "i0.1" :role :evidence :created-at (:created-at (first (:refs att)))}]
+      (expect (= [{:ref "i1.1" :role :evidence :created-at (:created-at (first (:refs att)))}]
                 (:refs att)))))
 
   (it "rejects terminal gate state without attestation refs"
@@ -370,12 +377,35 @@
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             blocks    (vis/db-list-iteration-blocks s (:id iteration))]
         (expect (= "Computing" (:thinking iteration)))
-        (expect (= 0 (:position iteration)))
+        (expect (= 1 (:position iteration)))
         (expect (= 2 (count blocks)))
         (expect (= "(+ 1 1)" (:code (first blocks))))
         (expect (= 2 (:result (first blocks))))
         (expect (= "(* 3 4)" (:code (second blocks))))
         (expect (= 12 (:result (second blocks)))))))
+
+  (it "assigns iteration positions from 1 and rejects non-contiguous manual positions"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
+      (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 1})
+      (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 1})
+      (expect (= [1 2] (mapv :position (vis/db-list-conversation-turn-iterations s qid))))
+      (let [turn-state-id (:id (first (raw-query s {:select [:id]
+                                                    :from :conversation_turn_state
+                                                    :where [:= :conversation_turn_soul_id (str qid)]})))
+            thrown (try
+                     (raw-query s {:insert-into :iteration
+                                   :values [{:id (str (random-uuid))
+                                             :conversation_turn_state_id turn-state-id
+                                             :position 4
+                                             :status "done"
+                                             :llm_returned_empty_blocks 1
+                                             :created_at 1}]})
+                     nil
+                     (catch Exception e e))]
+        (expect (some? thrown))
+        (expect (re-find #"iteration position must increment by 1" (ex-message thrown))))))
 
   (it "round-trips block-level provenance through the BLOB"
     (let [s   (h/store)
@@ -383,10 +413,10 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
           provenance {:op :vis/eval
                       :engine :vis/sci
-                      :iteration 0
+                      :iteration 1
                       :form-position 1
                       :form-count 1
-                      :ref "i0.1"
+                      :ref "i1.1"
                       :started-at-ms 10
                       :finished-at-ms 11
                       :duration-ms 1}]
