@@ -517,8 +517,9 @@
       (expect (contains? symbols 'gate-checks))
       (expect (contains? symbols 'contract-report))
       (expect (contains? symbols 'audit-report))
-      (expect (contains? symbols 'symbol-docs))
+      (expect (contains? symbols 'namespace-docs))
       (expect (contains? symbols 'symbol-doc))
+      (expect (not (contains? symbols 'symbol-docs)))
       (doseq [removed ['turn 'conversation 'conversations 'conversation-forks
                        'turn-retries 'var-history 'find-attempts
                        'find-attempts-everywhere 'failures
@@ -794,9 +795,9 @@
   (it "returns nil for an unknown extension reference"
     (expect (nil? ((private-fn "foundation-extension-doc") {} 'no.such.ext)))))
 
-(defdescribe foundation-symbol-docs-test
-  (it "single-arg form returns sandbox symbol docs for a registered extension"
-    (let [docs ((private-fn "foundation-symbol-docs") {} 'v)
+(defdescribe foundation-namespace-docs-test
+  (it "single-arg form returns sandbox symbol docs for a registered extension namespace"
+    (let [docs ((private-fn "foundation-namespace-docs") {} 'v)
           file-link (some #(when (= 'file-link (:name %)) %) docs)]
       (expect (vector? docs))
       (expect (some? file-link))
@@ -809,14 +810,14 @@
       (expect (= '([path] [path line]) (:arglists file-link)))
       (expect (some #(str/includes? % "v/file-link") (:examples file-link)))))
 
-  (it "no-arg form returns the symbol-doc registry keyed by extension id"
-    (let [registry ((private-fn "foundation-symbol-docs") {})]
+  (it "no-arg form returns the namespace-doc registry keyed by extension id"
+    (let [registry ((private-fn "foundation-namespace-docs") {})]
       (expect (map? registry))
       (expect (contains? registry 'v))
       (expect (some #(= 'inspect (:name %)) (get registry 'v)))))
 
   (it "unknown extension reference returns nil"
-    (expect (nil? ((private-fn "foundation-symbol-docs") {} 'no.such.extension)))))
+    (expect (nil? ((private-fn "foundation-namespace-docs") {} 'no.such.extension)))))
 
 (defdescribe foundation-symbol-doc-test
   (it "returns one sandbox symbol descriptor by extension ref and symbol name"

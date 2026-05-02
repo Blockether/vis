@@ -26,7 +26,7 @@ Pure reads off the same DB tables the projection layer uses; failures return nil
 (v/extension-docs ext-ref)      ; manifest doc summaries (no content)
 (v/extension-doc ext-ref)       ; full README descriptor incl. :content
 (v/extension-readme ext-ref)    ; README :content shortcut
-(v/symbol-docs ext-ref)         ; sandbox symbol summaries
+(v/namespace-docs ext-ref)      ; sandbox namespace symbol summaries
 (v/symbol-doc ext-ref sym)      ; doc/arglists/examples for one sandbox symbol
 ```
 
@@ -74,7 +74,7 @@ Programmatic markdown for `(answer …)`. Pure string builders; no templating, n
 (v/p \"Three files touched.\")
 (v/table [\"file\" \"+/-\"] [[\"core.clj\" \"+12 / -4\"]])
 (v/file-link \"src/core.clj\" 142)
-(v/code-block \"(println :done)\" \"clojure\")
+(v/code-block \"clojure\" \"(println :done)\")
 (v/join (v/h1 \"Done\") (v/p \"Ready.\"))
 
 (answer

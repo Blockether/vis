@@ -27,7 +27,7 @@
    - `(v/extension-docs [ref])`       → docs declared by an extension with descriptions
    - `(v/extension-doc ref)`          → full README descriptor for an extension
    - `(v/extension-readme ref)`       → convenience for (:content (extension-doc ref))
-   - `(v/symbol-docs [ref])`          → sandbox symbol summaries for an extension
+   - `(v/namespace-docs [ref])`       → sandbox symbol summaries for an extension namespace
    - `(v/symbol-doc ref sym)`         → doc/arglists/examples for one sandbox symbol
 
    Every function is a pure read off the same DB tables the projection
@@ -1205,7 +1205,7 @@
 ;; `(v/extension-docs ...)` returns the descriptions (no `:content`)
 ;; so the LLM can scan the index before pulling a full body via
 ;; `(v/extension-doc ...)`. Sandbox symbol docs are separate:
-;; `(v/symbol-docs ...)` / `(v/symbol-doc ...)` read the registered
+;; `(v/namespace-docs ...)` / `(v/symbol-doc ...)` read the registered
 ;; extension symbol metadata, not the manifest doc registry.
 ;; See AGENTS.md ▸ "Every extension ships a single canonical README
 ;; in vis.edn".
@@ -1344,11 +1344,12 @@
       (:ext.symbol/arglists entry) (assoc :arglists (:ext.symbol/arglists entry))
       (:ext.symbol/examples entry) (assoc :examples (:ext.symbol/examples entry)))))
 
-(defn- foundation-symbol-docs
-  "With one arg, return sandbox symbol doc summaries for one extension.
-   With no arg, return the full symbol-doc registry keyed by canonical
-   extension id. Symbol docs are derived from registered extension
-   `:ext/symbols`; manifest docs stay under `v/extension-docs`."
+(defn- foundation-namespace-docs
+  "With one arg, return sandbox symbol doc summaries for one extension
+   namespace/alias. With no arg, return the full namespace-doc registry
+   keyed by canonical extension id. Namespace docs are derived from
+   registered extension `:ext/symbols`; manifest docs stay under
+   `v/extension-docs`."
   ([_env]
    (into {}
      (keep (fn [extension]
@@ -1585,14 +1586,14 @@
                  "(println (v/extension-readme 'v))"]
      :before-fn inject-environment}))
 
-(def symbol-docs-symbol
-  (vis/symbol 'symbol-docs foundation-symbol-docs
-    {:doc       "Sandbox symbol doc index. No arg returns registry; one arg returns docs for one extension."
+(def namespace-docs-symbol
+  (vis/symbol 'namespace-docs foundation-namespace-docs
+    {:doc       "Sandbox namespace doc index. No arg returns registry; one arg returns docs for one extension namespace/alias."
      :arglists  '([] [extension-ref])
-     :examples  ["(v/symbol-docs)"
-                 "(v/symbol-docs 'v)"
-                 "(map :name (v/symbol-docs 'v))"
-                 "(filter #(= :fn (:kind %)) (v/symbol-docs 'v))"]
+     :examples  ["(v/namespace-docs)"
+                 "(v/namespace-docs 'v)"
+                 "(map :name (v/namespace-docs 'v))"
+                 "(filter #(= :fn (:kind %)) (v/namespace-docs 'v))"]
      :before-fn inject-environment}))
 
 (def symbol-doc-symbol
@@ -1628,7 +1629,7 @@
    extension-docs-symbol
    extension-doc-symbol
    extension-readme-symbol
-   symbol-docs-symbol
+   namespace-docs-symbol
    symbol-doc-symbol])
 
 (def introspection-prompt
@@ -1655,7 +1656,7 @@
     "  (v/extension-docs ext-ref)    manifest doc summaries\n"
     "  (v/extension-doc ext-ref)      README descriptor incl. :content\n"
     "  (v/extension-readme ext-ref)  README text\n"
-    "  (v/symbol-docs ext-ref)       sandbox symbol summaries\n"
+    "  (v/namespace-docs ext-ref)    sandbox namespace symbol summaries\n"
     "  (v/symbol-doc ext-ref sym)    sandbox symbol doc/arglists/examples\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
