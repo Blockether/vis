@@ -214,6 +214,13 @@
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
 
+;; Work provenance: turn-scoped intent -> plan -> gate -> attestation
+(def db-store-intent!                 persistance/db-store-intent!)
+(def db-store-plan!                   persistance/db-store-plan!)
+(def db-store-gate!                   persistance/db-store-gate!)
+(def db-store-attestation!            persistance/db-store-attestation!)
+(def db-work-state                    persistance/db-work-state)
+
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
 (def db-var-history                      persistance/db-var-history)

@@ -134,11 +134,31 @@
 
 (defn- paint-selection!
   "Overlay reverse-video on the selected back-buffer cells."
-  [^TerminalScreen screen selection cols rows]
-  (doseq [{:keys [row col width]} (selection/selected-ranges selection cols rows)
+  [^TerminalScreen screen selection cols rows selectable-ranges]
+  (doseq [{:keys [row col width]} (selection/selected-ranges selection cols rows selectable-ranges)
           x (range col (+ col width))]
     (when-let [tc (.getBackCharacter screen (int x) (int row))]
       (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE)))))
+
+(defn- bubble-selectable-ranges
+  "Return absolute screen-cell ranges that belong to visible transcript bubbles.
+
+   Selection deliberately excludes the header, input box, footer, scrollbar
+   gutter, and message-area margins. Dragging across those cells may continue a
+   gesture, but highlight/copy is clipped back to these bubble ranges."
+  [layout text-top inner-h cols]
+  (let [left         (long render/MESSAGE_MARGIN_LEFT)
+        width        (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        top-limit    (long text-top)
+        bottom-limit (+ top-limit (long (max 0 inner-h)))]
+    (if (or (not (pos? width)) (<= bottom-limit top-limit))
+      []
+      (vec
+        (for [{:keys [top height]} (:visible layout)
+              :let [from (max top-limit (+ top-limit (long top)))
+                    to   (min bottom-limit (+ top-limit (long top) (long height)))]
+              row (range from to)]
+          {:row row :col left :width width})))))
 
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
@@ -251,7 +271,9 @@
                         :progress-extra progress-extra}
                        {:conversation-id    (get-in db [:conversation :id])
                         :detail-expansions (:detail-expansions db)})
-        total-h      (long (:total-h layout))]
+        total-h      (long (:total-h layout))
+        text-top     (+ messages-top render/MESSAGE_MARGIN_TOP)
+        selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
@@ -276,12 +298,13 @@
     ;; instant.
     (let [screen-cells (capture-screen-cells screen cols rows)]
       (when-let [sel (:mouse-selection db)]
-        (paint-selection! screen sel cols rows))
+        (paint-selection! screen sel cols rows selectable-ranges))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols :rows rows :total-h total-h :inner-h inner-h
        :messages-top messages-top
-       :screen-cells screen-cells})))
+       :screen-cells screen-cells
+       :selectable-ranges selectable-ranges})))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
@@ -790,7 +813,8 @@
                                    (< mx cols)
                                    (>= my (long thumb-top))
                                    (< my (+ (long thumb-top) thumb-h)))
-                       selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))]
+                       selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
+                       selectable-ranges (get-in db [:layout :selectable-ranges])]
                    (cond
                      (= atype MouseActionType/SCROLL_UP)
                      (do (state/dispatch [:scroll-up 3 total-h inner-h])
@@ -857,10 +881,18 @@
                      (and selection-copy?
                        (= atype MouseActionType/DRAG)
                        (some? @mouse-selection-anchor))
-                     (do (state/dispatch
-                           [:set-mouse-selection
-                            {:anchor @mouse-selection-anchor
-                             :focus  (selection/point mx my)}])
+                     (let [focus (selection/point mx my)]
+                       (state/dispatch
+                         [:set-mouse-selection
+                          {:anchor @mouse-selection-anchor
+                           :focus  focus}])
+                       (case (selection/auto-scroll-direction
+                               focus {:top bar-top
+                                      :bottom (+ bar-top inner-h)
+                                      :edge-size 1})
+                         :up   (state/dispatch [:scroll-up 1 total-h inner-h])
+                         :down (state/dispatch [:scroll-down 1 total-h inner-h])
+                         nil)
                        (recur))
 
                      ;; CLICK_RELEASE — ends a drag, and serves as
@@ -885,7 +917,9 @@
                          (let [sel     {:anchor anchor
                                         :focus  (selection/point mx my)}
                                payload (selection/selected-text
-                                         (get-in db [:layout :screen-cells]) sel)]
+                                         (get-in db [:layout :screen-cells])
+                                         sel
+                                         selectable-ranges)]
                            (state/dispatch [:clear-mouse-selection])
                            (when (and (not= anchor (:focus sel))
                                    (not (str/blank? payload)))
@@ -956,10 +990,11 @@
                                    (catch Throwable _ nil)))))
                            (when selection-copy?
                              (let [anchor (selection/point mx my)]
-                               (vreset! mouse-selection-anchor anchor)
-                               (state/dispatch
-                                 [:set-mouse-selection
-                                  {:anchor anchor :focus anchor}]))))
+                               (when (selection/point-in-ranges? anchor selectable-ranges)
+                                 (vreset! mouse-selection-anchor anchor)
+                                 (state/dispatch
+                                   [:set-mouse-selection
+                                    {:anchor anchor :focus anchor}])))))
                        (recur))
 
                      ;; Every other click — inside the input box,

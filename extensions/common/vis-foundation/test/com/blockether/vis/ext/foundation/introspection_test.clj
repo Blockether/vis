@@ -52,6 +52,28 @@
    :conversation-id conversation-id
    :current-iteration-atom (atom 2)})
 
+(defn- eval-provenance [iteration form-position form-count]
+  {:op :vis/eval
+   :engine :vis/sci
+   :iteration iteration
+   :form-position form-position
+   :form-count form-count
+   :ref (str "i" iteration "." form-position)
+   :started-at-ms 10
+   :finished-at-ms 11
+   :duration-ms 1})
+
+(defn- tool-result [op markdown]
+  {:ok? true
+   :result {:value :ok}
+   :result-shape {:type :map}
+   :provenance {:op op
+                :started-at-ms 10
+                :finished-at-ms 15
+                :duration-ms 5}
+   :markdown markdown
+   :error nil})
+
 ;; The impl fns are private — reach via the var registry so tests
 ;; stay decoupled from any public re-export.
 (defn- private-fn [name]
@@ -478,15 +500,188 @@
         (expect (str/includes? out (str "conversation `" conversation-id "`")))
         (expect (str/includes? out "User request:** what's the plan?")))))
 
-  (it "exports only inspect/report plus extension discovery symbols for introspection"
+  (it "exports inspect/report, provenance helpers, plus extension discovery symbols for introspection"
     (let [symbols (set (map :ext.symbol/sym com.blockether.vis.ext.foundation.introspection/all-symbols))]
       (expect (contains? symbols 'inspect))
       (expect (contains? symbols 'report))
+      (expect (contains? symbols 'provenance-timeline))
+      (expect (contains? symbols 'provenance-stats))
+      (expect (contains? symbols 'provenance-guards))
+      (expect (contains? symbols 'provenance-report))
+      (expect (contains? symbols 'intent!))
+      (expect (contains? symbols 'plan!))
+      (expect (contains? symbols 'gate!))
+      (expect (contains? symbols 'attest!))
+      (expect (contains? symbols 'block-gate!))
+      (expect (contains? symbols 'work-state))
+      (expect (contains? symbols 'gate-checks))
       (doseq [removed ['turn 'conversation 'conversations 'conversation-forks
                        'turn-retries 'var-history 'find-attempts
                        'find-attempts-everywhere 'failures
                        'failures-everywhere 'diagnose]]
         (expect (not (contains? symbols removed)))))))
+
+;; -----------------------------------------------------------------------------
+;; Provenance helpers — timeline, stats, guards, compact report.
+;; -----------------------------------------------------------------------------
+
+(defdescribe foundation-provenance-test
+  (it "builds an ordered eval/tool timeline with stable iN.K refs"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(+ 1 2)"
+                   :result 3
+                   :stdout ""
+                   :stderr ""
+                   :error nil
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 0 1 2)}
+                  {:id 1
+                   :code "(v/bash \"pwd\")"
+                   :result (tool-result :v/bash "Ran bash in `.` — exit `0`, 5 ms.")
+                   :stdout ""
+                   :stderr ""
+                   :error nil
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 0 2 2)}]})
+      (let [timeline ((private-fn "foundation-provenance-timeline") (env s conversation-id))]
+        (expect (= ["i0.1" "i0.2" "i0.2/tool"] (mapv :ref timeline)))
+        (expect (= [:eval :eval :tool] (mapv :kind timeline)))
+        (expect (= [:vis/eval :vis/eval :v/bash] (mapv :op timeline)))
+        (expect (= "i0.2" (:parent-ref (last timeline)))))))
+
+  (it "rolls up provenance stats and failure slices"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(missing)"
+                   :result nil
+                   :stdout ""
+                   :stderr ""
+                   :error "Unable to resolve symbol: missing"
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 0 1 1)}]})
+      (let [stats ((private-fn "foundation-provenance-stats") (env s conversation-id))]
+        (expect (= 1 (:event-count stats)))
+        (expect (= {:eval 1} (:by-kind stats)))
+        (expect (= {:error 1} (:by-status stats)))
+        (expect (= "i0.1" (:ref (first (:failures stats))))))))
+
+  (it "guards provenance integrity and reports missing block provenance"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(+ 1 2)"
+                   :result 3
+                   :stdout ""
+                   :stderr ""
+                   :error nil
+                   :execution-time-ms 1}]})
+      (let [guards ((private-fn "foundation-provenance-guards") (env s conversation-id))]
+        (expect (false? (:ok? guards)))
+        (expect (some #(= :missing-op (:type %)) (:violations guards)))
+        (expect (some #(= :eval-missing-provenance (:type %)) (:violations guards))))))
+
+  (it "renders a compact Markdown provenance report"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(+ 1 2)"
+                   :result 3
+                   :stdout ""
+                   :stderr ""
+                   :error nil
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 0 1 1)}]})
+      (let [out ((private-fn "foundation-provenance-report") (env s conversation-id))]
+        (expect (str/includes? out "## Provenance"))
+        (expect (str/includes? out "`i0.1` eval :vis/eval"))
+        (expect (str/includes? out "Guards: ok"))))))
+
+;; -----------------------------------------------------------------------------
+;; Work-state gates — current conversation turn only.
+;; -----------------------------------------------------------------------------
+
+(defdescribe foundation-gate-test
+  (it "creates current-turn work-state and reports an open required gate"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          e (assoc (env s conversation-id)
+              :current-conversation-turn-id-atom (atom conversation-turn-id))
+          intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
+          plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
+                                                     :key :main
+                                                     :summary "Plan"})
+          gate   ((private-fn "foundation-gate!") e {:plan-state-id (:id plan)
+                                                     :key :verify
+                                                     :question "Verified?"})
+          checks ((private-fn "foundation-gate-checks") e)]
+      (expect (= :verify (:key gate)))
+      (expect (false? (:ok? checks)))
+      (expect (some #(= :required-gate-open (:type %)) (:violations checks)))))
+
+  (it "accepts a proven attestation only when its refs resolve in the current turn timeline"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          e (assoc (env s conversation-id)
+              :current-conversation-turn-id-atom (atom conversation-turn-id))]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(+ 1 2)"
+                   :result 3
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 0 1 1)}]})
+      (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
+            plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
+                                                       :key :main
+                                                       :summary "Plan"})
+            gate   ((private-fn "foundation-gate!") e {:plan-state-id (:id plan)
+                                                       :key :verify
+                                                       :question "Verified?"})]
+        ((private-fn "foundation-attest!") e (:id gate)
+                                           {:status :proven
+                                            :summary "Observed i0.1."
+                                            :refs ["i0.1"]})
+        (let [checks ((private-fn "foundation-gate-checks") e)
+              report ((private-fn "foundation-gate-report") e)]
+          (expect (true? (:ok? checks)))
+          (expect (str/includes? report "`verify` closed"))
+          (expect (str/includes? report "refs: i0.1"))))))
+
+  (it "flags attestation refs from another turn as missing from current-turn provenance"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          other-turn (vis/db-store-conversation-turn! s {:parent-conversation-id conversation-id
+                                                         :user-request "other"
+                                                         :status :running})
+          e (assoc (env s conversation-id)
+              :current-conversation-turn-id-atom (atom conversation-turn-id))]
+      (db-store-iteration! s other-turn
+        {:blocks [{:id 0
+                   :code "(+ 1 2)"
+                   :result 3
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 0 1 1)}]})
+      (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
+            plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
+                                                       :key :main
+                                                       :summary "Plan"})
+            gate   ((private-fn "foundation-gate!") e {:plan-state-id (:id plan)
+                                                       :key :verify
+                                                       :question "Verified?"})]
+        ((private-fn "foundation-attest!") e (:id gate)
+                                           {:status :proven
+                                            :summary "Wrong turn."
+                                            :refs ["i0.1"]})
+        (let [checks ((private-fn "foundation-gate-checks") e)]
+          (expect (false? (:ok? checks)))
+          (expect (some #(= :attestation-ref-missing-from-current-turn-provenance (:type %))
+                    (:violations checks))))))))
 
 ;; -----------------------------------------------------------------------------
 ;; (v/extensions), (v/extension-docs ...), (v/extension-doc ...),

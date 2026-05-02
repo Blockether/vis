@@ -10,6 +10,7 @@
 - [Overview](architecture/overview.md)
 - [Packages](architecture/packages.md)
 - [Iteration Flow](architecture/iteration-flow.md)
+- [Completion Contract](architecture/completion-contract.md)
 - [State Ownership](architecture/state.md)
 - [Database schema](architecture/database.md)
 - [Channels](architecture/channels.md)

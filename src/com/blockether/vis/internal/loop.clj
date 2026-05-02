@@ -765,17 +765,147 @@
       "OR (b) keep the trailing forms in this iteration and emit "
       "`(answer …)` as the only form of the next iteration.")))
 
+(defn- latest-by-soul
+  [xs]
+  (->> xs
+    (group-by :soul-id)
+    vals
+    (mapv #(last (sort-by :version %)))))
+
+(defn- active-plan-states
+  [work-state]
+  (let [active-intent-ids (->> (:intents work-state)
+                            latest-by-soul
+                            (filter #(= :active (:status %)))
+                            (map :id)
+                            set)]
+    (->> (:plans work-state)
+      latest-by-soul
+      (filter #(and (= :active (:status %))
+                 (contains? active-intent-ids (:intent-state-id %))))
+      vec)))
+
+(defn- active-gate-states
+  [work-state]
+  (let [active-plan-ids (set (map :id (active-plan-states work-state)))]
+    (->> (:gates work-state)
+      latest-by-soul
+      (filter #(contains? active-plan-ids (:plan-state-id %)))
+      vec)))
+
+(defn- block-ref
+  [iteration-position block]
+  (or (get-in block [:provenance :ref])
+    (str "i" iteration-position "." (inc (long (or (:idx block) (:id block) 0))))))
+
+(defn- tool-result-envelope?
+  [value]
+  (and (map? value)
+    (contains? value :ok?)
+    (contains? value :provenance)
+    (contains? value :markdown)))
+
+(defn- block-provenance-refs
+  [iteration-position block]
+  (let [ref (block-ref iteration-position block)]
+    (cond-> [ref]
+      (tool-result-envelope? (:result block)) (conj (str ref "/tool")))))
+
+(defn- current-turn-provenance-refs
+  "Refs available to final-answer gate enforcement. Includes persisted
+   prior iterations plus the current in-memory iteration, because a
+   model may inspect/attest/answer in one final iteration before that
+   iteration row has been written."
+  [environment current-iteration current-blocks]
+  (let [db-info (:db-info environment)
+        turn-id (some-> (:current-conversation-turn-id-atom environment) deref)
+        persisted (try
+                    (mapcat (fn [iteration]
+                              (let [position (:position iteration)]
+                                (mapcat #(block-provenance-refs position %)
+                                  (persistance/db-list-iteration-blocks db-info (:id iteration)))))
+                      (persistance/db-list-conversation-turn-iterations db-info turn-id))
+                    (catch Throwable _ []))
+        current   (mapcat #(block-provenance-refs current-iteration %) (or current-blocks []))]
+    (set (concat persisted current))))
+
+(defn- gate-guard-violations
+  [work-state ref-set]
+  (let [has-work-state? (some seq (map work-state [:intents :plans :gates :attestations]))
+        gates           (active-gate-states work-state)
+        by-gate         (group-by :gate-state-id (:attestations work-state))
+        active-intents  (filter #(= :active (:status %)) (latest-by-soul (:intents work-state)))
+        active-plans    (active-plan-states work-state)]
+    (when has-work-state?
+      (vec
+        (concat
+          (when (empty? active-intents)
+            [{:type :missing-active-intent}])
+          (when (and (seq active-intents) (empty? active-plans))
+            [{:type :missing-active-plan}])
+          (mapcat
+            (fn [gate]
+              (let [atts (get by-gate (:id gate))
+                    att  (first atts)
+                    refs (mapv :ref (:refs att))]
+                (cond-> []
+                  (and (:required? gate) (= :open (:status gate)))
+                  (conj {:type :required-gate-open :gate-key (:key gate)})
+
+                  (and (= :closed (:status gate)) (not= 1 (count atts)))
+                  (conj {:type :closed-gate-attestation-count :gate-key (:key gate) :count (count atts)})
+
+                  (and (= :closed (:status gate)) (= 1 (count atts)) (not= :proven (:status att)))
+                  (conj {:type :closed-gate-attestation-not-proven :gate-key (:key gate) :attestation-status (:status att)})
+
+                  (and (= :blocked (:status gate)) (not= 1 (count atts)))
+                  (conj {:type :blocked-gate-attestation-count :gate-key (:key gate) :count (count atts)})
+
+                  (and (= :blocked (:status gate)) (= 1 (count atts)) (not= :blocked (:status att)))
+                  (conj {:type :blocked-gate-attestation-not-blocked :gate-key (:key gate) :attestation-status (:status att)})
+
+                  (and (= :blocked (:status gate)) (= 1 (count atts)) (str/blank? (:reason att)))
+                  (conj {:type :blocked-gate-missing-reason :gate-key (:key gate)})
+
+                  (and (contains? #{:closed :blocked} (:status gate)) (empty? refs))
+                  (conj {:type :attestation-missing-refs :gate-key (:key gate)})
+
+                  (and (seq refs) (seq (remove ref-set refs)))
+                  (conj {:type :attestation-ref-missing-from-current-turn-provenance
+                         :gate-key (:key gate)
+                         :missing-refs (vec (remove ref-set refs))}))))
+            gates))))))
+
+(defn final-answer-gate-error
+  "Return nil when the current turn has no gate state or when gate state
+   passes. Return a validation error string when the model has started
+   using turn-scoped gates but tries to `(answer …)` before they pass."
+  [environment iteration blocks]
+  (let [db-info (:db-info environment)
+        turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
+    (when (and db-info turn-id)
+      (let [work-state (try (persistance/db-work-state db-info turn-id)
+                         (catch Throwable _ nil))
+            ref-set    (current-turn-provenance-refs environment iteration blocks)
+            violations (when work-state (gate-guard-violations work-state ref-set))]
+        (when (seq violations)
+          (str "Final answer rejected: current-turn gates are not satisfied. "
+            "Run `(v/gate-checks)` and close/block every required gate with "
+            "exactly one attestation whose refs exist in this turn. "
+            "Violations: " (pr-str violations)))))))
+
 (defn- eval-provenance
   "Generic provenance for every top-level form that passes through the
    Vis eval pipeline. Tool calls can add nested provenance inside their
    returned envelope; this records the outer regular form evaluation so
    plain calls and tool calls share a common block-level trace."
-  [iteration form-idx form-of result]
-  (let [finished (long (or (:execution-finished-at-ms result)
-                         (System/currentTimeMillis)))
-        duration (long (or (:execution-time-ms result) 0))
-        started  (long (or (:execution-started-at-ms result)
-                         (max 0 (- finished duration))))]
+  [iteration form-idx form-count result]
+  (let [finished      (long (or (:execution-finished-at-ms result)
+                              (System/currentTimeMillis)))
+        duration      (long (or (:execution-time-ms result) 0))
+        started       (long (or (:execution-started-at-ms result)
+                              (max 0 (- finished duration))))
+        form-position (inc (long form-idx))]
     (extension/normalize-provenance
       {:op             :vis/eval
        :started-at-ms  started
@@ -783,8 +913,9 @@
        :duration-ms    duration
        :engine         (or (:engine result) :vis/sci)
        :iteration      iteration
-       :form-idx       form-idx
-       :form-of        form-of
+       :form-position  form-position
+       :form-count     form-count
+       :ref            (str "i" iteration "." form-position)
        :timeout?       (boolean (:timeout? result))
        :repaired?      (boolean (:repaired? result))})))
 
@@ -806,8 +937,9 @@
     #(= :vis/eval (:op %))
     #(contains? eval-provenance-engines (:engine %))
     #(integer? (:iteration %))
-    #(nat-int? (:form-idx %))
-    #(pos-int? (:form-of %))))
+    #(pos-int? (:form-position %))
+    #(pos-int? (:form-count %))
+    #(= (:ref %) (str "i" (:iteration %) "." (:form-position %)))))
 (s/def ::provenance ::block-provenance)
 (s/def ::iteration-block
   (s/keys :req-un [::id ::code ::stdout ::stderr ::error
@@ -1014,11 +1146,15 @@
               position-bad?   (answer-position-violation? form-idx total-forms)
               own-form-error  (when-not position-bad?
                                 (answer-form-error block-results form-idx))
+              gate-error      (when (and (not position-bad?) (nil? own-form-error))
+                                (final-answer-gate-error environment iteration blocks))
               validation-error (cond
                                  position-bad?
                                  (answer-position-error-message form-idx total-forms)
                                  own-form-error
-                                 (error/final-answer-code-error-message own-form-error))
+                                 (error/final-answer-code-error-message own-form-error)
+                                 gate-error
+                                 gate-error)
               ;; Surface the validation error on the answer-bearing
               ;; form's row so the model sees \"my (answer …) was
               ;; rejected because…\" right next to its own code.
