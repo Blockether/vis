@@ -201,14 +201,25 @@
 ;; Block
 ;; =============================================================================
 
+(defn- fence-lang-str [lang]
+  (let [s (cond
+            (nil? lang) nil
+            (or (keyword? lang) (symbol? lang)) (name lang)
+            :else (->str lang))
+        s (some-> s str/trim)]
+    (when-not (str/blank? s) s)))
+
 (defn code-block
-  "Fenced code block. 1-arg = no language; 2-arg embeds it in the
-   opening fence (`clojure`, `bash`, `edn`, …)."
-  (^String [code] (code-block code nil))
-  (^String [code lang]
+  "Fenced code block. 1-arg = no language; 2-arg takes language first
+   and code second. Language may be a string, keyword, or symbol."
+  (^String [code]
    (let [body (->str code)
          body (if (str/ends-with? body "\n") body (str body "\n"))]
-     (str "```" (when lang (->str lang)) "\n"
+     (str "```\n" body "```")))
+  (^String [lang code]
+   (let [body (->str code)
+         body (if (str/ends-with? body "\n") body (str body "\n"))]
+     (str "```" (fence-lang-str lang) "\n"
        body
        "```"))))
 
@@ -650,10 +661,11 @@
                  "(v/anchor \"Jump to summary\" \"summary\")"]})
 
    (vis/symbol 'code-block code-block
-     {:doc "Fenced code block. 1-arg = no language; 2-arg embeds it."
-      :arglists '([code] [code lang])
-      :examples ["(v/code-block \"(println :ok)\" \"clojure\")"
-                 "(v/code-block (pp/pprint-str {:k 1}) \"clojure\")"
+     {:doc "Fenced code block. 1-arg = no language; 2-arg is language first, code second. Lang accepts string/keyword/symbol."
+      :arglists '([code] [lang code])
+      :examples ["(v/code-block \"clojure\" \"(println :ok)\")"
+                 "(v/code-block :clojure (pp/pprint-str {:k 1}))"
+                 "(v/code-block 'edn \"{:k 1}\")"
                  "(v/code-block \"plain text\")"]})
    (vis/symbol 'blockquote blockquote
      {:doc "Quote each line with `> `. Variadic — parts concatenated then split on \"\\n\"."
@@ -726,7 +738,7 @@
     "  headings: (v/h1 …) (v/h2 …) (v/h3 …) (v/h level …)\n"
     "  inline:   (v/bold …) (v/italic …) (v/code …) (v/kbd …) (v/strike …)\n"
     "  links:    (v/link text url) (v/image alt url) (v/file-link path line?) (v/anchor text slug?)\n"
-    "  blocks:   (v/p …) (v/code-block s lang?) (v/blockquote s) v/hr v/br (v/details …)\n"
+    "  blocks:   (v/p …) (v/code-block code) (v/code-block lang code) (v/blockquote s) v/hr v/br (v/details …)\n"
     "  lists:    (v/li …) (v/ul items) (v/ol items) (v/checklist items); v/ul adds bullets and also accepts v/li output\n"
     "  table:    (v/table headers rows opts?)\n"
     "  compose:  (v/join …blocks) (v/lines …lines) (v/section title body) (v/escape s)\n"

@@ -145,11 +145,16 @@
   (it "p with no args yields the empty string"
     (expect (= "" (md/p))))
 
-  (it "code-block fences with optional lang and ensures trailing newline before close"
+  (it "code-block fences with optional lang first and ensures trailing newline before close"
     (expect (= "```clojure\n(println :ok)\n```"
-              (md/code-block "(println :ok)" "clojure")))
+              (md/code-block "clojure" "(println :ok)")))
     (expect (= "```\nplain\n```"
               (md/code-block "plain")))
+    (it "accepts keyword and symbol language identifiers"
+      (expect (= "```clojure\n(println :ok)\n```"
+                (md/code-block :clojure "(println :ok)")))
+      (expect (= "```edn\n{:ok true}\n```"
+                (md/code-block 'edn "{:ok true}"))))
     (it "preserves embedded newline runs"
       (expect (= "```\na\nb\n```"
                 (md/code-block "a\nb")))))
@@ -336,9 +341,9 @@
 
   (it "lists indent multiline code-block items"
     (expect (= "- Example:\n  ```clojure\n  (+ 1 2)\n  ```"
-              (md/ul [["Example:\n" (md/code-block "(+ 1 2)" "clojure")]])))
+              (md/ul [["Example:\n" (md/code-block "clojure" "(+ 1 2)")]])))
     (expect (= "1. Example:\n   ```clojure\n   (+ 1 2)\n   ```"
-              (md/ol [["Example:\n" (md/code-block "(+ 1 2)" "clojure")]]))))
+              (md/ol [["Example:\n" (md/code-block "clojure" "(+ 1 2)")]]))))
 
   (it "checklist accepts vec pairs and maps"
     (expect (= "- [x] done\n- [ ] todo"
@@ -412,8 +417,8 @@
     ;; structure or splat reader-syntax into the answer.
     (expect (throws? clojure.lang.ExceptionInfo
               #(md/bold [["nested"]])))
-    ;; md/code-block is NOT variadic (single :code positional + opt
-    ;; :lang) — a stray seq there still throws.
+    ;; md/code-block is NOT variadic (single :code positional or
+    ;; :lang + :code) — a stray seq there still throws.
     (expect (throws? clojure.lang.ExceptionInfo
               #(md/code-block (map identity ["line1" "line2"])))))
 
@@ -442,7 +447,7 @@
                    ["loop.clj" "+0 / -38"]])
                 (md/h2 "Next")
                 (md/ul ["Run verify.sh" "Update CHANGELOG"])
-                (md/code-block "(println :done)" "clojure"))]
+                (md/code-block "clojure" "(println :done)"))]
       (expect (str/starts-with? out "# Patch report\n\n"))
       (expect (str/includes? out "| file | +/- |"))
       (expect (str/includes? out "## Next"))

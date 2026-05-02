@@ -38,7 +38,7 @@ Why programmatic over templating:
                ["loop.clj" "+0 / -38"]])
     (v/h2 "Next")
     (v/ul ["Run verify.sh" "Update CHANGELOG"])
-    (v/code-block "(println :done)" "clojure")))
+    (v/code-block "clojure" "(println :done)")))
 ```
 
 Block fns **return text without a trailing newline**. Stitch with
@@ -156,7 +156,7 @@ click affordance IS the picker.
 |------|--------|
 | `(v/p …parts)`                | parts space-joined; nil dropped; seqs spliced |
 | `(v/code-block "code")`       | unfenced \`\`\` block |
-| `(v/code-block "code" "lang")`| \`\`\`lang fenced block |
+| `(v/code-block "lang" "code")`| \`\`\`lang fenced block |
 | `(v/blockquote "a\nb")`       | `> a\n> b` |
 | `v/hr`                        | `---` (constant) |
 | `v/br`                        | `"  "` — CommonMark trailing-spaces line break |

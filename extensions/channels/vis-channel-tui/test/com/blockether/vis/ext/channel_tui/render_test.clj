@@ -134,6 +134,20 @@
       (expect (= p/MARKER_CODE (marker-of code-line)))
       (expect (= p/MARKER_CODE (marker-of status-line))))))
 
+(defdescribe markdown-fenced-code-language-test
+  (it "syntax-colors clojure fences produced by v/code-block"
+    (let [lines      (md->lines (md/code-block "clojure" "(def x {:a 1})") 80)
+          code-lines (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
+          bodies     (map body-of code-lines)]
+      (expect (some #(str/includes? % "\u001b[") bodies))
+      (expect (some #(str/includes? (strip-ansi %) "(def x {:a 1})") bodies))))
+
+  (it "leaves unqualified plain fences uncolored"
+    (let [lines  (md->lines (md/code-block "plain text") 80)
+          bodies (map body-of (filter #(= p/MARKER_MD_CODE (marker-of %)) lines))]
+      (expect (not-any? #(str/includes? % "\u001b[") bodies))
+      (expect (some #(= "plain text" %) bodies)))))
+
 (defdescribe malformed-fence-answer-repro-test
   (describe "glued fence repair for malformed final answers"
     ;; Faithful reduction of conversation bbc79960's broken final
@@ -1179,7 +1193,7 @@
                          (str/includes? (strip-sentinels %) "still bullet"))
                   lines))
         (expect (some #(and (= p/MARKER_MD_CODE (marker-of %))
-                         (str/includes? (body-of %) "(+ 1 2)"))
+                         (str/includes? (strip-ansi (body-of %)) "(+ 1 2)"))
                   lines))))
 
     (it "bold-only paragraph after a bullet does not get coalesced"

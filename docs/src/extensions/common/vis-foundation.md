@@ -24,7 +24,7 @@ Extension discovery stays separate because it is about the loaded surface, not o
 (v/extension-docs ext-ref)       ; manifest docs, e.g. README.md
 (v/extension-doc ext-ref)        ; full README descriptor
 (v/extension-readme ext-ref)
-(v/symbol-docs ext-ref)          ; sandbox symbols exported by an extension
+(v/namespace-docs ext-ref)       ; sandbox symbols exported by an extension namespace
 (v/symbol-doc ext-ref sym)       ; doc/arglists/examples for one symbol
 ```
 

@@ -595,6 +595,15 @@
     current-fg
     codes))
 
+(defn- clojure-lang? [lang]
+  (contains? #{"clj" "cljc" "cljs" "clojure" "edn"}
+    (str/lower-case (str/trim (or lang "")))))
+
+(defn- fence-lang [line]
+  (let [trimmed (str/trim (or line ""))]
+    (when (str/starts-with? trimmed "```")
+      (str/trim (subs trimmed 3)))))
+
 (defn- format-clojure-ansi
   "Format Clojure source via zprint and keep zprint's ANSI syntax
    coloring. The TUI painter translates those ANSI SGR codes to
@@ -604,6 +613,16 @@
     (zp/czprint-str code-text width {:parse-string? true})
     (catch Throwable _
       (vis/format-clojure code-text width))))
+
+(defn- code-block-lines
+  [m lang code-lines max-w]
+  (let [code-text (str/join "\n" code-lines)
+        body-lines (if (clojure-lang? lang)
+                     (str/split-lines (format-clojure-ansi code-text max-w))
+                     (mapcat #(wrap-text % max-w) code-lines))]
+    (vec (concat [(str (:code m) "")]
+           (map #(str (:code m) %) body-lines)
+           [(str (:code m) "")]))))
 
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
@@ -1144,7 +1163,7 @@
                   (str/starts-with? line md-code-marker)
                   (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                     (p/fill-rect! g fbx y iw 1)
-                    (p/put-str! g x y (subs line 1)))
+                    (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
 
               ;; Bullet items: same inline-span treatment as plain text.
               ;; `- **bold** thing` should bold the word.
@@ -1279,13 +1298,13 @@
                          :collapsed? (:collapsed? meta)})))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
-              ;; No sentinels in code-block bodies (markdown->lines does
-              ;; NOT recurse into fenced code), so a raw put-str! is fine.
+              ;; Clojure/EDN fences can carry zprint ANSI syntax color;
+              ;; the painter translates ANSI foreground codes to Lanterna.
                   (str/starts-with? line th-md-code-marker)
                   (do (p/set-colors! g t/code-result-fg t/code-block-bg)
                     (p/fill-rect! g fbx y iw 1)
                     (p/styled g [p/ITALIC]
-                      (p/put-str! g x y (subs line 1))))
+                      (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
 
                   (str/starts-with? line th-md-bullet-marker)
                   (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -2998,8 +3017,15 @@
            (let [line (first lines)
                  rst  (next lines)]
              (cond
+               (and (not in-code?) (str/starts-with? (str/trim line) "```"))
+               (let [lang        (fence-lang line)
+                     [code tail] (split-with #(not (str/starts-with? (str/trim %) "```")) rst)
+                     tail        (if (seq tail) (next tail) tail)]
+                 (recur (seq tail) false
+                   (into acc (code-block-lines m lang code max-w))))
+
                (str/starts-with? (str/trim line) "```")
-               (recur rst (not in-code?) (conj acc (str (:code m) "")))
+               (recur rst false (conj acc (str (:code m) "")))
 
                in-code?
                (recur rst true
