@@ -309,7 +309,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- Work provenance domain — versioned intent -> plan -> gate -> attestation.
+-- Completion contract domain — versioned intent -> plan -> gate -> attestation.
 --
 -- These tables make the completion contract durable instead of prompt-only:
 --   intent_state(versioned)

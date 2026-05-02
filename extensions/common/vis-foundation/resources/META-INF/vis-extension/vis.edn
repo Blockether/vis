@@ -23,9 +23,11 @@ Pure reads off the same DB tables the projection layer uses; failures return nil
 (v/inspect cid?)                ; canonical state data {:conversation :current-turn :failures :diagnosis :llm-diagnostics :transcript ...}
 (v/report cid?)                 ; Markdown report rendered from the same state data, incl. raw LLM diagnostics
 (v/extensions)                  ; loaded ext catalog incl. author/owner/license/source markers
-(v/extension-docs ext-ref)      ; declared doc summaries (no content)
-(v/extension-doc ext-ref name)  ; full doc descriptor incl. :content
+(v/extension-docs ext-ref)      ; manifest doc summaries (no content)
+(v/extension-doc ext-ref)       ; full README descriptor incl. :content
 (v/extension-readme ext-ref)    ; README :content shortcut
+(v/symbol-docs ext-ref)         ; sandbox symbol summaries
+(v/symbol-doc ext-ref sym)      ; doc/arglists/examples for one sandbox symbol
 ```
 
 ### File I/O (structured helpers + babashka.fs wrappers)

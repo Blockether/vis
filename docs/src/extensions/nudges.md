@@ -31,7 +31,7 @@ current environment, `:ext/nudge-fn` is not called at all.
 
 ```clojure
 {:environment            env    ;; the full environment map (see Environment Map)
- :iteration              int    ;; internal 0-indexed current iteration number
+ :iteration              int    ;; 1-based current iteration position
  :previous-blocks   [map]  ;; previous iteration's blocks:
                                 ;;   [{:code str :result any :error str?
                                 ;;     :stdout str :stderr str
@@ -62,7 +62,7 @@ Key names spell out the full word (`:previous-blocks`, not
    :ext/prompt    "Prefer batching by 10 items at a time."
    :ext/symbols   [my-tool-sym]
    :ext/nudge-fn  (fn [{:keys [environment iteration previous-blocks]}]
-                    (when (and (> iteration 5)
+                    (when (and (> iteration 6)
                               (some :timeout? previous-blocks))
                       "[system_nudge] my-tool calls are timing out. Try smaller batch sizes."))})
 ```

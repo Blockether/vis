@@ -21,9 +21,11 @@ Extension discovery stays separate because it is about the loaded surface, not o
 
 ```clojure
 (v/extensions)
-(v/extension-docs ext-ref)
-(v/extension-doc ext-ref name)
+(v/extension-docs ext-ref)       ; manifest docs, e.g. README.md
+(v/extension-doc ext-ref)        ; full README descriptor
 (v/extension-readme ext-ref)
+(v/symbol-docs ext-ref)          ; sandbox symbols exported by an extension
+(v/symbol-doc ext-ref sym)       ; doc/arglists/examples for one symbol
 ```
 
 The full reference is in the extension's canonical README. Read it from inside the agent with:

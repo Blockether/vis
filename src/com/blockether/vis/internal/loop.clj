@@ -773,22 +773,22 @@
     (mapv #(last (sort-by :version %)))))
 
 (defn- active-plan-states
-  [work-state]
-  (let [active-intent-ids (->> (:intents work-state)
+  [contract]
+  (let [active-intent-ids (->> (:intents contract)
                             latest-by-soul
                             (filter #(= :active (:status %)))
                             (map :id)
                             set)]
-    (->> (:plans work-state)
+    (->> (:plans contract)
       latest-by-soul
       (filter #(and (= :active (:status %))
                  (contains? active-intent-ids (:intent-state-id %))))
       vec)))
 
 (defn- active-gate-states
-  [work-state]
-  (let [active-plan-ids (set (map :id (active-plan-states work-state)))]
-    (->> (:gates work-state)
+  [contract]
+  (let [active-plan-ids (set (map :id (active-plan-states contract)))]
+    (->> (:gates contract)
       latest-by-soul
       (filter #(contains? active-plan-ids (:plan-state-id %)))
       vec)))
@@ -830,13 +830,13 @@
     (set (concat persisted current))))
 
 (defn- gate-guard-violations
-  [work-state ref-set]
-  (let [has-work-state? (some seq (map work-state [:intents :plans :gates :attestations]))
-        gates           (active-gate-states work-state)
-        by-gate         (group-by :gate-state-id (:attestations work-state))
-        active-intents  (filter #(= :active (:status %)) (latest-by-soul (:intents work-state)))
-        active-plans    (active-plan-states work-state)]
-    (when has-work-state?
+  [contract ref-set]
+  (let [has-contract? (some seq (map contract [:intents :plans :gates :attestations]))
+        gates           (active-gate-states contract)
+        by-gate         (group-by :gate-state-id (:attestations contract))
+        active-intents  (filter #(= :active (:status %)) (latest-by-soul (:intents contract)))
+        active-plans    (active-plan-states contract)]
+    (when has-contract?
       (vec
         (concat
           (when (empty? active-intents)
@@ -884,10 +884,10 @@
   (let [db-info (:db-info environment)
         turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
     (when (and db-info turn-id)
-      (let [work-state (try (persistance/db-work-state db-info turn-id)
-                         (catch Throwable _ nil))
+      (let [contract (try (persistance/db-completion-contract db-info turn-id)
+                       (catch Throwable _ nil))
             ref-set    (current-turn-provenance-refs environment iteration blocks)
-            violations (when work-state (gate-guard-violations work-state ref-set))]
+            violations (when contract (gate-guard-violations contract ref-set))]
         (when (seq violations)
           (str "Final answer rejected: current-turn gates are not satisfied. "
             "Run `(v/gate-checks)` and close/block every required gate with "
@@ -1770,7 +1770,7 @@
                               {:journal-iters seeded-journal-iters}))]
           (let [{:keys [iteration messages trace consecutive-errors restarts
                         journal-iters]} loop-state]
-            (when current-iteration-atom (reset! current-iteration-atom iteration))
+            (when current-iteration-atom (reset! current-iteration-atom (inc (long iteration))))
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error iteration {:reason :cancelled})
@@ -2130,7 +2130,7 @@
                                 ;; bounded.
                                   next-recent (->> (conj (or journal-iters [])
                                                      [(inc (long iteration)) {:thinking thinking
-                                                                             :blocks   blocks}])
+                                                                              :blocks   blocks}])
                                                 (take-last prompt/JOURNAL_KEEP_ITERS)
                                                 vec)]
                               (recur (merge loop-state
@@ -2246,7 +2246,7 @@
           root-provider          (:provider root-resolved-model)
           db-info                (:db-info env)
           custom-bindings        (custom-bindings env)
-          current-iteration-atom (atom 0)
+          current-iteration-atom (atom 1)
           sci-ctx                (:sci-ctx env)
           _                      (env/bump-var-index! env)
           _                      (doseq [[sym val] (or custom-bindings {})]

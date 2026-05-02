@@ -615,7 +615,7 @@
    ;; (kbd / bold / italic) because it produces a single bare HTML
    ;; tag, not a block. Composes with `details` via tag-passthrough.
    ;; Intentionally NOT mentioned in `markdown-prompt` — callers who
-   ;; need it can discover it via `(symbol-info 'v/summary)`; we
+   ;; need it can discover it via `(v/symbol-doc 'v/summary)`; we
    ;; don't want every answer reaching for collapsible UI.
    (vis/symbol 'summary summary
      {:doc "`<summary>…</summary>` for `v/details`."

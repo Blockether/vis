@@ -9,10 +9,10 @@
    - `(v/provenance-guards [conversation-id])`   → provenance integrity checks
    - `(v/provenance-report [conversation-id])`   → compact Markdown audit trail
    - `(v/intent! opts)` / `(v/plan! opts)` / `(v/gate! opts)`
-     persist turn-scoped work-state versions
+     persist turn-scoped contract versions
    - `(v/attest! gate opts)` / `(v/block-gate! gate opts)`
      persist exactly one attestation for exactly one gate version
-   - `(v/work-state)` / `(v/gates)` / `(v/attestations)` /
+   - `(v/contract)` / `(v/gates)` / `(v/attestations)` /
      `(v/gate-checks)` / `(v/gate-report)` inspect/enforce gates
 
    Everything else in this namespace is implementation behind that
@@ -25,8 +25,10 @@
 
    - `(v/extensions)`                 → catalog of every loaded extension
    - `(v/extension-docs [ref])`       → docs declared by an extension with descriptions
-   - `(v/extension-doc ref name)`     → full Markdown body of a declared doc
-   - `(v/extension-readme ref)`       → convenience for (extension-doc ref README.md)
+   - `(v/extension-doc ref)`          → full README descriptor for an extension
+   - `(v/extension-readme ref)`       → convenience for (:content (extension-doc ref))
+   - `(v/symbol-docs [ref])`          → sandbox symbol summaries for an extension
+   - `(v/symbol-doc ref sym)`         → doc/arglists/examples for one sandbox symbol
 
    Every function is a pure read off the same DB tables the projection
    layer reads from (or a classpath read for the doc accessors).
@@ -112,8 +114,8 @@
    model emits `:answer` -- there is no model-visible budget, so the
    pointer carries only `:current`."
   [env]
-  (let [current-zero-based (or (safe-deref (:current-iteration-atom env)) 0)]
-    {:current (inc (long current-zero-based))}))
+  (let [current-position (or (safe-deref (:current-iteration-atom env)) 1)]
+    {:current (long current-position)}))
 
 (defn- attempts-from-iterations
   "Walk `iterations` (in DB order) and collect every executed
@@ -933,13 +935,12 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Completion contract — turn-scoped intent -> plan -> gate -> attestation.
-;; `work-state` remains the low-level projection name; model-facing docs
-;; should prefer "contract" for the domain concept.
+;; This is the single read projection for the durable contract rows.
 ;; ---------------------------------------------------------------------------
 
-(defn- current-turn-work-state
+(defn- current-turn-contract
   [env]
-  (safe-call #(vis/db-work-state (:db-info env) (current-conversation-turn-id env))
+  (safe-call #(vis/db-completion-contract (:db-info env) (current-conversation-turn-id env))
     {:intents [] :plans [] :gates [] :attestations []}))
 
 (defn- latest-by-soul
@@ -950,29 +951,29 @@
     (mapv #(last (sort-by :version %)))))
 
 (defn- current-plan-states
-  [work-state]
-  (let [active-intent-ids (->> (:intents work-state)
+  [contract]
+  (let [active-intent-ids (->> (:intents contract)
                             latest-by-soul
                             (filter #(= :active (:status %)))
                             (map :id)
                             set)]
-    (->> (:plans work-state)
+    (->> (:plans contract)
       latest-by-soul
       (filter #(and (= :active (:status %))
                  (contains? active-intent-ids (:intent-state-id %))))
       vec)))
 
 (defn- current-gate-states
-  [work-state]
-  (let [active-plan-ids (set (map :id (current-plan-states work-state)))]
-    (->> (:gates work-state)
+  [contract]
+  (let [active-plan-ids (set (map :id (current-plan-states contract)))]
+    (->> (:gates contract)
       latest-by-soul
       (filter #(contains? active-plan-ids (:plan-state-id %)))
       vec)))
 
 (defn- attestations-by-gate
-  [work-state]
-  (group-by :gate-state-id (:attestations work-state)))
+  [contract]
+  (group-by :gate-state-id (:attestations contract)))
 
 (defn- current-turn-provenance-timeline
   [env]
@@ -982,32 +983,27 @@
       vec)))
 
 (defn- resolve-current-gate-state-id
-  [work-state gate]
+  [contract gate]
   (cond
     (uuid? gate) gate
-    (string? gate) (or (some #(when (= (str (:id %)) gate) (:id %)) (:gates work-state))
-                     (some #(when (= (:key %) (keyword gate)) (:id %)) (current-gate-states work-state)))
-    (keyword? gate) (some #(when (= (:key %) gate) (:id %)) (current-gate-states work-state))
+    (string? gate) (or (some #(when (= (str (:id %)) gate) (:id %)) (:gates contract))
+                     (some #(when (= (:key %) (keyword gate)) (:id %)) (current-gate-states contract)))
+    (keyword? gate) (some #(when (= (:key %) gate) (:id %)) (current-gate-states contract))
     (map? gate) (or (:gate-state-id gate) (:id gate))
     :else gate))
 
-(defn- foundation-work-state
-  ([env]
-   (current-turn-work-state env))
-  ([env conversation-turn-id]
-   (safe-call #(vis/db-work-state (:db-info env) conversation-turn-id)
-     {:conversation-turn-id conversation-turn-id
-      :intents [] :plans [] :gates [] :attestations []})))
-
 (defn- foundation-contract
-  "Model-facing alias for the current completion contract projection.
-   This is intentionally a read projection, not a separate domain
-   object: the domain objects are Intent, Plan, Gate, Attestation, and
+  "Read the current completion contract projection.
+
+   This is intentionally a projection, not a separate domain object:
+   the domain objects are Intent, Plan, Gate, Attestation, and
    provenance refs."
   ([env]
-   (foundation-work-state env))
+   (current-turn-contract env))
   ([env conversation-turn-id]
-   (foundation-work-state env conversation-turn-id)))
+   (safe-call #(vis/db-completion-contract (:db-info env) conversation-turn-id)
+     {:conversation-turn-id conversation-turn-id
+      :intents [] :plans [] :gates [] :attestations []})))
 
 (defn- foundation-intent!
   [env opts]
@@ -1025,10 +1021,10 @@
 
 (defn- foundation-attest!
   ([env opts]
-   (let [work-state (current-turn-work-state env)
+   (let [contract (current-turn-contract env)
          gate-id    (or (:gate-state-id opts)
-                      (resolve-current-gate-state-id work-state (:gate opts))
-                      (resolve-current-gate-state-id work-state (:gate-key opts)))]
+                      (resolve-current-gate-state-id contract (:gate opts))
+                      (resolve-current-gate-state-id contract (:gate-key opts)))]
      (vis/db-store-attestation! (:db-info env)
        (-> opts
          (dissoc :gate :gate-key)
@@ -1044,19 +1040,19 @@
 
 (defn- foundation-gates
   [env]
-  (current-gate-states (current-turn-work-state env)))
+  (current-gate-states (current-turn-contract env)))
 
 (defn- foundation-attestations
   [env]
-  (:attestations (current-turn-work-state env)))
+  (:attestations (current-turn-contract env)))
 
 (defn- gate-check-violations
-  [work-state timeline]
-  (let [gates      (current-gate-states work-state)
-        by-gate    (attestations-by-gate work-state)
+  [contract timeline]
+  (let [gates      (current-gate-states contract)
+        by-gate    (attestations-by-gate contract)
         ref-set    (set (keep :ref timeline))
-        active-intents (filter #(= :active (:status %)) (latest-by-soul (:intents work-state)))
-        active-plans   (current-plan-states work-state)]
+        active-intents (filter #(= :active (:status %)) (latest-by-soul (:intents contract)))
+        active-plans   (current-plan-states contract)]
     (vec
       (concat
         (when (empty? active-intents)
@@ -1099,26 +1095,26 @@
 
 (defn- foundation-gate-checks
   [env]
-  (let [work-state (current-turn-work-state env)
+  (let [contract (current-turn-contract env)
         timeline   (current-turn-provenance-timeline env)
-        violations (gate-check-violations work-state timeline)
-        gates      (current-gate-states work-state)]
+        violations (gate-check-violations contract timeline)
+        gates      (current-gate-states contract)]
     {:scope :conversation-turn
      :conversation-turn-id (current-conversation-turn-id env)
-     :conversation-turn-state-id (:conversation-turn-state-id work-state)
+     :conversation-turn-state-id (:conversation-turn-state-id contract)
      :ok? (empty? violations)
-     :checked {:active-intents (count (filter #(= :active (:status %)) (latest-by-soul (:intents work-state))))
-               :active-plans   (count (current-plan-states work-state))
+     :checked {:active-intents (count (filter #(= :active (:status %)) (latest-by-soul (:intents contract))))
+               :active-plans   (count (current-plan-states contract))
                :gates          (count gates)
                :required-gates (count (filter :required? gates))
-               :attestations   (count (:attestations work-state))
+               :attestations   (count (:attestations contract))
                :current-turn-provenance-events (count timeline)}
      :violations violations}))
 
-(defn- gate-report-for-work-state
-  [work-state checks]
-  (let [gates   (current-gate-states work-state)
-        by-gate (attestations-by-gate work-state)]
+(defn- gate-report-for-contract
+  [contract checks]
+  (let [gates   (current-gate-states contract)
+        by-gate (attestations-by-gate contract)]
     (str "## Gates\n\n"
       "- Scope: current conversation turn\n"
       "- Status: " (if (:ok? checks) "ok" (str "failed " (count (:violations checks)) " check(s)")) "\n\n"
@@ -1142,9 +1138,9 @@
 
 (defn- foundation-gate-report
   [env]
-  (let [work-state (current-turn-work-state env)
+  (let [contract (current-turn-contract env)
         checks     (foundation-gate-checks env)]
-    (gate-report-for-work-state work-state checks)))
+    (gate-report-for-contract contract checks)))
 
 (defn- foundation-contract-report
   "Markdown report for the current completion contract. Optional arg
@@ -1155,20 +1151,20 @@
      "\n"
      (foundation-provenance-report env (:conversation-id env))))
   ([env conversation-turn-id]
-   (let [work-state (foundation-work-state env conversation-turn-id)
+   (let [contract (foundation-contract env conversation-turn-id)
          timeline   (->> (foundation-provenance-timeline env (:conversation-id env))
                       (filter #(same-uuid? (:turn-id %) conversation-turn-id))
                       vec)
-         checks     (let [violations (gate-check-violations work-state timeline)]
+         checks     (let [violations (gate-check-violations contract timeline)]
                       {:ok? (empty? violations)
                        :violations violations
-                       :checked {:gates (count (current-gate-states work-state))
-                                 :attestations (count (:attestations work-state))
+                       :checked {:gates (count (current-gate-states contract))
+                                 :attestations (count (:attestations contract))
                                  :current-turn-provenance-events (count timeline)}})]
      (str "# Completion Contract\n\n"
        "- Turn: `" conversation-turn-id "`\n"
-       "- Turn-state: `" (:conversation-turn-state-id work-state) "`\n\n"
-       (gate-report-for-work-state work-state checks)))))
+       "- Turn-state: `" (:conversation-turn-state-id contract) "`\n\n"
+       (gate-report-for-contract contract checks)))))
 
 (defn- foundation-audit-report
   "Conversation-level Markdown audit report: every turn's contract
@@ -1184,13 +1180,13 @@
        (if (seq turns)
          (str/join "\n"
            (map (fn [turn]
-                  (let [work-state (foundation-work-state env (:id turn))
-                        gates      (current-gate-states work-state)]
+                  (let [contract (foundation-contract env (:id turn))
+                        gates      (current-gate-states contract)]
                     (str "## Turn `" (:id turn) "`\n\n"
                       "- Status: " (name (or (:status turn) :unknown)) "\n"
                       "- Request: " (preview (:user-request turn) 180) "\n"
                       "- Contract: " (if (seq gates)
-                                       (str (count gates) " gate(s), " (count (:attestations work-state)) " attestation(s)")
+                                       (str (count gates) " gate(s), " (count (:attestations contract)) " attestation(s)")
                                        "none") "\n")))
              turns))
          "_No turns found._\n")
@@ -1203,12 +1199,14 @@
 ;; Every extension declares itself in a single classpath resource at
 ;; `META-INF/vis-extension/vis.edn`, an EDN map keyed by id
 ;; (`{<id-symbol> {:nses [...] :docs {<name> <body>}}}`). The id is the
-;; same token the LLM uses as the SCI sandbox alias (`'vis`, `'vis`,
+;; same token the LLM uses as the SCI sandbox alias (`'v`, `'z`,
 ;; etc.). Each doc descriptor is a map with `:description` (one-paragraph
 ;; summary) + `:content` (full Markdown body) as plain EDN strings.
 ;; `(v/extension-docs ...)` returns the descriptions (no `:content`)
 ;; so the LLM can scan the index before pulling a full body via
-;; `(v/extension-doc ...)`.
+;; `(v/extension-doc ...)`. Sandbox symbol docs are separate:
+;; `(v/symbol-docs ...)` / `(v/symbol-doc ...)` read the registered
+;; extension symbol metadata, not the manifest doc registry.
 ;; See AGENTS.md ▸ "Every extension ships a single canonical README
 ;; in vis.edn".
 ;; ---------------------------------------------------------------------------
@@ -1217,12 +1215,10 @@
   (try (vis/registered-extensions) (catch Throwable _ [])))
 
 (defn- reference-as-symbol
-  "Coerce an extension reference to the canonical id symbol used by
-   the docs registry. Accepts the id symbol itself (`'vis`), a
-   keyword (`:vis`), a string (`\"meta\"`), the alias-ns symbol
-   (`'vis.ext.foundation`), or the full extension namespace (
-   `'com.blockether.vis.ext.foundation.introspection`). Multi-segment symbols are
-   resolved through the global extension registry."
+  "Coerce an extension reference to a symbol token. Accepts an id
+   symbol (`'v`), keyword (`:v`), string (`\"v\"`), alias-ns symbol
+   (`'vis.ext.v`), or full extension namespace symbol. Multi-segment
+   symbols are resolved through the global extension registry."
   [reference]
   (cond
     (nil? reference) nil
@@ -1234,30 +1230,37 @@
       reference)
     :else nil))
 
-(defn- extension-matches? [target extension]
-  (let [ns-sym    (some-> (:ext/namespace extension) str)
-        alias-sym (some-> (get-in extension [:ext/ns-alias :alias]) str)
-        alias-ns  (some-> (get-in extension [:ext/ns-alias :ns]) str)]
-    (boolean (some #(= target %) (remove nil? [ns-sym alias-sym alias-ns])))))
+(defn- extension-registry-id [extension]
+  (or (:registry-id (vis/extension-provenance extension))
+    (vis/extension-id-of-ns (:ext/namespace extension))
+    (get-in extension [:ext/ns-alias :alias])))
 
-(defn- resolve-extension-id
-  "Resolve `reference` to a registered extension id (symbol). Returns
-   `nil` when no extension matches. Resolution order:
-     1. The reference matches an id directly known to the docs
-        registry (cheapest path).
-     2. Otherwise, look up the extension by alias / alias-ns / full
-        namespace through the global registry, then map its namespace
-        back to the id via `extension-id-of-ns`."
+(defn- extension-matches? [target extension]
+  (let [registry-id (some-> (extension-registry-id extension) str)
+        ns-sym      (some-> (:ext/namespace extension) str)
+        alias-sym   (some-> (get-in extension [:ext/ns-alias :alias]) str)
+        alias-ns    (some-> (get-in extension [:ext/ns-alias :ns]) str)]
+    (boolean (some #(= target %) (remove nil? [registry-id ns-sym alias-sym alias-ns])))))
+
+(defn- resolve-extension
+  "Resolve `reference` to a registered extension map. Returns nil when
+   no extension matches."
   [reference]
   (when-let [target-sym (reference-as-symbol reference)]
     (let [target-str (str target-sym)]
-      (or (when (contains? (set (vis/registered-extension-ids)) target-sym)
-            target-sym)
-        (some (fn [extension]
-                (when (extension-matches? target-str extension)
-                  (or (get-in extension [:ext/ns-alias :alias])
-                    (vis/extension-id-of-ns (:ext/namespace extension)))))
-          (registered-extensions))))))
+      (some (fn [extension]
+              (when (extension-matches? target-str extension)
+                extension))
+        (registered-extensions)))))
+
+(defn- resolve-extension-id
+  "Resolve `reference` to a registered extension id (symbol). Returns
+   `nil` when no extension matches."
+  [reference]
+  (when-let [target-sym (reference-as-symbol reference)]
+    (or (when (contains? (set (vis/registered-extension-ids)) target-sym)
+          target-sym)
+      (some-> (resolve-extension target-sym) extension-registry-id))))
 
 (defn- extension-summary [extension]
   (let [prov     (vis/extension-provenance extension)
@@ -1288,25 +1291,88 @@
      (vis/extension-docs id))))
 
 (defn- foundation-extension-doc
-  "Return the full descriptor map for one declared doc, by extension
-   reference (id, alias, or full namespace) and doc name (e.g.
-   \"README.md\"). The descriptor carries
-   {:name :created-at :description :content :links :reflinks}; the
-   Markdown body is at `:content`. Returns `nil` when the extension
-   is not registered or declares no doc by that name."
-  [_env reference doc-name]
-  (when (string? doc-name)
-    (when-let [id (resolve-extension-id reference)]
-      (vis/extension-doc id doc-name))))
+  "Return a full manifest doc descriptor for an extension.
+   `reference` may be an id/alias (`'v`, `:v`, `\"v\"`), alias namespace
+   (`'vis.ext.v`), or full extension namespace. With two args, returns
+   README.md. With three args, returns the requested doc name. Returns
+   nil when the extension/doc is unknown."
+  ([_env reference]
+   (when-let [id (resolve-extension-id reference)]
+     (vis/extension-doc id "README.md")))
+  ([_env reference doc-name]
+   (when-let [id (resolve-extension-id reference)]
+     (vis/extension-doc id doc-name))))
 
 (defn- foundation-extension-readme
   "Convenience: full Markdown body of an extension's canonical
-   README. Equivalent to `(:content (v/extension-doc ref
-   \"README.md\"))`. Every extension is required to declare a README
+   README. Equivalent to `(:content (v/extension-doc ref))`.
+   Every extension is required to declare a README
    in its `vis.edn`, so this returns text for any registered
    extension that follows the convention."
   [env reference]
-  (:content (foundation-extension-doc env reference "README.md")))
+  (:content (foundation-extension-doc env reference)))
+
+(defn- symbol-reference-as-symbol [reference]
+  (cond
+    (nil? reference) nil
+    (keyword? reference) (clojure.core/symbol (name reference))
+    (string? reference) (clojure.core/symbol reference)
+    (symbol? reference) (clojure.core/symbol (name reference))
+    :else nil))
+
+(defn- qualified-symbol-reference [reference]
+  (when (and (symbol? reference) (namespace reference))
+    [(clojure.core/symbol (namespace reference))
+     (clojure.core/symbol (name reference))]))
+
+(defn- symbol-doc-kind [entry]
+  (if (contains? entry :ext.symbol/fn) :fn :value))
+
+(defn- symbol-doc-summary [extension entry]
+  (let [provenance (:registry-id (vis/extension-provenance extension))
+        alias      (get-in extension [:ext/ns-alias :alias])
+        sym        (:ext.symbol/sym entry)]
+    (cond-> {:extension-id        (or provenance (extension-registry-id extension))
+             :extension-alias     alias
+             :extension-namespace (:ext/namespace extension)
+             :name                sym
+             :symbol              (if alias
+                                    (clojure.core/symbol (str alias) (str sym))
+                                    sym)
+             :kind                (symbol-doc-kind entry)
+             :doc                 (:ext.symbol/doc entry)}
+      (:ext.symbol/arglists entry) (assoc :arglists (:ext.symbol/arglists entry))
+      (:ext.symbol/examples entry) (assoc :examples (:ext.symbol/examples entry)))))
+
+(defn- foundation-symbol-docs
+  "With one arg, return sandbox symbol doc summaries for one extension.
+   With no arg, return the full symbol-doc registry keyed by canonical
+   extension id. Symbol docs are derived from registered extension
+   `:ext/symbols`; manifest docs stay under `v/extension-docs`."
+  ([_env]
+   (into {}
+     (keep (fn [extension]
+             (when-let [id (extension-registry-id extension)]
+               [id (mapv #(symbol-doc-summary extension %) (:ext/symbols extension))])))
+     (registered-extensions)))
+  ([_env reference]
+   (when-let [extension (resolve-extension reference)]
+     (mapv #(symbol-doc-summary extension %) (:ext/symbols extension)))))
+
+(defn- foundation-symbol-doc
+  "Return doc/arglists/examples for one sandbox symbol. Accepts either
+   `(v/symbol-doc ext-ref sym)` or `(v/symbol-doc 'alias/sym)`. Returns
+   nil when the extension or symbol is unknown."
+  ([env qualified-symbol]
+   (when-let [[reference sym] (qualified-symbol-reference qualified-symbol)]
+     (foundation-symbol-doc env reference sym)))
+  ([_env reference sym-reference]
+   (when-let [extension (resolve-extension reference)]
+     (when-let [sym (symbol-reference-as-symbol sym-reference)]
+       (some (fn [entry]
+               (when (= sym (:ext.symbol/sym entry))
+                 (symbol-doc-summary extension entry)))
+         (:ext/symbols extension))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Env injection — shared :before-fn for every symbol below.
@@ -1384,17 +1450,9 @@
 
 (def contract-symbol
   (vis/symbol 'contract foundation-contract
-    {:doc       "Current turn completion contract projection: intents, plans, gates, attestations. Prefer this over the legacy name `work-state`."
+    {:doc       "Current turn completion contract projection: intents, plans, gates, attestations."
      :arglists  '([] [conversation-turn-id])
      :examples  ["(v/contract)"
-                 "(:gates (v/contract))"]
-     :before-fn inject-environment}))
-
-(def work-state-symbol
-  (vis/symbol 'work-state foundation-work-state
-    {:doc       "Legacy alias/read projection for the current completion contract. Prefer `(v/contract)`."
-     :arglists  '([] [conversation-turn-id])
-     :examples  ["(v/work-state)"
                  "(:gates (v/contract))"]
      :before-fn inject-environment}))
 
@@ -1501,29 +1559,50 @@
     {:doc       "Extension doc index. No arg returns registry; one arg returns summaries without `:content`."
      :arglists  '([] [extension-ref])
      :examples  ["(v/extension-docs)"
-                 "(v/extension-docs 'vis)"
-                 "(map :description (v/extension-docs 'vis))"
-                 "(:links (first (v/extension-docs 'vis)))"]
+                 "(v/extension-docs 'v)"
+                 "(map :description (v/extension-docs 'v))"
+                 "(:links (first (v/extension-docs 'v)))"]
      :before-fn inject-environment}))
 
 (def extension-doc-symbol
   (vis/symbol 'extension-doc foundation-extension-doc
-    {:doc       "Full extension doc descriptor: {:name :description :content :links :reflinks}. Nil when missing."
-     :arglists  '([extension-ref doc-name])
-     :examples  ["(v/extension-doc 'vis \"README.md\")"
-                 "(:content (v/extension-doc :vis \"README.md\"))"
-                 "(:links       (v/extension-doc 'vis \"README.md\"))"
-                 "(:reflinks    (v/extension-doc 'vis \"README.md\"))"]
+    {:doc       "Full extension README descriptor: {:name :description :content :links :reflinks}. Nil when missing."
+     :arglists  '([extension-ref])
+     :examples  ["(v/extension-doc 'v)"
+                 "(v/extension-doc 'com.blockether.vis.ext.foundation.core)"
+                 "(:content (v/extension-doc :v))"
+                 "(:links       (v/extension-doc 'v))"
+                 "(:reflinks    (v/extension-doc 'v))"]
      :before-fn inject-environment}))
 
 (def extension-readme-symbol
   (vis/symbol 'extension-readme foundation-extension-readme
     {:doc       "Extension README Markdown text. Nil when missing."
      :arglists  '([extension-ref])
-     :examples  ["(v/extension-readme 'vis)"
-                 "(v/extension-readme 'com.blockether.vis.ext.foundation.introspection)"
-                 "(v/extension-readme :vis)"
-                 "(println (v/extension-readme 'vis))"]
+     :examples  ["(v/extension-readme 'v)"
+                 "(v/extension-readme 'com.blockether.vis.ext.foundation.core)"
+                 "(v/extension-readme :v)"
+                 "(println (v/extension-readme 'v))"]
+     :before-fn inject-environment}))
+
+(def symbol-docs-symbol
+  (vis/symbol 'symbol-docs foundation-symbol-docs
+    {:doc       "Sandbox symbol doc index. No arg returns registry; one arg returns docs for one extension."
+     :arglists  '([] [extension-ref])
+     :examples  ["(v/symbol-docs)"
+                 "(v/symbol-docs 'v)"
+                 "(map :name (v/symbol-docs 'v))"
+                 "(filter #(= :fn (:kind %)) (v/symbol-docs 'v))"]
+     :before-fn inject-environment}))
+
+(def symbol-doc-symbol
+  (vis/symbol 'symbol-doc foundation-symbol-doc
+    {:doc       "Sandbox symbol descriptor: {:extension-id :extension-alias :extension-namespace :name :symbol :kind :doc :arglists :examples}."
+     :arglists  '([qualified-symbol] [extension-ref symbol-name])
+     :examples  ["(v/symbol-doc 'v 'file-link)"
+                 "(v/symbol-doc 'v/file-link)"
+                 "(:arglists (v/symbol-doc 'v 'table))"
+                 "(:doc (v/symbol-doc :v \"link\"))"]
      :before-fn inject-environment}))
 
 (def all-symbols
@@ -1534,7 +1613,6 @@
    provenance-guards-symbol
    provenance-report-symbol
    contract-symbol
-   work-state-symbol
    intent!-symbol
    plan!-symbol
    gate!-symbol
@@ -1549,7 +1627,9 @@
    extensions-symbol
    extension-docs-symbol
    extension-doc-symbol
-   extension-readme-symbol])
+   extension-readme-symbol
+   symbol-docs-symbol
+   symbol-doc-symbol])
 
 (def introspection-prompt
   (str "`v/` introspection:\n"
@@ -1567,15 +1647,16 @@
     "  (v/gate! opts)                create gate_state for a plan_state\n"
     "  (v/attest! gate opts)         prove exactly one gate version with refs\n"
     "  (v/block-gate! gate opts)     block exactly one gate version with refs + reason\n"
-    "  (v/work-state)                legacy alias for (v/contract)\n"
     "  (v/gates)                     current active-plan gate states\n"
     "  (v/attestations)              current-turn attestations\n"
     "  (v/gate-checks)               current-turn gate contract checks\n"
     "  (v/gate-report)               Markdown gate/attestation report\n"
     "  (v/extensions)                loaded extension catalog\n"
-    "  (v/extension-docs ext-ref)    doc summaries\n"
-    "  (v/extension-doc ext-ref name) doc incl. :content\n"
-    "  (v/extension-readme ext-ref)  README text\n"))
+    "  (v/extension-docs ext-ref)    manifest doc summaries\n"
+    "  (v/extension-doc ext-ref)      README descriptor incl. :content\n"
+    "  (v/extension-readme ext-ref)  README text\n"
+    "  (v/symbol-docs ext-ref)       sandbox symbol summaries\n"
+    "  (v/symbol-doc ext-ref sym)    sandbox symbol doc/arglists/examples\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

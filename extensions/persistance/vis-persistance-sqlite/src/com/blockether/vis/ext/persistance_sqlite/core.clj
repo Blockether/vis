@@ -650,7 +650,7 @@
            :where  [:= :id (:id state)]})))))
 
 ;; =============================================================================
-;; Work provenance — turn-scoped intent -> plan -> gate -> attestation
+;; Completion contract — turn-scoped intent -> plan -> gate -> attestation
 ;; =============================================================================
 
 (defn- require-latest-turn-state
@@ -809,7 +809,7 @@
 (defn db-store-intent!
   "Create a new turn-scoped intent_state version. `conversation-turn-id`
    is the conversation_turn_soul id; the row is scoped to that soul's
-   latest conversation_turn_state so retries get isolated work state."
+   latest conversation_turn_state so retries get isolated contract."
   [db-info {:keys [conversation-turn-id key text status created-iteration-id created-ref metadata]}]
   (when (ds db-info)
     (let [turn-state (require-latest-turn-state db-info conversation-turn-id)
@@ -972,10 +972,10 @@
             (query-one! tx-info {:select [:*] :from :attestation :where [:= :id id]})
             (attestation-refs tx-info id)))))))
 
-(defn db-work-state
+(defn db-completion-contract
   "Return all turn-scoped intent/plan/gate/attestation state for the
    latest state of `conversation-turn-id`. This is the read model used
-   by v/work-state and v/gate-checks."
+   by v/contract and v/gate-checks."
   [db-info conversation-turn-id]
   (if (and (ds db-info) conversation-turn-id)
     (let [turn-state (require-latest-turn-state db-info conversation-turn-id)

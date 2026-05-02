@@ -223,10 +223,17 @@ The markdown builders are part of the unified `vis-foundation`
 extension, so introspection goes through the `v` extension id:
 
 ```clojure
-(v/extensions)                           ; -> includes :v
-(v/extension-doc 'v 'file-link)          ; full descriptor
-(v/extension-doc 'v 'link)               ; arglists, examples, doc
+(v/extensions)                           ; -> includes {:registry-id 'v ...}
+(v/symbol-doc 'v 'file-link)             ; arglists, examples, doc
+(v/symbol-doc 'v/link)                   ; same lookup via qualified symbol
 (v/extension-readme 'v)                  ; unified README
+```
+
+`v/extension-doc` returns the extension README descriptor:
+
+```clojure
+(v/extension-doc 'v)
+(v/extension-doc 'com.blockether.vis.ext.foundation.core)
 ```
 
 See [Extension overview](../overview.md) for the underlying

@@ -248,7 +248,7 @@
       (expect (= :error (:status (first (vis/db-list-conversation-turns s cid))))))))
 
 ;; =============================================================================
-;; Work provenance: intent -> plan -> gate -> attestation
+;; Completion contract: intent -> plan -> gate -> attestation
 ;; =============================================================================
 
 (defdescribe work-provenance-test
@@ -282,7 +282,7 @@
                                                :status :proven
                                                :summary "Verification passed."
                                                :refs ["i1.1"]})
-          state  (vis/db-work-state s tid)]
+          state  (vis/db-completion-contract s tid)]
       (expect (= 1 (raw-count s :intent_soul)))
       (expect (= 1 (raw-count s :intent_state)))
       (expect (= 1 (raw-count s :plan_state)))
@@ -317,7 +317,7 @@
         (expect (re-find #"closed gate_state requires one proven attestation"
                   (ex-message thrown))))))
 
-  (it "isolates work-state per conversation_turn_state retry"
+  (it "isolates contract per conversation_turn_state retry"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -326,7 +326,7 @@
           intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "first run"})]
       (vis/db-retry-conversation-turn! s tid {:status :running})
       (let [retry-intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "retry run"})
-            state        (vis/db-work-state s tid)]
+            state        (vis/db-completion-contract s tid)]
         (expect (not= (:conversation-turn-state-id intent)
                   (:conversation-turn-state-id retry-intent)))
         (expect (= ["retry run"] (mapv :text (:intents state))))))))
@@ -487,9 +487,9 @@
   ;; collided on `UNIQUE (conversation_turn_state_id, position)` because the
   ;; SELECT aliased the count as `row_count` (HoneySQL underscorifies
   ;; `:row-count`) while the lookup used `:row-count` (hyphen),
-  ;; returning `nil` and pinning every position to 0. Drive at least
+  ;; returning `nil` and pinning every position to 1. Drive at least
   ;; three iterations on the same qid so the count would have to land
-  ;; at 0, 1, 2 monotonically.
+  ;; at 1, 2, 3 monotonically.
   (it "increments position monotonically across iterations in the same conversation_turn_state"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -500,7 +500,7 @@
       (let [iterations (vis/db-list-conversation-turn-iterations s qid)
             positions  (sort (mapv :position iterations))]
         (expect (= 3 (count iterations)))
-        (expect (= [0 1 2] positions)))))
+        (expect (= [1 2 3] positions)))))
 
   ;; Token + cost round-trip — iteration.llm_input_tokens /
   ;; llm_output_tokens / llm_reasoning_tokens / llm_cached_tokens /

@@ -50,7 +50,7 @@
 (defn- env [store conversation-id]
   {:db-info store
    :conversation-id conversation-id
-   :current-iteration-atom (atom 2)})
+   :current-iteration-atom (atom 3)})
 
 (defn- eval-provenance [iteration form-position form-count]
   {:op :vis/eval
@@ -485,7 +485,7 @@
         (expect (str/includes? out "User request:** what's the plan?"))
         (expect (str/includes? out "Raw LLM response diagnostics"))
         (expect (str/includes? out "Raw chars"))
-        (expect (str/includes? out (str "| `" conversation-turn-id "` | 0 | done |")))
+        (expect (str/includes? out (str "| `" conversation-turn-id "` | 1 | done |")))
         (expect (str/includes? out (str "| " (count raw-response) " |")))
         (expect (str/includes? out "| 1 | clojure |"))
         (expect (str/includes? out raw-response)))))
@@ -514,10 +514,11 @@
       (expect (contains? symbols 'attest!))
       (expect (contains? symbols 'block-gate!))
       (expect (contains? symbols 'contract))
-      (expect (contains? symbols 'work-state))
       (expect (contains? symbols 'gate-checks))
       (expect (contains? symbols 'contract-report))
       (expect (contains? symbols 'audit-report))
+      (expect (contains? symbols 'symbol-docs))
+      (expect (contains? symbols 'symbol-doc))
       (doseq [removed ['turn 'conversation 'conversations 'conversation-forks
                        'turn-retries 'var-history 'find-attempts
                        'find-attempts-everywhere 'failures
@@ -607,11 +608,11 @@
         (expect (str/includes? out "Guards: ok"))))))
 
 ;; -----------------------------------------------------------------------------
-;; Work-state gates — current conversation turn only.
+;; Contract gates — current conversation turn only.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-gate-test
-  (it "creates current-turn work-state and reports an open required gate"
+  (it "creates current-turn contract and reports an open required gate"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           e (assoc (env s conversation-id)
@@ -764,8 +765,8 @@
     (expect (nil? ((private-fn "foundation-extension-docs") {} 'no.such.extension)))))
 
 (defdescribe foundation-extension-doc-test
-  (it "returns the full descriptor map for a declared doc"
-    (let [doc ((private-fn "foundation-extension-doc") {} 'v "README.md")]
+  (it "returns the canonical README descriptor by id symbol"
+    (let [doc ((private-fn "foundation-extension-doc") {} 'v)]
       (expect (map? doc))
       (expect (= "README.md" (:name doc)))
       (expect (string? (:description doc)))
@@ -775,8 +776,14 @@
       (expect (pos? (count (:links doc))))
       (expect (vector? (:reflinks doc)))))
 
+  (it "resolves extension docs by keyword, string, full namespace, and alias namespace"
+    (doseq [reference [:v "v" 'com.blockether.vis.ext.foundation.core 'vis.ext.v]]
+      (let [doc ((private-fn "foundation-extension-doc") {} reference)]
+        (expect (= "README.md" (:name doc)))
+        (expect (str/includes? (:content doc) "# vis-foundation")))))
+
   (it "links carry author-declared targets and contexts"
-    (let [doc   ((private-fn "foundation-extension-doc") {} 'v "README.md")
+    (let [doc   ((private-fn "foundation-extension-doc") {} 'v)
           links (:links doc)]
       ;; The unified vis-foundation README links to the RLM paper
       ;; (URL) and the prompt-assembler source file (file). No
@@ -784,11 +791,74 @@
       (expect (some #(some? (:url %)) links))
       (expect (some #(some? (:file %)) links))))
 
-  (it "returns nil for an unknown doc name"
-    (expect (nil? ((private-fn "foundation-extension-doc") {} 'v "NOPE.md"))))
-
   (it "returns nil for an unknown extension reference"
-    (expect (nil? ((private-fn "foundation-extension-doc") {} 'no.such.ext "README.md")))))
+    (expect (nil? ((private-fn "foundation-extension-doc") {} 'no.such.ext)))))
+
+(defdescribe foundation-symbol-docs-test
+  (it "single-arg form returns sandbox symbol docs for a registered extension"
+    (let [docs ((private-fn "foundation-symbol-docs") {} 'v)
+          file-link (some #(when (= 'file-link (:name %)) %) docs)]
+      (expect (vector? docs))
+      (expect (some? file-link))
+      (expect (= 'v (:extension-id file-link)))
+      (expect (= 'v (:extension-alias file-link)))
+      (expect (= 'com.blockether.vis.ext.foundation.core (:extension-namespace file-link)))
+      (expect (= 'v/file-link (:symbol file-link)))
+      (expect (= :fn (:kind file-link)))
+      (expect (str/includes? (:doc file-link) "Workspace file link"))
+      (expect (= '([path] [path line]) (:arglists file-link)))
+      (expect (some #(str/includes? % "v/file-link") (:examples file-link)))))
+
+  (it "no-arg form returns the symbol-doc registry keyed by extension id"
+    (let [registry ((private-fn "foundation-symbol-docs") {})]
+      (expect (map? registry))
+      (expect (contains? registry 'v))
+      (expect (some #(= 'inspect (:name %)) (get registry 'v)))))
+
+  (it "unknown extension reference returns nil"
+    (expect (nil? ((private-fn "foundation-symbol-docs") {} 'no.such.extension)))))
+
+(defdescribe foundation-symbol-doc-test
+  (it "returns one sandbox symbol descriptor by extension ref and symbol name"
+    (let [doc ((private-fn "foundation-symbol-doc") {} 'v 'file-link)]
+      (expect (= 'file-link (:name doc)))
+      (expect (= 'v/file-link (:symbol doc)))
+      (expect (= 'v (:extension-id doc)))
+      (expect (= 'v (:extension-alias doc)))
+      (expect (str/includes? (:doc doc) "Workspace file link"))
+      (expect (= '([path] [path line]) (:arglists doc)))))
+
+  (it "accepts a single qualified alias/symbol reference"
+    (let [doc ((private-fn "foundation-symbol-doc") {} 'v/file-link)]
+      (expect (= 'file-link (:name doc)))
+      (expect (= 'v/file-link (:symbol doc)))))
+
+  (it "accepts keyword and string references"
+    (let [doc ((private-fn "foundation-symbol-doc") {} :v "link")]
+      (expect (= 'link (:name doc)))
+      (expect (= 'v/link (:symbol doc)))))
+
+  (it "keeps manifest extension docs and sandbox symbol docs separate"
+    (let [extension-doc ((private-fn "foundation-extension-doc") {} 'v)
+          symbol-doc    ((private-fn "foundation-symbol-doc") {} 'v 'file-link)]
+      (expect (= "README.md" (:name extension-doc)))
+      (expect (str/includes? (:content extension-doc) "# vis-foundation"))
+      (expect (= 'file-link (:name symbol-doc)))
+      (expect (str/includes? (:doc symbol-doc) "Workspace file link"))))
+
+  (it "documents arglists for both extension-doc and symbol-doc"
+    (let [extension-doc-doc ((private-fn "foundation-symbol-doc") {} 'v 'extension-doc)
+          symbol-doc-doc    ((private-fn "foundation-symbol-doc") {} 'v 'symbol-doc)]
+      (expect (= '([extension-ref]) (:arglists extension-doc-doc)))
+      (expect (= '([qualified-symbol] [extension-ref symbol-name])
+                (:arglists symbol-doc-doc)))
+      (expect (some #(str/includes? % "v/extension-doc") (:examples extension-doc-doc)))
+      (expect (some #(str/includes? % "v/symbol-doc") (:examples symbol-doc-doc)))))
+
+  (it "returns nil for unknown extension or symbol"
+    (expect (nil? ((private-fn "foundation-symbol-doc") {} 'no.such.extension 'file-link)))
+    (expect (nil? ((private-fn "foundation-symbol-doc") {} 'v 'no-such-symbol)))
+    (expect (nil? ((private-fn "foundation-symbol-doc") {} 'not-qualified)))))
 
 (defdescribe foundation-extension-readme-test
   (it "resolves by id symbol"
@@ -839,7 +909,7 @@
         (expect (vector? ((private-fn "foundation-extensions") environment)))
         (expect (map? ((private-fn "foundation-extension-docs") environment)))
         (expect (nil? ((private-fn "foundation-extension-docs") environment 'no.such.ext)))
-        (expect (nil? ((private-fn "foundation-extension-doc") environment 'no.such.ext "README.md")))
+        (expect (nil? ((private-fn "foundation-extension-doc") environment 'no.such.ext)))
         (expect (nil? ((private-fn "foundation-extension-readme") environment 'no.such.ext)))))
 
     (it "returns nil-or-empty when conversation-id is missing"

@@ -465,7 +465,7 @@
     ;; Intentional: v/summary is a low-level HTML-tag helper for
     ;; users who already know what they want. Advertising it in the
     ;; system prompt would push every model toward collapsible UI
-    ;; for normal answers. Discoverable via symbol-info, hidden from
+    ;; for normal answers. Discoverable via v/symbol-doc, hidden from
     ;; the prompt surface.
     (expect (not (str/includes? md/markdown-prompt "v/summary"))))
 

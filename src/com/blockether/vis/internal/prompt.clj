@@ -344,8 +344,8 @@
      `:blocks-by-iteration` — last few iterations of
         `[iteration-position {:thinking :blocks}]` pairs for the
         <journal> renderer.
-     `:iteration` — internal 0-based iteration counter; threaded into the
-        title-nudge cadence check."
+     `:iteration` — current iteration position (1-based for rendered refs;
+        callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model system-prompt]
                 :as opts}]
@@ -372,7 +372,11 @@
         pressure-line (when (and used-tokens ctx-limit)
                         (context-pressure-nudge model used-tokens ctx-limit))
         ext-nudges (when (seq active-extensions)
-                     (let [ctx {:environment environment
+                     (let [iter-position (if (some? iteration)
+                                           (inc (long iteration))
+                                           1)
+                           ctx {:environment environment
+                                :iteration iter-position
                                 :previous-blocks last-iteration-blocks}]
                        (into []
                          (keep (fn [ext]
@@ -427,7 +431,7 @@
 [phi fractal euler tao pi mu ∃ ∀] | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other] | OODA ⊗ RGR ⊗ REPL
 Human ⊗ Vis ⊗ Workspace
 
-ΩVisWork :=
+ΩVisContract :=
   Intentᵛ
     → Planᵛ
       → Gateᵛ
@@ -529,8 +533,8 @@ Completion contract is database-backed, not a local `turn-state` map:
   Attestation¹   exactly one proof/blocker for one gate version
   ProvRef⁺       refs from the current-turn timeline
 
-Do NOT maintain a parallel `turn-state` / `work-state` map as the proof system.
-`(v/contract)` is only a read projection of the DB-backed contract. The domain objects are Intent, Plan, Gate, Attestation, and provenance refs.
+Do NOT maintain a parallel local proof map.
+`(v/contract)` is only a read projection of the DB-backed completion contract. The domain objects are Intent, Plan, Gate, Attestation, and provenance refs.
 
 Loop law:
   1. Emit Clojure forms for the current step only.
@@ -751,11 +755,10 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                   classpath entry for this extension.
      :symbols   — vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
-                  from `(v/extension-doc ...)` if the model wants
-                  them).
+                  from `(v/symbol-doc ...)` if the model wants them).
      :docs      — vec of doc-name strings (e.g. `\"README.md\"`) the
                   extension ships in its `vis.edn` registry. Reachable
-                  via `(v/extension-doc 'id name)`.
+                  via `(v/extension-doc 'id)`.
 
    The vec is bound ONCE at turn start (see `iteration-loop`) and
    stays frozen for the rest of the turn — every iteration sees the
