@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
    [com.blockether.svar.core :as svar]
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.persistance-sqlite.core]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as loop]
@@ -52,6 +54,75 @@
     (expect (= "Here's the top-level directory structure of this repo:\n```text\n\n```\nSo: I'm a language model."
               (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")))))
 
+(defdescribe final-answer-gate-error-test
+  (it "allows answers when the current turn has no gate state"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "hi"
+                                                  :status :running})]
+      (try
+        (expect (nil? (loop/final-answer-gate-error
+                        {:db-info s :current-conversation-turn-id-atom (atom tid)}
+                        0 [])))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "rejects answers while a required current-turn gate is still open"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "fix it"
+                                                  :status :running})]
+      (try
+        (let [intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "fix it"})
+              plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+                                            :key :main
+                                            :summary "Plan"})]
+          (vis/db-store-gate! s {:plan-state-id (:id plan)
+                                 :key :verify
+                                 :question "Verified?"})
+          (let [error (loop/final-answer-gate-error
+                        {:db-info s :current-conversation-turn-id-atom (atom tid)}
+                        0 [])]
+            (expect (string? error))
+            (expect (re-find #"Final answer rejected" error))
+            (expect (re-find #":required-gate-open" error))))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "accepts a proven gate whose attestation ref exists in the current in-memory iteration"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "fix it"
+                                                  :status :running})]
+      (try
+        (let [intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "fix it"})
+              plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+                                            :key :main
+                                            :summary "Plan"})
+              gate   (vis/db-store-gate! s {:plan-state-id (:id plan)
+                                            :key :verify
+                                            :question "Verified?"})
+              blocks [{:id 0
+                       :code "(+ 1 2)"
+                       :result 3
+                       :stdout ""
+                       :stderr ""
+                       :error nil
+                       :execution-time-ms 1
+                       :provenance {:ref "i0.1" :op :vis/eval :engine :vis/sci}}]]
+          (vis/db-store-attestation! s {:gate-state-id (:id gate)
+                                        :status :proven
+                                        :summary "Verified."
+                                        :refs ["i0.1"]})
+          (expect (nil? (loop/final-answer-gate-error
+                          {:db-info s :current-conversation-turn-id-atom (atom tid)}
+                          0 blocks))))
+        (finally
+          (vis/db-dispose-connection! s))))))
+
 (defdescribe run-iteration-diagnostics-test
   (it "carries raw LLM response diagnostics from svar to the iteration result"
     (let [raw "```clojure\n(+ 1 1)\n```"
@@ -84,8 +155,9 @@
             (let [prov (:provenance (first (:blocks result)))]
               (expect (= :vis/eval (:op prov)))
               (expect (= 0 (:iteration prov)))
-              (expect (= 0 (:form-idx prov)))
-              (expect (= 1 (:form-of prov)))
+              (expect (= 1 (:form-position prov)))
+              (expect (= 1 (:form-count prov)))
+              (expect (= "i0.1" (:ref prov)))
               (expect (= :vis/sci (:engine prov))))))))))
 
 (defdescribe markdown-fence-guard-test

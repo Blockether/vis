@@ -23,11 +23,7 @@
       {:start a :end f}
       {:start f :end a})))
 
-(defn selected-ranges
-  "Return inclusive row ranges for a normalized terminal-style selection.
-
-   Each range is `{:row r :col c :width w}` in screen cells. `cols`/`rows`
-   clip stale mouse coordinates after resizes."
+(defn- base-selected-ranges
   [selection cols rows]
   (let [cols (long (max 0 cols))
         rows (long (max 0 rows))]
@@ -46,6 +42,64 @@
                       {:row row :col from :width w})))
             (range sr (inc er))))))))
 
+(defn- intersect-row-ranges
+  [ranges selectable-ranges]
+  (let [selectable-by-row (group-by :row selectable-ranges)]
+    (vec
+      (for [{:keys [row col width]} ranges
+            selectable (get selectable-by-row row)
+            :let [from (max (long col) (long (:col selectable)))
+                  to   (min (+ (long col) (long width))
+                         (+ (long (:col selectable)) (long (:width selectable))))]
+            :when (< from to)]
+        {:row row :col from :width (- to from)}))))
+
+(defn selected-ranges
+  "Return inclusive row ranges for a normalized terminal-style selection.
+
+   Each range is `{:row r :col c :width w}` in screen cells. `cols`/`rows`
+   clip stale mouse coordinates after resizes.
+
+   Optional `selectable-ranges` restricts the result to bubble cells, so a
+   drag that crosses the header, input box, footer, or gutters highlights and
+   copies only transcript bubble text."
+  ([selection cols rows]
+   (selected-ranges selection cols rows nil))
+  ([selection cols rows selectable-ranges]
+   (let [ranges (base-selected-ranges selection cols rows)]
+     (cond
+       (nil? selectable-ranges) ranges
+       (seq selectable-ranges) (intersect-row-ranges ranges selectable-ranges)
+       :else []))))
+
+(defn point-in-ranges?
+  "True when `point` lies inside at least one selectable row range."
+  [{:keys [col row]} ranges]
+  (let [col (long col)
+        row (long row)]
+    (boolean
+      (some (fn [{r :row c :col w :width}]
+              (and (= row (long r))
+                (>= col (long c))
+                (< col (+ (long c) (long w)))))
+        ranges))))
+
+(defn auto-scroll-direction
+  "Return `:up`, `:down`, or nil while a drag-selection point is at a
+   viewport edge.
+
+   `top` is inclusive, `bottom` is exclusive, and `edge-size` is the number of
+   rows at either edge that should trigger auto-scroll."
+  [{:keys [row]} {:keys [top bottom edge-size]}]
+  (let [row  (long row)
+        top  (long top)
+        bot  (long bottom)
+        edge (long (max 0 (or edge-size 1)))]
+    (when (and (< top bot) (pos? edge))
+      (cond
+        (< row (+ top edge)) :up
+        (>= row (- bot edge)) :down))))
+
 (defn- row-cells
   [row]
   (cond
@@ -62,16 +116,20 @@
 
    `screen-cells` is a vector of rows; each row may be a string or a vector of
    per-cell strings. Trailing screen padding spaces are stripped per copied
-   line, while leading indentation inside the selected span is preserved."
-  [screen-cells selection]
-  (let [rows (vec (or screen-cells []))
-        row-count (count rows)
-        cols (long (or (some-> rows first row-cells count) 0))
-        ranges (selected-ranges selection cols row-count)]
-    (->> ranges
-      (map (fn [{:keys [row col width]}]
-             (let [cells (row-cells (nth rows row []))
-                   from  (min (count cells) (long col))
-                   to    (min (count cells) (+ from (long width)))]
-               (trim-trailing-spaces (apply str (subvec cells from to))))))
-      (str/join "\n"))))
+   line, while leading indentation inside the selected span is preserved.
+
+   Optional `selectable-ranges` restricts extraction to bubble cells only."
+  ([screen-cells selection]
+   (selected-text screen-cells selection nil))
+  ([screen-cells selection selectable-ranges]
+   (let [rows (vec (or screen-cells []))
+         row-count (count rows)
+         cols (long (or (some-> rows first row-cells count) 0))
+         ranges (selected-ranges selection cols row-count selectable-ranges)]
+     (->> ranges
+       (map (fn [{:keys [row col width]}]
+              (let [cells (row-cells (nth rows row []))
+                    from  (min (count cells) (long col))
+                    to    (min (count cells) (+ from (long width)))]
+                (trim-trailing-spaces (apply str (subvec cells from to))))))
+       (str/join "\n")))))

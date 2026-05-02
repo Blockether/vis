@@ -86,12 +86,14 @@
                  :blocks-by-iteration [[0 {:thinking nil
                                            :blocks   [{:code "(+ 1 2)"
                                                        :result 3
-                                                       :provenance {:op :vis/eval
+                                                       :provenance {:ref "i0.1"
+                                                                    :op :vis/eval
                                                                     :engine :vis/sci
                                                                     :duration-ms 7}}]}]]
                  :iteration           1})]
       (expect (string? out))
       (expect (str/includes? out ":provenance"))
+      (expect (str/includes? out ":ref \"i0.1\""))
       (expect (str/includes? out ":op :vis/eval"))
       (expect (str/includes? out ":engine :vis/sci"))))
 
@@ -255,8 +257,9 @@
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "(def observation (v/rg"))
       (expect (str/includes? p "observation"))
-      (expect (str/includes? p "turn-state"))
-      (expect (str/includes? p ":gates"))
+      (expect (str/includes? p "ΩVisWork"))
+      (expect (str/includes? p "v/intent!"))
+      (expect (str/includes? p "v/gate-checks"))
       (expect (str/includes? p "Close or block gates with observed evidence"))))
 
   (it "rejects exploration-only terminal progress answers"

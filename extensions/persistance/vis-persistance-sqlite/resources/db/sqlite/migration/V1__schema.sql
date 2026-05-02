@@ -7,15 +7,22 @@
 --     └─ conversation_state (branch/fork)
 --          ├─ conversation_turn_soul (user ask identity, branch-local)
 --          │    └─ conversation_turn_state (one run/retry)
---          │         └─ iteration (one LLM round-trip)
---          │              │
---          │              ├─ iteration.blocks BLOB
---          │              │    Nippy-encoded vec of per-block maps
---          │              │    {:idx :code :comment :result :error
---          │              │     :stdout :stderr :duration-ms
---          │              │     :timeout? :repaired?}
---          │              │
---          │              └─ expression_state (var versions only)
+--          │         ├─ iteration (one LLM round-trip)
+--          │         │    │
+--          │         │    ├─ iteration.blocks BLOB
+--          │         │    │    Nippy-encoded vec of per-block maps
+--          │         │    │    {:idx :code :comment :result :error
+--          │         │    │     :stdout :stderr :duration-ms
+--          │         │    │     :timeout? :repaired?}
+--          │         │    │
+--          │         │    └─ expression_state (var versions only)
+--          │         │
+--          │         └─ intent_soul / intent_state (turn-run scoped)
+--          │              └─ plan_soul / plan_state
+--          │                   └─ gate_soul / gate_state
+--          │                        └─ attestation
+--          │                             └─ attestation_provenance_ref
+--          │                                  refs into iteration.blocks provenance timeline
 --          │
 --          └─ expression_soul (branch-local var identities, kind='var')
 --               └─ expression_dependency (var dependency graph, soul-level)
@@ -235,6 +242,432 @@ CREATE INDEX idx_iteration_conversation_turn_state
 
 CREATE INDEX idx_iteration_conversation_turn_state_created
   ON iteration(conversation_turn_state_id, created_at);
+
+-- =============================================================================
+-- Work provenance domain — versioned intent -> plan -> gate -> attestation.
+--
+-- These tables make the completion contract durable instead of prompt-only:
+--   intent_state(versioned)
+--     -> plan_state(versioned)
+--       -> gate_state(versioned)
+--         -> exactly one attestation per gate_state
+--           -> one or more provenance refs into the iteration timeline
+--
+-- A gate can be inserted as open first. To close/block it, callers must insert
+-- the matching attestation and at least one attestation_provenance_ref, then
+-- update gate_state.status to closed/blocked. Triggers below enforce that final
+-- closed/blocked state.
+-- =============================================================================
+CREATE TABLE intent_soul (
+  id                          TEXT PRIMARY KEY NOT NULL,
+  conversation_turn_state_id  TEXT NOT NULL
+                              REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
+  key                         TEXT NOT NULL CHECK (trim(key) <> ''),
+  metadata                    TEXT,         -- JSON-encoded object/string
+  created_at                  INTEGER NOT NULL,
+
+  UNIQUE (conversation_turn_state_id, key)
+);
+
+CREATE INDEX idx_intent_soul_turn_state
+  ON intent_soul(conversation_turn_state_id, created_at);
+
+CREATE TABLE intent_state (
+  id                         TEXT PRIMARY KEY NOT NULL,
+  intent_soul_id             TEXT NOT NULL
+                             REFERENCES intent_soul(id) ON DELETE CASCADE,
+  version                    INTEGER NOT NULL CHECK (version >= 0),
+  supersedes_intent_state_id TEXT
+                             REFERENCES intent_state(id) ON DELETE SET NULL,
+  status                     TEXT NOT NULL
+                             CHECK (status IN ('active', 'satisfied', 'superseded', 'abandoned')),
+  text                       TEXT NOT NULL CHECK (trim(text) <> ''),
+  created_iteration_id       TEXT
+                             REFERENCES iteration(id) ON DELETE SET NULL,
+  created_ref                TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  metadata                   TEXT,          -- JSON-encoded object/string
+  created_at                 INTEGER NOT NULL,
+
+  UNIQUE (intent_soul_id, version)
+);
+
+CREATE INDEX idx_intent_state_soul
+  ON intent_state(intent_soul_id, version);
+
+CREATE INDEX idx_intent_state_created_iteration
+  ON intent_state(created_iteration_id)
+  WHERE created_iteration_id IS NOT NULL;
+
+CREATE TRIGGER trg_intent_state_version_ai
+BEFORE INSERT ON intent_state
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+           SELECT 1 FROM intent_state s
+           WHERE s.intent_soul_id = NEW.intent_soul_id)
+         AND NEW.version <> 0
+    THEN RAISE(ABORT, 'first intent_state version must be 0')
+  END;
+
+  SELECT CASE
+    WHEN EXISTS (
+           SELECT 1 FROM intent_state s
+           WHERE s.intent_soul_id = NEW.intent_soul_id)
+         AND NEW.version <> (
+           SELECT max(s.version) + 1 FROM intent_state s
+           WHERE s.intent_soul_id = NEW.intent_soul_id)
+    THEN RAISE(ABORT, 'intent_state version must increment by 1')
+  END;
+
+  SELECT CASE
+    WHEN NEW.supersedes_intent_state_id IS NOT NULL
+         AND (SELECT intent_soul_id FROM intent_state WHERE id = NEW.supersedes_intent_state_id) <> NEW.intent_soul_id
+    THEN RAISE(ABORT, 'intent_state supersedes must target same intent_soul')
+  END;
+END;
+
+CREATE TRIGGER trg_intent_state_version_au
+BEFORE UPDATE ON intent_state
+BEGIN
+  SELECT CASE
+    WHEN NEW.intent_soul_id <> OLD.intent_soul_id OR NEW.version <> OLD.version
+    THEN RAISE(ABORT, 'intent_state identity/version are immutable')
+  END;
+
+  SELECT CASE
+    WHEN NEW.supersedes_intent_state_id IS NOT NULL
+         AND (SELECT intent_soul_id FROM intent_state WHERE id = NEW.supersedes_intent_state_id) <> NEW.intent_soul_id
+    THEN RAISE(ABORT, 'intent_state supersedes must target same intent_soul')
+  END;
+END;
+
+CREATE TABLE plan_soul (
+  id              TEXT PRIMARY KEY NOT NULL,
+  intent_soul_id  TEXT NOT NULL
+                  REFERENCES intent_soul(id) ON DELETE CASCADE,
+  key             TEXT NOT NULL CHECK (trim(key) <> ''),
+  metadata        TEXT,                     -- JSON-encoded object/string
+  created_at      INTEGER NOT NULL,
+
+  UNIQUE (intent_soul_id, key)
+);
+
+CREATE INDEX idx_plan_soul_intent
+  ON plan_soul(intent_soul_id, created_at);
+
+CREATE TABLE plan_state (
+  id                       TEXT PRIMARY KEY NOT NULL,
+  plan_soul_id             TEXT NOT NULL
+                           REFERENCES plan_soul(id) ON DELETE CASCADE,
+  version                  INTEGER NOT NULL CHECK (version >= 0),
+  intent_state_id          TEXT NOT NULL
+                           REFERENCES intent_state(id) ON DELETE CASCADE,
+  supersedes_plan_state_id TEXT
+                           REFERENCES plan_state(id) ON DELETE SET NULL,
+  status                   TEXT NOT NULL
+                           CHECK (status IN ('active', 'completed', 'stale', 'superseded', 'abandoned')),
+  summary                  TEXT NOT NULL CHECK (trim(summary) <> ''),
+  steps                    TEXT,            -- JSON-encoded vector of plan steps
+  created_iteration_id     TEXT
+                           REFERENCES iteration(id) ON DELETE SET NULL,
+  created_ref              TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  metadata                 TEXT,            -- JSON-encoded object/string
+  created_at               INTEGER NOT NULL,
+
+  UNIQUE (plan_soul_id, version)
+);
+
+CREATE INDEX idx_plan_state_soul
+  ON plan_state(plan_soul_id, version);
+
+CREATE INDEX idx_plan_state_intent_state
+  ON plan_state(intent_state_id);
+
+CREATE TRIGGER trg_plan_state_lineage_ai
+BEFORE INSERT ON plan_state
+BEGIN
+  SELECT CASE
+    WHEN (SELECT intent_soul_id FROM plan_soul WHERE id = NEW.plan_soul_id) <>
+         (SELECT intent_soul_id FROM intent_state WHERE id = NEW.intent_state_id)
+    THEN RAISE(ABORT, 'plan_state intent_state must belong to plan_soul intent_soul')
+  END;
+
+  SELECT CASE
+    WHEN NOT EXISTS (
+           SELECT 1 FROM plan_state s
+           WHERE s.plan_soul_id = NEW.plan_soul_id)
+         AND NEW.version <> 0
+    THEN RAISE(ABORT, 'first plan_state version must be 0')
+  END;
+
+  SELECT CASE
+    WHEN EXISTS (
+           SELECT 1 FROM plan_state s
+           WHERE s.plan_soul_id = NEW.plan_soul_id)
+         AND NEW.version <> (
+           SELECT max(s.version) + 1 FROM plan_state s
+           WHERE s.plan_soul_id = NEW.plan_soul_id)
+    THEN RAISE(ABORT, 'plan_state version must increment by 1')
+  END;
+
+  SELECT CASE
+    WHEN NEW.supersedes_plan_state_id IS NOT NULL
+         AND (SELECT plan_soul_id FROM plan_state WHERE id = NEW.supersedes_plan_state_id) <> NEW.plan_soul_id
+    THEN RAISE(ABORT, 'plan_state supersedes must target same plan_soul')
+  END;
+END;
+
+CREATE TRIGGER trg_plan_state_lineage_au
+BEFORE UPDATE ON plan_state
+BEGIN
+  SELECT CASE
+    WHEN NEW.plan_soul_id <> OLD.plan_soul_id OR NEW.version <> OLD.version
+    THEN RAISE(ABORT, 'plan_state identity/version are immutable')
+  END;
+
+  SELECT CASE
+    WHEN (SELECT intent_soul_id FROM plan_soul WHERE id = NEW.plan_soul_id) <>
+         (SELECT intent_soul_id FROM intent_state WHERE id = NEW.intent_state_id)
+    THEN RAISE(ABORT, 'plan_state intent_state must belong to plan_soul intent_soul')
+  END;
+
+  SELECT CASE
+    WHEN NEW.supersedes_plan_state_id IS NOT NULL
+         AND (SELECT plan_soul_id FROM plan_state WHERE id = NEW.supersedes_plan_state_id) <> NEW.plan_soul_id
+    THEN RAISE(ABORT, 'plan_state supersedes must target same plan_soul')
+  END;
+END;
+
+CREATE TABLE gate_soul (
+  id            TEXT PRIMARY KEY NOT NULL,
+  plan_soul_id  TEXT NOT NULL
+                REFERENCES plan_soul(id) ON DELETE CASCADE,
+  key           TEXT NOT NULL CHECK (trim(key) <> ''),
+  metadata      TEXT,                       -- JSON-encoded object/string
+  created_at    INTEGER NOT NULL,
+
+  UNIQUE (plan_soul_id, key)
+);
+
+CREATE INDEX idx_gate_soul_plan
+  ON gate_soul(plan_soul_id, created_at);
+
+CREATE TABLE gate_state (
+  id                       TEXT PRIMARY KEY NOT NULL,
+  gate_soul_id             TEXT NOT NULL
+                           REFERENCES gate_soul(id) ON DELETE CASCADE,
+  version                  INTEGER NOT NULL CHECK (version >= 0),
+  plan_state_id            TEXT NOT NULL
+                           REFERENCES plan_state(id) ON DELETE CASCADE,
+  supersedes_gate_state_id TEXT
+                           REFERENCES gate_state(id) ON DELETE SET NULL,
+  status                   TEXT NOT NULL
+                           CHECK (status IN ('open', 'closed', 'blocked', 'superseded')),
+  required                 INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
+  question                 TEXT NOT NULL CHECK (trim(question) <> ''),
+  created_iteration_id     TEXT
+                           REFERENCES iteration(id) ON DELETE SET NULL,
+  created_ref              TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  metadata                 TEXT,            -- JSON-encoded object/string
+  created_at               INTEGER NOT NULL,
+
+  UNIQUE (gate_soul_id, version)
+);
+
+CREATE INDEX idx_gate_state_soul
+  ON gate_state(gate_soul_id, version);
+
+CREATE INDEX idx_gate_state_plan_state
+  ON gate_state(plan_state_id);
+
+CREATE TABLE attestation (
+  id                    TEXT PRIMARY KEY NOT NULL,
+  gate_state_id         TEXT NOT NULL
+                        REFERENCES gate_state(id) ON DELETE CASCADE,
+  status                TEXT NOT NULL
+                        CHECK (status IN ('proven', 'blocked', 'rejected')),
+  summary               TEXT CHECK (summary IS NULL OR trim(summary) <> ''),
+  reason                TEXT CHECK (reason IS NULL OR trim(reason) <> ''),
+  created_iteration_id  TEXT
+                        REFERENCES iteration(id) ON DELETE SET NULL,
+  created_ref           TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  metadata              TEXT,              -- JSON-encoded object/string
+  created_at            INTEGER NOT NULL,
+
+  UNIQUE (gate_state_id),
+  CHECK (status <> 'proven' OR summary IS NOT NULL),
+  CHECK (status <> 'blocked' OR reason IS NOT NULL),
+  CHECK (status <> 'rejected' OR reason IS NOT NULL)
+);
+
+CREATE INDEX idx_attestation_gate_state
+  ON attestation(gate_state_id);
+
+CREATE INDEX idx_attestation_created_iteration
+  ON attestation(created_iteration_id)
+  WHERE created_iteration_id IS NOT NULL;
+
+CREATE TABLE attestation_provenance_ref (
+  id              TEXT PRIMARY KEY NOT NULL,
+  attestation_id  TEXT NOT NULL
+                  REFERENCES attestation(id) ON DELETE CASCADE,
+  ref             TEXT NOT NULL CHECK (trim(ref) <> ''),
+  role            TEXT NOT NULL DEFAULT 'evidence'
+                  CHECK (role IN ('evidence', 'counter-evidence', 'context')),
+  metadata        TEXT,                     -- JSON-encoded object/string
+  created_at      INTEGER NOT NULL,
+
+  UNIQUE (attestation_id, ref)
+);
+
+CREATE INDEX idx_attestation_ref_attestation
+  ON attestation_provenance_ref(attestation_id);
+
+CREATE INDEX idx_attestation_ref_ref
+  ON attestation_provenance_ref(ref);
+
+CREATE TRIGGER trg_gate_state_lineage_ai
+BEFORE INSERT ON gate_state
+BEGIN
+  SELECT CASE
+    WHEN (SELECT plan_soul_id FROM gate_soul WHERE id = NEW.gate_soul_id) <>
+         (SELECT plan_soul_id FROM plan_state WHERE id = NEW.plan_state_id)
+    THEN RAISE(ABORT, 'gate_state plan_state must belong to gate_soul plan_soul')
+  END;
+
+  SELECT CASE
+    WHEN NOT EXISTS (
+           SELECT 1 FROM gate_state s
+           WHERE s.gate_soul_id = NEW.gate_soul_id)
+         AND NEW.version <> 0
+    THEN RAISE(ABORT, 'first gate_state version must be 0')
+  END;
+
+  SELECT CASE
+    WHEN EXISTS (
+           SELECT 1 FROM gate_state s
+           WHERE s.gate_soul_id = NEW.gate_soul_id)
+         AND NEW.version <> (
+           SELECT max(s.version) + 1 FROM gate_state s
+           WHERE s.gate_soul_id = NEW.gate_soul_id)
+    THEN RAISE(ABORT, 'gate_state version must increment by 1')
+  END;
+
+  SELECT CASE
+    WHEN NEW.supersedes_gate_state_id IS NOT NULL
+         AND (SELECT gate_soul_id FROM gate_state WHERE id = NEW.supersedes_gate_state_id) <> NEW.gate_soul_id
+    THEN RAISE(ABORT, 'gate_state supersedes must target same gate_soul')
+  END;
+
+  SELECT CASE
+    WHEN NEW.status = 'closed'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM attestation a
+           WHERE a.gate_state_id = NEW.id
+             AND a.status = 'proven'
+             AND EXISTS (SELECT 1 FROM attestation_provenance_ref r WHERE r.attestation_id = a.id))
+    THEN RAISE(ABORT, 'closed gate_state requires one proven attestation with provenance refs')
+  END;
+
+  SELECT CASE
+    WHEN NEW.status = 'blocked'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM attestation a
+           WHERE a.gate_state_id = NEW.id
+             AND a.status = 'blocked'
+             AND a.reason IS NOT NULL
+             AND EXISTS (SELECT 1 FROM attestation_provenance_ref r WHERE r.attestation_id = a.id))
+    THEN RAISE(ABORT, 'blocked gate_state requires one blocked attestation with reason and provenance refs')
+  END;
+END;
+
+CREATE TRIGGER trg_gate_state_lineage_au
+BEFORE UPDATE ON gate_state
+BEGIN
+  SELECT CASE
+    WHEN NEW.gate_soul_id <> OLD.gate_soul_id OR NEW.version <> OLD.version
+    THEN RAISE(ABORT, 'gate_state identity/version are immutable')
+  END;
+
+  SELECT CASE
+    WHEN (SELECT plan_soul_id FROM gate_soul WHERE id = NEW.gate_soul_id) <>
+         (SELECT plan_soul_id FROM plan_state WHERE id = NEW.plan_state_id)
+    THEN RAISE(ABORT, 'gate_state plan_state must belong to gate_soul plan_soul')
+  END;
+
+  SELECT CASE
+    WHEN NEW.supersedes_gate_state_id IS NOT NULL
+         AND (SELECT gate_soul_id FROM gate_state WHERE id = NEW.supersedes_gate_state_id) <> NEW.gate_soul_id
+    THEN RAISE(ABORT, 'gate_state supersedes must target same gate_soul')
+  END;
+
+  SELECT CASE
+    WHEN NEW.status = 'closed'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM attestation a
+           WHERE a.gate_state_id = NEW.id
+             AND a.status = 'proven'
+             AND EXISTS (SELECT 1 FROM attestation_provenance_ref r WHERE r.attestation_id = a.id))
+    THEN RAISE(ABORT, 'closed gate_state requires one proven attestation with provenance refs')
+  END;
+
+  SELECT CASE
+    WHEN NEW.status = 'blocked'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM attestation a
+           WHERE a.gate_state_id = NEW.id
+             AND a.status = 'blocked'
+             AND a.reason IS NOT NULL
+             AND EXISTS (SELECT 1 FROM attestation_provenance_ref r WHERE r.attestation_id = a.id))
+    THEN RAISE(ABORT, 'blocked gate_state requires one blocked attestation with reason and provenance refs')
+  END;
+END;
+
+CREATE TRIGGER trg_attestation_immutable_when_gate_terminal_au
+BEFORE UPDATE ON attestation
+BEGIN
+  SELECT CASE
+    WHEN (SELECT status FROM gate_state WHERE id = OLD.gate_state_id) IN ('closed', 'blocked')
+    THEN RAISE(ABORT, 'attestation is immutable after gate_state is closed or blocked')
+  END;
+END;
+
+CREATE TRIGGER trg_attestation_immutable_when_gate_terminal_ad
+BEFORE DELETE ON attestation
+BEGIN
+  SELECT CASE
+    WHEN (SELECT status FROM gate_state WHERE id = OLD.gate_state_id) IN ('closed', 'blocked')
+    THEN RAISE(ABORT, 'attestation cannot be deleted after gate_state is closed or blocked')
+  END;
+END;
+
+CREATE TRIGGER trg_attestation_ref_immutable_when_gate_terminal_au
+BEFORE UPDATE ON attestation_provenance_ref
+BEGIN
+  SELECT CASE
+    WHEN (SELECT gs.status
+          FROM gate_state gs
+          JOIN attestation a ON a.gate_state_id = gs.id
+          WHERE a.id = OLD.attestation_id) IN ('closed', 'blocked')
+    THEN RAISE(ABORT, 'attestation provenance refs are immutable after gate_state is closed or blocked')
+  END;
+END;
+
+CREATE TRIGGER trg_attestation_ref_immutable_when_gate_terminal_ad
+BEFORE DELETE ON attestation_provenance_ref
+BEGIN
+  SELECT CASE
+    WHEN (SELECT gs.status
+          FROM gate_state gs
+          JOIN attestation a ON a.gate_state_id = gs.id
+          WHERE a.id = OLD.attestation_id) IN ('closed', 'blocked')
+    THEN RAISE(ABORT, 'attestation provenance refs cannot be deleted after gate_state is closed or blocked')
+  END;
+END;
 
 -- =============================================================================
 -- Expression soul — identity for var bindings (and reserved literal

@@ -14,6 +14,27 @@
 | Current iteration counter | `environment :current-iteration-atom` (turn-scoped, int counter starting at 0) | Turn |
 | Current iteration row id | `environment :current-iteration-id-atom` (turn-scoped, UUID of the latest `db-store-iteration!` row, or nil) | Turn |
 | Token usage | `usage-atom` (local in iteration loop) | Turn |
+| Completion contract | `intent_*`, `plan_*`, `gate_*`, `attestation*` tables rooted at `conversation_turn_state` | Turn run/retry |
+
+## Completion contract ownership
+
+The completion contract is not model-authored scratch state. It is durable database state rooted at one `conversation_turn_state`:
+
+```text
+conversation_turn_state
+  └─ intent_soul / intent_state
+       └─ plan_soul / plan_state
+            └─ gate_soul / gate_state
+                 └─ attestation
+                      └─ attestation_provenance_ref
+```
+
+This is intentionally scoped to a run/retry, not to the whole conversation.
+A retry gets a new `conversation_turn_state`, therefore a separate completion contract.
+
+The model-facing helper `(v/work-state)` is only a read projection of this contract. It is not a domain object and should not be confused with a local `turn-state` map. The domain objects are Intent, Plan, Gate, Attestation, Provenance refs, and Timeline events.
+
+See [Completion Contract](completion-contract.md).
 
 ## Environment map
 

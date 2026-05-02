@@ -23,6 +23,9 @@
 (def ^:private copy-selection!
   (deref #'screen/copy-selection!))
 
+(def ^:private bubble-selectable-ranges
+  (deref #'screen/bubble-selectable-ranges))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
    the contract the channel entry point relies on to print a clean
@@ -47,6 +50,17 @@
       (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
       (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
+
+(defdescribe bubble-selection-ranges-test
+  (it "clips selectable cells to visible transcript bubbles only"
+    (expect (= [{:row 4 :col 2 :width 15}
+                {:row 5 :col 2 :width 15}
+                {:row 7 :col 2 :width 15}
+                {:row 8 :col 2 :width 15}]
+              (bubble-selectable-ranges
+                {:visible [{:top -2 :height 4}
+                           {:top 3 :height 2}]}
+                4 5 20)))))
 
 (defdescribe clipboard-copy-actions-test
   (it "conversation-id copy uses the same icon-era notification TTL"

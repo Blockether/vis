@@ -305,6 +305,13 @@
 (defdelegate db-list-iteration-vars       [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
+;; --- Work provenance: turn-scoped intent -> plan -> gate -> attestation ---
+(defdelegate db-store-intent!       [db-info opts])
+(defdelegate db-store-plan!         [db-info opts])
+(defdelegate db-store-gate!         [db-info opts])
+(defdelegate db-store-attestation!  [db-info opts])
+(defdelegate db-work-state          [db-info conversation-turn-ref])
+
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
   ([db-info conversation-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref))

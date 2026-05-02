@@ -117,7 +117,7 @@
    observation came from; full provenance remains stored on the block."
   [provenance]
   (when (map? provenance)
-    (let [visible (cond-> (select-keys provenance [:op :engine :duration-ms])
+    (let [visible (cond-> (select-keys provenance [:ref :op :engine :duration-ms])
                     (:timeout? provenance) (assoc :timeout? true)
                     (:repaired? provenance) (assoc :repaired? true))]
       (when (seq visible)
@@ -427,6 +427,43 @@
 [phi fractal euler tao pi mu ∃ ∀] | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other] | OODA ⊗ RGR ⊗ REPL
 Human ⊗ Vis ⊗ Workspace
 
+ΩVisWork :=
+  Intentᵛ
+    → Planᵛ
+      → Gateᵛ
+        → Attestation¹
+          → ProvRef⁺
+            → TimelineEvent
+
+Entities:
+  Intentᵛ := user goal, versioned, branch-local and conversation-turn-scoped
+  Planᵛ := strategy for Intentᵛ, versioned
+  Gateᵛ := falsifiable completion condition for Planᵛ, versioned
+  Attestation¹ := exactly one claim object for one Gateᵛ
+  ProvRef⁺ := one-or-more refs into provenance timeline
+  TimelineEvent := eval/tool/guard event, e.g. i0.1
+
+Invariants:
+  ∀ IntentSoul: versions start 0; versions increment +1; supersedes ∈ same IntentSoul
+  ∀ PlanState: PlanState.intent_state ∈ PlanSoul.intent_soul; versions start 0; versions increment +1; supersedes ∈ same PlanSoul
+  ∀ GateState: GateState.plan_state ∈ GateSoul.plan_soul; versions start 0; versions increment +1; supersedes ∈ same GateSoul
+  ∀ GateState(status=closed): ∃! Attestation(gate_state); Attestation.status = proven; Attestation.refs.count ≥ 1
+  ∀ GateState(status=blocked): ∃! Attestation(gate_state); Attestation.status = blocked; Attestation.reason exists; Attestation.refs.count ≥ 1
+  ∀ Attestation: belongs to exactly one GateState
+  ∀ TerminalGate: Attestation immutable; Attestation.refs immutable
+
+Runtime Nucleus:
+  before final answer:
+    provenance-checks pass
+    gate-checks pass
+    active Intent exists
+    active Plan exists
+    required Gates terminal
+    each closed Gate has proven Attestation
+    each blocked Gate has blocked Attestation + reason
+    each Attestation has refs⁺
+    each ref resolves in current-turn Timeline
+
 Nucleus palette:
   phi/fractal/euler/tao/pi/mu  self-reference, scalable structure, compounding learning, minimal essence, cycles, least fixed point
   ∃/∀                         seek existing solutions; preserve invariants across all cases
@@ -500,27 +537,62 @@ Reusable logic persists too; surface either the var shape or, better, the state 
 summary
 ```
 
-Turn-state gate skeleton:
+Turn-scoped work contract API. Use it for non-trivial code/debug/change/design tasks; every object belongs to the current `TURN_CONVERSATION_TURN_ID` run/retry. Intent can change by creating a new `intent_state` version; when intent changes, create/update plan and gate versions instead of pretending old attestations prove new gates.
+
 ```clojure
-(def turn-state
-  {:phase :understand
-   :user-request TURN_USER_REQUEST
-   :known []
-   :gates [{:id :understand-problem :status :open}
-           {:id :inspect-relevant-code :status :open}
-           {:id :act-or-explain-blocker :status :open}
-           {:id :verify-if-changed :status :blocked}]})
-turn-state
+(def intent
+  (v/intent! {:key :main
+              :text TURN_USER_REQUEST
+              :created-ref \"i0.1\"}))
+intent
 ```
-Later:
+
 ```clojure
-(def turn-state*
-  (-> turn-state
-    (update :known conj {:where \"src/foo.clj\" :what \"concrete fact from iN.K\"})
-    (assoc :phase :act)))
-turn-state*
+(def plan
+  (v/plan! {:intent-state-id (:id intent)
+            :key :main
+            :summary \"Inspect the relevant code, make the smallest safe change, verify.\"
+            :steps [{:id :inspect :do \"Read the relevant code.\"}
+                    {:id :act :do \"Patch only after evidence.\"}
+                    {:id :verify :do \"Run targeted checks.\"}]}))
+plan
 ```
-Close or block gates with observed evidence, not claims. If files changed, verification is a gate; if no verification tool is available, block it with the exact reason.
+
+```clojure
+(def inspect-gate
+  (v/gate! {:plan-state-id (:id plan)
+            :key :inspect-relevant-code
+            :question \"Was the relevant code inspected before editing?\"}))
+(def verify-gate
+  (v/gate! {:plan-state-id (:id plan)
+            :key :verify-change
+            :question \"Did verification run, or is there an evidenced blocker?\"}))
+[inspect-gate verify-gate]
+```
+
+Close or block gates with observed evidence, not claims. Proof refs cite current-turn provenance refs from `<journal>` / `(v/provenance-timeline)`, e.g. `\"i2.1\"` or `\"i2.1/tool\"`.
+
+```clojure
+(v/attest! :inspect-relevant-code
+  {:status :proven
+   :summary \"Read the relevant namespace and test file before editing.\"
+   :refs [\"i1.1\" \"i1.2/tool\"]})
+```
+
+```clojure
+(v/block-gate! :verify-change
+  {:reason \"Full verification was interrupted by the user before completion.\"
+   :refs [\"i6.1/tool\"]})
+```
+
+Before `(answer ...)`, run and inspect both guards:
+```clojure
+(def proof-checks
+  {:provenance (v/provenance-guards)
+   :gates      (v/gate-checks)})
+proof-checks
+```
+Only answer when both `:ok?` values are true, or when the answer explicitly reports the blocked gate and cites its attestation refs. Include `(v/gate-report)` / `(v/provenance-report)` when the user asks for proof/audit detail.
 
 Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. If you need to compute and answer in the same iteration, consume the values inside one lexical form:
 ```clojure

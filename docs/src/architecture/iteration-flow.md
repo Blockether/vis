@@ -32,8 +32,8 @@ user message
    snapshot router — NOT the global loop router atom. See
    [Router Lifecycle](state.md#router-lifecycle) for why this matters
    when provider/model is switched mid-session.
-3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result per block
-4. **Persist + Decide** — `db-store-iteration!`, attach extension metadata, route to next step
+3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result/provenance per block
+4. **Persist + Decide** — `db-store-iteration!`, attach extension metadata, enforce final-answer gates when `(answer …)` fires, route to next step
 
 ## System prompt assembly
 
@@ -73,9 +73,18 @@ When an iteration throws:
 The model finishes a turn by calling `(answer "…")` from inside a
 fenced code block. The runtime binds `answer` as a one-arg SCI fn
 that `reset!`s an environment-scoped atom; after evaluating every
-form in the iteration, the loop reads the atom and — if non-nil and
-no expression in the same iteration errored — commits the captured
-string as the turn's final answer.
+form in the iteration, the loop reads the atom and validates the
+captured answer before committing it.
+
+Validation includes:
+
+1. `(answer …)` must fire from the last top-level form of the iteration.
+2. The answer-bearing form itself must not have errored.
+3. If the current `conversation_turn_state` has completion gates, the
+   gate contract must pass before the answer is accepted.
+
+See [Completion Contract](completion-contract.md) for the Intent → Plan
+→ Gate → Attestation → Provenance model.
 
 The canonical way to build the answer body is the `v/` surface
 (see [Markdown builders under `v/`](../extensions/common/markdown.md)):
@@ -99,8 +108,9 @@ Key properties:
 - Calling `(answer …)` more than once in the same iteration: the LAST
   call wins. The atom is reset to `nil` at the start of every
   iteration.
-- If any form in the same iteration errors, the captured answer is
-  discarded and the loop retries.
+- If the answer-bearing form errors, the captured answer is discarded and the loop retries.
+- If completion gates exist and `(v/gate-checks)` would fail, the captured answer is discarded and the loop retries with a validation error.
+- If no gates exist, the gate guard is skipped. Trivial chat does not need a completion contract.
 
 ## Loop termination
 
@@ -115,8 +125,12 @@ automatic termination path apart from finalize / cancel.
 
 ## Reasoning continuity
 
-There is no projection layer carrying "plan" or "breadcrumb" data
-between iterations. Continuity is delivered by:
+There is no model-authored `turn-state` map carrying "plan" or
+"breadcrumb" data between iterations. For non-trivial work, durable
+planning/completion state lives in the database-backed completion
+contract: Intent, Plan, Gate, Attestation, and Provenance refs.
+
+Continuity is delivered by:
 
 - **`<journal>`** — the previous iteration's code blocks + results,
   addressable by `iN.K` ids.
@@ -128,7 +142,10 @@ between iterations. Continuity is delivered by:
 
 For deeper introspection, the opt-in `vis-foundation` extension
 exposes `(v/inspect)` as the canonical state data map and `(v/report)`
-as the Markdown renderer over the same data. See
+as the Markdown renderer over the same data. Completion contract helpers
+include `(v/intent!)`, `(v/plan!)`, `(v/gate!)`, `(v/attest!)`,
+`(v/block-gate!)`, `(v/gate-checks)`, and `(v/gate-report)`. See
+[Completion Contract](completion-contract.md) and
 [Meta extension](../extensions/common/vis-foundation.md).
 
 ## SYSTEM vars

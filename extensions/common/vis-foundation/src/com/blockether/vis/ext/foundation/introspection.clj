@@ -4,6 +4,16 @@
 
    - `(v/inspect [conversation-id])` → canonical data map, including raw LLM diagnostics
    - `(v/report [conversation-id])`  → Markdown rendered from that data
+   - `(v/provenance-timeline [conversation-id])` → ordered eval/tool provenance events
+   - `(v/provenance-stats [conversation-id])`    → ops/status/failure/slow summaries
+   - `(v/provenance-guards [conversation-id])`   → provenance integrity checks
+   - `(v/provenance-report [conversation-id])`   → compact Markdown audit trail
+   - `(v/intent! opts)` / `(v/plan! opts)` / `(v/gate! opts)`
+     persist turn-scoped work-state versions
+   - `(v/attest! gate opts)` / `(v/block-gate! gate opts)`
+     persist exactly one attestation for exactly one gate version
+   - `(v/work-state)` / `(v/gates)` / `(v/attestations)` /
+     `(v/gate-checks)` / `(v/gate-report)` inspect/enforce gates
 
    Everything else in this namespace is implementation behind that
    deeper interface. The agent gets the data once, manipulates it via
@@ -721,6 +731,406 @@
        (str "Conversation not found: " (:conversation-id data) "\n")))))
 
 ;; ---------------------------------------------------------------------------
+;; Provenance timeline + guards — model-facing audit helpers.
+;; ---------------------------------------------------------------------------
+
+(defn- tool-result-envelope? [value]
+  (and (map? value)
+    (contains? value :ok?)
+    (contains? value :provenance)
+    (contains? value :markdown)))
+
+(defn- event-status [error ok?]
+  (cond
+    error :error
+    (false? ok?) :error
+    :else :ok))
+
+(defn- block-index [block]
+  (or (:idx block) (:id block) 0))
+
+(defn- block-ref [iteration-position block]
+  (or (get-in block [:provenance :ref])
+    (str "i" iteration-position "." (inc (long (block-index block))))))
+
+(defn- eval-event [conversation-id turn iteration block]
+  (let [provenance (:provenance block)
+        iteration-position (:position iteration)
+        ref (block-ref iteration-position block)
+        status (event-status (:error block) true)]
+    (cond-> {:kind            :eval
+             :ref             ref
+             :conversation-id conversation-id
+             :turn-id         (:id turn)
+             :iteration-id    (:id iteration)
+             :iteration       iteration-position
+             :form-position   (or (:form-position provenance)
+                                (inc (long (block-index block))))
+             :form-count      (:form-count provenance)
+             :code            (:code block)
+             :op              (:op provenance)
+             :engine          (:engine provenance)
+             :status          status
+             :duration-ms     (or (:duration-ms provenance)
+                                (:execution-time-ms block)
+                                (:duration-ms block)
+                                0)
+             :links           {:conversation conversation-id
+                               :turn         (:id turn)
+                               :iteration    (:id iteration)
+                               :form         ref}}
+      (:error block)     (assoc :error (:error block))
+      (:timeout? block)  (assoc :timeout? true)
+      (:repaired? block) (assoc :repaired? true)
+      provenance         (assoc :provenance provenance))))
+
+(defn- tool-event [conversation-id turn iteration block]
+  (let [value (:result block)]
+    (when (tool-result-envelope? value)
+      (let [parent-ref (block-ref (:position iteration) block)
+            provenance (:provenance value)
+            status (event-status (:error value) (:ok? value))]
+        (cond-> {:kind            :tool
+                 :ref             (str parent-ref "/tool")
+                 :parent-ref      parent-ref
+                 :conversation-id conversation-id
+                 :turn-id         (:id turn)
+                 :iteration-id    (:id iteration)
+                 :iteration       (:position iteration)
+                 :form-position   (get-in block [:provenance :form-position])
+                 :op              (:op provenance)
+                 :status          status
+                 :duration-ms     (or (:duration-ms provenance) 0)
+                 :markdown        (:markdown value)
+                 :links           {:conversation conversation-id
+                                   :turn         (:id turn)
+                                   :iteration    (:id iteration)
+                                   :form         parent-ref
+                                   :parent       parent-ref}}
+          (:tool provenance)   (assoc :tool (:tool provenance))
+          (:target provenance) (assoc :target (:target provenance))
+          (:error value)       (assoc :error (:error value))
+          provenance           (assoc :provenance provenance))))))
+
+(defn- transcript-for-provenance [env conversation-id]
+  (safe-call #(transcript/transcript (:db-info env) (or conversation-id (:conversation-id env))) nil))
+
+(defn- foundation-provenance-timeline
+  "Ordered provenance ledger for one conversation. Emits one `:eval`
+   event for every executed top-level form, plus one child `:tool`
+   event whenever that form returned a tool-result envelope."
+  ([env]
+   (foundation-provenance-timeline env (:conversation-id env)))
+  ([env conversation-id]
+   (let [data (transcript-for-provenance env conversation-id)
+         conversation-id (get-in data [:conversation :id])]
+     (if-not data
+       []
+       (vec
+         (mapcat (fn [turn]
+                   (mapcat (fn [iteration]
+                             (mapcat (fn [block]
+                                       (let [tool (tool-event conversation-id turn iteration block)]
+                                         (cond-> [(eval-event conversation-id turn iteration block)]
+                                           tool (conj tool))))
+                               (:blocks iteration)))
+                     (:iterations turn)))
+           (:turns data)))))))
+
+(defn- foundation-provenance-stats
+  "Roll up a provenance timeline into counts and audit-focused slices."
+  ([env]
+   (foundation-provenance-stats env (:conversation-id env)))
+  ([env conversation-id]
+   (let [timeline (foundation-provenance-timeline env conversation-id)]
+     {:event-count (count timeline)
+      :by-kind     (frequencies (map :kind timeline))
+      :by-op       (frequencies (map :op timeline))
+      :by-engine   (frequencies (keep :engine timeline))
+      :by-status   (frequencies (map :status timeline))
+      :failures    (filterv #(= :error (:status %)) timeline)
+      :slowest     (vec (take 5 (sort-by (comp - long #(or % 0) :duration-ms) timeline)))
+      :tools       (filterv #(= :tool (:kind %)) timeline)})))
+
+(defn- provenance-guard-violations [timeline]
+  (let [refs       (keep :ref timeline)
+        ref-counts (frequencies refs)
+        ref-set    (set refs)]
+    (vec
+      (concat
+        (mapcat (fn [event]
+                  (let [expected-ref (when (= :eval (:kind event))
+                                       (str "i" (:iteration event) "." (:form-position event)))]
+                    (cond-> []
+                      (nil? (:ref event))
+                      (conj {:type :missing-ref :event event})
+
+                      (nil? (:op event))
+                      (conj {:type :missing-op :ref (:ref event)})
+
+                      (nil? (:status event))
+                      (conj {:type :missing-status :ref (:ref event)})
+
+                      (and (= :error (:status event)) (nil? (:error event)))
+                      (conj {:type :failed-event-without-error :ref (:ref event)})
+
+                      (and expected-ref (not= expected-ref (:ref event)))
+                      (conj {:type :eval-ref-mismatch
+                             :ref (:ref event)
+                             :expected expected-ref})
+
+                      (and (= :tool (:kind event))
+                        (not (contains? ref-set (:parent-ref event))))
+                      (conj {:type :tool-parent-missing
+                             :ref (:ref event)
+                             :parent-ref (:parent-ref event)})
+
+                      (and (= :eval (:kind event))
+                        (nil? (:provenance event)))
+                      (conj {:type :eval-missing-provenance :ref (:ref event)}))))
+          timeline)
+        (keep (fn [[ref n]]
+                (when (> n 1)
+                  {:type :duplicate-ref :ref ref :count n}))
+          ref-counts)))))
+
+(defn- foundation-provenance-guards
+  "Integrity checks over the provenance ledger. Returns data, never
+   throws, so the model can gate answers on `:ok?` before citing refs."
+  ([env]
+   (foundation-provenance-guards env (:conversation-id env)))
+  ([env conversation-id]
+   (let [timeline   (foundation-provenance-timeline env conversation-id)
+         violations (provenance-guard-violations timeline)]
+     {:ok?        (empty? violations)
+      :checked    {:events (count timeline)
+                   :refs   (count (set (keep :ref timeline)))}
+      :violations violations})))
+
+(defn- foundation-provenance-report
+  "Compact Markdown audit trail suitable for inclusion in an answer."
+  ([env]
+   (foundation-provenance-report env (:conversation-id env)))
+  ([env conversation-id]
+   (let [timeline (foundation-provenance-timeline env conversation-id)
+         stats    (foundation-provenance-stats env conversation-id)
+         guards   (foundation-provenance-guards env conversation-id)]
+     (str "## Provenance\n\n"
+       "- Events: " (:event-count stats) "\n"
+       "- Status: " (pr-str (:by-status stats)) "\n"
+       "- Guards: " (if (:ok? guards) "ok" (str "failed " (count (:violations guards)) " check(s)")) "\n\n"
+       (if (seq timeline)
+         (str/join "\n"
+           (map (fn [{:keys [ref parent-ref kind op engine status duration-ms error]}]
+                  (str "- `" ref "` " (name kind) " " (pr-str op)
+                    (when parent-ref (str " parent `" parent-ref "`"))
+                    (when engine (str " via " (pr-str engine)))
+                    " → " (name status) ", " (or duration-ms 0) "ms"
+                    (when error (str " — " (preview (error-text error) 180)))))
+             timeline))
+         "_No provenance events._")
+       "\n"))))
+
+;; ---------------------------------------------------------------------------
+;; Work-state gates — turn-scoped intent -> plan -> gate -> attestation.
+;; ---------------------------------------------------------------------------
+
+(defn- current-turn-work-state
+  [env]
+  (safe-call #(vis/db-work-state (:db-info env) (current-conversation-turn-id env))
+    {:intents [] :plans [] :gates [] :attestations []}))
+
+(defn- latest-by-soul
+  [xs]
+  (->> xs
+    (group-by :soul-id)
+    vals
+    (mapv #(last (sort-by :version %)))))
+
+(defn- current-plan-states
+  [work-state]
+  (let [active-intent-ids (->> (:intents work-state)
+                            latest-by-soul
+                            (filter #(= :active (:status %)))
+                            (map :id)
+                            set)]
+    (->> (:plans work-state)
+      latest-by-soul
+      (filter #(and (= :active (:status %))
+                 (contains? active-intent-ids (:intent-state-id %))))
+      vec)))
+
+(defn- current-gate-states
+  [work-state]
+  (let [active-plan-ids (set (map :id (current-plan-states work-state)))]
+    (->> (:gates work-state)
+      latest-by-soul
+      (filter #(contains? active-plan-ids (:plan-state-id %)))
+      vec)))
+
+(defn- attestations-by-gate
+  [work-state]
+  (group-by :gate-state-id (:attestations work-state)))
+
+(defn- current-turn-provenance-timeline
+  [env]
+  (let [turn-id (current-conversation-turn-id env)]
+    (->> (foundation-provenance-timeline env (:conversation-id env))
+      (filter #(same-uuid? (:turn-id %) turn-id))
+      vec)))
+
+(defn- resolve-current-gate-state-id
+  [work-state gate]
+  (cond
+    (uuid? gate) gate
+    (string? gate) (or (some #(when (= (str (:id %)) gate) (:id %)) (:gates work-state))
+                     (some #(when (= (:key %) (keyword gate)) (:id %)) (current-gate-states work-state)))
+    (keyword? gate) (some #(when (= (:key %) gate) (:id %)) (current-gate-states work-state))
+    (map? gate) (or (:gate-state-id gate) (:id gate))
+    :else gate))
+
+(defn- foundation-work-state
+  ([env]
+   (current-turn-work-state env))
+  ([env conversation-turn-id]
+   (safe-call #(vis/db-work-state (:db-info env) conversation-turn-id)
+     {:conversation-turn-id conversation-turn-id
+      :intents [] :plans [] :gates [] :attestations []})))
+
+(defn- foundation-intent!
+  [env opts]
+  (vis/db-store-intent! (:db-info env)
+    (assoc opts :conversation-turn-id (or (:conversation-turn-id opts)
+                                        (current-conversation-turn-id env)))))
+
+(defn- foundation-plan!
+  [env opts]
+  (vis/db-store-plan! (:db-info env) opts))
+
+(defn- foundation-gate!
+  [env opts]
+  (vis/db-store-gate! (:db-info env) opts))
+
+(defn- foundation-attest!
+  ([env opts]
+   (let [work-state (current-turn-work-state env)
+         gate-id    (or (:gate-state-id opts)
+                      (resolve-current-gate-state-id work-state (:gate opts))
+                      (resolve-current-gate-state-id work-state (:gate-key opts)))]
+     (vis/db-store-attestation! (:db-info env)
+       (-> opts
+         (dissoc :gate :gate-key)
+         (assoc :gate-state-id gate-id)))))
+  ([env gate opts]
+   (foundation-attest! env (assoc opts :gate gate))))
+
+(defn- foundation-block-gate!
+  ([env opts]
+   (foundation-attest! env (assoc opts :status :blocked)))
+  ([env gate opts]
+   (foundation-attest! env gate (assoc opts :status :blocked))))
+
+(defn- foundation-gates
+  [env]
+  (current-gate-states (current-turn-work-state env)))
+
+(defn- foundation-attestations
+  [env]
+  (:attestations (current-turn-work-state env)))
+
+(defn- gate-check-violations
+  [work-state timeline]
+  (let [gates      (current-gate-states work-state)
+        by-gate    (attestations-by-gate work-state)
+        ref-set    (set (keep :ref timeline))
+        active-intents (filter #(= :active (:status %)) (latest-by-soul (:intents work-state)))
+        active-plans   (current-plan-states work-state)]
+    (vec
+      (concat
+        (when (empty? active-intents)
+          [{:type :missing-active-intent}])
+        (when (and (seq active-intents) (empty? active-plans))
+          [{:type :missing-active-plan}])
+        (mapcat
+          (fn [gate]
+            (let [atts (get by-gate (:id gate))
+                  att  (first atts)
+                  refs (mapv :ref (:refs att))]
+              (cond-> []
+                (and (:required? gate) (= :open (:status gate)))
+                (conj {:type :required-gate-open :gate gate})
+
+                (and (= :closed (:status gate)) (not= 1 (count atts)))
+                (conj {:type :closed-gate-attestation-count :gate gate :count (count atts)})
+
+                (and (= :closed (:status gate)) (= 1 (count atts)) (not= :proven (:status att)))
+                (conj {:type :closed-gate-attestation-not-proven :gate gate :attestation att})
+
+                (and (= :blocked (:status gate)) (not= 1 (count atts)))
+                (conj {:type :blocked-gate-attestation-count :gate gate :count (count atts)})
+
+                (and (= :blocked (:status gate)) (= 1 (count atts)) (not= :blocked (:status att)))
+                (conj {:type :blocked-gate-attestation-not-blocked :gate gate :attestation att})
+
+                (and (= :blocked (:status gate)) (= 1 (count atts)) (str/blank? (:reason att)))
+                (conj {:type :blocked-gate-missing-reason :gate gate :attestation att})
+
+                (and (contains? #{:closed :blocked} (:status gate)) (empty? refs))
+                (conj {:type :attestation-missing-refs :gate gate :attestation att})
+
+                (and (seq refs) (seq (remove ref-set refs)))
+                (conj {:type :attestation-ref-missing-from-current-turn-provenance
+                       :gate gate
+                       :attestation att
+                       :missing-refs (vec (remove ref-set refs))}))))
+          gates)))))
+
+(defn- foundation-gate-checks
+  [env]
+  (let [work-state (current-turn-work-state env)
+        timeline   (current-turn-provenance-timeline env)
+        violations (gate-check-violations work-state timeline)
+        gates      (current-gate-states work-state)]
+    {:scope :conversation-turn
+     :conversation-turn-id (current-conversation-turn-id env)
+     :conversation-turn-state-id (:conversation-turn-state-id work-state)
+     :ok? (empty? violations)
+     :checked {:active-intents (count (filter #(= :active (:status %)) (latest-by-soul (:intents work-state))))
+               :active-plans   (count (current-plan-states work-state))
+               :gates          (count gates)
+               :required-gates (count (filter :required? gates))
+               :attestations   (count (:attestations work-state))
+               :current-turn-provenance-events (count timeline)}
+     :violations violations}))
+
+(defn- foundation-gate-report
+  [env]
+  (let [work-state (current-turn-work-state env)
+        checks     (foundation-gate-checks env)
+        gates      (current-gate-states work-state)
+        by-gate    (attestations-by-gate work-state)]
+    (str "## Gates\n\n"
+      "- Scope: current conversation turn\n"
+      "- Status: " (if (:ok? checks) "ok" (str "failed " (count (:violations checks)) " check(s)")) "\n\n"
+      (if (seq gates)
+        (str/join "\n"
+          (map (fn [gate]
+                 (let [att (first (get by-gate (:id gate)))]
+                   (str "- `" (name (:key gate)) "` " (name (:status gate))
+                     " — " (:question gate)
+                     (when att
+                       (str "\n  - attestation: " (name (:status att))
+                         (when-let [summary (:summary att)] (str " — " summary))
+                         (when-let [reason (:reason att)] (str " — " reason))
+                         "\n  - refs: " (str/join ", " (map :ref (:refs att))))))))
+            gates))
+        "_No current gates._")
+      (when (seq (:violations checks))
+        (str "\n\n### Violations\n"
+          (str/join "\n" (map #(str "- " (pr-str (dissoc % :gate :attestation))) (:violations checks)))))
+      "\n")))
+
+;; ---------------------------------------------------------------------------
 ;; Extension catalog + README / doc access
 ;;
 ;; Every extension declares itself in a single classpath resource at
@@ -871,6 +1281,116 @@
                  "(v/report \"3a7b2c…\")"]
      :before-fn inject-environment}))
 
+(def provenance-timeline-symbol
+  (vis/symbol 'provenance-timeline foundation-provenance-timeline
+    {:doc       "Ordered provenance ledger: eval events plus child tool events with stable iN.K refs."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/provenance-timeline)"
+                 "(filter #(= :error (:status %)) (v/provenance-timeline))"
+                 "(map (juxt :ref :kind :op :status) (v/provenance-timeline))"]
+     :before-fn inject-environment}))
+
+(def provenance-stats-symbol
+  (vis/symbol 'provenance-stats foundation-provenance-stats
+    {:doc       "Provenance rollup: counts by kind/op/status/engine, failures, slowest events, tools."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/provenance-stats)"
+                 "(:failures (v/provenance-stats))"
+                 "(:by-op (v/provenance-stats))"]
+     :before-fn inject-environment}))
+
+(def provenance-guards-symbol
+  (vis/symbol 'provenance-guards foundation-provenance-guards
+    {:doc       "Run provenance integrity guards. Returns {:ok? :checked :violations}; gate answer citations on :ok?."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/provenance-guards)"
+                 "(:violations (v/provenance-guards))"]
+     :before-fn inject-environment}))
+
+(def provenance-report-symbol
+  (vis/symbol 'provenance-report foundation-provenance-report
+    {:doc       "Compact Markdown provenance audit trail for answer proof sections."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/provenance-report)"
+                 "(answer (v/provenance-report))"]
+     :before-fn inject-environment}))
+
+(def work-state-symbol
+  (vis/symbol 'work-state foundation-work-state
+    {:doc       "Turn-scoped work contract: intents, plans, gates, attestations for the current conversation turn."
+     :arglists  '([] [conversation-turn-id])
+     :examples  ["(v/work-state)"
+                 "(:gates (v/work-state))"]
+     :before-fn inject-environment}))
+
+(def intent!-symbol
+  (vis/symbol 'intent! foundation-intent!
+    {:doc       "Persist a new versioned intent for the current conversation turn."
+     :arglists  '([{:keys [key text status created-ref metadata]}])
+     :examples  ["(def intent (v/intent! {:key :main :text TURN_USER_REQUEST :created-ref \"i0.1\"}))"]
+     :before-fn inject-environment}))
+
+(def plan!-symbol
+  (vis/symbol 'plan! foundation-plan!
+    {:doc       "Persist a new versioned plan for an intent_state."
+     :arglists  '([{:keys [intent-state-id key summary steps status created-ref metadata]}])
+     :examples  ["(def plan (v/plan! {:intent-state-id (:id intent) :key :main :summary \"Inspect, change, verify.\" :steps [{:do :inspect}]}))"]
+     :before-fn inject-environment}))
+
+(def gate!-symbol
+  (vis/symbol 'gate! foundation-gate!
+    {:doc       "Persist a new versioned gate for a plan_state. Gates are open until attested or blocked."
+     :arglists  '([{:keys [plan-state-id key question required? status created-ref metadata]}])
+     :examples  ["(def verify-gate (v/gate! {:plan-state-id (:id plan) :key :verify :question \"Did verification pass?\"}))"]
+     :before-fn inject-environment}))
+
+(def attest!-symbol
+  (vis/symbol 'attest! foundation-attest!
+    {:doc       "Persist the exactly-one attestation for a gate version. Status :proven closes the gate. Refs must cite current-turn provenance refs."
+     :arglists  '([opts] [gate opts])
+     :examples  ["(v/attest! (:id verify-gate) {:status :proven :summary \"Tests passed.\" :refs [\"i4.1/tool\"]})"
+                 "(v/attest! :verify {:status :proven :summary \"Quick verification passed.\" :refs [\"i4.1/tool\"]})"]
+     :before-fn inject-environment}))
+
+(def block-gate!-symbol
+  (vis/symbol 'block-gate! foundation-block-gate!
+    {:doc       "Persist a blocked attestation for a gate version. Requires :reason and provenance refs."
+     :arglists  '([opts] [gate opts])
+     :examples  ["(v/block-gate! :verify {:reason \"verify.sh unavailable\" :refs [\"i3.1/tool\"]})"]
+     :before-fn inject-environment}))
+
+(def gates-symbol
+  (vis/symbol 'gates foundation-gates
+    {:doc       "Current active-plan gate states for this conversation turn."
+     :arglists  '([])
+     :examples  ["(v/gates)"
+                 "(filter :required? (v/gates))"]
+     :before-fn inject-environment}))
+
+(def attestations-symbol
+  (vis/symbol 'attestations foundation-attestations
+    {:doc       "Attestations for the current conversation turn."
+     :arglists  '([])
+     :examples  ["(v/attestations)"
+                 "(mapcat :refs (v/attestations))"]
+     :before-fn inject-environment}))
+
+(def gate-checks-symbol
+  (vis/symbol 'gate-checks foundation-gate-checks
+    {:doc       "Enforce the current-turn gate contract before final answer: required gates terminal, exactly one attestation, refs resolve."
+     :arglists  '([])
+     :examples  ["(v/gate-checks)"
+                 "(:violations (v/gate-checks))"]
+     :before-fn inject-environment}))
+
+(def gate-report-symbol
+  (vis/symbol 'gate-report foundation-gate-report
+    {:doc       "Markdown gate/attestation report for final answer proof sections."
+     :arglists  '([])
+     :examples  ["(v/gate-report)"
+                 "(answer (v/join (v/gate-report) (v/provenance-report)))"]
+     :before-fn inject-environment}))
+
 ;; Legacy per-view sandbox symbols were removed from the public surface.
 ;; The private implementation functions above remain as building blocks for
 ;; `v/inspect` so tests and internal composition can target the real seams
@@ -918,6 +1438,20 @@
 (def all-symbols
   [inspect-symbol
    report-symbol
+   provenance-timeline-symbol
+   provenance-stats-symbol
+   provenance-guards-symbol
+   provenance-report-symbol
+   work-state-symbol
+   intent!-symbol
+   plan!-symbol
+   gate!-symbol
+   attest!-symbol
+   block-gate!-symbol
+   gates-symbol
+   attestations-symbol
+   gate-checks-symbol
+   gate-report-symbol
    extensions-symbol
    extension-docs-symbol
    extension-doc-symbol
@@ -927,6 +1461,20 @@
   (str "`v/` introspection:\n"
     "  (v/inspect cid?)              conversation data incl. :llm-diagnostics\n"
     "  (v/report cid?)               Markdown report incl. raw LLM diagnostics\n"
+    "  (v/provenance-timeline cid?)  ordered eval/tool ledger with iN.K refs\n"
+    "  (v/provenance-stats cid?)     counts, failures, slowest events, tools\n"
+    "  (v/provenance-guards cid?)    integrity checks before citing provenance\n"
+    "  (v/provenance-report cid?)    compact Markdown audit trail\n"
+    "  (v/intent! opts)              create current-turn intent_state version\n"
+    "  (v/plan! opts)                create plan_state for an intent_state\n"
+    "  (v/gate! opts)                create gate_state for a plan_state\n"
+    "  (v/attest! gate opts)         prove exactly one gate version with refs\n"
+    "  (v/block-gate! gate opts)     block exactly one gate version with refs + reason\n"
+    "  (v/work-state)                current-turn intent/plan/gate/attestation data\n"
+    "  (v/gates)                     current active-plan gate states\n"
+    "  (v/attestations)              current-turn attestations\n"
+    "  (v/gate-checks)               current-turn gate contract checks\n"
+    "  (v/gate-report)               Markdown gate/attestation report\n"
     "  (v/extensions)                loaded extension catalog\n"
     "  (v/extension-docs ext-ref)    doc summaries\n"
     "  (v/extension-doc ext-ref name) doc incl. :content\n"

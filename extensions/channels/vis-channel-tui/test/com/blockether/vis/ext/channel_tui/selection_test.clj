@@ -41,4 +41,36 @@
               (selection/selected-text
                 [[" " " " "(" "f" "o" "o" ")" " " " "]]
                 {:anchor (selection/point 0 0)
-                 :focus  (selection/point 8 0)})))))
+                 :focus  (selection/point 8 0)}))))
+
+  (it "copies only selectable bubble ranges when a drag crosses TUI chrome"
+    (expect (= "bubble"
+              (selection/selected-text
+                ["HEADER    "
+                 "  bubble  "
+                 "INPUT     "]
+                {:anchor (selection/point 0 0)
+                 :focus  (selection/point 9 2)}
+                [{:row 1 :col 2 :width 6}])))))
+
+(defdescribe selectable-ranges-test
+  (it "reports whether a point is inside a selectable bubble range"
+    (expect (selection/point-in-ranges? (selection/point 3 1)
+              [{:row 1 :col 2 :width 6}]))
+    (expect (not (selection/point-in-ranges? (selection/point 1 1)
+                   [{:row 1 :col 2 :width 6}])))))
+
+(defdescribe auto-scroll-test
+  (it "requests upward or downward scroll while selection is dragged at viewport edges"
+    (expect (= :up
+              (selection/auto-scroll-direction
+                (selection/point 5 3)
+                {:top 3 :bottom 10 :edge-size 1})))
+    (expect (= :down
+              (selection/auto-scroll-direction
+                (selection/point 5 9)
+                {:top 3 :bottom 10 :edge-size 1})))
+    (expect (nil?
+              (selection/auto-scroll-direction
+                (selection/point 5 6)
+                {:top 3 :bottom 10 :edge-size 1})))))

@@ -241,6 +241,90 @@
       (expect (= :error (:status (first (vis/db-list-conversation-turns s cid))))))))
 
 ;; =============================================================================
+;; Work provenance: intent -> plan -> gate -> attestation
+;; =============================================================================
+
+(defdescribe work-provenance-test
+  (it "persists turn-scoped intent plan gate and exactly one attestation"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship it"
+                                                     :status :running})
+          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(+ 1 2)"
+                                                       :result 3
+                                                       :provenance {:ref "i0.1"
+                                                                    :op :vis/eval
+                                                                    :engine :vis/sci
+                                                                    :form-position 1
+                                                                    :form-count 1}}]})
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :key :main
+                                          :text "ship it"
+                                          :created-iteration-id iid
+                                          :created-ref "i0.1"})
+          plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+                                        :key :main
+                                        :summary "Inspect and verify."
+                                        :steps [{:id :verify}]})
+          gate   (vis/db-store-gate! s {:plan-state-id (:id plan)
+                                        :key :verify
+                                        :question "Did verification pass?"})
+          att    (vis/db-store-attestation! s {:gate-state-id (:id gate)
+                                               :status :proven
+                                               :summary "Verification passed."
+                                               :refs ["i0.1"]})
+          state  (vis/db-work-state s tid)]
+      (expect (= 1 (raw-count s :intent_soul)))
+      (expect (= 1 (raw-count s :intent_state)))
+      (expect (= 1 (raw-count s :plan_state)))
+      (expect (= 1 (raw-count s :gate_state)))
+      (expect (= 1 (raw-count s :attestation)))
+      (expect (= 1 (raw-count s :attestation_provenance_ref)))
+      (expect (= :closed (:status (first (:gates state)))))
+      (expect (= :proven (:status att)))
+      (expect (= [{:ref "i0.1" :role :evidence :created-at (:created-at (first (:refs att)))}]
+                (:refs att)))))
+
+  (it "rejects terminal gate state without attestation refs"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship it"
+                                                     :status :running})
+          intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "ship it"})
+          plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+                                        :key :main
+                                        :summary "Plan"})
+          gate   (vis/db-store-gate! s {:plan-state-id (:id plan)
+                                        :key :verify
+                                        :question "Verified?"})]
+      (let [thrown (try
+                     (raw-query s {:update :gate_state
+                                   :set {:status "closed"}
+                                   :where [:= :id (str (:id gate))]})
+                     nil
+                     (catch Exception e e))]
+        (expect (some? thrown))
+        (expect (re-find #"closed gate_state requires one proven attestation"
+                  (ex-message thrown))))))
+
+  (it "isolates work-state per conversation_turn_state retry"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "retry me"
+                                                     :status :running})
+          intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "first run"})]
+      (vis/db-retry-conversation-turn! s tid {:status :running})
+      (let [retry-intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "retry run"})
+            state        (vis/db-work-state s tid)]
+        (expect (not= (:conversation-turn-state-id intent)
+                  (:conversation-turn-state-id retry-intent)))
+        (expect (= ["retry run"] (mapv :text (:intents state))))))))
+
+;; =============================================================================
 ;; Retry
 ;; =============================================================================
 
@@ -292,6 +376,29 @@
         (expect (= 2 (:result (first blocks))))
         (expect (= "(* 3 4)" (:code (second blocks))))
         (expect (= 12 (:result (second blocks)))))))
+
+  (it "round-trips block-level provenance through the BLOB"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
+          provenance {:op :vis/eval
+                      :engine :vis/sci
+                      :iteration 0
+                      :form-position 1
+                      :form-count 1
+                      :ref "i0.1"
+                      :started-at-ms 10
+                      :finished-at-ms 11
+                      :duration-ms 1}]
+      (vis/db-store-iteration! s {:conversation-turn-id qid
+                                  :blocks [{:code "(+ 1 1)"
+                                            :result 2
+                                            :execution-time-ms 1
+                                            :provenance provenance}]
+                                  :duration-ms 5})
+      (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
+            [exec] (vis/db-list-iteration-blocks s (:id iteration))]
+        (expect (= provenance (:provenance exec))))))
 
   (it "round-trips structured values through the BLOB"
     (let [s   (h/store)

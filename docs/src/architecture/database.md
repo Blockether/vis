@@ -6,6 +6,8 @@ Schema source of truth: `extensions/persistance/vis-persistance-sqlite/resources
 
 > This document defines the **turn model**.
 > Canonical hierarchy: `conversation -> turn -> iteration -> block`.
+>
+> Completion gates/proofs are documented in [Completion Contract](completion-contract.md).
 
 Flyway migration location: `classpath:db/sqlite/migration`.
 
@@ -16,9 +18,15 @@ conversation_soul
   └─ conversation_state
        ├─ conversation_turn_soul          (one user turn identity, branch-local)
        │    └─ conversation_turn_state    (one run/retry of that turn)
-       │         └─ iteration             (one LLM round-trip)
-       │              ├─ blocks BLOB      (per-block code/result/stdout/stderr/error)
-       │              └─ expression_state (versioned var snapshots)
+       │         ├─ iteration             (one LLM round-trip)
+       │         │    ├─ blocks BLOB      (per-block code/result/stdout/stderr/error/provenance)
+       │         │    └─ expression_state (versioned var snapshots)
+       │         └─ intent_soul           (completion contract, scoped to this run/retry)
+       │              └─ intent_state
+       │                   └─ plan_soul / plan_state
+       │                        └─ gate_soul / gate_state
+       │                             └─ attestation
+       │                                  └─ attestation_provenance_ref
        └─ expression_soul                 (var identity, branch-local)
             └─ expression_dependency      (dependency edges)
 
@@ -142,6 +150,115 @@ Constraints and indexes:
 - `UNIQUE(conversation_turn_state_id, position)`
 - `idx_iteration_turn_state(conversation_turn_state_id, position)`
 - `idx_iteration_turn_state_created(conversation_turn_state_id, created_at)`
+
+### Completion contract tables
+
+The completion contract is scoped to `conversation_turn_state`, not to the whole conversation and not merely to `conversation_turn_soul`. A retry receives a new `conversation_turn_state`, therefore a new isolated completion contract.
+
+See [Completion Contract](completion-contract.md) for the conceptual model and diagrams.
+
+#### Intent soul
+
+Table: `intent_soul`. Stable intent identity inside one turn-state run/retry.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | TEXT PK | |
+| `conversation_turn_state_id` | TEXT FK | → `conversation_turn_state.id`, cascade delete |
+| `key` | TEXT | non-blank; unique within turn state |
+| `metadata` | TEXT | JSON-encoded |
+| `created_at` | INTEGER | |
+
+Constraint: `UNIQUE(conversation_turn_state_id, key)`
+
+#### Intent state
+
+Table: `intent_state`. Versioned user intent text.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | TEXT PK | |
+| `intent_soul_id` | TEXT FK | → `intent_soul.id`, cascade delete |
+| `version` | INTEGER | starts at 0, increments by 1 |
+| `supersedes_intent_state_id` | TEXT FK | same intent soul |
+| `status` | TEXT | `active|satisfied|superseded|abandoned` |
+| `text` | TEXT | non-blank |
+| `created_iteration_id` | TEXT FK | nullable, → `iteration.id` |
+| `created_ref` | TEXT | nullable provenance ref |
+| `metadata` | TEXT | JSON-encoded |
+| `created_at` | INTEGER | |
+
+#### Plan soul/state
+
+Tables: `plan_soul`, `plan_state`. Versioned strategy tied to an intent version.
+
+Key constraints:
+
+- `plan_soul.intent_soul_id` → `intent_soul.id`.
+- `plan_state.intent_state_id` → `intent_state.id`.
+- triggers ensure `plan_state.intent_state_id` belongs to the same intent soul as `plan_soul`.
+- versions start at 0 and increment by 1.
+
+`plan_state.status` is one of:
+
+```text
+active | completed | stale | superseded | abandoned
+```
+
+#### Gate soul/state
+
+Tables: `gate_soul`, `gate_state`. Versioned falsifiable completion conditions tied to a plan version.
+
+Key constraints:
+
+- `gate_soul.plan_soul_id` → `plan_soul.id`.
+- `gate_state.plan_state_id` → `plan_state.id`.
+- triggers ensure `gate_state.plan_state_id` belongs to the same plan soul as `gate_soul`.
+- versions start at 0 and increment by 1.
+
+`gate_state.status` is one of:
+
+```text
+open | closed | blocked | superseded
+```
+
+A terminal gate is enforced by triggers:
+
+- `closed` requires one `proven` attestation with at least one provenance ref.
+- `blocked` requires one `blocked` attestation with `reason` and at least one provenance ref.
+
+#### Attestation
+
+Table: `attestation`. Exactly one proof/blocker object for exactly one gate version.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | TEXT PK | |
+| `gate_state_id` | TEXT FK | → `gate_state.id`, cascade delete; unique |
+| `status` | TEXT | `proven|blocked|rejected` |
+| `summary` | TEXT | required for `proven` |
+| `reason` | TEXT | required for `blocked`/`rejected` |
+| `created_iteration_id` | TEXT FK | nullable, → `iteration.id` |
+| `created_ref` | TEXT | nullable provenance ref |
+| `metadata` | TEXT | JSON-encoded |
+| `created_at` | INTEGER | |
+
+Constraint: `UNIQUE(gate_state_id)`.
+
+#### Attestation provenance refs
+
+Table: `attestation_provenance_ref`. Evidence refs cited by one attestation.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | TEXT PK | |
+| `attestation_id` | TEXT FK | → `attestation.id`, cascade delete |
+| `ref` | TEXT | e.g. `i2.1`, `i2.1/tool` |
+| `role` | TEXT | `evidence|counter-evidence|context` |
+| `metadata` | TEXT | JSON-encoded |
+| `created_at` | INTEGER | |
+
+Constraint: `UNIQUE(attestation_id, ref)`.
 
 ### Expression soul
 
