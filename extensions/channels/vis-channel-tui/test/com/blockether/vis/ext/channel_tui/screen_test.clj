@@ -23,8 +23,14 @@
 (def ^:private copy-selection!
   (deref #'screen/copy-selection!))
 
+(def ^:private copy-conversation-as-markdown!
+  (deref #'screen/copy-conversation-as-markdown!))
+
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
+
+(def ^:private input-selectable-ranges
+  (deref #'screen/input-selectable-ranges))
 
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
@@ -51,7 +57,7 @@
       (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
 
-(defdescribe bubble-selection-ranges-test
+(defdescribe selectable-ranges-test
   (it "clips selectable cells to visible transcript bubbles only"
     (expect (= [{:row 4 :col 2 :width 15}
                 {:row 7 :col 2 :width 15}]
@@ -65,7 +71,12 @@
                 {:row 5 :col 2 :width 15}]
               (bubble-selectable-ranges
                 {:visible [{:top 0 :height 3}]}
-                4 5 20)))))
+                4 5 20))))
+
+  (it "marks input text rows as selectable without input padding"
+    (expect (= [{:row 11 :col 2 :width 16}
+                {:row 12 :col 2 :width 16}]
+              (input-selectable-ranges 10 2 20)))))
 
 (defdescribe clipboard-copy-actions-test
   (it "conversation-id copy uses the same icon-era notification TTL"
@@ -95,7 +106,42 @@
           (copy-selection! "selected text")
           (expect (= "selected text" (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]]
-                    @notified)))))))
+                    @notified))))))
+
+  (it "input mouse selection copy names the input in the notification"
+    (let [copied   (promise)
+          notified (atom nil)]
+      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify!           (fn [text & kvs]
+                                                 (reset! notified [text kvs]))}
+        (fn []
+          (copy-selection! "typed mistake" :input)
+          (expect (= "typed mistake" (deref copied 1000 ::timeout)))
+          (expect (= ["✓ Copied input selection" [:level :success :ttl-ms 1500]]
+                    @notified))))))
+
+  (it "conversation Markdown copy exports through the host projection"
+    (let [copied   (promise)
+          notified (promise)]
+      (with-redefs-fn {#'vis/env-for (fn [conversation-id]
+                                       (expect (= "conversation-1" conversation-id))
+                                       {:db-info :db})
+                       #'vis/conversation->markdown (fn [db-info conversation-id]
+                                                      (expect (= :db db-info))
+                                                      (expect (= "conversation-1" conversation-id))
+                                                      "# Conversation")
+                       #'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify! (fn [text & kvs]
+                                       (deliver notified [text kvs]))}
+        (fn []
+          (copy-conversation-as-markdown! "conversation-1")
+          (expect (= "# Conversation" (deref copied 1000 ::timeout)))
+          (expect (= ["✓ Copied conversation as Markdown" [:level :success :ttl-ms 1500]]
+                    (deref notified 1000 ::timeout))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

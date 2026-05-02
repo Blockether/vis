@@ -668,7 +668,38 @@
           h   (vis/db-var-history s cid 'x)]
       (expect (= 3 (count h)))
       (expect (= [1 50 99] (mapv :value h)))
-      (expect (= [0 1 2] (mapv :version h))))))
+      (expect (= [0 1 2] (mapv :version h)))))
+
+  (it "builds a compact latest symbol index with provenance"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
+          _   (vis/db-store-iteration! s {:conversation-turn-id qid
+                                          :blocks [{:code "(def x 1)" :result 1}]
+                                          :duration-ms 0
+                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})
+          _   (vis/db-store-iteration! s {:conversation-turn-id qid
+                                          :blocks [{:code "(defn f [x] x)" :result (fn [x] x)}]
+                                          :duration-ms 0
+                                          :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
+          idx (vis/db-var-history-index s cid {:limit 10})]
+      (expect (= '[f x] (mapv :name idx)))
+      (expect (= [:fn :data] (mapv :kind idx)))
+      (expect (every? :restorable? idx))
+      (expect (not-any? #(contains? % :value) idx))
+      (expect (every? #(get-in % [:provenance :iteration-id]) idx))))
+
+  (it "builds a newest-first value-free var history timeline"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
+          _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0 :vars [{:name "x" :value 1 :code "(def x 1)"}]})
+          _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0 :vars [{:name "x" :value 2 :code "(def x 2)"}]})
+          tl  (vis/db-var-history-timeline s cid {:limit 10})]
+      (expect (= [:redefined :defined] (mapv :event tl)))
+      (expect (= [:persisted :persisted] (mapv :durability tl)))
+      (expect (= '[x x] (mapv :symbol tl)))
+      (expect (not-any? #(contains? % :value) tl)))))
 
 ;; =============================================================================
 ;; Cascade delete
@@ -1651,7 +1682,7 @@
         (expect (= "test.event" (:event row)))
         (expect (= (str cid) (:conversation_soul_id row)))))))
 
-;; ─── from auto_forget_sqlite_test.clj ───
+;; ─── from auto_archive_sqlite_test.clj ───
 
 (h/use-mem-store!)
 
@@ -1684,111 +1715,63 @@
   [sci-ctx]
   (set (keys (get-in @(:env sci-ctx) [:namespaces 'sandbox]))))
 
-(defdescribe auto-forget-stale-vars-test
+(defdescribe auto-archive-hot-symbols-test
 
-  (it "🔥 stale var evicted from live SCI sandbox, fresh var untouched, revision bumped"
+  (it "archives live user symbols down to the post-answer target and bumps the var-index revision"
     (let [s       (h/store)
           cid     (vis/db-store-conversation! s {:channel :tui})
-          ;; Create 4 queries — only last 3 are "recent" (AUTO_FORGET_STALE_QUERIES=3)
-          old-qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "old" :status :done})
-          _       (Thread/sleep 5)
-          q2id    (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q2" :status :done})
-          _       (Thread/sleep 5)
-          q3id    (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q3" :status :done})
-          _       (Thread/sleep 5)
-          q4id    (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q4" :status :done})
-          ;; Persist vars: `stale` was defined in old turn, `fresh` in q4
-          _       (vis/db-store-iteration! s {:conversation-turn-id old-qid :blocks [] :duration-ms 0
-                                              :vars [{:name "stale" :value 1 :code "(def stale 1)"}]})
-          _       (vis/db-store-iteration! s {:conversation-turn-id q4id :blocks [] :duration-ms 0
-                                              :vars [{:name "fresh" :value 2 :code "(def fresh 2)"}]})
-          ;; Build SCI sandbox with both vars (no docstrings)
-          sci-ctx (make-sci-ctx [['stale 1] ['fresh 2]])
+          qid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
+          entries (mapv (fn [i]
+                          [(symbol (format "v%02d" i)) i])
+                    (range 82))
+          _       (doseq [[sym value] entries]
+                    (vis/db-store-iteration! s {:conversation-turn-id qid
+                                                :blocks []
+                                                :duration-ms 0
+                                                :vars [{:name (name sym)
+                                                        :value value
+                                                        :code (str "(def " (name sym) " " value ")")}]})
+                    (Thread/sleep 1))
+          sci-ctx (make-sci-ctx entries)
           via     (atom {:current-revision 0})
-          rlm-env {:db-info          s
-                   :conversation-id  cid
-                   :sci-ctx          sci-ctx
-                   :initial-ns-keys  #{}
-                   :var-index-atom   via}]
-      (#'lp/auto-forget-stale-vars! rlm-env)
-      ;; `stale` should be gone, `fresh` should remain
-      (expect (not (contains? (sandbox-syms sci-ctx) 'stale)))
-      (expect (contains? (sandbox-syms sci-ctx) 'fresh))
-      ;; var-index revision bumped
+          rlm-env {:db-info         s
+                   :conversation-id cid
+                   :sci-ctx         sci-ctx
+                   :initial-ns-keys #{}
+                   :var-index-atom  via}]
+      (#'lp/auto-archive-hot-symbols! rlm-env)
+      (expect (= 80 (count (sandbox-syms sci-ctx))))
+      (expect (not (contains? (sandbox-syms sci-ctx) 'v00)))
+      (expect (not (contains? (sandbox-syms sci-ctx) 'v01)))
+      (expect (contains? (sandbox-syms sci-ctx) 'v81))
       (expect (= 1 (:current-revision @via)))))
 
-  (it "😴 all vars recent → janitor naps, sandbox untouched, no revision bump"
+  (it "does not archive docstring-protected symbols automatically"
     (let [s       (h/store)
           cid     (vis/db-store-conversation! s {:channel :tui})
-          qid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q1" :status :done})
-          _       (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
-                                              :vars [{:name "x" :value 1 :code "(def x 1)"}]})
-          sci-ctx (make-sci-ctx [['x 1]])
+          qid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
+          entries (into [['protected 0 "Durable state"]]
+                    (mapv (fn [i]
+                            [(symbol (format "v%02d" i)) i])
+                      (range 81)))
+          _       (doseq [[sym value] (map #(take 2 %) entries)]
+                    (vis/db-store-iteration! s {:conversation-turn-id qid
+                                                :blocks []
+                                                :duration-ms 0
+                                                :vars [{:name (name sym)
+                                                        :value value
+                                                        :code (str "(def " (name sym) " " value ")")}]})
+                    (Thread/sleep 1))
+          sci-ctx (make-sci-ctx entries)
           via     (atom {:current-revision 0})
-          rlm-env {:db-info          s
-                   :conversation-id  cid
-                   :sci-ctx          sci-ctx
-                   :initial-ns-keys  #{}
-                   :var-index-atom   via}]
-      (#'lp/auto-forget-stale-vars! rlm-env)
-      (expect (contains? (sandbox-syms sci-ctx) 'x))
-      ;; No bump — nothing was forgotten
-      (expect (= 0 (:current-revision @via)))))
-
-  (it "📖 docstring = immortality shield — stale but documented vars survive the purge"
-    (let [s       (h/store)
-          cid     (vis/db-store-conversation! s {:channel :tui})
-          old-qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "old" :status :done})
-          _       (Thread/sleep 5)
-          _       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q2" :status :done})
-          _       (Thread/sleep 5)
-          _       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q3" :status :done})
-          _       (Thread/sleep 5)
-          _       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q4" :status :done})
-          _       (vis/db-store-iteration! s {:conversation-turn-id old-qid :blocks [] :duration-ms 0
-                                              :vars [{:name "keeper" :value 42 :code "(def keeper 42)"}]})
-          ;; `keeper` has a docstring in the live SCI sandbox
-          sci-ctx (make-sci-ctx [['keeper 42 "I'm documented, keep me"]])
-          via     (atom {:current-revision 0})
-          rlm-env {:db-info          s
-                   :conversation-id  cid
-                   :sci-ctx          sci-ctx
-                   :initial-ns-keys  #{}
-                   :var-index-atom   via}]
-      (#'lp/auto-forget-stale-vars! rlm-env)
-      (expect (contains? (sandbox-syms sci-ctx) 'keeper))
-      (expect (= 0 (:current-revision @via)))))
-
-  (it "🚫 nil db-info → graceful no-op, nothing explodes, vars stay put"
-    (let [sci-ctx (make-sci-ctx [['x 1]])
-          rlm-env {:db-info nil :conversation-id nil :sci-ctx sci-ctx
-                   :initial-ns-keys #{} :var-index-atom (atom {:current-revision 0})}]
-      (#'lp/auto-forget-stale-vars! rlm-env)
-      ;; Nothing exploded, var still there
-      (expect (contains? (sandbox-syms sci-ctx) 'x))))
-
-  (it "🏰 ITERATION_PREVIOUS_REASONING and friends are fortress vars — stale or not, the janitor can't touch them"
-    (let [s       (h/store)
-          cid     (vis/db-store-conversation! s {:channel :tui})
-          old-qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "old" :status :done})
-          _       (Thread/sleep 5)
-          _       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q2" :status :done})
-          _       (Thread/sleep 5)
-          _       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q3" :status :done})
-          _       (Thread/sleep 5)
-          _       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "q4" :status :done})
-          _       (vis/db-store-iteration! s {:conversation-turn-id old-qid :blocks [] :duration-ms 0
-                                              :vars [{:name "ITERATION_PREVIOUS_REASONING" :value "think" :code "(def ITERATION_PREVIOUS_REASONING \"think\")"}]})
-          sci-ctx (make-sci-ctx [['ITERATION_PREVIOUS_REASONING "think"]])
-          via     (atom {:current-revision 0})
-          rlm-env {:db-info          s
-                   :conversation-id  cid
-                   :sci-ctx          sci-ctx
-                   :initial-ns-keys  #{}
-                   :var-index-atom   via}]
-      (#'lp/auto-forget-stale-vars! rlm-env)
-      (expect (contains? (sandbox-syms sci-ctx) 'ITERATION_PREVIOUS_REASONING))
-      (expect (= 0 (:current-revision @via))))))
+          rlm-env {:db-info         s
+                   :conversation-id cid
+                   :sci-ctx         sci-ctx
+                   :initial-ns-keys #{}
+                   :var-index-atom  via}]
+      (#'lp/auto-archive-hot-symbols! rlm-env)
+      (expect (contains? (sandbox-syms sci-ctx) 'protected))
+      (expect (= 80 (count (sandbox-syms sci-ctx)))))))
 
 ;; ─── (Removed) plan_slot_test.clj content
 ;;

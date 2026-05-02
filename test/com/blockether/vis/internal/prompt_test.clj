@@ -219,6 +219,8 @@
       (expect (str/includes? p "no raw ``` markers"))
       (expect (str/includes? p "TURN_USER_REQUEST is fully satisfied"))
       (expect (str/includes? p "host automatically continues the SAME user turn"))
+      (expect (str/includes? p "No sibling forms in the answer iteration"))
+      (expect (str/includes? p "ONLY top-level form of its final iteration"))
       (expect (str/includes? p "Not every iteration needs an answer"))
       (expect (str/includes? p "omitting `(answer ...)`; the runtime will loop you"))
       (expect (str/includes? p "UNDERSTAND"))
@@ -263,10 +265,13 @@
       (expect (str/includes? p "v/contract-report"))
       (expect (str/includes? p "Close or block gates with observed evidence"))))
 
-  (it "rejects exploration-only terminal progress answers"
+  (it "teaches the correct multi-iteration finish pattern"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "Exploration-only iterations must not call `(answer …)`"))
-      (expect (str/includes? p "(answer \"scanned\") ; BAD"))
+      (expect (str/includes? p "Exploration/action/verification iterations omit `(answer …)` so the host loops"))
+      (expect (str/includes? p "Correct multi-iteration finish pattern"))
+      (expect (str/includes? p "iteration N: verify and surface final evidence, no answer yet"))
+      (expect (str/includes? p "iteration N+1: final turn-finisher, exactly one top-level form"))
+      (expect (not (str/includes? p "(answer \"scanned\") ; BAD")))
       (expect (not (str/includes? p "last 2 iters")))))
 
   (it "pins the first-iteration no-answer discipline for code/debug/change tasks"

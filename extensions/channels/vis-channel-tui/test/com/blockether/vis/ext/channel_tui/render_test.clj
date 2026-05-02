@@ -1475,6 +1475,29 @@
       (fillRectangle [_ _ _] this)
       (setCharacter [_ _ _] this))))
 
+(defdescribe auto-collapse-rendering-test
+  (it "does not wrap collapsed huge result bodies before rendering the summary"
+    (render/invalidate-cache!)
+    (let [huge-result (str/join " " (repeat 4000 "abcdefghij"))
+          trace       [{:code      ["(+ 1 2)"]
+                        :comments  [nil]
+                        :results   [huge-result]
+                        :stdouts   [""]
+                        :durations [1]
+                        :successes [true]}]
+          fut         (future
+                        (render/format-answer-with-thinking-data
+                          "" trace 96 {:show-iterations true} nil false
+                          {:conversation-id "conversation"
+                           :conversation-turn-id "turn"}))
+          payload     (deref fut 500 ::timeout)]
+      (when (= ::timeout payload)
+        (future-cancel fut))
+      (expect (not= ::timeout payload))
+      (expect (str/includes? (:text payload) "RESULT (code 1)"))
+      (expect (str/includes? (:text payload) "chars hidden"))
+      (expect (not (str/includes? (:text payload) huge-result))))))
+
 (defdescribe message-footer-test
   (it "does not register a per-message copy button"
     (cr/reset!)

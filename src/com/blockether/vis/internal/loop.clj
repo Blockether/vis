@@ -52,8 +52,8 @@
    [com.oakmac.parinfer Parinfer ParinferResult]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
-(declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings auto-forget-stale-vars!
-  set-title! set-title-with-broadcast! env-for spawn-auto-title!)
+(declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings
+  auto-archive-hot-symbols! set-title! set-title-with-broadcast! env-for spawn-auto-title!)
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates
@@ -256,6 +256,91 @@
   ^String [^String source]
   (parse-diagnose/try-quote-rebalance source edamame-parses?))
 
+(def ^:private glued-numeric-option-keys
+  "Known option keys LLMs commonly glue to numeric values, producing
+   invalid odd-entry maps such as `{:limit200}` instead of
+   `{:limit 200}`. Keep this whitelist narrow so real data keywords
+   like `:h1` remain data, not silently rewritten."
+  #{"char-limit"
+    "context-lines"
+    "limit"
+    "max-bytes"
+    "max-lines"
+    "max-output-chars"
+    "offset"
+    "timeout-ms"})
+
+(def ^:private keyword-token-delimiters
+  #{\space \tab \newline \return \, \( \) \[ \] \{ \} \" \; \' \` \~ \^ \@})
+
+(defn- split-glued-numeric-option-token
+  [token]
+  (some (fn [k]
+          (let [suffix (subs token (count k))]
+            (when (and (str/starts-with? token k)
+                    (seq suffix)
+                    (every? #(Character/isDigit ^char %) suffix))
+              (str k " " suffix))))
+    (sort-by count > glued-numeric-option-keys)))
+
+(defn glued-numeric-option-rebalance
+  "Repair LLM option-map typos like `{:limit200}` / `{:max-lines260}`
+   to `{:limit 200}` / `{:max-lines 260}` when doing so yields valid
+   Clojure. The scanner intentionally skips strings and line comments;
+   the whitelist in `glued-numeric-option-keys` keeps data keywords
+   from being rewritten by accident. Returns nil when no valid repair
+   is available."
+  [source]
+  (let [s (str source)
+        n (count s)
+        out (StringBuilder.)
+        changed? (volatile! false)]
+    (loop [i 0 in-string? false escaped? false in-comment? false]
+      (if (>= i n)
+        (let [candidate (str out)]
+          (when (and @changed? (edamame-parses? candidate))
+            candidate))
+        (let [ch (.charAt s i)]
+          (cond
+            in-comment?
+            (do (.append out ch)
+              (recur (inc i) false false (not= ch \newline)))
+
+            in-string?
+            (do (.append out ch)
+              (cond
+                escaped?  (recur (inc i) true false false)
+                (= ch \\) (recur (inc i) true true false)
+                (= ch \") (recur (inc i) false false false)
+                :else     (recur (inc i) true false false)))
+
+            (= ch \;)
+            (do (.append out ch)
+              (recur (inc i) false false true))
+
+            (= ch \")
+            (do (.append out ch)
+              (recur (inc i) true false false))
+
+            (= ch \:)
+            (let [j (loop [j (inc i)]
+                      (if (or (>= j n)
+                            (contains? keyword-token-delimiters (.charAt s j)))
+                        j
+                        (recur (inc j))))
+                  token (subs s (inc i) j)]
+              (if-let [replacement (split-glued-numeric-option-token token)]
+                (do (vreset! changed? true)
+                  (.append out \:)
+                  (.append out replacement)
+                  (recur j false false false))
+                (do (.append out ch)
+                  (recur (inc i) false false false))))
+
+            :else
+            (do (.append out ch)
+              (recur (inc i) false false false))))))))
+
 (defn parinfer-rebalance
   "First-line repair for malformed Clojure source. Calls parinfer's
    indent-mode auto-balancer (a battle-tested 1100-line algo from
@@ -299,7 +384,10 @@
      1. parinfer indent-mode rebalance → re-parse via edamame;
         on success every form gets `:repaired? true` so the channel
         can see the repair happened.
-     2. on second failure return `[nil parse-error]` and let the
+     2. quote rebalance for unbalanced string delimiters.
+     3. glued numeric option repair for LLM typos like
+        `{:limit200}` / `{:max-lines260}`.
+     4. on final failure return `[nil parse-error]` and let the
         caller (`execute-code`) dispatch to the extension rescue
         chain (`try-extension-parse-rescue`).
 
@@ -717,53 +805,47 @@
     (:error (nth block-results form-idx))))
 
 ;; ---------------------------------------------------------------------------
-;; Answer-position contract (rule b' — \"answer is the last form, or the
-;; only form\")
+;; Answer-position contract (rule b' — "answer is the only form")
 ;;
-;; An iteration that calls `(answer …)` MUST emit it from EITHER:
-;;   (i)  the only top-level form, OR
-;;   (ii) the last top-level form.
+;; An iteration that calls `(answer …)` MUST emit it as the only
+;; top-level form of that iteration. Exploration, action, verification,
+;; and evidence-surfacing forms belong in earlier iterations; the host
+;; will loop automatically when `(answer …)` is omitted.
 ;;
-;; In other words: every form preceding the answer call ran first; no
-;; form runs AFTER it. Mid-iteration answers are rejected because
-;; trailing work would silently discard the answer's intent (\"I said
-;; we're done, then I did more stuff\" — incoherent).
-;;
-;; The check collapses to one comparison: `form-idx` (which top-level
-;; form invoked `(answer …)`) must equal `(dec total-forms)`. That
-;; naturally subsumes the single-form case (form-idx 0 == count 1 - 1).
-;;
-;; Structural wrappers — `(let […] (answer …))`, `(do … (answer …))`,
-;; `(answer (build))` — stay legal because they are still ONE
-;; top-level form (the wrapper) which itself is the last/only form.
+;; This makes `(answer …)` a clean turn-finisher: no other code runs in
+;; the final iteration. Structural wrappers — `(let […] (answer …))`,
+;; `(do … (answer …))`, `(answer (build))` — stay legal because they
+;; are still ONE top-level form.
 ;; ---------------------------------------------------------------------------
 
 (defn answer-position-violation?
-  "True when `(answer …)` fired from a form that is NOT the last
-   top-level form of the iteration. `form-idx` is the 0-based index
-   of the form that set `answer-atom`; `total-forms` is the count of
-   parsed top-level blocks. Pure; public so loop + tests share
-   the rule. Returns false when `form-idx` is nil (no answer fired)."
+  "True when `(answer …)` fired in an iteration that has any
+   top-level form besides the answer-bearing form. `form-idx` is the
+   0-based index of the form that set `answer-atom`; `total-forms` is
+   the count of parsed top-level blocks. Pure; public so loop + tests
+   share the rule. Returns false when `form-idx` is nil (no answer
+   fired)."
   [form-idx total-forms]
   (boolean (and form-idx
              (integer? form-idx)
              (not (neg? form-idx))
              (pos? total-forms)
-             (not= form-idx (dec total-forms)))))
+             (not (and (= 1 total-forms)
+                    (zero? form-idx))))))
 
 (defn answer-position-error-message
   "Validation-error string surfaced when `answer-position-violation?`
-   fires. Tells the model where its answer call landed (1-based form
-   index) vs. where the rule expects it (last form), and offers two
-   concrete recovery paths."
+   fires. Tells the model where its answer call landed and states the
+   hard completion contract: the final answer must be the only
+   top-level form of its iteration."
   [form-idx total-forms]
   (let [actual-1 (inc (or form-idx 0))]
-    (str "(answer …) is the LAST top-level form of its iteration. "
+    (str "(answer …) must be the ONLY top-level form of its final iteration. "
       "This iteration had " total-forms " top-level forms; answer "
-      "fired from form " actual-1 "; it must fire from form " total-forms
-      ". Recovery: (a) move the answer call to the end of this iteration, "
-      "OR (b) keep the trailing forms in this iteration and emit "
-      "`(answer …)` as the only form of the next iteration.")))
+      "fired from form " actual-1 ". Recovery: keep exploration, action, "
+      "and verification forms in earlier iterations by omitting `(answer …)` "
+      "so the host loops, then emit one final top-level form such as "
+      "`(answer …)` or `(let [...] (answer …))`.")))
 
 (defn- latest-by-soul
   [xs]
@@ -1134,10 +1216,11 @@
           ;; iteration. Atom payload is `{:value :form-idx}`. Two
           ;; gates fire in order:
           ;;
-          ;;   1. Rule b' (answer position): `(answer …)` must fire
-          ;;      from the last (or only) top-level form. Mid-
-          ;;      iteration answers are rejected; trailing work
-          ;;      after an answer is incoherent.
+          ;;   1. Rule b' (answer position): `(answer …)` must be the
+          ;;      only top-level form in the final iteration. Any
+          ;;      sibling form means the model mixed finishing with
+          ;;      exploration/action/verification, so the answer is
+          ;;      rejected and the host loops.
           ;;
           ;;   2. Option C (form-scoped error gate): if the answer-
           ;;      bearing form's own evaluation errored anyway
@@ -1726,7 +1809,9 @@
     (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
-    (auto-forget-stale-vars! environment)
+    ;; Hot symbol compaction is archive-based and runs only after a
+    ;; final successful answer. Failed/cancelled turns keep their live
+    ;; scratch symbols for recovery.
     ;; Cross-turn carry: seed `journal-iters` with the last
     ;; JOURNAL_KEEP_ITERS iterations of the current conversation
     ;; (across every prior turn) so a follow-up turn opens with the
@@ -2095,6 +2180,7 @@
                                  :cost-usd        (:cost   result)
                                  :answer          (:answer final-result)
                                  :error           nil}))
+                            (auto-archive-hot-symbols! environment)
                             result))
 
                         :else
@@ -2530,30 +2616,102 @@
   [env]
   (some-> (:state-atom env) deref :custom-bindings))
 
+(defn- normalize-history-symbol
+  [sym]
+  (cond
+    (symbol? sym) sym
+    (string? sym) (clojure.core/symbol sym)
+    :else         (clojure.core/symbol (str sym))))
+
+(defn- live-user-symbols
+  [{:keys [sci-ctx initial-ns-keys]}]
+  (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
+    (into #{}
+      (filter (fn [sym]
+                (and (symbol? sym)
+                  (not (contains? initial-ns-keys sym))
+                  (not (env/system-var-sym? sym)))))
+      (keys sandbox-map))))
+
+(defn- with-live-status
+  [live-syms entry]
+  (assoc entry :status
+    (cond
+      (contains? live-syms (:name entry)) :live
+      (= :unavailable (:status entry))   :unavailable
+      :else                              :archived)))
+
+(defn- history-preview
+  [v]
+  (prompt/safe-pr-str v {:max-chars 1000 :print-length 16 :print-level 4}))
+
+(defn- history-entry-view
+  [entry opts]
+  (let [base (cond-> (dissoc entry :value :code)
+               (:code? opts) (assoc :code (:code entry)))
+        include (:include opts)]
+    (case include
+      :preview (assoc base :preview (history-preview (:value entry)))
+      :value   (assoc base :value (:value entry))
+      base)))
+
+(defn- var-history-index
+  [environment opts]
+  (let [db-info (:db-info environment)
+        conversation-id (:conversation-id environment)
+        live-syms (live-user-symbols environment)]
+    (->> (persistance/db-var-history-index db-info conversation-id (or opts {}))
+      (mapv #(with-live-status live-syms %)))))
+
+(defn- var-history-for-symbol
+  [environment sym opts]
+  (let [db-info (:db-info environment)
+        conversation-id (:conversation-id environment)
+        sym (normalize-history-symbol sym)
+        live? (contains? (live-user-symbols environment) sym)]
+    (->> (persistance/db-var-history db-info conversation-id sym)
+      (mapv (fn [entry]
+              (-> entry
+                (assoc :name sym
+                  :status (if live? :live :archived))
+                (history-entry-view (or opts {}))))))))
+
+(defn- var-history-timeline-view
+  [environment opts]
+  (let [db-info (:db-info environment)
+        conversation-id (:conversation-id environment)
+        opts (or opts {})
+        symbol (:symbol opts)
+        events (:events opts)
+        timeline (persistance/db-var-history-timeline db-info conversation-id
+                   (cond-> opts symbol (assoc :symbol (normalize-history-symbol symbol))))]
+    (cond->> timeline
+      (seq events) (filter #(contains? (set events) (:event %)))
+      true vec)))
+
 ;; =============================================================================
 ;; System Prompt
 ;; =============================================================================
 
 ;; =============================================================================
-;; Auto-Forget
+;; Auto-Archive
 ;; =============================================================================
 
 (defn- system-var-sym?
   "Local alias — the canonical predicate lives in `sci-env`. Kept here
-   as a private helper so this file's auto-forget code reads cleanly
-   without an extra namespace bounce on every call."
+   so archive code reads cleanly without an extra namespace bounce on
+   every call."
   [sym]
   (env/system-var-sym? sym))
 
-(defn- forget-vars!
-  "Unmap `names` from the SCI sandbox namespace. Used by the
-   deterministic auto-forget at turn boundaries.
+(defn- archive-vars!
+  "Unmap `names` from the SCI sandbox namespace. Archive removes live
+   bindings only; persisted history remains available through
+   `var-history`.
 
-   HARD GUARD: SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — the
-   `TURN_*` / `ITERATION_*` / `CONVERSATION_*` registry) can NEVER be
-   forgotten — they are contract surfaces the iteration loop re-binds
-   every turn; dropping them would tear the sandbox mid-turn.
-   Filtered out + logged."
+   HARD GUARD: SYSTEM symbols can NEVER be archived — they are contract
+   surfaces the iteration loop re-binds every turn. Filtered out +
+   logged."
   [sci-ctx names]
   (let [raw-syms (keep (fn [n]
                          (cond (symbol? n) n
@@ -2562,89 +2720,80 @@
                    names)
         {system-syms true user-syms false} (group-by (comp boolean system-var-sym?) raw-syms)]
     (when (seq system-syms)
-      (tel/log! {:level :info :id ::forget-system-var-refused
+      (tel/log! {:level :info :id ::archive-system-symbol-refused
                  :data {:requested (mapv str system-syms)}
-                 :msg "Refusing to forget SYSTEM vars — ignoring those names"}))
+                 :msg "Refusing to archive SYSTEM symbols — ignoring those names"}))
     (when (seq user-syms)
       (try
         (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
           (fn [ns-map] (apply dissoc ns-map user-syms)))
         (catch Throwable e
-          (tel/log! {:level :debug :id ::forget-vars-failed
+          (tel/log! {:level :debug :id ::archive-vars-failed
                      :data {:error (ex-message e) :syms (mapv str user-syms)}
-                     :msg "forget-vars! failed — skipping"}))))))
+                     :msg "archive-vars! failed — skipping"}))))))
 
-(def ^:const AUTO_FORGET_STALE_QUERIES
-  "Number of recent queries a var must have been defined/redefined in to
-   survive auto-forget. Vars without a docstring that were last touched
-   more than this many turns ago are evicted at the start of each new
-   turn. DB rows are untouched — `(var-history 'sym)` still works."
-  3)
+(def ^:const HOT_SYMBOL_CAP
+  "Maximum live user-defined symbols targeted by RLM hot memory."
+  100)
 
-(defn auto-forget-candidates
-  "Pure function. Returns the set of sandbox var symbols that should be
-   auto-forgotten at the start of a new turn.
+(def ^:const HOT_SYMBOL_COMPACTION_TARGET
+  "Low-water mark after a final successful answer. Archiving down to 80
+   leaves headroom for the next turn instead of immediately bumping into
+   the hard cap again."
+  80)
 
-   A var is a candidate when ALL of:
-   1. It is a user var (not in `initial-ns-keys`).
-   2. It is not a SYSTEM var (per `SYSTEM_VAR_NAMES`).
-   3. It has NO docstring (runtime SCI meta `:doc` is nil/blank).
-   4. It was last defined/redefined in a turn that is NOT among the
-      `recent-conversation-turn-ids`.
+(defn auto-archive-candidates
+  "Pure cap-based hot-memory archive selection. Counts every live
+   user-defined symbol toward the target, but only user symbols without a
+   docstring are eligible. Returns the least-recent eligible symbols needed
+   to reach `target-count`; if protected symbols alone exceed the target,
+   returns every eligible symbol and leaves diagnostics to the caller."
+  [sandbox-map initial-ns-keys var-registry target-count]
+  (let [recency-of (fn [sym]
+                     (if-let [ts (some-> (get var-registry sym) :created-at)]
+                       (cond (inst? ts) (inst-ms ts)
+                         (integer? ts) (long ts)
+                         :else Long/MAX_VALUE)
+                       Long/MAX_VALUE))
+        user-symbol? (fn [sym]
+                       (and (symbol? sym)
+                         (not (contains? initial-ns-keys sym))
+                         (not (env/system-var-sym? sym))))
+        live-user-syms (filterv user-symbol? (keys sandbox-map))
+        overflow (max 0 (- (count live-user-syms) (long target-count)))
+        eligible (->> live-user-syms
+                   (remove (fn [sym]
+                             (let [doc (:doc (meta (get sandbox-map sym)))]
+                               (and (string? doc) (not (str/blank? doc))))))
+                   (sort-by (fn [sym] [(long (recency-of sym)) (str sym)]))
+                   vec)]
+    (set (take overflow eligible))))
 
-   Params:
-   - `sandbox-map`      — SCI sandbox namespace map {symbol → value-or-var}
-   - `initial-ns-keys`  — set of symbols that are built-in tools/helpers
-   - `var-registry`     — result of `db-latest-var-registry`:
-                          {symbol → {:conversation-turn-id ... :value ... :code ...}}
-   - `recent-conversation-turn-ids` — set of turn UUIDs for the last N queries
-
-   Returns: set of symbols to forget."
-  [sandbox-map initial-ns-keys var-registry recent-conversation-turn-ids]
-  (let [recent-ids (set recent-conversation-turn-ids)]
-    (into #{}
-      (filter
-        (fn [sym]
-          (let [v (get sandbox-map sym)
-                doc (:doc (meta v))
-                has-doc? (and doc (not (str/blank? doc)))
-                reg-entry (get var-registry sym)
-                defining-conversation-turn-id (:conversation-turn-id reg-entry)]
-            (and
-              (not (contains? initial-ns-keys sym))
-              (not (env/system-var-sym? sym))
-              (not has-doc?)
-              (some? reg-entry)
-              (not (contains? recent-ids defining-conversation-turn-id))))))
-      (keys sandbox-map))))
-
-(defn auto-forget-stale-vars!
-  "Deterministic cleanup at the turn boundary: remove sandbox vars that
-   (a) have no docstring AND (b) were last defined/redefined more than
-   `AUTO_FORGET_STALE_QUERIES` queries ago. Replaces the unreliable
-   ask-the-LLM-to-emit-`:forget` pattern for scratch vars. DB rows are
-   untouched — `(var-history 'sym)` can inspect old values."
+(defn auto-archive-hot-symbols!
+  "Archive eligible live user symbols after a final successful answer.
+   Archive means removing bindings from the live SCI sandbox only; DB
+   history remains the source of truth for `var-history`."
   [{:keys [db-info conversation-id sci-ctx initial-ns-keys var-index-atom]}]
   (when (and db-info conversation-id sci-ctx)
     (try
-      (let [all-queries  (sort-by :created-at
-                           (persistance/db-list-conversation-turns db-info conversation-id))
-            recent-ids   (into #{} (map :id) (take-last AUTO_FORGET_STALE_QUERIES all-queries))
-            var-registry (persistance/db-latest-var-registry db-info conversation-id)
+      (let [var-registry (persistance/db-latest-var-registry db-info conversation-id)
             sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
-            candidates   (auto-forget-candidates sandbox-map initial-ns-keys
-                           var-registry recent-ids)]
+            candidates   (auto-archive-candidates sandbox-map initial-ns-keys
+                           var-registry HOT_SYMBOL_COMPACTION_TARGET)]
         (when (seq candidates)
-          (tel/log! {:level :info :id ::auto-forget
-                     :data {:forgotten (mapv str candidates) :count (count candidates)}
-                     :msg (str "Auto-forget: evicting " (count candidates) " stale vars without docstrings")})
-          (forget-vars! sci-ctx candidates)
+          (tel/log! {:level :info :id ::auto-archive
+                     :data {:archived (mapv str candidates)
+                            :count (count candidates)
+                            :target HOT_SYMBOL_COMPACTION_TARGET}
+                     :msg (str "Auto-archive: evicting " (count candidates)
+                            " hot symbols after final answer")})
+          (archive-vars! sci-ctx candidates)
           (when var-index-atom
             (swap! var-index-atom update :current-revision inc))))
       (catch Exception e
-        (tel/log! {:level :warn :id ::auto-forget-failed
+        (tel/log! {:level :warn :id ::auto-archive-failed
                    :data {:error (ex-message e)}
-                   :msg "Auto-forget failed — skipping"})))))
+                   :msg "Auto-archive failed — skipping"})))))
 
 ;; =============================================================================
 ;; Environment Lifecycle
@@ -2730,12 +2879,20 @@
         ;; land in `initial-ns-keys` and therefore stay out of
         ;; `<var_index>` (matches the treatment of every other system
         ;; binding shipped via EXTRA_BINDINGS).
-        var-history-fn           (fn var-history [sym]
-                                   (persistance/db-var-history db-info conversation-id
-                                     (cond
-                                       (symbol? sym) sym
-                                       (string? sym) (clojure.core/symbol sym)
-                                       :else (clojure.core/symbol (str sym)))))
+        var-history-fn           (fn var-history
+                                   ([]
+                                    (var-history-index @environment-atom {}))
+                                   ([sym-or-opts]
+                                    (if (map? sym-or-opts)
+                                      (var-history-index @environment-atom sym-or-opts)
+                                      (var-history-for-symbol @environment-atom sym-or-opts {})))
+                                   ([sym opts]
+                                    (var-history-for-symbol @environment-atom sym opts)))
+        var-history-timeline-fn  (fn var-history-timeline
+                                   ([]
+                                    (var-history-timeline-view @environment-atom {}))
+                                   ([opts]
+                                    (var-history-timeline-view @environment-atom opts)))
         ;; SCI binding for `(answer "…")` — the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
@@ -2768,9 +2925,10 @@
                                        db-info conversation-id
                                        conversation-title-atom s)
                                      :vis/silent))
-        env-bindings             {'var-history        var-history-fn
-                                  'answer             answer-fn
-                                  'conversation-title conversation-title-fn}
+        env-bindings             {'var-history          var-history-fn
+                                  'var-history-timeline var-history-timeline-fn
+                                  'answer               answer-fn
+                                  'conversation-title   conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))

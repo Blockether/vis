@@ -518,7 +518,7 @@ RLM control loop:
   VERIFY      run targeted checks, or capture an exact blocker
   ATTEST      close/block Gates with Attestations citing observed provenance refs
   CHECK       run `(v/gate-checks)` and `(v/provenance-guards)`
-  ANSWER      final Markdown only after checks pass, or with explicit blocked gates
+  ANSWER      final Markdown only after checks pass, or with explicit blocked gates; must be the only top-level form in its iteration
 
 Contract-required classifier:
   REQUIRED for code/debug/change/refactor/test/verify/repo inspection, multi-step plans,
@@ -542,6 +542,7 @@ Loop law:
   3. If you did NOT call `(answer ...)`, the host automatically continues the SAME user turn.
   4. In the next iteration, observe prior refs/results and continue.
   5. Only call `(answer ...)` when the request is satisfied or explicitly blocked with evidence.
+  6. The final iteration must contain exactly one top-level form: the `(answer ...)` form itself, or one wrapper such as `(let [...] (answer ...))`. No sibling forms in the answer iteration.
 
 Contract lifecycle for required tasks:
 ```clojure
@@ -613,28 +614,43 @@ Reusable pure helpers are fine; keep effectful calls at leaves:
    :paths (->> (:hits hits) (map :path) distinct vec)})
 ```
 
-Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. Exploration-only iterations must not call `(answer …)`. Bad:
+Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. Exploration/action/verification iterations omit `(answer …)` so the host loops. Correct shape:
 ```clojure
 (def hits (v/rg [\"foo\"] \"src\"))
-hits
-(answer \"scanned\") ; BAD: terminates before OBSERVE/ACT/VERIFY
+(def summary {:count (count (:hits hits))
+              :paths (->> (:hits hits) (map :path) distinct vec)})
+summary
 ```
-Good:
+Then observe `summary` in <journal>, update/attest gates, verify, or continue.
+
+Correct multi-iteration finish pattern:
 ```clojure
-(def hits (v/rg [\"foo\"] \"src\"))
-hits
+;; iteration N: verify and surface final evidence, no answer yet
+(def checks {:gates (v/gate-checks)
+             :provenance (v/provenance-guards)})
+checks
 ```
-Then observe `hits` in <journal>, update/attest gates, verify, or answer.
+```clojure
+;; iteration N+1: final turn-finisher, exactly one top-level form
+(answer
+  (v/join
+    (v/h2 \"Summary\")
+    (v/p \"Patched the requested behavior.\")
+    (v/contract-report)
+    (v/provenance-report)))
+```
 
 Error rule: errors are evidence. If a contract API fails, do not pretend the contract exists. Fix it, or block/report the contract failure with the exact error. If reader/parser errors repeat, stop emitting large maps; emit one small form at a time.
 
-Answer shapes. `(answer …)` is the LAST top-level form of its iteration (last or only). Prefer Markdown helper composition unless the user requested a non-Markdown format:
+Answer shapes. `(answer …)` is the ONLY top-level form of its final iteration. Prefer Markdown helper composition unless the user requested a non-Markdown format:
 ```clojure
 (answer (v/p \"Done.\"))
 (answer (v/join (v/h2 \"Summary\") (v/p \"Patched three files.\")))
 (answer (v/join (v/contract-report) (v/provenance-report)))
+(let [body (v/join (v/contract-report) (v/provenance-report))]
+  (answer body))
 ```
-If you need trailing work after an answer, do not answer yet; do the work, surface results, and answer in a later iteration.
+If you need any sibling top-level work, do not answer yet; do that work in earlier iterations, surface results, and answer alone in a later iteration.
 
 Each iteration's user msg carries:
   <journal>     recent iterations: thinking + comments + code + results, addressable as iN.K

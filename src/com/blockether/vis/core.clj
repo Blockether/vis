@@ -223,7 +223,9 @@
 
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
+(def db-var-history-index                persistance/db-var-history-index)
 (def db-var-history                      persistance/db-var-history)
+(def db-var-history-timeline             persistance/db-var-history-timeline)
 (def db-turn-history                     persistance/db-turn-history)
 
 ;; Dependencies
@@ -348,9 +350,9 @@
 (def dispose-environment!         lp/dispose-environment!)
 (def install-extension!           lp/install-extension!)
 
-;; Auto-forget
-(def auto-forget-candidates       lp/auto-forget-candidates)
-(def auto-forget-stale-vars!      lp/auto-forget-stale-vars!)
+;; Auto-archive
+(def auto-archive-candidates       lp/auto-archive-candidates)
+(def auto-archive-hot-symbols!     lp/auto-archive-hot-symbols!)
 
 ;; Conversations
 (def db-info                      lp/db-info)

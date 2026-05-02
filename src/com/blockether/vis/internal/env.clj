@@ -747,7 +747,7 @@
 ;; vars are UPPERCASE and explicitly defined".
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
-   var?' check is needed: var-index sort+status, auto-forget guard, etc.
+   var?' check is needed: var-index sort+status, archive guard, etc.
 
    See the comment block above this def for full per-name documentation
    and the prefix-based lifetime convention
@@ -840,6 +840,8 @@
 (def ^:private VAR_INDEX_BODY_MAX_CHARS 600)
 (def ^:private VAR_INDEX_PRINT_LENGTH 32)
 (def ^:private VAR_INDEX_PRINT_LEVEL 6)
+(def ^:private MAX_VAR_INDEX_ENTRIES 100)
+(def ^:private VAR_INDEX_SUMMARY_MAX_NAMES 10)
 
 (defn- bounded-pr-str
   "Local mirror of `iteration.core/safe-pr-str` for the var-index render
@@ -879,11 +881,11 @@
 (defn- stats-comment
   "Render the per-entry stats as a single `;;` comment line. Replaces the
    fake-Clojure metadata-on-symbol form. `:scope` uses full words
-   (`:live | :forgotten | :system`); `:v` is the persisted version count."
+   (`:live | :archived | :system`); `:v` is the persisted version count."
   [{:keys [version status size]}]
   (let [scope-word (case status
                      :sys :system
-                     :f   :forgotten
+                     :f   :archived
                      :l   :live
                      status)]
     (str ";; v=" version " scope=" (name scope-word)
@@ -970,6 +972,44 @@
     (render-fn-form entry)
     (render-data-form entry)))
 
+(defn- display-sym-name
+  [sym]
+  (name sym))
+
+(defn- safe-defn-source?
+  [expr]
+  (boolean
+    (when (string? expr)
+      (re-find #"^\s*\((?:clojure.core/)?defn(?:-|\s)" expr))))
+
+(defn- unavailable-archive-entry?
+  [{:keys [value code]}]
+  (and (map? value)
+    (= :expr (:vis/ref value))
+    (not (safe-defn-source? code))))
+
+(defn- render-symbol-summary
+  [label syms]
+  (when (seq syms)
+    (str ";; " label ": "
+      (str/join ", " (map display-sym-name (take VAR_INDEX_SUMMARY_MAX_NAMES syms)))
+      (when (> (count syms) VAR_INDEX_SUMMARY_MAX_NAMES)
+        (str " (+" (- (count syms) VAR_INDEX_SUMMARY_MAX_NAMES) " more)")))))
+
+(defn- render-var-index-summary
+  [{:keys [overflow-live archived unavailable-count]}]
+  (let [lines (cond-> []
+                (seq overflow-live)
+                (conj (str ";; overflow-live-symbols: " (count overflow-live))
+                  (render-symbol-summary "hidden live symbols" overflow-live))
+                (seq archived)
+                (conj (str ";; archived-symbols: " (count archived)
+                        (when (pos? (long (or unavailable-count 0)))
+                          (str ", unavailable: " unavailable-count)))
+                  (render-symbol-summary "recent archived" archived)
+                  ";; use (var-history) to browse symbol history/provenance"))]
+    (seq (keep identity lines))))
+
 (defn build-var-index
   "Build the `<var_index>` block from user-defined vars in the SCI sandbox.
 
@@ -1018,9 +1058,26 @@
                                  :size (var-size val false)
                                  :val val
                                  :arglists arglists
-                                 :doc doc})))]
-     (when (seq live-entries)
-       (str/join "\n" (map render-var-form live-entries))))))
+                                 :doc doc})))
+         rendered-live (take MAX_VAR_INDEX_ENTRIES live-entries)
+         overflow-live (mapv :sym (drop MAX_VAR_INDEX_ENTRIES live-entries))
+         live-syms     (set (keys live-info))
+         archived-entries (->> (or var-registry {})
+                            (remove (fn [[sym _]]
+                                      (or (contains? live-syms sym)
+                                        (contains? initial-ns-keys sym)
+                                        (system-var-sym? sym))))
+                            (sort-by (fn [[sym _]]
+                                       [(- (long (recency-of sym))) (str sym)]))
+                            vec)
+         archived-syms (mapv first archived-entries)
+         unavailable-count (count (filter (comp unavailable-archive-entry? second) archived-entries))
+         summary-lines (render-var-index-summary {:overflow-live overflow-live
+                                                  :archived archived-syms
+                                                  :unavailable-count unavailable-count})
+         lines (vec (concat (map render-var-form rendered-live) summary-lines))]
+     (when (seq lines)
+       (str/join "\n" lines)))))
 
 ;; =============================================================================
 ;; Sandbox restore — rebuild SCI bindings from DB
