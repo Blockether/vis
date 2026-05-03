@@ -164,8 +164,8 @@
                     p/MARKER_MD_H3 p/MARKER_MD_H3 p/MARKER_MD_H3]
                   (mapv marker-of lines)))))))
 
-(defdescribe live-running-code-test
-  (it "renders a code slot with no result as currently running with elapsed time"
+(defdescribe live-running-block-test
+  (it "renders a block slot with no result as currently running with elapsed time"
     (let [lines (format-iteration-entry {:iteration     0
                                          :events        [{:type :form-result :form-idx 0}]
                                          :code          ["(Thread/sleep 1000)"]
@@ -173,6 +173,8 @@
                   40 1 {:now-ms 2500})
           code-line (first (filter #(str/includes? % "Thread/sleep") lines))
           status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
+      (expect (some #(str/includes? % "BLOCK 1") lines))
+      (expect (not-any? #(str/includes? % "CODE 1") lines))
       (expect (= p/MARKER_CODE (marker-of code-line)))
       (expect (= p/MARKER_CODE (marker-of status-line))))))
 
@@ -207,6 +209,39 @@
         (expect (some #(= p/MARKER_MD_CODE (marker-of %)) lines))
         (expect (some #(= "So: I'm a language model." %) lines))
         (expect (not-any? #(str/includes? % "```text") lines))))))
+
+(defdescribe progress-rendering-test
+  (it "live progress renders every iteration instead of hiding history"
+    (let [mk-entry (fn [n]
+                     {:events    [{:type :form-result :form-idx 0}]
+                      :code      [(str "(+ " n " 1)")]
+                      :comments  []
+                      :results   [(str (inc n))]
+                      :stdouts   []
+                      :stderrs   []
+                      :durations [1]
+                      :successes [true]})
+          body     (strip-ansi
+                     (render/progress->text
+                       {:iterations (mapv mk-entry (range 5))}
+                       80
+                       {:show-thinking true :show-iterations true}
+                       {:now-ms 1000 :turn-start-ms 0}))]
+      (expect (not (str/includes? body "hidden while live")))
+      (expect (str/includes? body "(+ 0 1)"))
+      (expect (str/includes? body "(+ 4 1)"))))
+
+  (it "live progress renders bounded thinking chunks without hiding content"
+    (let [body (strip-ansi
+                 (render/progress->text
+                   {:iterations [{:events [{:type :thinking :thinking "alpha "}
+                                           {:type :thinking :thinking "beta"}]}]}
+                   80
+                   {:show-thinking true :show-iterations true}
+                   {:now-ms 1000 :turn-start-ms 0}))]
+      (expect (not (str/includes? body "hidden while live")))
+      (expect (str/includes? body "alpha"))
+      (expect (str/includes? body "beta")))))
 
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"
@@ -822,22 +857,22 @@
         (expect (nil? (g 100 0 0)))))
 
     (describe "Standard 100/20 conversation"
-      (it "Auto-bottom (scroll=nil) places thumb at the END of the track"
+      (it "Auto-bottom (scroll=nil) places the single-cell thumb at the END of the track"
         (let [{:keys [thumb-top-rel thumb-h max-scroll]} (g 100 20 nil)]
-          (expect (= 16 thumb-top-rel))   ;; track-h(20) - thumb-h(4) = 16
-          (expect (= 4 thumb-h))           ;; 20 * 20/100
+          (expect (= 19 thumb-top-rel))   ;; track-h(20) - thumb-h(1) = 19
+          (expect (= 1 thumb-h))
           (expect (= 80 max-scroll))))    ;; 100 - 20
 
       (it "scroll=0 places thumb at the TOP"
-        (expect (= {:thumb-top-rel 0 :thumb-h 4 :max-scroll 80}
+        (expect (= {:thumb-top-rel 0 :thumb-h 1 :max-scroll 80}
                   (g 100 20 0))))
 
       (it "scroll=40 places thumb in the MIDDLE of the free track"
-        (expect (= {:thumb-top-rel 8 :thumb-h 4 :max-scroll 80}
+        (expect (= {:thumb-top-rel 9 :thumb-h 1 :max-scroll 80}
                   (g 100 20 40))))
 
       (it "scroll=80 places thumb at the BOTTOM (== max-scroll)"
-        (expect (= {:thumb-top-rel 16 :thumb-h 4 :max-scroll 80}
+        (expect (= {:thumb-top-rel 19 :thumb-h 1 :max-scroll 80}
                   (g 100 20 80)))))
 
     (describe "Out-of-range scroll values are clamped"
@@ -845,14 +880,15 @@
         (expect (zero? (:thumb-top-rel (g 100 20 -50)))))
       (it "Excessive scroll clamps to max-scroll (bottom)"
         (let [{:keys [thumb-top-rel max-scroll]} (g 100 20 9999)]
-          (expect (= 16 thumb-top-rel))
+          (expect (= 19 thumb-top-rel))
           (expect (= 80 max-scroll)))))
 
-    (describe "Tiny viewport on huge content keeps thumb-h >= 1"
-      ;; If `inner-h * track-h / total-h` rounds to 0, we still draw
-      ;; SOMETHING — a 1-row thumb — so the user has a target to grab.
-      (it "1000-row content in a 5-row viewport: thumb-h is 1, not 0"
+    (describe "Viewport height changes keep one visible thumb cell"
+      (it "1000-row content in a 5-row viewport: thumb-h is 1"
         (let [{:keys [thumb-h]} (g 1000 5 0)]
+          (expect (= 1 thumb-h))))
+      (it "360-row content in a maximized 56-row viewport: thumb-h stays 1"
+        (let [{:keys [thumb-h]} (g 360 56 nil)]
           (expect (= 1 thumb-h))))
       (it "And the thumb still slides through the full track"
         (let [top (:thumb-top-rel (g 1000 5 0))
@@ -1060,6 +1096,28 @@
   (->> s
     (remove #(<= 0xE110 (int %) 0xE2FF))
     (apply str)))
+
+(defdescribe final-summary-section-normalization-test
+  (it "renders verification evidence under the Verification bullet, including its code block"
+    (let [src (str "## Summary\n\n"
+                "- **Verification**\n"
+                "- All cases verified via nREPL:```clojure\n"
+                "{:bug-fixed true}\n"
+                "```\n"
+                "- **verify.sh --quick**\n"
+                "- Format check PASS, lint PASS — all 2 steps passed.")
+          rows (->> (md->lines src 100 :answer)
+                 (mapv (fn [line]
+                         {:marker (marker-of line)
+                          :body   (strip-sentinels (body-of line))})))]
+      (expect (some #(= "  • Verification" (:body %)) rows))
+      (expect (some #(= "    ◦ All cases verified via nREPL:" (:body %)) rows))
+      (expect (some #(and (= p/MARKER_MD_CODE (:marker %))
+                       (str/includes? (:body %) "      ")
+                       (str/includes? (:body %) ":bug-fixed"))
+                rows))
+      (expect (some #(= "  • verify.sh --quick" (:body %)) rows))
+      (expect (some #(str/starts-with? (:body %) "    ◦ Format check PASS") rows)))))
 
 (defdescribe loose-bullet-coalesce-test
   (describe "blank-line-fragmented bullets render as a single bullet line"
@@ -1527,17 +1585,27 @@
                         :stdouts   [""]
                         :durations [1]
                         :successes [true]}]
+          turn-id     "123e4567-e89b-12d3-a456-426614174000"
           fut         (future
                         (render/format-answer-with-thinking-data
                           "" trace 96 {:show-iterations true} nil false
                           {:conversation-id "conversation"
-                           :conversation-turn-id "turn"}))
+                           :conversation-turn-id turn-id}))
           payload     (deref fut 500 ::timeout)]
       (when (= ::timeout payload)
         (future-cancel fut))
       (expect (not= ::timeout payload))
-      (expect (str/includes? (:text payload) "RESULT (code 1)"))
+      (expect (str/includes? (:text payload) "RESULT (block 1)"))
       (expect (str/includes? (:text payload) "chars hidden"))
+      (expect (str/includes? (:text payload) "Turn: 123e4567, iteration: 1, block: 1"))
+      (let [suffix       "[Turn: 123e4567, iteration: 1, block: 1]"
+            summary-line (some #(when (str/includes? % "Turn: 123e4567") %) (:lines payload))
+            visible      (strip-sentinels (body-of summary-line))]
+        (expect (str/ends-with? visible suffix))
+        (expect (= 91 (p/display-width visible))))
+      (expect (not (str/includes? (:text payload) "t:")))
+      (expect (not (str/includes? (:text payload) "i:")))
+      (expect (not (str/includes? (:text payload) "b:")))
       (expect (not (str/includes? (:text payload) huge-result))))))
 
 (defdescribe message-footer-test

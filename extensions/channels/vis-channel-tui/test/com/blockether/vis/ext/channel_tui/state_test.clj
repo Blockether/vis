@@ -183,6 +183,17 @@
       (expect (= "codex-high"
                 (get-in third-cycle [:config :providers 0 :models 0 :name]))))))
 
+(defdescribe scrollbar-state-test
+  (it "maps scrollbar clicks with the same single-cell thumb used by the renderer"
+    (let [scroll-to-y-fn (-> #'state/event-registry deref deref (get :scroll-to-y) :fn)
+          db            {:messages-scroll nil}]
+      (expect (= 155
+                (:messages-scroll
+                 (scroll-to-y-fn db [:scroll-to-y 28 0 56 360 56]))))
+      (expect (= 304
+                (:messages-scroll
+                 (scroll-to-y-fn db [:scroll-to-y 55 0 56 360 56])))))))
+
 (defdescribe send-message-test
   (it "keeps @mentions compact in chat while expanding them for the agent"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)

@@ -108,6 +108,21 @@
     (input-empty? input) hint-idle-empty
     :else               hint-idle-typed))
 
+(defn- submit-input!
+  "Submit the current editor buffer, then clear it.
+
+   Important: `:send-message` must run before `:reset-input`. Large
+   paste placeholders expand from `app-db :pastes`, and `:reset-input`
+   clears that registry. Resetting first sends the cosmetic
+   `[Pasted #N: ...]` token to the provider instead of the payload."
+  [db input-state]
+  (let [text (input/input->text input-state)]
+    (when (and (seq (str/trim text))
+            (:conversation db)
+            (not (:loading? db)))
+      (state/dispatch [:send-message text]))
+    (state/dispatch [:reset-input])))
+
 (def ^:private copy-success-ttl-ms 1500)
 
 (defn- copy-conversation-id! [text]
@@ -347,7 +362,7 @@
         ;; NOT inline a literal here. Two layers disagreeing by even
         ;; one column makes `format-iteration-entry` size labels for
         ;; one bubble-w while `draw-chat-bubble!` paints into a
-        ;; different bubble-w — right-aligned labels (`CODE 3`,
+        ;; different bubble-w — right-aligned labels (`BLOCK 3`,
         ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
         bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
@@ -1285,12 +1300,7 @@
                          (recur))
 
                        :send
-                       (let [text (input/input->text state)]
-                         (state/dispatch [:reset-input])
-                         (when (and (seq (str/trim text))
-                                 (:conversation @state/app-db)
-                                 (not (:loading? @state/app-db)))
-                           (state/dispatch [:send-message text]))
+                       (do (submit-input! @state/app-db state)
                          (recur))
 
                        :cancel

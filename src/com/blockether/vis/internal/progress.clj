@@ -100,6 +100,43 @@
     (error/format-error (:error chunk))
     (prompt/safe-pr-str (:result chunk))))
 
+(def ^:private thinking-event-target-chars
+  "Target max chars per live thinking event.
+
+   svar sends accumulated reasoning; tracker converts it back to deltas.
+   Keep those deltas as bounded render events instead of merging them
+   into one forever-growing markdown block. TUI can then cache old
+   chunks and render only changed/new tail chunks."
+  4000)
+
+(defn- string-chunks [s chunk-size]
+  (let [s (str s)
+        n (count s)]
+    (loop [i 0
+           out []]
+      (if (>= i n)
+        out
+        (let [j (min n (+ i chunk-size))]
+          (recur j (conj out (subs s i j))))))))
+
+(defn- append-thinking-delta [events delta]
+  (let [events (vec (or events []))
+        delta  (str delta)]
+    (if (str/blank? delta)
+      events
+      (let [last-event (peek events)
+            last-text  (when (= :thinking (:type last-event)) (or (:thinking last-event) ""))
+            room       (if last-text (max 0 (- thinking-event-target-chars (count last-text))) 0)
+            [events delta]
+            (if (pos? room)
+              (let [head (subs delta 0 (min room (count delta)))
+                    tail (subs delta (count head))]
+                [(update events (dec (count events)) update :thinking str head) tail])
+              [events delta])]
+        (into events
+          (map (fn [chunk] {:type :thinking :thinking chunk}))
+          (string-chunks delta thinking-event-target-chars))))))
+
 (defn- write-thinking-event [events prev-thinking new-thinking]
   (let [events       (vec (or events []))
         prev-text    (or prev-thinking "")
@@ -110,18 +147,10 @@
 
       (and (not (str/blank? prev-text))
         (str/starts-with? current-text prev-text))
-      (let [delta (subs current-text (count prev-text))]
-        (if (str/blank? delta)
-          events
-          (if (= :thinking (:type (peek events)))
-            (update events (dec (count events)) update :thinking #(str (or % "") delta))
-            (conj events {:type :thinking :thinking delta}))))
-
-      (= :thinking (:type (peek events)))
-      (assoc events (dec (count events)) {:type :thinking :thinking current-text})
+      (append-thinking-delta events (subs current-text (count prev-text)))
 
       :else
-      (conj events {:type :thinking :thinking current-text}))))
+      (append-thinking-delta events current-text))))
 
 (defn- write-form-event [events form-idx]
   (let [events (vec (or events []))

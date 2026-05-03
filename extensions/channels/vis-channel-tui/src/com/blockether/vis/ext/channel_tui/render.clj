@@ -604,25 +604,51 @@
     (when (str/starts-with? trimmed "```")
       (str/trim (subs trimmed 3)))))
 
+(defn- leading-space-count [^String s]
+  (count (take-while #(= \space %) (or s ""))))
+
+(defn- strip-leading-spaces-up-to [n line]
+  (let [line (or line "")
+        drop-n (min (long n) (leading-space-count line))]
+    (subs line drop-n)))
+
+(defn- nested-prefix
+  [indent labels]
+  (let [level (min 3 (quot (leading-space-count indent) 2))]
+    (str (repeat-str \space (+ 2 (* level 2)))
+      (nth labels level))))
+
 (defn- format-clojure-ansi
   "Format Clojure source via zprint and keep zprint's ANSI syntax
    coloring. The TUI painter translates those ANSI SGR codes to
-   Lanterna colors; raw ANSI is never written to the terminal."
+   Lanterna colors; raw ANSI is never written to the terminal.
+
+   Live progress redraws on the spinner cadence while a provider call
+   is in flight. Without this cache, every tick re-ran zprint over
+   every already-finished form in the progress trace, so a long trace
+   could make the TUI look frozen even though app-db had advanced."
   [code-text width]
-  (try
-    (fmt/safe-czprint-str code-text width {:parse-string? true})
-    (catch Throwable _
-      (vis/format-clojure code-text width))))
+  (let [code-text (str code-text)
+        width     (long width)]
+    (cached* [:clojure-ansi width code-text]
+      #(try
+         (fmt/safe-czprint-str code-text width {:parse-string? true})
+         (catch Throwable _
+           (vis/format-clojure code-text width))))))
 
 (defn- code-block-lines
-  [m lang code-lines max-w]
-  (let [code-text (str/join "\n" code-lines)
-        body-lines (if (clojure-lang? lang)
-                     (str/split-lines (format-clojure-ansi code-text max-w))
-                     (mapcat #(wrap-text % max-w) code-lines))]
-    (vec (concat [(str (:code m) "")]
-           (map #(str (:code m) %) body-lines)
-           [(str (:code m) "")]))))
+  ([m lang code-lines max-w]
+   (code-block-lines m lang code-lines max-w ""))
+  ([m lang code-lines max-w prefix]
+   (let [prefix-w   (p/display-width prefix)
+         code-w     (max 1 (- (long max-w) prefix-w))
+         code-text  (str/join "\n" code-lines)
+         body-lines (if (clojure-lang? lang)
+                      (str/split-lines (format-clojure-ansi code-text code-w))
+                      (mapcat #(wrap-text % code-w) code-lines))]
+     (vec (concat [(str (:code m) prefix)]
+            (map #(str (:code m) prefix %) body-lines)
+            [(str (:code m) prefix)])))))
 
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
@@ -1645,11 +1671,15 @@
     (+ 1 top-pad (count lines) bottom-pad (count refs) (if footer? 1 0) 1)))
 
 (defn bubble-height
-  "Memoized `bubble-height*`. Keyed by `:text` identity + role +
-   width — same string instance + role + width = same height, no
-   need to re-wrap."
-  [{:keys [text role] :as message} max-w]
-  (cached* [::bh (System/identityHashCode text) role (long max-w)]
+  "Memoized `bubble-height*`. Keyed by projected line identity when
+   available; live progress keeps stable prewrapped body lines and only
+   appends a cheap spinner row."
+  [{:keys [text role prewrapped-lines] :as message} max-w]
+  (cached* [::bh
+            (System/identityHashCode text)
+            (System/identityHashCode prewrapped-lines)
+            role
+            (long max-w)]
     #(bubble-height* message max-w)))
 
 (defn total-messages-height
@@ -1678,7 +1708,7 @@
 (defn- short-id-fragment
   ^String [id]
   (let [s (str (or id ""))]
-    (subs s 0 (min 4 (count s)))))
+    (subs s 0 (min 8 (count s)))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-expanded?
   ([detail-expansions conversation-id node-id]
@@ -1701,13 +1731,36 @@
 (defn- detail-id-suffix
   ^String [{:keys [conversation-turn-id iteration-number block-number details-path]}]
   (let [parts (cond-> []
-                (some? conversation-turn-id) (conj (str "t:" (short-id-fragment conversation-turn-id)))
-                iteration-number (conj (str "i:" iteration-number))
-                block-number (conj (str "b:" block-number))
-                (seq details-path) (conj (str "d:" (str/join "." details-path))))]
+                (some? conversation-turn-id) (conj (str "Turn: " (short-id-fragment conversation-turn-id)))
+                iteration-number (conj (str "iteration: " iteration-number))
+                block-number (conj (str "block: " block-number))
+                (seq details-path) (conj (str "details: " (str/join "." details-path))))]
     (if (seq parts)
-      (str "[" (str/join " " parts) "]")
+      (str "[" (str/join ", " parts) "]")
       "[details]")))
+
+(defn- ellipsize-cols
+  ^String [s max-w]
+  (cond
+    (<= max-w 0) ""
+    (<= (p/display-width s) max-w) s
+    (= max-w 1) "…"
+    :else (str (p/truncate-cols s (dec max-w)) "…")))
+
+(defn- format-detail-summary-line
+  "Put the human-readable detail provenance on the right edge. The
+   suffix is intentionally rendered as inline code so it gets a distinct
+   colour treatment from the disclosure label."
+  ^String [left suffix max-w]
+  (let [suffix-w (p/display-width suffix)
+        gap-w    2]
+    (if (> (+ suffix-w gap-w 1) max-w)
+      (str left " · `" suffix "`")
+      (let [left-w     (max 1 (- max-w suffix-w gap-w))
+            left       (ellipsize-cols left left-w)
+            pad-w      (max gap-w (- max-w (p/display-width left) suffix-w))
+            suffix-md  (str "`" suffix "`")]
+        (str left (repeat-str \space pad-w) suffix-md)))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-node-id
   ^String [{:keys [iteration-number block-number details-path section kind]}]
@@ -1723,10 +1776,10 @@
     :as detail-ctx}]
   (let [suffix    (detail-id-suffix detail-ctx)
         hint      (when collapsed? (str " · " (hidden-size-hint hidden-entries)))
-        visible   (str (if collapsed? "▸ " "▾ ")
+        left      (str (if collapsed? "▸ " "▾ ")
                     (or summary "Details")
-                    (or hint "")
-                    " · " suffix)
+                    (or hint ""))
+        visible   (format-detail-summary-line left suffix (max 1 max-w))
         wrapped   (wrap-text (markdown->inline visible) (max 1 max-w))
         meta      {:kind :toggle-details
                    :conversation-id (str conversation-id)
@@ -2129,17 +2182,24 @@
                       [(line-entry (str iteration-hdr-marker header-line))]
                       [])
         thinking-lines
-        (fn [thinking-text]
-          (when (and (string? thinking-text) (not (str/blank? thinking-text)))
-            (let [entries (markdown->entries (str/trim thinking-text) fill-w :thinking
-                            {:conversation-id      conversation-id
-                             :conversation-turn-id conversation-turn-id
-                             :detail-expansions   detail-expansions
-                             :iteration-number    iteration-number
-                             :section             :thinking})
-                  entries (or (seq entries)
-                            (mapv #(line-entry (str thinking-marker %))
-                              (wrap-text (str/trim thinking-text) fill-w)))]
+        (fn [thinking-text-or-texts]
+          (let [texts (if (sequential? thinking-text-or-texts)
+                        thinking-text-or-texts
+                        [thinking-text-or-texts])
+                entries (into []
+                          (mapcat
+                            (fn [thinking-text]
+                              (when (and (string? thinking-text) (not (str/blank? thinking-text)))
+                                (or (seq (markdown->entries thinking-text fill-w :thinking
+                                           {:conversation-id      conversation-id
+                                            :conversation-turn-id conversation-turn-id
+                                            :detail-expansions   detail-expansions
+                                            :iteration-number    iteration-number
+                                            :section             :thinking}))
+                                  (mapv #(line-entry (str thinking-marker %))
+                                    (wrap-text thinking-text fill-w))))))
+                          texts)]
+            (when (seq entries)
               (vec (concat [(line-entry (str thinking-marker ""))]
                      entries
                      [(line-entry (str thinking-marker ""))])))))
@@ -2181,7 +2241,7 @@
                 is-error?     (and has-status? (not success?))
                 duration-ms   (when durations (get durations idx))
                 duration-str  (vis/format-duration duration-ms)
-                expr-label    (label-text "code" block-number)
+                expr-label    (label-text "block" block-number)
                 expr-hdr      (let [pl (max 0 (- fill-w (count expr-label) 1))]
                                 (str (repeat-str \space pl) expr-label " "))
                 running-start (when started-at-ms (get started-at-ms idx))
@@ -2228,7 +2288,7 @@
                                    :iteration-number    iteration-number
                                    :block-number        block-number
                                    :kind                :result
-                                   :summary             (str "RESULT (code " block-number ")")
+                                   :summary             (str "RESULT (block " block-number ")")
                                    :summary-marker      md-summary-marker
                                    :body-marker         r-marker
                                    :raw-text            result-str
@@ -2257,7 +2317,7 @@
                                          :iteration-number    iteration-number
                                          :block-number        block-number
                                          :kind                :stdout
-                                         :summary             (str "STDOUT (code " block-number ")")
+                                         :summary             (str "STDOUT (block " block-number ")")
                                          :summary-marker      md-summary-marker
                                          :body-marker         stdout-marker
                                          :lines               text-lines
@@ -2298,12 +2358,13 @@
                               (if-let [event (first remaining)]
                                 (case (:type event)
                                   :thinking
-                                  (recur (rest remaining)
-                                    block-number
-                                    (into out
-                                      (concat
-                                        (when (seq out) [(line-entry (str iteration-pad-marker ""))])
-                                        (thinking-lines (:thinking event)))))
+                                  (let [[thinking-run more] (split-with #(= :thinking (:type %)) remaining)]
+                                    (recur more
+                                      block-number
+                                      (into out
+                                        (concat
+                                          (when (seq out) [(line-entry (str iteration-pad-marker ""))])
+                                          (thinking-lines (mapv :thinking thinking-run))))))
 
                                   :form-result
                                   (recur (rest remaining)
@@ -2383,8 +2444,8 @@
       executing?  (str "Vis is running code (iter " n ")")
       :else       (str "Vis is working (iter " n ")"))))
 
-(defn progress->text
-  "Build the text body of the live progress placeholder bubble.
+(defn progress->lines-data
+  "Build prewrapped lines for the live progress placeholder bubble.
 
    The bubble lives in the assistant slot (right where the final
    answer will land), so the user sees the agent thinking/working in
@@ -2411,7 +2472,7 @@
                        (drives the spinner frame); defaults to current ms
      :turn-start-ms — wall-clock start, used for elapsed time
      :cancelling?    — true once Esc was pressed"
-  ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
+  ([progress bubble-w settings] (progress->lines-data progress bubble-w settings nil))
   ([progress bubble-w settings extra]
    (let [iterations       (vec (:iterations progress))
          content-w        (max 10 (- bubble-w 4))
@@ -2430,14 +2491,23 @@
                             (into []
                               (mapcat (fn [[idx entry]]
                                         (format-iteration-entry
-                                          (if show-thinking? entry (dissoc entry :thinking))
+                                          (if show-thinking? entry (dissoc entry :thinking :events))
                                           content-w (inc idx)
                                           {:show-header? show-iteration-headers?
                                            :now-ms       now-ms})))
-                              (collapse-repeated-error-runs iterations)))]
-     (if (seq trace-lines)
-       (str/join "\n" (conj (conj trace-lines "") spinner-line))
-       spinner-line))))
+                              (collapse-repeated-error-runs iterations)))
+         lines            (if (seq trace-lines)
+                            (conj (conj trace-lines "") spinner-line)
+                            [spinner-line])]
+     {:text      (str/join "\n" lines)
+      :lines     lines
+      :line-meta (vec (repeat (count lines) nil))})))
+
+(defn progress->text
+  "Build the text body of the live progress placeholder bubble."
+  ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
+  ([progress bubble-w settings extra]
+   (:text (progress->lines-data progress bubble-w settings extra))))
 
 ;;; ── Markdown table parsing ───────────────────────────────────────────────
 
@@ -3050,10 +3120,15 @@
              (cond
                (and (not in-code?) (str/starts-with? (str/trim line) "```"))
                (let [lang        (fence-lang line)
+                     indent      (leading-space-count line)
+                     prefix      (repeat-str \space indent)
                      [code tail] (split-with #(not (str/starts-with? (str/trim %) "```")) rst)
+                     code        (if (pos? indent)
+                                   (mapv #(strip-leading-spaces-up-to indent %) code)
+                                   code)
                      tail        (if (seq tail) (next tail) tail)]
                  (recur (seq tail) false
-                   (into acc (code-block-lines m lang code max-w))))
+                   (into acc (code-block-lines m lang code max-w prefix))))
 
                (str/starts-with? (str/trim line) "```")
                (recur rst false (conj acc (str (:code m) "")))
@@ -3111,23 +3186,24 @@
                    (into acc (mapv #(str (:quote m) "┃ " %) wrapped))))
 
                (re-matches #"^\s*[-*+]\s+.*" line)
-               (let [trimmed   (str/replace line #"^\s*[-*+]\s+" "")
+               (let [[_ indent trimmed] (re-matches #"^(\s*)[-*+]\s+(.*)$" line)
+                     prefix    (nested-prefix indent ["• " "◦ " "▪ " "• "])
                      decorated (markdown->inline trimmed)
-                     wrapped   (wrap-text decorated (max 1 (- max-w 4)))]
+                     wrapped   (wrap-text decorated (max 1 (- max-w (count prefix))))]
                  (recur rst false
                    (into acc
-                     (into [(str (:bullet m) "  • " (first wrapped))]
-                       (mapv #(str (:bullet m) "    " %) (rest wrapped))))))
+                     (into [(str (:bullet m) prefix (first wrapped))]
+                       (mapv #(str (:bullet m) (repeat-str \space (count prefix)) %) (rest wrapped))))))
 
                (re-matches #"^\s*\d+[.)]\s+.*" line)
-               (let [[_ num body] (re-matches #"^\s*(\d+)[.)]\s+(.*)$" line)
+               (let [[_ indent num body] (re-matches #"^(\s*)(\d+)[.)]\s+(.*)$" line)
                      decorated (markdown->inline (or body ""))
-                     prefix    (str num ". ")
-                     wrapped   (wrap-text decorated (max 1 (- max-w (count prefix) 2)))]
+                     prefix    (nested-prefix indent [(str num ". ") (str num ". ") (str num ". ") (str num ". ")])
+                     wrapped   (wrap-text decorated (max 1 (- max-w (count prefix))))]
                  (recur rst false
                    (into acc
-                     (into [(str (:bullet m) "  " prefix (first wrapped))]
-                       (mapv #(str (:bullet m) "    " (repeat-str \space (count prefix)) %)
+                     (into [(str (:bullet m) prefix (first wrapped))]
+                       (mapv #(str (:bullet m) (repeat-str \space (count prefix)) %)
                          (rest wrapped))))))
 
                (and (str/starts-with? (str/trim line) "**")
@@ -3225,14 +3301,37 @@
                  (when expanded? body-entries))))))
     segments))
 
+(defn- markdown-entries-cache-key
+  [text max-w mode opts]
+  ;; Never call `(hash text)` here: first hash of a huge String scans
+  ;; the whole thing, exactly what this cache is supposed to avoid.
+  ;; Bounded fingerprint only. Collision risk is acceptable for a render
+  ;; cache; wrong cache entry would be cosmetic and LRU-bounded, while
+  ;; full hashing can freeze the UI.
+  (let [n (count text)]
+    [::md-entries
+     n
+     (subs text 0 (min 64 n))
+     (subs text (max 0 (- n 256)))
+     (long max-w)
+     mode
+     (:conversation-id opts)
+     (:conversation-turn-id opts)
+     (:iteration-number opts)
+     (:block-number opts)
+     (:section opts)
+     (System/identityHashCode (:detail-expansions opts))]))
+
 (defn markdown->entries
   ([text max-w] (markdown->entries text max-w :answer nil))
   ([text max-w mode] (markdown->entries text max-w mode nil))
   ([text max-w mode opts]
    (when (and text (not (str/blank? text)))
-     (let [text     (md-repair/normalize-chat-markdown text)
-           segments (parse-detail-segments (coalesce-loose-list-items (str/split-lines text)))]
-       (vec (render-detail-segments segments max-w mode opts))))))
+     (let [text (str text)]
+       (cached* (markdown-entries-cache-key text max-w mode opts)
+         #(let [text     (md-repair/normalize-chat-markdown text)
+                segments (parse-detail-segments (coalesce-loose-list-items (str/split-lines text)))]
+            (vec (render-detail-segments segments max-w mode opts))))))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} markdown->lines
   ([text max-w] (markdown->lines text max-w :answer nil))
@@ -3359,7 +3458,7 @@
 ;;
 ;; PUBLIC because `screen.clj` must compute bubble width with the same
 ;; gutter math the painter uses; if the two layers disagree by even one
-;; column, `format-iteration-entry` sizes labels (`CODE 3`, `✓ 3ms`,
+;; column, `format-iteration-entry` sizes labels (`BLOCK 3`, `✓ 3ms`,
 ;; `FINAL ANSWER`) for one bubble-w while `draw-chat-bubble!` paints
 ;; into a different bubble-w and the right-aligned labels wrap onto
 ;; two lines.
@@ -3387,15 +3486,18 @@
    Returns `{:thumb-top-rel long :thumb-h long :max-scroll long}`,
    where `:thumb-top-rel` is rows from the TOP of the track (caller
    adds the absolute `bar-top` to convert to screen coordinates).
-   Returns `nil` when there's no overflow — no thumb is drawn, no
-   click should hit-test as on-thumb."
+   The visible thumb is intentionally one terminal cell high: Terminal.app
+   renders stacked full-block cells as a ladder of separate boxes when
+   the window is tall, which reads as multiple scroll positions instead
+   of one current-position marker. Returns `nil` when there's no overflow
+   — no thumb is drawn, no click should hit-test as on-thumb."
   [^long total-h ^long inner-h scroll]
   (when (and (pos? inner-h) (> total-h inner-h))
     (let [track-h    inner-h
           max-scroll (max 1 (- total-h inner-h))
           eff-scroll (let [s (long (or scroll max-scroll))]
                        (max 0 (min s max-scroll)))
-          thumb-h    (max 1 (long (* track-h (/ (double inner-h) total-h))))
+          thumb-h    1
           thumb-top  (long (* (- track-h thumb-h)
                              (/ (double eff-scroll) max-scroll)))]
       {:thumb-top-rel thumb-top

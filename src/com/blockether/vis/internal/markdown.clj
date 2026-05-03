@@ -55,25 +55,9 @@
     (let [s (str uuid-or-string)]
       (subs s 0 (min SHORT_ID_CHARS (count s))))))
 
-(defn normalize-chat-markdown
-  "Repair a narrow class of malformed fenced-code Markdown emitted by
-   LLM answers.
-
-   High-confidence fixes only:
-
-   1. Opening fence glued to preceding prose:
-        `Intro:```text` -> `Intro:\n```text`
-
-   2. Closing fence glued to following prose while already inside a
-      fenced block:
-        ` ```Done.` -> ` ```\nDone.`
-
-   This preserves the visible prose while making the answer renderable
-   in chat/export surfaces. Forensic transcript views intentionally
-   keep the stored raw text and do NOT call this helper."
+(defn- normalize-glued-fences
   [text]
-  (if (or (not (string? text))
-        (not (str/includes? text "```")))
+  (if-not (str/includes? text "```")
     text
     (letfn [(split-glued-opening-fence [line]
               (when-let [[_ before fence]
@@ -112,6 +96,119 @@
                        (recur rst (not in-code?) (conj acc line))
                        (recur rst in-code? (conj acc line))))))))
         (str/join "\n")))))
+
+(defn- section-bullet-line?
+  "True for a top-level bullet whose whole body is one bold label,
+   e.g. `- **Verification**`. These are common LLM final-summary
+   section headers; sibling bullets that follow are evidence for the
+   section, not peers of the section header."
+  [line]
+  (boolean
+    (and (string? line)
+      (re-matches #"^[-*+]\s+\*\*.+\*\*\s*$" line))))
+
+(defn- top-level-list-line? [line]
+  (boolean
+    (and (string? line)
+      (re-matches #"^(?:[-*+]|\d+[.)])\s+.*" line))))
+
+(defn- indented-list-line? [line]
+  (boolean
+    (and (string? line)
+      (re-matches #"^\s+(?:[-*+]|\d+[.)])\s+.*" line))))
+
+(defn- lone-top-level-bullet? [line]
+  (boolean
+    (and (string? line)
+      (re-matches #"^[-*+]\s*$" line))))
+
+(defn- fence-line? [line]
+  (boolean
+    (and (string? line)
+      (str/starts-with? (str/trim line) "```"))))
+
+(defn- normalize-summary-section-bullets
+  "Repair malformed final-answer summaries where a section bullet is
+   followed by sibling evidence bullets:
+
+       - **Verification**
+       - All cases verified via nREPL:
+       ```clojure
+       ...
+       ```
+
+   The renderer has a visual hierarchy, so normalize this to nested
+   evidence before rendering/exporting. Existing nested bullets are
+   preserved; a lone `-` directly under a section is treated as LLM
+   noise and dropped."
+  [text]
+  (->> (loop [remaining   (seq (str/split-lines text))
+              in-section? false
+              in-child?   false
+              in-code?    false
+              code-prefix nil
+              acc         []]
+         (if-not remaining
+           acc
+           (let [line (first remaining)
+                 rst  (next remaining)]
+             (cond
+               in-code?
+               (let [out      (str code-prefix line)
+                     closing? (fence-line? line)]
+                 (recur rst in-section? in-child? (not closing?) (when-not closing? code-prefix) (conj acc out)))
+
+               (section-bullet-line? line)
+               (recur rst true false false nil (conj acc line))
+
+               (and in-section? (lone-top-level-bullet? line))
+               (recur rst in-section? in-child? false nil acc)
+
+               (and in-section? in-child? (fence-line? line))
+               (let [prefix "      "]
+                 (recur rst in-section? in-child? true prefix (conj acc (str prefix line))))
+
+               (and in-section? (top-level-list-line? line))
+               (recur rst true true false nil (conj acc (str "  " line)))
+
+               (and in-section? (indented-list-line? line))
+               (recur rst true true false nil (conj acc line))
+
+               (and in-section? (str/blank? line))
+               (recur rst in-section? in-child? false nil (conj acc line))
+
+               (and in-section? (not (str/blank? line)))
+               (recur rst false false false nil (conj acc line))
+
+               :else
+               (recur rst false false false nil (conj acc line))))))
+    (str/join "\n")))
+
+(defn normalize-chat-markdown
+  "Repair narrow classes of malformed Markdown emitted by LLM answers.
+
+   High-confidence fixes only:
+
+   1. Opening fence glued to preceding prose:
+        `Intro:```text` -> `Intro:\n```text`
+
+   2. Closing fence glued to following prose while already inside a
+      fenced block:
+        ` ```Done.` -> ` ```\nDone.`
+
+   3. Final-summary section bullets (`- **Verification**`) followed by
+      sibling evidence bullets are normalized into nested bullets, with
+      a following fenced code block nested under the evidence bullet.
+
+   This preserves the visible prose while making the answer renderable
+   in chat/export surfaces. Forensic transcript views intentionally
+   keep the stored raw text and do NOT call this helper."
+  [text]
+  (if-not (string? text)
+    text
+    (-> text
+      normalize-glued-fences
+      normalize-summary-section-bullets)))
 
 (defn- comma-int
   "Group-3 thousands separator for integers, US locale-style. Used by
