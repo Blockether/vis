@@ -834,6 +834,27 @@
       (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking…"})
       (expect (= "thinking…" (:thinking (first (get-timeline)))))))
 
+  (it "reasoning live-render events preserve whitespace-only stream deltas"
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
+      (doseq [thinking ["The contract APIs failed in iteration"
+                        "The contract APIs failed in iteration "
+                        "The contract APIs failed in iteration 1 - lines"
+                        "The contract APIs failed in iteration 1 - lines "
+                        "The contract APIs failed in iteration 1 - lines 100-169"]]
+        (on-chunk {:phase :reasoning :iteration 0 :thinking thinking}))
+      (let [entry         (first (get-timeline))
+            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
+        (expect (= "The contract APIs failed in iteration 1 - lines 100-169"
+                  (:thinking entry)))
+        (expect (= (:thinking entry) reconstructed))))
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
+      (doseq [thinking [" " " a"]]
+        (on-chunk {:phase :reasoning :iteration 0 :thinking thinking}))
+      (let [entry         (first (get-timeline))
+            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
+        (expect (= " a" (:thinking entry)))
+        (expect (= (:thinking entry) reconstructed)))))
+
   (it "reasoning / code / reasoning builds ordered :events for live rendering"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :reasoning :iteration 0 :thinking "alpha"})

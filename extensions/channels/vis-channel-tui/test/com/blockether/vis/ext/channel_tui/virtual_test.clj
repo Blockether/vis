@@ -17,7 +17,7 @@
   (:require
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.virtual :as virtual]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+   [lazytest.core :refer [defdescribe describe expect it]] [clojure.string :as str]))
 
 (def ^:private estimated-height @#'virtual/estimated-height)
 (def ^:private project-message  @#'virtual/project-message)
@@ -259,15 +259,7 @@
         (expect (zero? (virtual/height-cache-size)))))))
 
 (defdescribe project-message-test
-  (describe "user messages pass through (no :text mutation)"
-    (it "drops :timestamp when :show-timestamps false (default)"
-      (let [pm (project-message (user-msg "hi") bubble-w settings)]
-        (expect (nil? (:timestamp pm)))
-        (expect (= "hi" (:text pm)))))
-    (it "keeps :timestamp when :show-timestamps true"
-      (let [pm (project-message (user-msg "hi") bubble-w
-                 (assoc settings :show-timestamps true))]
-        (expect (some? (:timestamp pm))))))
+  (describe "user messages strip timestamps and render markdown" (it "drops :timestamp when :show-timestamps false (default)" (let [pm (project-message (user-msg "hi") bubble-w settings)] (expect (nil? (:timestamp pm))) (expect (= "hi" (:text pm))))) (it "keeps :timestamp when :show-timestamps true" (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))] (expect (some? (:timestamp pm))))) (it "formats markdown in user-authored bubbles" (let [pm (project-message (user-msg "# Introduction\n\nVis is **bold**\n\n- one") bubble-w settings)] (expect (seq (:prewrapped-lines pm))) (expect (str/includes? (:text pm) "Introduction")) (expect (str/includes? (:text pm) "bold")) (expect (str/includes? (:text pm) "• one")) (expect (not (str/includes? (:text pm) "# Introduction"))) (expect (not (str/includes? (:text pm) "**bold**"))))))
 
   (describe "plain assistant messages run through markdown formatting"
     (it "produces a non-empty :text"

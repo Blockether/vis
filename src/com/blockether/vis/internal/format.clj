@@ -96,12 +96,31 @@
       d)))
 
 (defn format-clojure
-  "Pretty-print a Clojure source string with zprint. Falls back to
-   the original string on any error."
+  "Pretty-print a Clojure/EDN source string with zprint.
+
+   The input is source text, not a single runtime value: it may be a
+   whole file with leading comments and multiple top-level forms.
+   zprint documents `:parse-string?` as single-expression parsing;
+   `:parse-string-all?` is the source/file mode that preserves every
+   top-level form. Falls back to the original string on any error."
   [code-str width]
   (try
     (let [formatted (safe-zprint-str code-str width
-                      {:parse-string? true :style :community})]
+                      {:parse-string-all? true :style :community})]
+      (if (str/blank? formatted) code-str (str/trimr formatted)))
+    (catch Exception _ code-str)))
+
+(defn format-clojure-ansi
+  "Pretty-print Clojure/EDN source with ANSI zprint syntax coloring.
+
+   Mirrors `format-clojure`'s source/file contract and uses
+   `:parse-string-all?` so fenced file contents with leading comments
+   do not collapse to the first parsed expression. Falls back to the
+   original string on any error."
+  [code-str width]
+  (try
+    (let [formatted (safe-czprint-str (str code-str) width
+                      {:parse-string-all? true})]
       (if (str/blank? formatted) code-str (str/trimr formatted)))
     (catch Exception _ code-str)))
 

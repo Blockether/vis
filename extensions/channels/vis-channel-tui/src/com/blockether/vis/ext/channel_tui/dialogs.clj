@@ -317,6 +317,120 @@
               KeyType/Enter     (when (pos? total) (nth items @selected))
               (recur))))))))
 
+;;; ── Resources dialog ────────────────────────────────────────────────────────
+
+(defn- markdown-link-row
+  [{:keys [text url]}]
+  (str "- [" (or text "Resource") "](" (or url "") ")"))
+
+(defn- resource-open-action?
+  [action]
+  (or (= MouseActionType/CLICK_DOWN action)
+    (= MouseActionType/CLICK_RELEASE action)))
+
+(defn- resource-row-label
+  [selected? title max-w]
+  (ellipsize (str (if selected? "▸ " "  ") "[" (or title "Resource") "]") max-w))
+
+(defn resource-dialog-items
+  "Build selectable rows for a resources popup from renderer refs.
+   Keeps the original ref fields so callers can open `:url` after
+   selection, and also preserves a Markdown link row for copy/readback."
+  [refs]
+  (mapv (fn [{:keys [display text url] :as ref}]
+          (assoc ref
+            :markdown (markdown-link-row ref)
+            :label    (or display
+                        (str (or text "Resource")
+                          (when-not (str/blank? url)
+                            (str " → " url))))))
+    refs))
+
+(defn- draw-resource-item!
+  [g left row inner-w selected? {:keys [text url kind]}]
+  (let [title      (or text "Resource")
+        target     (or url "")
+        badge      (case kind
+                     :image "image"
+                     :file  "file"
+                     "link")
+        body-w     (max 1 (- inner-w 4))
+        target-w   (min 32 (max 0 (- body-w (count title) 10)))
+        target-txt (when (pos? target-w) (ellipsize target target-w))
+        label      (resource-row-label selected? title body-w)]
+    (if selected?
+      (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+      (p/set-colors! g t/dialog-fg t/dialog-bg))
+    (p/fill-rect! g (inc left) row inner-w 1)
+    (let [x (+ left 2)]
+      ;; Render the Markdown link shape as a link, not as raw markup:
+      ;; bullet + blue bracketed title + muted URL tail. The original
+      ;; markdown string remains on the item under `:markdown`.
+      (p/set-colors! g (if selected? t/dialog-bg t/link-chrome-fg)
+        (if selected? t/dialog-title-bg t/dialog-bg))
+      (p/put-str! g x row label)
+      (when target-txt
+        (p/set-colors! g (if selected? t/dialog-bg t/dialog-hint)
+          (if selected? t/dialog-title-bg t/dialog-bg))
+        (p/put-str! g (+ x (count label) 1) row (str "(" badge ") " target-txt))))))
+
+(defn resources-dialog!
+  "Show a Markdown-style clickable resources popup and return the
+   selected ref, or nil on Esc. Enter opens the highlighted row;
+   mouse click opens the row under the cursor."
+  [^TerminalScreen screen refs]
+  (let [items    (resource-dialog-items refs)
+        selected (atom 0)
+        scroll   (atom 0)]
+    (when (seq items)
+      (loop []
+        (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+              cols    (.getColumns size)
+              rows    (.getRows size)
+              g       (.newTextGraphics screen)
+              bounds  (draw-dialog-chrome! g cols rows "Resources" (count items))
+              {:keys [left inner-w]} bounds
+              total   (count items)
+              {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
+              visible (min total content-h)
+              _       (swap! selected #(clamp % 0 (max 0 (dec total))))
+              _       (swap! scroll #(visible-window-start @selected % content-h total))]
+          (dotimes [i visible]
+            (let [idx (+ @scroll i)
+                  row (+ content-top i)]
+              (when (< idx total)
+                (draw-resource-item! g left row inner-w (= idx @selected) (nth items idx)))))
+          (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter/click" "open"] ["Esc" "cancel"]])
+          (.setCursorPosition screen (p/cursor-pos 0 0))
+          (.refresh screen Screen$RefreshType/DELTA)
+          (let [key (.readInput screen)]
+            (when key
+              (cond
+                (= KeyType/Escape (.getKeyType key)) nil
+                (= KeyType/ArrowUp (.getKeyType key))
+                (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                (= KeyType/ArrowDown (.getKeyType key))
+                (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                (= KeyType/Enter (.getKeyType key))
+                (nth items @selected)
+                (instance? MouseAction key)
+                (let [^MouseAction m key
+                      pos (.getPosition m)
+                      mx  (.getColumn pos)
+                      my  (.getRow pos)
+                      hit (when (and (<= content-top my)
+                                  (< my (+ content-top visible))
+                                  (<= (inc left) mx)
+                                  (< mx (+ left inner-w)))
+                            (+ @scroll (- my content-top)))]
+                  (if (and hit (< hit total)
+                        (resource-open-action? (.getActionType m)))
+                    (nth items hit)
+                    (do (when (and hit (< hit total))
+                          (reset! selected hit))
+                      (recur))))
+                :else (recur)))))))))
+
 ;;; ── File picker dialog ──────────────────────────────────────────────────────
 
 (def ^:private file-picker-max-visible 10)

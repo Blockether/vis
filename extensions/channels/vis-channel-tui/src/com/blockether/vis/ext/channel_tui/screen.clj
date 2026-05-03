@@ -293,6 +293,13 @@
     (finally
       (.unlock draw-lock))))
 
+(defn- open-resources-popup!
+  [^TerminalScreen screen refs]
+  (when-let [ref (with-dialog-lock #(dlg/resources-dialog! screen refs))]
+    (future
+      (try (opener/open! (:url ref))
+        (catch Throwable _ nil)))))
+
 (defn- screen-size
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
    held (or before the render thread is started) because
@@ -1084,6 +1091,10 @@
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+
+                               :resources
+                               (open-resources-popup! screen (:refs hit))
+
                                (future
                                  (try (opener/open! (:url hit))
                                    (catch Throwable _ nil)))))))
@@ -1136,6 +1147,9 @@
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+
+                               :resources
+                               (open-resources-popup! screen (:refs hit))
 
                              ;; Default (markdown link / image /
                              ;; file-link chrome): hand the URL to
