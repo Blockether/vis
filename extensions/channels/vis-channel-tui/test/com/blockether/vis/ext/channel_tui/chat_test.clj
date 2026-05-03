@@ -39,7 +39,36 @@
             trace-entry (first (:trace assistant))]
         (expect (= ["(+ 1 2)"] (:code trace-entry)))
         (expect (= ["3"] (:results trace-entry)))
-        (expect (= [true] (:successes trace-entry)))))))
+        (expect (= [true] (:successes trace-entry))))))
+
+  (it "projects persisted turn cost into resumed assistant messages"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-conversation-turns
+                  (fn [db conversation-id]
+                    (expect (= :db db))
+                    (expect (= "c1" conversation-id))
+                    [{:id :turn-1
+                      :user-request "hello"
+                      :answer "ok"
+                      :provider :zai-coding
+                      :model "glm-5.1"
+                      :input-tokens 120
+                      :output-tokens 30
+                      :reasoning-tokens 7
+                      :cached-tokens 4
+                      :total-cost 0.0123}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [db turn-id]
+                    (expect (= :db db))
+                    (expect (= :turn-1 turn-id))
+                    [])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            assistant (second history)]
+        (expect (= {:total-cost 0.0123
+                    :provider :zai-coding
+                    :model "glm-5.1"}
+                  (:cost assistant)))
+        (expect (= {:input 120 :output 30} (:tokens assistant)))))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"

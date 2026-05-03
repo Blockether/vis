@@ -11,6 +11,7 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
    [com.blockether.vis.ext.channel-tui.selection :as selection]
+   [com.blockether.vis.internal.external-opener :as opener]
    [com.blockether.vis.ext.channel-tui.state :as state]
    [lazytest.core :refer [defdescribe it expect]]))
 
@@ -31,6 +32,9 @@
 
 (def ^:private copy-conversation-as-markdown!
   (deref #'screen/copy-conversation-as-markdown!))
+
+(def ^:private open-click-target!
+  (deref #'screen/open-click-target!))
 
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
@@ -192,7 +196,30 @@
           (copy-conversation-as-markdown! "conversation-1")
           (expect (= "# Conversation" (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied conversation as Markdown" [:level :success :ttl-ms 1500]]
-                    (deref notified 1000 ::timeout))))))))
+                    (deref notified 1000 ::timeout)))))))
+
+  (it "file click targets open through the editor path, not the generic URL opener"
+    (let [editor-opened (promise)
+          url-opened    (promise)]
+      (with-redefs-fn {#'opener/open-file-in-editor! (fn [target]
+                                                       (deliver editor-opened target)
+                                                       {:status :ok})
+                       #'opener/open!                (fn [target]
+                                                       (deliver url-opened target)
+                                                       {:status :ok})}
+        (fn []
+          (open-click-target! {:kind :file :url "deps.edn#L42"})
+          (expect (= "deps.edn#L42" (deref editor-opened 1000 ::timeout)))
+          (expect (= ::timeout (deref url-opened 100 ::timeout)))))))
+
+  (it "URL click targets keep using the generic opener"
+    (let [url-opened (promise)]
+      (with-redefs-fn {#'opener/open! (fn [target]
+                                        (deliver url-opened target)
+                                        {:status :ok})}
+        (fn []
+          (open-click-target! {:kind :url :url "https://example.com"})
+          (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

@@ -187,6 +187,26 @@
 (def ^:private linux-fallbacks
   [["gio" "open"] ["kde-open5"] ["kde-open"] ["gnome-open"]])
 
+(defn- editor-target
+  "Format a local file target for editor CLIs that accept optional
+   line suffixes."
+  [target line]
+  (if line
+    (str target ":" line)
+    target))
+
+(defn- file-editor-commands
+  "Preferred GUI editor commands for local file links. These are tried
+   before the generic OS opener so Markdown `v/file-link` resources go
+   to an editor, not a browser/file manager. Missing commands are fine:
+   `open-file-in-editor!` falls back to `open!`."
+  [target line]
+  (let [t (editor-target target line)]
+    [["code" "-g" t]
+     ["cursor" "-g" t]
+     ["cursor" "--goto" t]
+     ["zed" t]]))
+
 ;; =============================================================================
 ;; Side-effecting spawn
 ;; =============================================================================
@@ -203,6 +223,33 @@
       (.start pb)
       nil)
     (catch Throwable t t)))
+
+(declare open!)
+
+(defn- spawn-first!
+  "Try argv candidates in order. Returns the winning argv, or nil if
+   every candidate failed to spawn."
+  [commands]
+  (loop [[argv & more] commands]
+    (when argv
+      (let [err (spawn! argv)]
+        (if (nil? err)
+          argv
+          (recur more))))))
+
+(defn open-file-in-editor!
+  "Open local file target `s` in a GUI editor when possible, preserving
+   `#Lline` anchors for editor CLIs. Falls back to `open!` for missing
+   editors, non-local targets, rejected paths, and unsupported shapes.
+   Never throws."
+  [s]
+  (if-let [{:keys [scheme target line]} (safe-target s)]
+    (if (#{:file :rel} scheme)
+      (if-let [argv (spawn-first! (file-editor-commands target line))]
+        {:status :ok :command argv :scheme scheme :target target :line line :error nil}
+        (open! s))
+      (open! s))
+    (open! s)))
 
 (defn open!
   "Open `s` via the host OS opener. Never throws.

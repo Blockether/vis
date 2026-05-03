@@ -222,7 +222,7 @@
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)
            strip-ts))
 
-       (= :assistant (:role message))
+       (#{:assistant :user} (:role message))
        (let [{:keys [text lines line-meta]}
              (render/format-answer-markdown-data
                (:text message) bubble-w

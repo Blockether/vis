@@ -293,12 +293,19 @@
     (finally
       (.unlock draw-lock))))
 
+(defn- open-click-target!
+  [{:keys [kind url]}]
+  (future
+    (try
+      (if (= :file kind)
+        (opener/open-file-in-editor! url)
+        (opener/open! url))
+      (catch Throwable _ nil))))
+
 (defn- open-resources-popup!
   [^TerminalScreen screen refs]
   (when-let [ref (with-dialog-lock #(dlg/resources-dialog! screen refs))]
-    (future
-      (try (opener/open! (:url ref))
-        (catch Throwable _ nil)))))
+    (open-click-target! ref)))
 
 (defn- screen-size
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
@@ -1095,9 +1102,7 @@
                                :resources
                                (open-resources-popup! screen (:refs hit))
 
-                               (future
-                                 (try (opener/open! (:url hit))
-                                   (catch Throwable _ nil)))))))
+                               (open-click-target! hit)))))
                        (recur))
 
                      ;; MOVE — hover. We want the chat link-chrome
@@ -1156,9 +1161,7 @@
                              ;; the OS opener on a side thread —
                              ;; a slow `xdg-open` cannot freeze the
                              ;; input loop's redraw cadence.
-                               (future
-                                 (try (opener/open! (:url hit))
-                                   (catch Throwable _ nil)))))
+                               (open-click-target! hit)))
                            (when selection-copy?
                              (let [screen-anchor (selection/point mx my)
                                    source        (selection/source-at-point

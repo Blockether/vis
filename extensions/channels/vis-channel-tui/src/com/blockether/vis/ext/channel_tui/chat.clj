@@ -58,7 +58,10 @@
                                     (:output-tokens q) (assoc :output (:output-tokens q)))
                         iteration-count (:iteration-count q)
                         duration-ms (:duration-ms q)
-                        cost      (when (:cost q) {:total-cost (:cost q)})
+                        cost      (when-let [total-cost (or (:total-cost q) (:cost q))]
+                                    (cond-> {:total-cost total-cost}
+                                      (:provider q) (assoc :provider (:provider q))
+                                      (:model q)    (assoc :model (:model q))))
                         ;; Rebuild trace from iterations + blocks.
                         ;; The answer-bearing form (last expression of
                         ;; the answer iteration, per rule b') is

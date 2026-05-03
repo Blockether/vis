@@ -79,6 +79,26 @@
       (expect (= (cwd-target "deps.edn") (:target out))))
     (expect (nil? (opener/safe-target "file:///etc/passwd")))))
 
+(defdescribe file-editor-command-test
+  (it "local file editor commands preserve line anchors"
+    (let [commands (@#'opener/file-editor-commands "/repo/deps.edn" 42)]
+      (expect (= ["code" "-g" "/repo/deps.edn:42"] (first commands)))
+      (expect (some #(= ["cursor" "--goto" "/repo/deps.edn:42"] %) commands))))
+
+  (it "open-file-in-editor! tries editor commands before generic OS open"
+    (let [spawned (atom [])]
+      (with-redefs [opener/open-command (fn [target] ["open" target])
+                    opener/spawn! (fn [argv]
+                                    (swap! spawned conj argv)
+                                    nil)]
+        (let [r (opener/open-file-in-editor! "deps.edn#L42")]
+          (expect (= :ok (:status r)))
+          (expect (= :rel (:scheme r)))
+          (expect (= 42 (:line r)))
+          (expect (= ["code" "-g" (str (cwd-target "deps.edn") ":42")]
+                    (:command r)))
+          (expect (= [(:command r)] @spawned)))))))
+
 (defdescribe open-command-test
   (it "macOS dispatches to open <target>"
     (with-redefs [opener/os-name (constantly "mac os x")]
