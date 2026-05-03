@@ -388,6 +388,21 @@
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
+(def ^:private silent-host-form-heads
+  '#{conversation-title})
+
+(defn- silent-host-form?
+  "True for host side-effect forms that intentionally return
+   `:vis/silent` and should never be shown as running code in live
+   progress. The result still emits a :form-result chunk so persisted
+   diagnostics and index elision stay consistent."
+  [expr]
+  (try
+    (let [form (edamame/parse-string (str expr) edamame-opts)]
+      (and (seq? form)
+        (contains? silent-host-form-heads (first form))))
+    (catch Throwable _
+      false)))
 
 (defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
@@ -1031,7 +1046,7 @@
           executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
-                           (when on-chunk
+                           (when (and on-chunk (not (silent-host-form? expr)))
                              (on-chunk {:phase         :form-start
                                         :iteration     iteration-position
                                         :form-idx      idx

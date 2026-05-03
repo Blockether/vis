@@ -82,7 +82,20 @@
 
   (it "leaves already-valid fenced markdown unchanged"
     (let [valid "Intro\n```text\nbody\n```\nTail"]
-      (expect (= valid (md/normalize-chat-markdown valid))))))
+      (expect (= valid (md/normalize-chat-markdown valid)))))
+
+  (it "normalizes malformed final-summary section bullets into nested evidence"
+    (let [broken (str "## Summary\n\n"
+                   "- **Verification**\n"
+                   "- All cases verified via nREPL:```clojure\n"
+                   "{:bug-fixed true}\n"
+                   "```\n"
+                   "- **verify.sh --quick**\n"
+                   "- Format check PASS, lint PASS — all 2 steps passed.")
+          fixed  (md/normalize-chat-markdown broken)]
+      (expect (str/includes? fixed "- **Verification**\n  - All cases verified via nREPL:\n      ```clojure"))
+      (expect (str/includes? fixed "      {:bug-fixed true}\n      ```"))
+      (expect (str/includes? fixed "- **verify.sh --quick**\n  - Format check PASS")))))
 
 (defdescribe conversation->markdown-test
   (describe "Header"

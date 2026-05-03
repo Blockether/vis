@@ -160,7 +160,7 @@
               (expect (= :vis/sci (:engine prov))))))))))
 
 (defdescribe run-iteration-silent-chunk-test
-  (it "emits :vis/silent form-result chunks so live progress can clear silent form-start slots"
+  (it "does not emit form-start for known :vis/silent host forms"
     (let [chunks (atom [])
           environment {:router ::router
                        :answer-atom (atom nil)
@@ -183,9 +183,9 @@
             {:iteration 0
              :resolved-model {:provider :test :name "model"}
              :on-chunk (fn [chunk] (swap! chunks conj chunk))})
-          (expect (= [:form-start :form-result]
+          (expect (= [:form-result]
                     (mapv :phase @chunks)))
-          (expect (= :vis/silent (:result (second @chunks)))))))))
+          (expect (= :vis/silent (:result (first @chunks)))))))))
 
 (defdescribe run-iteration-answer-position-test
   (it "accepts first-iteration final answers mixed with earlier top-level forms when answer is last"

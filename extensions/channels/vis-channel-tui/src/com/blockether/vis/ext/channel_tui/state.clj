@@ -577,7 +577,7 @@
   (fn [db [_ mouse-y bar-top track-h total-h inner-h]]
     (if (or (<= total-h inner-h) (<= track-h 0))
       db
-      (let [thumb-h    (max 1 (int (* track-h (/ (double inner-h) total-h))))
+      (let [thumb-h    1
             max-scroll (max 0 (- total-h inner-h))
             relative   (- mouse-y bar-top)
             denom      (max 1 (- track-h thumb-h))

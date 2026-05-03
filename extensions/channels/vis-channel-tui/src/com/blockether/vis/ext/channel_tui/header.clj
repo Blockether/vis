@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          ⧉ d8d6a0a1 M↓
+       ✓ Copied!                 Conversation title          ⧉ d8d6a0a1 | Copy Transcript
        (notification banner)     (or fallback placeholder)   (id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -19,8 +19,8 @@
    - RIGHT: short conversation id (first 8 chars of the UUID, the
      same convention `vis conversations` uses) + a clickable
      `⧉` affordance that drops the FULL UUID onto the system
-     clipboard, followed by `M↓` for whole-conversation Markdown
-     copy. Visual feedback is the LEFT-slot `✓ Copied!` notification
+     clipboard, followed by `| Copy Transcript` for whole-conversation
+     Markdown copy. Visual feedback is the LEFT-slot `✓ Copied!` notification
      — same mechanism every other cross-channel signal flows through.
 
    Pure draw: reads `:title` and `:conversation` from app-db, the
@@ -64,9 +64,13 @@
   "Compact header affordance painted left of the short conversation id."
   copy-icon)
 
-(def ^:private markdown-copy-icon
-  "Compact Markdown export affordance painted after the conversation-id copy block."
-  "M↓")
+(def ^:private right-block-separator
+  "Visual separator between the UUID-copy affordance and Markdown export action."
+  " | ")
+
+(def ^:private markdown-copy-label
+  "Descriptive Markdown transcript export affordance painted after the conversation-id copy block."
+  "Copy Transcript")
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -117,17 +121,17 @@
     ""))
 
 (defn- markdown-copy-block-text [id-short]
-  (if id-short markdown-copy-icon ""))
+  (if id-short markdown-copy-label ""))
 
 (defn- right-block-text
-  "Compose the right-side text: \"⧉ 4b1ed602 M↓\" when a conversation
-   id exists, otherwise empty. Single place that knows the layout
+  "Compose the right-side text: \"⧉ 4b1ed602 | Copy Transcript\" when a
+   conversation id exists, otherwise empty. Single place that knows the layout
    so `draw-header!` can stay focused on placement math."
   [id-short]
   (let [id-text (id-copy-block-text id-short)
         md-text (markdown-copy-block-text id-short)]
     (if (seq id-text)
-      (str id-text " " md-text)
+      (str id-text right-block-separator md-text)
       "")))
 
 (defn draw-header!
@@ -137,8 +141,8 @@
    every frame.
 
    Layout per the namespace doc: notification banner LEFT, centered
-   conversation title CENTER, short conversation id + `⧉` plus `M↓`
-   RIGHT. When the title would overlap either edge block, the title
+   conversation title CENTER, short conversation id + `⧉`, separator, plus
+   `Copy Transcript` RIGHT. When the title would overlap either edge block, the title
    is truncated with an ellipsis so the diagnostically-important id
    stays readable.
 
@@ -160,8 +164,9 @@
         id-copy-w    (p/display-width id-copy-text)
         md-copy-w    (p/display-width md-copy-text)
         right-col    (when (pos? right-w) (max 0 (- cols edge-pad right-w)))
+        separator-w  (p/display-width right-block-separator)
         md-copy-col  (when (and right-col (pos? md-copy-w))
-                       (+ right-col id-copy-w 1))
+                       (+ right-col id-copy-w separator-w))
         notif        (latest-notification)
         notif-text   (some-> notif :text)
         notif-level  (some-> notif :level)
@@ -223,7 +228,7 @@
       (p/put-str! g title-col content-row title-trim)
       (p/clear-styles! g))
 
-    ;; RIGHT — copy conversation ID block + Markdown export icon.
+    ;; RIGHT — copy conversation ID block + Markdown transcript export label.
     ;; Visual hover feedback: when either clickable region is hovered,
     ;; that exact affordance brightens and gains BOLD. Terminal emulators
     ;; don't allow applications to control the mouse cursor shape, so this
@@ -241,8 +246,9 @@
           (p/set-colors! g t/footer-fg-muted t/terminal-bg))
         (p/put-str! g right-col content-row id-copy-text)
         (p/clear-styles! g)
-        (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-        (p/put-str! g (+ right-col id-copy-w) content-row " ")
+        (p/set-colors! g t/footer-fg-strong t/terminal-bg)
+        (p/enable! g p/BOLD)
+        (p/put-str! g (+ right-col id-copy-w) content-row right-block-separator)
         (p/clear-styles! g)
         (if markdown-hovered?
           (do (p/set-colors! g t/footer-fg-strong t/terminal-bg)

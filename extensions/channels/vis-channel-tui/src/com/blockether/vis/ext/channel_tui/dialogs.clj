@@ -686,7 +686,7 @@
                 {:key :show-iterations
                  :type :toggle
                  :label "Show full execution trace"
-                 :description "Code blocks, eval results, stdout, errors — the whole iteration history"}
+                 :description "Blocks, eval results, stdout, errors — the whole iteration history"}
                 {:key :show-timestamps
                  :type :toggle
                  :label "Show per-message timestamps"

@@ -60,7 +60,7 @@
   [token]
   (boolean (some-> token ::flag deref)))
 
-(defn ^:private interrupt-in-cause-chain?
+(defn ^:private cancellation-cause?
   "Walk an exception's cause chain looking for an `InterruptedException`.
    Some HTTP libs wrap thread interruption in a runtime exception, so
    the obvious `(instance? InterruptedException e)` check misses them."
@@ -68,7 +68,8 @@
   (loop [t e]
     (cond
       (nil? t)                            false
-      (instance? InterruptedException t)  true
+      (instance? InterruptedException t)         true
+      (instance? java.util.concurrent.CancellationException t) true
       :else                               (recur (.getCause t)))))
 
 (defn cancellation?
@@ -76,5 +77,4 @@
    should treat this as a normal (cancelled) outcome rather than an
    error and avoid showing stack traces."
   [^Throwable e]
-  (or (instance? java.util.concurrent.CancellationException e)
-    (interrupt-in-cause-chain? e)))
+  (cancellation-cause? e))

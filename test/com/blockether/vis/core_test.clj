@@ -849,6 +849,16 @@
                     {:type :thinking :thinking "\nbeta"}]
                   (:events entry))))))
 
+  (it "long streamed reasoning is stored as bounded render events"
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)
+          long-thinking (apply str (repeat 9000 "x"))]
+      (on-chunk {:phase :reasoning :iteration 0 :thinking long-thinking})
+      (let [entry           (first (get-timeline))
+            thinking-events (filterv #(= :thinking (:type %)) (:events entry))]
+        (expect (= long-thinking (:thinking entry)))
+        (expect (< 1 (count thinking-events)))
+        (expect (= long-thinking (apply str (map :thinking thinking-events)))))))
+
   (it ":form-result with :error formats the error string into :results"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0

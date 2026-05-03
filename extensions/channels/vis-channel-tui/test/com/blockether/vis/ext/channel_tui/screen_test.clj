@@ -11,6 +11,7 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
    [com.blockether.vis.ext.channel-tui.selection :as selection]
+   [com.blockether.vis.ext.channel-tui.state :as state]
    [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private parse-args
@@ -18,6 +19,9 @@
 
 (def ^:private current-hint
   (deref #'screen/current-hint))
+
+(def ^:private submit-input!
+  (deref #'screen/submit-input!))
 
 (def ^:private copy-conversation-id!
   (deref #'screen/copy-conversation-id!))
@@ -58,6 +62,21 @@
       (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
       (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
+
+(defdescribe submit-input-test
+  (it "dispatches send before reset so paste placeholders can expand"
+    (let [events      (atom [])
+          payload     "therapy line 1\ntherapy line 2"
+          token       (input/format-paste-placeholder {:id 1 :content payload})
+          input-state (input/paste-text (input/empty-input) (str "context " token))]
+      (with-redefs [state/dispatch (fn [event]
+                                     (swap! events conj event))]
+        (submit-input! {:conversation {:id "c1"}
+                        :loading? false}
+          input-state)
+        (expect (= [[:send-message (str "context " token)]
+                    [:reset-input]]
+                  @events))))))
 
 (defdescribe selectable-ranges-test
   (it "clips transcript selection to message content rows only"
