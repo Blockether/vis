@@ -13,9 +13,13 @@
     (expect (s/valid? ::intent-spec/issue-plan-opts
               {:intent-id (random-uuid)
                :summary "Inspect, verify, answer."}))
-    (expect (s/valid? ::intent-spec/issue-gate-opts
-              {:plan-id (random-uuid)
-               :question "Did verification pass?"}))
+    (let [intent-id (random-uuid)
+          slot [intent-id :verification]]
+      (expect (s/valid? ::intent-spec/issue-gate-opts
+                {:plan-id (random-uuid)
+                 :proposition "Verification passes."
+                 :expected-proof {:slots {slot {:required? true}}
+                                  :guard [:exists [:slot slot :ref]]}})))
     (expect (s/valid? ::intent-spec/relate-intents-opts
               {:from-intent-id (random-uuid)
                :to-intent-id (random-uuid)

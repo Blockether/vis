@@ -10,17 +10,57 @@
                   :unused-binding    {:level :off}}}}
   com.blockether.vis.ext.persistance-sqlite.core-test
   (:require
+   [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
    [lazytest.core :refer [defdescribe it expect]]
+   [next.jdbc :as jdbc]
    [sci.core :as sci]))
 
 ;; ─── from db_test.clj ───
 
 (h/use-mem-store!)
+
+(defn- drop-conversation-intent-schema!
+  [db-file]
+  (let [ds (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" db-file)})]
+    (doseq [ddl ["PRAGMA foreign_keys = OFF"
+                 "DROP TABLE IF EXISTS conversation_intent_focus"
+                 "DROP TABLE IF EXISTS conversation_intent_gate_ref"
+                 "DROP TABLE IF EXISTS conversation_intent_gate"
+                 "DROP TABLE IF EXISTS conversation_intent_plan"
+                 "DROP TABLE IF EXISTS conversation_intent_relation"
+                 "DROP TABLE IF EXISTS conversation_intent_ref"
+                 "DROP TABLE IF EXISTS conversation_intent"]]
+      (jdbc/execute! ds [ddl]))))
+
+(defdescribe inline-v1-schema-repair-test
+  (it "repairs existing V1 developer databases that predate conversation-scoped intents"
+    (let [dir (fs/create-temp-dir {:prefix "vis-inline-v1-repair-"})]
+      (try
+        (let [s (vis/db-create-connection! (str dir))]
+          (vis/db-dispose-connection! s))
+        (drop-conversation-intent-schema! (fs/file dir "vis.db"))
+        (let [s (vis/db-create-connection! (str dir))]
+          (try
+            (let [cid    (vis/db-store-conversation! s {:channel :cli})
+                  tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                             :user-request "fix the schema"
+                                                             :status :running})
+                  state  (vis/db-intents s {:conversation-turn-id tid})
+                  intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                                  :title "Repair intent"
+                                                  :rationale "The user asked for schema repair."})]
+              (expect (false? (:ok? state)))
+              (expect (= :missing-focused-intent (-> state :violations first :type)))
+              (expect (= "Repair intent" (:title intent))))
+            (finally
+              (vis/db-dispose-connection! s))))
+        (finally
+          (fs/delete-tree dir))))))
 
 ;; =============================================================================
 ;; Conversation
@@ -268,8 +308,15 @@
           plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                         :summary "Inspect and verify."
                                         :steps [{:id :verify}]})
+          slot   [(:id intent) :verification]
+          plan-dsl (:plan plan)
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Did verification pass?"})
+                                        :proposition "Verification passes."
+                                        :expected-proof {:slots {slot {:required? true}}
+                                                         :guard [:exists [:slot slot :ref]]}})
+          _candidate (vis/db-offer-proof! s {:gate-id (:id gate)
+                                             :slots {slot {:ref ref}}
+                                             :refs [ref]})
           proven (vis/db-prove-gate! s {:gate-id (:id gate)
                                         :summary "Verification passed."
                                         :refs [ref]})
@@ -281,7 +328,10 @@
       (expect (= 1 (raw-count s :conversation_intent_plan)))
       (expect (= 1 (raw-count s :conversation_intent_gate)))
       (expect (= 1 (raw-count s :conversation_intent_gate_ref)))
+      (expect (= :verify (get-in plan-dsl [:steps 0 :id])))
       (expect (= :proven (:status proven)))
+      (expect (= "Verification passes." (:proposition gate)))
+      (expect (= ref (get-in proven [:proof :slots slot :ref])))
       (expect (= :fulfilled (:status fulfilled)))
       (expect (= true (:ok? state)))
       (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
@@ -424,9 +474,9 @@
         gate   (vis/db-store-gate! s {:plan-id (:id plan)
                                       :question "Did deferred work complete?"})
         [block] (vis/db-list-iteration-blocks s iid)
-        blocked (vis/db-block-gate! s {:gate-id (:id gate)
-                                       :reason "Deferred work timed out."
-                                       :refs [await-ref]})
+        impeded (vis/db-impede-gate! s {:gate-id (:id gate)
+                                        :reason "Deferred work timed out."
+                                        :refs [await-ref]})
         proof-thrown (try
                        (vis/db-prove-gate! s {:gate-id (:id gate)
                                               :summary "Future completed."
@@ -435,7 +485,7 @@
                        (catch Exception e e))]
     (expect (= await-ref (get-in block [:events 0 :provenance :ref])))
     (expect (= :timeout (get-in block [:events 0 :provenance :status])))
-    (expect (= :blocked (:status blocked)))
+    (expect (= :impeded (:status impeded)))
     (expect (some? proof-thrown))
     (expect (str/includes? (ex-message proof-thrown) "completed successful lifecycle event"))))
 

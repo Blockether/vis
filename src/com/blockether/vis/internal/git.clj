@@ -12,6 +12,11 @@
 
 (set! *warn-on-reflection* true)
 
+(def ^:private default-cache-ms 5000)
+
+(defonce ^:private workspace-status-cache
+  (atom {:cwd nil :expires-at 0 :value nil}))
+
 (defn cwd-file
   "Canonical current working directory as a File. Indirected for tests."
   ^File []
@@ -65,7 +70,8 @@
   [^Repository repo branch]
   (try
     (when-let [^BranchTrackingStatus tracking (BranchTrackingStatus/of repo branch)]
-      {:ahead  (.getAheadCount tracking)
+      {:upstream? true
+       :ahead  (.getAheadCount tracking)
        :behind (.getBehindCount tracking)})
     (catch Throwable _ nil)))
 
@@ -76,16 +82,17 @@
    render the absence of a workspace. Inside git, returns:
 
      {:workspace? true
-      :repo "vis"
-      :branch "main"
+      :repo <repo-name>
+      :branch <branch-name>
       :modified 2 :created 1 :deleted 0
-      :ahead 4 :behind 0} ; ahead/behind only when upstream exists"
+      :upstream? true :ahead 4 :behind 0}"
   ([] (workspace-status (cwd-file)))
   ([^File start]
    (if-let [^Repository repo (open-repository start)]
      (try
        (let [branch   (branch-label repo)
-             tracking (tracking-counts repo branch)
+             tracking (or (tracking-counts repo branch)
+                        {:upstream? false :ahead 0 :behind 0})
              ^Git git (Git/wrap repo)
              ^Status status (try
                               (.. git status call)
@@ -101,3 +108,22 @@
        (finally
          (try (.close repo) (catch Throwable _ nil))))
      {:workspace? false})))
+
+(defn cached-workspace-status
+  "Cached `workspace-status` for hot render paths.
+
+   The TUI footer repaints often, and other surfaces will need the same
+   git workspace facts. Keep the cache here so every caller shares one
+   resolved view instead of each UI namespace running JGit independently."
+  ([] (cached-workspace-status (System/currentTimeMillis) default-cache-ms))
+  ([now-ms ttl-ms]
+   (let [cwd (.getPath (cwd-file))
+         {:keys [expires-at value]} @workspace-status-cache]
+     (if (and (= cwd (:cwd @workspace-status-cache))
+           (< (long now-ms) (long expires-at)))
+       value
+       (let [value (workspace-status)]
+         (reset! workspace-status-cache {:cwd cwd
+                                         :expires-at (+ (long now-ms) (long ttl-ms))
+                                         :value value})
+         value)))))

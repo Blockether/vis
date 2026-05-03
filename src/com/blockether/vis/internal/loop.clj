@@ -794,17 +794,19 @@
   (re-pattern
     (str "(?i)\\b("
       (str/join "|"
-        ["audit" "build" "change" "check" "code" "debug" "diagnose"
+        ["audit" "bash" "build" "change" "check" "code" "debug" "diagnose"
          "edit" "fail" "failing" "fix" "grep" "implement" "inspect"
-         "investigate" "patch" "refactor" "repo" "repository" "reproduce"
-         "run" "search" "test" "verify" "write"])
+         "investigate" "ls" "patch" "paste" "pasted" "refactor" "repo"
+         "repository" "reproduce" "run" "search" "sent" "test" "verify"
+         "what did i send" "write"])
       ")\\b")))
 
 (defn intent-required?
   "True when the current request needs workspace/evidence-backed intent gating.
    Trivial chat and pure conceptual answers may finish without an intent; code,
-   debugging, repository, change, search, verification, audit, and multi-step
-   work must first create/focus and resolve an intent."
+   debugging, repository, change, search, verification, audit, pasted-content
+   inspection, terminal/tool demonstration, and multi-step work must first
+   create/focus and resolve an intent."
   [user-request]
   (boolean (and (string? user-request)
              (re-find evidence-bearing-request-pattern user-request))))
@@ -931,6 +933,20 @@
 ;; run-iteration
 ;; ---------------------------------------------------------------------------
 
+(defn- token-number
+  [tokens ks]
+  (some (fn [k]
+          (let [v (get tokens k)]
+            (when (number? v) v)))
+    ks))
+
+(defn- ask-result->api-usage
+  [{:keys [tokens]}]
+  {:prompt_tokens (long (or (token-number tokens [:input]) 0))
+   :completion_tokens (long (or (token-number tokens [:output]) 0))
+   :completion_tokens_details {:reasoning_tokens (long (or (token-number tokens [:reasoning]) 0))}
+   :prompt_tokens_details {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached]) 0))}})
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -996,10 +1012,7 @@
                :duration-ms   (:duration-ms ask-result)
                :tokens        (:tokens ask-result)
                :thinking      thinking})
-          api-usage {:prompt_tokens (get-in ask-result [:tokens :input] 0)
-                     :completion_tokens (get-in ask-result [:tokens :output] 0)
-                     :completion_tokens_details {:reasoning_tokens (get-in ask-result [:tokens :reasoning] 0)}
-                     :prompt_tokens_details {:cached_tokens (get-in ask-result [:tokens :cached] 0)}}
+          api-usage (ask-result->api-usage ask-result)
           ;; svar/ask-code! returns the concatenated source string in :result.
           ;; Parse it into top-level forms; each form becomes one
           ;; expression_state row.

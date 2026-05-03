@@ -112,8 +112,244 @@
 
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
 
+(def ^:private inline-v1-conversation-intent-ddl
+  ["CREATE TABLE IF NOT EXISTS conversation_intent (
+      id TEXT PRIMARY KEY NOT NULL,
+      conversation_soul_id TEXT NOT NULL REFERENCES conversation_soul(id) ON DELETE CASCADE,
+      title TEXT NOT NULL CHECK (trim(title) <> ''),
+      rationale TEXT NOT NULL CHECK (trim(rationale) <> ''),
+      status TEXT NOT NULL CHECK (status IN ('active', 'fulfilled', 'abandoned')),
+      fulfillment_summary TEXT CHECK (fulfillment_summary IS NULL OR trim(fulfillment_summary) <> ''),
+      abandonment_reason TEXT CHECK (abandonment_reason IS NULL OR trim(abandonment_reason) <> ''),
+      created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+      resolved_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+      created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+      resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
+      metadata TEXT,
+      created_at INTEGER NOT NULL,
+      resolved_at INTEGER,
+      CHECK (status <> 'fulfilled' OR
+             (fulfillment_summary IS NOT NULL AND abandonment_reason IS NULL AND resolved_at IS NOT NULL)),
+      CHECK (status <> 'abandoned' OR
+             (abandonment_reason IS NOT NULL AND fulfillment_summary IS NULL AND resolved_at IS NOT NULL)),
+      CHECK (status <> 'active' OR
+             (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL))
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_soul_status
+      ON conversation_intent(conversation_soul_id, status, created_at)"
+   "CREATE TABLE IF NOT EXISTS conversation_intent_ref (
+      id TEXT PRIMARY KEY NOT NULL,
+      intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+      ref TEXT NOT NULL CHECK (trim(ref) <> ''),
+      role TEXT NOT NULL CHECK (role IN ('fulfillment-evidence', 'abandonment-evidence', 'context')),
+      metadata TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE (intent_id, ref, role)
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_ref_intent ON conversation_intent_ref(intent_id)"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_ref_ref ON conversation_intent_ref(ref)"
+   "CREATE TABLE IF NOT EXISTS conversation_intent_relation (
+      id TEXT PRIMARY KEY NOT NULL,
+      from_intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+      to_intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+      relation TEXT NOT NULL CHECK (relation IN ('subintent', 'related', 'supports', 'blocks')),
+      rationale TEXT CHECK (rationale IS NULL OR trim(rationale) <> ''),
+      metadata TEXT,
+      created_at INTEGER NOT NULL,
+      CHECK (from_intent_id <> to_intent_id),
+      UNIQUE (from_intent_id, to_intent_id, relation)
+    )"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_relation_same_soul_ai
+      BEFORE INSERT ON conversation_intent_relation
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) IS NULL
+            OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id) IS NULL
+          THEN RAISE(ABORT, 'conversation_intent_relation endpoint not found')
+          WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) <>
+               (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id)
+          THEN RAISE(ABORT, 'conversation_intent_relation endpoints must belong to same conversation_soul')
+        END;
+      END"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_relation_same_soul_au
+      BEFORE UPDATE ON conversation_intent_relation
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) IS NULL
+            OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id) IS NULL
+          THEN RAISE(ABORT, 'conversation_intent_relation endpoint not found')
+          WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) <>
+               (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id)
+          THEN RAISE(ABORT, 'conversation_intent_relation endpoints must belong to same conversation_soul')
+        END;
+      END"
+   "CREATE TABLE IF NOT EXISTS conversation_intent_plan (
+      id TEXT PRIMARY KEY NOT NULL,
+      intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'superseded', 'abandoned')),
+      summary TEXT NOT NULL CHECK (trim(summary) <> ''),
+      plan_dsl BLOB,
+      steps BLOB,
+      supersedes_plan_id TEXT REFERENCES conversation_intent_plan(id) ON DELETE SET NULL,
+      created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+      created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+      metadata BLOB,
+      created_at INTEGER NOT NULL
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_plan_intent
+      ON conversation_intent_plan(intent_id, created_at)"
+   "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_intent_plan_one_active
+      ON conversation_intent_plan(intent_id)
+      WHERE status = 'active'"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_plan_supersedes_ai
+      BEFORE INSERT ON conversation_intent_plan
+      BEGIN
+        SELECT CASE
+          WHEN NEW.supersedes_plan_id IS NOT NULL
+               AND (SELECT intent_id FROM conversation_intent_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
+          THEN RAISE(ABORT, 'conversation_intent_plan supersedes must target same intent')
+        END;
+      END"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_plan_supersedes_au
+      BEFORE UPDATE ON conversation_intent_plan
+      BEGIN
+        SELECT CASE
+          WHEN NEW.intent_id <> OLD.intent_id
+          THEN RAISE(ABORT, 'conversation_intent_plan intent is immutable')
+        END;
+        SELECT CASE
+          WHEN NEW.supersedes_plan_id IS NOT NULL
+               AND (SELECT intent_id FROM conversation_intent_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
+          THEN RAISE(ABORT, 'conversation_intent_plan supersedes must target same intent')
+        END;
+      END"
+   "CREATE TABLE IF NOT EXISTS conversation_intent_gate (
+      id TEXT PRIMARY KEY NOT NULL,
+      plan_id TEXT NOT NULL REFERENCES conversation_intent_plan(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'proven', 'impeded')),
+      required INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
+      proposition TEXT NOT NULL CHECK (trim(proposition) <> ''),
+      expected_proof BLOB NOT NULL,
+      candidate_proof BLOB,
+      proof BLOB,
+      impediment BLOB,
+      metadata BLOB,
+      created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+      resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
+      created_at INTEGER NOT NULL,
+      resolved_at INTEGER,
+      CHECK (status <> 'proven' OR
+             (proof IS NOT NULL AND impediment IS NULL AND resolved_at IS NOT NULL)),
+      CHECK (status <> 'impeded' OR
+             (impediment IS NOT NULL AND proof IS NULL AND resolved_at IS NOT NULL)),
+      CHECK (status <> 'open' OR
+             (proof IS NULL AND impediment IS NULL AND resolved_at IS NULL))
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_gate_plan
+      ON conversation_intent_gate(plan_id, created_at)"
+   "CREATE TABLE IF NOT EXISTS conversation_intent_gate_ref (
+      id TEXT PRIMARY KEY NOT NULL,
+      gate_id TEXT NOT NULL REFERENCES conversation_intent_gate(id) ON DELETE CASCADE,
+      ref TEXT NOT NULL CHECK (trim(ref) <> ''),
+      role TEXT NOT NULL DEFAULT 'proof' CHECK (role IN ('proof', 'impediment', 'context')),
+      intent_id TEXT,
+      slot TEXT,
+      metadata BLOB,
+      created_at INTEGER NOT NULL,
+      UNIQUE (gate_id, ref, role, intent_id, slot)
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_gate_ref_gate ON conversation_intent_gate_ref(gate_id)"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_gate_ref_ref ON conversation_intent_gate_ref(ref)"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_gate_ref_terminal_au
+      BEFORE UPDATE ON conversation_intent_gate_ref
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'impeded')
+          THEN RAISE(ABORT, 'conversation_intent_gate refs are immutable after gate is proven or impeded')
+        END;
+      END"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_gate_ref_terminal_ad
+      BEFORE DELETE ON conversation_intent_gate_ref
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'impeded')
+          THEN RAISE(ABORT, 'conversation_intent_gate refs cannot be deleted after gate is proven or impeded')
+        END;
+      END"
+   "CREATE TABLE IF NOT EXISTS conversation_intent_focus (
+      id TEXT PRIMARY KEY NOT NULL,
+      conversation_turn_state_id TEXT NOT NULL REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK (source IN ('created', 'touched', 'inferred')),
+      metadata TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE (conversation_turn_state_id, intent_id)
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_focus_turn_state
+      ON conversation_intent_focus(conversation_turn_state_id, created_at)"
+   "CREATE INDEX IF NOT EXISTS idx_conversation_intent_focus_intent
+      ON conversation_intent_focus(intent_id)"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_focus_same_soul_ai
+      BEFORE INSERT ON conversation_intent_focus
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT cs.conversation_soul_id
+                FROM conversation_turn_state cts
+                JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+                JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+                WHERE cts.id = NEW.conversation_turn_state_id) IS NULL
+            OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
+          THEN RAISE(ABORT, 'conversation_intent_focus endpoint not found')
+          WHEN (SELECT cs.conversation_soul_id
+                FROM conversation_turn_state cts
+                JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+                JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+                WHERE cts.id = NEW.conversation_turn_state_id) <>
+               (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id)
+          THEN RAISE(ABORT, 'conversation_intent_focus intent must belong to turn-state conversation_soul')
+        END;
+      END"
+   "CREATE TRIGGER IF NOT EXISTS trg_conversation_intent_focus_same_soul_au
+      BEFORE UPDATE ON conversation_intent_focus
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT cs.conversation_soul_id
+                FROM conversation_turn_state cts
+                JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+                JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+                WHERE cts.id = NEW.conversation_turn_state_id) IS NULL
+            OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
+          THEN RAISE(ABORT, 'conversation_intent_focus endpoint not found')
+          WHEN (SELECT cs.conversation_soul_id
+                FROM conversation_turn_state cts
+                JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+                JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+                WHERE cts.id = NEW.conversation_turn_state_id) <>
+               (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id)
+          THEN RAISE(ABORT, 'conversation_intent_focus intent must belong to turn-state conversation_soul')
+        END;
+      END"])
+
+(defn- table-exists?
+  [^DataSource ds table-name]
+  (boolean
+    (seq (jdbc/execute! ds
+           ["SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?" table-name]
+           {:builder-fn rs/as-unqualified-lower-maps}))))
+
+(defn- repair-inline-v1-schema!
+  "V1 is still edited inline during pre-release development. Existing local
+   databases can therefore have Flyway's V1 marker while missing newer V1
+   objects. Keep those developer databases usable by installing the added
+   conversation-scoped intent tables idempotently after Flyway has run."
+  [^DataSource ds]
+  (when-not (table-exists? ds "conversation_intent")
+    (doseq [ddl inline-v1-conversation-intent-ddl]
+      (jdbc/execute! ds [ddl]))))
+
 (defn- install-schema! [^DataSource ds]
-  (migration/migrate! ds MIGRATIONS))
+  (migration/migrate! ds MIGRATIONS)
+  (repair-inline-v1-schema! ds))
 
 ;; =============================================================================
 ;; Connection management
@@ -725,7 +961,7 @@
 (defn- gate-refs
   [db-info gate-id]
   (->> (query! db-info
-         {:select [:ref :role :metadata :created_at]
+         {:select [:ref :role :intent_id :slot :metadata :created_at]
           :from   :conversation_intent_gate_ref
           :where  [:= :gate_id (->ref gate-id)]
           :order-by [[:created_at :asc]]})
@@ -733,7 +969,8 @@
             (cond-> {:ref (:ref row)
                      :role (->kw-back (:role row))
                      :created-at (->date (:created_at row))}
-              (:metadata row) (assoc :metadata (<-json (:metadata row))))))))
+              (:intent_id row) (assoc :slot [(->uuid (:intent_id row)) (keyword (:slot row))])
+              (:metadata row) (assoc :metadata (<-blob (:metadata row))))))))
 
 (defn- row->intent
   ([row] (row->intent row [] [] []))
@@ -768,27 +1005,31 @@
             :gates      gates
             :created-at (->date (:created_at row))}
      (:supersedes_plan_id row) (assoc :supersedes-plan-id (->uuid (:supersedes_plan_id row)))
-     (:steps row)              (assoc :steps (<-json (:steps row)))
+     (:plan_dsl row)           (assoc :plan (<-blob (:plan_dsl row)))
+     (:steps row)              (assoc :steps (<-blob (:steps row)))
      (:created_conversation_turn_id row) (assoc :created-conversation-turn-id (->uuid (:created_conversation_turn_id row)))
      (:created_ref row)        (assoc :created-ref (:created_ref row))
-     (:metadata row)           (assoc :metadata (<-json (:metadata row))))))
+     (:metadata row)           (assoc :metadata (<-blob (:metadata row))))))
 
 (defn- row->gate
   ([row] (row->gate row []))
   ([row refs]
-   (cond-> {:id         (->uuid (:id row))
-            :handle     (id-handle "G" (:id row))
-            :plan-id    (->uuid (:plan_id row))
-            :status     (->kw-back (:status row))
-            :required?  (= 1 (long (:required row)))
-            :question   (:question row)
-            :refs       refs
-            :created-at (->date (:created_at row))}
-     (:proof_summary row)      (assoc :proof-summary (:proof_summary row))
-     (:block_reason row)       (assoc :block-reason (:block_reason row))
-     (:created_ref row)        (assoc :created-ref (:created_ref row))
-     (:resolved_ref row)       (assoc :resolved-ref (:resolved_ref row))
-     (:resolved_at row)        (assoc :resolved-at (->date (:resolved_at row))))))
+   (cond-> {:id             (->uuid (:id row))
+            :handle         (id-handle "G" (:id row))
+            :plan-id        (->uuid (:plan_id row))
+            :status         (->kw-back (:status row))
+            :required?      (= 1 (long (:required row)))
+            :proposition    (:proposition row)
+            :expected-proof (<-blob (:expected_proof row))
+            :refs           refs
+            :created-at     (->date (:created_at row))}
+     (:candidate_proof row) (assoc :candidate-proof (<-blob (:candidate_proof row)))
+     (:proof row)           (assoc :proof (<-blob (:proof row)))
+     (:impediment row)      (assoc :impediment (<-blob (:impediment row)))
+     (:metadata row)        (assoc :metadata (<-blob (:metadata row)))
+     (:created_ref row)     (assoc :created-ref (:created_ref row))
+     (:resolved_ref row)    (assoc :resolved-ref (:resolved_ref row))
+     (:resolved_at row)     (assoc :resolved-at (->date (:resolved_at row))))))
 
 (defn- canonical-ref-or-throw! [ref]
   (when-not (prov-ref/canonical-ref? ref)
@@ -1032,8 +1273,15 @@
        :relation relation
        :rationale rationale})))
 
+(defn- default-plan-dsl
+  [intent-id steps]
+  {:entry [:intent (->uuid (->ref intent-id))]
+   :nodes {[:intent (->uuid (->ref intent-id))] {:kind :intent}}
+   :edges []
+   :steps (vec (or steps []))})
+
 (defn db-store-plan!
-  [db-info {:keys [intent-id summary steps created-ref metadata conversation-turn-id]}]
+  [db-info {:keys [intent-id summary plan steps created-ref metadata conversation-turn-id]}]
   (when (ds db-info)
     (when-not (seq (str summary))
       (throw (ex-info "issue-plan requires :summary" {:intent-id intent-id})))
@@ -1045,6 +1293,7 @@
                                                :from :conversation_intent_plan
                                                :where [:and [:= :intent_id (->ref intent-id)] [:= :status "active"]]}))
             id (str (UUID/randomUUID))
+            plan-dsl (or plan (default-plan-dsl intent-id steps))
             now (now-ms)]
         (when previous
           (execute! tx-info {:update :conversation_intent_plan
@@ -1056,104 +1305,270 @@
                              :intent_id (->ref intent-id)
                              :status "active"
                              :summary summary
-                             :steps (->json (when steps (vec steps)))
+                             :plan_dsl (->blob plan-dsl)
+                             :steps (->blob (when steps (vec steps)))
                              :supersedes_plan_id previous
-                             :metadata (->json metadata)
+                             :metadata (->blob metadata)
                              :created_at now}
                       conversation-turn-id (assoc :created_conversation_turn_id (->ref conversation-turn-id))
                       created-ref (assoc :created_ref created-ref))]})
         (row->plan (require-row tx-info :conversation_intent_plan id "conversation_intent_plan not found"))))))
 
+(defn- normalize-proof-slot-id
+  [slot]
+  (when-not (and (vector? slot)
+              (= 2 (count slot))
+              (keyword? (second slot)))
+    (throw (ex-info "proof slot must be [intent-id :slot-name]"
+             {:slot slot})))
+  [(->uuid (first slot)) (second slot)])
+
+(defn- normalize-proof-slots
+  [slots]
+  (into {}
+    (map (fn [[slot value]]
+           [(normalize-proof-slot-id slot) value]))
+    (or slots {})))
+
+(defn- proof-guard-slot-ids
+  [guard]
+  (let [slots (atom [])]
+    (letfn [(walk [x]
+              (cond
+                (and (vector? x) (= :slot (first x)))
+                (do (swap! slots conj (second x))
+                  (doseq [child (drop 2 x)] (walk child)))
+
+                (map? x)
+                (doseq [[k v] x] (walk k) (walk v))
+
+                (coll? x)
+                (doseq [child x] (walk child))))]
+      (walk guard)
+      @slots)))
+
+(defn- normalize-expected-proof
+  [expected-proof]
+  (let [expected-proof (or expected-proof {:slots {}})
+        slots          (normalize-proof-slots (:slots expected-proof))]
+    (doseq [slot (proof-guard-slot-ids (:guard expected-proof))]
+      (normalize-proof-slot-id slot))
+    (assoc expected-proof :slots slots)))
+
+(defn- normalize-proof-data
+  [proof-data]
+  (-> (or proof-data {})
+    (update :slots normalize-proof-slots)
+    (update :refs #(vec (or % [])))))
+
+(defn- selector-value
+  [proof-data selector]
+  (cond
+    (= selector [:refs]) (:refs proof-data)
+    (and (vector? selector) (= :slot (first selector)))
+    (get-in (:slots proof-data) (into [(normalize-proof-slot-id (second selector))] (drop 2 selector)))
+    :else selector))
+
+(defn- guard-value
+  [proof-data x]
+  (if (and (vector? x) (#{:slot :refs} (first x)))
+    (selector-value proof-data x)
+    x))
+
+(defn- guard-passes?
+  [proof-data guard]
+  (letfn [(eval-guard [expr]
+            (if-not (vector? expr)
+              (boolean expr)
+              (let [op (first expr)
+                    args (rest expr)]
+                (case op
+                  :and (every? eval-guard args)
+                  :or  (boolean (some eval-guard args))
+                  :not (not (eval-guard (first args)))
+                  :=   (= (guard-value proof-data (first args)) (guard-value proof-data (second args)))
+                  :!=  (not= (guard-value proof-data (first args)) (guard-value proof-data (second args)))
+                  :<   (< (guard-value proof-data (first args)) (guard-value proof-data (second args)))
+                  :<=  (<= (guard-value proof-data (first args)) (guard-value proof-data (second args)))
+                  :>   (> (guard-value proof-data (first args)) (guard-value proof-data (second args)))
+                  :>=  (>= (guard-value proof-data (first args)) (guard-value proof-data (second args)))
+                  :exists (some? (guard-value proof-data (first args)))
+                  :contains (let [haystack (guard-value proof-data (first args))
+                                  needle   (guard-value proof-data (second args))]
+                              (cond
+                                (string? haystack) (str/includes? haystack (str needle))
+                                (coll? haystack)   (contains? (set haystack) needle)
+                                :else false))
+                  :matches (boolean (re-find (re-pattern (str (guard-value proof-data (second args))))
+                                      (str (guard-value proof-data (first args)))))
+                  (boolean (guard-value proof-data expr))))))]
+    (if guard (eval-guard guard) true)))
+
+(defn- required-proof-slots-present?
+  [expected-proof proof-data]
+  (every? (fn [[slot {:keys [required?]}]]
+            (or (false? required?) (contains? (:slots proof-data) slot)))
+    (:slots expected-proof)))
+
+(defn- proof-ref-entries
+  [proof-data role]
+  (let [explicit (map #(if (map? %) (assoc % :role role) {:ref % :role role}) (:refs proof-data))
+        slotted  (keep (fn [[slot value]]
+                         (when-let [ref (:ref value)]
+                           {:ref ref :role role :slot slot}))
+                   (:slots proof-data))]
+    (->> (concat explicit slotted)
+      (reduce (fn [acc entry]
+                (update acc [(:ref entry) (:role entry)] merge entry))
+        {})
+      vals
+      vec)))
+
 (defn db-store-gate!
-  [db-info {:keys [plan-id question required? created-ref]}]
+  [db-info {:keys [plan-id proposition expected-proof candidate-proof required? created-ref metadata]
+            legacy-question :question}]
   (when (ds db-info)
-    (when-not (seq (str question))
-      (throw (ex-info "issue-gate requires :question" {:plan-id plan-id})))
-    (when created-ref (canonical-ref-or-throw! created-ref))
-    (let [_plan (require-row db-info :conversation_intent_plan plan-id "conversation_intent_plan not found")
-          id (str (UUID/randomUUID))]
-      (execute! db-info
-        {:insert-into :conversation_intent_gate
-         :values [(cond-> {:id id
-                           :plan_id (->ref plan-id)
-                           :status "open"
-                           :required (if (false? required?) 0 1)
-                           :question question
-                           :created_at (now-ms)}
-                    created-ref (assoc :created_ref created-ref))]})
-      (row->gate (require-row db-info :conversation_intent_gate id "conversation_intent_gate not found")))))
+    (let [proposition (or proposition legacy-question)]
+      (when-not (seq (str proposition))
+        (throw (ex-info "issue-gate requires :proposition" {:plan-id plan-id})))
+      (when created-ref (canonical-ref-or-throw! created-ref))
+      (let [_plan (require-row db-info :conversation_intent_plan plan-id "conversation_intent_plan not found")
+            id (str (UUID/randomUUID))
+            expected-proof (normalize-expected-proof expected-proof)
+            candidate-proof (normalize-proof-data candidate-proof)]
+        (execute! db-info
+          {:insert-into :conversation_intent_gate
+           :values [(cond-> {:id id
+                             :plan_id (->ref plan-id)
+                             :status "open"
+                             :required (if (false? required?) 0 1)
+                             :proposition proposition
+                             :expected_proof (->blob expected-proof)
+                             :candidate_proof (->blob candidate-proof)
+                             :metadata (->blob metadata)
+                             :created_at (now-ms)}
+                      created-ref (assoc :created_ref created-ref))]})
+        (row->gate (require-row db-info :conversation_intent_gate id "conversation_intent_gate not found"))))))
 
 (defn- normalize-ref-entry [role ref]
-  (let [{ref-value :ref ref-role :role ref-metadata :metadata} (if (map? ref) ref {:ref ref})]
-    {:ref (str ref-value) :role (or ref-role role) :metadata ref-metadata}))
+  (let [{ref-value :ref ref-role :role ref-metadata :metadata slot :slot} (if (map? ref) ref {:ref ref})]
+    (cond-> {:ref (str ref-value) :role (or ref-role role) :metadata ref-metadata}
+      slot (assoc :slot (normalize-proof-slot-id slot)))))
 
 (defn- store-gate-refs!
   [db-info gate-id refs role now]
-  (doseq [{:keys [ref role metadata]} (map #(normalize-ref-entry role %) refs)]
+  (doseq [{:keys [ref role metadata slot]} (map #(normalize-ref-entry role %) refs)]
     (execute! db-info
       {:insert-into :conversation_intent_gate_ref
-       :values [{:id         (str (UUID/randomUUID))
-                 :gate_id    (->ref gate-id)
-                 :ref        ref
-                 :role       (->kw role)
-                 :metadata   (->json metadata)
-                 :created_at now}]})))
+       :values [(cond-> {:id         (str (UUID/randomUUID))
+                         :gate_id    (->ref gate-id)
+                         :ref        ref
+                         :role       (->kw role)
+                         :metadata   (->blob metadata)
+                         :created_at now}
+                  slot (assoc :intent_id (->ref (first slot))
+                         :slot (name (second slot))))]})))
+
+(defn db-offer-proof!
+  [db-info {:keys [gate-id slots refs metadata]}]
+  (when (ds db-info)
+    (let [candidate-update (normalize-proof-data {:slots slots :refs refs})]
+      (jdbc/with-transaction [tx (ds db-info)]
+        (let [tx-info (assoc db-info :datasource tx)
+              gate    (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+              previous (normalize-proof-data (<-blob (:candidate_proof gate)))
+              candidate {:slots (merge (:slots previous) (:slots candidate-update))
+                         :refs  (vec (distinct (concat (:refs previous) (:refs candidate-update))))}]
+          (execute! tx-info
+            {:update :conversation_intent_gate
+             :set    (cond-> {:candidate_proof (->blob candidate)}
+                       metadata (assoc :metadata (->blob metadata)))
+             :where  [:= :id (->ref gate-id)]})
+          (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+            (gate-refs tx-info gate-id)))))))
 
 (defn db-prove-gate!
-  [db-info {:keys [gate-id summary refs resolved-ref metadata]}]
+  [db-info {:keys [gate-id summary refs slots resolved-ref metadata]}]
   (when (ds db-info)
     (let [refs-v (vec refs)]
       (when-not (seq refs-v)
-        (throw (ex-info "proven gate requires at least one evidence ref" {:gate-id gate-id})))
+        (throw (ex-info "proven gate requires at least one proof ref" {:gate-id gate-id})))
       (when-not (seq (str summary))
         (throw (ex-info "proven gate requires :summary" {:gate-id gate-id})))
       (jdbc/with-transaction [tx (ds db-info)]
         (let [tx-info (assoc db-info :datasource tx)
-              gate    (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-              plan    (require-row tx-info :conversation_intent_plan (:plan_id gate) "conversation_intent_plan not found")
+              gate-row (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+              plan    (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
               soul-id (intent-conversation-soul-id tx-info (:intent_id plan))
-              now     (now-ms)]
+              now     (now-ms)
+              expected-proof (normalize-expected-proof (<-blob (:expected_proof gate-row)))
+              candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
+              proof-data (normalize-proof-data
+                           {:summary summary
+                            :refs refs-v
+                            :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))
+                            :guard (:guard expected-proof)})]
+          (when-not (required-proof-slots-present? expected-proof proof-data)
+            (throw (ex-info "proven gate proof is missing required slots"
+                     {:gate-id gate-id
+                      :required-slots (keys (:slots expected-proof))
+                      :provided-slots (keys (:slots proof-data))})))
+          (when-not (guard-passes? proof-data (:guard expected-proof))
+            (throw (ex-info "proven gate proof did not satisfy expected proof guard"
+                     {:gate-id gate-id
+                      :guard (:guard expected-proof)})))
           (validate-provenance-refs! tx-info soul-id refs-v :proof)
-          (store-gate-refs! tx-info gate-id refs-v :evidence now)
+          (store-gate-refs! tx-info gate-id (proof-ref-entries proof-data :proof) :proof now)
           (execute! tx-info
             {:update :conversation_intent_gate
-             :set    (cond-> {:status        "proven"
-                              :proof_summary summary
-                              :block_reason  nil
-                              :resolved_at   now}
-                       metadata     (assoc :metadata (->json metadata))
+             :set    (cond-> {:status          "proven"
+                              :candidate_proof nil
+                              :proof           (->blob proof-data)
+                              :impediment      nil
+                              :resolved_at     now}
+                       metadata     (assoc :metadata (->blob metadata))
+                       resolved-ref (assoc :resolved_ref resolved-ref))
+             :where  [:= :id (->ref gate-id)]})
+          (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+            (gate-refs tx-info gate-id)))))))
+
+(defn db-impede-gate!
+  [db-info {:keys [gate-id reason refs slots resolved-ref metadata]}]
+  (when (ds db-info)
+    (let [refs-v (vec refs)]
+      (when-not (seq refs-v)
+        (throw (ex-info "impeded gate requires at least one impediment ref" {:gate-id gate-id})))
+      (when-not (seq (str reason))
+        (throw (ex-info "impeded gate requires :reason" {:gate-id gate-id})))
+      (jdbc/with-transaction [tx (ds db-info)]
+        (let [tx-info (assoc db-info :datasource tx)
+              gate-row (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+              plan    (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
+              soul-id (intent-conversation-soul-id tx-info (:intent_id plan))
+              now     (now-ms)
+              candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
+              impediment-data (normalize-proof-data
+                                {:reason reason
+                                 :refs refs-v
+                                 :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))})]
+          (validate-provenance-refs! tx-info soul-id refs-v :blocker)
+          (store-gate-refs! tx-info gate-id (proof-ref-entries impediment-data :impediment) :impediment now)
+          (execute! tx-info
+            {:update :conversation_intent_gate
+             :set    (cond-> {:status          "impeded"
+                              :candidate_proof nil
+                              :proof           nil
+                              :impediment      (->blob impediment-data)
+                              :resolved_at     now}
+                       metadata     (assoc :metadata (->blob metadata))
                        resolved-ref (assoc :resolved_ref resolved-ref))
              :where  [:= :id (->ref gate-id)]})
           (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
             (gate-refs tx-info gate-id)))))))
 
 (defn db-block-gate!
-  [db-info {:keys [gate-id reason refs resolved-ref metadata]}]
-  (when (ds db-info)
-    (let [refs-v (vec refs)]
-      (when-not (seq refs-v)
-        (throw (ex-info "blocked gate requires at least one evidence ref" {:gate-id gate-id})))
-      (when-not (seq (str reason))
-        (throw (ex-info "blocked gate requires :reason" {:gate-id gate-id})))
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)
-              gate    (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-              plan    (require-row tx-info :conversation_intent_plan (:plan_id gate) "conversation_intent_plan not found")
-              soul-id (intent-conversation-soul-id tx-info (:intent_id plan))
-              now     (now-ms)]
-          (validate-provenance-refs! tx-info soul-id refs-v :blocker)
-          (store-gate-refs! tx-info gate-id refs-v :evidence now)
-          (execute! tx-info
-            {:update :conversation_intent_gate
-             :set    (cond-> {:status        "blocked"
-                              :proof_summary nil
-                              :block_reason  reason
-                              :resolved_at   now}
-                       metadata     (assoc :metadata (->json metadata))
-                       resolved-ref (assoc :resolved_ref resolved-ref))
-             :where  [:= :id (->ref gate-id)]})
-          (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-            (gate-refs tx-info gate-id)))))))
+  [db-info opts]
+  (db-impede-gate! db-info opts))
 
 (defn- active-plan-for-intent [db-info intent-id]
   (query-one! db-info {:select [:*]
@@ -1330,35 +1745,91 @@
                                      :blocking? true
                                      :intent-id (:id intent)
                                      :gate-id (:id gate)
-                                     :message (str "Required gate is open: " (:question gate))})
+                                     :message (str "Required gate is open: " (:proposition gate))})
                                (filter #(= :open (:status %)) required))
                              (map (fn [gate]
-                                    {:type :required-blocked-gate
+                                    {:type :required-impeded-gate
                                      :blocking? true
                                      :intent-id (:id intent)
                                      :gate-id (:id gate)
-                                     :message (str "Required gate is blocked; re-plan or abandon: " (:question gate))})
-                               (filter #(= :blocked (:status %)) required))))]
+                                     :message (str "Required gate is impeded; re-plan or abandon: " (:proposition gate))})
+                               (filter #(= :impeded (:status %)) required))))]
           [[{:check :intent-resolved :ok? false :intent-id (:id intent)}] violations])))))
+
+(defn- code-ish [x]
+  (str "`" x "`"))
+
+(defn- refs-text [refs]
+  (when (seq refs)
+    (str/join ", " (map code-ish (distinct (map :ref refs))))))
+
+(defn- proof-slots-text [slots]
+  (when (seq slots)
+    (str/join ", "
+      (map (fn [[slot value]]
+             (str (code-ish (pr-str slot)) " → " (code-ish (pr-str value))))
+        slots))))
+
+(defn- gate-report-markdown [gate]
+  (str "    - Gate " (code-ish (:handle gate)) " " (name (:status gate))
+    " — " (:proposition gate) "\n"
+    "      - required: " (:required? gate) "\n"
+    (when-let [slots (proof-slots-text (get-in gate [:expected-proof :slots]))]
+      (str "      - expected slots: " slots "\n"))
+    (when-let [guard (get-in gate [:expected-proof :guard])]
+      (str "      - guard: " (code-ish (pr-str guard)) "\n"))
+    (when-let [slots (proof-slots-text (get-in gate [:candidate-proof :slots]))]
+      (str "      - candidate-proof slots: " slots "\n"))
+    (when-let [proof (:proof gate)]
+      (str "      - proof: " (:summary proof) "\n"
+        (when-let [slots (proof-slots-text (:slots proof))]
+          (str "      - proof slots: " slots "\n"))))
+    (when-let [impediment (:impediment gate)]
+      (str "      - impediment: " (:reason impediment) "\n"
+        (when-let [slots (proof-slots-text (:slots impediment))]
+          (str "      - impediment slots: " slots "\n"))))
+    (when-let [refs (refs-text (:refs gate))]
+      (str "      - refs: " refs "\n"))))
+
+(defn- plan-report-markdown [plan]
+  (str "  - Plan " (code-ish (:handle plan)) " " (name (:status plan))
+    " — " (:summary plan) "\n"
+    (when-let [plan-dsl (:plan plan)]
+      (str "    - DSL: " (code-ish (pr-str plan-dsl)) "\n"))
+    (when (seq (:steps plan))
+      (str "    - steps: " (code-ish (pr-str (:steps plan))) "\n"))
+    (if (seq (:gates plan))
+      (str/join "" (map gate-report-markdown (:gates plan)))
+      "    - gates: none\n")))
+
+(defn- relation-report-markdown [relation]
+  (str "  - " (name (:relation relation)) " " (code-ish (:handle relation))
+    (when-let [rationale (:rationale relation)]
+      (str " — " rationale))
+    "\n"))
+
+(defn- intent-report-markdown [intent]
+  (str "- Intent " (code-ish (:handle intent)) " " (name (:status intent))
+    " — " (:title intent) "\n"
+    "  - id: " (code-ish (:id intent)) "\n"
+    (when-let [refs (refs-text (:refs intent))]
+      (str "  - refs: " refs "\n"))
+    (when (seq (:relations intent))
+      (str "  - relations:\n" (str/join "" (map relation-report-markdown (:relations intent)))))
+    (if (seq (:plans intent))
+      (str "  - plans:\n" (str/join "" (map plan-report-markdown (:plans intent))))
+      "  - plans: none\n")))
 
 (defn- intents-report-markdown [ok? focused-ids unfocused-active-ids intents violations]
   (str "## Intents\n\n"
     "- Scope: conversation\n"
-    "- Status: " (if ok? "ok" (str "blocked (" (count violations) " violation(s))")) "\n"
+    "- Status: " (if ok? "ok" (str "needs resolution (" (count violations) " violation(s))")) "\n"
     "- Focused: " (if (seq focused-ids) (str/join ", " focused-ids) "none") "\n"
     (when (seq unfocused-active-ids)
       (str "- Unfocused active intents: " (str/join ", " unfocused-active-ids) "\n"))
     "\n"
     (if (seq intents)
-      (str/join "\n"
-        (map (fn [intent]
-               (str "- `" (:handle intent) "` " (name (:status intent)) " — " (:title intent)
-                 (when (seq (:refs intent))
-                   (str "\n  - refs: " (str/join ", " (map :ref (:refs intent)))))
-                 (when (seq (:plans intent))
-                   (str "\n  - plans: "
-                     (str/join ", " (map #(str "`" (:handle %) "` " (name (:status %))) (:plans intent)))))))
-          intents))
+      (str/join "\n" (map intent-report-markdown intents))
       "_No intents._")
     (when (seq violations)
       (str "\n\n### Violations\n"

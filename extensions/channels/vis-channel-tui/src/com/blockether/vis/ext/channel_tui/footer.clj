@@ -23,11 +23,11 @@
    identity + budget bits; the bubble keeps the live activity story
    («Vis is thinking (iter 3)… 4.1s · Esc to cancel»).
 
-   The second footer row carries repository context when the current
-   working directory is inside git: repo/branch, modified/created/deleted
-   counts, and ahead/behind counts when an upstream is configured. Git
-   status is cached briefly so repainting the TUI does not run JGit on
-   every frame.
+   The first footer row carries repository context on the right:
+   repo/branch, modified/created/deleted counts, and ahead/behind counts
+   when an upstream is configured. The second footer row carries provider
+   budgets and cumulative usage under that git context. Git status is
+   cached briefly so repainting the TUI does not run JGit on every frame.
 
    Every numeric format uses `Locale/ROOT` so a Polish JVM doesn't
    produce mixed `5,8k` next to English `k`. The previous footer
@@ -73,58 +73,48 @@
   (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
     (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
 
-(def ^:private git-footer-cache-ms 5000)
+(def ^:private git-glyph "")
 
-(defonce ^:private git-footer-cache
-  (atom {:cwd nil :expires-at 0 :value nil}))
+(defn- git-repo-label
+  [{:keys [repo branch]}]
+  (str "~/" (or repo "?") " (" (or branch "?") ")"))
 
-(defn- git-footer-status
-  []
-  (let [now-ms (System/currentTimeMillis)
-        cwd    (.getPath (git/cwd-file))
-        {:keys [expires-at value]} @git-footer-cache]
-    (if (and (= cwd (:cwd @git-footer-cache))
-          (< now-ms (long expires-at)))
-      value
-      (let [value (git/workspace-status)]
-        (reset! git-footer-cache {:cwd cwd
-                                  :expires-at (+ now-ms git-footer-cache-ms)
-                                  :value value})
-        value))))
+(defn- git-dirty-label
+  [{:keys [modified created deleted]}]
+  (let [modified (long (or modified 0))
+        created  (long (or created 0))
+        deleted  (long (or deleted 0))]
+    (if (zero? (+ modified created deleted))
+      "files: clean"
+      (String/format Locale/ROOT "files: %d modified, %d created, %d deleted"
+        (into-array Object [modified created deleted])))))
+
+(defn- git-sync-label
+  [{:keys [upstream? ahead behind]}]
+  (let [ahead  (long (or ahead 0))
+        behind (long (or behind 0))]
+    (cond
+      (not upstream?) "commits: no upstream"
+      (zero? (+ ahead behind)) "commits: up to date"
+      :else (str "commits:"
+              (when (pos? ahead) (str " ⇡" ahead))
+              (when (pos? behind) (str " ⇣" behind))))))
 
 (defn- git-footer-spans
-  [{:keys [workspace? repo branch modified created deleted ahead behind]}]
+  [{:keys [workspace?] :as status}]
   (if workspace?
-    (cond-> [{:text (str "git workspace: " repo "/" branch)
-              :fg t/footer-fg-strong :bold? true
-              :region :left :priority 2}]
-      (number? modified)
-      (conj {:text (str "modified " modified)
-             :fg t/footer-fg-muted :bold? false
-             :region :left :priority 3})
-
-      (number? created)
-      (conj {:text (str "created " created)
-             :fg t/footer-fg-muted :bold? false
-             :region :left :priority 3})
-
-      (number? deleted)
-      (conj {:text (str "deleted " deleted)
-             :fg t/footer-fg-muted :bold? false
-             :region :left :priority 3})
-
-      (number? ahead)
-      (conj {:text (str "ahead " ahead)
-             :fg t/footer-fg-muted :bold? false
-             :region :left :priority 4})
-
-      (number? behind)
-      (conj {:text (str "behind " behind)
-             :fg t/footer-fg-muted :bold? false
-             :region :left :priority 4}))
-    [{:text "git workspace: no"
+    [{:text (str git-glyph " " (git-repo-label status))
+      :fg t/footer-fg-strong :bold? true
+      :region :right :priority 2}
+     {:text (git-dirty-label status)
       :fg t/footer-fg-muted :bold? false
-      :region :left :priority 2}]))
+      :region :right :priority 3}
+     {:text (git-sync-label status)
+      :fg t/footer-fg-muted :bold? false
+      :region :right :priority 4}]
+    [{:text (str "No " git-glyph)
+      :fg t/footer-error-fg :bold? true
+      :region :right :priority 2}]))
 
 (defn- session-cost
   "Cumulative session cost in USD across all assistant turns, or nil
@@ -260,7 +250,7 @@
      4  cost
      5  keyboard shortcut hints"
   [db _now-ms]
-  (let [{:keys [messages cancelling? settings]} db
+  (let [{:keys [cancelling? settings]} db
         info       (chosen-model-info)
         model      (:name info)
         provider   (:provider info)
@@ -275,9 +265,8 @@
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
-        tokens-str (some-> (session-tokens messages) fmt/format-tokens)
-        cost-str   (format-cost (session-cost messages))]
-    (cond-> []
+        git-spans  (git-footer-spans (git/cached-workspace-status))]
+    (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       model-display
       (conj {:text model-display
@@ -327,26 +316,36 @@
       ;; current-iteration.
 
       ;; ── RIGHT ─────────────────────────────────────────────────────────────
+      ;; Git lives here. Provider usage moved to the second row so it sits
+      ;; directly under the repository state instead of competing with it.
+      )))
+
+(defn- build-usage-segments
+  [{:keys [messages]}]
+  (let [tokens-str (some-> (session-tokens messages) fmt/format-tokens)
+        cost-str   (format-cost (session-cost messages))]
+    (cond-> []
       tokens-str
       (conj {:text (str "total " tokens-str)
              :fg t/footer-fg-muted :bold? false
-             :region :right :priority 3})
+             :region :right :priority 2})
 
       cost-str
       (conj {:text cost-str
              :fg t/footer-fg-muted :bold? false
-             :region :right :priority 4}))))
+             :region :right :priority 3}))))
 
 (defn- build-limits-segments
   [db now-ms]
   (let [provider (some-> (chosen-model-info) :provider)
         text     (when (= :openai-codex provider)
                    (codex-limits-footer-text db now-ms))]
-    (cond-> (vec (git-footer-spans (git-footer-status)))
-      text
-      (conj {:text text
-             :fg t/footer-fg-muted :bold? false
-             :region :right :priority 1}))))
+    (into (cond-> []
+            text
+            (conj {:text text
+                   :fg t/footer-fg-muted :bold? false
+                   :region :left :priority 1}))
+      (build-usage-segments db))))
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 

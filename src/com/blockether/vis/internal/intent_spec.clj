@@ -42,8 +42,8 @@
 (def relation-kinds #{:subintent :related :supports :blocks})
 (def intent-ref-roles #{:fulfillment-evidence :abandonment-evidence :context})
 (def plan-statuses #{:active :completed :superseded :abandoned})
-(def gate-statuses #{:open :proven :blocked})
-(def gate-ref-roles #{:evidence :counter-evidence :context})
+(def gate-statuses #{:open :proven :impeded})
+(def gate-ref-roles #{:proof :impediment :context})
 (def focus-sources #{:created :touched :inferred})
 (def event-statuses #{:running :done :error :interrupted :timeout :cancelled})
 (def rendering-kinds #{:vis/sci :vis/silent :vis/system :vis/tool :vis/answer :vis/error :vis/diagnostic})
@@ -66,9 +66,11 @@
 (s/def ::summary non-blank-string?)
 (s/def ::reason non-blank-string?)
 (s/def ::question non-blank-string?)
+(s/def ::proposition non-blank-string?)
 (s/def ::status event-statuses)
 (s/def ::metadata map?)
 (s/def ::steps vector?)
+(s/def ::plan map?)
 (s/def ::required? boolean?)
 (s/def ::relation relation-kinds)
 (s/def ::source focus-sources)
@@ -93,7 +95,7 @@
 (s/def :plan/summary non-blank-string?)
 (s/def :gate/id uuid-string?)
 (s/def :gate/status gate-statuses)
-(s/def :gate/question non-blank-string?)
+(s/def :gate/proposition non-blank-string?)
 (s/def :provenance/ref canonical-ref?)
 (s/def :rendering/kind rendering-kinds)
 (s/def :block/idx nat-int?)
@@ -118,21 +120,44 @@
 
 (s/def ::issue-plan-opts
   (s/keys :req-un [::intent-id ::summary]
-    :opt-un [::steps ::created-ref ::metadata]))
+    :opt-un [::plan ::steps ::created-ref ::metadata]))
+
+(defn proof-slot-id? [x]
+  (and (vector? x)
+    (= 2 (count x))
+    (uuid-string? (first x))
+    (keyword? (second x))))
+
+(s/def ::proof-slot-id proof-slot-id?)
+(s/def ::slots (s/map-of ::proof-slot-id map?))
+(s/def ::guard vector?)
+(s/def ::expected-proof (s/keys :req-un [::slots]
+                          :opt-un [::guard]))
+(s/def ::candidate-proof (s/keys :opt-un [::slots ::refs]))
+(s/def ::proof (s/keys :req-un [::summary ::refs]
+                 :opt-un [::slots ::guard]))
+(s/def ::impediment (s/keys :req-un [::reason ::refs]
+                      :opt-un [::slots]))
 
 (s/def ::issue-gate-opts
-  (s/keys :req-un [::plan-id ::question]
-    :opt-un [::required? ::created-ref ::metadata]))
+  (s/keys :req-un [::plan-id ::proposition ::expected-proof]
+    :opt-un [::candidate-proof ::required? ::created-ref ::metadata]))
+
+(s/def ::offer-proof-opts
+  (s/keys :req-un [::gate-id]
+    :opt-un [::slots ::refs ::metadata]))
 
 (s/def ::prove-gate-opts
   (s/and #(seq (:refs %))
     (s/keys :req-un [::summary ::refs]
-      :opt-un [::resolved-ref ::metadata])))
+      :opt-un [::slots ::resolved-ref ::metadata])))
 
-(s/def ::block-gate-opts
+(s/def ::impede-gate-opts
   (s/and #(seq (:refs %))
     (s/keys :req-un [::reason ::refs]
-      :opt-un [::resolved-ref ::metadata])))
+      :opt-un [::slots ::resolved-ref ::metadata])))
+
+(s/def ::block-gate-opts ::impede-gate-opts)
 
 (s/def ::fulfill-intent-opts
   (s/and #(seq (:refs %))
