@@ -84,6 +84,42 @@
                    [{:row 5 :col 2 :width 6}]
                    {:row-padding 2})))))
 
+(defdescribe click-selection-test
+  (it "finds the same selection source for input and transcript rows"
+    (expect (= :input
+              (selection/source-at-point
+                (selection/point 4 8)
+                [{:row 3 :col 2 :width 10}]
+                [{:row 8 :col 2 :width 10}]
+                {:row-padding 1})))
+    (expect (= :transcript
+              (selection/source-at-point
+                (selection/point 4 3)
+                [{:row 3 :col 2 :width 10}]
+                [{:row 8 :col 2 :width 10}]
+                {:row-padding 1}))))
+
+  (it "detects a rapid second click on the same source row"
+    (let [last-click {:source :input
+                      :point  (selection/point 3 8)
+                      :time-ms 1000}]
+      (expect (selection/double-click?
+                last-click 1200 :input (selection/point 9 8) 500))
+      (expect (not (selection/double-click?
+                     last-click 1200 :transcript (selection/point 9 8) 500)))
+      (expect (not (selection/double-click?
+                     last-click 1200 :input (selection/point 9 9) 500)))
+      (expect (not (selection/double-click?
+                     last-click 1700 :input (selection/point 9 8) 500)))))
+
+  (it "expands a double-click to the whole selectable line"
+    (expect (= {:anchor (selection/point 2 11)
+                :focus  (selection/point 7 11)}
+              (selection/line-selection-at-point
+                (selection/point 5 4)
+                [{:row 4 :col 2 :width 6}]
+                {:viewport-top 2 :eff-scroll 9})))))
+
 (defdescribe document-selection-test
   (it "projects document-space selection into the current viewport"
     (expect (= {:anchor (selection/point 4 2)

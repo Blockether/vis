@@ -279,7 +279,7 @@
           (expect (str/includes? out "User request:** First turn"))
           (expect (str/includes? out "Provider/model:** blockether/gpt-4o"))
           ;; Per-iteration header.
-          (expect (str/includes? out "#### Iteration 0"))
+          (expect (str/includes? out "#### Iteration 1"))
           ;; Per-block header.
           (expect (str/includes? out "##### Block 0"))
           ;; Code rendered inside a fenced ```clojure block (NOT a

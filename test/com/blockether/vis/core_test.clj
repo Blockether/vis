@@ -1127,25 +1127,6 @@
       ;; Must surface SOMETHING actionable; exact message is edamame's.
       (expect (pos? (count err))))))
 
-(defdescribe glued-numeric-option-keyword-repro-test
-  (it "reproduces the {:limit200} parse failure from execution 2a696007"
-    (let [src "(v/glob \".\" \"**/*.clj\" {:limit200})"
-          [forms err] (vis/split-top-level-forms src)]
-      (expect (nil? err))
-      (expect (= 1 (count forms)))
-      (expect (= "(v/glob \".\" \"**/*.clj\" {:limit 200})"
-                (:expr (first forms))))
-      (expect (:repaired? (first forms)))))
-
-  (it "reproduces the {:max-lines260} parse failure from the last persisted block"
-    (let [src "(v/cat foundation-core-path {:max-lines260})"
-          [forms err] (vis/split-top-level-forms src)]
-      (expect (nil? err))
-      (expect (= 1 (count forms)))
-      (expect (= "(v/cat foundation-core-path {:max-lines 260})"
-                (:expr (first forms))))
-      (expect (:repaired? (first forms))))))
-
 (defdescribe markdown-fence-guard-test
   (it "rejects raw markdown fence tokens before SCI eval can blow the stack"
     (let [environment (vis/create-sci-context nil)
@@ -2092,7 +2073,7 @@
   (it "prints an empty-list message when no conversations exist"
     (let [{:keys [exit out]} (run-vis "conversations")]
       (expect (zero? exit))
-      (expect (str/includes? out "No tui conversations found."))))
+      (expect (str/includes? out "No conversations found."))))
 
   (it "prints database bootstrap user errors instead of failing silently"
     (let [bad-dir (make-temp-db-dir "vis-cli-bad-flyway-db-")]

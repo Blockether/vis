@@ -94,6 +94,36 @@
                  (< col (+ (long c) (long w)))))
          ranges)))))
 
+(defn source-at-point
+  "Return the selectable text source under `point`, or nil.
+
+   Input rows are checked first so the input editor wins if a vertical comfort
+   zone ever overlaps transcript chrome. Both sources use the same
+   `point-in-ranges?` predicate, which keeps hit-testing behaviour identical for
+   transcript bubbles and the input editor."
+  ([point transcript-ranges input-ranges]
+   (source-at-point point transcript-ranges input-ranges nil))
+  ([point transcript-ranges input-ranges opts]
+   (cond
+     (point-in-ranges? point input-ranges opts) :input
+     (point-in-ranges? point transcript-ranges opts) :transcript
+     :else nil)))
+
+(defn double-click?
+  "True when `point` is a second click on the same source row in time.
+
+   `last-click` is a map with `:source`, `:point`, and `:time-ms`. Columns are
+   intentionally ignored: line selection should tolerate small horizontal mouse
+   movement between clicks, while requiring the same row prevents a rapid click
+   on a neighbouring line from selecting the wrong text."
+  [last-click now-ms source point threshold-ms]
+  (let [elapsed (- (long now-ms) (long (:time-ms last-click 0)))]
+    (boolean
+      (and last-click
+        (= source (:source last-click))
+        (<= 0 elapsed (long (max 0 threshold-ms)))
+        (= (:row point) (get-in last-click [:point :row]))))))
+
 (defn screen->document-point
   "Convert a visible screen point into a transcript document point.
 
@@ -103,6 +133,27 @@
   [{:keys [col row]} {:keys [viewport-top eff-scroll]}]
   (point col (+ (long (or eff-scroll 0))
                (- (long row) (long (or viewport-top 0))))))
+
+(defn line-selection-at-point
+  "Expand a click on a selectable screen row to that whole row.
+
+   Returns a document-space `{:anchor ... :focus ...}` selection, or nil when
+   the point is only in padding/chrome. The end point is inclusive to match
+   `selected-ranges` semantics."
+  [{:keys [col row]} selectable-ranges viewport]
+  (let [col (long col)
+        row (long row)]
+    (when-let [{range-col :col range-row :row width :width}
+               (some (fn [{range-col :col range-row :row width :width :as r}]
+                       (when (and (= row (long range-row))
+                               (>= col (long range-col))
+                               (< col (+ (long range-col) (long width))))
+                         r))
+                 selectable-ranges)]
+      {:anchor (screen->document-point (point range-col range-row) viewport)
+       :focus  (screen->document-point (point (dec (+ (long range-col) (long width)))
+                                         range-row)
+                 viewport)})))
 
 (defn document->screen-selection
   "Project a document-space selection into the current screen viewport."
