@@ -86,16 +86,16 @@
                  :blocks-by-iteration [[1 {:thinking nil
                                            :blocks   [{:code "(+ 1 2)"
                                                        :result 3
-                                                       :provenance {:ref "i1.1"
-                                                                    :op :vis/eval
-                                                                    :engine :vis/sci
+                                                       :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
+                                                                    :op :sci/eval
+                                                                    :status :done
                                                                     :duration-ms 7}}]}]]
                  :iteration           1})]
       (expect (string? out))
       (expect (str/includes? out ":provenance"))
-      (expect (str/includes? out ":ref \"i1.1\""))
-      (expect (str/includes? out ":op :vis/eval"))
-      (expect (str/includes? out ":engine :vis/sci"))))
+      (expect (str/includes? out ":ref \"turn/3f2a91c0/iteration/1/block/1\""))
+      (expect (str/includes? out ":op :sci/eval"))
+      (expect (str/includes? out ":status :done"))))
 
   ;; Helpers ------------------------------------------------------------------
   ;;
@@ -256,15 +256,18 @@
       (expect (str/includes? p "v/file-link"))
       (expect (str/includes? p "use `v/code-block`"))))
 
-  (it "teaches the completion contract lifecycle instead of local turn-state"
+  (it "teaches the conversation intent lifecycle instead of local turn-state"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "Contract-required classifier"))
-      (expect (str/includes? p "Completion contract is database-backed"))
+      (expect (str/includes? p "Intent-required classifier"))
+      (expect (str/includes? p "Conversation intents are database-backed"))
       (expect (str/includes? p "Do NOT maintain a parallel local proof map"))
-      (expect (str/includes? p "v/intent!"))
-      (expect (str/includes? p "v/gate-checks"))
-      (expect (str/includes? p "v/contract-report"))
-      (expect (str/includes? p "Close or block gates with observed evidence"))))
+      (expect (str/includes? p "v/issue-intent!"))
+      (expect (str/includes? p "v/intents"))
+      (expect (str/includes? p "v/fulfill-intent!"))
+      (expect (str/includes? p "Prove or block gates with observed evidence"))
+      (expect (not (str/includes? p "v/intent!")))
+      (expect (not (str/includes? p "v/gate-checks")))
+      (expect (not (str/includes? p "v/contract-report")))))
 
   (it "teaches the correct multi-iteration finish pattern"
     (let [p prompt/CORE_SYSTEM_PROMPT]

@@ -248,11 +248,11 @@
       (expect (= :error (:status (first (vis/db-list-conversation-turns s cid))))))))
 
 ;; =============================================================================
-;; Completion contract: intent -> plan -> gate refs
+;; Conversation-scoped intents: intent -> plan -> gate refs
 ;; =============================================================================
 
-(defdescribe work-provenance-test
-  (it "persists turn-scoped intent plan gate and exactly one proof ref"
+(defdescribe conversation-intent-test
+  (it "persists conversation-scoped intent plan gate and exactly one proof ref"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -260,73 +260,117 @@
                                                      :status :running})
           iid    (vis/db-store-iteration! s {:conversation-turn-id tid
                                              :blocks [{:code "(+ 1 2)"
-                                                       :result 3
-                                                       :provenance {:ref "i1.1"
-                                                                    :op :vis/eval
-                                                                    :engine :vis/sci
-                                                                    :form-position 1
-                                                                    :form-count 1}}]})
+                                                       :result 3}]})
+          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
           intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :key :main
-                                          :text "ship it"
-                                          :created-iteration-id iid
-                                          :created-ref "i1.1"})
+                                          :title "Ship it"
+                                          :rationale "User asked for it."})
           plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :key :main
                                         :summary "Inspect and verify."
                                         :steps [{:id :verify}]})
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :key :verify
                                         :question "Did verification pass?"})
-          att    (vis/db-prove-gate! s {:gate-id (:id gate)
+          proven (vis/db-prove-gate! s {:gate-id (:id gate)
                                         :summary "Verification passed."
-                                        :refs ["i1.1"]})
-          state  (vis/db-completion-contract s tid)]
-      (expect (= 1 (raw-count s :conversation_turn_intent)))
-      (expect (= 1 (raw-count s :conversation_turn_plan)))
-      (expect (= 1 (raw-count s :conversation_turn_gate)))
-      (expect (= 1 (raw-count s :conversation_turn_gate_ref)))
-      (expect (= :proven (:status (first (:gates state)))))
-      (expect (= :proven (:status att)))
-      (expect (= [{:ref "i1.1" :role :evidence :created-at (:created-at (first (:refs att)))}]
-                (:refs att)))))
+                                        :refs [ref]})
+          fulfilled (vis/db-fulfill-intent! s (:id intent)
+                      {:summary "Done."
+                       :refs [ref]})
+          state  (vis/db-intents s {:conversation-turn-id tid})]
+      (expect (= 1 (raw-count s :conversation_intent)))
+      (expect (= 1 (raw-count s :conversation_intent_plan)))
+      (expect (= 1 (raw-count s :conversation_intent_gate)))
+      (expect (= 1 (raw-count s :conversation_intent_gate_ref)))
+      (expect (= :proven (:status proven)))
+      (expect (= :fulfilled (:status fulfilled)))
+      (expect (= true (:ok? state)))
+      (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
+      (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind])))))
 
-  (it "rejects terminal gate state without evidence refs"
+  (it "rejects compact provenance refs"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                      :user-request "ship it"
                                                      :status :running})
-          intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "ship it"})
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship it"
+                                          :rationale "User asked for it."})
           plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :key :main
                                         :summary "Plan"})
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :key :verify
                                         :question "Verified?"})]
       (let [thrown (try
-                     (raw-query s {:update :conversation_turn_gate
-                                   :set {:status "proven"}
-                                   :where [:= :id (str (:id gate))]})
+                     (vis/db-prove-gate! s {:gate-id (:id gate)
+                                            :summary "Nope"
+                                            :refs ["i1.1"]})
                      nil
                      (catch Exception e e))]
         (expect (some? thrown))
-        (expect (re-find #"proven conversation_turn_gate requires evidence refs"
-                  (ex-message thrown))))))
+        (expect (str/includes? (ex-message thrown) "canonical")))))
 
-  (it "isolates contract per conversation_turn_state retry"
+  (it "supersedes the previous active plan for an intent"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "retry me"
+                                                     :user-request "plan"
                                                      :status :running})
-          intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "first run"})]
-      (vis/db-retry-conversation-turn! s tid {:status :running})
-      (let [retry-intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "retry run"})
-            state        (vis/db-completion-contract s tid)]
-        (expect (not= (:conversation-turn-state-id intent)
-                  (:conversation-turn-state-id retry-intent)))
-        (expect (= ["retry run"] (mapv :text (:intents state))))))))
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Plan"
+                                          :rationale "User asked."})
+          p1     (vis/db-store-plan! s {:intent-id (:id intent) :summary "First"})
+          p2     (vis/db-store-plan! s {:intent-id (:id intent) :summary "Second"})
+          plans  (raw-query s {:select [:id :status]
+                               :from :conversation_intent_plan
+                               :order-by [[:created_at :asc]]})]
+      (expect (= [[(str (:id p1)) "superseded"] [(str (:id p2)) "active"]]
+                (mapv (juxt :id :status) plans)))))
+
+  (it "reports unresolved focused intents as blocking"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship it"
+                                                     :status :running})
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship it"
+                                          :rationale "User asked for it."})
+          state  (vis/db-intents s {:conversation-turn-id tid})]
+      (expect (= false (:ok? state)))
+      (expect (some #(= :missing-active-plan (:type %)) (:violations state)))
+      (expect (= [(:id intent)] (:focused-intent-ids state)))))
+
+  (it "persists a running lifecycle child event for deferred future results and rejects it as proof"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship it"
+                                                     :status :running})
+          fut    (future (Thread/sleep 1000) :done)
+          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(future :done)"
+                                                       :result fut}]})
+          future-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship it"
+                                          :rationale "User asked for it."})
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                        :summary "Plan"})
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                        :question "Did deferred work complete?"})
+          [block] (vis/db-list-iteration-blocks s iid)
+          thrown (try
+                   (vis/db-prove-gate! s {:gate-id (:id gate)
+                                          :summary "Future completed."
+                                          :refs [future-ref]})
+                   nil
+                   (catch Exception e e))]
+      (future-cancel fut)
+      (expect (= {:vis/ref :expr} (:result block)))
+      (expect (= future-ref (get-in block [:events 0 :provenance :ref])))
+      (expect (= :running (get-in block [:events 0 :provenance :status])))
+      (expect (some? thrown))
+      (expect (str/includes? (ex-message thrown) "completed successful lifecycle event")))))
 
 ;; =============================================================================
 ;; Retry
@@ -408,12 +452,7 @@
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
-          provenance {:op :vis/eval
-                      :engine :vis/sci
-                      :iteration 1
-                      :form-position 1
-                      :form-count 1
-                      :ref "i1.1"
+          provenance {:op :sci/eval
                       :started-at-ms 10
                       :finished-at-ms 11
                       :duration-ms 1}]
@@ -425,7 +464,11 @@
                                   :duration-ms 5})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             [exec] (vis/db-list-iteration-blocks s (:id iteration))]
-        (expect (= provenance (:provenance exec))))))
+        (expect (= (assoc provenance
+                     :ref (str "turn/" (subs (str qid) 0 8) "/iteration/1/block/1")
+                     :status :done)
+                  (:provenance exec)))
+        (expect (= :vis/sci (:rendering-kind exec))))))
 
   (it "round-trips structured values through the BLOB"
     (let [s   (h/store)

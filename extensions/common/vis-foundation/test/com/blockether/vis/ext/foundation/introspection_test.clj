@@ -508,14 +508,18 @@
       (expect (contains? symbols 'provenance-stats))
       (expect (contains? symbols 'provenance-guards))
       (expect (contains? symbols 'provenance-report))
-      (expect (contains? symbols 'intent!))
-      (expect (contains? symbols 'plan!))
-      (expect (contains? symbols 'gate!))
+      (expect (contains? symbols 'issue-intent!))
+      (expect (contains? symbols 'focus-intent!))
+      (expect (contains? symbols 'relate-intents!))
+      (expect (contains? symbols 'issue-plan!))
+      (expect (contains? symbols 'issue-gate!))
       (expect (contains? symbols 'prove-gate!))
       (expect (contains? symbols 'block-gate!))
-      (expect (contains? symbols 'contract))
-      (expect (contains? symbols 'gates))
-      (expect (contains? symbols 'contract-report))
+      (expect (contains? symbols 'fulfill-intent!))
+      (expect (contains? symbols 'abandon-intent!))
+      (expect (contains? symbols 'intents))
+      (expect (not (contains? symbols 'intent!)))
+      (expect (not (contains? symbols 'contract)))
       (expect (contains? symbols 'audit-report))
       (expect (contains? symbols 'namespace-docs))
       (expect (contains? symbols 'symbol-doc))
@@ -531,9 +535,12 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-provenance-test
-  (it "builds an ordered eval/tool timeline with stable iN.K refs"
+  (it "builds an ordered eval/tool timeline with canonical refs"
     (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          base-ref (fn [block]
+                     (str "turn/" (subs (str conversation-turn-id) 0 8)
+                       "/iteration/1/block/" block))]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0
                    :code "(+ 1 2)"
@@ -552,14 +559,16 @@
                    :execution-time-ms 1
                    :provenance (eval-provenance 1 2 2)}]})
       (let [timeline ((private-fn "foundation-provenance-timeline") (env s conversation-id))]
-        (expect (= ["i1.1" "i1.2" "i1.2/tool"] (mapv :ref timeline)))
+        (expect (= [(base-ref 1) (base-ref 2) (str (base-ref 2) "/tool/v.bash")]
+                  (mapv :ref timeline)))
         (expect (= [:eval :eval :tool] (mapv :kind timeline)))
         (expect (= [:vis/eval :vis/eval :v/bash] (mapv :op timeline)))
-        (expect (= "i1.2" (:parent-ref (last timeline)))))))
+        (expect (= (base-ref 2) (:parent-ref (last timeline)))))))
 
   (it "rolls up provenance stats and failure slices"
     (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0
                    :code "(missing)"
@@ -573,9 +582,9 @@
         (expect (= 1 (:event-count stats)))
         (expect (= {:eval 1} (:by-kind stats)))
         (expect (= {:error 1} (:by-status stats)))
-        (expect (= "i1.1" (:ref (first (:failures stats))))))))
+        (expect (= ref (:ref (first (:failures stats))))))))
 
-  (it "guards provenance integrity and reports missing block provenance"
+  (it "guards injected block provenance as valid"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
       (db-store-iteration! s conversation-turn-id
@@ -587,13 +596,13 @@
                    :error nil
                    :execution-time-ms 1}]})
       (let [guards ((private-fn "foundation-provenance-guards") (env s conversation-id))]
-        (expect (false? (:ok? guards)))
-        (expect (some #(= :missing-op (:type %)) (:violations guards)))
-        (expect (some #(= :eval-missing-provenance (:type %)) (:violations guards))))))
+        (expect (true? (:ok? guards)))
+        (expect (= [] (:violations guards))))))
 
   (it "renders a compact Markdown provenance report"
     (let [s (h/store)
-          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0
                    :code "(+ 1 2)"
@@ -605,86 +614,74 @@
                    :provenance (eval-provenance 1 1 1)}]})
       (let [out ((private-fn "foundation-provenance-report") (env s conversation-id))]
         (expect (str/includes? out "## Provenance"))
-        (expect (str/includes? out "`i1.1` eval :vis/eval"))
+        (expect (str/includes? out ref))
         (expect (str/includes? out "Guards: ok"))))))
 
 ;; -----------------------------------------------------------------------------
-;; Contract gates — current conversation turn only.
+;; Conversation intents — current conversation focus only.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe foundation-gate-test
-  (it "creates current-turn contract and reports an open required gate"
+  (it "creates focused intent state and reports an open required gate"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           e (assoc (env s conversation-id)
               :current-conversation-turn-id-atom (atom conversation-turn-id))
-          intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
-          plan   ((private-fn "foundation-plan!") e {:intent-id (:id intent)
-                                                     :key :main
-                                                     :summary "Plan"})
-          gate   ((private-fn "foundation-gate!") e {:plan-id (:id plan)
-                                                     :key :verify
-                                                     :question "Verified?"})
-          checks ((private-fn "foundation-gate-checks") e)]
+          intent ((private-fn "foundation-issue-intent!") e {:title "Ship it" :rationale "User asked."})
+          plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
+                                                           :summary "Plan"})
+          gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
+                                                           :question "Verified?"})
+          checks ((private-fn "foundation-intents") e)]
       (expect (= "Verified?" (:question gate)))
       (expect (false? (:ok? checks)))
-      (expect (some #(= :required-gate-open (:type %)) (:violations checks)))))
+      (expect (some #(= :required-open-gate (:type %)) (:violations checks)))))
 
-  (it "accepts a proven attestation only when its refs resolve in the current turn timeline"
+  (it "accepts a fulfilled intent only when canonical refs resolve"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           e (assoc (env s conversation-id)
-              :current-conversation-turn-id-atom (atom conversation-turn-id))]
+              :current-conversation-turn-id-atom (atom conversation-turn-id))
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0
                    :code "(+ 1 2)"
                    :result 3
                    :execution-time-ms 1
                    :provenance (eval-provenance 1 1 1)}]})
-      (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
-            plan   ((private-fn "foundation-plan!") e {:intent-id (:id intent)
-                                                       :key :main
-                                                       :summary "Plan"})
-            gate   ((private-fn "foundation-gate!") e {:plan-id (:id plan)
-                                                       :key :verify
-                                                       :question "Verified?"})]
+      (let [intent ((private-fn "foundation-issue-intent!") e {:title "Ship it" :rationale "User asked."})
+            plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
+                                                             :summary "Plan"})
+            gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
+                                                             :question "Verified?"})]
         ((private-fn "foundation-prove-gate!") e (:id gate)
-                                               {:summary "Observed i1.1."
-                                                :refs ["i1.1"]})
-        (let [checks ((private-fn "foundation-gate-checks") e)
-              report ((private-fn "foundation-gate-report") e)]
+                                               {:summary "Observed verification."
+                                                :refs [ref]})
+        ((private-fn "foundation-fulfill-intent!") e (:id intent)
+                                                   {:summary "Done."
+                                                    :refs [ref]})
+        (let [checks ((private-fn "foundation-intents") e)]
           (expect (true? (:ok? checks)))
-          (expect (str/includes? report "proven required"))
-          (expect (str/includes? report "refs: i1.1"))))))
+          (expect (str/includes? (:report checks) ref))))))
 
-  (it "flags attestation refs from another turn as missing from current-turn provenance"
+  (it "rejects compact refs for gate proof"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
-          other-turn (vis/db-store-conversation-turn! s {:parent-conversation-id conversation-id
-                                                         :user-request "other"
-                                                         :status :running})
           e (assoc (env s conversation-id)
-              :current-conversation-turn-id-atom (atom conversation-turn-id))]
-      (db-store-iteration! s other-turn
-        {:blocks [{:id 0
-                   :code "(+ 1 2)"
-                   :result 3
-                   :execution-time-ms 1
-                   :provenance (eval-provenance 1 1 1)}]})
-      (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
-            plan   ((private-fn "foundation-plan!") e {:intent-id (:id intent)
-                                                       :key :main
-                                                       :summary "Plan"})
-            gate   ((private-fn "foundation-gate!") e {:plan-id (:id plan)
-                                                       :key :verify
-                                                       :question "Verified?"})]
-        ((private-fn "foundation-prove-gate!") e (:id gate)
-                                               {:summary "Wrong turn."
-                                                :refs ["i1.1"]})
-        (let [checks ((private-fn "foundation-gate-checks") e)]
-          (expect (false? (:ok? checks)))
-          (expect (some #(= :gate-ref-missing-from-current-turn-provenance (:type %))
-                    (:violations checks))))))))
+              :current-conversation-turn-id-atom (atom conversation-turn-id))
+          intent ((private-fn "foundation-issue-intent!") e {:title "Ship it" :rationale "User asked."})
+          plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
+                                                           :summary "Plan"})
+          gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
+                                                           :question "Verified?"})
+          thrown (try
+                   ((private-fn "foundation-prove-gate!") e (:id gate)
+                                                          {:summary "Wrong ref."
+                                                           :refs ["i1.1"]})
+                   nil
+                   (catch Exception ex ex))]
+      (expect (some? thrown))
+      (expect (str/includes? (ex-message thrown) "canonical")))))
 
 ;; -----------------------------------------------------------------------------
 ;; (v/extensions), (v/extension-docs ...), (v/extension-doc ...),

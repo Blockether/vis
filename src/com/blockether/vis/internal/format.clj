@@ -149,8 +149,8 @@
 ;; its own `String/format` for the cost. These helpers are the single
 ;; source of truth for the canonical surface form:
 ;;
-;;   tokens   →  "↑11461 ↓35"            (input arrows up, output down)
-;;   cost     →  "~$0.006954"            (six decimal places, US locale)
+;;   tokens   →  "↑11461 (cached 4096) ↓35" (input, cached input, output)
+;;   cost     →  "~$0.006954"             (six decimal places, US locale)
 ;;   iters    →  "1 iter" / "3 iters"    (unit auto-pluralized)
 ;;   line     →  "<iters> · <tokens> · ~$<cost> · <duration>"
 ;;
@@ -161,14 +161,39 @@
 ;; =============================================================================
 
 (defn format-tokens
-  "Render token counts in the canonical compact form: '↑<input> ↓<output>'.
+  "Render token counts in the canonical compact form:
+   '↑<input> (cached <cached-input>) ↓<output>'.
+
    Up arrow = tokens fed INTO the model (prompt); down arrow = tokens
-   the model produced. Returns nil when neither field carries a number."
-  [{:keys [input output]}]
-  (let [parts (cond-> []
-                (number? input)  (conj (str "↑" input))
-                (number? output) (conj (str "↓" output)))]
-    (when (seq parts) (str/join " " parts))))
+   the model produced. Cached is cached input tokens, displayed next to
+   input because provider APIs report cache hits inside prompt usage.
+   `:cached` is the legacy/current provider field; `:cached-input` /
+   `:input-cached` are accepted aliases so usage maps can name the
+   direction explicitly.
+
+   Returns nil when no known field carries a number."
+  [{:keys [input output] :as tokens}]
+  (letfn [(first-number [ks]
+            (some (fn [k]
+                    (let [v (get tokens k)]
+                      (when (number? v) v)))
+              ks))]
+    (let [cached-input (first-number [:cached-input :input-cached :cached])
+          cached-input (when (and (number? cached-input) (pos? cached-input))
+                         cached-input)
+          input-part (cond
+                       (and (number? input) cached-input)
+                       (str "↑" input " (cached " cached-input ")")
+
+                       (number? input)
+                       (str "↑" input)
+
+                       cached-input
+                       (str "↑0 (cached " cached-input ")"))
+          parts (cond-> []
+                  input-part       (conj input-part)
+                  (number? output) (conj (str "↓" output)))]
+      (when (seq parts) (str/join " " parts)))))
 
 (defn format-cost
   "Render a dollar cost as '~$0.006954' (six decimal places, US
@@ -241,8 +266,8 @@
    slot directly; pass `:model false` to suppress.
 
    `result` is the iteration runtime's result map: `{:iteration-count
-   :duration-ms :tokens {:input :output} :cost {:total-cost :provider
-   :model}}`. `opts` accepts
+   :duration-ms :tokens {:input :output :cached ...} :cost {:total-cost
+   :provider :model}}`. `opts` accepts
    `{:model <string|false> :prefix [...] :suffix [...]}` —
    `:prefix`/`:suffix` are lists of arbitrary extra slots prepended /
    appended to the line (rare; mostly for channels with non-result

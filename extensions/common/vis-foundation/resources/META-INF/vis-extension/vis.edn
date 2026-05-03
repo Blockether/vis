@@ -4,70 +4,58 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "vis-foundation: ONE classpath jar, ONE SCI alias `v/`, four cooperating surfaces — introspection (inspect data / report Markdown / extensions catalog), file I/O (cat / ls / rg / bash plus thin babashka.fs wrappers like read-all-lines / write-lines / update-file / glob / list-dir), markdown answer builders (h1 / p / table / file-link / join / code-block / details), and environment awareness (snapshot / git / languages / monorepo / refresh!). Owns the `<environment>` block in the system prompt and replaces the old multi-alias split."
+    "vis-foundation: ONE SCI alias `v/` for introspection, filesystem/tool helpers, Markdown answer builders, environment awareness, provenance, and conversation-scoped intent/plan/gate APIs."
     :content
     "# vis-foundation
 
 Pkg: `com.blockether/vis-foundation`. Src: `extensions/common/vis-foundation/`.
-Canonical: inlined under `[v :docs \"README.md\"]` in `META-INF/vis-extension/vis.edn`. LLM reads via `(v/extension-readme 'v)`.
 
-ONE alias `v/` bundles everything the agent needs to read its own state, work the filesystem, build answer markdown, and see the host environment. It replaces the older split across separate aliases and keeps the model inside one short prefix for the whole iteration.
+ONE alias `v/` bundles the model-facing host surface.
 
-## Sections
-
-### Introspection (read your own state)
-
-Pure reads off the same DB tables the projection layer uses; failures return nil/[] never throw. Conversation-state introspection is intentionally a deep two-call surface: one canonical data map, one Markdown renderer over the same data.
+## Conversation intents
 
 ```clojure
-(v/inspect cid?)                ; canonical state data {:conversation :current-turn :failures :diagnosis :llm-diagnostics :transcript ...}
-(v/report cid?)                 ; Markdown report rendered from the same state data, incl. raw LLM diagnostics
-(v/extensions)                  ; loaded ext catalog incl. author/owner/license/source markers
-(v/extension-docs ext-ref)      ; manifest doc summaries (no content)
-(v/extension-doc ext-ref)       ; full README descriptor incl. :content
-(v/extension-readme ext-ref)    ; README :content shortcut
-(v/namespace-docs ext-ref)      ; sandbox namespace symbol summaries
-(v/symbol-doc ext-ref sym)      ; doc/arglists/examples for one sandbox symbol
+(v/issue-intent! {:title \"...\" :rationale \"...\"})
+(v/focus-intent! intent-id {:rationale \"...\"})
+(v/relate-intents! {:from-intent-id ... :to-intent-id ... :relation :subintent})
+(v/issue-plan! {:intent-id ... :summary \"...\" :steps [...]})
+(v/issue-gate! {:plan-id ... :question \"...\" :required? true})
+(v/prove-gate! gate-id {:summary \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
+(v/block-gate! gate-id {:reason \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})
+(v/fulfill-intent! intent-id {:summary \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
+(v/abandon-intent! intent-id {:reason \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
+(v/intents)
 ```
 
-### File I/O (structured helpers + babashka.fs wrappers)
+`v/intents` is the single read/check/report surface. Final answers are accepted only after focused intents are fulfilled or abandoned.
 
-Structured helpers return tool-result envelopes; the thin babashka.fs wrappers return ordinary Clojure values like strings, booleans, and line vectors.
+Writer refs must be canonical, for example `turn/3f2a91c0/iteration/4/block/2`. Compact labels such as `i4.2`, `i4.2/tool`, `E1`, or `G1` are display-only and are rejected as writer input.
+
+## Provenance
 
 ```clojure
-(v/cat path)                    ; -> {:ok? :result :markdown ...}
-(v/cat path opts)               ; opts {:offset N :limit M :char-limit C}
-(v/ls path)                     ; -> {:ok? :result {:children [...]} ...}
-(v/ls path opts)                ; opts {:depth :hidden? :respect-gitignore?}
-(v/rg [\"a\" \"b\"] path)       ; -> {:ok? :result {:hits [...]} ...}
-                                  ; patterns = non-empty vec of LITERAL substrings (PCRE metacharacters auto-escaped)
-                                  ; for genuine regex: (re-seq #\"...\" (str/join \"\\n\" (v/read-all-lines path)))
-(v/bash command)                ; -> {:ok? true :result {:exit :stdout :stderr ...} ...}
-(v/bash command opts)           ; opts {:cwd :timeout-ms :max-output-chars :stdin}
-
-(v/read-all-lines path)         ; -> {:ok? true :result [\"line\" ...] ...}
-(v/write-lines path lines)      ; -> {:ok? true :result \"path\" ...}
-(v/update-file path f & xs)     ; -> {:ok? true :result new-string ...}
-(v/create-dirs path)            ; -> {:ok? true :result \"path\" ...}
-(v/list-dir path)               ; -> {:ok? true :result [\"child\" ...] ...}
-(v/glob root pattern)           ; -> {:ok? true :result [\"match\" ...] ...}
-(v/copy src dest)               ; -> {:ok? true :result \"dest\" ...}
-(v/move src dest)               ; -> {:ok? true :result \"dest\" ...}
-(v/delete path)                 ; -> {:ok? true :result true ...}
-(v/delete-if-exists path)       ; -> {:ok? true :result true|false ...}
-(v/exists? path)                ; -> {:ok? true :result true|false ...}
-(v/cwd)                         ; -> \"/abs/path\"
-(v/parent path)                 ; -> \"dir\" | nil
-(v/file-name path)              ; -> \"file.ext\"
-(v/extension path)              ; -> \"ext\"
-(v/relativize from to)          ; -> \"relative/path\"
+(v/provenance-timeline cid?)
+(v/provenance-stats cid?)
+(v/provenance-guards cid?)
+(v/provenance-report cid?)
 ```
 
-For structured Clojure edits use the sibling `vis-language-clojure` extension (alias `z/`).
+Provenance is machine data. Markdown and labels are derived by renderers, not stored in provenance maps.
 
-### Markdown answer builders
+## File I/O and tools
 
-Programmatic markdown for `(answer …)`. Pure string builders; no templating, no Mustache, no hidden interpolation layer.
+```clojure
+(v/cat path)
+(v/ls path)
+(v/rg [\"literal\"] path)
+(v/bash command)
+(v/read-all-lines path)
+(v/write-lines path lines)
+(v/update-file path f & xs)
+(v/glob root pattern)
+```
+
+## Markdown answer builders
 
 ```clojure
 (v/h1 \"Patch report\")
@@ -76,34 +64,27 @@ Programmatic markdown for `(answer …)`. Pure string builders; no templating, n
 (v/file-link \"src/core.clj\" 142)
 (v/code-block \"clojure\" \"(println :done)\")
 (v/join (v/h1 \"Done\") (v/p \"Ready.\"))
-
-(answer
-  (v/join
-    (v/h1 \"Patch report\")
-    (v/p \"Three files touched.\")
-    (v/ul [\"Run verify.sh\" \"Update CHANGELOG\"])))
 ```
 
-See `docs/src/extensions/common/markdown.md` for the full builder reference.
-
-### Environment awareness
-
-Bounded host + git + language + monorepo snapshot, computed lazily and cached per cwd.
+## Introspection and environment
 
 ```clojure
-(v/snapshot)        ; full snapshot {:host :git :languages :monorepo}
-(v/git)             ; git submap or nil
-(v/languages)       ; bounded language scan
-(v/monorepo)        ; monorepo shape detection
-(v/render)          ; same render as the system prompt's `<environment>` block
-(v/refresh!)        ; drop cache, recompute; useful after substantial working-tree changes
+(v/inspect cid?)
+(v/report cid?)
+(v/extensions)
+(v/extension-docs ext-ref)
+(v/extension-doc ext-ref)
+(v/extension-readme ext-ref)
+(v/namespace-docs ext-ref)
+(v/symbol-doc ext-ref sym)
+(v/snapshot)
+(v/git)
+(v/languages)
+(v/monorepo)
+(v/render)
+(v/refresh!)
 ```
-
-The `<environment>` block in the system prompt (cwd / user / platform / shell / locale / jvm / git / languages / monorepo) is rendered from the same snapshot. Drop this jar -> drop the block.
-
-## Why one alias?
-
-Pre-merge the agent had to context-switch between multiple aliases just to compose a single thought. Those boundaries reflected packaging history, not the model's actual job. Collapsing everything to `v/` keeps every primitive one short prefix away, including answer construction, so iteration code reads more like prose and less like namespace shuffling."
+"
     :links
     [{:url "https://arxiv.org/abs/2512.24601"
       :context "Recursive Language Models paper -- design vis is built on"}

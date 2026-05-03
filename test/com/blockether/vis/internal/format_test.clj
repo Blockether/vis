@@ -30,7 +30,12 @@
   (it "formats turn-summary atoms through the public helpers"
     (expect (= "1 iter" (format/format-iterations 1)))
     (expect (= "3 iters" (format/format-iterations 3)))
-    (expect (= "↑10 ↓5" (format/format-tokens {:input 10 :output 5})))
+    (expect (= "↑10 (cached 7) ↓5"
+              (format/format-tokens {:input 10 :output 5
+                                     :cached 7})))
+    (expect (= "↑10 ↓5"
+              (format/format-tokens {:input 10 :output 5
+                                     :cached 0})))
     (expect (= "~$0.123456" (format/format-cost 0.1234564)))
     (expect (= "1.5s" (format/format-duration 1500))))
 
@@ -38,12 +43,12 @@
     (let [line (format/format-meta-line
                  {:iteration-count 2
                   :duration-ms 1200
-                  :tokens {:input 100 :output 20}
+                  :tokens {:input 100 :output 20 :cached 60}
                   :cost {:total-cost 0.00042
                          :provider :openai
                          :model "gpt-4o"}})]
       (expect (str/includes? line "openai/gpt-4o"))
       (expect (str/includes? line "2 iters"))
-      (expect (str/includes? line "↑100 ↓20"))
+      (expect (str/includes? line "↑100 (cached 60) ↓20"))
       (expect (str/includes? line "~$0.000420"))
       (expect (str/includes? line "1.2s")))))

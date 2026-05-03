@@ -4,7 +4,7 @@
    Codex-style three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       glm-5.1 (balanced)                                   $0.04
+       glm-5.1 (balanced)              total ↑12000 (cached 8000) ↓800  $0.04
 
    Each region holds a list of `{:text :fg :bold? :region :priority}`
    spans separated by ' · ' in muted color. The full segment list is
@@ -12,9 +12,9 @@
    number (least important) until it fits the available width.
 
    States (driven by `:loading?`, `:cancelling?` from app-db):
-     idle       → LEFT=model    CENTER=∅           RIGHT=cost
-     running    → LEFT=model    CENTER=∅           RIGHT=cost
-     cancelling → LEFT=model    CENTER=cancelling…  RIGHT=cost
+     idle       → LEFT=model    CENTER=∅           RIGHT=tokens/cost
+     running    → LEFT=model    CENTER=∅           RIGHT=tokens/cost
+     cancelling → LEFT=model    CENTER=cancelling…  RIGHT=tokens/cost
 
    Run-state (spinner, iteration counter, elapsed time, current
    phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
@@ -32,6 +32,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [java.time Instant ZoneId]
            [java.time.format DateTimeFormatter]
@@ -76,6 +77,38 @@
                           acc))
                 0.0 messages)]
     (when (pos? total) total)))
+
+(defn- first-token-number
+  [tokens ks]
+  (some (fn [k]
+          (let [v (get tokens k)]
+            (when (number? v) v)))
+    ks))
+
+(defn- add-token-slot
+  [acc tokens out-k aliases]
+  (if-let [v (first-token-number tokens aliases)]
+    (update acc out-k (fnil + 0) (long v))
+    acc))
+
+(defn- add-message-tokens
+  [acc {:keys [tokens]}]
+  (if (map? tokens)
+    (-> acc
+      (add-token-slot tokens :input [:input])
+      (add-token-slot tokens :output [:output])
+      (add-token-slot tokens :cached-input [:cached-input :input-cached :cached]))
+    acc))
+
+(defn- session-tokens
+  "Cumulative session token usage across assistant turns. Returns nil
+   when no message carried usage. The legacy `:cached` field is cached
+   input."
+  [messages]
+  (let [totals (reduce add-message-tokens {} messages)]
+    (when (seq totals)
+      (merge {:input 0 :output 0 :cached-input 0}
+        totals))))
 
 (def ^:private one-week-ms
   (* 7 24 60 60 1000))
@@ -182,6 +215,7 @@
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
+        tokens-str (some-> (session-tokens messages) fmt/format-tokens)
         cost-str   (format-cost (session-cost messages))]
     (cond-> []
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -233,6 +267,11 @@
       ;; current-iteration.
 
       ;; ── RIGHT ─────────────────────────────────────────────────────────────
+      tokens-str
+      (conj {:text (str "total " tokens-str)
+             :fg t/footer-fg-muted :bold? false
+             :region :right :priority 3})
+
       cost-str
       (conj {:text cost-str
              :fg t/footer-fg-muted :bold? false

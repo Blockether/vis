@@ -1799,6 +1799,30 @@
                 (map #(cr/lookup hit-col %)
                   (range viewport-top (+ viewport-top start height)))))))
 
+  (it "renders cached token usage in the assistant bubble footer"
+    (let [puts    (atom [])
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers [] this)
+                     (enableModifiers [_] this)
+                     (disableModifiers [_] this)
+                     (getActiveModifiers []
+                       (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [_col row text]
+                       (swap! puts conj {:row row :text text})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))
+          height   (render/draw-chat-bubble! graphics
+                     {:role :assistant
+                      :text "hello"
+                      :tokens {:input 100 :output 20 :cached 70}}
+                     4 2 60 {:viewport-h 40})]
+      (expect (= 4 height))
+      (expect (some #(str/includes? (:text %) "↑100 (cached 70) ↓20")
+                @puts))))
+
   (it "renders the optional turn separator above the You label"
     (let [puts    (atom [])
           fills   (atom [])

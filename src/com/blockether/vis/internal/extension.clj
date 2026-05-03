@@ -101,7 +101,8 @@
 (s/def ::error (s/nilable ::error-map))
 
 (s/def ::tool-result-base
-  (s/keys :req-un [::ok? ::result ::result-shape ::provenance ::markdown ::error]))
+  (s/keys :req-un [::ok? ::result ::result-shape ::provenance ::error]
+    :opt-un [::markdown]))
 
 (s/def ::tool-result
   (s/and

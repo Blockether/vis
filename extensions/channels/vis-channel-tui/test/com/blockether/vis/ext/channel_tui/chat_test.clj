@@ -68,7 +68,8 @@
                     :provider :zai-coding
                     :model "glm-5.1"}
                   (:cost assistant)))
-        (expect (= {:input 120 :output 30} (:tokens assistant)))))))
+        (expect (= {:input 120 :output 30 :reasoning 7 :cached 4}
+                  (:tokens assistant)))))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"
