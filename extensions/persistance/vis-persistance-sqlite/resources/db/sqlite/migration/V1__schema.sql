@@ -396,11 +396,12 @@ CREATE TABLE conversation_intent_plan (
   intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'superseded', 'abandoned')),
   summary TEXT NOT NULL CHECK (trim(summary) <> ''),
-  steps TEXT,
+  plan_dsl BLOB,
+  steps BLOB,
   supersedes_plan_id TEXT REFERENCES conversation_intent_plan(id) ON DELETE SET NULL,
   created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
   created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  metadata TEXT,
+  metadata BLOB,
   created_at INTEGER NOT NULL
 );
 
@@ -439,22 +440,25 @@ END;
 CREATE TABLE conversation_intent_gate (
   id TEXT PRIMARY KEY NOT NULL,
   plan_id TEXT NOT NULL REFERENCES conversation_intent_plan(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'proven', 'blocked')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'proven', 'impeded')),
   required INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
-  question TEXT NOT NULL CHECK (trim(question) <> ''),
-  proof_summary TEXT CHECK (proof_summary IS NULL OR trim(proof_summary) <> ''),
-  block_reason TEXT CHECK (block_reason IS NULL OR trim(block_reason) <> ''),
+  proposition TEXT NOT NULL CHECK (trim(proposition) <> ''),
+  expected_proof BLOB NOT NULL,
+  candidate_proof BLOB,
+  proof BLOB,
+  impediment BLOB,
+  metadata BLOB,
   created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
   resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
   created_at INTEGER NOT NULL,
   resolved_at INTEGER,
 
   CHECK (status <> 'proven' OR
-         (proof_summary IS NOT NULL AND block_reason IS NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'blocked' OR
-         (block_reason IS NOT NULL AND proof_summary IS NULL AND resolved_at IS NOT NULL)),
+         (proof IS NOT NULL AND impediment IS NULL AND resolved_at IS NOT NULL)),
+  CHECK (status <> 'impeded' OR
+         (impediment IS NOT NULL AND proof IS NULL AND resolved_at IS NOT NULL)),
   CHECK (status <> 'open' OR
-         (proof_summary IS NULL AND block_reason IS NULL AND resolved_at IS NULL))
+         (proof IS NULL AND impediment IS NULL AND resolved_at IS NULL))
 );
 
 CREATE INDEX idx_conversation_intent_gate_plan
@@ -464,10 +468,12 @@ CREATE TABLE conversation_intent_gate_ref (
   id TEXT PRIMARY KEY NOT NULL,
   gate_id TEXT NOT NULL REFERENCES conversation_intent_gate(id) ON DELETE CASCADE,
   ref TEXT NOT NULL CHECK (trim(ref) <> ''),
-  role TEXT NOT NULL DEFAULT 'evidence' CHECK (role IN ('evidence', 'counter-evidence', 'context')),
-  metadata TEXT,
+  role TEXT NOT NULL DEFAULT 'proof' CHECK (role IN ('proof', 'impediment', 'context')),
+  intent_id TEXT,
+  slot TEXT,
+  metadata BLOB,
   created_at INTEGER NOT NULL,
-  UNIQUE (gate_id, ref, role)
+  UNIQUE (gate_id, ref, role, intent_id, slot)
 );
 
 CREATE INDEX idx_conversation_intent_gate_ref_gate ON conversation_intent_gate_ref(gate_id);
@@ -477,8 +483,8 @@ CREATE TRIGGER trg_conversation_intent_gate_ref_terminal_au
 BEFORE UPDATE ON conversation_intent_gate_ref
 BEGIN
   SELECT CASE
-    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'blocked')
-    THEN RAISE(ABORT, 'conversation_intent_gate refs are immutable after gate is proven or blocked')
+    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'impeded')
+    THEN RAISE(ABORT, 'conversation_intent_gate refs are immutable after gate is proven or impeded')
   END;
 END;
 
@@ -486,8 +492,8 @@ CREATE TRIGGER trg_conversation_intent_gate_ref_terminal_ad
 BEFORE DELETE ON conversation_intent_gate_ref
 BEGIN
   SELECT CASE
-    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'blocked')
-    THEN RAISE(ABORT, 'conversation_intent_gate refs cannot be deleted after gate is proven or blocked')
+    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'impeded')
+    THEN RAISE(ABORT, 'conversation_intent_gate refs cannot be deleted after gate is proven or impeded')
   END;
 END;
 

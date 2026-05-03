@@ -40,7 +40,7 @@
   "Open the git repository containing `start`, or nil when `start` is
    outside git."
   ^Repository [^File start]
-  (git/open-repository start)
+  (git/open-repository start))
 
 (defn status-priority
   "Higher = more visually important in the picker."

@@ -54,6 +54,16 @@
     (expect (= "Here's the top-level directory structure of this repo:\n```text\n\n```\nSo: I'm a language model."
               (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")))))
 
+(defdescribe intent-required-test
+  (it "requires intents for pasted-content inspection and terminal demonstrations"
+    (expect (true? (#'loop/intent-required? "What did I send to you right now?! # Introduction")))
+    (expect (true? (#'loop/intent-required? "[Pasted #1: 129 lines, 4.6KB]")))
+    (expect (true? (#'loop/intent-required? "Show me how you are calling bash and doing some ls etc."))))
+
+  (it "keeps trivial chat free of intent ceremony"
+    (expect (false? (#'loop/intent-required? "hi")))
+    (expect (false? (#'loop/intent-required? "how are you today?")))))
+
 (defdescribe final-answer-gate-error-test
   (it "accepts trivial chat when no focused intent exists"
     (let [s   (vis/db-create-connection! :memory)
@@ -67,6 +77,23 @@
                          :current-conversation-turn-id-atom (atom tid)
                          :current-user-request-atom (atom "hi")}
                         0 [])))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "rejects pasted-content inspection when no focused intent exists"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "What did I send to you right now?! # Introduction"
+                                                  :status :running})]
+      (try
+        (let [error (loop/final-answer-gate-error
+                      {:db-info s
+                       :current-conversation-turn-id-atom (atom tid)
+                       :current-user-request-atom (atom "What did I send to you right now?! # Introduction")}
+                      0 [])]
+          (expect (string? error))
+          (expect (re-find #":missing-focused-intent" error)))
         (finally
           (vis/db-dispose-connection! s)))))
 
@@ -152,7 +179,7 @@
                                           {:raw raw
                                            :blocks executable-blocks
                                            :result "(+ 1 1)"
-                                           :tokens {:input 1 :output 1}
+                                           :tokens {:input 1 :output 1 :cached-input 5}
                                            :duration-ms 1})
                        #'loop/execute-code (fn [_ code]
                                              (expect (= "(+ 1 1)" code))
@@ -166,6 +193,7 @@
                          {:iteration 0
                           :resolved-model {:provider :test :name "model"}})]
             (expect (= raw (:llm-raw-response result)))
+            (expect (= 5 (get-in result [:api-usage :prompt_tokens_details :cached_tokens])))
             (expect (= "(+ 1 1)" (:llm-executable-code result)))
             (expect (= executable-blocks (:llm-executable-blocks result)))
             (let [prov (:provenance (first (:blocks result)))]

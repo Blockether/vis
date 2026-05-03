@@ -512,9 +512,13 @@
       (expect (contains? symbols 'issue-intent!))
       (expect (contains? symbols 'focus-intent!))
       (expect (contains? symbols 'relate-intents!))
+      (expect (contains? symbols 'proof-slot))
+      (expect (contains? symbols 'plan))
       (expect (contains? symbols 'issue-plan!))
       (expect (contains? symbols 'issue-gate!))
+      (expect (contains? symbols 'offer-proof!))
       (expect (contains? symbols 'prove-gate!))
+      (expect (contains? symbols 'impede-gate!))
       (expect (contains? symbols 'block-gate!))
       (expect (contains? symbols 'fulfill-intent!))
       (expect (contains? symbols 'abandon-intent!))
@@ -649,13 +653,24 @@
           e (assoc (env s conversation-id)
               :current-conversation-turn-id-atom (atom conversation-turn-id))
           intent ((private-fn "foundation-issue-intent!") e {:title "Ship it" :rationale "User asked."})
+          slot   ((private-fn "foundation-proof-slot") e intent :verification)
+          graph  ((private-fn "foundation-plan") e intent {:requires [slot]})
           plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
-                                                           :summary "Plan"})
+                                                           :summary "Plan"
+                                                           :plan graph})
           gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
-                                                           :question "Verified?"})
+                                                           :proposition "Verification passes."
+                                                           :expected-proof {:slots {slot {:required? true}}
+                                                                            :guard [:exists [:slot slot :ref]]}})
           checks ((private-fn "foundation-intents") e)]
-      (expect (= "Verified?" (:question gate)))
+      (expect (= [(:id intent) :verification] slot))
+      (expect (= [[:intent (:id intent)] :requires [:slot slot]] (first (:edges graph))))
+      (expect (= "Verification passes." (:proposition gate)))
       (expect (false? (:ok? checks)))
+      (expect (str/includes? (:report checks) "Intent"))
+      (expect (str/includes? (:report checks) "Plan"))
+      (expect (str/includes? (:report checks) "Gate"))
+      (expect (str/includes? (:report checks) "Verification passes."))
       (expect (some #(= :required-open-gate (:type %)) (:violations checks)))))
 
   (it "accepts a fulfilled intent only when canonical refs resolve"
@@ -674,7 +689,8 @@
             plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
                                                              :summary "Plan"})
             gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
-                                                             :question "Verified?"})]
+                                                             :proposition "Verification passes."
+                                                             :expected-proof {:slots {}}})]
         ((private-fn "foundation-prove-gate!") e (:id gate)
                                                {:summary "Observed verification."
                                                 :refs [ref]})
@@ -694,7 +710,8 @@
           plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
                                                            :summary "Plan"})
           gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
-                                                           :question "Verified?"})
+                                                           :proposition "Verification passes."
+                                                           :expected-proof {:slots {}}})
           thrown (try
                    ((private-fn "foundation-prove-gate!") e (:id gate)
                                                           {:summary "Wrong ref."

@@ -15,4 +15,18 @@
         (expect (string? (:branch status)))
         (expect (number? (:modified status)))
         (expect (number? (:created status)))
-        (expect (number? (:deleted status)))))))
+        (expect (number? (:deleted status)))
+        (expect (contains? status :upstream?))
+        (expect (number? (:ahead status)))
+        (expect (number? (:behind status))))))
+
+  (it "caches resolved workspace status for hot UI callers"
+    (let [calls (atom 0)]
+      (with-redefs [git/workspace-status (fn []
+                                           (swap! calls inc)
+                                           {:workspace? false})
+                    git/cwd-file (fn []
+                                   (java.io.File. "."))]
+        (expect (= {:workspace? false} (git/cached-workspace-status 1000 5000)))
+        (expect (= {:workspace? false} (git/cached-workspace-status 2000 5000)))
+        (expect (= 1 @calls))))))

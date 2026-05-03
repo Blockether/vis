@@ -12,8 +12,9 @@
      manage conversation-scoped intent focus
    - `(v/issue-plan! opts)` / `(v/issue-gate! opts)`
      create blocking plans/gates for one intent
-   - `(v/prove-gate! gate opts)` / `(v/block-gate! gate opts)`
-     resolve one gate with observed canonical evidence refs
+   - `(v/offer-proof! opts)` adds partial candidate proof slots
+   - `(v/prove-gate! gate opts)` / `(v/impede-gate! gate opts)`
+     resolve one gate with observed canonical proof/impediment refs
    - `(v/fulfill-intent! id opts)` / `(v/abandon-intent! id opts)`
      resolve one intent with observed canonical evidence refs
    - `(v/intents)` reads focus, checks, violations, and report
@@ -1021,6 +1022,42 @@ _No intents._
   [env opts]
   (vis/db-relate-intents! (:db-info env) opts))
 
+(defn- plan-id-value
+  [x]
+  (cond
+    (map? x) (:id x)
+    :else x))
+
+(defn- foundation-proof-slot
+  [_env intent-or-id slot-name]
+  [(plan-id-value intent-or-id) (keyword slot-name)])
+
+(defn- plan-node
+  [kind id]
+  [(keyword kind) (plan-id-value id)])
+
+(defn- plan-edge-target
+  [target]
+  (cond
+    (and (vector? target) (= 2 (count target)) (keyword? (second target))) [:slot target]
+    (and (vector? target) (#{:intent :gate :slot} (first target))) target
+    (map? target) [:intent (:id target)]
+    :else [:intent target]))
+
+(defn- foundation-plan
+  ([env intent-or-id]
+   (foundation-plan env intent-or-id {}))
+  ([_env intent-or-id {:keys [requires nodes edges steps] :as _opts}]
+   (let [entry (plan-node :intent intent-or-id)]
+     (cond-> {:entry entry
+              :nodes (merge {entry {:kind :intent}} (or nodes {}))
+              :edges (vec (concat
+                            (map (fn [target]
+                                   [entry :requires (plan-edge-target target)])
+                              requires)
+                            (or edges [])))}
+       steps (assoc :steps (vec steps))))))
+
 (defn- foundation-issue-plan!
   [env opts]
   (vis/db-store-plan! (:db-info env)
@@ -1030,6 +1067,10 @@ _No intents._
 (defn- foundation-issue-gate!
   [env opts]
   (vis/db-store-gate! (:db-info env) opts))
+
+(defn- foundation-offer-proof!
+  [env opts]
+  (vis/db-offer-proof! (:db-info env) opts))
 
 (defn- resolve-current-gate-id
   [state gate]
@@ -1053,15 +1094,21 @@ _No intents._
   ([env gate opts]
    (foundation-prove-gate! env (assoc opts :gate gate))))
 
-(defn- foundation-block-gate!
+(defn- foundation-impede-gate!
   ([env opts]
    (let [state (current-turn-intents env)
          gate-id (or (:gate-id opts)
                    (resolve-current-gate-id state (:gate opts)))]
-     (vis/db-block-gate! (:db-info env)
+     (vis/db-impede-gate! (:db-info env)
        (-> opts (dissoc :gate) (assoc :gate-id gate-id)))))
   ([env gate opts]
-   (foundation-block-gate! env (assoc opts :gate gate))))
+   (foundation-impede-gate! env (assoc opts :gate gate))))
+
+(defn- foundation-block-gate!
+  ([env opts]
+   (foundation-impede-gate! env opts))
+  ([env gate opts]
+   (foundation-impede-gate! env gate opts)))
 
 (defn- foundation-fulfill-intent!
   [env intent-id opts]
@@ -1444,32 +1491,61 @@ _No intents._
      :examples  ["(v/relate-intents! {:from-intent-id (:id child) :to-intent-id (:id parent) :relation :subintent})"]
      :before-fn inject-environment}))
 
+(def proof-slot-symbol
+  (vis/symbol 'proof-slot foundation-proof-slot
+    {:doc       "Canonical proof slot id. Always returns [intent-id :slot-name]. Use these in :expected-proof guards and plan DSL edges."
+     :arglists  '([intent-or-id slot-name])
+     :examples  ["(def verification-slot (v/proof-slot intent :verification))"]
+     :before-fn inject-environment}))
+
+(def plan-symbol
+  (vis/symbol 'plan foundation-plan
+    {:doc       "Build a compact plan DSL graph for an intent. :requires entries may be proof slots, intent maps/ids, or explicit [:intent|:gate|:slot ...] nodes."
+     :arglists  '([intent-or-id] [intent-or-id {:keys [requires nodes edges steps]}])
+     :examples  ["(v/plan intent {:requires [verification-slot]})"
+                 "(v/plan (:id intent) {:requires [verification-slot] :steps [{:id :verify}]})"]
+     :before-fn inject-environment}))
+
 (def issue-plan!-symbol
   (vis/symbol 'issue-plan! foundation-issue-plan!
-    {:doc       "Create the active plan for an intent, superseding any previous active plan."
-     :arglists  '([{:keys [intent-id summary steps created-ref metadata]}])
-     :examples  ["(def plan (v/issue-plan! {:intent-id (:id intent) :summary \"Inspect, act on evidence, verify.\" :steps [{:id :inspect} {:id :verify}]}))"]
+    {:doc       "Create the active plan for an intent, superseding any previous active plan. :plan is a Nippy-persisted Clojure DSL graph joining intents, subintents, gates, and proof slots so the runtime can render/resolution-check it without the model carrying local state. Build it with v/plan."
+     :arglists  '([{:keys [intent-id summary plan steps created-ref metadata]}])
+     :examples  ["(def plan (v/issue-plan! {:intent-id (:id intent) :summary \"Inspect, act on evidence, verify.\" :plan (v/plan intent {:requires [verification-slot]})}))"]
      :before-fn inject-environment}))
 
 (def issue-gate!-symbol
   (vis/symbol 'issue-gate! foundation-issue-gate!
-    {:doc       "Create a blocking gate for a plan. Required gates block until proven or the intent is abandoned/re-planned."
-     :arglists  '([{:keys [plan-id question required? created-ref metadata]}])
-     :examples  ["(def gate (v/issue-gate! {:plan-id (:id plan) :question \"Did verification pass?\"}))"]
+    {:doc       "Create a gate proposition for a plan. Required gates block final answer until proven or impeded/re-planned."
+     :arglists  '([{:keys [plan-id proposition expected-proof candidate-proof required? created-ref metadata]}])
+     :examples  ["(def gate (v/issue-gate! {:plan-id (:id plan) :proposition \"Verification passes.\" :expected-proof {:slots {[(str (:id intent)) :test-run] {:required? true}} :guard [:exists [:slot [(str (:id intent)) :test-run] :ref]]}}))"]
+     :before-fn inject-environment}))
+
+(def offer-proof!-symbol
+  (vis/symbol 'offer-proof! foundation-offer-proof!
+    {:doc       "Add partial candidate proof slots to an open gate. Slot ids are always [intent-id :slot-name]."
+     :arglists  '([{:keys [gate-id slots refs metadata]}])
+     :examples  ["(v/offer-proof! {:gate-id (:id gate) :slots {[(str (:id intent)) :test-run] {:ref \"turn/3f2a91c0/iteration/5/block/2\"}}})"]
      :before-fn inject-environment}))
 
 (def prove-gate!-symbol
   (vis/symbol 'prove-gate! foundation-prove-gate!
-    {:doc       "Mark a gate proven. Requires :summary and observed canonical provenance refs."
+    {:doc       "Mark a gate proven. Requires :summary, observed canonical proof refs, and slots satisfying the gate's expected-proof guard."
      :arglists  '([opts] [gate opts])
-     :examples  ["(v/prove-gate! (:id gate) {:summary \"Targeted verification passed.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})"]
+     :examples  ["(v/prove-gate! (:id gate) {:summary \"Targeted verification passed.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"] :slots {[(str (:id intent)) :exit-code] {:value 0}}})"]
+     :before-fn inject-environment}))
+
+(def impede-gate!-symbol
+  (vis/symbol 'impede-gate! foundation-impede-gate!
+    {:doc       "Mark a gate impeded. Requires :reason and observed canonical impediment refs."
+     :arglists  '([opts] [gate opts])
+     :examples  ["(v/impede-gate! (:id gate) {:reason \"Verification cannot run.\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})"]
      :before-fn inject-environment}))
 
 (def block-gate!-symbol
   (vis/symbol 'block-gate! foundation-block-gate!
-    {:doc       "Mark a gate blocked. Requires :reason and observed canonical provenance refs."
+    {:doc       "Legacy alias for v/impede-gate!. Prefer impede-gate!."
      :arglists  '([opts] [gate opts])
-     :examples  ["(v/block-gate! (:id gate) {:reason \"Verification cannot run.\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})"]
+     :examples  ["(v/impede-gate! (:id gate) {:reason \"Verification cannot run.\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})"]
      :before-fn inject-environment}))
 
 (def fulfill-intent!-symbol
@@ -1571,9 +1647,13 @@ _No intents._
    issue-intent!-symbol
    focus-intent!-symbol
    relate-intents!-symbol
+   proof-slot-symbol
+   plan-symbol
    issue-plan!-symbol
    issue-gate!-symbol
+   offer-proof!-symbol
    prove-gate!-symbol
+   impede-gate!-symbol
    block-gate!-symbol
    fulfill-intent!-symbol
    abandon-intent!-symbol
@@ -1599,10 +1679,14 @@ _No intents._
     "  (v/issue-intent! opts)        create and focus an intent\n"
     "  (v/focus-intent! id opts)     focus existing intent, guarded against unrelated switches\n"
     "  (v/relate-intents! opts)      relate intents in the same conversation\n"
+    "  (v/proof-slot intent slot)    canonical [intent-id :slot-name] proof slot\n"
+    "  (v/plan intent opts?)         build a plan DSL graph\n"
     "  (v/issue-plan! opts)          create/supersede active plan for an intent\n"
-    "  (v/issue-gate! opts)          create required open gate for a plan\n"
-    "  (v/prove-gate! gate opts)     prove a gate with canonical refs\n"
-    "  (v/block-gate! gate opts)     block a gate with canonical refs + reason\n"
+    "  (v/issue-gate! opts)          create required open gate proposition for a plan\n"
+    "  (v/offer-proof! opts)         add partial candidate proof slots\n"
+    "  (v/prove-gate! gate opts)     prove a gate with canonical refs + slots\n"
+    "  (v/impede-gate! gate opts)    impede a gate with canonical refs + reason\n"
+    "  (v/block-gate! gate opts)     legacy alias for impede-gate!\n"
     "  (v/fulfill-intent! id opts)   fulfill focused intent with canonical refs\n"
     "  (v/abandon-intent! id opts)   abandon intent with canonical refs\n"
     "  (v/extensions)                loaded extension catalog\n"

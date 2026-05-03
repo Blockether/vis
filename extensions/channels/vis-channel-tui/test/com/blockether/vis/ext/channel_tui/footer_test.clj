@@ -1,5 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.footer-test
   (:require [com.blockether.vis.ext.channel-tui.footer :as footer]
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe build-segments-test
@@ -45,63 +47,103 @@
                                                      :window {:resets-at-ms (+ now-ms (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5.5"
                                                           :provider :openai-codex})
-                       #'footer/git-footer-status (fn [] nil)}
+                       #'git/cached-workspace-status (fn [] {:workspace? false})}
         (fn []
           (let [text (->> (build-limits-segments {:messages []
                                                   :settings {}
                                                   :provider-limits {:provider-id :openai-codex
                                                                     :report report}}
                             now-ms)
-                       (filter #(= :right (:region %)))
+                       (filter #(= :left (:region %)))
                        first
                        :text)]
             (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
             (expect (re-find #"7d 85% left ↺3d18h @" text)))))))
 
-  (it "shows git repository state on the second footer line"
-    (let [build-limits-segments @#'footer/build-limits-segments]
-      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
-                                                          :provider :openai})
-                       #'footer/git-footer-status (fn [] {:workspace? true
-                                                          :repo "vis"
-                                                          :branch "main"
-                                                          :modified 2
-                                                          :created 3
-                                                          :deleted 1
-                                                          :ahead 4
-                                                          :behind 0})}
-        (fn []
-          (expect (= ["git workspace: vis/main" "modified 2" "created 3" "deleted 1" "ahead 4" "behind 0"]
-                    (->> (build-limits-segments {:messages [] :settings {}} 0)
-                      (filter #(= :left (:region %)))
-                      (mapv :text))))))))
-
-  (it "shows when the current directory is outside a git workspace"
-    (let [build-limits-segments @#'footer/build-limits-segments]
-      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
-                                                          :provider :openai})
-                       #'footer/git-footer-status (fn [] {:workspace? false})}
-        (fn []
-          (expect (= ["git workspace: no"]
-                    (->> (build-limits-segments {:messages [] :settings {}} 0)
-                      (filter #(= :left (:region %)))
-                      (mapv :text))))))))
-
-  (it "shows cumulative token totals in the right footer"
+  (it "shows git repository state on the first footer line right side"
     (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'git/cached-workspace-status (fn [] {:workspace? true
+                                                             :repo "vis"
+                                                             :branch "main"
+                                                             :modified 2
+                                                             :created 3
+                                                             :deleted 1
+                                                             :upstream? true
+                                                             :ahead 4
+                                                             :behind 0})}
+        (fn []
+          (expect (= [" ~/vis (main)" "files: 2 modified, 3 created, 1 deleted" "commits: ⇡4"]
+                    (->> (build-segments {:messages [] :settings {}} 0)
+                      (filter #(= :right (:region %)))
+                      (mapv :text))))))))
+
+  (it "shows when the current directory is outside a git workspace on the first footer line"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'git/cached-workspace-status (fn [] {:workspace? false})}
+        (fn []
+          (let [spans (->> (build-segments {:messages [] :settings {}} 0)
+                        (filter #(= :right (:region %))))]
+            (expect (= ["No "] (mapv :text spans)))
+            (expect (= t/footer-error-fg (:fg (first spans))))
+            (expect (true? (:bold? (first spans)))))))))
+
+  (it "collapses clean file and synced commit state"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'git/cached-workspace-status (fn [] {:workspace? true
+                                                             :repo "vis"
+                                                             :branch "main"
+                                                             :modified 0
+                                                             :created 0
+                                                             :deleted 0
+                                                             :upstream? true
+                                                             :ahead 0
+                                                             :behind 0})}
+        (fn []
+          (expect (= [" ~/vis (main)" "files: clean" "commits: up to date"]
+                    (->> (build-segments {:messages [] :settings {}} 0)
+                      (filter #(= :right (:region %)))
+                      (mapv :text))))))))
+
+  (it "shows missing upstream distinctly from up-to-date commits"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'git/cached-workspace-status (fn [] {:workspace? true
+                                                             :repo "vis"
+                                                             :branch "main"
+                                                             :modified 0
+                                                             :created 0
+                                                             :deleted 0
+                                                             :upstream? false
+                                                             :ahead 0
+                                                             :behind 0})}
+        (fn []
+          (expect (= [" ~/vis (main)" "files: clean" "commits: no upstream"]
+                    (->> (build-segments {:messages [] :settings {}} 0)
+                      (filter #(= :right (:region %)))
+                      (mapv :text))))))))
+
+  (it "shows cumulative token totals in the second footer row right side"
+    (let [build-limits-segments @#'footer/build-limits-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
           (expect (= ["total ↑150 (cached 70) ↓45" "$0.015"]
-                    (->> (build-segments {:messages [{:role :assistant
-                                                      :tokens {:input 100 :output 30 :cached 60}
-                                                      :cost {:total-cost 0.01}}
-                                                     {:role :assistant
-                                                      :tokens {:input 50 :output 15
-                                                               :cached-input 10}
-                                                      :cost {:total-cost 0.005}}]
-                                          :settings {}}
+                    (->> (build-limits-segments {:messages [{:role :assistant
+                                                             :tokens {:input 100 :output 30 :cached 60}
+                                                             :cost {:total-cost 0.01}}
+                                                            {:role :assistant
+                                                             :tokens {:input 50 :output 15
+                                                                      :cached-input 10}
+                                                             :cost {:total-cost 0.005}}]
+                                                 :settings {}}
                            0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
