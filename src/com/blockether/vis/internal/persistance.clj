@@ -309,6 +309,7 @@
 (defdelegate db-store-intent!       [db-info opts])
 (defdelegate db-store-intent-ref!   [db-info intent-id opts])
 (defdelegate db-focus-intent!       [db-info intent-id opts])
+(defdelegate db-infer-focus!        [db-info conversation-turn-id opts])
 (defdelegate db-relate-intents!     [db-info opts])
 (defdelegate db-store-plan!         [db-info opts])
 (defdelegate db-store-gate!         [db-info opts])

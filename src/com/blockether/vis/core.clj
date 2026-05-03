@@ -218,6 +218,7 @@
 (def db-store-intent!                 persistance/db-store-intent!)
 (def db-store-intent-ref!             persistance/db-store-intent-ref!)
 (def db-focus-intent!                 persistance/db-focus-intent!)
+(def db-infer-focus!                  persistance/db-infer-focus!)
 (def db-relate-intents!               persistance/db-relate-intents!)
 (def db-store-plan!                   persistance/db-store-plan!)
 (def db-store-gate!                   persistance/db-store-gate!)

@@ -10,15 +10,15 @@
 
    Channels render and keybind on top of this data; they should not
    reimplement repository walking or git-status logic themselves."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.git :as git])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
            [java.util Locale]
            [java.util.concurrent ExecutionException Future TimeUnit TimeoutException]
            [org.eclipse.jgit.api Git Status]
-           [org.eclipse.jgit.lib Repository]
-           [org.eclipse.jgit.storage.file FileRepositoryBuilder]))
+           [org.eclipse.jgit.lib Repository]))
 
 (set! *warn-on-reflection* true)
 
@@ -40,14 +40,7 @@
   "Open the git repository containing `start`, or nil when `start` is
    outside git."
   ^Repository [^File start]
-  (try
-    (let [^FileRepositoryBuilder builder (FileRepositoryBuilder.)]
-      (.. builder
-        (findGitDir start)
-        readEnvironment)
-      (when (.getGitDir builder)
-        (.build builder)))
-    (catch Throwable _ nil)))
+  (git/open-repository start)
 
 (defn status-priority
   "Higher = more visually important in the picker."
@@ -235,16 +228,16 @@
     :recent))
 
 (defn status-label
-  "Single-character git badge for picker rows."
+  "Human-readable git status for picker table rows."
   [status]
   (case status
-    :modified  "M"
-    :untracked "?"
-    :added     "A"
-    :deleted   "D"
-    :conflict  "U"
-    :ignored   "I"
-    " "))
+    :modified  "modified"
+    :untracked "untracked"
+    :added     "added"
+    :deleted   "deleted"
+    :conflict  "conflict"
+    :ignored   "ignored"
+    "clean"))
 
 (defn decorate-entry
   "Attach derived display fields used by the picker renderer."

@@ -362,7 +362,10 @@
                   loading-bubble? (= i loading-last-idx)
                   pm (if loading-bubble?
                        (let [{:keys [text lines line-meta]}
-                             (render/progress->lines-data progress bubble-w settings progress-extra)]
+                             (render/progress->lines-data progress bubble-w settings
+                               (assoc progress-extra
+                                 :conversation-id conversation-id
+                                 :detail-expansions detail-expansions))]
                          (assoc m
                            :text text
                            :prewrapped-lines lines

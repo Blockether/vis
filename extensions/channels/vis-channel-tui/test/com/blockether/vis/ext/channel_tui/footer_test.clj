@@ -44,18 +44,48 @@
                                                      :remaining 85.0
                                                      :window {:resets-at-ms (+ now-ms (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5.5"
-                                                          :provider :openai-codex})}
+                                                          :provider :openai-codex})
+                       #'footer/git-footer-status (fn [] nil)}
         (fn []
           (let [text (->> (build-limits-segments {:messages []
                                                   :settings {}
                                                   :provider-limits {:provider-id :openai-codex
                                                                     :report report}}
                             now-ms)
-                       (filter #(= :left (:region %)))
+                       (filter #(= :right (:region %)))
                        first
                        :text)]
             (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
             (expect (re-find #"7d 85% left ↺3d18h @" text)))))))
+
+  (it "shows git repository state on the second footer line"
+    (let [build-limits-segments @#'footer/build-limits-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'footer/git-footer-status (fn [] {:workspace? true
+                                                          :repo "vis"
+                                                          :branch "main"
+                                                          :modified 2
+                                                          :created 3
+                                                          :deleted 1
+                                                          :ahead 4
+                                                          :behind 0})}
+        (fn []
+          (expect (= ["git workspace: vis/main" "modified 2" "created 3" "deleted 1" "ahead 4" "behind 0"]
+                    (->> (build-limits-segments {:messages [] :settings {}} 0)
+                      (filter #(= :left (:region %)))
+                      (mapv :text))))))))
+
+  (it "shows when the current directory is outside a git workspace"
+    (let [build-limits-segments @#'footer/build-limits-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'footer/git-footer-status (fn [] {:workspace? false})}
+        (fn []
+          (expect (= ["git workspace: no"]
+                    (->> (build-limits-segments {:messages [] :settings {}} 0)
+                      (filter #(= :left (:region %)))
+                      (mapv :text))))))))
 
   (it "shows cumulative token totals in the right footer"
     (let [build-segments @#'footer/build-segments]

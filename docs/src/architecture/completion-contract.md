@@ -64,6 +64,22 @@ conversation/<conversation8>/turn/<turn8>/iteration/<iteration-number>/block/<bl
 
 Compact display labels such as `i4.2`, `i4.2/tool`, `E1`, or `G1` are not accepted writer references and are not stored.
 
+## Lifecycle provenance
+
+Provenance is lifecycle-based. A block ref proves only the block observation itself. Deferred/future work gets child lifecycle events so the system can distinguish `:running` from terminal `:done`, `:error`, `:timeout`, `:cancelled`, or `:interrupted`.
+
+Example: a block that starts a future can persist a running child event:
+
+```clojure
+{:provenance {:ref "turn/3f2a91c0/iteration/4/block/2/tool/future"
+              :parent-ref "turn/3f2a91c0/iteration/4/block/2"
+              :op :future/deferred
+              :status :running}
+ :rendering-kind :vis/tool}
+```
+
+Gate proof cannot cite a running lifecycle event. Proof requires a completed successful event (`:status :done`). Blocker evidence may cite terminal failures/timeouts/cancellations, but not still-running work.
+
 ## Rendering metadata
 
 Every persisted execution block carries:

@@ -6,10 +6,11 @@
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe tool-result-contract-test
-  (it "success requires :ok? :result :result-shape :provenance :markdown and nil :error"
-    (let [out (tr/success {:result {:a 1}
-                           :provenance {:op :demo}
-                           :markdown "done"})]
+  (it "success requires :ok? :result :result-shape :provenance and nil :error"
+    (let [out (tr/with-presentation
+                (tr/success {:result {:a 1}
+                             :provenance {:op :demo}})
+                {:markdown "done"})]
       (expect (true? (:ok? out)))
       (expect (= nil (:error out)))
       (expect (= :demo (get-in out [:provenance :op])))
@@ -18,7 +19,7 @@
       (expect (integer? (get-in out [:provenance :duration-ms])))
       (expect (= {:a 1} (:result out)))
       (expect (map? (:result-shape out)))
-      (expect (= "done" (:markdown out)))))
+      (expect (= "done" (:markdown (tr/presentation out))))))
 
   (it "failure requires structured :error with type/message/trace"
     (let [ex (try
@@ -26,7 +27,6 @@
                (catch Throwable t t))
           out (tr/failure {:result nil
                            :provenance {:op :demo}
-                           :markdown "failed"
                            :throwable ex})]
       (expect (false? (:ok? out)))
       (expect (= nil (:result out)))
@@ -40,17 +40,16 @@
 
   (it "metadata carries :vis/presentation without changing the data contract"
     (let [out (tr/with-presentation
-                (tr/success {:result true :provenance {:op :exists?} :markdown "exists"})
-                {:journal :hide})]
-      (expect (= {:journal :hide} (tr/presentation out)))
+                (tr/success {:result true :provenance {:op :exists?}})
+                {:journal :hide :markdown "exists"})]
+      (expect (= {:journal :hide :markdown "exists"} (tr/presentation out)))
       (expect (tr/tool-result? out))))
 
   (it "merge-provenance preserves metadata and re-validates the envelope"
     (let [base (tr/with-presentation
                  (tr/success {:result true
-                              :provenance {:op :exists?}
-                              :markdown "exists"})
-                 {:journal :markdown})
+                              :provenance {:op :exists?}})
+                 {:journal :markdown :markdown "exists"})
           out  (tr/merge-provenance base
                  {:tool {:sym 'exists?
                          :call "v/exists?"}
@@ -58,7 +57,7 @@
                   :source {:paths ["/tmp/ext.clj"]
                            :mtime-max 1
                            :hash-sha256 nil}})]
-      (expect (= {:journal :markdown} (tr/presentation out)))
+      (expect (= {:journal :markdown :markdown "exists"} (tr/presentation out)))
       (expect (= 'exists? (get-in out [:provenance :tool :sym])))
       (expect (= 'com.acme.ext.fs (get-in out [:provenance :extension :namespace])))
       (expect (= ["/tmp/ext.clj"] (get-in out [:provenance :source :paths]))))))

@@ -340,6 +340,29 @@
       (expect (some #(= :missing-active-plan (:type %)) (:violations state)))
       (expect (= [(:id intent)] (:focused-intent-ids state)))))
 
+  (it "carries unresolved focus into the next turn and rejects unrelated new intent focus"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          t1     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "finish schema"
+                                                     :status :running})
+          intent (vis/db-store-intent! s {:conversation-turn-id t1
+                                          :title "Finish schema"
+                                          :rationale "User asked."})
+          t2     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "unrelated work"
+                                                     :status :running})
+          inferred (vis/db-infer-focus! s t2 {:rationale "carry focus"})
+          thrown (try
+                   (vis/db-store-intent! s {:conversation-turn-id t2
+                                            :title "Unrelated work"
+                                            :rationale "User asked."})
+                   nil
+                   (catch Exception e e))]
+      (expect (= [(:id intent)] (:focused-intent-ids inferred)))
+      (expect (some? thrown))
+      (expect (str/includes? (ex-message thrown) "unresolved intent"))))
+
   (it "persists a running lifecycle child event for deferred future results and rejects it as proof"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
@@ -371,6 +394,50 @@
       (expect (= :running (get-in block [:events 0 :provenance :status])))
       (expect (some? thrown))
       (expect (str/includes? (ex-message thrown) "completed successful lifecycle event")))))
+
+(it "persists await-proof timeout as terminal blocker-compatible lifecycle evidence"
+  (let [s      (h/store)
+        cid    (vis/db-store-conversation! s {:channel :tui})
+        tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                   :user-request "ship it"
+                                                   :status :running})
+        timeout-result {:ok? false
+                        :result nil
+                        :result-shape {:type :nil}
+                        :provenance {:op :future/await
+                                     :status :timeout
+                                     :started-at-ms 10
+                                     :finished-at-ms 15
+                                     :duration-ms 5}
+                        :error {:type "java.util.concurrent.TimeoutException"
+                                :message "Timed out"
+                                :trace []}}
+        iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                           :blocks [{:code "(v/await-proof! f {:timeout-ms 1})"
+                                                     :result timeout-result}]})
+        await-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future.await")
+        intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                        :title "Ship it"
+                                        :rationale "User asked for it."})
+        plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                      :summary "Plan"})
+        gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                      :question "Did deferred work complete?"})
+        [block] (vis/db-list-iteration-blocks s iid)
+        blocked (vis/db-block-gate! s {:gate-id (:id gate)
+                                       :reason "Deferred work timed out."
+                                       :refs [await-ref]})
+        proof-thrown (try
+                       (vis/db-prove-gate! s {:gate-id (:id gate)
+                                              :summary "Future completed."
+                                              :refs [await-ref]})
+                       nil
+                       (catch Exception e e))]
+    (expect (= await-ref (get-in block [:events 0 :provenance :ref])))
+    (expect (= :timeout (get-in block [:events 0 :provenance :status])))
+    (expect (= :blocked (:status blocked)))
+    (expect (some? proof-thrown))
+    (expect (str/includes? (ex-message proof-thrown) "completed successful lifecycle event"))))
 
 ;; =============================================================================
 ;; Retry
@@ -880,9 +947,9 @@
                                           :duration-ms 0
                                           :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
       (let [souls (raw-query s {:select [:kind :state_mode :name] :from :expression_soul})]
-        ;; The legacy 'call' kind is gone. Only the var-soul lands
-        ;; in expression_soul; the block log lives in the
-        ;; iteration.blocks Nippy blob.
+        ;; Per-form calls do not land in expression_soul. Only the var
+        ;; soul lands there; the block log lives in the iteration.blocks
+        ;; Nippy blob.
         (expect (= 1 (count souls)))
         (let [{:keys [kind state_mode name]} (first souls)]
           (expect (= "var" kind))
@@ -1838,7 +1905,7 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented twelve SYSTEM vars"
+  (it "SYSTEM_VAR_NAMES contains exactly the documented fourteen SYSTEM vars"
     (expect (= '#{TURN_USER_REQUEST
                   TURN_CONVERSATION_TURN_ID
                   TURN_CONVERSATION_SOUL_ID
@@ -1848,8 +1915,10 @@
                   TURN_ACCESSIBLE_SKILLS
                   ITERATION_ID
                   ITERATION_PREVIOUS_REASONING
+                  CONVERSATION_ID
+                  CONVERSATION_SOUL_ID
+                  CONVERSATION_STATE_ID
                   CONVERSATION_TITLE
-                  CONVERSATION_METADATA
                   CONVERSATION_PREVIOUS_ANSWER}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
@@ -1865,6 +1934,9 @@
       (expect (true?  (system-var-sym? 'TURN_ACCESSIBLE_SKILLS)))
       (expect (true?  (system-var-sym? 'ITERATION_ID)))
       (expect (true?  (system-var-sym? 'ITERATION_PREVIOUS_REASONING)))
+      (expect (true?  (system-var-sym? 'CONVERSATION_ID)))
+      (expect (true?  (system-var-sym? 'CONVERSATION_SOUL_ID)))
+      (expect (true?  (system-var-sym? 'CONVERSATION_STATE_ID)))
       (expect (true?  (system-var-sym? 'CONVERSATION_TITLE)))
       (expect (true?  (system-var-sym? 'CONVERSATION_PREVIOUS_ANSWER)))
       (expect (false? (system-var-sym? 'CONFIG)))

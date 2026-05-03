@@ -72,12 +72,16 @@
                 {:conversation-title-atom (atom "set")}
                 {:active-extensions   NO_EXTENSIONS
                  :blocks-by-iteration [[1 {:thinking nil
-                                           :blocks   [{:code "(+ 1 2)" :result 3}]}]]
+                                           :blocks   [{:code "(+ 1 2)"
+                                                       :result 3
+                                                       :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
+                                                                    :op :sci/eval
+                                                                    :status :done}}]}]]
                  :iteration           0})]
       (expect (string? out))
       (expect (str/includes? out "<journal>"))
       (expect (str/includes? out "(+ 1 2)"))
-      (expect (str/includes? out "i1.1"))))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1"))))
 
   (it "renders block-level provenance in <journal> for regular evaluated forms"
     (let [out (prompt/build-iteration-context
@@ -131,18 +135,6 @@
                           :iteration           1})]
         (expect (not (str/includes? (or out-1 "") "[system_nudge]")))
         (expect (not (str/includes? (or out-2 "") "[system_nudge]")))))
-
-    (it "rejects the legacy :call-counts-atom arg silently (it is ignored, not required)"
-      ;; Defensive: callers that still pass `:call-counts-atom` must
-      ;; not blow up; the key is simply ignored.
-      (let [out (prompt/build-iteration-context
-                  (env-with-title)
-                  {:active-extensions   NO_EXTENSIONS
-                   :call-counts-atom    (atom {})
-                   :blocks-by-iteration [(->iter 0 [{:code "(+ 1 2)" :result 3}])]
-                   :iteration           0})]
-        (expect (string? out))
-        (expect (not (str/includes? out "[system_nudge]")))))
 
     (it "appends extension nudges when :ext/nudge-fn returns a non-blank string"
       (let [ext (identity
@@ -214,60 +206,76 @@
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "recursive language model (RLM)"))
       (expect (str/includes? p "read/eval/observe loop"))
-      (expect (str/includes? p "terminal COMMIT"))
-      (expect (str/includes? p "no nested Markdown fences"))
-      (expect (str/includes? p "no raw ``` markers"))
+      (expect (str/includes? p "`(answer ARG)` is terminal"))
+      (expect (str/includes? p "nested Markdown fences"))
+      (expect (str/includes? p "never emit raw nested Markdown fences"))
       (expect (str/includes? p "TURN_USER_REQUEST is fully satisfied"))
-      (expect (str/includes? p "host automatically continues the SAME user turn"))
-      (expect (str/includes? p "After iteration 1, the final iteration must contain exactly one top-level form"))
+      (expect (str/includes? p "the host continues the same user turn"))
+      (expect (str/includes? p "After iteration 1, `(answer …)` is the ONLY top-level form"))
       (expect (str/includes? p "In iteration 1 only, trivial chat may answer as the last top-level form"))
       (expect (str/includes? p "ONLY top-level form of its final iteration"))
-      (expect (str/includes? p "Not every iteration needs an answer"))
-      (expect (str/includes? p "omitting `(answer ...)`; the runtime will loop you"))
       (expect (str/includes? p "UNDERSTAND"))
-      (expect (str/includes? p "PLAN"))
+      (expect (str/includes? p "INTENT"))
       (expect (str/includes? p "EXPLORE"))
       (expect (str/includes? p "OBSERVE"))
       (expect (str/includes? p "ACT"))
       (expect (str/includes? p "VERIFY"))
       (expect (str/includes? p "ANSWER"))))
 
-  (it "centers Vis on a Nucleus palette and VSM operating stack without prompt attribution"
+  (it "centers Vis on Nucleus plus a state/decision/observed-state matrix"
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "λ engage(nucleus)."))
-      (expect (str/includes? p "[phi fractal euler tao pi mu ∃ ∀]"))
-      (expect (str/includes? p "ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other"))
-      (expect (str/includes? p "Human ⊗ Vis ⊗ Workspace"))
-      (expect (str/includes? p "VSM operating stack"))
-      (expect (str/includes? p "S5 identity"))
-      (expect (str/includes? p "S4 intelligence"))
-      (expect (str/includes? p "S3 control"))
-      (expect (str/includes? p "S2 coordination"))
-      (expect (str/includes? p "S1 operations"))
+      (expect (str/includes? p "Nucleus := Human ⊗ Vis ⊗ Workspace"))
+      (expect (str/includes? p "OODA ⊗ RGR ⊗ REPL"))
+      (expect (str/includes? p "State → decision matrix → observed new state"))
+      (expect (str/includes? p "| State | Decision | Emit / do | New state in `<journal>` / `<var_index>` | Next state |"))
+      (expect (str/includes? p "| STUCK |"))
+      (expect (str/includes? p "Stop looping"))
+      (expect (str/includes? p "ANSWER to user with blocker/clarifying ask"))
+      (expect (str/includes? p "Host-enforced gates before final answer"))
+      (expect (str/includes? p "Model discipline"))
+      (expect (str/includes? p "run `(v/provenance-guards)` before citing provenance"))
+      (expect (str/includes? p "S5 identity/rules"))
+      (expect (not (str/includes? p "Runtime Nucleus")))
+      (expect (not (str/includes? p "Nucleus decision matrix")))
+      (expect (not (str/includes? p "Nucleus palette")))
+      (expect (not (str/includes? p "VSM operating stack")))
+      (expect (not (str/includes? p "provenance-checks pass")))
       (expect (not (str/includes? p "Michael Whitford")))
       (expect (not (str/includes? p "github.com/michaelwhitford/nucleus")))))
 
   (it "requires Markdown final answers by default and prefers v/ helpers"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "final answers are Markdown by default"))
-      (expect (str/includes? p "Unless TURN_USER_REQUEST explicitly asks for another format"))
-      (expect (str/includes? p "Prefer the `v/` Markdown helpers"))
+      (expect (str/includes? p "Final answers are Markdown by default"))
+      (expect (str/includes? p "prefer `v/join`"))
       (expect (str/includes? p "v/join"))
       (expect (str/includes? p "v/file-link"))
-      (expect (str/includes? p "use `v/code-block`"))))
+      (expect (str/includes? p "v/code-block"))))
 
-  (it "teaches the conversation intent lifecycle instead of local turn-state"
+  (it "teaches SYSTEM vars as a typed Markdown table with direct sandbox bindings"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "Intent-required classifier"))
-      (expect (str/includes? p "Conversation intents are database-backed"))
-      (expect (str/includes? p "Do NOT maintain a parallel local proof map"))
+      (expect (str/includes? p "Reference them by name in Clojure forms"))
+      (expect (str/includes? p "| SYSTEM VAR | Value | Type | What is it |"))
+      (expect (str/includes? p "CONVERSATION_SOUL_ID"))
+      (expect (str/includes? p "CONVERSATION_STATE_ID"))
+      (expect (str/includes? p "| `CONVERSATION_SOUL_ID` | parent `conversation_soul.id` | `uuid` |"))
+      (expect (not (str/includes? p "CONVERSATION_METADATA")))))
+
+  (it "teaches the current conversation intent lifecycle without legacy ref patterns"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "intents are database-backed, conversation-scoped"))
+      (expect (str/includes? p "do not keep a local proof map"))
       (expect (str/includes? p "v/issue-intent!"))
       (expect (str/includes? p "v/intents"))
       (expect (str/includes? p "v/fulfill-intent!"))
-      (expect (str/includes? p "Prove or block gates with observed evidence"))
-      (expect (not (str/includes? p "v/intent!")))
-      (expect (not (str/includes? p "v/gate-checks")))
-      (expect (not (str/includes? p "v/contract-report")))))
+      (expect (str/includes? p "Every observed top-level form becomes a journal block"))
+      (expect (str/includes? p "turn/<turn8>/iteration/<n>/block/<k>"))
+      (expect (str/includes? p "v/await-proof!"))
+      (expect (str/includes? p "Plain deref stays legal Clojure"))
+      (expect (not (str/includes? p "i1.1")))
+      (expect (not (str/includes? p "i4.2/tool")))
+      (expect (not (str/includes? p "E1")))
+      (expect (not (str/includes? p "G1")))))
 
   (it "teaches the correct multi-iteration finish pattern"
     (let [p prompt/CORE_SYSTEM_PROMPT]
@@ -281,8 +289,8 @@
   (it "pins the first-iteration no-answer discipline for code/debug/change tasks"
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "FIRST-ITERATION ANSWER BAN"))
-      (expect (str/includes? p "If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state"))
-      (expect (str/includes? p "iteration 1 MUST NOT call `(answer …)`"))
+      (expect (str/includes? p "for code/debug/change/refactor/test/verify/run/search/explain repo-state work"))
+      (expect (str/includes? p "iteration 1 probes only"))
       (expect (str/includes? p "Scratch values are still useful, but they are not proof"))
       (expect (str/includes? p "Never invent refs"))
       (expect (str/includes? p "If reader/parser errors repeat")))))

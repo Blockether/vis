@@ -31,6 +31,13 @@
       :totals       {:turns N :iterations N
                      :tokens {:input :output :reasoning :cached}
                      :cost-usd D}
+      :dialog      [{:role :turn-id :content}]
+      :calls       [{:kind :ref :parent-ref :turn-id :iteration-id :op :tool
+                     :var :code :status :duration-ms :command :target
+                     :result :result-summary :provenance}]
+      :timeline    [{:kind :ref :turn-id :iteration-id :content :code
+                     :status :duration-ms :result-summary}]
+      :llm-diagnostics [{:turn-id :iteration-id :raw-response}]
       :turns
        [{:id :user-request :status :prior-outcome :provider :model
          :iteration-count :failure-count
@@ -179,6 +186,249 @@
             (when (= 1 (count matches))
               (:id (first matches)))))))))
 
+(defn- preview-string
+  [s n]
+  (let [s (str s)]
+    (if (<= (count s) n) s (str (subs s 0 n) "…"))))
+
+(defn- preview-value
+  [v n]
+  (preview-string (pr-str v) n))
+
+(defn- runtime-ref?
+  [v]
+  (and (map? v) (= :expr (:vis/ref v))))
+
+(defn- op-slug
+  [op]
+  (let [s (cond
+            (keyword? op) (if (namespace op)
+                            (str (namespace op) "." (name op))
+                            (name op))
+            (symbol? op)  (if (namespace op)
+                            (str (namespace op) "." (name op))
+                            (name op))
+            :else        (str op))]
+    (-> s
+      (str/replace #"/" ".")
+      (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
+
+(defn- block-index
+  [block]
+  (or (:idx block) (:id block) 0))
+
+(defn- block-ref
+  [turn iteration block]
+  (or (get-in block [:provenance :ref])
+    (str "turn/" (subs (str (:id turn)) 0 8)
+      "/iteration/" (:position iteration)
+      "/block/" (inc (long (block-index block))))))
+
+(defn- tool-result-envelope?
+  [value]
+  (and (map? value)
+    (contains? value :ok?)
+    (contains? value :provenance)))
+
+(defn- result-summary
+  "Bounded, data-first result preview for timeline/call rows. The full
+   values remain available where they were persisted (`:blocks`,
+   `:vars`, and `:calls :result`); this summary makes the timeline
+   useful without forcing callers to inspect provider/tool-specific
+   payloads."
+  [result]
+  (cond
+    (runtime-ref? result)
+    {:type :runtime-ref :preview "<runtime value; see matching var/call row>"}
+
+    (map? result)
+    (cond-> {:type :map
+             :keys (vec (take 16 (keys result)))
+             :preview (preview-value result 400)}
+      (contains? result :exit)            (assoc :exit (:exit result))
+      (contains? result :timed-out?)      (assoc :timed-out? (:timed-out? result))
+      (contains? result :command)         (assoc :command (:command result))
+      (contains? result :duration-ms)     (assoc :duration-ms (:duration-ms result))
+      (contains? result :stdout-chars)    (assoc :stdout-chars (:stdout-chars result))
+      (contains? result :stderr-chars)    (assoc :stderr-chars (:stderr-chars result))
+      (contains? result :stdout)          (assoc :stdout-preview (preview-string (:stdout result) 4096))
+      (contains? result :stderr)          (assoc :stderr-preview (preview-string (:stderr result) 4096))
+      (contains? result :stdout-truncated?) (assoc :stdout-truncated? (:stdout-truncated? result))
+      (contains? result :stderr-truncated?) (assoc :stderr-truncated? (:stderr-truncated? result)))
+
+    :else
+    {:type (cond
+             (nil? result) :nil
+             (string? result) :string
+             (keyword? result) :keyword
+             (number? result) :number
+             (coll? result) :collection
+             :else :value)
+     :preview (preview-value result 400)}))
+
+(defn- event-status
+  [error ok? timeout?]
+  (cond
+    timeout? :timeout
+    error :error
+    (false? ok?) :error
+    :else :done))
+
+(defn- tool-call-row
+  [turn iteration block var-row envelope]
+  (let [tool-provenance (:provenance envelope)
+        result          (:result envelope)
+        op              (or (:op tool-provenance) :v/tool)
+        parent-ref      (when block (block-ref turn iteration block))
+        ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
+        status          (event-status (:error envelope) (:ok? envelope)
+                          (or (:timed-out? result) (:timeout? envelope)))
+        tool            (:tool tool-provenance)]
+    (cond-> {:kind           :tool-call
+             :ref            ref
+             :parent-ref     parent-ref
+             :turn-id        (:id turn)
+             :iteration-id   (:id iteration)
+             :iteration      (:position iteration)
+             :op             op
+             :tool           (or (:sym tool) (:call tool) tool)
+             :status         status
+             :ok?            (:ok? envelope)
+             :duration-ms    (or (:duration-ms tool-provenance)
+                               (:duration-ms result)
+                               0)
+             :code           (:code block)
+             :result         result
+             :result-summary (result-summary result)
+             :provenance     tool-provenance}
+      var-row              (assoc :var (:name var-row))
+      (:command tool-provenance) (assoc :command (:command tool-provenance))
+      (:command result)    (assoc :command (:command result))
+      (:target tool-provenance) (assoc :target (:target tool-provenance))
+      (:error envelope)    (assoc :error (:error envelope))
+      (:markdown envelope) (assoc :markdown (:markdown envelope)))))
+
+(defn- block-by-code
+  [iteration]
+  (reduce (fn [acc block]
+            (if (contains? acc (:code block))
+              acc
+              (assoc acc (:code block) block)))
+    {}
+    (:blocks iteration)))
+
+(defn- iteration-tool-calls
+  [turn iteration]
+  (let [blocks-by-code (block-by-code iteration)
+        direct-calls   (keep (fn [block]
+                               (when (tool-result-envelope? (:result block))
+                                 (tool-call-row turn iteration block nil (:result block))))
+                         (:blocks iteration))
+        var-calls      (keep (fn [var-row]
+                               (when (tool-result-envelope? (:value var-row))
+                                 (tool-call-row turn iteration
+                                   (get blocks-by-code (:code var-row))
+                                   var-row
+                                   (:value var-row))))
+                         (:vars iteration))]
+    (vec (concat direct-calls var-calls))))
+
+(defn- transcript-calls
+  [turns]
+  (vec
+    (mapcat (fn [turn]
+              (mapcat #(iteration-tool-calls turn %) (:iterations turn)))
+      turns)))
+
+(defn- dialog-events
+  [turns]
+  (vec
+    (mapcat (fn [turn]
+              (cond-> [{:role :user
+                        :turn-id (:id turn)
+                        :content (:user-request turn)}]
+                (:answer turn) (conj {:role :assistant
+                                      :turn-id (:id turn)
+                                      :content (:answer turn)})))
+      turns)))
+
+(defn- code-event
+  [turn iteration block]
+  (let [error (:error block)]
+    (cond-> {:kind           :code
+             :ref            (block-ref turn iteration block)
+             :turn-id        (:id turn)
+             :iteration-id   (:id iteration)
+             :iteration      (:position iteration)
+             :form-position  (inc (long (block-index block)))
+             :rendering-kind (:rendering-kind block)
+             :status         (event-status error true (:timeout? block))
+             :duration-ms    (or (:duration-ms block) 0)
+             :code           (:code block)}
+      (contains? block :result) (assoc :result-summary (result-summary (:result block)))
+      error                     (assoc :error error)
+      (:stdout block)           (assoc :stdout-preview (preview-string (:stdout block) 4096))
+      (:stderr block)           (assoc :stderr-preview (preview-string (:stderr block) 4096)))))
+
+(defn- transcript-timeline
+  [turns calls]
+  (let [calls-by-parent (group-by :parent-ref calls)]
+    (vec
+      (mapcat (fn [turn]
+                (concat
+                  [{:kind :user-message
+                    :turn-id (:id turn)
+                    :content (:user-request turn)}]
+                  (mapcat (fn [iteration]
+                            (mapcat (fn [block]
+                                      (let [ref (block-ref turn iteration block)]
+                                        (cons (code-event turn iteration block)
+                                          (get calls-by-parent ref))))
+                              (:blocks iteration)))
+                    (:iterations turn))
+                  (when (:answer turn)
+                    [{:kind :assistant-message
+                      :turn-id (:id turn)
+                      :content (:answer turn)}])))
+        turns))))
+
+(defn- raw-response-map
+  [iteration]
+  (let [blocks (vec (:llm-executable-blocks iteration))]
+    (cond-> {}
+      (some? (:llm-raw-response-preview iteration))
+      (assoc :preview (:llm-raw-response-preview iteration))
+      (some? (:llm-raw-response-length iteration))
+      (assoc :length (:llm-raw-response-length iteration))
+      (some? (:llm-raw-response-sha256 iteration))
+      (assoc :sha256 (:llm-raw-response-sha256 iteration))
+      (some? (:llm-executable-code iteration))
+      (assoc :executable-code (:llm-executable-code iteration))
+      (seq blocks)
+      (assoc :executable-blocks blocks
+        :block-count (count blocks)
+        :block-langs (mapv :lang blocks)))))
+
+(defn- llm-diagnostic-row
+  [turn iteration]
+  (let [raw-response (raw-response-map iteration)]
+    (when (seq raw-response)
+      (cond-> {:turn-id      (:id turn)
+               :user-request (:user-request turn)
+               :iteration-id (:id iteration)
+               :iteration    (:position iteration)
+               :status       (:status iteration)
+               :raw-response raw-response}
+        (:provider iteration) (assoc :provider (:provider iteration))
+        (:model iteration)    (assoc :model (:model iteration))))))
+
+(defn- transcript-llm-diagnostics
+  [turns]
+  (vec
+    (mapcat (fn [turn]
+              (keep #(llm-diagnostic-row turn %) (:iterations turn)))
+      turns)))
+
 (defn transcript
   "Full conversation transcript as one Clojure data map. See ns
    docstring for the canonical shape. Returns nil when the
@@ -197,15 +447,20 @@
       (let [turn-rows (try (vis/db-list-conversation-turns db-info resolved-id)
                         (catch Throwable _ []))
             turns     (mapv (partial build-turn db-info) turn-rows)
-            totals  (conversation-totals turns)]
-        {:conversation (cond-> {:id         resolved-id
-                                :title      (:title conv)
-                                :channel    (:channel conv)
-                                :model      (:model conv)
-                                :created-at (:created-at conv)}
-                         (:provider conv) (assoc :provider (:provider conv)))
-         :totals       totals
-         :turns        turns}))))
+            totals    (conversation-totals turns)
+            calls     (transcript-calls turns)]
+        {:conversation     (cond-> {:id         resolved-id
+                                    :title      (:title conv)
+                                    :channel    (:channel conv)
+                                    :model      (:model conv)
+                                    :created-at (:created-at conv)}
+                             (:provider conv) (assoc :provider (:provider conv)))
+         :totals           totals
+         :dialog           (dialog-events turns)
+         :calls            calls
+         :timeline         (transcript-timeline turns calls)
+         :llm-diagnostics  (transcript-llm-diagnostics turns)
+         :turns            turns}))))
 
 ;; =============================================================================
 ;; Markdown renderer. Pure transformation over `transcript`'s data
@@ -262,6 +517,11 @@
         s
         "</details>\n\n"))))
 
+(defn- display-result [result]
+  (if (and (map? result) (= :expr (:vis/ref result)))
+    "<runtime value; re-evaluate expression to restore>"
+    (pr-str result)))
+
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced stdout/stderr,
@@ -270,7 +530,7 @@
    so the reader spots the terminal block at a glance.
 
    Truncation budgets stay generous (4KB stdout / stderr, 800 chars
-   on the pr-str of result) so the report is forensic, not a
+   on the display string of result) so the report is forensic, not a
    one-pager."
   [idx answer? {:keys [code comment result error stdout stderr] :as block}]
   (let [marker      (if error "✗" "✓")
@@ -286,7 +546,7 @@
       (when (not (str/blank? comment)) (str comment "\n"))
       (render-fenced "clojure" code)
       (when has-result?
-        (str "\nResult: `" (truncate (pr-str result) 800) "`\n"))
+        (str "\nResult: `" (truncate (display-result result) 800) "`\n"))
       (when (not (str/blank? stdout))
         (str "\n_stdout:_\n" (render-fenced "text" (truncate stdout 4096))))
       (when (not (str/blank? stderr))
@@ -524,24 +784,57 @@
     "- **Total tokens (in/out):** " (format-tokens (:tokens totals)) "\n"
     "\n"))
 
-(defn transcript->md
-  "Render transcript data as Markdown. Pure transformation over
-   `transcript`'s canonical data shape. Returns a string."
+(defn- render-dialog-message
+  [{:keys [role content]}]
+  (str "### " (case role
+                :user "User"
+                :assistant "Assistant"
+                (name role))
+    "\n\n"
+    (render-fenced "markdown" content)
+    "\n"))
+
+(defn- render-dialog-md
+  [{:keys [conversation dialog]}]
+  (str "# Dialog — conversation `" (:id conversation) "`\n\n"
+    (if (seq dialog)
+      (apply str (map render-dialog-message dialog))
+      "_No dialog messages._\n")))
+
+(defn- render-full-md
   [data]
   (str (render-header data)
     (render-raw-diagnostics (:turns data))
     "## Turn-by-turn breakdown\n\n"
     (apply str (map render-turn-block (:turns data)))))
 
+(defn transcript->md
+  "Render transcript data as Markdown. Pure transformation over
+   `transcript`'s canonical data shape. Returns a string.
+
+   Modes:
+   - `:full` / `:debug` — full forensic transcript (default).
+   - `:dialog`          — user/assistant dialog only."
+  ([data]
+   (transcript->md data {:mode :full}))
+  ([data {:keys [mode] :or {mode :full}}]
+   (case mode
+     :dialog (render-dialog-md data)
+     :full   (render-full-md data)
+     :debug  (render-full-md data)
+     (render-full-md data))))
+
 (defn transcript-md
   "Render the conversation as Markdown. Single transformation over
    `transcript`'s data. Returns a string; returns
    `\"Conversation not found: <id>\\n\"` (no throw) on a missing id so
    shell pipelines stay clean."
-  [db-info conversation-id]
-  (if-let [data (transcript db-info conversation-id)]
-    (transcript->md data)
-    (str "Conversation not found: " conversation-id "\n")))
+  ([db-info conversation-id]
+   (transcript-md db-info conversation-id {:mode :full}))
+  ([db-info conversation-id opts]
+   (if-let [data (transcript db-info conversation-id)]
+     (transcript->md data opts)
+     (str "Conversation not found: " conversation-id "\n"))))
 
 ;; =============================================================================
 ;; CLI command — `vis report <CONVERSATION-ID>`. Foundation owns it

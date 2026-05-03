@@ -43,6 +43,7 @@
    [com.blockether.vis.internal.markdown :as markdown]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.provenance-lifecycle :as prov-life]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.registry :as registry]
    [edamame.core :as edamame]
@@ -479,8 +480,7 @@
         finished-time    (System/currentTimeMillis)
         execution-time   (- finished-time start-time)]
     (cond-> execution-result
-      true (assoc :engine :vis/sci
-             :execution-started-at-ms start-time
+      true (assoc :execution-started-at-ms start-time
              :execution-finished-at-ms finished-time
              :execution-time-ms execution-time)
       (:timeout? execution-result) (assoc :timeout? true)
@@ -715,7 +715,7 @@
 ;;
 ;; Returns the error from the form at `form-idx` in `block-results`
 ;; or nil when that form's evaluation succeeded. `form-idx` may be
-;; nil (legacy answer-atom payloads) or out-of-bounds (defensive
+;; nil (older answer-atom payloads) or out-of-bounds (defensive
 ;; against shape drift) — both yield nil (no discard).
 ;; ---------------------------------------------------------------------------
 
@@ -790,11 +790,42 @@
       "so the host loops, then emit one final top-level form such as "
       "`(answer …)` or `(let [...] (answer …))`.")))
 
+(def ^:private evidence-bearing-request-pattern
+  (re-pattern
+    (str "(?i)\\b("
+      (str/join "|"
+        ["audit" "build" "change" "check" "code" "debug" "diagnose"
+         "edit" "fail" "failing" "fix" "grep" "implement" "inspect"
+         "investigate" "patch" "refactor" "repo" "repository" "reproduce"
+         "run" "search" "test" "verify" "write"])
+      ")\\b")))
+
+(defn intent-required?
+  "True when the current request needs workspace/evidence-backed intent gating.
+   Trivial chat and pure conceptual answers may finish without an intent; code,
+   debugging, repository, change, search, verification, audit, and multi-step
+   work must first create/focus and resolve an intent."
+  [user-request]
+  (boolean (and (string? user-request)
+             (re-find evidence-bearing-request-pattern user-request))))
+
+(defn- current-user-request
+  [environment]
+  (or (:user-request environment)
+    (some-> (:current-user-request-atom environment) deref)))
+
+(defn- ignorable-missing-focused-intent-only?
+  [state]
+  (let [violations (:violations state)]
+    (and (seq violations)
+      (every? #(= :missing-focused-intent (:type %)) violations))))
+
 (defn final-answer-gate-error
   "Return nil only when focused conversation intents are answer-ready.
-   Conversation-scoped intents must be fulfilled or abandoned before
-   `(answer …)`. Old unfocused active intents are reported by `v/intents`, but
-   do not block the current focused answer."
+   Evidence-bearing requests require a focused conversation intent that is
+   fulfilled or abandoned before `(answer …)`. Trivial chat/conceptual answers
+   may finish without creating an intent, unless focused work already exists and
+   is unresolved."
   [environment _iteration _blocks]
   (let [db-info (:db-info environment)
         turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
@@ -804,20 +835,35 @@
                       {:ok? false
                        :violations [{:type :intent-check-error
                                      :blocking? true
-                                     :message (ex-message e)}]}))]
-        (when-not (:ok? state)
+                                     :message (ex-message e)}]}))
+            required? (intent-required? (current-user-request environment))]
+        (when (and (not (:ok? state))
+                (or required?
+                  (not (ignorable-missing-focused-intent-only? state))))
           (str "Final answer rejected: focused conversation intents are not resolved. "
             "Run `(v/intents)`, prove/block gates with canonical provenance refs, "
             "then fulfill or abandon every focused intent before `(answer …)`. "
+            "For trivial chat/conceptual answers with no workspace evidence, no intent is required. "
             "For unrelated parallel work, fork the conversation. "
             "Violations: " (pr-str (:violations state))))))))
 
+(defn- runtime-turn-prefix
+  [environment]
+  (let [id-s (str (or (some-> (:current-conversation-turn-id-atom environment) deref)
+                    (:environment-id environment)
+                    "00000000"))
+        prefix (subs id-s 0 (min 8 (count id-s)))]
+    (if (re-matches #"(?i)[0-9a-f]{8}" prefix)
+      prefix
+      "00000000")))
+
 (defn- eval-provenance
-  "Generic provenance for every top-level form that passes through the
-   Vis eval pipeline. Tool calls can add nested provenance inside their
-   returned envelope; this records the outer regular form evaluation so
-   plain calls and tool calls share a common block-level trace."
-  [iteration form-idx form-count result]
+  "Generic canonical provenance for every top-level form that passes
+   through the Vis eval pipeline. Tool calls can add nested provenance
+   inside their returned envelope; this records the outer regular form
+   evaluation so plain calls and tool calls share a common block-level
+   trace."
+  [turn-prefix iteration form-idx form-count result]
   (let [finished      (long (or (:execution-finished-at-ms result)
                               (System/currentTimeMillis)))
         duration      (long (or (:execution-time-ms result) 0))
@@ -825,20 +871,22 @@
                               (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
     (extension/normalize-provenance
-      {:op             :vis/eval
+      {:op             (or (:op result) :sci/eval)
        :started-at-ms  started
        :finished-at-ms finished
        :duration-ms    duration
-       :engine         (or (:engine result) :vis/sci)
+       :status         (cond
+                         (:timeout? result) :timeout
+                         (:error result) :error
+                         :else :done)
        :iteration      iteration
        :form-position  form-position
        :form-count     form-count
-       :ref            (str "i" iteration "." form-position)
+       :ref            (prov-life/block-ref {:turn-prefix turn-prefix
+                                             :iteration iteration
+                                             :block form-position})
        :timeout?       (boolean (:timeout? result))
        :repaired?      (boolean (:repaired? result))})))
-
-(def ^:private eval-provenance-engines
-  #{:vis/sci :vis/edamame :vis/guard})
 
 (s/def ::id nat-int?)
 (s/def ::code string?)
@@ -852,12 +900,12 @@
 (s/def ::block-provenance
   (s/and
     ::extension/provenance
-    #(= :vis/eval (:op %))
-    #(contains? eval-provenance-engines (:engine %))
+    #(contains? #{:sci/eval :edamame/parse :vis/guard} (:op %))
+    #(contains? #{:done :error :timeout} (:status %))
     #(pos-int? (:iteration %))
     #(pos-int? (:form-position %))
     #(pos-int? (:form-count %))
-    #(= (:ref %) (str "i" (:iteration %) "." (:form-position %)))))
+    #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" (:ref %))))
 (s/def ::provenance ::block-provenance)
 (s/def ::iteration-block
   (s/keys :req-un [::id ::code ::stdout ::stderr ::error
@@ -889,6 +937,11 @@
   [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
+          turn-prefix (runtime-turn-prefix environment)
+          form-ref (fn [idx]
+                     (prov-life/block-ref {:turn-prefix turn-prefix
+                                           :iteration iteration-position
+                                           :block (inc idx)}))
           effective-reasoning (when (some? reasoning-level)
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
@@ -966,7 +1019,7 @@
                                         :iteration     iteration-position
                                         :form-idx      idx
                                         :form-of       total-blocks
-                                        :iteration-id  (str "i" iteration-position "." (inc idx))
+                                        :iteration-id  (form-ref idx)
                                         :code          expr
                                         :comment       form-comment
                                         :started-at-ms (System/currentTimeMillis)}))
@@ -975,16 +1028,16 @@
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (reset! current-form-idx-atom idx)
-                           (let [iteration-id (str "i" iteration-position "." (inc idx))
+                           (let [iteration-id (form-ref idx)
                                  raw-result (cond
                                               parse-error
                                               {:result nil :error (str "Parse error: " parse-error)
                                                :stdout "" :stderr "" :execution-time-ms 0
-                                               :engine :vis/edamame}
+                                               :op :edamame/parse}
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
-                                                 :engine :vis/guard}
+                                                 :op :vis/guard}
                                                 (let [r (execute-code environment expr)]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
@@ -999,12 +1052,12 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
-                                 provenance (eval-provenance iteration-position idx total-blocks result)
+                                 provenance (eval-provenance turn-prefix iteration-position idx total-blocks result)
                                  result* (assoc result :provenance provenance)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; form lands so the channel can render
-                             ;; iN.K results incrementally instead
+                             ;; per-form results incrementally instead
                              ;; of waiting for the whole batch. Same
                              ;; envelope on success and error —
                              ;; consumers branch on `:error nil?`,
@@ -1107,7 +1160,7 @@
                                :iteration         iteration-position
                                :form-idx          form-idx
                                :form-of           total-forms
-                               :iteration-id      (str "i" iteration-position "." (inc form-idx))
+                               :iteration-id      (form-ref form-idx)
                                :code              (:code b)
                                :comment           (get block-comments form-idx)
                                :result            (:result b)
@@ -1437,7 +1490,8 @@
 
    Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_CONVERSATION_TURN_ID,
    TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
-   TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS) repeat verbatim across
+   TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS,
+   CONVERSATION_ID, CONVERSATION_SOUL_ID, CONVERSATION_STATE_ID) repeat verbatim across
    iterations of the same turn — that is the intentional contract:
    \"every iteration carries a snapshot of every SYSTEM var\". The
    dedup-on-unchanged optimization the previous version did was a
@@ -1452,7 +1506,7 @@
                          conversation-soul-id conversation-state-id
                          system-prompt
                          extensions-snapshot accessible-skills-snapshot
-                         conversation-title conversation-metadata]}]
+                         conversation-title]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
@@ -1465,8 +1519,10 @@
       (stamp "TURN_ACCESSIBLE_SKILLS"       (or accessible-skills-snapshot []))
       (stamp "ITERATION_ID"                 (or iteration-id ""))
       (stamp "ITERATION_PREVIOUS_REASONING" (or thinking ""))
+      (stamp "CONVERSATION_ID"              (or conversation-soul-id ""))
+      (stamp "CONVERSATION_SOUL_ID"         (or conversation-soul-id ""))
+      (stamp "CONVERSATION_STATE_ID"        (or conversation-state-id ""))
       (stamp "CONVERSATION_TITLE"           (or conversation-title ""))
-      (stamp "CONVERSATION_METADATA"        (or conversation-metadata {}))
       (stamp "CONVERSATION_PREVIOUS_ANSWER" (or final-answer "")))))
 
 (defn update-title-system-var!
@@ -1639,9 +1695,12 @@
     (env/bind-and-bump! environment 'TURN_CONVERSATION_TURN_ID conversation-turn-id)
     (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
       (:conversation-id environment))
-    (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID
-      (persistance/db-latest-conversation-state-id
-        (:db-info environment) (:conversation-id environment)))
+    (let [conversation-state-id (persistance/db-latest-conversation-state-id
+                                  (:db-info environment) (:conversation-id environment))]
+      (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID conversation-state-id)
+      (env/bind-and-bump! environment 'CONVERSATION_ID (:conversation-id environment))
+      (env/bind-and-bump! environment 'CONVERSATION_SOUL_ID (:conversation-id environment))
+      (env/bind-and-bump! environment 'CONVERSATION_STATE_ID conversation-state-id))
     ;; The full assembled system prompt that drives THIS turn. SYSTEM
     ;; vars are excluded from `<var_index>` (see `env/build-var-index`)
     ;; so binding a multi-KB string here does NOT enter per-iteration
@@ -1667,6 +1726,14 @@
     (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
+    (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
+    (try
+      (persistance/db-infer-focus! (:db-info environment) conversation-turn-id
+        {:rationale "Turn-start focus inference carried unresolved previous focus."})
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::turn-focus-inference-failed
+                   :data {:error (ex-message t)}}
+          "Turn-start focus inference failed; continuing without inferred focus")))
     ;; Hot symbol compaction is archive-based and runs only after a
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
@@ -1720,7 +1787,7 @@
                 (let [result (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
                                      :trace trace :iteration-count iteration} (finalize-cost))]
                   ;; Lifecycle :turn-end with :cancelled status (replaces
-                  ;; the legacy `:on-cancel` slot — listeners distinguish
+                  ;; the retired `:on-cancel` slot — listeners distinguish
                   ;; via `:status`).
                   (lifecycle/emit! lifecycle-listeners :turn-end
                     (merge turn-base-payload
@@ -1865,7 +1932,7 @@
                            :done?     true}
                           "on-chunk (iteration error)")
                         ;; Lifecycle :iteration-end (error path).
-                        ;; Replaces the legacy `:on-iteration` slot.
+                        ;; Replaces the retired `:on-iteration` slot.
                         ;; The :status keyword (:error here) is the
                         ;; discriminator listeners switch on.
                         (lifecycle/emit! lifecycle-listeners :iteration-end
@@ -2004,7 +2071,7 @@
                             {:blocks (count blocks) :errors (count (filter :error blocks))
                              :times (mapv :execution-time-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
-                        ;; Per-form chunks already streamed every iN.K
+                        ;; Per-form chunks already streamed every form
                         ;; result; this is the trim \"iteration is
                         ;; complete, here is the terminal answer\"
                         ;; signal. Consumers attach `:final` to
@@ -2190,15 +2257,15 @@
           root-provider          (:provider root-resolved-model)
           db-info                (:db-info env)
           custom-bindings        (custom-bindings env)
-          current-iteration-atom (atom 1)
+          current-iteration-atom (:current-iteration-atom env)
           sci-ctx                (:sci-ctx env)
           _                      (env/bump-var-index! env)
           _                      (doseq [[sym val] (or custom-bindings {})]
                                    (when val
                                      (env/sci-update-binding! sci-ctx sym val)))
           _                      (env/bump-var-index! env)
-          current-iteration-id-atom (atom nil)
-          current-conversation-turn-id-atom    (atom nil)
+          current-iteration-id-atom (:current-iteration-id-atom env)
+          current-conversation-turn-id-atom (:current-conversation-turn-id-atom env)
           environment            (assoc env
                                    :current-iteration-atom current-iteration-atom
                                    :current-iteration-id-atom current-iteration-id-atom
@@ -2708,6 +2775,14 @@
         ;; form's evaluation invoked it. Pairs with `answer-atom` to
         ;; implement Option C (scoped) discard semantics.
         current-form-idx-atom    (atom nil)
+        ;; Stable per-env turn/iteration atoms. Extension symbol wrappers
+        ;; close over the environment installed at creation time, so these
+        ;; atoms must live on that base env and be reset per turn instead of
+        ;; being introduced only on the transient turn env.
+        current-iteration-atom    (atom 1)
+        current-iteration-id-atom (atom nil)
+        current-conversation-turn-id-atom (atom nil)
+        current-user-request-atom (atom nil)
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
         ;; truth; this atom is the fast read path for  and
@@ -2755,7 +2830,7 @@
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
         ;; the discard check to the form that actually called this.
-        ;; Returns the marker keyword so the iN.K result row makes
+        ;; Returns the marker keyword so the per-form result row makes
         ;; intent visible.
         answer-fn                (fn answer [s]
                                    (reset! answer-atom
@@ -2802,6 +2877,10 @@
              :router          router
              :answer-atom           answer-atom
              :current-form-idx-atom current-form-idx-atom
+             :current-iteration-atom current-iteration-atom
+             :current-iteration-id-atom current-iteration-id-atom
+             :current-conversation-turn-id-atom current-conversation-turn-id-atom
+             :current-user-request-atom current-user-request-atom
              :conversation-title-atom            conversation-title-atom
              :extensions            (atom [])}]
     (reset! environment-atom env)

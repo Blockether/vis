@@ -826,18 +826,20 @@
           (when block-map
             (cond
               (= :error (:kind child))
-              (when (:error block-map)
-                (assoc block-map
-                  :provenance (assoc (:provenance block-map)
-                                :ref canonical-ref
-                                :status :error)
-                  :rendering-kind :vis/error))
+              (when (and (:error block-map)
+                      (= canonical-ref (str (get-in block-map [:provenance :ref]) "/error")))
+                {:rendering-kind :vis/error
+                 :provenance {:ref canonical-ref
+                              :op :sci/error
+                              :status :error}
+                 :error (:error block-map)})
 
               (= :tool (:kind child))
               (some #(when (= canonical-ref (get-in % [:provenance :ref])) %)
                 (:events block-map))
 
-              :else block-map)))))))
+              (= canonical-ref (get-in block-map [:provenance :ref]))
+              block-map)))))))
 
 (defn- validate-provenance-refs!
   [db-info conversation-soul-id refs role]
@@ -914,6 +916,53 @@
                          :created_at now}})
       (row->intent (require-row db-info :conversation_intent intent-id "conversation_intent not found")))))
 
+(defn- previous-unresolved-focused-intent-ids
+  [db-info conversation-turn-state-id]
+  (let [ctx (turn-state-context db-info
+              (:conversation_turn_soul_id
+               (require-row db-info :conversation_turn_state conversation-turn-state-id
+                 "conversation_turn_state not found")))]
+    (mapv :intent_id
+      (query! db-info
+        {:select-distinct [:f.intent_id]
+         :from [[:conversation_intent_focus :f]]
+         :join [[:conversation_turn_state :cts] [:= :cts.id :f.conversation_turn_state_id]
+                [:conversation_turn_soul :ct] [:= :ct.id :cts.conversation_turn_soul_id]
+                [:conversation_state :cs] [:= :cs.id :ct.conversation_state_id]
+                [:conversation_intent :i] [:= :i.id :f.intent_id]]
+         :where [:and
+                 [:= :cs.conversation_soul_id (:conversation_soul_id ctx)]
+                 [:<> :f.conversation_turn_state_id (->ref conversation-turn-state-id)]
+                 [:= :i.status "active"]]
+         :order-by [[:cts.created_at :desc] [:f.created_at :asc]]}))))
+
+(defn db-infer-focus!
+  "Conservatively carry unresolved focus from the previous branch/run into the
+   new turn-state. This makes focus switching enforcement real: unrelated new
+   issue/focus calls cannot bypass unresolved focused work merely by starting a
+   new turn."
+  [db-info conversation-turn-id {:keys [rationale source metadata]
+                                 :or {rationale "Inherited unresolved focus from previous turn."
+                                      source :inferred}}]
+  (when (and (ds db-info) conversation-turn-id)
+    (let [ctx (turn-state-context db-info conversation-turn-id)
+          turn-state-id (:conversation_turn_state_id ctx)
+          now (now-ms)
+          ids (previous-unresolved-focused-intent-ids db-info turn-state-id)]
+      (doseq [intent-id ids]
+        (execute! db-info
+          {:insert-into :conversation_intent_focus
+           :values [{:id (str (UUID/randomUUID))
+                     :conversation_turn_state_id turn-state-id
+                     :intent_id intent-id
+                     :source (->kw source)
+                     :metadata (->json (assoc (or metadata {}) :rationale rationale))
+                     :created_at now}]
+           :on-conflict [:conversation_turn_state_id :intent_id]
+           :do-nothing true}))
+      {:conversation-turn-state-id (->uuid turn-state-id)
+       :focused-intent-ids (mapv ->uuid ids)})))
+
 (defn db-store-intent!
   [db-info {:keys [conversation-id conversation-turn-id title rationale created-ref metadata]}]
   (when (ds db-info)
@@ -927,21 +976,23 @@
                                  (conversation-soul-id-for-conversation db-info conversation-id))
           id  (str (UUID/randomUUID))
           now (now-ms)]
-      (execute! db-info
-        {:insert-into :conversation_intent
-         :values [(cond-> {:id id
-                           :conversation_soul_id conversation-soul-id
-                           :title title
-                           :rationale rationale
-                           :status "active"
-                           :metadata (->json metadata)
-                           :created_at now}
-                    conversation-turn-id (assoc :created_conversation_turn_id (->ref conversation-turn-id))
-                    created-ref (assoc :created_ref created-ref))]})
-      (when (:conversation_turn_state_id ctx)
-        (db-focus-intent! db-info id {:conversation-turn-state-id (:conversation_turn_state_id ctx)
-                                      :rationale rationale
-                                      :source :created}))
+      (jdbc/with-transaction [tx (ds db-info)]
+        (let [tx-info (assoc db-info :datasource tx)]
+          (execute! tx-info
+            {:insert-into :conversation_intent
+             :values [(cond-> {:id id
+                               :conversation_soul_id conversation-soul-id
+                               :title title
+                               :rationale rationale
+                               :status "active"
+                               :metadata (->json metadata)
+                               :created_at now}
+                        conversation-turn-id (assoc :created_conversation_turn_id (->ref conversation-turn-id))
+                        created-ref (assoc :created_ref created-ref))]})
+          (when (:conversation_turn_state_id ctx)
+            (db-focus-intent! tx-info id {:conversation-turn-state-id (:conversation_turn_state_id ctx)
+                                          :rationale rationale
+                                          :source :created}))))
       (row->intent (require-row db-info :conversation_intent id "conversation_intent not found")))))
 
 (defn db-store-intent-ref!
@@ -1426,33 +1477,33 @@
     (keyword? (:rendering-kind exec)) (:rendering-kind exec)
     :else :vis/sci))
 
-(def ^:private obsolete-provenance-keys
-  #{:markdown :label :short :engine :rendering-kind :result :error :stdout :stderr :vis/silent})
-
 (defn- normalized-provenance
   [turn-id-s iteration-position block-pos exec]
-  (let [existing (apply dissoc (or (:provenance exec) {}) obsolete-provenance-keys)
+  (let [incoming-provenance (:provenance exec)
         rendering-kind (normalize-rendering-kind exec)
         status (cond
                  (:timeout? exec) :timeout
                  (:error exec) :error
                  :else :done)
-        op (or (:op existing)
+        op (or (:op incoming-provenance)
              (case rendering-kind
                :vis/tool :v/tool
                :vis/system :vis/system
                :vis/answer :vis/answer
                :vis/error :sci/eval
                :sci/eval))]
-    (merge existing
-      (:provenance
-       (prov-life/event
-         {:ref (prov-life/block-ref {:turn-prefix (subs turn-id-s 0 8)
-                                     :iteration iteration-position
-                                     :block (inc block-pos)})
-          :op op
-          :status status
-          :rendering-kind rendering-kind})))))
+    (:provenance
+     (prov-life/event
+       {:ref (prov-life/block-ref {:turn-prefix (subs turn-id-s 0 8)
+                                   :iteration iteration-position
+                                   :block (inc block-pos)})
+        :op op
+        :status status
+        :rendering-kind rendering-kind
+        :duration-ms (or (:duration-ms incoming-provenance)
+                       (:execution-time-ms exec))
+        :started-at-ms (:started-at-ms incoming-provenance)
+        :finished-at-ms (:finished-at-ms incoming-provenance)}))))
 
 (defn- structural-tool-result?
   [v]
@@ -1468,10 +1519,11 @@
       (structural-tool-result? result)
       (conj
         (let [tool-prov (:provenance result)
-              status (cond
-                       (:error result) :error
-                       (false? (:ok? result)) :error
-                       :else :done)
+              status (or (:status tool-prov)
+                       (cond
+                         (:error result) :error
+                         (false? (:ok? result)) :error
+                         :else :done))
               op (or (:op tool-prov) :v/tool)
               ref (prov-life/child-ref parent-ref {:op op})]
           (prov-life/event
@@ -1564,9 +1616,9 @@
                       1)
           raw-response-s (some-> llm-raw-response str)]
       ;; 1. Iteration row — includes the full block log inline as
-      ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Replaces
-      ;;    the legacy expression_soul kind='call' + expression_state
-      ;;    fanout: every reader iterated per-iteration anyway.
+      ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Per-form
+      ;;    observations live here; expression_soul/expression_state
+      ;;    are only for named vars.
       (let [blocks-vec (prepare-blocks-blob conversation-turn-soul-id-s position blocks)]
         (execute! db-info
           {:insert-into :iteration
@@ -1802,10 +1854,9 @@
    Each entry carries :idx + :code (and optionally :comment :result
    :error :stdout :stderr :duration-ms :timeout? :repaired?).
 
-   Source: the Nippy-encoded `iteration.blocks` BLOB. Replaces the
-   legacy expression_soul kind='call' + expression_state row join.
-   Same shape every legacy reader expects, so call sites round-trip
-   through the blob without changes."
+   Source: the Nippy-encoded `iteration.blocks` BLOB. Per-form calls are
+   read directly from that blob; expression_soul/expression_state are
+   reserved for named vars."
   [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
     (let [iteration-id-s (->ref iteration-id)

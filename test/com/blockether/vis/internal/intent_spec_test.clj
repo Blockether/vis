@@ -40,11 +40,11 @@
 
   (it "rejects presentation keys inside provenance maps"
     (expect (s/valid? ::intent-spec/provenance
-              {:ref canonical-ref :op :sci/eval :event-status :done}))
+              {:ref canonical-ref :op :sci/eval :status :done}))
     (expect (false? (s/valid? ::intent-spec/provenance
                       {:ref canonical-ref
                        :op :sci/eval
-                       :event-status :done
+                       :status :done
                        :markdown "presentation does not belong here"}))))
 
   (it "requires provenance and namespaced rendering-kind on executed blocks"
@@ -52,7 +52,7 @@
               {:idx 0
                :code "(+ 1 2)"
                :result 3
-               :provenance {:ref canonical-ref :op :sci/eval :event-status :done}
+               :provenance {:ref canonical-ref :op :sci/eval :status :done}
                :rendering-kind :vis/sci}))
     (expect (false? (s/valid? ::intent-spec/executed-block
                       {:idx 0
@@ -63,7 +63,7 @@
                       {:idx 0
                        :code "(+ 1 2)"
                        :result 3
-                       :provenance {:ref canonical-ref :op :sci/eval :event-status :done}}))))
+                       :provenance {:ref canonical-ref :op :sci/eval :status :done}}))))
 
   (it "validates the v/intents aggregate read shape"
     (expect (s/valid? ::intent-spec/intents-report

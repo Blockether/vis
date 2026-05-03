@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs-test
-  (:require [clojure.test :refer [deftest testing is]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest testing is]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input MouseActionType]))
@@ -47,6 +48,43 @@
               @(open-picker-item! {:path "deps.edn"})))
         (is (= ["deps.edn"] @calls))))))
 
+(deftest file-picker-table-test
+  (let [table-widths    (var-get #'dlg/file-picker-table-widths)
+        border-line     (var-get #'dlg/file-picker-table-border-line)
+        row-line        (var-get #'dlg/file-picker-table-row-line)
+        cells           (var-get #'dlg/file-picker-table-cells)
+        headers         (var-get #'dlg/file-picker-table-headers)
+        content-lines   (var-get #'dlg/file-picker-content-lines)
+        body-height     (var-get #'dlg/file-picker-table-body-height)
+        scrollbar-geom  (var-get #'dlg/file-picker-scrollbar-geometry)
+        widths          (table-widths 72)]
+    (testing "file picker renders a table with headers and no outer side borders"
+      (let [top-line    (border-line widths :top)
+            header-line (row-line widths headers)]
+        (is (= 72 (count top-line)))
+        (is (not= \│ (first top-line)))
+        (is (not= \│ (last top-line)))
+        (is (= \space (first header-line)))
+        (is (= \space (last header-line)))
+        (is (re-find #"Status.*File.*Size.*Modified" header-line))))
+
+    (testing "status is rendered as a word, not a bracket badge"
+      (let [line (row-line widths
+                   (cells {:status-label "modified"
+                           :path "src/com/blockether/vis/core.clj"
+                           :size-label "14.0K"
+                           :age-label "1m"}))]
+        (is (str/includes? line "modified"))
+        (is (not (str/includes? line "[M]")))))
+
+    (testing "picker body has a constant height and visible scrollbar geometry"
+      (is (= 20 (content-lines)))
+      (is (= 10 (body-height 50)))
+      (is (= {:track-h 10 :thumb-h 5 :thumb-top 2}
+            (scrollbar-geom 10 20 5)))
+      (is (= {:track-h 10 :thumb-h 10 :thumb-top 0}
+            (scrollbar-geom 10 3 0))))))
+
 (deftest apply-settings-option-test
   (let [apply-settings-option (var-get #'dlg/apply-settings-option)
         settings-option-label (var-get #'dlg/settings-option-label)
@@ -92,6 +130,5 @@
 
     (testing "command palette exposes Providers outside Settings"
       (is (= ["Providers"
-              "Settings"
-              "Copy Messages"]
+              "Settings"]
             (mapv :label palette-commands))))))

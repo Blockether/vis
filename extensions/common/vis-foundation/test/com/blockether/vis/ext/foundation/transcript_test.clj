@@ -11,6 +11,31 @@
    [com.blockether.vis.ext.foundation.transcript :as transcript]
    [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- tool-result
+  [command stdout]
+  {:ok? true
+   :result {:exit 0
+            :timed-out? false
+            :cwd "."
+            :command command
+            :duration-ms 5
+            :stderr-chars 0
+            :stderr ""
+            :stderr-truncated? false
+            :stdout-chars (count stdout)
+            :stdout-truncated? false
+            :stdout stdout}
+   :result-shape {:type :map}
+   :provenance {:op :v/bash
+                :tool {:sym 'bash :call "v/bash" :alias 'v}
+                :command command
+                :duration-ms 5
+                :started-at-ms 10
+                :finished-at-ms 15
+                :target {:requested "." :kind :dir}}
+   :markdown "Ran bash in `.` — exit `0`, 5 ms."
+   :error nil})
+
 (defn- seed!
   "Two-turn fixture exercising the full transcript surface: one
    clean turn with comment / result / stdout / a `(def …)` var /
@@ -91,7 +116,8 @@
         (let [cid  (seed! s)
               data (transcript/transcript s cid)]
           (expect (map? data))
-          (expect (= #{:conversation :totals :turns} (set (keys data))))
+          (expect (= #{:conversation :totals :turns :dialog :calls :timeline :llm-diagnostics}
+                    (set (keys data))))
           ;; Conversation header carries the canonical fields.
           (expect (= cid    (:id    (:conversation data))))
           (expect (= "Transcript fixture" (:title (:conversation data))))
@@ -240,6 +266,42 @@
           ;; Empty-blocks? defaults to true (bit was 1) when the iter
           ;; row recorded zero blocks.
           (expect (true? (:returned-empty-blocks? iter))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "normalizes dialog, code blocks, and def-wrapped tool calls into transcript-level timelines"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid  (vis/db-store-conversation! s {:channel :tui :title "tool transcript" :model "x"})
+              turn (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                       :user-request "run a tool"
+                                                       :status :running})
+              code "(def out (v/bash \"echo hi\"))"
+              value (tool-result "echo hi" "hi\n")]
+          (vis/db-store-iteration! s {:conversation-turn-id turn
+                                      :blocks [{:code code
+                                                :result {:vis/ref :expr}
+                                                :execution-time-ms 6}]
+                                      :vars [{:name "out" :value value :code code}]
+                                      :answer "done"
+                                      :answer-form-idx nil
+                                      :duration-ms 10})
+          (vis/db-update-conversation-turn! s turn {:status :done :answer "done"})
+          (let [data      (transcript/transcript s cid)
+                call      (first (:calls data))
+                code-row  (first (filter #(= :code (:kind %)) (:timeline data)))
+                tool-row  (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
+            (expect (= [{:role :user :turn-id turn :content "run a tool"}
+                        {:role :assistant :turn-id turn :content "done"}]
+                      (:dialog data)))
+            (expect (= 1 (count (:calls data))))
+            (expect (= :v/bash (:op call)))
+            (expect (= "out" (:var call)))
+            (expect (= code (:code call)))
+            (expect (= "echo hi" (:command call)))
+            (expect (= 0 (get-in call [:result-summary :exit])))
+            (expect (= "hi\n" (get-in call [:result-summary :stdout-preview])))
+            (expect (= (:parent-ref call) (:ref code-row)))
+            (expect (= call tool-row))))
         (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------
@@ -265,6 +327,20 @@
           (expect (string? out))
           (expect (str/includes? out (str "conversation `" cid "`")))
           (expect (not (str/includes? out "Conversation not found"))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "can render dialog-only Markdown from the same transcript data"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid  (seed! s)
+              data (transcript/transcript s cid)
+              out  (transcript/transcript->md data {:mode :dialog})]
+          (expect (str/includes? out "# Dialog — conversation"))
+          (expect (str/includes? out "### User"))
+          (expect (str/includes? out "First turn"))
+          (expect (str/includes? out "### Assistant"))
+          (expect (str/includes? out "42"))
+          (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "renders header + per-turn block + per-iteration block dump"

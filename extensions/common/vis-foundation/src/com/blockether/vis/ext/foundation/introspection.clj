@@ -44,7 +44,11 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation.transcript :as transcript]))
+   [com.blockether.vis.ext.foundation.transcript :as transcript]
+   [com.blockether.vis.internal.extension :as extension])
+  (:import
+   [clojure.lang IBlockingDeref IDeref IPending]
+   [java.util.concurrent CancellationException ExecutionException Future TimeUnit TimeoutException]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
@@ -880,7 +884,7 @@
      {:event-count (count timeline)
       :by-kind     (frequencies (map :kind timeline))
       :by-op       (frequencies (map :op timeline))
-      :by-engine   (frequencies (keep :engine timeline))
+      :by-rendering-kind (frequencies (keep :rendering-kind timeline))
       :by-status   (frequencies (map :status timeline))
       :failures    (filterv #(= :error (:status %)) timeline)
       :slowest     (vec (take 5 (sort-by (comp - long #(or % 0) :duration-ms) timeline)))
@@ -1280,6 +1284,70 @@ _No intents._
   [env _f args]
   {:args (vec (cons env args))})
 
+(defn- await-value
+  [x timeout-ms timeout-sentinel]
+  (cond
+    (instance? Future x)
+    (.get ^Future x (long timeout-ms) TimeUnit/MILLISECONDS)
+
+    (instance? IBlockingDeref x)
+    (let [v (deref x (long timeout-ms) timeout-sentinel)]
+      (if (identical? timeout-sentinel v)
+        (throw (TimeoutException. (str "Timed out after " timeout-ms "ms")))
+        v))
+
+    (and (instance? IPending x) (realized? x))
+    (deref x)
+
+    (instance? IDeref x)
+    (throw (ex-info "Cannot await this deref with a timeout; use a Future, promise, or another blocking deref."
+             {:type :vis.await-proof/unsupported-deref
+              :class (.getName (class x))}))
+
+    :else
+    (throw (ex-info "await-proof! expects a Future or blocking deref"
+             {:type :vis.await-proof/not-derefable
+              :class (some-> x class .getName)}))))
+
+(defn- failure-status
+  [^Throwable t]
+  (cond
+    (instance? TimeoutException t) :timeout
+    (instance? CancellationException t) :cancelled
+    :else :error))
+
+(defn- await-proof-result
+  [status result throwable started finished]
+  (let [provenance {:op :future/await
+                    :status status
+                    :started-at-ms started
+                    :finished-at-ms finished
+                    :duration-ms (max 0 (- finished started))}]
+    (if (= :done status)
+      (extension/success {:result result :provenance provenance})
+      (extension/failure {:result result :provenance provenance :throwable throwable}))))
+
+(defn- foundation-await-proof!
+  "Wait for a Future/blocking deref and return a tool-result envelope with
+   terminal provenance. Use this instead of plain deref when the awaited
+   value will be cited as proof."
+  ([x]
+   (foundation-await-proof! x {}))
+  ([x {:keys [timeout-ms] :or {timeout-ms 30000}}]
+   (let [started (System/currentTimeMillis)
+         timeout-sentinel (Object.)]
+     (try
+       (let [value (await-value x timeout-ms timeout-sentinel)
+             finished (System/currentTimeMillis)]
+         (await-proof-result :done value nil started finished))
+       (catch ExecutionException e
+         (let [cause (or (.getCause e) e)
+               finished (System/currentTimeMillis)]
+           (await-proof-result (failure-status cause) nil cause started finished)))
+       (catch Throwable e
+         (let [finished (System/currentTimeMillis)]
+           (await-proof-result (failure-status e) nil e started finished)))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Symbol entries — each maps a sandbox-visible name to its impl fn,
 ;; documented for the LLM (the `:doc` + `:examples` fields render into
@@ -1307,7 +1375,7 @@ _No intents._
 
 (def provenance-timeline-symbol
   (vis/symbol 'provenance-timeline foundation-provenance-timeline
-    {:doc       "Ordered provenance ledger: eval events plus child tool events with stable iN.K refs."
+    {:doc       "Ordered provenance ledger: eval events plus child tool events with canonical refs."
      :arglists  '([] [conversation-id])
      :examples  ["(v/provenance-timeline)"
                  "(filter #(= :error (:status %)) (v/provenance-timeline))"
@@ -1338,6 +1406,13 @@ _No intents._
      :examples  ["(v/provenance-report)"
                  "(answer (v/provenance-report))"]
      :before-fn inject-environment}))
+
+(def await-proof!-symbol
+  (vis/symbol 'await-proof! foundation-await-proof!
+    {:doc       "Canonical await for Future/blocking deref values when the awaited result will be used as proof. Returns a terminal tool-result envelope; cite the observed await block, not the start ref."
+     :arglists  '([future-or-deref] [future-or-deref {:keys [timeout-ms]}])
+     :examples  ["(def result (v/await-proof! f {:timeout-ms 30000}))"
+                 "result"]}))
 
 (def intents-symbol
   (vis/symbol 'intents foundation-intents
@@ -1491,6 +1566,7 @@ _No intents._
    provenance-stats-symbol
    provenance-guards-symbol
    provenance-report-symbol
+   await-proof!-symbol
    intents-symbol
    issue-intent!-symbol
    focus-intent!-symbol
@@ -1517,6 +1593,7 @@ _No intents._
     "  (v/provenance-stats cid?)     counts, failures, slowest events, tools\n"
     "  (v/provenance-guards cid?)    integrity checks before citing provenance\n"
     "  (v/provenance-report cid?)    compact Markdown audit trail\n"
+    "  (v/await-proof! x opts?)      canonical await for Future/blocking deref proof\n"
     "  (v/intents turn-id?)          conversation-scoped intents, focus, checks, report\n"
     "  (v/audit-report cid?)         conversation audit + provenance\n"
     "  (v/issue-intent! opts)        create and focus an intent\n"

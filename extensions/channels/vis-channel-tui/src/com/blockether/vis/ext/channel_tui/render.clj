@@ -388,6 +388,15 @@
      :cursor-vrow  (+ (nth offsets crow) seg-idx)
      :cursor-vcol  seg-off}))
 
+(defn- input-more-hint
+  "Left-edge label for the input top border when the editor has more
+   visual rows than the visible input body can show. The count is the
+   number of hidden visual rows, matching pi's compact `N more` cue."
+  [total-visual-rows text-rows]
+  (let [hidden (max 0 (- (long total-visual-rows) (long text-rows)))]
+    (when (pos? hidden)
+      (str " " hidden " more "))))
+
 (defn draw-input-box!
   "Draw bordered input area with internal padding. Returns
    [cursor-col cursor-row] in screen coords.
@@ -412,8 +421,14 @@
         text-w     (input-text-w cols)
         {:keys [visual-lines cursor-vrow cursor-vcol]}
         (soft-wrap-input input text-w)
-        v-scroll   (max 0 (- cursor-vrow (dec text-rows)))]
+        v-scroll   (max 0 (- cursor-vrow (dec text-rows)))
+        more-hint  (input-more-hint (count visual-lines) text-rows)]
     (draw-box-border! g box-top box-bottom cols hint false)
+    (when more-hint
+      (.setForegroundColor g t/border-fg)
+      (.setBackgroundColor g t/terminal-bg)
+      (.putString g (+ INPUT_BORDER_HORIZONTAL_PAD 2) (int box-top)
+        (p/truncate-cols more-hint (max 0 (- cols (* 2 INPUT_BORDER_HORIZONTAL_PAD) 4)))))
     (fill-box-interior! g box-top box-bottom cols)
 
     ;; Text
@@ -1854,7 +1869,6 @@
            block-number kind summary summary-marker body-marker lines max-w]}]
   (let [entries (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines)]
     (if (or (nil? conversation-id)
-          (nil? conversation-turn-id)
           (not (auto-collapse-needed? lines (str/join "\n" lines))))
       entries
       (let [detail-ctx {:conversation-id conversation-id
@@ -1885,7 +1899,6 @@
         n       (count entries)
         edge    thinking-preview-edge-lines]
     (if (or (nil? conversation-id)
-          (nil? conversation-turn-id)
           (<= n (* 2 edge)))
       entries
       (let [detail-ctx {:conversation-id conversation-id
@@ -1935,7 +1948,6 @@
             node-id    (detail-node-id detail-ctx)
             collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
         (if (and conversation-id
-              conversation-turn-id
               collapsed?
               (> (count raw-text) auto-collapse-char-threshold))
           (detail-summary-entries (assoc detail-ctx
@@ -2490,7 +2502,7 @@
       (into (vec header) (concat body trailing-errors))
       (into (vec (concat header (thinking-lines thinking) trailing-errors)) body))))
 
-(defn- format-iteration-entry
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
 
@@ -2574,7 +2586,10 @@
      :now-ms         — `System/currentTimeMillis` from the render thread
                        (drives the spinner frame); defaults to current ms
      :turn-start-ms — wall-clock start, used for elapsed time
-     :cancelling?    — true once Esc was pressed"
+     :cancelling?    — true once Esc was pressed
+     :conversation-id — current conversation id; enables live detail rows
+     :conversation-turn-id — optional turn id, when known
+     :detail-expansions — detail expansion state keyed by conversation/node"
   ([progress bubble-w settings] (progress->lines-data progress bubble-w settings nil))
   ([progress bubble-w settings extra]
    (let [iterations       (vec (:iterations progress))
@@ -2582,7 +2597,8 @@
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
          show-iteration-headers?  (get settings :show-iteration-headers false)
-         {:keys [now-ms turn-start-ms cancelling?]} extra
+         {:keys [now-ms turn-start-ms cancelling? conversation-id
+                 conversation-turn-id detail-expansions]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          elapsed-ms       (when turn-start-ms
                             (max 0 (- now-ms (long turn-start-ms))))
@@ -2590,21 +2606,24 @@
          spinner-line     (str (spinner-frame now-ms) "  "
                             (progress-phase iterations cancelling?) "…  "
                             elapsed-str "  ·  Esc to cancel")
-         trace-lines      (when (and show-iterations? (seq iterations))
+         line-entry       (fn [line] {:line line :meta nil})
+         trace-entries    (when (and show-iterations? (seq iterations))
                             (into []
                               (mapcat (fn [[idx entry]]
-                                        (format-iteration-entry
+                                        (format-iteration-entry-entries
                                           (if show-thinking? entry (dissoc entry :thinking :events))
                                           content-w (inc idx)
-                                          {:show-header? show-iteration-headers?
-                                           :now-ms       now-ms})))
+                                          {:show-header?         show-iteration-headers?
+                                           :now-ms               now-ms
+                                           :conversation-id      conversation-id
+                                           :conversation-turn-id conversation-turn-id
+                                           :detail-expansions   detail-expansions})))
                               (collapse-repeated-error-runs iterations)))
-         lines            (if (seq trace-lines)
-                            (conj (conj trace-lines "") spinner-line)
-                            [spinner-line])]
-     {:text      (str/join "\n" lines)
-      :lines     lines
-      :line-meta (vec (repeat (count lines) nil))})))
+         entries          (if (seq trace-entries)
+                            (conj (conj trace-entries (line-entry ""))
+                              (line-entry spinner-line))
+                            [(line-entry spinner-line)])]
+     (entries->payload entries))))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble."
