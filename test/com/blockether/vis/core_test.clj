@@ -679,7 +679,7 @@
     (it "returns the trailing form's error when answer was the last block"
       (expect (= "trailing boom" (vis/answer-form-error results 3))))
 
-    (it "returns nil when form-idx is missing (legacy / pre-Option-C payload)"
+    (it "returns nil when form-idx is missing"
       (expect (nil? (vis/answer-form-error results nil))))
 
     (it "returns nil for out-of-bounds form-idx (defensive against shape drift)"
@@ -1228,13 +1228,13 @@
       (expect (= [] forms))))
 
   (it "`#_(...)` discard joins the leading-comment block in :comment"
-    (let [src ";; what\n#_(legacy-call)\n(def x 1)"
+    (let [src ";; what\n#_(discarded-call)\n(def x 1)"
           [forms _] (vis/split-top-level-forms src)]
       (expect (= 1 (count forms)))
       (expect (= "(def x 1)" (:expr (first forms))))
       (let [c (:comment (first forms))]
         (expect (str/includes? c ";; what"))
-        (expect (str/includes? c "#_(legacy-call)")))))
+        (expect (str/includes? c "#_(discarded-call)")))))
 
   (it "comment glue survives a parinfer repair (Case C with leading comment)"
     (let [src ";; missing close\n(def x (let [y 1]\n  y)"
@@ -1861,9 +1861,9 @@
         (expect (= :svar.spec/schema-rejected (:type (ex-data exception))))
         (expect (empty? (filter :schema-reject-retry @chunks))))))
 
-;; The whole legacy block above is wrapped in `#_` reader-discard so
+;; The whole retired block above is wrapped in `#_` reader-discard so
 ;; nothing in this section compiles. Kept inline as a record of the
-;; retry-shape we used to expose at the public API.
+;; retry-shape previously exposed at the public API.
 
 ;; ─── from parse_rescue_loop_test.clj ───
 

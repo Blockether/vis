@@ -1330,9 +1330,6 @@
                                                  (:settings @state/app-db)))]
                                  (state/dispatch [:update-settings s]))
 
-                               :copy
-                               (with-dialog-lock #(dlg/copy-dialog! screen (:messages @state/app-db)))
-
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
                                nil)))]
@@ -1346,7 +1343,7 @@
                        :show-palette
                      ;; Modal stack: each command runs nested inside the
                      ;; palette's open state, so ESC from a sub-dialog
-                     ;; (Settings, Copy, etc.) reopens the palette
+                     ;; (Settings, etc.) reopens the palette
                      ;; instead of dropping the user back to the chat.
                      ;; Only ESC pressed *inside* the palette itself
                      ;; closes the whole stack.

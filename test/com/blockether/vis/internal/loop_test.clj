@@ -55,15 +55,32 @@
               (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")))))
 
 (defdescribe final-answer-gate-error-test
-  (it "rejects when no focused intent exists for the current turn"
+  (it "accepts trivial chat when no focused intent exists"
     (let [s   (vis/db-create-connection! :memory)
           cid (vis/db-store-conversation! s {:channel :cli})
           tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                   :user-request "hi"
                                                   :status :running})]
       (try
+        (expect (nil? (loop/final-answer-gate-error
+                        {:db-info s
+                         :current-conversation-turn-id-atom (atom tid)
+                         :current-user-request-atom (atom "hi")}
+                        0 [])))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "rejects evidence-bearing answers when no focused intent exists"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "fix the failing test"
+                                                  :status :running})]
+      (try
         (let [error (loop/final-answer-gate-error
-                      {:db-info s :current-conversation-turn-id-atom (atom tid)}
+                      {:db-info s
+                       :current-conversation-turn-id-atom (atom tid)
+                       :current-user-request-atom (atom "fix the failing test")}
                       0 [])]
           (expect (string? error))
           (expect (re-find #":missing-focused-intent" error)))
@@ -152,12 +169,12 @@
             (expect (= "(+ 1 1)" (:llm-executable-code result)))
             (expect (= executable-blocks (:llm-executable-blocks result)))
             (let [prov (:provenance (first (:blocks result)))]
-              (expect (= :vis/eval (:op prov)))
+              (expect (= :sci/eval (:op prov)))
+              (expect (= :done (:status prov)))
               (expect (= 1 (:iteration prov)))
               (expect (= 1 (:form-position prov)))
               (expect (= 1 (:form-count prov)))
-              (expect (= "i1.1" (:ref prov)))
-              (expect (= :vis/sci (:engine prov))))))))))
+              (expect (= "turn/00000000/iteration/1/block/1" (:ref prov))))))))))
 
 (defdescribe run-iteration-silent-chunk-test
   (it "does not emit form-start for known :vis/silent host forms"
@@ -294,6 +311,25 @@
       (expect (not (re-find #"StackOverflowError" (:error result))))
       (expect (= 0 (:execution-time-ms result))))))
 
+(defdescribe turn-scoped-extension-env-test
+  (it "lets installed extension symbols see the current turn id"
+    (let [env (loop/create-environment
+                {:providers [{:id :test :models [{:name "model"}]}]}
+                {:db :memory :channel :cli})
+          tid (vis/db-store-conversation-turn! (:db-info env)
+                {:parent-conversation-id (:conversation-id env)
+                 :user-request "track intent"
+                 :status :running})]
+      (try
+        (reset! (:current-conversation-turn-id-atom env) tid)
+        (let [result (#'loop/execute-code env
+                                          "(v/issue-intent! {:title \"Track intent\" :rationale \"User asked.\"})")]
+          (expect (nil? (:error result)))
+          (expect (= "Track intent" (-> result :result :title)))
+          (expect (= tid (-> result :result :created-conversation-turn-id))))
+        (finally
+          (loop/dispose-environment! env))))))
+
 (defdescribe prepare-turn-context-test
   (it "preserves provider-specific extra-body opts for downstream LLM calls"
     (with-redefs [env/bump-var-index! (fn [_] nil)
@@ -303,7 +339,10 @@
                   :conversation-id "c1"
                   :environment-id  "e1"
                   :state-atom      (atom {})
-                  :sci-ctx         nil}
+                  :sci-ctx         nil
+                  :current-iteration-atom (atom 1)
+                  :current-iteration-id-atom (atom nil)
+                  :current-conversation-turn-id-atom (atom nil)}
                  [{:role "user" :content "hello"}]
                  {:extra-body {:text {:verbosity "high"}}})]
         (expect (= {:text {:verbosity "high"}} (:extra-body ctx)))))))

@@ -17,6 +17,7 @@
 (def ^:private md->lines @#'render/markdown->lines)
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private format-clojure-ansi @#'render/format-clojure-ansi)
+(def ^:private input-more-hint @#'render/input-more-hint)
 
 (defn- run-concurrently!
   [thunks]
@@ -60,6 +61,13 @@
   [s]
   (when (string? s)
     (if (zero? (count s)) "" (subs s 1))))
+
+(defdescribe input-overflow-hint-test
+  (it "shows hidden visual-row count as an N more label for the input top border"
+    (expect (= nil (input-more-hint 1 4)))
+    (expect (= nil (input-more-hint 4 4)))
+    (expect (= " 1 more " (input-more-hint 5 4)))
+    (expect (= " 6 more " (input-more-hint 10 4)))))
 
 (defdescribe zprint-render-concurrency-test
   (it "TUI Clojure formatting shares the process-wide zprint lock"
@@ -263,7 +271,29 @@
                    {:now-ms 1000 :turn-start-ms 0}))]
       (expect (not (str/includes? body "hidden while live")))
       (expect (str/includes? body "alpha"))
-      (expect (str/includes? body "beta")))))
+      (expect (str/includes? body "beta"))))
+
+  (it "live progress collapses huge results when conversation context is available"
+    (render/invalidate-cache!)
+    (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
+          payload     (render/progress->lines-data
+                        {:iterations [{:events    [{:type :form-result :form-idx 0}]
+                                       :code      ["(+ 1 2)"]
+                                       :comments  [nil]
+                                       :results   [huge-result]
+                                       :stdouts   [""]
+                                       :durations [1]
+                                       :successes [true]}]}
+                        96
+                        {:show-thinking true :show-iterations true}
+                        {:now-ms            1000
+                         :turn-start-ms     0
+                         :conversation-id   "conversation"
+                         :detail-expansions {}})]
+      (expect (str/includes? (:text payload) "RESULT"))
+      (expect (str/includes? (:text payload) "chars hidden"))
+      (expect (not (str/includes? (:text payload) huge-result)))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload))))))
 
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"

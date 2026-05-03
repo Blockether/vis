@@ -22,6 +22,8 @@ Conversation-scoped intents are the durable memory of what Vis is trying to sati
 
 The model should prove gates and fulfill/abandon focused intents using observed canonical refs before answering.
 
+Deferred work is lifecycle-based. A future/deferred child ref with `:status :running` proves only that work was started. It cannot prove a gate. The model must cite a completed `:done` event, or cite terminal failure/timeout/cancellation as blocker evidence.
+
 ## Restore behavior
 
 Runtime-only values may be stored internally as `{:vis/ref :expr}`. Chat, transcript, report, and provenance renderers must treat that as an internal pointer and show a reconstructed value or diagnostic fallback, never the raw sentinel.

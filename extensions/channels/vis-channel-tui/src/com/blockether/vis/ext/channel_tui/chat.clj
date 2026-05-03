@@ -84,8 +84,9 @@
                                                             (seq all-exprs))
                                              elide-idxs  (cond-> (into #{}
                                                                    (keep-indexed
-                                                                     (fn [idx {:keys [result]}]
-                                                                       (when (= :vis/silent result) idx)))
+                                                                     (fn [idx {:keys [result rendering-kind]}]
+                                                                       (when (or (= :vis/silent rendering-kind)
+                                                                               (= :vis/silent result)) idx)))
                                                                    all-exprs)
                                                            answer-here? (conj (dec (count all-exprs))))
                                              exprs       (into []
@@ -95,9 +96,11 @@
                                                                  expr)))
                                                            all-exprs)
                                              result-strs (mapv (fn [{:keys [result error]}]
-                                                                 (if error
-                                                                   (vis/format-error error)
-                                                                   (pr-str result)))
+                                                                 (cond
+                                                                   error (vis/format-error error)
+                                                                   (and (map? result) (= :expr (:vis/ref result)))
+                                                                   "<runtime value; re-evaluate expression to restore>"
+                                                                   :else (pr-str result)))
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]

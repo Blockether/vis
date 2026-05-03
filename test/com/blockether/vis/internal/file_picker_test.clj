@@ -69,7 +69,12 @@
                   {:sort-mode :auto :include-ignored? true :now-ms 5000})]
       (expect (= "scratch/generated/output.txt"
                 (:path (first items))))
-      (expect (= "I" (:status-label (first items))))))
+      (expect (= "ignored" (:status-label (first items))))))
+
+  (it "uses readable status words instead of one-letter badges"
+    (let [item (first (picker/file-picker-items sample-entries "footer"
+                        {:sort-mode :auto :include-ignored? false :now-ms 61000}))]
+      (expect (= "modified" (:status-label item)))))
 
   (it "typed query switches to relevance-first, with recency as a tiebreak"
     (let [items (picker/file-picker-items sample-entries "input"

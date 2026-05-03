@@ -143,7 +143,31 @@
               {:loading? true :progress {:iterations []}})
             projected (:projected (first visible))]
         (expect (string? (:text projected)))
-        (expect (not= (:text m) (:text projected))))))
+        (expect (not= (:text m) (:text projected)))))
+
+    (it "passes conversation context to live progress so huge blocks collapse while streaming"
+      (render/invalidate-cache!)
+      (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
+            m           {:role :assistant :text "Sending request to provider…"}
+            trace       [{:events    [{:type :form-result :form-idx 0}]
+                          :code      ["(+ 1 2)"]
+                          :comments  [nil]
+                          :results   [huge-result]
+                          :stdouts   [""]
+                          :durations [1]
+                          :successes [true]}]
+            {:keys [visible]}
+            (virtual/layout [m] bubble-w settings nil 30
+              {:loading?       true
+               :progress       {:iterations trace}
+               :progress-extra {:now-ms 1000 :turn-start-ms 0}}
+              {:conversation-id    "conversation"
+               :detail-expansions {}})
+            projected (:projected (first visible))]
+        (expect (str/includes? (:text projected) "RESULT"))
+        (expect (str/includes? (:text projected) "chars hidden"))
+        (expect (not (str/includes? (:text projected) huge-result)))
+        (expect (some #(= :toggle-details (:kind %)) (:line-meta projected))))))
 
   (describe "fixed scroll offset (scroll = some long)"
     (it "clamps to [0, max-scroll]"

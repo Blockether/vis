@@ -15,6 +15,7 @@
    [babashka.fs :as fs]
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
+   [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- private-fn [name]
@@ -231,11 +232,11 @@
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
           read-all-lines (private-fn "read-all-lines-tool")
           out (read-all-lines path)]
-      (expect (= #{:ok? :result :result-shape :provenance :markdown :error}
+      (expect (= #{:ok? :result :result-shape :provenance :error}
                 (set (keys out))))
       (expect (true? (:ok? out)))
       (expect (= ["alpha" "beta"] (:result out)))
-      (expect (string? (:markdown out)))
+      (expect (string? (:markdown (extension/presentation out))))
       (expect (nil? (:error out)))))
 
   (it "tool failure contract includes structured :error with normalized trace"
@@ -246,4 +247,4 @@
       (expect (= nil (:result out)))
       (expect (= "clojure.lang.ExceptionInfo" (get-in out [:error :type])))
       (expect (vector? (get-in out [:error :trace])))
-      (expect (string? (:markdown out))))))
+      (expect (string? (:markdown (extension/presentation out)))))))

@@ -246,9 +246,9 @@ CREATE TABLE iteration (
   --
   -- \"Block\" matches the LLM-facing prompt vocabulary (each
   -- top-level form inside a fenced ```clojure ... ``` block). The
-  -- legacy `expression_soul kind='call'` + `expression_state` per-
-  -- call rows are gone: every reader iterates per-iteration anyway,
-  -- so per-call rows added cost without index value. Var rows stay
+  -- per-call `expression_soul` rows are gone: every reader iterates
+  -- per-iteration anyway, so per-call rows added cost without index
+  -- value. Var rows stay
   -- first-class (expression_soul kind='var') because var-history is
   -- the keystone of the data model — versioned, branched,
   -- dependency-graphed.
@@ -561,9 +561,9 @@ END;
 --              kind enum stays open so a future RLM extension can
 --              pin literals without another schema migration.
 --
--- The legacy 'call' kind was REMOVED. Per-call data now lives in the
--- Nippy-encoded `iteration.blocks` BLOB; nothing else queried
--- call rows by id, so the indirection added cost without value.
+-- Per-call rows were removed. Per-call data now lives in the
+-- Nippy-encoded `iteration.blocks` BLOB; nothing else queried call rows
+-- by id, so the indirection added cost without value.
 --
 -- state_mode:
 --   stateless | stateful

@@ -143,9 +143,9 @@
                              :started-at-ms  t
                              :finished-at-ms t
                              :duration-ms    0}
-                       provenance)
-         :markdown   markdown})
+                       provenance)})
       {:journal :markdown
+       :markdown markdown
        :var-index :compact
        :transcript :full})))
 
@@ -169,9 +169,9 @@
                                  :started-at-ms  t
                                  :finished-at-ms t
                                  :duration-ms    0}
-                    :markdown   markdown
                     :throwable  err})
                  {:journal :markdown
+                  :markdown markdown
                   :var-index :compact
                   :transcript :full})})))
 

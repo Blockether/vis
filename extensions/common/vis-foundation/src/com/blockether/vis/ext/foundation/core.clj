@@ -21,8 +21,8 @@
    Plus a live `<environment>` block in the system prompt, owned by
    `environment/core.clj`'s `environment-prompt`.
 
-   The legacy `fs/` alias was dropped, but the useful babashka.fs
-   surface is now inlined back under `v/` as thin cwd-safe wrappers
+   The separate `fs/` alias was dropped, but the useful babashka.fs
+   surface is now inlined under `v/` as thin cwd-safe wrappers
    (`v/read-all-lines`, `v/write-lines`, `v/update-file`, `v/glob`,
    `v/list-dir`, ...). The markdown builders were merged too, so the
    model now uses `(answer (v/join ...))`, `(v/h1 ...)`,

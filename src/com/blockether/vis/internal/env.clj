@@ -690,8 +690,8 @@
 ;;
 ;;   TURN_*         frozen at turn start, immutable for the whole turn
 ;;     TURN_USER_REQUEST           exact human-authored turn text (string)
-;;     TURN_CONVERSATION_TURN_ID   UUID of THIS in-flight turn soul
-;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under
+;;     TURN_CONVERSATION_TURN_ID   UUID of THIS in-flight turn soul.
+;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under.
 ;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
 ;;                                 turn start. Stable for the whole turn even if a
 ;;                                 sibling write changes title; only an
@@ -731,6 +731,9 @@
 ;;     ITERATION_PREVIOUS_REASONING  previous iteration's :thinking text (string)
 ;;
 ;;   CONVERSATION_* conversation-state, mutates freely within the turn
+;;     CONVERSATION_ID               Alias for CONVERSATION_SOUL_ID.
+;;     CONVERSATION_SOUL_ID          UUID of the parent conversation_soul.
+;;     CONVERSATION_STATE_ID         UUID of the current conversation_state branch.
 ;;     CONVERSATION_TITLE            current conversation title ("" until set).
 ;;                                   The model writes via the host primitive
 ;;                                   `(conversation-title "...")`, never by
@@ -770,8 +773,10 @@
      TURN_ACCESSIBLE_SKILLS
      ITERATION_ID
      ITERATION_PREVIOUS_REASONING
+     CONVERSATION_ID
+     CONVERSATION_SOUL_ID
+     CONVERSATION_STATE_ID
      CONVERSATION_TITLE
-     CONVERSATION_METADATA
      CONVERSATION_PREVIOUS_ANSWER})
 
 (defn system-var-sym?

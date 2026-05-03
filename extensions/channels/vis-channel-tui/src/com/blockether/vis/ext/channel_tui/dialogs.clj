@@ -447,24 +447,90 @@
          :target path
          :error (.getMessage t)}))))
 
-(defn- draw-file-picker-item!
-  [g left row inner-w selected? {:keys [status-label name parent size-label age-label]}]
-  (let [meta-text (str size-label "  " age-label)
-        text-x    (+ left 2)
-        text-w    (max 1 (- inner-w 2))
-        right-w   (count meta-text)
-        gap-w     (if (str/blank? meta-text) 0 2)
-        left-w    (max 1 (- text-w right-w gap-w))
-        path-text (if (= parent ".")
-                    (str "[" status-label "] " name)
-                    (str "[" status-label "] " name " · " parent))]
-    (if selected?
-      (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-      (p/set-colors! g t/dialog-fg t/dialog-bg))
-    (p/fill-rect! g (inc left) row inner-w 1)
-    (p/put-str! g text-x row (ellipsize path-text left-w))
-    (when-not (str/blank? meta-text)
-      (p/put-str! g (+ text-x (- text-w right-w)) row meta-text))))
+(def ^:private file-picker-table-headers
+  ["Status" "File" "Size" "Modified"])
+
+(defn- file-picker-content-lines
+  []
+  (+ 10 file-picker-max-visible))
+
+(defn- file-picker-table-body-height
+  [content-h]
+  (max 1 (min file-picker-max-visible (- content-h 10))))
+
+(defn- file-picker-table-widths
+  [table-w]
+  (let [overhead  (dec (* 3 (count file-picker-table-headers)))
+        available (max (count file-picker-table-headers) (- table-w overhead))]
+    (if (>= available 32)
+      (let [status-w   9
+            size-w     7
+            modified-w 8
+            file-w     (max 1 (- available status-w size-w modified-w))]
+        [status-w file-w size-w modified-w])
+      (let [status-w   (max 1 (min 6 (quot available 4)))
+            size-w     1
+            modified-w 1
+            file-w     (max 1 (- available status-w size-w modified-w))]
+        [status-w file-w size-w modified-w]))))
+
+(defn- fit-table-cell
+  [value width]
+  (let [text (ellipsize (or value "") width)]
+    (str text (apply str (repeat (max 0 (- width (count text))) \space)))))
+
+(defn- file-picker-table-cells
+  [{:keys [status-label path size-label age-label]}]
+  [status-label path size-label age-label])
+
+(defn- file-picker-table-row-line
+  [widths cells]
+  (str " "
+    (str/join " │ " (map fit-table-cell cells widths))
+    " "))
+
+(defn- file-picker-table-border-line
+  [widths kind]
+  (let [junction (case kind
+                   :top    \┬
+                   :middle \┼)]
+    (str/join (str junction)
+      (map #(p/horiz-line (+ % 2)) widths))))
+
+(defn- draw-file-picker-table-line!
+  [g x row table-w selected? line]
+  (if selected?
+    (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+    (p/set-colors! g t/dialog-fg t/dialog-bg))
+  (p/fill-rect! g x row table-w 1)
+  (p/put-str! g x row (ellipsize line table-w)))
+
+(defn- file-picker-scrollbar-geometry
+  [height total scroll]
+  (when (pos? height)
+    (let [scrollable? (> total height)
+          thumb-h     (if scrollable?
+                        (max 1 (int (* height (/ (double height) total))))
+                        height)
+          max-scroll  (max 1 (- total height))
+          thumb-top   (if scrollable?
+                        (int (* (- height thumb-h)
+                               (/ (double (clamp scroll 0 max-scroll)) max-scroll)))
+                        0)]
+      {:track-h height
+       :thumb-h thumb-h
+       :thumb-top thumb-top})))
+
+(defn- draw-file-picker-scrollbar!
+  [g col top height total scroll]
+  (when-let [{:keys [track-h thumb-h thumb-top]}
+             (file-picker-scrollbar-geometry height total scroll)]
+    (doseq [r (range track-h)]
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/set-char! g col (+ top r) Symbols/SINGLE_LINE_VERTICAL))
+    (doseq [r (range thumb-h)]
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/set-char! g col (+ top thumb-top r) \█))))
 
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
@@ -481,7 +547,7 @@
       (let [items         (picker/file-picker-items entries @query {:include-ignored? @include-ignored?
                                                                     :sort-mode @sort-mode})
             total         (count items)
-            content-lines (+ 5 (max 1 (min total file-picker-max-visible)))
+            content-lines (file-picker-content-lines)
             size          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols          (.getColumns size)
             rows          (.getRows size)
@@ -490,30 +556,63 @@
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds content-lines)
             _             (swap! selected #(clamp % 0 (max 0 (dec total))))
-            mode-row      (+ content-top 4)
-            list-top      (+ content-top 5)
-            list-h        (max 1 (- content-h 5))
-            visible       (min total list-h)
+            table-top     (+ content-top 4)
+            table-header  (+ content-top 5)
+            table-sep     (+ content-top 6)
+            list-top      (+ content-top 7)
+            list-h        (file-picker-table-body-height content-h)
+            mode-margin-row (+ list-top list-h)
+            mode-border-row (inc mode-margin-row)
+            mode-row      (inc mode-border-row)
             _             (swap! scroll #(visible-window-start @selected % list-h total))
             mode-line     (str "Ignored: " (if @include-ignored? "on" "off")
-                            "   Sort: " (picker/sort-label @sort-mode @query))]
+                            "   Sort: " (picker/sort-label @sort-mode @query))
+            table-x       (+ left 2)
+            table-w       (max 1 (- inner-w 2))
+            table-content-w (max 1 (- table-w 2))
+            scrollbar-col (+ table-x (dec table-w))
+            widths        (file-picker-table-widths table-content-w)]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/put-str! g table-x table-top (file-picker-table-border-line widths :top))
+          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+          (p/put-str! g table-x table-header
+            (file-picker-table-row-line widths file-picker-table-headers))
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/put-str! g table-x table-sep (file-picker-table-border-line widths :middle))
+
+          (dotimes [i list-h]
+            (let [idx (+ @scroll i)
+                  row (+ list-top i)]
+              (cond
+                (< idx total)
+                (draw-file-picker-table-line! g table-x row table-content-w (= idx @selected)
+                  (file-picker-table-row-line widths
+                    (file-picker-table-cells (nth items idx))))
+
+                (and (zero? total) (zero? i))
+                (do
+                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/fill-rect! g table-x row table-content-w 1)
+                  (p/put-str! g table-x row
+                    (file-picker-table-row-line widths ["" "No matching files." "" ""])))
+
+                :else
+                (do
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
+                  (p/fill-rect! g table-x row table-content-w 1)))))
+
+          (draw-file-picker-scrollbar! g scrollbar-col list-top list-h total @scroll)
+
+          (p/set-colors! g t/dialog-fg t/dialog-bg)
+          (p/fill-rect! g (inc left) mode-margin-row inner-w 1)
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/put-str! g (inc left) mode-border-row (p/horiz-line inner-w))
           (p/set-colors! g t/dialog-hint t/dialog-bg)
           (p/put-str! g (+ left 2) mode-row (ellipsize mode-line (max 1 (- inner-w 2))))
-
-          (if (zero? total)
-            (do
-              (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/put-str! g (+ left 2) list-top "No matching files."))
-            (dotimes [i visible]
-              (let [idx (+ @scroll i)
-                    row (+ list-top i)]
-                (when (< idx total)
-                  (draw-file-picker-item! g left row inner-w (= idx @selected)
-                    (nth items idx))))))
 
           (draw-hint-bar! g left hint-row inner-w
             [["type" "filter"] ["Alt+I" "ignored"] ["Alt+S" "sort"] ["Alt+O" "open"] ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
@@ -529,10 +628,18 @@
                     pos   (.getPosition ma)
                     mx    (.getColumn pos)
                     my    (.getRow pos)
-                    hit-idx (when (and (>= mx (inc left)) (< mx (+ left 1 inner-w))
-                                    (>= my list-top) (< my (+ list-top visible)))
+                    hit-idx (when (and (>= mx table-x) (< mx (+ table-x table-content-w))
+                                    (>= my list-top) (< my (+ list-top list-h)))
                               (+ @scroll (- my list-top)))]
                 (cond
+                  (= atype MouseActionType/SCROLL_UP)
+                  (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
+                    (recur))
+
+                  (= atype MouseActionType/SCROLL_DOWN)
+                  (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
+                    (recur))
+
                   (and (= atype MouseActionType/CLICK_DOWN) (some? hit-idx) (< hit-idx total))
                   (do (reset! selected hit-idx)
                     (recur))
@@ -548,6 +655,8 @@
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/PageUp (do (swap! selected #(clamp (- % list-h) 0 (max 0 (dec total)))) (recur))
+                KeyType/PageDown (do (swap! selected #(clamp (+ % list-h) 0 (max 0 (dec total)))) (recur))
                 KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
                                     (reset! selected 0)
                                     (reset! scroll 0)
@@ -992,12 +1101,10 @@
    `:providers` opens router/model/auth configuration directly from the
    palette instead of nesting it under Settings.
 
-   `:copy` is the per-message picker (Space toggles, Enter copies
-   selected as plain `role: text`). Whole-conversation Markdown copy
-   lives in the header as an icon, not in Ctrl+K."
+   Whole-conversation Markdown copy lives in the header as an icon,
+   not in Ctrl+K."
   [{:id :providers :label "Providers"}
-   {:id :settings  :label "Settings"}
-   {:id :copy      :label "Copy Messages"}])
+   {:id :settings  :label "Settings"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.

@@ -53,8 +53,8 @@
    :current-iteration-atom (atom 3)})
 
 (defn- eval-provenance [iteration form-position form-count]
-  {:op :vis/eval
-   :engine :vis/sci
+  {:op :sci/eval
+   :status :done
    :iteration iteration
    :form-position form-position
    :form-count form-count
@@ -63,15 +63,15 @@
    :finished-at-ms 11
    :duration-ms 1})
 
-(defn- tool-result [op markdown]
+(defn- tool-result [op _markdown]
   {:ok? true
    :result {:value :ok}
    :result-shape {:type :map}
    :provenance {:op op
+                :status :done
                 :started-at-ms 10
                 :finished-at-ms 15
                 :duration-ms 5}
-   :markdown markdown
    :error nil})
 
 ;; The impl fns are private — reach via the var registry so tests
@@ -508,6 +508,7 @@
       (expect (contains? symbols 'provenance-stats))
       (expect (contains? symbols 'provenance-guards))
       (expect (contains? symbols 'provenance-report))
+      (expect (contains? symbols 'await-proof!))
       (expect (contains? symbols 'issue-intent!))
       (expect (contains? symbols 'focus-intent!))
       (expect (contains? symbols 'relate-intents!))
@@ -529,6 +530,26 @@
                        'find-attempts-everywhere 'failures
                        'failures-everywhere 'diagnose]]
         (expect (not (contains? symbols removed)))))))
+
+;; -----------------------------------------------------------------------------
+;; Await proof — canonical Future/blocking deref observation.
+;; -----------------------------------------------------------------------------
+
+(defdescribe foundation-await-proof-test
+  (it "returns terminal :done provenance for completed futures"
+    (let [out ((private-fn "foundation-await-proof!") (future 42) {:timeout-ms 1000})]
+      (expect (true? (:ok? out)))
+      (expect (= 42 (:result out)))
+      (expect (= :future/await (get-in out [:provenance :op])))
+      (expect (= :done (get-in out [:provenance :status])))))
+
+  (it "returns terminal :timeout provenance for blocking deref timeouts"
+    (let [p (promise)
+          out ((private-fn "foundation-await-proof!") p {:timeout-ms 1})]
+      (expect (false? (:ok? out)))
+      (expect (= :future/await (get-in out [:provenance :op])))
+      (expect (= :timeout (get-in out [:provenance :status])))
+      (expect (= "java.util.concurrent.TimeoutException" (get-in out [:error :type]))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Provenance helpers — timeline, stats, guards, compact report.
@@ -562,7 +583,7 @@
         (expect (= [(base-ref 1) (base-ref 2) (str (base-ref 2) "/tool/v.bash")]
                   (mapv :ref timeline)))
         (expect (= [:eval :eval :tool] (mapv :kind timeline)))
-        (expect (= [:vis/eval :vis/eval :v/bash] (mapv :op timeline)))
+        (expect (= [:sci/eval :sci/eval :v/bash] (mapv :op timeline)))
         (expect (= (base-ref 2) (:parent-ref (last timeline)))))))
 
   (it "rolls up provenance stats and failure slices"

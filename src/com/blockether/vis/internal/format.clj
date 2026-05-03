@@ -167,9 +167,8 @@
    Up arrow = tokens fed INTO the model (prompt); down arrow = tokens
    the model produced. Cached is cached input tokens, displayed next to
    input because provider APIs report cache hits inside prompt usage.
-   `:cached` is the legacy/current provider field; `:cached-input` /
-   `:input-cached` are accepted aliases so usage maps can name the
-   direction explicitly.
+   `:cached` is the provider field; `:cached-input` / `:input-cached`
+   are accepted aliases so usage maps can name the direction explicitly.
 
    Returns nil when no known field carries a number."
   [{:keys [input output] :as tokens}]

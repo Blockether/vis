@@ -256,24 +256,22 @@
    :trace   (normalize-trace t)})
 
 (defn success
-  [{:keys [result provenance markdown] :as m}]
+  [{:keys [result provenance] :as m}]
   (-> {:ok?          true
        :result       result
        :result-shape (or (:result-shape m) (result-shape result))
        :provenance   (normalize-provenance provenance)
-       :markdown     markdown
        :error        nil}
     assert-tool-result!))
 
 (defn failure
-  [{:keys [result provenance markdown error throwable] :as m}]
+  [{:keys [result provenance error throwable] :as m}]
   (let [err (or error
               (when throwable (normalize-error throwable)))]
     (-> {:ok?          false
          :result       result
          :result-shape (or (:result-shape m) (result-shape result))
          :provenance   (normalize-provenance provenance)
-         :markdown     markdown
          :error        err}
       assert-tool-result!)))
 

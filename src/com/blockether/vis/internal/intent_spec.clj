@@ -66,7 +66,7 @@
 (s/def ::summary non-blank-string?)
 (s/def ::reason non-blank-string?)
 (s/def ::question non-blank-string?)
-(s/def ::status keyword?)
+(s/def ::status event-statuses)
 (s/def ::metadata map?)
 (s/def ::steps vector?)
 (s/def ::required? boolean?)
@@ -149,7 +149,6 @@
 ;; -----------------------------------------------------------------------------
 
 (s/def ::op (s/or :keyword keyword? :string non-blank-string?))
-(s/def ::event-status event-statuses)
 (s/def ::duration-ms nat-int?)
 (s/def ::started-at-ms nat-int?)
 (s/def ::finished-at-ms nat-int?)
@@ -164,7 +163,7 @@
 (s/def ::provenance
   (s/and map?
     no-obsolete-keys-in-provenance?
-    (s/keys :req-un [::ref ::op ::event-status]
+    (s/keys :req-un [::ref ::op ::status]
       :opt-un [::parent-ref ::duration-ms ::started-at-ms ::finished-at-ms ::metadata])))
 
 (s/def ::idx nat-int?)

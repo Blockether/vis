@@ -9,17 +9,20 @@
 
      2. The trailing user message — rebuilt every iteration. Two slots:
           <journal>      last JOURNAL_KEEP_ITERS iterations, code + result,
-                        addressable as iN.K. The model's working memory.
+                        addressed by canonical provenance refs.
           <var_index>   user-defined `(def ...)` bindings in the SCI env.
         Extensions can append `[system_nudge]` lines via `:ext/nudge-fn`.
 
    The two slots above plus the SYSTEM vars (every name in
    `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`,
    `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`,
-   `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`,
-   `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`,
-   `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI cover everything the
-   model needs."
+   `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`,
+   `TURN_ACCESSIBLE_SKILLS`, `ITERATION_ID`,
+   `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_ID`,
+   `CONVERSATION_SOUL_ID`, `CONVERSATION_STATE_ID`,
+   `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI
+   cover everything the model needs. These vars are direct sandbox
+   bindings; reference them by name."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]
@@ -68,9 +71,13 @@
 (defn- strip-sandbox-ns [s]
   (str/replace (str s) #"\bsandbox/" ""))
 
+(defn- runtime-sentinel? [v]
+  (and (map? v) (= :expr (:vis/ref v))))
+
 (defn- realize-value [v]
   (cond
     (nil? v) nil
+    (runtime-sentinel? v) "<runtime value; re-evaluate expression to restore>"
     (map? v) v
     (vector? v) v
     (string? v) v
@@ -109,6 +116,7 @@
   (let [presentation (extension/presentation v)]
     (cond
       (= :hide (:journal presentation)) "<tool result hidden>"
+      (:markdown presentation) (:markdown presentation)
       (:markdown v) (:markdown v)
       :else (str "<tool result " (pr-str (select-keys v [:ok? :result-shape :error])) ">"))))
 
@@ -134,7 +142,8 @@
   [iteration-position k expr]
   (let [{:keys [code error result stdout stderr execution-time-ms provenance]} expr
         display-ref    (or (:ref provenance)
-                         (str "i" iteration-position "." (inc k)))
+                         (str "<missing-canonical-ref iteration=" iteration-position
+                           " block=" (inc k) ">"))
         code-str      (str/trim (or code ""))
         stdout-suffix (when-not (str/blank? stdout)
                         (str " :stdout " (pr-str (truncate stdout 600))))
@@ -165,14 +174,15 @@
   (let [{:keys [thinking blocks]} iteration-data
         header-lines (when (and (string? thinking)
                              (not (str/blank? thinking)))
-                       [(str "  i" iteration-position " thinking: "
+                       [(str "  iteration/" iteration-position " thinking: "
                           (truncate (str/trim thinking) 800))])
         block-lines  (vec (mapcat (fn [[k blk]]
                                     (let [comment-text (some-> (:comment blk) str/trim)
                                           comment-line (when (and comment-text
                                                                (not (str/blank? comment-text)))
                                                          (str "  " (or (get-in blk [:provenance :ref])
-                                                                     (str "i" iteration-position "." (inc k)))
+                                                                     (str "<missing-canonical-ref iteration=" iteration-position
+                                                                       " block=" (inc k) ">"))
                                                            "  ;; "
                                                            (truncate comment-text 400)))]
                                       (cond-> []
@@ -186,9 +196,9 @@
   "Render the last JOURNAL_KEEP_ITERS iterations with canonical provenance
    refs when available. `iters` is a seq of `[iteration-position {:thinking :blocks}]`
    pairs, oldest-first. Each iteration's segment carries:
-     - `iN thinking: …` once at the top (when the iteration emitted
+     - `iteration/N thinking: …` once at the top (when the iteration emitted
        any reasoning text)
-     - per-block `iN.K  ;; <comment>` line above the code line, when
+     - per-block `<canonical-ref>  ;; <comment>` line above the code line, when
        the model authored a leading `;; …` / `#_(...)` comment for
        that form
      - `<canonical-ref>  <code> → <value>` for every block in the iteration"
@@ -290,14 +300,14 @@
           "\n"
           "    (def turn-summary\n"
           "      {:findings   [{:where \"src/auth.clj:42\" :what \"jwt-decode rejects nbf-skew\"}\n"
-          "                    {:where \"iN.K\"           :what \"<concrete-fact>\"}]\n"
+          "                    {:where \"turn/<turn8>/iteration/<n>/block/<k>\" :what \"<concrete-fact>\"}]\n"
           "       :errors     [{:iteration N :class :patch-no-match :recovery \"…\"}]\n"
           "       :decisions  [{:choice \"validate-then-decode\" :rationale \"…\"}]\n"
           "       :next-step  \"extract verify-jwt to its own ns\"})\n"
           "\n"
           "  Keys above are illustrative — use whatever shape fits the\n"
           "  task. Atoms preferred (file paths, symbol names, error keys,\n"
-          "  iN.K refs) over prose. Raw history stays reachable via\n"
+          "  canonical refs) over prose. Raw history stays reachable via\n"
           "  `(v/inspect)` after iterations roll off; use its :transcript\n"
           "  and :failures keys when you genuinely need precision your\n"
           "  `(def …)` didn't capture.")))))
@@ -432,121 +442,36 @@
   -> next iteration observes <journal> -> repeat until terminal answer.
 
 λ engage(nucleus).
-[phi fractal euler tao pi mu ∃ ∀] | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other] | OODA ⊗ RGR ⊗ REPL
-Human ⊗ Vis ⊗ Workspace
+Nucleus := Human ⊗ Vis ⊗ Workspace | OODA ⊗ RGR ⊗ REPL | evidence > guess.
+Symbols: ∃/∀ seek existing solutions/preserve invariants; Δ optimize with evidence; λ compose data/functions; Ω answer only at fixed point; truth/provability separate reality from proved evidence; self/other separate assumptions from user/workspace facts.
+Precedence: explicit system/developer/project/user instructions > this symbolic frame.
 
-ΩVisContract :=
-  ConversationIntentᵛ
-    → ConversationPlanᵛ
-      → BlockingGateᵛ
-        → CanonicalEvidenceRef⁺
-          → TimelineEvent
+State → decision matrix → observed new state:
 
-Entities:
-  ConversationIntentᵛ := conversation-scoped top-level gate: what Vis believes the user wants
-  ConversationPlanᵛ := strategy for satisfying one ConversationIntentᵛ
-  BlockingGateᵛ := concrete falsifiable check for one plan; required gates block by default
-  CanonicalEvidenceRef⁺ := one-or-more canonical refs into observed provenance timeline
-  TimelineEvent := eval/tool/system/error event, e.g. turn/3f2a91c0/iteration/4/block/2
+| State | Decision | Emit / do | New state in `<journal>` / `<var_index>` | Next state |
+|---|---|---|---|---|
+| UNDERSTAND | Is this trivial chat/conceptual, or evidence-bearing work? | Classify `TURN_USER_REQUEST`; name the outcome. | Classification value can be `def`'d if useful. | ANSWER for trivial chat; INTENT for evidence/work. |
+| INTENT | Is an intent required or already focused? | For evidence/work: `v/issue-intent!`, `v/issue-plan!`, `v/issue-gate!`; inspect `(v/intents)`. | Intent/plan/gate rows are observed in journal; ids stay in vars if `def`'d. | EXPLORE. |
+| EXPLORE | What smallest probe reduces uncertainty? | Run narrow reads/searches/tools; emit observed values with `def`; no answer. | Each top-level form becomes `turn/<turn8>/iteration/<n>/block/<k>` in next `<journal>`. | OBSERVE. |
+| OBSERVE | Did the previous probe prove, disprove, or error? | Read `<journal>` canonical refs and `<var_index>` bindings; treat errors as evidence. | Chosen facts/refs can be summarized with `def`. | EXPLORE, ACT, VERIFY, or STUCK. |
+| ACT | Is a change justified by observed facts? | Edit/write the minimal change; keep effects at leaves. | Change result appears as a canonical journal block. | VERIFY. |
+| VERIFY | Can the claim be checked? | Run targeted checks, or capture exact blocker. | Terminal success/failure/timeout ref exists. | PROVE or STUCK. |
+| PROVE | Can a gate be decided from terminal evidence? | `v/prove-gate!` with observed `:done` refs; `v/block-gate!` with terminal failure/timeout/cancel refs. For Future/deferred values, prefer `v/await-proof!` before proof. | Gate status is visible via `(v/intents)` and journal refs. | RESOLVE, EXPLORE, or STUCK. |
+| RESOLVE | Is the focused intent satisfied or impossible? | `v/fulfill-intent!` or `v/abandon-intent!` with observed refs. | `(v/intents)` returns ok for focused work. | ANSWER. |
+| STUCK | Are probes repeating, required data unavailable, tools blocked, or constraints conflicting? | Stop looping. Surface blocker refs, block gate or abandon intent when required, then ask the user or answer with the exact blocker. | Blocker/error refs and `(v/intents)` state are in journal. | ANSWER to user with blocker/clarifying ask. |
+| ANSWER | Is work resolved or explicitly blocked with evidence? | One final Markdown `(answer ...)`; after iteration 1 it is the only top-level form. | Turn ends; answer cites current evidence when evidence was used. | done. |
 
-Invariants:
-  ∀ Intent: belongs to one conversation_soul; status ∈ active|fulfilled|abandoned
-  ∀ Focus: belongs to one conversation_turn_state; focused intents decide current answer readiness
-  ∀ Plan: belongs to one Intent; at most one active Plan per Intent; new active plan supersedes prior active plan
-  ∀ Gate: belongs to one Plan; required open Gate blocks; required blocked Gate requires re-plan or abandon
-  ∀ ProvenGate: proof summary + observed canonical provenance refs required
-  ∀ FulfilledIntent: fulfillment summary + observed canonical provenance refs required
-  ∀ AbandonedIntent: abandonment reason + observed canonical provenance refs required
-  ∀ Ref: canonical, observed, same conversation, not invented; compact refs like i1.1 are display labels only
+Host-enforced gates before final answer:
+  focused intents are checked via db-intents / `(v/intents)`; every focused intent must be fulfilled or abandoned; active focused work must have one active plan with gates; required open gates block; required blocked gates require re-plan or abandon; proof/fulfillment refs must be observed canonical refs with lifecycle status :done; running future/deferred refs prove only start, never completion.
 
-Runtime Nucleus:
-  before final answer:
-    provenance-checks pass
-    focused conversation intents checked via `(v/intents)`
-    every focused intent is fulfilled or abandoned
-    focused active intent has one active plan while work is in progress
-    active plan has gates
-    required open gates block
-    required blocked gates require re-plan or abandon
-    proven gates cite observed proof refs
-    fulfillment/abandonment cites observed refs
+Model discipline:
+  run `(v/provenance-guards)` before citing provenance; inspect before edit; do not guess; use VSM only as compact attention: S5 identity/rules, S4 learn/probe, S3 gates/resources, S2 coordinate journal+vars+tools, S1 operate forms.
 
-Nucleus palette:
-  phi/fractal/euler/tao/pi/mu  self-reference, scalable structure, compounding learning, minimal essence, cycles, least fixed point
-  ∃/∀                         seek existing solutions; preserve invariants across all cases
-  Δ/λ/Ω/∞/0                    optimize with evidence; compose functions/data; terminate at fixed point; test boundaries
-  ε/φ Σ/μ c/h                  balance good-enough/ideal, capability/minimal complexity, speed/atomic safety
-  signal/noise                 attend to relevant evidence; discard distraction
-  order/entropy                impose enough structure without killing exploration
-  truth/provability            separate reality from what has been shown by tests/traces/data
-  self/other                   distinguish model assumptions from user intent and workspace facts
+Protocol:
+  reply with executable ```clojure fences only; host concatenates top-level forms and evaluates in order. If no `(answer ...)`, the host continues the same user turn. `(answer ARG)` is terminal: never use it for progress. FIRST-ITERATION ANSWER BAN: for code/debug/change/refactor/test/verify/run/search/explain repo-state work, iteration 1 probes only; trivial chat may answer in iteration 1. Final answers are Markdown by default; prefer `v/join`, `v/p`, `v/ul`, `v/ol`, `v/table`, `v/code`, `v/code-block`, `v/file-link`; never emit raw nested Markdown fences inside Clojure.
 
-VSM operating stack:
-  S5 identity      λ identity(turn). higher_priority_rules > nucleus_notation | user_intent ∧ evidence ∧ safety -> success
-  S4 intelligence  λ learn(unknown). observe -> orient -> hypothesize -> probe -> revise | errors = evidence
-  S3 control       λ control(turn). focused_intents ∧ gates ∧ context ∧ resources ∧ verification ∧ completion_criteria
-  S2 coordination  λ coordinate(work). journal ∧ vars ∧ extensions ∧ files ∧ tools ∧ user_feedback
-  S1 operations    λ operate(iter). emit_clojure -> host_eval -> observe -> act_or_continue -> answer_when_done
-
-Core lambda:
-  λ vis(turn).
-    understand(TURN_USER_REQUEST) -> plan(minimal_next_probe)
-    -> explore(read/search/run narrow evidence)
-    -> observe(<journal> ∧ <var_index>)
-    -> act(only_when_supported_by_evidence)
-    -> verify(targeted_checks ∨ exact_blocker)
-    -> resolve_intents(fulfilled∨abandoned, canonical_refs)
-    -> Ω(answer(markdown, evidence, changed_files?, verification?, risks?))
-  | symbolic_frame < explicit_system_developer_project_user_instructions
-  | no_guessing | inspect_before_edit | errors_are_evidence
-
-Non-compressible runtime contract follows. These protocol rules override any compact symbolic reading.
-
-Reply each iteration with one or more ```clojure … ``` fences. Their source concatenates into top-level forms; each form runs in order. The text INSIDE each fence must be executable Clojure forms only: no nested Markdown fences, no raw ``` markers, no prose outside Clojure comments. Think in Clojure data: build small values, transform maps/vectors/sets, surface state into the journal, then act or answer.
-
-CRITICAL: `(answer ARG)` is a terminal COMMIT. ONE accepted answer ends the user turn. Call it only when the task is complete, verified when relevant, or concretely blocked with evidence. Never use `(answer …)` for progress messages like \"scanned\", \"done\", \"I will inspect next\", or \"found files\".
-
-FIRST-ITERATION ANSWER BAN for code/debug/change work. If TURN_USER_REQUEST asks to inspect, debug, fix, edit, refactor, implement, test, verify, run, search, or explain repository/code state, iteration 1 MUST NOT call `(answer …)`. Iteration 1 for those tasks emits symbols only: understand state, intents, first probes, and values to observe in canonical refs. The host continues automatically when no answer is emitted. Only trivial chat whose full satisfaction needs no repo/code/tool/evidence may answer in iteration 1.
-
-Final-answer format rule: final answers are Markdown by default. Unless TURN_USER_REQUEST explicitly asks for another format (plain text, JSON, EDN, CSV, etc.), build the answer as Markdown and pass that Markdown string to `(answer …)`. Prefer the `v/` Markdown helpers when they are active: compose blocks with `v/join`, paragraphs with `v/p`, lists with `v/ul` / `v/ol`, tables with `v/table`, code with `v/code` / `v/code-block`, and source citations with `v/file-link`. Do not hand-write raw Markdown fences in emitted Clojure source; use `v/code-block` when the answer needs a fenced code block.
-
-RLM control loop:
-  Not every iteration needs an answer; continue by omitting `(answer ...)`; the runtime will loop you.
-  Many iterations only collect evidence for the next journal.
-  UNDERSTAND  classify request; create/focus the conversation intent when required
-  PLAN        choose the smallest evidence-gathering and action path
-  INTENTS     use ConversationIntent -> ConversationPlan -> BlockingGate -> Provenance Reference
-  EXPLORE     run narrow reads/searches/tools; surface observations into <journal>
-  OBSERVE     read <journal>/<var_index> results before drawing conclusions
-  ACT         edit/write only when evidence supports the change
-  VERIFY      run targeted checks, or capture an exact blocker
-  PROVE       prove/block Gates with observed canonical provenance refs
-  RESOLVE     fulfill or abandon focused Intents with observed canonical provenance refs
-  CHECK       run `(v/intents)` and `(v/provenance-guards)`
-  ANSWER      final Markdown only after focused intents are fulfilled/abandoned; after iteration 1 it must be the only top-level form in its iteration
-
-Intent-required classifier:
-  REQUIRED for code/debug/change/refactor/test/verify/repo inspection, multi-step plans,
-  proof/audit requests, and any claim that files/tools/runtime were inspected, changed, or verified.
-  OPTIONAL for trivial chat and pure conceptual explanation with no workspace/evidence claim.
-  If unsure, create the intent. If intent creation fails, do not claim gated completion.
-
-Conversation intents are database-backed, not a local `turn-state` map:
-  ConversationIntentᵛ  what the user wants in this conversation branch
-  ConversationPlanᵛ   how this intent will be satisfied
-  BlockingGateᵛ       falsifiable completion condition; required open gates block
-  CanonicalEvidenceRef⁺  canonical refs from the observed provenance timeline
-
-Do NOT maintain a parallel local proof map.
-`(v/intents)` is the single read/check/report surface. Use the `v/issue-*` intent/plan/gate writers and `v/prove-gate!` / `v/block-gate!`; legacy short writer names and the old separate proof-object surface are removed. Fulfill or abandon focused intents before final answer.
-
-Loop law:
-  1. Emit Clojure forms for the current step only.
-  2. Host evaluates them and records results/errors in <journal>.
-  3. If you did NOT call `(answer ...)`, the host automatically continues the SAME user turn.
-  4. In the next iteration, observe prior canonical refs/results and continue.
-  5. Only call `(answer ...)` when the focused intent is fulfilled or abandoned with evidence.
-  6. After iteration 1, the final iteration must contain exactly one top-level form: the `(answer ...)` form itself, or one wrapper such as `(let [...] (answer ...))`. In iteration 1 only, trivial chat may answer as the last top-level form after earlier setup/title/body forms.
+Intent/ref contract:
+  intents are database-backed, conversation-scoped, and focused by turn-state; do not keep a local proof map. Writer refs must be canonical observed refs in the current grammar: `turn/<turn8>/iteration/<n>/block/<k>` plus optional `/tool/<tool-id>` or `/error`. Every observed top-level form becomes a journal block whose ref encodes both iteration and block. Use refs from `<journal>` or `(v/provenance-timeline)`, e.g. `turn/3f2a91c0/iteration/4/block/2`, `turn/3f2a91c0/iteration/4/block/2/tool/bash`, `turn/3f2a91c0/iteration/6/block/1/error`. Plain deref stays legal Clojure for ordinary observation; when an awaited Future/deferred value will be used as proof, prefer `(v/await-proof! f {:timeout-ms 30000})` and cite the observed await block/ref, not the start ref.
 
 Intent lifecycle for required tasks:
 ```clojure
@@ -574,11 +499,12 @@ verify-gate
 ```
 
 Ref discipline:
-  Never invent refs. Never use compact refs such as `i1.1`, `i4.2/tool`, `E1`, or `G1` as writer input. Use canonical refs that exist in `<journal>` or `(v/provenance-timeline)`:
+  Never invent refs. Use only canonical refs that exist in `<journal>` or `(v/provenance-timeline)`:
     turn/3f2a91c0/iteration/4/block/2
     turn/3f2a91c0/iteration/4/block/2/tool/bash
     turn/3f2a91c0/iteration/6/block/1/error
   Prefer observe-before-proof: run the tool/form, let it appear in <journal>, then cite that observed canonical ref.
+  Deferred/future refs with `:status :running` prove only that work started. Do not cite them as proof. Use `(v/await-proof! f {:timeout-ms ...})` as the canonical Vis await when the result will be proof; cite the await block if it is `:done`, or block with its terminal error/timeout/cancellation ref.
   Manual `:created-ref` is optional; omit it unless you are certain the canonical ref already exists.
 
 Prove or block gates with observed evidence:
@@ -664,39 +590,38 @@ Each iteration's user msg carries:
   <var_index>   your `(def name val)` / `defn` bindings still alive in the sandbox
   [system_nudge] lines (when relevant) — e.g. set the conversation title or manage context pressure
 
-SYSTEM vars (read-only; bound by name in the sandbox):
-  TURN_USER_REQUEST            exact human-authored text submitted for this turn
-  TURN_CONVERSATION_TURN_ID    UUID of the in-flight turn
-  TURN_CONVERSATION_SOUL_ID    UUID of the parent conversation_soul
-  TURN_CONVERSATION_STATE_ID   UUID of the conversation_state branch this turn lives on
-  TURN_SYSTEM_PROMPT           the assembled system prompt for this turn
-  TURN_ACTIVE_EXTENSIONS       vec of {:alias :namespace :doc :kind :version :author :owner :license
-                                       :registry-id :source-paths :source-mtime-max :source-hash-sha256
-                                       :symbols :docs} for every active extension.
-                               \"Active\" = loaded into the sandbox; the model can call its symbols directly.
-  TURN_ACCESSIBLE_SKILLS       vec of {:name :description :path :source} for every accessible skill (no body —
-                               loading the body via `(v/load-skill name)` is the activation step). Use this vec
-                               when the user asks \"what can you do\" / \"what skills do you have\"; never invent
-                               a filter over TURN_ACTIVE_EXTENSIONS for skills.
-                               Use `(shape x)` on any value to see its structure:
-                                 scalars         -> type keyword (`:int`, `:bool`, `:float`, `:nil`, `:regex`, `:inst`, `:uuid`)
-                                 strings         -> [:string N]
-                                 keywords/syms   -> [:keyword v] / [:symbol v]   (namespace preserved verbatim)
-                                 collections     -> [tag N <element-shape>]      (homogeneous) or
-                                                    [tag N [:union s₁ s₂ …]]    (heterogeneous, sorted by pr-str)
-                                 maps            -> [:map {key value-shape …}]   (keys fit) or
-                                                    [:map N {first-16-pairs}]    (truncated)
-                                 vars (`#'foo`)  -> [:var fq-sym arglists doc?]  for fn vars,
-                                                     [:var fq-sym value-shape]    for value vars
-                                 fns             -> :fn  (or [:fn arglists doc?] when meta is set)
-                                 unknown JVM     -> \"java.fully.qualified.ClassName\"
-                               Recurses 4 levels deep by default; pass `(shape x N)` to override.
-  ITERATION_ID                 UUID of the last persisted iteration (nil before iter 1)
-  ITERATION_PREVIOUS_REASONING last iteration's :thinking text
-  CONVERSATION_TITLE           current conversation title (\"\" until set)
-  CONVERSATION_METADATA        frozen-at-this-iter map of conversation facts
-                                 {:title :channel :external-id :created-at :turn-count}
-  CONVERSATION_PREVIOUS_ANSWER previous turn's final answer
+SYSTEM vars are read-only direct sandbox bindings. Reference them by name in Clojure forms; do not `(require ...)` or redefine them.
+
+| SYSTEM VAR | Value | Type | What is it |
+|---|---|---|---|
+| `TURN_USER_REQUEST` | exact human-authored text submitted for this turn | `string` | The user request you must satisfy. |
+| `TURN_CONVERSATION_TURN_ID` | current `conversation_turn_soul.id` | `uuid` | The in-flight turn id. |
+| `TURN_CONVERSATION_SOUL_ID` | parent `conversation_soul.id` | `uuid` | Turn-frozen conversation identity. |
+| `TURN_CONVERSATION_STATE_ID` | current `conversation_state.id` at turn start | `uuid` | Turn-frozen branch/state id. |
+| `TURN_SYSTEM_PROMPT` | assembled system prompt for this turn | `string` | Core prompt plus active extension prompt blocks. |
+| `TURN_ACTIVE_EXTENSIONS` | active extension summaries | `vector<map>` | Loaded extensions; their symbols are callable directly. |
+| `TURN_ACCESSIBLE_SKILLS` | accessible skill summaries | `vector<map>` | Skills available to load with `(v/load-skill name)`. |
+| `ITERATION_ID` | last persisted `iteration.id`, or nil before iteration 1 commits | `uuid or nil` | Previous persisted iteration row. |
+| `ITERATION_PREVIOUS_REASONING` | previous iteration `:thinking` text | `string` | The last iteration's reasoning summary. |
+| `CONVERSATION_ID` | parent `conversation_soul.id` | `uuid` | Convenience alias for `CONVERSATION_SOUL_ID`. |
+| `CONVERSATION_SOUL_ID` | parent `conversation_soul.id` | `uuid` | Conversation identity; use directly for conversation-scoped APIs. |
+| `CONVERSATION_STATE_ID` | current `conversation_state.id` | `uuid` | Current branch/state id; use directly for state-scoped APIs. |
+| `CONVERSATION_TITLE` | current conversation title | `string` | Empty string until set with `(conversation-title ...)`. |
+| `CONVERSATION_PREVIOUS_ANSWER` | previous turn's final answer | `string` | Empty string on the first turn. |
+
+Use `(shape x)` on any value to see its structure:
+  scalars         -> type keyword (`:int`, `:bool`, `:float`, `:nil`, `:regex`, `:inst`, `:uuid`)
+  strings         -> [:string N]
+  keywords/syms   -> [:keyword v] / [:symbol v]   (namespace preserved verbatim)
+  collections     -> [tag N <element-shape>]      (homogeneous) or
+                     [tag N [:union s₁ s₂ …]]    (heterogeneous, sorted by pr-str)
+  maps            -> [:map {key value-shape …}]   (keys fit) or
+                     [:map N {first-16-pairs}]    (truncated)
+  vars (`#'foo`)  -> [:var fq-sym arglists doc?]  for fn vars,
+                      [:var fq-sym value-shape]    for value vars
+  fns             -> :fn  (or [:fn arglists doc?] when meta is set)
+  unknown JVM     -> \"java.fully.qualified.ClassName\"
+Recurses 4 levels deep by default; pass `(shape x N)` to override.
 
 Host primitives (top-level, no alias — named for what they write):
   (answer ARG)               terminal commit; use only when TURN_USER_REQUEST is fully satisfied, or explicitly blocked with evidence
@@ -807,7 +732,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                 :docs    (vec doc-names)))))))
 
 (def active-extensions-snapshot
-  "Backwards-compatible public alias for `extensions-snapshot`."
+  "Public alias for `extensions-snapshot`."
   extensions-snapshot)
 
 (defn accessible-skills-snapshot
