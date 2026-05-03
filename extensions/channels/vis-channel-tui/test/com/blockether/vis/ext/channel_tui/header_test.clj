@@ -44,8 +44,8 @@
        (setCharacter [_ _ _] this)))))
 
 (defdescribe right-block-text-test
-  (it "shows separated copy-id and transcript copy actions"
-    (expect (= "⧉ 4b1ed602 | Copy Transcript" (right-block-text "4b1ed602")))))
+  (it "shows separated copy-id and transcript copy actions with copy icons"
+    (expect (= "⧉ 4b1ed602 | ⧉ Transcript" (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
   (it "registers separate click regions for id copy and Markdown copy"
@@ -54,7 +54,7 @@
           rendered      (right-block-text short-id)
           id-rendered   "⧉ 123e4567"
           separator      " | "
-          md-rendered   "Copy Transcript"
+          md-rendered   "⧉ Transcript"
           expected-w    (p/display-width rendered)
           id-w          (p/display-width id-rendered)
           separator-w   (p/display-width separator)

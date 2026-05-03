@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          ⧉ d8d6a0a1 | Copy Transcript
+       ✓ Copied!                 Conversation title          ⧉ d8d6a0a1 | ⧉ Transcript
        (notification banner)     (or fallback placeholder)   (id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -19,7 +19,7 @@
    - RIGHT: short conversation id (first 8 chars of the UUID, the
      same convention `vis conversations` uses) + a clickable
      `⧉` affordance that drops the FULL UUID onto the system
-     clipboard, followed by `| Copy Transcript` for whole-conversation
+     clipboard, followed by `| ⧉ Transcript` for whole-conversation
      Markdown copy. Visual feedback is the LEFT-slot `✓ Copied!` notification
      — same mechanism every other cross-channel signal flows through.
 
@@ -69,8 +69,8 @@
   " | ")
 
 (def ^:private markdown-copy-label
-  "Descriptive Markdown transcript export affordance painted after the conversation-id copy block."
-  "Copy Transcript")
+  "Compact Markdown transcript export affordance painted after the conversation-id copy block."
+  (str copy-icon " Transcript"))
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -124,7 +124,7 @@
   (if id-short markdown-copy-label ""))
 
 (defn- right-block-text
-  "Compose the right-side text: \"⧉ 4b1ed602 | Copy Transcript\" when a
+  "Compose the right-side text: \"⧉ 4b1ed602 | ⧉ Transcript\" when a
    conversation id exists, otherwise empty. Single place that knows the layout
    so `draw-header!` can stay focused on placement math."
   [id-short]
@@ -142,7 +142,7 @@
 
    Layout per the namespace doc: notification banner LEFT, centered
    conversation title CENTER, short conversation id + `⧉`, separator, plus
-   `Copy Transcript` RIGHT. When the title would overlap either edge block, the title
+   `⧉ Transcript` RIGHT. When the title would overlap either edge block, the title
    is truncated with an ellipsis so the diagnostically-important id
    stays readable.
 
