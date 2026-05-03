@@ -144,6 +144,13 @@
                   "✓ Copied selection")
      :level :success :ttl-ms copy-success-ttl-ms)))
 
+(defn- copy-bubble! [text]
+  (future
+    (try (input/clipboard-copy! (or text ""))
+      (catch Throwable _ nil)))
+  (vis/notify! "✓ Copied bubble"
+    :level :success :ttl-ms copy-success-ttl-ms))
+
 (defn- copy-conversation-as-markdown! [conversation-id]
   (future
     (try
@@ -239,14 +246,61 @@
       (vec
         (for [{:keys [top projected]} (:visible layout)
               :let [message     (or projected {})
+                    sep-pad     (if (:turn-separator? message) 1 0)
                     top-pad     (if (= :user (:role message)) 1 0)
-                    content-top (+ top-limit (long top) 1 top-pad)]
+                    content-top (+ top-limit (long top) sep-pad 1 top-pad)]
               [idx line] (map-indexed vector (projected-content-lines message content-w))
               :let [row (+ content-top (long idx))]
               :when (and (<= top-limit row)
                       (< row bottom-limit)
                       (copyable-transcript-line? line))]
           {:row row :col text-left :width content-w})))))
+
+(defn- copyable-bubble-text [message]
+  (let [text (or (:raw-answer message) (:text message) "")]
+    (if (string? text) text (pr-str text))))
+
+(defn- bubble-copy-regions
+  "Return absolute screen-cell rectangles for single-click whole-bubble copy.
+
+   Drag selection remains clipped to `bubble-selectable-ranges`; these wider
+   regions only answer the release-time question: which message did this
+   simple click land on? They cover the visible bubble rectangle except for
+   the final inter-bubble gap row, so clicking the role row or bubble padding
+   still copies the message while clicking between bubbles does nothing."
+  [layout messages text-top inner-h cols]
+  (let [bubble-left  (long render/MESSAGE_MARGIN_LEFT)
+        bubble-w     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        top-limit    (long text-top)
+        bottom-limit (+ top-limit (long (max 0 inner-h)))]
+    (if (or (not (pos? bubble-w)) (<= bottom-limit top-limit))
+      []
+      (vec
+        (for [{:keys [idx top height projected]} (:visible layout)
+              :let [message       (nth messages idx nil)
+                    text          (copyable-bubble-text message)
+                    sep-pad       (if (:turn-separator? projected) 1 0)
+                    bubble-top    (+ top-limit (long top) sep-pad)
+                    copy-height   (max 1 (- (long height) sep-pad 1))
+                    copy-bottom   (min bottom-limit (+ bubble-top copy-height))
+                    row           (max top-limit bubble-top)
+                    clipped-height (- copy-bottom row)]
+              :when (and (pos? clipped-height)
+                      (not (str/blank? text)))]
+          {:row row :col bubble-left :width bubble-w
+           :height clipped-height :text text})))))
+
+(defn- bubble-copy-hit
+  [point regions]
+  (let [col (long (:col point))
+        row (long (:row point))]
+    (some (fn [{r :row c :col w :width h :height :as region}]
+            (when (and (>= row (long r))
+                    (< row (+ (long r) (long h)))
+                    (>= col (long c))
+                    (< col (+ (long c) (long w))))
+              region))
+      regions)))
 
 (defn- input-selectable-ranges
   "Return absolute screen-cell ranges for the visible input editor text rows.
@@ -400,6 +454,7 @@
         total-h      (long (:total-h layout))
         text-top     (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
+        transcript-bubble-copy-regions (bubble-copy-regions layout messages text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
         selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)]
     (render/fill-background! g cols rows)
@@ -441,6 +496,7 @@
        :screen-cells screen-cells
        :selectable-ranges selectable-ranges
        :transcript-selectable-ranges transcript-selectable-ranges
+       :transcript-bubble-copy-regions transcript-bubble-copy-regions
        :input-selectable-ranges input-selectable-ranges})))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
@@ -955,6 +1011,7 @@
                                    (< my (+ (long thumb-top) thumb-h)))
                        selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
                        transcript-selectable-ranges (get-in db [:layout :transcript-selectable-ranges])
+                       transcript-bubble-copy-regions (get-in db [:layout :transcript-bubble-copy-regions])
                        input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
                        selection-viewport {:viewport-top bar-top
                                            :eff-scroll   (get-in db [:layout :eff-scroll])}]
@@ -1073,22 +1130,33 @@
                        (vreset! mouse-selection-focus nil)
                        (vreset! mouse-selection-source nil)
                        (if (and selection-copy? anchor)
-                         (let [sel        {:anchor anchor
-                                           :focus  focus
-                                           :source source}
-                               screen-sel (selection/document->screen-selection
-                                            sel selection-viewport)
-                               payload    (selection/selected-text
-                                            (get-in db [:layout :screen-cells])
-                                            screen-sel
-                                            (selectable-ranges-for-source
-                                              source transcript-selectable-ranges input-selectable-ranges))]
+                         (let [sel           {:anchor anchor
+                                              :focus  focus
+                                              :source source}
+                               simple-click? (= anchor (:focus sel))
+                               screen-point  (selection/point mx my)
+                               bubble-hit    (when (and simple-click?
+                                                     (not= source :input))
+                                               (bubble-copy-hit
+                                                 screen-point
+                                                 transcript-bubble-copy-regions))
+                               screen-sel    (selection/document->screen-selection
+                                               sel selection-viewport)
+                               payload       (selection/selected-text
+                                               (get-in db [:layout :screen-cells])
+                                               screen-sel
+                                               (selectable-ranges-for-source
+                                                 source transcript-selectable-ranges input-selectable-ranges))]
                            (state/dispatch [:clear-mouse-selection])
-                           (when (and (not= anchor (:focus sel))
-                                   (not (str/blank? payload)))
+                           (cond
+                             bubble-hit
+                             (copy-bubble! (:text bubble-hit))
+
+                             (and (not simple-click?)
+                               (not (str/blank? payload)))
                              (copy-selection! payload source)))
                          (when (and (not was-dragging?) (not already-handled?))
-                           (when-let [hit (cr/lookup mx my)]
+                           (if-let [hit (cr/lookup mx my)]
                              (case (:kind hit)
                                :copy-id
                                (copy-conversation-id! (:text hit))
@@ -1102,7 +1170,11 @@
                                :resources
                                (open-resources-popup! screen (:refs hit))
 
-                               (open-click-target! hit)))))
+                               (open-click-target! hit))
+                             (when-let [bubble-hit (bubble-copy-hit
+                                                     (selection/point mx my)
+                                                     transcript-bubble-copy-regions)]
+                               (copy-bubble! (:text bubble-hit))))))
                        (recur))
 
                      ;; MOVE — hover. We want the chat link-chrome

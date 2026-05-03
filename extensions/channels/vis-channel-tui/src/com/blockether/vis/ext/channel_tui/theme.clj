@@ -30,6 +30,8 @@
 (def user-bubble-bg    (TextColor$RGB. 255 255 255))  ;; identical to terminal-bg — no user-request bg tint
 (def user-bubble-fg    (TextColor$RGB. 30 30 30))     ;; near-black text on white
 (def user-role-fg      (TextColor$RGB. 130 90 0))     ;; bold amber accent for the "You" label
+(def turn-separator-bg (TextColor$RGB. 248 244 235))  ;; warm separator band between Vis and You turns
+(def turn-separator-fg (TextColor$RGB. 190 150 40))   ;; amber rule on the turn separator band
 
 ;; Chat messages — assistant (no background fill, terminal bg shows through)
 (def ai-bubble-bg      (TextColor$RGB. 255 255 255))  ;; white — same as terminal
@@ -113,14 +115,14 @@
 ;;   - the saturation is low enough to sit quietly on white
 ;;     assistant bg without screaming.
 ;; WCAG ratio fg/bg ≈ 9.5 (AAA).
-(def md-summary-bg     (TextColor$RGB. 240 235 250))  ;; pale lavender band
-(def md-summary-fg     (TextColor$RGB. 70 40 130))    ;; deep violet — high-contrast text
+(def md-summary-bg     (TextColor$RGB. 226 214 250))  ;; visible lavender band
+(def md-summary-fg     (TextColor$RGB. 55 30 120))     ;; deep violet — high-contrast text
 ;; Thinking-mode summary keeps the iteration-header tint family so
 ;; the disclosure stays inside the dim reasoning zone instead of
 ;; popping out of it. Slightly cooler / darker than the surrounding
 ;; iteration-header-bg so the band is still legible against it.
-(def th-md-summary-bg  (TextColor$RGB. 232 230 240))  ;; cool gray-lavender, one notch off iteration-header-bg
-(def th-md-summary-fg  (TextColor$RGB. 90 80 130))    ;; muted violet on the dim band
+(def th-md-summary-bg  (TextColor$RGB. 218 214 236))  ;; visible cool lavender inside reasoning
+(def th-md-summary-fg  (TextColor$RGB. 70 55 125))     ;; muted violet on the dim band
 
 ;; Clickable link / image / file-link chrome painted at the foot of
 ;; an assistant bubble. Three states:

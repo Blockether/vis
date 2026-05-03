@@ -30,6 +30,9 @@
 (def ^:private copy-selection!
   (deref #'screen/copy-selection!))
 
+(def ^:private copy-bubble!
+  (deref #'screen/copy-bubble!))
+
 (def ^:private copy-conversation-as-markdown!
   (deref #'screen/copy-conversation-as-markdown!))
 
@@ -38,6 +41,12 @@
 
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
+
+(def ^:private bubble-copy-regions
+  (deref #'screen/bubble-copy-regions))
+
+(def ^:private bubble-copy-hit
+  (deref #'screen/bubble-copy-hit))
 
 (def ^:private input-selectable-ranges
   (deref #'screen/input-selectable-ranges))
@@ -128,6 +137,21 @@
                    :focus  (selection/point 29 5)}
                   ranges)))))
 
+  (it "marks whole visible bubble rectangles for single-click copy"
+    (let [regions (bubble-copy-regions
+                    {:visible [{:idx 0 :top 0 :height 5
+                                :projected {:role :user
+                                            :prewrapped-lines ["hello"]}}]}
+                    [{:role :user :text "hello **markdown**"}]
+                    4 6 20)]
+      (expect (= [{:row 4 :col 2 :width 15
+                   :height 4 :text "hello **markdown**"}]
+                regions))
+      (expect (= "hello **markdown**"
+                (:text (bubble-copy-hit (selection/point 4 5) regions))))
+      (expect (nil? (bubble-copy-hit (selection/point 1 5) regions)))
+      (expect (nil? (bubble-copy-hit (selection/point 4 8) regions)))))
+
   (it "marks input text rows as selectable without input padding"
     (expect (= [{:row 11 :col 2 :width 16}
                 {:row 12 :col 2 :width 16}]
@@ -161,6 +185,20 @@
           (copy-selection! "selected text")
           (expect (= "selected text" (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]]
+                    @notified))))))
+
+  (it "single-click bubble copy uses the shared success notification contract"
+    (let [copied   (promise)
+          notified (atom nil)]
+      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify!           (fn [text & kvs]
+                                                 (reset! notified [text kvs]))}
+        (fn []
+          (copy-bubble! "whole bubble")
+          (expect (= "whole bubble" (deref copied 1000 ::timeout)))
+          (expect (= ["✓ Copied bubble" [:level :success :ttl-ms 1500]]
                     @notified))))))
 
   (it "input mouse selection copy names the input in the notification"

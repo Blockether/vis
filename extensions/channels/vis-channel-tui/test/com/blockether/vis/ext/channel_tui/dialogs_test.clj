@@ -87,6 +87,7 @@
             (->> (settings-rows)
               (filter #(= :section (:type %)))
               (mapv :label))))
+      (is (some #(= :differentiate-turns (:key %)) (settings-rows)))
       (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
 
     (testing "command palette exposes Providers outside Settings"

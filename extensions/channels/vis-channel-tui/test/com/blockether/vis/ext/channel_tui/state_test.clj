@@ -13,6 +13,8 @@
       (expect (= :low
                 (get-in @state/app-db [:settings :openai-codex-verbosity])))
       (expect (true?
+                (get-in @state/app-db [:settings :differentiate-turns])))
+      (expect (true?
                 (get-in @state/app-db [:settings :mouse-selection-copy])))))
 
   (it "normalizes low/medium/high aliases from persisted config"
@@ -55,6 +57,7 @@
                                    :reasoning-level :balanced
                                    :openai-codex-verbosity :low
                                    :show-timestamps false
+                                   :differentiate-turns true
                                    :mouse-selection-copy true}}
                   @saved))
         (expect (= ["Reasoning: balanced" [:level :info :ttl-ms 1500]]
