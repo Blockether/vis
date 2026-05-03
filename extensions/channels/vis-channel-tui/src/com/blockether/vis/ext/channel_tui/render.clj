@@ -813,7 +813,7 @@
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
         turn-separator? (boolean (:turn-separator? message))
-        top-sep-h (if turn-separator? 1 0)
+        top-sep-h (if turn-separator? 2 0)
         label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
@@ -1480,11 +1480,12 @@
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
         ;; Return: rows consumed
-        ;;   = label(1) + top-pad(user only) + content(N)
+        ;;   = optional turn separator + one spacer row (0|2)
+        ;;     + label(1) + top-pad(user only) + content(N)
         ;;     + bottom-pad(user only)
         ;;     + footer(meta)(0|1)
         ;;     + gap(1)
-        (+ 1 top-pad bubble-h bottom-pad (if footer? 1 0) 1)))))
+        (+ top-sep-h 1 top-pad bubble-h bottom-pad (if footer? 1 0) 1)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Link / image / file-link resources
@@ -1696,7 +1697,7 @@
    layout math stays consistent across the height calc and the draw."
   [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status turn-separator?]} max-w]
   (let [bubble-w   max-w
-        top-sep-h  (if turn-separator? 1 0)
+        top-sep-h  (if turn-separator? 2 0)
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
         lines      (or prewrapped-lines
@@ -1895,8 +1896,8 @@
                            :marker th-md-summary-marker
                            :max-w max-w
                            :summary (if expanded?
-                                      (str "Reasoning · " (hidden-size-hint hidden))
-                                      "Reasoning")
+                                      (str "REASONING · " (hidden-size-hint hidden))
+                                      "REASONING")
                            :hidden-entries hidden
                            :collapsed? (not expanded?)
                            :node-id node-id))]
@@ -2382,7 +2383,7 @@
                                    :iteration-number    iteration-number
                                    :block-number        block-number
                                    :kind                :result
-                                   :summary             (str "RESULT (Block " block-number ")")
+                                   :summary             "RESULT"
                                    :summary-marker      md-summary-marker
                                    :body-marker         r-marker
                                    :raw-text            result-str
@@ -2411,7 +2412,7 @@
                                          :iteration-number    iteration-number
                                          :block-number        block-number
                                          :kind                :stdout
-                                         :summary             (str "STDOUT (Block " block-number ")")
+                                         :summary             "STDOUT"
                                          :summary-marker      md-summary-marker
                                          :body-marker         stdout-marker
                                          :lines               text-lines

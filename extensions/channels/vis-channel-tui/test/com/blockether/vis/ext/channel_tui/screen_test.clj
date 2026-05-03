@@ -152,6 +152,22 @@
       (expect (nil? (bubble-copy-hit (selection/point 1 5) regions)))
       (expect (nil? (bubble-copy-hit (selection/point 4 8) regions)))))
 
+  (it "excludes turn separator rows from whole-bubble click copy hitboxes"
+    (let [regions (bubble-copy-regions
+                    {:visible [{:idx 0 :top 0 :height 7
+                                :projected {:role :user
+                                            :turn-separator? true
+                                            :prewrapped-lines ["hello"]}}]}
+                    [{:role :user :text "hello"}]
+                    4 9 20)]
+      (expect (= [{:row 6 :col 2 :width 15
+                   :height 4 :text "hello"}]
+                regions))
+      (expect (nil? (bubble-copy-hit (selection/point 4 4) regions)))
+      (expect (nil? (bubble-copy-hit (selection/point 4 5) regions)))
+      (expect (= "hello"
+                (:text (bubble-copy-hit (selection/point 4 6) regions))))))
+
   (it "marks input text rows as selectable without input padding"
     (expect (= [{:row 11 :col 2 :width 16}
                 {:row 12 :col 2 :width 16}]

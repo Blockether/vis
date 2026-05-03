@@ -246,7 +246,7 @@
       (vec
         (for [{:keys [top projected]} (:visible layout)
               :let [message     (or projected {})
-                    sep-pad     (if (:turn-separator? message) 1 0)
+                    sep-pad     (if (:turn-separator? message) 2 0)
                     top-pad     (if (= :user (:role message)) 1 0)
                     content-top (+ top-limit (long top) sep-pad 1 top-pad)]
               [idx line] (map-indexed vector (projected-content-lines message content-w))
@@ -279,7 +279,7 @@
         (for [{:keys [idx top height projected]} (:visible layout)
               :let [message       (nth messages idx nil)
                     text          (copyable-bubble-text message)
-                    sep-pad       (if (:turn-separator? projected) 1 0)
+                    sep-pad       (if (:turn-separator? projected) 2 0)
                     bubble-top    (+ top-limit (long top) sep-pad)
                     copy-height   (max 1 (- (long height) sep-pad 1))
                     copy-bottom   (min bottom-limit (+ bubble-top copy-height))

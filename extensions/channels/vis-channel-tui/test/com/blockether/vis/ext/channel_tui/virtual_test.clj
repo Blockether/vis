@@ -258,6 +258,30 @@
         (virtual/invalidate-heights!)
         (expect (zero? (virtual/height-cache-size)))))))
 
+(defdescribe turn-separator-test
+  (it "marks a You bubble after a Vis bubble when turn differentiation is enabled"
+    (let [msgs [(user-msg "first")
+                (plain-assistant-msg "answer")
+                (user-msg "next")]
+          {:keys [visible total-h]} (virtual/layout msgs bubble-w
+                                      (assoc settings :differentiate-turns true)
+                                      nil 100 {})
+          projected (mapv :projected visible)
+          marked    (nth projected 2)
+          unmarked-total (:total-h (virtual/layout msgs bubble-w
+                                     (assoc settings :differentiate-turns false)
+                                     nil 100 {}))]
+      (expect (true? (:turn-separator? marked)))
+      (expect (nil? (:turn-separator? (first projected))))
+      (expect (= 2 (- total-h unmarked-total)))))
+
+  (it "does not mark turn separators when disabled"
+    (let [msgs [(plain-assistant-msg "answer") (user-msg "next")]
+          {:keys [visible]} (virtual/layout msgs bubble-w
+                              (assoc settings :differentiate-turns false)
+                              nil 100 {})]
+      (expect (not-any? #(contains? (:projected %) :turn-separator?) visible)))))
+
 (defdescribe project-message-test
   (describe "user messages strip timestamps and render markdown" (it "drops :timestamp when :show-timestamps false (default)" (let [pm (project-message (user-msg "hi") bubble-w settings)] (expect (nil? (:timestamp pm))) (expect (= "hi" (:text pm))))) (it "keeps :timestamp when :show-timestamps true" (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))] (expect (some? (:timestamp pm))))) (it "formats markdown in user-authored bubbles" (let [pm (project-message (user-msg "# Introduction\n\nVis is **bold**\n\n- one") bubble-w settings)] (expect (seq (:prewrapped-lines pm))) (expect (str/includes? (:text pm) "Introduction")) (expect (str/includes? (:text pm) "bold")) (expect (str/includes? (:text pm) "• one")) (expect (not (str/includes? (:text pm) "# Introduction"))) (expect (not (str/includes? (:text pm) "**bold**"))))))
 
