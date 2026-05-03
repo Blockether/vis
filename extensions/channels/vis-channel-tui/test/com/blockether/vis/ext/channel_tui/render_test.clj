@@ -1626,7 +1626,7 @@
                       {:conversation-id cid
                        :conversation-turn-id turn-id})
           rows      (mapv (comp strip-sentinels body-of) (:lines payload))
-          summaries (filter #(str/includes? % "Reasoning") rows)]
+          summaries (filter #(str/includes? % "REASONING") rows)]
       (expect (some #(str/includes? % "line-01") rows))
       (expect (some #(str/includes? % "line-10") rows))
       (expect (not-any? #(str/includes? % "line-11") rows))
@@ -1649,7 +1649,7 @@
                       :conversation-turn-id turn-id
                       :detail-expansions {[cid node-id] true}})
           rows     (mapv (comp strip-sentinels body-of) (:lines payload))]
-      (expect (some #(str/includes? % "▾ Reasoning · 30 lines hidden") rows))
+      (expect (some #(str/includes? % "▾ REASONING · 30 lines hidden") rows))
       (expect (some #(str/includes? % "line-11") rows))
       (expect (some #(str/includes? % "line-40") rows)))))
 
@@ -1673,7 +1673,8 @@
       (when (= ::timeout payload)
         (future-cancel fut))
       (expect (not= ::timeout payload))
-      (expect (str/includes? (:text payload) "RESULT (Block 1)"))
+      (expect (str/includes? (:text payload) "RESULT"))
+      (expect (not (str/includes? (:text payload) "RESULT (Block 1)")))
       (expect (str/includes? (:text payload) "chars hidden"))
       (expect (str/includes? (:text payload) "Turn: 123e4567, Iteration: 1, Block: 1"))
       (let [suffix       "[Turn: 123e4567, Iteration: 1, Block: 1]"
@@ -1711,15 +1712,15 @@
                                (fn [idx line]
                                  (when (str/includes? line needle) idx))
                                lines)))]
-      (expect (str/includes? (:text collapsed) "Reasoning · 30 lines hidden"))
+      (expect (str/includes? (:text collapsed) "REASONING · 30 lines hidden"))
       (expect (str/includes? (:text collapsed) "line 10"))
       (expect (not (str/includes? (:text collapsed) "line 11")))
       (expect (not (str/includes? (:text collapsed) "line 40")))
       (expect (str/includes? (:text collapsed) "line 41"))
-      (expect (str/includes? (:text expanded) "Reasoning · 30 lines hidden"))
+      (expect (str/includes? (:text expanded) "REASONING · 30 lines hidden"))
       (expect (< (line-idx (:lines expanded) "line 10")
-                (line-idx (:lines expanded) "Reasoning")))
-      (expect (< (line-idx (:lines expanded) "Reasoning")
+                (line-idx (:lines expanded) "REASONING")))
+      (expect (< (line-idx (:lines expanded) "REASONING")
                 (line-idx (:lines expanded) "line 11")))
       (expect (< (line-idx (:lines expanded) "line 40")
                 (line-idx (:lines expanded) "line 41")))))
@@ -1771,6 +1772,15 @@
         (expect (= t/md-summary-bg (:bg summary-put)))
         (expect (contains? (:sgr summary-put) com.googlecode.lanterna.SGR/BOLD))))))
 
+(defdescribe answer-separator-test
+  (it "does not draw a bottom border between reasoning and final answer"
+    (render/invalidate-cache!)
+    (let [payload (render/format-answer-with-thinking-data
+                    "done" [{:thinking "reasoning"}]
+                    80 {:show-thinking true :show-iterations true} nil false {})]
+      (expect (not (str/includes? (:text payload) p/MARKER_ANSWER_SEP)))
+      (expect (not-any? #(str/starts-with? % p/MARKER_ANSWER_SEP) (:lines payload))))))
+
 (defdescribe message-footer-test
   (it "does not register a per-message copy button"
     (cr/reset!)
@@ -1788,6 +1798,49 @@
       (expect (every? nil?
                 (map #(cr/lookup hit-col %)
                   (range viewport-top (+ viewport-top start height)))))))
+
+  (it "renders the optional turn separator above the You label"
+    (let [puts    (atom [])
+          fills   (atom [])
+          fg      (atom nil)
+          bg      (atom nil)
+          active  (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [c] (reset! fg c) this)
+                     (setBackgroundColor [c] (reset! bg c) this)
+                     (putString [_col row text]
+                       (swap! puts conj {:row row :text text :fg @fg :bg @bg :sgr @active})
+                       this)
+                     (fillRectangle [_pos _size _ch]
+                       (swap! fills conj {:fg @fg :bg @bg})
+                       this)
+                     (setCharacter [_ _ _] this))
+          height   (render/draw-chat-bubble! graphics
+                     {:role :user :text "hello" :turn-separator? true}
+                     4 2 30 {:viewport-h 40})]
+      (expect (= 7 height))
+      (expect (some #(and (= 4 (:row %))
+                       (str/includes? (:text %) "──")
+                       (= t/turn-separator-bg (:bg %)))
+                @puts))
+      (expect (not-any? #(= 5 (:row %)) @puts))
+      (expect (some #(and (= 6 (:row %))
+                       (= "You" (:text %))
+                       (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
+                @puts))))
 
   (it "renders user messages with a left rail and markdown styling"
     (let [puts    (atom [])

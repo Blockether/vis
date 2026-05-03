@@ -210,7 +210,7 @@
   (let [bubble-w (long bubble-w)
         idx      (long idx)]
     (long (+ (estimated-height message bubble-w)
-            (if (turn-separator? messages settings idx) 1 0)))))
+            (if (turn-separator? messages settings idx) 2 0)))))
 
 (defn- with-turn-separator
   [message messages settings ^long idx]
