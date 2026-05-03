@@ -219,7 +219,8 @@
       (expect (str/includes? p "no raw ``` markers"))
       (expect (str/includes? p "TURN_USER_REQUEST is fully satisfied"))
       (expect (str/includes? p "host automatically continues the SAME user turn"))
-      (expect (str/includes? p "No sibling forms in the answer iteration"))
+      (expect (str/includes? p "After iteration 1, the final iteration must contain exactly one top-level form"))
+      (expect (str/includes? p "In iteration 1 only, trivial chat may answer as the last top-level form"))
       (expect (str/includes? p "ONLY top-level form of its final iteration"))
       (expect (str/includes? p "Not every iteration needs an answer"))
       (expect (str/includes? p "omitting `(answer ...)`; the runtime will loop you"))
@@ -270,7 +271,7 @@
       (expect (str/includes? p "Exploration/action/verification iterations omit `(answer …)` so the host loops"))
       (expect (str/includes? p "Correct multi-iteration finish pattern"))
       (expect (str/includes? p "iteration N: verify and surface final evidence, no answer yet"))
-      (expect (str/includes? p "iteration N+1: final turn-finisher, exactly one top-level form"))
+      (expect (str/includes? p "iteration N+1: final turn-finisher after observed evidence, exactly one top-level form"))
       (expect (not (str/includes? p "(answer \"scanned\") ; BAD")))
       (expect (not (str/includes? p "last 2 iters")))))
 

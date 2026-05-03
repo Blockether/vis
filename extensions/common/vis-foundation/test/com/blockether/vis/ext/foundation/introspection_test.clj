@@ -511,10 +511,10 @@
       (expect (contains? symbols 'intent!))
       (expect (contains? symbols 'plan!))
       (expect (contains? symbols 'gate!))
-      (expect (contains? symbols 'attest!))
+      (expect (contains? symbols 'prove-gate!))
       (expect (contains? symbols 'block-gate!))
       (expect (contains? symbols 'contract))
-      (expect (contains? symbols 'gate-checks))
+      (expect (contains? symbols 'gates))
       (expect (contains? symbols 'contract-report))
       (expect (contains? symbols 'audit-report))
       (expect (contains? symbols 'namespace-docs))
@@ -619,14 +619,14 @@
           e (assoc (env s conversation-id)
               :current-conversation-turn-id-atom (atom conversation-turn-id))
           intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
-          plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
+          plan   ((private-fn "foundation-plan!") e {:intent-id (:id intent)
                                                      :key :main
                                                      :summary "Plan"})
-          gate   ((private-fn "foundation-gate!") e {:plan-state-id (:id plan)
+          gate   ((private-fn "foundation-gate!") e {:plan-id (:id plan)
                                                      :key :verify
                                                      :question "Verified?"})
           checks ((private-fn "foundation-gate-checks") e)]
-      (expect (= :verify (:key gate)))
+      (expect (= "Verified?" (:question gate)))
       (expect (false? (:ok? checks)))
       (expect (some #(= :required-gate-open (:type %)) (:violations checks)))))
 
@@ -642,20 +642,19 @@
                    :execution-time-ms 1
                    :provenance (eval-provenance 1 1 1)}]})
       (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
-            plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
+            plan   ((private-fn "foundation-plan!") e {:intent-id (:id intent)
                                                        :key :main
                                                        :summary "Plan"})
-            gate   ((private-fn "foundation-gate!") e {:plan-state-id (:id plan)
+            gate   ((private-fn "foundation-gate!") e {:plan-id (:id plan)
                                                        :key :verify
                                                        :question "Verified?"})]
-        ((private-fn "foundation-attest!") e (:id gate)
-                                           {:status :proven
-                                            :summary "Observed i1.1."
-                                            :refs ["i1.1"]})
+        ((private-fn "foundation-prove-gate!") e (:id gate)
+                                               {:summary "Observed i1.1."
+                                                :refs ["i1.1"]})
         (let [checks ((private-fn "foundation-gate-checks") e)
               report ((private-fn "foundation-gate-report") e)]
           (expect (true? (:ok? checks)))
-          (expect (str/includes? report "`verify` closed"))
+          (expect (str/includes? report "proven required"))
           (expect (str/includes? report "refs: i1.1"))))))
 
   (it "flags attestation refs from another turn as missing from current-turn provenance"
@@ -673,19 +672,18 @@
                    :execution-time-ms 1
                    :provenance (eval-provenance 1 1 1)}]})
       (let [intent ((private-fn "foundation-intent!") e {:key :main :text "ship it"})
-            plan   ((private-fn "foundation-plan!") e {:intent-state-id (:id intent)
+            plan   ((private-fn "foundation-plan!") e {:intent-id (:id intent)
                                                        :key :main
                                                        :summary "Plan"})
-            gate   ((private-fn "foundation-gate!") e {:plan-state-id (:id plan)
+            gate   ((private-fn "foundation-gate!") e {:plan-id (:id plan)
                                                        :key :verify
                                                        :question "Verified?"})]
-        ((private-fn "foundation-attest!") e (:id gate)
-                                           {:status :proven
-                                            :summary "Wrong turn."
-                                            :refs ["i1.1"]})
+        ((private-fn "foundation-prove-gate!") e (:id gate)
+                                               {:summary "Wrong turn."
+                                                :refs ["i1.1"]})
         (let [checks ((private-fn "foundation-gate-checks") e)]
           (expect (false? (:ok? checks)))
-          (expect (some #(= :attestation-ref-missing-from-current-turn-provenance (:type %))
+          (expect (some #(= :gate-ref-missing-from-current-turn-provenance (:type %))
                     (:violations checks))))))))
 
 ;; -----------------------------------------------------------------------------

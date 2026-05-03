@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
-   [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.core]
@@ -77,10 +76,10 @@
                                                   :status :running})]
       (try
         (let [intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "fix it"})
-              plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+              plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                             :key :main
                                             :summary "Plan"})]
-          (vis/db-store-gate! s {:plan-state-id (:id plan)
+          (vis/db-store-gate! s {:plan-id (:id plan)
                                  :key :verify
                                  :question "Verified?"})
           (let [error (loop/final-answer-gate-error
@@ -100,10 +99,10 @@
                                                   :status :running})]
       (try
         (let [intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "fix it"})
-              plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+              plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                             :key :main
                                             :summary "Plan"})
-              gate   (vis/db-store-gate! s {:plan-state-id (:id plan)
+              gate   (vis/db-store-gate! s {:plan-id (:id plan)
                                             :key :verify
                                             :question "Verified?"})
               blocks [{:id 0
@@ -114,10 +113,9 @@
                        :error nil
                        :execution-time-ms 1
                        :provenance {:ref "i1.1" :op :vis/eval :engine :vis/sci}}]]
-          (vis/db-store-attestation! s {:gate-state-id (:id gate)
-                                        :status :proven
-                                        :summary "Verified."
-                                        :refs ["i1.1"]})
+          (vis/db-prove-gate! s {:gate-id (:id gate)
+                                 :summary "Verified."
+                                 :refs ["i1.1"]})
           (expect (nil? (loop/final-answer-gate-error
                           {:db-info s :current-conversation-turn-id-atom (atom tid)}
                           1 blocks))))
@@ -161,8 +159,36 @@
               (expect (= "i1.1" (:ref prov)))
               (expect (= :vis/sci (:engine prov))))))))))
 
+(defdescribe run-iteration-silent-chunk-test
+  (it "emits :vis/silent form-result chunks so live progress can clear silent form-start slots"
+    (let [chunks (atom [])
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw "```clojure\n(conversation-title \"x\")\n```"
+                                           :blocks [{:lang "clojure" :source "(conversation-title \"x\")"}]
+                                           :result "(conversation-title \"x\")"
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [_ code]
+                                             (expect (= "(conversation-title \"x\")" code))
+                                             {:result :vis/silent
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
+        (fn []
+          (loop/run-iteration environment
+            [{:role "user" :content "set title"}]
+            {:iteration 0
+             :resolved-model {:provider :test :name "model"}
+             :on-chunk (fn [chunk] (swap! chunks conj chunk))})
+          (expect (= [:form-start :form-result]
+                    (mapv :phase @chunks)))
+          (expect (= :vis/silent (:result (second @chunks)))))))))
+
 (defdescribe run-iteration-answer-position-test
-  (it "rejects final answers mixed with sibling top-level forms"
+  (it "accepts first-iteration final answers mixed with earlier top-level forms when answer is last"
     (let [environment {:router ::router
                        :answer-atom (atom nil)
                        :current-form-idx-atom (atom nil)}]
@@ -190,6 +216,41 @@
           (let [result (loop/run-iteration environment
                          [{:role "user" :content "finish"}]
                          {:iteration 0
+                          :resolved-model {:provider :test :name "model"}})]
+            (expect (= {:final? true
+                        :answer "done"
+                        :answer-form-idx 1}
+                      (:final-result result)))
+            (expect (= 2 (count (:blocks result)))))))))
+
+  (it "rejects post-first-iteration final answers mixed with sibling top-level forms"
+    (let [environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw "```clojure\n(def observed 1)\n(answer \"done\")\n```"
+                                           :blocks [{:lang "clojure" :source "(def observed 1)\n(answer \"done\")"}]
+                                           :result "(def observed 1)\n(answer \"done\")"
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [env code]
+                                             (if (= "(answer \"done\")" code)
+                                               (do
+                                                 (reset! (:answer-atom env)
+                                                   {:value "done"
+                                                    :form-idx @(:current-form-idx-atom env)})
+                                                 {:result :vis/answer
+                                                  :stdout ""
+                                                  :stderr ""
+                                                  :execution-time-ms 0})
+                                               {:result 1
+                                                :stdout ""
+                                                :stderr ""
+                                                :execution-time-ms 0}))}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "finish"}]
+                         {:iteration 1
                           :resolved-model {:provider :test :name "model"}})]
             (expect (nil? (:final-result result)))
             (expect (= 2 (count (:blocks result))))

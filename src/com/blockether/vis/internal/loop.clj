@@ -718,33 +718,48 @@
     (:error (nth block-results form-idx))))
 
 ;; ---------------------------------------------------------------------------
-;; Answer-position contract (rule b' — "answer is the only form")
+;; Answer-position contract (rule b' — "answer is alone after iter 1")
 ;;
-;; An iteration that calls `(answer …)` MUST emit it as the only
+;; An answer accepted after the first iteration MUST be the only
 ;; top-level form of that iteration. Exploration, action, verification,
 ;; and evidence-surfacing forms belong in earlier iterations; the host
 ;; will loop automatically when `(answer …)` is omitted.
 ;;
-;; This makes `(answer …)` a clean turn-finisher: no other code runs in
-;; the final iteration. Structural wrappers — `(let […] (answer …))`,
-;; `(do … (answer …))`, `(answer (build))` — stay legal because they
-;; are still ONE top-level form.
+;; Iteration 1 is intentionally more permissive for trivial chat: if
+;; the first model response emits setup/title/body construction forms
+;; and then calls `(answer …)` as the LAST top-level form, the answer is
+;; accepted instead of forcing a wasteful recovery iteration. Structural
+;; wrappers — `(let […] (answer …))`, `(do … (answer …))`,
+;; `(answer (build))` — stay legal in every iteration because they are
+;; still ONE top-level form.
 ;; ---------------------------------------------------------------------------
 
 (defn answer-position-violation?
-  "True when `(answer …)` fired in an iteration that has any
-   top-level form besides the answer-bearing form. `form-idx` is the
-   0-based index of the form that set `answer-atom`; `total-forms` is
-   the count of parsed top-level blocks. Pure; public so loop + tests
-   share the rule. Returns false when `form-idx` is nil (no answer
-   fired)."
-  [form-idx total-forms]
-  (boolean (and form-idx
-             (integer? form-idx)
-             (not (neg? form-idx))
-             (pos? total-forms)
-             (not (and (= 1 total-forms)
-                    (zero? form-idx))))))
+  "True when `(answer …)` fired from a disallowed top-level position.
+   `form-idx` is the 0-based index of the form that set `answer-atom`;
+   `total-forms` is the count of parsed top-level blocks;
+   `iteration-position` is 1-based. Pure; public so loop + tests share
+   the rule. Returns false when `form-idx` is nil (no answer fired).
+
+   Rules:
+   - any iteration: one top-level answer-bearing form is accepted;
+   - iteration 1 only: answer may be the last form after earlier setup;
+   - later iterations: answer must be the only top-level form."
+  ([form-idx total-forms]
+   (answer-position-violation? form-idx total-forms nil))
+  ([form-idx total-forms iteration-position]
+   (let [valid-answer-form? (and form-idx
+                              (integer? form-idx)
+                              (not (neg? form-idx))
+                              (pos? total-forms))
+         only-form?         (and (= 1 total-forms)
+                              (zero? (long (or form-idx -1))))
+         first-iter-last?   (and (= 1 iteration-position)
+                              valid-answer-form?
+                              (= form-idx (dec total-forms)))]
+     (boolean (and valid-answer-form?
+                (not (or only-form?
+                       first-iter-last?)))))))
 
 (defn answer-position-error-message
   "Validation-error string surfaced when `answer-position-violation?`
@@ -759,13 +774,6 @@
       "and verification forms in earlier iterations by omitting `(answer …)` "
       "so the host loops, then emit one final top-level form such as "
       "`(answer …)` or `(let [...] (answer …))`.")))
-
-(defn- latest-by-soul
-  [xs]
-  (->> xs
-    (group-by :soul-id)
-    vals
-    (mapv #(last (sort-by :version %)))))
 
 (defn- active-plan-states
   [contract]
@@ -1071,7 +1079,7 @@
                              ;; envelope on success and error —
                              ;; consumers branch on `:error nil?`,
                              ;; not on shape.
-                             (when (and on-chunk (not= :vis/silent (:result result*)))
+                             (when on-chunk
                                (on-chunk {:phase             :form-result
                                           :iteration         iteration-position
                                           :form-idx          idx
@@ -1135,7 +1143,7 @@
           ;; separately so both columns get clean values.
         (let [final-answer    (str value)
               total-forms     (count code-entries)
-              position-bad?   (answer-position-violation? form-idx total-forms)
+              position-bad?   (answer-position-violation? form-idx total-forms iteration-position)
               own-form-error  (when-not position-bad?
                                 (answer-form-error block-results form-idx))
               gate-error      (when (and (not position-bad?) (nil? own-form-error))

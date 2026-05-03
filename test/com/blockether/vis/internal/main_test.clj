@@ -18,6 +18,7 @@
 (def ^:private expand-table-cols       #'main/expand-table-cols)
 (def ^:private table-width             #'main/table-width)
 (def ^:private terminal-width          #'main/terminal-width)
+(def ^:private print-table!            #'main/print-table!)
 (def ^:private conversation-rows       #'main/conversation-rows)
 
 (defdescribe short-ext-ns-test
@@ -67,7 +68,20 @@
           expanded (expand-table-cols cols 20)]
       (expect (= 4 (:width (first expanded))))
       (expect (= 11 (:width (second expanded))))
-      (expect (= 20 (table-width expanded))))))
+      (expect (= 20 (table-width expanded)))))
+
+  (it "renders table lines at the detected terminal width"
+    (let [out (java.io.ByteArrayOutputStream.)
+          ps  (java.io.PrintStream. out true "UTF-8")]
+      (with-redefs-fn {#'main/terminal-width        (fn [] 50)
+                       #'config/original-stdout ps}
+        #(print-table! [{:key :id :label "ID" :width 4 :align :left}
+                        {:key :title :label "Title" :width 6 :align :left :grow? true}]
+           [{:id "1" :title "hello"}]))
+      (.flush ps)
+      (let [lines (str/split-lines (.toString out "UTF-8"))]
+        (expect (seq lines))
+        (expect (every? #(= 50 (count %)) lines))))))
 
 (defdescribe conversation-rows-test
   (it "sorts by last turn descending, puts empty conversations last, and includes the last channel"

@@ -367,6 +367,46 @@
     (and (< 1 (count lines))
       (every? list-marker? lines))))
 
+(defn- continuation-prefix? [s]
+  (boolean (re-matches #"^(?:\s+|[,;:.)\]}]|[—–-]).*" s)))
+
+(defn- dangling-suffix? [s]
+  (boolean (re-find #"(?:\s|[({\[:;,—–-])$" s)))
+
+(defn- fragmentable-list-item? [x]
+  (and (string? x)
+    (not (list-marker? x))
+    (not (root-list-block? x))))
+
+(defn- attach-inline-fragment? [current x]
+  (and (fragmentable-list-item? current)
+    (fragmentable-list-item? x)
+    (or (dangling-suffix? current)
+      (continuation-prefix? x))))
+
+(defn- coalesce-inline-list-fragments
+  "Tolerate LLM-written `(v/ul [\"prefix \" (v/code \"x\") \" suffix\" ...])`.
+   The documented shape is a nested item vector (`[[\"prefix \" (v/code \"x\")]]`),
+   but models sometimes flatten inline item fragments into the top-level
+   list. Join only clear inline continuations so ordinary `[\"a\" \"b\"]`
+   remains two items."
+  [items]
+  (loop [remaining (seq items)
+         current   nil
+         acc       []]
+    (cond
+      (nil? remaining)
+      (cond-> acc current (conj current))
+
+      (nil? current)
+      (recur (next remaining) (first remaining) acc)
+
+      (attach-inline-fragment? current (first remaining))
+      (recur (next remaining) (str current (first remaining)) acc)
+
+      :else
+      (recur (next remaining) (first remaining) (conj acc current)))))
+
 (defn- indent-lines [indent lines]
   (let [pad (apply str (repeat indent " "))]
     (map #(str pad %) lines)))
@@ -404,6 +444,7 @@
    Multiline items indent continuation lines under the list marker."
   [& items]
   (->> (normalize-list-items items)
+    coalesce-inline-list-fragments
     (map render-unordered-item)
     (str/join "\n")))
 
@@ -419,6 +460,7 @@
      (v/ol [[\"Step \" (v/code \"1\") \": go\"] \"done\"])"
   [& items]
   (->> (normalize-list-items items)
+    coalesce-inline-list-fragments
     (map-indexed (fn [i x]
                    (let [marker-prefix (str (inc i) ". ")
                          text          (item-text x)

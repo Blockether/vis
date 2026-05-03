@@ -248,11 +248,11 @@
       (expect (= :error (:status (first (vis/db-list-conversation-turns s cid))))))))
 
 ;; =============================================================================
-;; Completion contract: intent -> plan -> gate -> attestation
+;; Completion contract: intent -> plan -> gate refs
 ;; =============================================================================
 
 (defdescribe work-provenance-test
-  (it "persists turn-scoped intent plan gate and exactly one attestation"
+  (it "persists turn-scoped intent plan gate and exactly one proof ref"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -271,50 +271,47 @@
                                           :text "ship it"
                                           :created-iteration-id iid
                                           :created-ref "i1.1"})
-          plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                         :key :main
                                         :summary "Inspect and verify."
                                         :steps [{:id :verify}]})
-          gate   (vis/db-store-gate! s {:plan-state-id (:id plan)
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
                                         :key :verify
                                         :question "Did verification pass?"})
-          att    (vis/db-store-attestation! s {:gate-state-id (:id gate)
-                                               :status :proven
-                                               :summary "Verification passed."
-                                               :refs ["i1.1"]})
+          att    (vis/db-prove-gate! s {:gate-id (:id gate)
+                                        :summary "Verification passed."
+                                        :refs ["i1.1"]})
           state  (vis/db-completion-contract s tid)]
-      (expect (= 1 (raw-count s :intent_soul)))
-      (expect (= 1 (raw-count s :intent_state)))
-      (expect (= 1 (raw-count s :plan_state)))
-      (expect (= 1 (raw-count s :gate_state)))
-      (expect (= 1 (raw-count s :attestation)))
-      (expect (= 1 (raw-count s :attestation_provenance_ref)))
-      (expect (= :closed (:status (first (:gates state)))))
+      (expect (= 1 (raw-count s :conversation_turn_intent)))
+      (expect (= 1 (raw-count s :conversation_turn_plan)))
+      (expect (= 1 (raw-count s :conversation_turn_gate)))
+      (expect (= 1 (raw-count s :conversation_turn_gate_ref)))
+      (expect (= :proven (:status (first (:gates state)))))
       (expect (= :proven (:status att)))
       (expect (= [{:ref "i1.1" :role :evidence :created-at (:created-at (first (:refs att)))}]
                 (:refs att)))))
 
-  (it "rejects terminal gate state without attestation refs"
+  (it "rejects terminal gate state without evidence refs"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                      :user-request "ship it"
                                                      :status :running})
           intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "ship it"})
-          plan   (vis/db-store-plan! s {:intent-state-id (:id intent)
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                         :key :main
                                         :summary "Plan"})
-          gate   (vis/db-store-gate! s {:plan-state-id (:id plan)
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
                                         :key :verify
                                         :question "Verified?"})]
       (let [thrown (try
-                     (raw-query s {:update :gate_state
-                                   :set {:status "closed"}
+                     (raw-query s {:update :conversation_turn_gate
+                                   :set {:status "proven"}
                                    :where [:= :id (str (:id gate))]})
                      nil
                      (catch Exception e e))]
         (expect (some? thrown))
-        (expect (re-find #"closed gate_state requires one proven attestation"
+        (expect (re-find #"proven conversation_turn_gate requires evidence refs"
                   (ex-message thrown))))))
 
   (it "isolates contract per conversation_turn_state retry"
