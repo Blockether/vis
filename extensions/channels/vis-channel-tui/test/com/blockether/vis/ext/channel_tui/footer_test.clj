@@ -57,6 +57,25 @@
             (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
             (expect (re-find #"7d 85% left ↺3d18h @" text)))))))
 
+  (it "shows cumulative token totals in the right footer"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai
+                                                          :reasoning? false})}
+        (fn []
+          (expect (= ["total ↑150 (cached 70) ↓45" "$0.015"]
+                    (->> (build-segments {:messages [{:role :assistant
+                                                      :tokens {:input 100 :output 30 :cached 60}
+                                                      :cost {:total-cost 0.01}}
+                                                     {:role :assistant
+                                                      :tokens {:input 50 :output 15
+                                                               :cached-input 10}
+                                                      :cost {:total-cost 0.005}}]
+                                          :settings {}}
+                           0)
+                      (filter #(= :right (:region %)))
+                      (mapv :text))))))))
+
   (it "omits the reasoning suffix for non-reasoning models"
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"

@@ -1,233 +1,52 @@
-# Iteration Flow
+# Iteration flow
 
-What happens when the user sends a message, end to end.
+Each Vis turn runs as one or more model iterations. The model emits Clojure forms, Vis evaluates them in order, persists observations into `iteration.blocks`, and either continues or accepts one terminal `(answer ...)`.
 
-## Sequence
+## Provenance
 
-```
-user message
-  → internal/loop.clj :: send!         acquire per-conversation lock; build history
-  → internal/loop.clj :: run-turn!     validate; store turn; enter loop
-      loop:
-        1. Build Context
-        2. Ask LLM
-        3. Execute Code
-        4. Persist + Decide
-             — forms ran, no `(answer …)` call  → back to step 1
-             — `(answer …)` was called           → return answer + metadata
-             — error                              → feed error as user msg, back to step 1
+Every persisted block has a canonical provenance reference and a rendering kind. Examples:
+
+```text
+turn/3f2a91c0/iteration/1/block/1
+turn/3f2a91c0/iteration/4/block/2/tool/bash
+turn/3f2a91c0/iteration/6/block/1/error
 ```
 
-**Step details:**
-
-1. **Build Context** — `<journal>` (last iteration's blocks with `iN.K` ids), `<var_index>` (user-defined vars only). Plus the SCI-bound SYSTEM vars (every name in `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`, `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`, `ITERATION_ID`, `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) the model can read directly. Active extensions may append one `[system_nudge]` line each via `:ext/nudge-fn`.
-2. **Ask LLM** — plain-text completion + fenced code-block
-   extraction. The call site is
-   `(svar/ask-code! (:router environment) {:lang "clojure" …})`.
-   svar sends `:messages` verbatim, parses the assistant response,
-   filters Clojure-tagged + untagged fences, returns the concatenated
-   source. NO JSON spec, NO schema validation, NO schema-reject
-   retry layer; reader errors on the extracted source flow as
-   ordinary iteration errors instead. The router is the env's
-   snapshot router — NOT the global loop router atom. See
-   [Router Lifecycle](state.md#router-lifecycle) for why this matters
-   when provider/model is switched mid-session.
-3. **Execute Code** — lint, SCI eval with timeout, capture stdout/stderr/result/provenance per block
-4. **Persist + Decide** — `db-store-iteration!`, attach extension metadata, enforce final-answer gates when `(answer …)` fires, route to next step
-
-## System prompt assembly
-
-`prompt/assemble-system-prompt` is the **single source of truth** for
-the system message content. Both iteration loop paths and the TUI
-`[?]` inspector call it. It composes:
-
-1. **Core instructions** (`CORE_SYSTEM_PROMPT`) — the agent contract:
-   reply with Clojure source inside ```clojure … ``` fences, use
-   `;; comments` for thinking, call `(answer …)` to finish.
-2. **Extension prompts** — each active extension’s canonical
-   symbol-derived prompt block, prefixed with `[namespace: alias → ns]`,
-   plus any optional extra `:ext/prompt` tail (cwd / OS / git facts
-   come from the `vis-foundation` extension, not from the
-   runtime).
-
-No iteration spec schema is appended anymore. svar’s `ask-code!`
-appends one short `code-tail-pointer` reminder as the LAST text
-block of the LAST user message (`Reply with clojure source inside
- ` ` ` clojure …  ` ` ` fences …`); that lives outside the system
-message and is NOT cached.
-
-## Error recovery
-
-When an iteration throws:
-
-1. If the error is **infrastructure** (router down, DB closed, JVM): re-throw — the turn aborts.
-2. Otherwise: normalize the error and append it as the next user message; continue the loop.
-3. A `[system_nudge]` fires at `CONSECUTIVE_ERROR_NUDGE_AT` (=2) consecutive errors so the model gets one warning to change strategy.
-4. If consecutive errors reach `max-consecutive-errors` (default **3**, overridable via `:max-consecutive-errors`), the loop attempts a **strategy restart** — fresh prompt assembly + reset counters — up to `max-restarts` (default **3**, overridable via `:max-restarts`).
-5. After the final restart still fails, the turn ends with `:status :error`.
-
-## Final answer
-
-<a id="answer-protocol"></a>
-
-The model finishes a turn by calling `(answer "…")` from inside a
-fenced code block. The runtime binds `answer` as a one-arg SCI fn
-that `reset!`s an environment-scoped atom; after evaluating every
-form in the iteration, the loop reads the atom and validates the
-captured answer before committing it.
-
-Validation includes:
-
-1. `(answer …)` must be the only top-level form of the final iteration. A wrapper such as `(let [...] (answer ...))` is fine, but no sibling top-level forms may run in the answer iteration.
-2. The answer-bearing form itself must not have errored.
-3. If the current `conversation_turn_state` has completion gates, the
-   gate contract must pass before the answer is accepted.
-
-See [Completion Contract](completion-contract.md) for the Intent → Plan
-→ Gate → Attestation → Provenance model.
-
-The canonical flow separates work iterations from the final answer iteration:
+The block map stores machine data:
 
 ```clojure
-;; iteration N: explore / act / verify, then omit answer so the host loops
-(def touched-paths ["src/foo.clj" "test/foo_test.clj"])
-(def verification {:status :passed :cmd "./verify.sh --quick"})
-{:touched touched-paths :verification verification}
+{:provenance {:ref "turn/3f2a91c0/iteration/4/block/2"
+              :op :sci/eval
+              :status :done}
+ :rendering-kind :vis/sci}
 ```
 
-```clojure
-;; iteration N+1: final turn-finisher, exactly one top-level form
-(answer
-  (v/join
-    (v/h1 "Done")
-    (v/p "Three files touched.")
-    (v/ul (map #(v/file-link % nil) touched-paths))
-    (v/p (str "Verification: " (:status verification))))))
-```
+Markdown is not stored in provenance.
 
-Use the `v/` surface to build the answer body (see [Markdown builders under `v/`](../extensions/common/markdown.md)).
+## Final-answer guard
 
-Key properties:
+Before Vis accepts `(answer ...)`, it reads `(v/intents)` / `db-intents` for the current turn-state focus. The answer is rejected unless every focused intent is fulfilled or abandoned.
 
-- `(answer …)` is a real Clojure call, so `(str …)`, `(format …)`,
-  `(pr-str …)`, etc. all interpolate. No Mustache layer, no template
-  language. Whatever `(str <arg>)` produces becomes the answer.
-- Use `v/` helpers (`v/h1`, `v/table`, `v/file-link`, …) to
-  assemble the body — they keep formatting consistent across
-  channels and surface clickable links the TUI can follow.
-- Correct flow is multi-iteration: explore/act/verify first, omit `(answer …)` so the host loops, then answer alone in the final iteration.
-- If the answer-bearing form errors, the captured answer is discarded and the loop retries.
-- If completion gates exist and `(v/gate-checks)` would fail, the captured answer is discarded and the loop retries with a validation error.
-- If no gates exist, the gate guard is skipped. Trivial chat does not need a completion contract.
+The guard rejects:
 
-## Loop termination
+- no focused intent;
+- focused active intent without an active plan;
+- active plan without gates;
+- required open gate;
+- required blocked gate without re-plan or abandonment;
+- proven gates without intent fulfillment.
 
-The loop runs **until the model calls `(answer …)`**, the user
-cancels, or the consecutive-error budget is exhausted. The model
-decides when it's done by finalizing; the user decides when to bail
-by cancelling.
+Unfocused old active intents are reported by `v/intents` but do not block the current answer.
 
-The consecutive-error budget (`max-consecutive-errors`, default 3,
-with `max-restarts` strategy resets, default 3) is the only
-automatic termination path apart from finalize / cancel.
+## Rendering kinds
 
-## Reasoning continuity
+Channels render blocks by `:rendering-kind`:
 
-There is no model-authored `turn-state` map carrying "plan" or
-"breadcrumb" data between iterations. For non-trivial work, durable
-planning/completion state lives in the database-backed completion
-contract: Intent, Plan, Gate, Attestation, and Provenance refs.
+- `:vis/sci` — normal evaluated form/result;
+- `:vis/silent` — executed and citeable, hidden/collapsed in chat;
+- `:vis/system` — Vis-owned intent/gate/focus/control call, collapsed as `SYSTEM`;
+- `:vis/tool` — tool child projection;
+- `:vis/answer` — final answer form;
+- `:vis/error` and `:vis/diagnostic` — diagnostic/audit surfaces.
 
-Continuity is delivered by:
-
-- **`<journal>`** — the previous iteration's code blocks + results,
-  addressable by `iN.K` ids.
-- **`<var_index>`** — user-defined `(def …)` bindings, type-aware
-  rendering (see below).
-- **SCI bindings** — the SYSTEM vars (every name in `SYSTEM_VAR_NAMES`
-  — see [SYSTEM vars](#system-vars) below) the model can read directly
-  from inside a fenced code block.
-
-For deeper conversation introspection, the opt-in `vis-foundation`
-extension exposes `(v/inspect)` as the canonical state data map and
-`(v/report)` as the Markdown renderer over the same data. Symbol memory
-uses `var-history`: `(var-history)` returns a compact symbol index with
-provenance, while `(var-history 'sym)` returns history for one known
-symbol. Completion contract helpers include `(v/intent!)`, `(v/plan!)`,
-`(v/gate!)`, `(v/attest!)`, `(v/block-gate!)`, `(v/gate-checks)`, and
-`(v/gate-report)`. See [RLM Memory](rlm-memory.md),
-[Completion Contract](completion-contract.md), and
-[Meta extension](../extensions/common/vis-foundation.md).
-
-## SYSTEM vars
-
-The registry `SYSTEM_VAR_NAMES` is fixed. Names are split across three
-prefix-tagged lifetime tiers:
-
-- **`TURN_*`** — frozen at turn start, immutable for the whole turn:
-  - `TURN_USER_REQUEST` — user's current message text.
-  - `TURN_CONVERSATION_TURN_ID` — UUID of THIS in-flight turn (== conversation turn soul id).
-  - `TURN_CONVERSATION_SOUL_ID` — UUID of the `conversation_soul` row.
-  - `TURN_CONVERSATION_STATE_ID` — UUID of the latest `conversation_state` row at turn start.
-  - `TURN_SYSTEM_PROMPT` — the full assembled system prompt driving THIS turn.
-  - `TURN_ACTIVE_EXTENSIONS` — frozen vec of compact extension descriptors (`:alias`, `:namespace`, `:doc`, `:kind`, `:version`, `:author`, `:owner`, `:license`, `:registry-id`, `:source-paths`, `:source-mtime-max`, `:source-hash-sha256`, `:symbols`, `:docs`).
-- **`ITERATION_*`** — rebound at every iteration boundary:
-  - `ITERATION_ID` — UUID of the most recently persisted iteration (nil before iter 1).
-  - `ITERATION_PREVIOUS_REASONING` — last iteration's `:thinking` text.
-- **`CONVERSATION_*`** — conversation-state, mutates freely within the turn:
-  - `CONVERSATION_TITLE` — current conversation title ("" until set).
-  - `CONVERSATION_PREVIOUS_ANSWER` — previous turn's final answer string.
-
-UPPERCASE marks them as constants. See
-`com.blockether.vis.core/system-var-sym?` for the predicate. SYSTEM
-vars are excluded from `<var_index>` and are not subject to
-automatic archive — the model reads them as plain SCI symbols.
-
-`TURN_SYSTEM_PROMPT` carries the full assembled system prompt as a
-multi-KB string; because SYSTEM vars are excluded from `<var_index>`,
-the binding costs zero per-iteration tokens. It only enters context
-when the model evaluates the symbol explicitly.
-
-## Var index
-
-`<var_index>` is the latest namespace snapshot of *user-defined* vars
-only.
-
-Rendering is **type-aware**: cheap values get their actual content
-inlined so the model never has to call a history helper just to read
-what's in a var. Expensive values fall back to a schema
-preview. Stats live in a `;;` comment line, **never** as reader-macro
-metadata onto the symbol.
-
-```
-;; v=3 scope=live n=2
-(def s "hello")
-;; v=1 scope=live n=12
-(def m {:keys [:status :id :name :owner :created-at :updated-at :tags :owner-id]})
-;; v=1 scope=live n=42
-(def big-map {:n 42 :keys-sample [:a :b :c :d :e :f]})
-;; v=2 scope=live n=4
-(def callers [{:path "src/x.clj"} {:path "src/y.clj"} …])
-;; v=1 scope=live
-(defn foo-fn [x opts] "Update foo-fn arity. …")
-```
-
-Rules:
-
-- `:string ≤200c` → inline literal.
-- `:string >200c` → `{:string-size N :head "first 80c…"}`.
-- `:map ≤8 keys` → `{:keys […]}`.
-- `:map  >8 keys` → `{:n N :keys-sample […]}`.
-- `:vector|:set|:list|:seq ≤5 elems` → inline `[…]`.
-- `:vector|:set|:list|:seq >5 elems` → `{:n N :head […]}`.
-- `:fn` → arglists + first docstring line.
-- `:nil|:bool|:int|:float|:keyword|:symbol` → inline literal.
-
-`<var_index>` is capped hot memory, not a full symbol archive. It renders
-at most 100 live user-defined symbols; overflow and archived symbols are
-shown only as compact names/counts. After a successful accepted final
-answer, Vis archives eligible symbols down toward an 80-symbol target.
-Archive removes a symbol from the live sandbox and prompt hot set but
-never deletes persisted history. Symbol history and provenance are read
-through `var-history`, not through `v/inspect`. See
-[RLM Memory](rlm-memory.md).
+Raw errors from `:vis/system` blocks are preserved for audit/debug views, but normal chat rendering suppresses them unless the user opens diagnostics.

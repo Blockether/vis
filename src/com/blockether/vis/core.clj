@@ -214,13 +214,18 @@
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
 
-;; Completion contract: turn-scoped intent -> plan -> blocking gate
+;; Conversation-scoped intents, plans, gates, and focus
 (def db-store-intent!                 persistance/db-store-intent!)
+(def db-store-intent-ref!             persistance/db-store-intent-ref!)
+(def db-focus-intent!                 persistance/db-focus-intent!)
+(def db-relate-intents!               persistance/db-relate-intents!)
 (def db-store-plan!                   persistance/db-store-plan!)
 (def db-store-gate!                   persistance/db-store-gate!)
 (def db-prove-gate!                   persistance/db-prove-gate!)
 (def db-block-gate!                   persistance/db-block-gate!)
-(def db-completion-contract                    persistance/db-completion-contract)
+(def db-fulfill-intent!               persistance/db-fulfill-intent!)
+(def db-abandon-intent!               persistance/db-abandon-intent!)
+(def db-intents                       persistance/db-intents)
 
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)

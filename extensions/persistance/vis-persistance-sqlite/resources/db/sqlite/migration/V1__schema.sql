@@ -17,12 +17,10 @@
 --          │         │    │
 --          │         │    └─ expression_state (var versions only)
 --          │         │
---          │         └─ intent_soul / intent_state (turn-run scoped)
---          │              └─ plan_soul / plan_state
---          │                   └─ gate_soul / gate_state
---          │                        └─ attestation
---          │                             └─ attestation_provenance_ref
---          │                                  refs into iteration.blocks provenance timeline
+--          │
+--          ├─ conversation_intent / plan / gate (conversation-scoped)
+--          │    └─ conversation_intent_focus (turn-state sidecar)
+--          │         refs into iteration.blocks provenance timeline
 --          │
 --          └─ expression_soul (branch-local var identities, kind='var')
 --               └─ expression_dependency (var dependency graph, soul-level)
@@ -309,232 +307,245 @@ BEGIN
 END;
 
 -- =============================================================================
--- Completion contract domain — turn-scoped intent -> plan -> gate.
+-- Conversation-scoped intents, plans, blocking gates, and turn focus.
 --
--- The contract is deliberately rooted at conversation_turn_state: one
--- concrete run/retry owns its own intents, plans, gates, and gate evidence.
--- Gates block final answers by default: a required gate starts as `open` and
--- must become either `proven` (proof summary + refs) or `blocked` (reason +
--- refs) before the final answer guard accepts completion.
---
--- There are no intent/plan/gate souls and no model-authored keys here.
--- Stable identity is the row UUID; prompt handles like I1/P1/G1 are derived
--- projections, not persisted identity.
+-- Intents belong to conversation_soul. Focus belongs to one
+-- conversation_turn_state so an old unrelated active intent does not block
+-- every later branch/run. Provenance refs cite canonical iteration block paths.
 -- =============================================================================
-CREATE TABLE conversation_turn_intent (
-  id                          TEXT PRIMARY KEY NOT NULL,
-  conversation_turn_state_id  TEXT NOT NULL
-                              REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  supersedes_intent_id        TEXT
-                              REFERENCES conversation_turn_intent(id) ON DELETE SET NULL,
-  status                      TEXT NOT NULL
-                              CHECK (status IN ('active', 'satisfied', 'superseded', 'abandoned')),
-  text                        TEXT NOT NULL CHECK (trim(text) <> ''),
-  created_iteration_id        TEXT
-                              REFERENCES iteration(id) ON DELETE SET NULL,
-  created_ref                 TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  metadata                    TEXT,          -- JSON-encoded object/string
-  created_at                  INTEGER NOT NULL
+CREATE TABLE conversation_intent (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_soul_id TEXT NOT NULL REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  title TEXT NOT NULL CHECK (trim(title) <> ''),
+  rationale TEXT NOT NULL CHECK (trim(rationale) <> ''),
+  status TEXT NOT NULL CHECK (status IN ('active', 'fulfilled', 'abandoned')),
+  fulfillment_summary TEXT CHECK (fulfillment_summary IS NULL OR trim(fulfillment_summary) <> ''),
+  abandonment_reason TEXT CHECK (abandonment_reason IS NULL OR trim(abandonment_reason) <> ''),
+  created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+  resolved_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+  created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
+  metadata TEXT,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+
+  CHECK (status <> 'fulfilled' OR
+         (fulfillment_summary IS NOT NULL AND abandonment_reason IS NULL AND resolved_at IS NOT NULL)),
+  CHECK (status <> 'abandoned' OR
+         (abandonment_reason IS NOT NULL AND fulfillment_summary IS NULL AND resolved_at IS NOT NULL)),
+  CHECK (status <> 'active' OR
+         (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL))
 );
 
-CREATE INDEX idx_conversation_turn_intent_turn_state
-  ON conversation_turn_intent(conversation_turn_state_id, created_at);
+CREATE INDEX idx_conversation_intent_soul_status
+  ON conversation_intent(conversation_soul_id, status, created_at);
 
-CREATE INDEX idx_conversation_turn_intent_created_iteration
-  ON conversation_turn_intent(created_iteration_id)
-  WHERE created_iteration_id IS NOT NULL;
+CREATE TABLE conversation_intent_ref (
+  id TEXT PRIMARY KEY NOT NULL,
+  intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+  ref TEXT NOT NULL CHECK (trim(ref) <> ''),
+  role TEXT NOT NULL CHECK (role IN ('fulfillment-evidence', 'abandonment-evidence', 'context')),
+  metadata TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE (intent_id, ref, role)
+);
 
-CREATE TRIGGER trg_conversation_turn_intent_lineage_ai
-BEFORE INSERT ON conversation_turn_intent
+CREATE INDEX idx_conversation_intent_ref_intent ON conversation_intent_ref(intent_id);
+CREATE INDEX idx_conversation_intent_ref_ref ON conversation_intent_ref(ref);
+
+CREATE TABLE conversation_intent_relation (
+  id TEXT PRIMARY KEY NOT NULL,
+  from_intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+  to_intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+  relation TEXT NOT NULL CHECK (relation IN ('subintent', 'related', 'supports', 'blocks')),
+  rationale TEXT CHECK (rationale IS NULL OR trim(rationale) <> ''),
+  metadata TEXT,
+  created_at INTEGER NOT NULL,
+  CHECK (from_intent_id <> to_intent_id),
+  UNIQUE (from_intent_id, to_intent_id, relation)
+);
+
+CREATE TRIGGER trg_conversation_intent_relation_same_soul_ai
+BEFORE INSERT ON conversation_intent_relation
 BEGIN
   SELECT CASE
-    WHEN NEW.supersedes_intent_id IS NOT NULL
-         AND (SELECT conversation_turn_state_id FROM conversation_turn_intent WHERE id = NEW.supersedes_intent_id) <> NEW.conversation_turn_state_id
-    THEN RAISE(ABORT, 'conversation_turn_intent supersedes must target same conversation_turn_state')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) IS NULL
+      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent_relation endpoint not found')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) <>
+         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id)
+    THEN RAISE(ABORT, 'conversation_intent_relation endpoints must belong to same conversation_soul')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_intent_lineage_au
-BEFORE UPDATE ON conversation_turn_intent
+CREATE TRIGGER trg_conversation_intent_relation_same_soul_au
+BEFORE UPDATE ON conversation_intent_relation
 BEGIN
   SELECT CASE
-    WHEN NEW.conversation_turn_state_id <> OLD.conversation_turn_state_id
-    THEN RAISE(ABORT, 'conversation_turn_intent turn-state is immutable')
-  END;
-
-  SELECT CASE
-    WHEN NEW.supersedes_intent_id IS NOT NULL
-         AND (SELECT conversation_turn_state_id FROM conversation_turn_intent WHERE id = NEW.supersedes_intent_id) <> NEW.conversation_turn_state_id
-    THEN RAISE(ABORT, 'conversation_turn_intent supersedes must target same conversation_turn_state')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) IS NULL
+      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent_relation endpoint not found')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) <>
+         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id)
+    THEN RAISE(ABORT, 'conversation_intent_relation endpoints must belong to same conversation_soul')
   END;
 END;
 
-CREATE TABLE conversation_turn_plan (
-  id                    TEXT PRIMARY KEY NOT NULL,
-  intent_id             TEXT NOT NULL
-                        REFERENCES conversation_turn_intent(id) ON DELETE CASCADE,
-  supersedes_plan_id    TEXT
-                        REFERENCES conversation_turn_plan(id) ON DELETE SET NULL,
-  status                TEXT NOT NULL
-                        CHECK (status IN ('active', 'completed', 'stale', 'superseded', 'abandoned')),
-  summary               TEXT NOT NULL CHECK (trim(summary) <> ''),
-  steps                 TEXT,            -- JSON-encoded vector of plan steps
-  created_iteration_id  TEXT
-                        REFERENCES iteration(id) ON DELETE SET NULL,
-  created_ref           TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  metadata              TEXT,            -- JSON-encoded object/string
-  created_at            INTEGER NOT NULL
+CREATE TABLE conversation_intent_plan (
+  id TEXT PRIMARY KEY NOT NULL,
+  intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'superseded', 'abandoned')),
+  summary TEXT NOT NULL CHECK (trim(summary) <> ''),
+  steps TEXT,
+  supersedes_plan_id TEXT REFERENCES conversation_intent_plan(id) ON DELETE SET NULL,
+  created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+  created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  metadata TEXT,
+  created_at INTEGER NOT NULL
 );
 
-CREATE INDEX idx_conversation_turn_plan_intent
-  ON conversation_turn_plan(intent_id, created_at);
+CREATE INDEX idx_conversation_intent_plan_intent
+  ON conversation_intent_plan(intent_id, created_at);
 
-CREATE INDEX idx_conversation_turn_plan_created_iteration
-  ON conversation_turn_plan(created_iteration_id)
-  WHERE created_iteration_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_conversation_intent_plan_one_active
+  ON conversation_intent_plan(intent_id)
+  WHERE status = 'active';
 
-CREATE TRIGGER trg_conversation_turn_plan_lineage_ai
-BEFORE INSERT ON conversation_turn_plan
+CREATE TRIGGER trg_conversation_intent_plan_supersedes_ai
+BEFORE INSERT ON conversation_intent_plan
 BEGIN
   SELECT CASE
     WHEN NEW.supersedes_plan_id IS NOT NULL
-         AND (SELECT intent_id FROM conversation_turn_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
-    THEN RAISE(ABORT, 'conversation_turn_plan supersedes must target same intent')
+         AND (SELECT intent_id FROM conversation_intent_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
+    THEN RAISE(ABORT, 'conversation_intent_plan supersedes must target same intent')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_plan_lineage_au
-BEFORE UPDATE ON conversation_turn_plan
+CREATE TRIGGER trg_conversation_intent_plan_supersedes_au
+BEFORE UPDATE ON conversation_intent_plan
 BEGIN
   SELECT CASE
     WHEN NEW.intent_id <> OLD.intent_id
-    THEN RAISE(ABORT, 'conversation_turn_plan intent is immutable')
+    THEN RAISE(ABORT, 'conversation_intent_plan intent is immutable')
   END;
 
   SELECT CASE
     WHEN NEW.supersedes_plan_id IS NOT NULL
-         AND (SELECT intent_id FROM conversation_turn_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
-    THEN RAISE(ABORT, 'conversation_turn_plan supersedes must target same intent')
+         AND (SELECT intent_id FROM conversation_intent_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
+    THEN RAISE(ABORT, 'conversation_intent_plan supersedes must target same intent')
   END;
 END;
 
-CREATE TABLE conversation_turn_gate (
-  id                    TEXT PRIMARY KEY NOT NULL,
-  plan_id               TEXT NOT NULL
-                        REFERENCES conversation_turn_plan(id) ON DELETE CASCADE,
-  supersedes_gate_id    TEXT
-                        REFERENCES conversation_turn_gate(id) ON DELETE SET NULL,
-  status                TEXT NOT NULL DEFAULT 'open'
-                        CHECK (status IN ('open', 'proven', 'blocked', 'superseded')),
-  required              INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
-  question              TEXT NOT NULL CHECK (trim(question) <> ''),
-  proof_summary         TEXT CHECK (proof_summary IS NULL OR trim(proof_summary) <> ''),
-  block_reason          TEXT CHECK (block_reason IS NULL OR trim(block_reason) <> ''),
-  created_iteration_id  TEXT
-                        REFERENCES iteration(id) ON DELETE SET NULL,
-  created_ref           TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  resolved_iteration_id TEXT
-                        REFERENCES iteration(id) ON DELETE SET NULL,
-  resolved_ref          TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
-  metadata              TEXT,            -- JSON-encoded object/string
-  created_at            INTEGER NOT NULL,
-  resolved_at           INTEGER,
+CREATE TABLE conversation_intent_gate (
+  id TEXT PRIMARY KEY NOT NULL,
+  plan_id TEXT NOT NULL REFERENCES conversation_intent_plan(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'proven', 'blocked')),
+  required INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
+  question TEXT NOT NULL CHECK (trim(question) <> ''),
+  proof_summary TEXT CHECK (proof_summary IS NULL OR trim(proof_summary) <> ''),
+  block_reason TEXT CHECK (block_reason IS NULL OR trim(block_reason) <> ''),
+  created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
+  resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
 
-  CHECK (status <> 'proven' OR (proof_summary IS NOT NULL AND block_reason IS NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'blocked' OR (block_reason IS NOT NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'open' OR (proof_summary IS NULL AND block_reason IS NULL AND resolved_at IS NULL))
+  CHECK (status <> 'proven' OR
+         (proof_summary IS NOT NULL AND block_reason IS NULL AND resolved_at IS NOT NULL)),
+  CHECK (status <> 'blocked' OR
+         (block_reason IS NOT NULL AND proof_summary IS NULL AND resolved_at IS NOT NULL)),
+  CHECK (status <> 'open' OR
+         (proof_summary IS NULL AND block_reason IS NULL AND resolved_at IS NULL))
 );
 
-CREATE INDEX idx_conversation_turn_gate_plan
-  ON conversation_turn_gate(plan_id, created_at);
+CREATE INDEX idx_conversation_intent_gate_plan
+  ON conversation_intent_gate(plan_id, created_at);
 
-CREATE INDEX idx_conversation_turn_gate_created_iteration
-  ON conversation_turn_gate(created_iteration_id)
-  WHERE created_iteration_id IS NOT NULL;
-
-CREATE TABLE conversation_turn_gate_ref (
-  id              TEXT PRIMARY KEY NOT NULL,
-  gate_id         TEXT NOT NULL
-                  REFERENCES conversation_turn_gate(id) ON DELETE CASCADE,
-  ref             TEXT NOT NULL CHECK (trim(ref) <> ''),
-  role            TEXT NOT NULL DEFAULT 'evidence'
-                  CHECK (role IN ('evidence', 'counter-evidence', 'context')),
-  metadata        TEXT,                     -- JSON-encoded object/string
-  created_at      INTEGER NOT NULL,
-
-  UNIQUE (gate_id, ref)
+CREATE TABLE conversation_intent_gate_ref (
+  id TEXT PRIMARY KEY NOT NULL,
+  gate_id TEXT NOT NULL REFERENCES conversation_intent_gate(id) ON DELETE CASCADE,
+  ref TEXT NOT NULL CHECK (trim(ref) <> ''),
+  role TEXT NOT NULL DEFAULT 'evidence' CHECK (role IN ('evidence', 'counter-evidence', 'context')),
+  metadata TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE (gate_id, ref, role)
 );
 
-CREATE INDEX idx_conversation_turn_gate_ref_gate
-  ON conversation_turn_gate_ref(gate_id);
+CREATE INDEX idx_conversation_intent_gate_ref_gate ON conversation_intent_gate_ref(gate_id);
+CREATE INDEX idx_conversation_intent_gate_ref_ref ON conversation_intent_gate_ref(ref);
 
-CREATE INDEX idx_conversation_turn_gate_ref_ref
-  ON conversation_turn_gate_ref(ref);
-
-CREATE TRIGGER trg_conversation_turn_gate_lineage_ai
-BEFORE INSERT ON conversation_turn_gate
+CREATE TRIGGER trg_conversation_intent_gate_ref_terminal_au
+BEFORE UPDATE ON conversation_intent_gate_ref
 BEGIN
   SELECT CASE
-    WHEN NEW.supersedes_gate_id IS NOT NULL
-         AND (SELECT plan_id FROM conversation_turn_gate WHERE id = NEW.supersedes_gate_id) <> NEW.plan_id
-    THEN RAISE(ABORT, 'conversation_turn_gate supersedes must target same plan')
-  END;
-
-  SELECT CASE
-    WHEN NEW.status = 'proven'
-         AND NOT EXISTS (SELECT 1 FROM conversation_turn_gate_ref r WHERE r.gate_id = NEW.id)
-    THEN RAISE(ABORT, 'proven conversation_turn_gate requires evidence refs')
-  END;
-
-  SELECT CASE
-    WHEN NEW.status = 'blocked'
-         AND NOT EXISTS (SELECT 1 FROM conversation_turn_gate_ref r WHERE r.gate_id = NEW.id)
-    THEN RAISE(ABORT, 'blocked conversation_turn_gate requires evidence refs')
+    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'blocked')
+    THEN RAISE(ABORT, 'conversation_intent_gate refs are immutable after gate is proven or blocked')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_gate_lineage_au
-BEFORE UPDATE ON conversation_turn_gate
+CREATE TRIGGER trg_conversation_intent_gate_ref_terminal_ad
+BEFORE DELETE ON conversation_intent_gate_ref
 BEGIN
   SELECT CASE
-    WHEN NEW.plan_id <> OLD.plan_id
-    THEN RAISE(ABORT, 'conversation_turn_gate plan is immutable')
-  END;
-
-  SELECT CASE
-    WHEN NEW.supersedes_gate_id IS NOT NULL
-         AND (SELECT plan_id FROM conversation_turn_gate WHERE id = NEW.supersedes_gate_id) <> NEW.plan_id
-    THEN RAISE(ABORT, 'conversation_turn_gate supersedes must target same plan')
-  END;
-
-  SELECT CASE
-    WHEN NEW.status = 'proven'
-         AND NOT EXISTS (SELECT 1 FROM conversation_turn_gate_ref r WHERE r.gate_id = NEW.id)
-    THEN RAISE(ABORT, 'proven conversation_turn_gate requires evidence refs')
-  END;
-
-  SELECT CASE
-    WHEN NEW.status = 'blocked'
-         AND NOT EXISTS (SELECT 1 FROM conversation_turn_gate_ref r WHERE r.gate_id = NEW.id)
-    THEN RAISE(ABORT, 'blocked conversation_turn_gate requires evidence refs')
+    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'blocked')
+    THEN RAISE(ABORT, 'conversation_intent_gate refs cannot be deleted after gate is proven or blocked')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_gate_ref_terminal_au
-BEFORE UPDATE ON conversation_turn_gate_ref
+CREATE TABLE conversation_intent_focus (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_turn_state_id TEXT NOT NULL REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
+  intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK (source IN ('created', 'touched', 'inferred')),
+  metadata TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE (conversation_turn_state_id, intent_id)
+);
+
+CREATE INDEX idx_conversation_intent_focus_turn_state
+  ON conversation_intent_focus(conversation_turn_state_id, created_at);
+
+CREATE INDEX idx_conversation_intent_focus_intent
+  ON conversation_intent_focus(intent_id);
+
+CREATE TRIGGER trg_conversation_intent_focus_same_soul_ai
+BEFORE INSERT ON conversation_intent_focus
 BEGIN
   SELECT CASE
-    WHEN (SELECT status FROM conversation_turn_gate WHERE id = OLD.gate_id) IN ('proven', 'blocked')
-    THEN RAISE(ABORT, 'conversation_turn_gate refs are immutable after gate is proven or blocked')
+    WHEN (SELECT cs.conversation_soul_id
+          FROM conversation_turn_state cts
+          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+          WHERE cts.id = NEW.conversation_turn_state_id) IS NULL
+      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent_focus endpoint not found')
+    WHEN (SELECT cs.conversation_soul_id
+          FROM conversation_turn_state cts
+          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+          WHERE cts.id = NEW.conversation_turn_state_id) <>
+         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id)
+    THEN RAISE(ABORT, 'conversation_intent_focus intent must belong to turn-state conversation_soul')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_gate_ref_terminal_ad
-BEFORE DELETE ON conversation_turn_gate_ref
+CREATE TRIGGER trg_conversation_intent_focus_same_soul_au
+BEFORE UPDATE ON conversation_intent_focus
 BEGIN
   SELECT CASE
-    WHEN (SELECT status FROM conversation_turn_gate WHERE id = OLD.gate_id) IN ('proven', 'blocked')
-    THEN RAISE(ABORT, 'conversation_turn_gate refs cannot be deleted after gate is proven or blocked')
+    WHEN (SELECT cs.conversation_soul_id
+          FROM conversation_turn_state cts
+          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+          WHERE cts.id = NEW.conversation_turn_state_id) IS NULL
+      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent_focus endpoint not found')
+    WHEN (SELECT cs.conversation_soul_id
+          FROM conversation_turn_state cts
+          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
+          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
+          WHERE cts.id = NEW.conversation_turn_state_id) <>
+         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id)
+    THEN RAISE(ABORT, 'conversation_intent_focus intent must belong to turn-state conversation_soul')
   END;
 END;
 

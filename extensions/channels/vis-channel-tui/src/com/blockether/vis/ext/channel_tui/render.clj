@@ -1719,13 +1719,21 @@
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by projected line identity when
    available; live progress keeps stable prewrapped body lines and only
-   appends a cheap spinner row."
-  [{:keys [text role prewrapped-lines turn-separator?] :as message} max-w]
+   appends a cheap spinner row. Metadata that can add/remove the
+   assistant footer is part of the key; otherwise a no-usage render can
+   stale-cache the shorter height before usage arrives."
+  [{:keys [text role prewrapped-lines turn-separator?
+           iteration-count duration-ms tokens cost status] :as message} max-w]
   (cached* [::bh
             (System/identityHashCode text)
             (System/identityHashCode prewrapped-lines)
             role
             (boolean turn-separator?)
+            iteration-count
+            duration-ms
+            tokens
+            cost
+            status
             (long max-w)]
     #(bubble-height* message max-w)))
 

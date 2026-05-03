@@ -55,70 +55,70 @@
               (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")))))
 
 (defdescribe final-answer-gate-error-test
-  (it "allows answers when the current turn has no gate state"
+  (it "rejects when no focused intent exists for the current turn"
     (let [s   (vis/db-create-connection! :memory)
           cid (vis/db-store-conversation! s {:channel :cli})
           tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                   :user-request "hi"
                                                   :status :running})]
       (try
-        (expect (nil? (loop/final-answer-gate-error
-                        {:db-info s :current-conversation-turn-id-atom (atom tid)}
-                        0 [])))
+        (let [error (loop/final-answer-gate-error
+                      {:db-info s :current-conversation-turn-id-atom (atom tid)}
+                      0 [])]
+          (expect (string? error))
+          (expect (re-find #":missing-focused-intent" error)))
         (finally
           (vis/db-dispose-connection! s)))))
 
-  (it "rejects answers while a required current-turn gate is still open"
+  (it "rejects answers while a required focused gate is still open"
     (let [s   (vis/db-create-connection! :memory)
           cid (vis/db-store-conversation! s {:channel :cli})
           tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                   :user-request "fix it"
                                                   :status :running})]
       (try
-        (let [intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "fix it"})
+        (let [intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "Fix it"
+                                              :rationale "User asked."})
               plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                            :key :main
                                             :summary "Plan"})]
           (vis/db-store-gate! s {:plan-id (:id plan)
-                                 :key :verify
                                  :question "Verified?"})
           (let [error (loop/final-answer-gate-error
                         {:db-info s :current-conversation-turn-id-atom (atom tid)}
                         0 [])]
             (expect (string? error))
             (expect (re-find #"Final answer rejected" error))
-            (expect (re-find #":required-gate-open" error))))
+            (expect (re-find #":required-open-gate" error))))
         (finally
           (vis/db-dispose-connection! s)))))
 
-  (it "accepts a proven gate whose attestation ref exists in the current in-memory iteration"
+  (it "accepts after the focused intent is proven and fulfilled"
     (let [s   (vis/db-create-connection! :memory)
           cid (vis/db-store-conversation! s {:channel :cli})
           tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                   :user-request "fix it"
                                                   :status :running})]
       (try
-        (let [intent (vis/db-store-intent! s {:conversation-turn-id tid :key :main :text "fix it"})
+        (let [intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "Fix it"
+                                              :rationale "User asked."})
               plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                            :key :main
                                             :summary "Plan"})
               gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                            :key :verify
                                             :question "Verified?"})
-              blocks [{:id 0
-                       :code "(+ 1 2)"
-                       :result 3
-                       :stdout ""
-                       :stderr ""
-                       :error nil
-                       :execution-time-ms 1
-                       :provenance {:ref "i1.1" :op :vis/eval :engine :vis/sci}}]]
+              iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                                 :blocks [{:code "(+ 1 2)"
+                                                           :result 3
+                                                           :execution-time-ms 1}]})
+              ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")]
           (vis/db-prove-gate! s {:gate-id (:id gate)
                                  :summary "Verified."
-                                 :refs ["i1.1"]})
+                                 :refs [ref]})
+          (vis/db-fulfill-intent! s (:id intent) {:summary "Done." :refs [ref]})
           (expect (nil? (loop/final-answer-gate-error
                           {:db-info s :current-conversation-turn-id-atom (atom tid)}
-                          1 blocks))))
+                          1 (vis/db-list-iteration-blocks s iid)))))
         (finally
           (vis/db-dispose-connection! s))))))
 

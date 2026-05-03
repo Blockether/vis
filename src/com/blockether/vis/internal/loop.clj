@@ -790,112 +790,27 @@
       "so the host loops, then emit one final top-level form such as "
       "`(answer …)` or `(let [...] (answer …))`.")))
 
-(defn- active-plan-states
-  [contract]
-  (let [active-intent-ids (->> (:intents contract)
-                            (filter #(= :active (:status %)))
-                            (map :id)
-                            set)]
-    (->> (:plans contract)
-      (filter #(and (= :active (:status %))
-                 (contains? active-intent-ids (:intent-id %))))
-      vec)))
-
-(defn- active-gate-states
-  [contract]
-  (let [active-plan-ids (set (map :id (active-plan-states contract)))]
-    (->> (:gates contract)
-      (filter #(contains? active-plan-ids (:plan-id %)))
-      vec)))
-
-(defn- block-ref
-  [iteration-position block]
-  (or (get-in block [:provenance :ref])
-    (str "i" iteration-position "." (inc (long (or (:idx block) (:id block) 0))))))
-
-(defn- tool-result-envelope?
-  [value]
-  (and (map? value)
-    (contains? value :ok?)
-    (contains? value :provenance)
-    (contains? value :markdown)))
-
-(defn- block-provenance-refs
-  [iteration-position block]
-  (let [ref (block-ref iteration-position block)]
-    (cond-> [ref]
-      (tool-result-envelope? (:result block)) (conj (str ref "/tool")))))
-
-(defn- current-turn-provenance-refs
-  "Refs available to final-answer gate enforcement. Includes persisted
-   prior iterations plus the current in-memory iteration, because a
-   model may inspect/attest/answer in one final iteration before that
-   iteration row has been written."
-  [environment current-iteration current-blocks]
-  (let [db-info (:db-info environment)
-        turn-id (some-> (:current-conversation-turn-id-atom environment) deref)
-        persisted (try
-                    (mapcat (fn [iteration]
-                              (let [position (:position iteration)]
-                                (mapcat #(block-provenance-refs position %)
-                                  (persistance/db-list-iteration-blocks db-info (:id iteration)))))
-                      (persistance/db-list-conversation-turn-iterations db-info turn-id))
-                    (catch Throwable _ []))
-        current   (mapcat #(block-provenance-refs current-iteration %) (or current-blocks []))]
-    (set (concat persisted current))))
-
-(defn- gate-guard-violations
-  [contract ref-set]
-  (let [has-contract? (some seq (map contract [:intents :plans :gates]))
-        gates           (active-gate-states contract)
-        active-intents  (filter #(= :active (:status %)) (:intents contract))
-        active-plans    (active-plan-states contract)]
-    (when has-contract?
-      (vec
-        (concat
-          (when (empty? active-intents)
-            [{:type :missing-active-intent}])
-          (when (and (seq active-intents) (empty? active-plans))
-            [{:type :missing-active-plan}])
-          (mapcat
-            (fn [gate]
-              (let [refs (mapv :ref (:refs gate))]
-                (cond-> []
-                  (and (:required? gate) (= :open (:status gate)))
-                  (conj {:type :required-gate-open :gate-id (:id gate)})
-
-                  (and (= :proven (:status gate)) (str/blank? (:proof-summary gate)))
-                  (conj {:type :proven-gate-missing-summary :gate-id (:id gate)})
-
-                  (and (= :blocked (:status gate)) (str/blank? (:block-reason gate)))
-                  (conj {:type :blocked-gate-missing-reason :gate-id (:id gate)})
-
-                  (and (contains? #{:proven :blocked} (:status gate)) (empty? refs))
-                  (conj {:type :resolved-gate-missing-refs :gate-id (:id gate)})
-
-                  (and (seq refs) (seq (remove ref-set refs)))
-                  (conj {:type :gate-ref-missing-from-current-turn-provenance
-                         :gate-id (:id gate)
-                         :missing-refs (vec (remove ref-set refs))}))))
-            gates))))))
-
 (defn final-answer-gate-error
-  "Return nil when the current turn has no gate state or when gate state
-   passes. Return a validation error string when the model has started
-   using turn-scoped gates but tries to `(answer …)` before they pass."
-  [environment iteration blocks]
+  "Return nil only when focused conversation intents are answer-ready.
+   Conversation-scoped intents must be fulfilled or abandoned before
+   `(answer …)`. Old unfocused active intents are reported by `v/intents`, but
+   do not block the current focused answer."
+  [environment _iteration _blocks]
   (let [db-info (:db-info environment)
         turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
     (when (and db-info turn-id)
-      (let [contract (try (persistance/db-completion-contract db-info turn-id)
-                       (catch Throwable _ nil))
-            ref-set    (current-turn-provenance-refs environment iteration blocks)
-            violations (when contract (gate-guard-violations contract ref-set))]
-        (when (seq violations)
-          (str "Final answer rejected: current-turn gates are not satisfied. "
-            "Run `(v/gate-checks)` and prove/block every required gate with "
-            "evidence refs that exist in this turn. "
-            "Violations: " (pr-str violations)))))))
+      (let [state (try (persistance/db-intents db-info {:conversation-turn-id turn-id})
+                    (catch Throwable e
+                      {:ok? false
+                       :violations [{:type :intent-check-error
+                                     :blocking? true
+                                     :message (ex-message e)}]}))]
+        (when-not (:ok? state)
+          (str "Final answer rejected: focused conversation intents are not resolved. "
+            "Run `(v/intents)`, prove/block gates with canonical provenance refs, "
+            "then fulfill or abandon every focused intent before `(answer …)`. "
+            "For unrelated parallel work, fork the conversation. "
+            "Violations: " (pr-str (:violations state))))))))
 
 (defn- eval-provenance
   "Generic provenance for every top-level form that passes through the

@@ -54,8 +54,10 @@
                         answer    (or (:answer q) "")
                         model     (:model q)
                         tokens    (cond-> {}
-                                    (:input-tokens q)  (assoc :input (:input-tokens q))
-                                    (:output-tokens q) (assoc :output (:output-tokens q)))
+                                    (:input-tokens q)     (assoc :input (:input-tokens q))
+                                    (:output-tokens q)    (assoc :output (:output-tokens q))
+                                    (:reasoning-tokens q) (assoc :reasoning (:reasoning-tokens q))
+                                    (:cached-tokens q)    (assoc :cached (:cached-tokens q)))
                         iteration-count (:iteration-count q)
                         duration-ms (:duration-ms q)
                         cost      (when-let [total-cost (or (:total-cost q) (:cost q))]

@@ -305,13 +305,18 @@
 (defdelegate db-list-iteration-vars       [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
-;; --- Completion contract: turn-scoped intent -> plan -> blocking gate ---
+;; --- Conversation-scoped intents, plans, gates, and focus ---
 (defdelegate db-store-intent!       [db-info opts])
+(defdelegate db-store-intent-ref!   [db-info intent-id opts])
+(defdelegate db-focus-intent!       [db-info intent-id opts])
+(defdelegate db-relate-intents!     [db-info opts])
 (defdelegate db-store-plan!         [db-info opts])
 (defdelegate db-store-gate!         [db-info opts])
 (defdelegate db-prove-gate!         [db-info opts])
 (defdelegate db-block-gate!         [db-info opts])
-(defdelegate db-completion-contract          [db-info conversation-turn-ref])
+(defdelegate db-fulfill-intent!     [db-info intent-id opts])
+(defdelegate db-abandon-intent!     [db-info intent-id opts])
+(defdelegate db-intents             [db-info opts-or-conversation-turn-id])
 
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
