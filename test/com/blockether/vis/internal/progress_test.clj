@@ -23,7 +23,27 @@
       (let [tl (:get-timeline tracker)]
         (is (= 1 (count tl)))
         (is (= 1 (:iteration (first tl))))
-        (is (= "thinking..." (:thinking (first tl))))))))
+        (is (= "thinking..." (:thinking (first tl)))))))
+  (testing "reasoning event deltas preserve whitespace-only streaming chunks"
+    (let [tracker (progress/make-progress-tracker)]
+      (doseq [thinking ["The contract APIs failed in iteration"
+                        "The contract APIs failed in iteration "
+                        "The contract APIs failed in iteration 1 - lines"
+                        "The contract APIs failed in iteration 1 - lines "
+                        "The contract APIs failed in iteration 1 - lines 100-169"]]
+        ((:on-chunk tracker) {:phase :reasoning :iteration 1 :thinking thinking}))
+      (let [entry         (first (:get-timeline tracker))
+            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
+        (is (= "The contract APIs failed in iteration 1 - lines 100-169"
+              (:thinking entry)))
+        (is (= (:thinking entry) reconstructed))))
+    (let [tracker (progress/make-progress-tracker)]
+      (doseq [thinking [" " " a"]]
+        ((:on-chunk tracker) {:phase :reasoning :iteration 1 :thinking thinking}))
+      (let [entry         (first (:get-timeline tracker))
+            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
+        (is (= " a" (:thinking entry)))
+        (is (= (:thinking entry) reconstructed))))))
 
 (deftest on-chunk-form-result-test
   (testing ":form_result phase records code and result"

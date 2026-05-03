@@ -18,6 +18,15 @@
     (expect (= "(defn broken [x"
               (format/format-clojure "(defn broken [x" 20))))
 
+  (it "formats whole source strings instead of only the first parsed expression"
+    (let [src ";; file header\n{:paths [\"src\"]}\n{:aliases {:test {}}}"
+          plain (format/format-clojure src 80)
+          ansi  (format/format-clojure-ansi src 80)]
+      (expect (str/includes? plain ";; file header"))
+      (expect (str/includes? plain ":aliases"))
+      (expect (str/includes? ansi ";; file header"))
+      (expect (str/includes? ansi ":aliases"))))
+
   (it "formats turn-summary atoms through the public helpers"
     (expect (= "1 iter" (format/format-iterations 1)))
     (expect (= "3 iters" (format/format-iterations 3)))

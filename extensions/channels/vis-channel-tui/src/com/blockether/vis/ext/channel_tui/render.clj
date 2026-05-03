@@ -619,9 +619,13 @@
       (nth labels level))))
 
 (defn- format-clojure-ansi
-  "Format Clojure source via zprint and keep zprint's ANSI syntax
+  "Format Clojure/EDN source via zprint and keep zprint's ANSI syntax
    coloring. The TUI painter translates those ANSI SGR codes to
    Lanterna colors; raw ANSI is never written to the terminal.
+
+   The source may be a complete file or fenced block with leading
+   comments and multiple top-level forms. `fmt/format-clojure-ansi`
+   owns the zprint source/file contract (`:parse-string-all?`).
 
    Live progress redraws on the spinner cadence while a provider call
    is in flight. Without this cache, every tick re-ran zprint over
@@ -631,10 +635,7 @@
   (let [code-text (str code-text)
         width     (long width)]
     (cached* [:clojure-ansi width code-text]
-      #(try
-         (fmt/safe-czprint-str code-text width {:parse-string? true})
-         (catch Throwable _
-           (vis/format-clojure code-text width))))))
+      #(fmt/format-clojure-ansi code-text width))))
 
 (defn- code-block-lines
   ([m lang code-lines max-w]
@@ -760,7 +761,8 @@
 ;; definitions up here would split a long, cohesive block of
 ;; markdown / inline-marker code; the forward declares are the
 ;; cheaper move.
-(declare extract-link-refs paint-link-chrome-row! in-viewport?)
+(declare extract-link-refs in-viewport? paint-link-chrome-row!
+  paint-resources-badge! resources-badge-label)
 
 ;; `chrome-display-text` (further down) calls into `markdown->inline`
 ;; via `strip-inline-markup` so the chrome row doesn't show raw
@@ -770,7 +772,6 @@
 ;; far too late for a chrome helper this high in the file. We pin
 ;; the var here so Clojure can resolve the symbol at compile time.
 (declare markdown->inline)
-
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -869,16 +870,34 @@
                                    :duration-ms duration-ms
                                    :tokens tokens
                                    :cost cost})]
-                       (when-not (str/blank? line) line)))]
+                       (when-not (str/blank? line) line)))
+        refs       (extract-link-refs message bubble-w)]
 
-    ;; Row 0: label (bold, role-colored) + timestamp (dim, right-aligned).
+    ;; Row 0: label (bold, role-colored) + optional resources badge +
+    ;; timestamp. Resources sit in the top-right chrome instead of
+    ;; taking one row per link under the answer body.
     (p/clear-styles! g)
     (p/set-colors! g role-fg t/terminal-bg)
     (p/styled g [p/BOLD]
       (p/put-str! g bx start-row label))
-    (when time-str
-      (p/set-colors! g t/dialog-hint t/terminal-bg)
-      (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str))
+    (let [right-edge   (+ bx bubble-w)
+          time-w       (if time-str (p/display-width time-str) 0)
+          time-x       (when time-str (- right-edge time-w))
+          badge-end    (if time-x (- time-x 2) right-edge)
+          badge-min-x  (+ bx (p/display-width label) 2)
+          badge-max-w  (max 0 (- badge-end badge-min-x))
+          badge-label  (when (pos? (count refs))
+                         (resources-badge-label (count refs) badge-max-w))
+          badge-w      (if badge-label (p/display-width badge-label) 0)
+          badge-x      (- badge-end badge-w)
+          abs-row      (+ (long viewport-top) (long start-row))]
+      (when badge-label
+        (paint-resources-badge!
+          g badge-label refs badge-x start-row badge-w
+          0 abs-row (long viewport-top) (long viewport-h)))
+      (when time-str
+        (p/set-colors! g t/dialog-hint t/terminal-bg)
+        (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str)))
 
     ;; Content begins directly under the role banner for ASSISTANT
     ;; bubbles — the previous breathing row read as an unwanted top
@@ -1428,82 +1447,55 @@
                         t/code-block-fg t/code-block-bg)))))
               (recur (inc i))))))
 
-      ;; Below-content link-chrome strip.
+      ;; Below-content footer row: optional right-aligned meta.
+      ;; Resource links are exposed through the header badge, so they
+      ;; no longer consume one extra chrome row per link under the
+      ;; answer body.
       ;;
-      ;; One chrome row per (md/link …) / (md/image …) /
-      ;; (md/file-link …) reference present in the message body.
-      ;; Painted between content and meta so it sits inside the
-      ;; bubble’s footprint but below the prose. Each row registers
-      ;; itself with `click-regions` so the screen mouse handler
-      ;; can hand the click off to the OS opener.
-      (let [refs           (extract-link-refs message bubble-w)
-            chrome-rows    (count refs)
-            chrome-top     (+ btop bubble-h bottom-pad)
-            ;; Coordinate translation: `clip` was created at
-            ;; `(0, viewport-top)`, so y inside the clip == y +
-            ;; viewport-top on the absolute screen. The chrome
-            ;; painter needs the absolute row to register a click
-            ;; region.
-            abs-col-base   0
-            abs-row-of     (fn ^long [^long y] (+ (long viewport-top) y))]
-        (when (pos? chrome-rows)
-          (doseq [[i ref] (map-indexed vector refs)]
-            (let [y       (+ chrome-top i)
-                  abs-row (abs-row-of y)]
-              (paint-link-chrome-row!
-                g ref bx y bubble-w
-                abs-col-base abs-row
-                (long viewport-top) (long viewport-h)))))
-
-        ;; Below-content footer row: optional right-aligned meta.
-        ;;
-        ;; Final per-message layout (no outer box, no bg fill, no
-        ;; horizontal rule under the label):
-        ;;   row 0                    : label + timestamp
-        ;;   row 1 … N                : wrapped content (with marker-zone fills)
-        ;;   row 1+N                  : bottom pad (user only)
-        ;;   row 1+N+P … 1+N+P+M-1    : link chrome (M refs)
-        ;;   row 1+N+P+M              : meta right, when present
-        ;;   final row                : single blank gap before the next message
-        (p/clear-styles! g)
-        (let [footer?    (some? meta-str)
-              footer-row (+ chrome-top chrome-rows)]
-          (when footer?
-            (p/set-colors! g t/dialog-hint t/terminal-bg)
-            (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
-          ;; Return: rows consumed
-          ;;   = label(1) + top-pad(user only) + content(N)
-          ;;     + bottom-pad(user only) + chrome(M)
-          ;;     + footer(meta)(0|1)
-          ;;     + gap(1)
-          (+ 1 top-pad bubble-h bottom-pad chrome-rows (if footer? 1 0) 1))))))
+      ;; Final per-message layout (no outer box, no bg fill, no
+      ;; horizontal rule under the label):
+      ;;   row 0                    : label + resources badge + timestamp
+      ;;   row 1 … N                : wrapped content (with marker-zone fills)
+      ;;   row 1+N                  : bottom pad (user only)
+      ;;   row 1+N+P                : meta right, when present
+      ;;   final row                : single blank gap before the next message
+      (p/clear-styles! g)
+      (let [footer?    (some? meta-str)
+            footer-row (+ btop bubble-h bottom-pad)]
+        (when footer?
+          (p/set-colors! g t/dialog-hint t/terminal-bg)
+          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
+        ;; Return: rows consumed
+        ;;   = label(1) + top-pad(user only) + content(N)
+        ;;     + bottom-pad(user only)
+        ;;     + footer(meta)(0|1)
+        ;;     + gap(1)
+        (+ 1 top-pad bubble-h bottom-pad (if footer? 1 0) 1)))))
 
 ;; ---------------------------------------------------------------------------
-;; Link / image / file-link chrome
+;; Link / image / file-link resources
 ;;
-;; Painted as a strip of one-row chrome entries between the wrapped
-;; content and the meta line. Each entry is the user-visible
-;; clickable affordance for a markdown reference (`[text](url)`,
-;; `![alt](url)`, `[path:line](path#Lline)`) the model emitted in
-;; the answer.
+;; Markdown references (`[text](url)`, `![alt](url)`,
+;; `[path:line](path#Lline)`) are collected from the message body,
+;; surfaced as one compact top-right resources badge, then shown in a
+;; modal picker when clicked. The old one-row-per-link strip helpers
+;; stay here for compatibility with tests and potential future layouts,
+;; but the active chat layout uses the badge + popup path.
 ;;
-;; Why a sidecar strip instead of inlining clickable spans into the
-;; existing wrap-and-paint pipeline:
+;; Why a badge instead of inline clickable spans:
 ;;
 ;;   - The inline tokeniser already runs over `:answer` text and
 ;;     intentionally drops link/image markup as plain prose. Touching
 ;;     it would force a second pass through the styled-line painter
 ;;     and risk regressions in the existing markdown rendering.
 ;;
-;;   - Click-region bounds are easier to reason about row-aligned
-;;     than mid-line. A whole row is the click target; hover
-;;     highlights the whole row.
+;;   - A single row-level click target is easier to hit in terminal
+;;     mouse mode than a set of mid-line spans.
 ;;
-;;   - The chrome doubles as a discoverability cue — the user sees
-;;     “these N things in this answer are clickable” at a glance,
-;;     not a sea of inline blue text they have to hunt for.
+;;   - The badge gives a clean discoverability cue without pushing the
+;;     answer body down by one row per resource.
 ;;
-;; The strip is OPT-OUT for callers that pass `:hide-links? true` on
+;; Resources are OPT-OUT for callers that pass `:hide-links? true` on
 ;; the message map. Today that flag isn’t set anywhere; reserved as
 ;; an escape hatch for warnings / cancelled messages where we deem
 ;; the chrome noise.
@@ -1512,6 +1504,43 @@
 (def ^:private link-icon-link     "\uD83D\uDD17")  ; 🔗
 (def ^:private link-icon-file     "\uD83D\uDCC4")  ; 📄
 (def ^:private link-icon-blocked  "\uD83D\uDEAB")  ; 🚫
+(def ^:private resources-icon     "\uD83D\uDCDA")  ; 📚
+
+(defn- resources-badge-label
+  "Return the widest resources badge that fits `max-w` display cells,
+   or nil when even the compact count cannot fit. The top-row badge is
+   intentionally compact because it shares the right edge with the
+   timestamp."
+  [n max-w]
+  (let [candidates [(str resources-icon " Resources " n)
+                    (str resources-icon " Resources")
+                    (str "Resources " n)
+                    (str resources-icon " " n)
+                    resources-icon]]
+    (some #(when (<= (p/display-width %) max-w) %) candidates)))
+
+(defn- paint-resources-badge!
+  "Paint and register the clickable top-row resources badge for one
+   bubble. Clicking opens a resources popup instead of opening a single
+   URL immediately."
+  [^TextGraphics g label refs x y width abs-col-base abs-row viewport-top viewport-h]
+  (let [hovered (cr/hovered)
+        hovered? (and (= :resources (:kind hovered))
+                   (= abs-row (:row (:bounds hovered)))
+                   (= (+ abs-col-base x) (:col (:bounds hovered))))
+        bg       (if hovered? t/link-chrome-hover-bg t/terminal-bg)
+        fg       (if hovered? t/link-chrome-hover-fg t/link-chrome-fg)]
+    (p/clear-styles! g)
+    (p/set-colors! g fg bg)
+    (when hovered?
+      (p/fill-rect! g x y width 1))
+    (p/put-str! g x y label)
+    (when (in-viewport? viewport-top viewport-h abs-row)
+      (cr/register!
+        {:bounds   {:row abs-row :col (+ abs-col-base x) :width width}
+         :kind     :resources
+         :refs     refs
+         :enabled? true}))))
 
 (defn- ref-icon
   "Return the chrome icon string for `ref`. Disabled refs always
@@ -1599,6 +1628,7 @@
   (and (>= abs-row viewport-top)
     (< abs-row (+ viewport-top viewport-h))))
 
+#_{:clj-kondo/ignore [:unused-private-var]}
 (defn- paint-link-chrome-row!
   "Paint one chrome row at `(x, y)` (clip-relative coords) inside a
    `bubble-w`-wide column. When the row’s absolute screen position
@@ -1646,12 +1676,11 @@
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
    label(1) + optional top-pad(1, user only) + wrapped-lines
-   + optional bottom-pad(1, user only) + link-chrome(refs)
-   + optional meta footer(0|1)
+   + optional bottom-pad(1, user only) + optional meta footer(0|1)
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status] :as message} max-w]
+  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status]} max-w]
   (let [bubble-w   max-w
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
@@ -1666,9 +1695,8 @@
                                    :tokens tokens
                                    :cost cost})]
                        (when-not (str/blank? line) line)))
-        refs       (extract-link-refs message bubble-w)
         footer?    (some? meta-str)]
-    (+ 1 top-pad (count lines) bottom-pad (count refs) (if footer? 1 0) 1)))
+    (+ 1 top-pad (count lines) bottom-pad (if footer? 1 0) 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by projected line identity when

@@ -1,7 +1,8 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs-test
   (:require [clojure.test :refer [deftest testing is]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis.internal.external-opener :as opener]))
+            [com.blockether.vis.internal.external-opener :as opener])
+  (:import [com.googlecode.lanterna.input MouseActionType]))
 
 ;; The dialog functions require a live TerminalScreen, so direct unit
 ;; testing is impractical. The bracketed-paste fix in text-input-dialog!
@@ -11,6 +12,29 @@
 (deftest smoke-test
   (testing "dialogs namespace loads and text-input-dialog! is public"
     (is (fn? (var-get #'dlg/text-input-dialog!)))))
+
+(deftest resource-dialog-items-test
+  (testing "resources popup rows keep click target fields and rendered labels"
+    (is (= [{:text "Book"
+             :url "https://example.com/book"
+             :display "📚 Book → https://example.com/book"
+             :markdown "- [Book](https://example.com/book)"
+             :label "📚 Book → https://example.com/book"}]
+          (dlg/resource-dialog-items
+            [{:text "Book"
+              :url "https://example.com/book"
+              :display "📚 Book → https://example.com/book"}]))))
+
+  (testing "resource rows use a single selector, not selector plus bullet"
+    (let [resource-row-label (var-get #'dlg/resource-row-label)]
+      (is (= "▸ [Book]" (resource-row-label true "Book" 80)))
+      (is (= "  [Book]" (resource-row-label false "Book" 80)))))
+
+  (testing "resource mouse open accepts normal down and release-only terminals"
+    (let [resource-open-action? (var-get #'dlg/resource-open-action?)]
+      (is (resource-open-action? MouseActionType/CLICK_DOWN))
+      (is (resource-open-action? MouseActionType/CLICK_RELEASE))
+      (is (not (resource-open-action? MouseActionType/MOVE))))))
 
 (deftest file-picker-opener-test
   (testing "file picker can hand the selected path to the shared external opener"

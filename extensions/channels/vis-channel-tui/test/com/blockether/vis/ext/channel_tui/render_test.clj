@@ -71,7 +71,28 @@
                        (for [_ (range 4)]
                          #(dotimes [i 100]
                             (fmt/safe-zprint-str {:i i :data (vec (range 200))})))))]
-      (expect (= [] failures)))))
+      (expect (= [] failures))))
+
+  (it "keeps every top-level form in file-shaped Clojure fences"
+    (let [src (str ";; file header\n"
+                "{:paths [\"src\"]}\n"
+                "{:aliases {:test {}}}")
+          out (strip-ansi (format-clojure-ansi src 80))]
+      (expect (str/includes? out ";; file header"))
+      (expect (str/includes? out ":paths"))
+      (expect (str/includes? out ":aliases"))))
+
+  (it "renders deps.edn fences with leading comments through to later map entries"
+    (let [fence (apply str (repeat 3 \`))
+          src   (str "## `deps.edn` — Root\n\n"
+                  fence "clojure\n"
+                  ";; vis — single-package monorepo.\n"
+                  "{:paths [\"src\"]\n"
+                  " :deps {com.blockether/vis-persistance-sqlite {:local/root \"extensions/persistance/vis-persistance-sqlite\"}}}\n"
+                  fence "\n")
+          rows  (mapv (comp strip-ansi body-of) (md->lines src 100 :answer))]
+      (expect (some #(str/includes? % ";; vis") rows))
+      (expect (some #(str/includes? % "com.blockether/vis-persistance-sqlite") rows)))))
 
 (defdescribe wrap-text-marker-test
   (describe "structural row markers survive wrapping"
@@ -1013,6 +1034,7 @@
 ;; ─────────────────────────────────────────────────────────────────────────
 
 (def ^:private chrome-display-text @#'render/chrome-display-text)
+(def ^:private resources-badge-label @#'render/resources-badge-label)
 
 (defn- chrome-of [src]
   (let [[ref] (links/parse-md-refs src)]
@@ -1053,6 +1075,22 @@
       (let [s (chrome-of "[plain](https://example.com)")]
         (expect (str/includes? s " → "))
         (expect (str/includes? s "https://example.com"))))))
+
+(defdescribe resources-badge-test
+  (describe "top-right resources badge"
+    (it "chooses the richest label that fits"
+      (expect (= "📚 Resources 3" (resources-badge-label 3 20)))
+      (expect (= "📚 3" (resources-badge-label 3 4)))
+      (expect (nil? (resources-badge-label 3 0))))
+
+    (it "links no longer add per-resource rows to bubble height"
+      (let [plain  {:role :assistant :text "a" :prewrapped-lines ["a"]}
+            linked {:role :assistant
+                    :text "[a](https://example.com)"
+                    :prewrapped-lines ["a"]}]
+        (render/invalidate-cache!)
+        (expect (= (render/bubble-height plain 80)
+                  (render/bubble-height linked 80)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Loose-bullet coalesce — multi-paragraph list items render as one bullet

@@ -122,7 +122,7 @@
 (defn- append-thinking-delta [events delta]
   (let [events (vec (or events []))
         delta  (str delta)]
-    (if (str/blank? delta)
+    (if (zero? (count delta))
       events
       (let [last-event (peek events)
             last-text  (when (= :thinking (:type last-event)) (or (:thinking last-event) ""))
@@ -142,10 +142,10 @@
         prev-text    (or prev-thinking "")
         current-text (or new-thinking "")]
     (cond
-      (str/blank? current-text)
+      (zero? (count current-text))
       events
 
-      (and (not (str/blank? prev-text))
+      (and (pos? (count prev-text))
         (str/starts-with? current-text prev-text))
       (append-thinking-delta events (subs current-text (count prev-text)))
 
