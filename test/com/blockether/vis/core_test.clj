@@ -694,12 +694,13 @@
       (expect (nil? (vis/answer-form-error [] 0))))))
 
 ;; -----------------------------------------------------------------------------
-;; answer-position — rule b' (\"answer is the only form\")
+;; answer-position — rule b' ("answer is alone after iteration 1")
 ;;
-;; `(answer …)` must be the ONLY top-level form of its final iteration.
-;; Exploration/action/verification forms belong in earlier iterations;
-;; wrappers like `(let [...] (answer ...))` stay legal because they are
-;; still one top-level form. Mixed answer+work iterations trigger a
+;; `(answer …)` must be the ONLY top-level form after iteration 1.
+;; Iteration 1 allows trivial-chat answers as the last top-level form
+;; so a greeting does not pay a pointless recovery iteration. Wrappers
+;; like `(let [...] (answer ...))` stay legal because they are still one
+;; top-level form. Disallowed mixed answer+work iterations trigger a
 ;; position violation, the answer is discarded, and the model gets a
 ;; structured nudge to answer alone in the next iteration.
 ;; -----------------------------------------------------------------------------
@@ -719,6 +720,18 @@
 
   (it "five forms, answer in middle (form 2) — violation"
     (expect (true? (vis/answer-position-violation? 2 5))))
+
+  (it "iteration 1 allows answer as the last top-level form"
+    (expect (false? (vis/answer-position-violation? 1 2 1)))
+    (expect (false? (vis/answer-position-violation? 4 5 1))))
+
+  (it "iteration 1 still rejects answer before trailing sibling forms"
+    (expect (true? (vis/answer-position-violation? 0 2 1)))
+    (expect (true? (vis/answer-position-violation? 2 5 1))))
+
+  (it "post-first iterations still reject sibling top-level forms"
+    (expect (true? (vis/answer-position-violation? 1 2 2)))
+    (expect (true? (vis/answer-position-violation? 4 5 3))))
 
   (it "nil form-idx (no answer fired) — never a violation"
     (expect (false? (vis/answer-position-violation? nil 3)))
@@ -789,6 +802,20 @@
         (expect (= [true] (:successes entry)))
         (expect (= [1000] (:durations entry)))
         (expect (= [{:type :form-result :form-idx 0}] (:events entry))))))
+
+  (it ":vis/silent form results immediately elide a prior form-start slot"
+    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
+      (on-chunk {:phase :form-start :iteration 0 :form-idx 0
+                 :form-of 1 :code "(conversation-title \"x\")"
+                 :started-at-ms 1000})
+      (expect (= ["(conversation-title \"x\")"] (:code (first (get-timeline)))))
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
+                 :code "(conversation-title \"x\")" :result :vis/silent
+                 :stdout "" :stderr "" :execution-time-ms 1 :error nil})
+      (let [entry (first (get-timeline))]
+        (expect (= [] (:code entry)))
+        (expect (= [] (:events entry)))
+        (expect (= [] (:started-at-ms entry))))))
 
   (it "out-of-order :form-result chunks pad with nil"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]

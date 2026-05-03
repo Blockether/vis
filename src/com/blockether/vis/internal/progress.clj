@@ -230,7 +230,9 @@
     (write-form-start-slot entry chunk)
 
     :form-result
-    (write-form-slot entry chunk)
+    (if (= :vis/silent (:result chunk))
+      (elide-form-slots entry #{(:form-idx chunk)})
+      (write-form-slot entry chunk))
 
     :iteration-final
     (let [base (assoc entry

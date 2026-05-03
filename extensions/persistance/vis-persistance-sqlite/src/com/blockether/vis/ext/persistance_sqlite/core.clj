@@ -838,10 +838,10 @@
           (execute! tx-info
             {:update :conversation_turn_gate
              :set    (cond-> {:status        "proven"
-                               :proof_summary summary
-                               :block_reason  nil
-                               :metadata      (->json metadata)
-                               :resolved_at   now}
+                              :proof_summary summary
+                              :block_reason  nil
+                              :metadata      (->json metadata)
+                              :resolved_at   now}
                        resolved-iteration-id (assoc :resolved_iteration_id (->ref resolved-iteration-id))
                        resolved-ref          (assoc :resolved_ref resolved-ref))
              :where  [:= :id (->ref gate-id)]})
@@ -868,10 +868,10 @@
           (execute! tx-info
             {:update :conversation_turn_gate
              :set    (cond-> {:status        "blocked"
-                               :proof_summary nil
-                               :block_reason  reason
-                               :metadata      (->json metadata)
-                               :resolved_at   now}
+                              :proof_summary nil
+                              :block_reason  reason
+                              :metadata      (->json metadata)
+                              :resolved_at   now}
                        resolved-iteration-id (assoc :resolved_iteration_id (->ref resolved-iteration-id))
                        resolved-ref          (assoc :resolved_ref resolved-ref))
              :where  [:= :id (->ref gate-id)]})
@@ -921,6 +921,48 @@
      :intents []
      :plans []
      :gates []}))
+
+;; =============================================================================
+;; SCI var serialization helpers
+;; =============================================================================
+
+(defn- runtime-object?
+  "True when `v` is a runtime-only object (function, SCI var, SCI internal)
+   that cannot be meaningfully serialized as data. These get a :vis/ref marker
+   so the system knows to re-eval from the `expr` column to reconstruct them."
+  [v]
+  (or (fn? v)
+    (instance? clojure.lang.Var v)
+    (and (some? v) (str/starts-with? (.getName (class v)) "sci."))))
+
+(defn- freeze-safe
+  "Prepare `v` for nippy serialization.
+
+   Rules:
+   - Realized collections (vectors, sets, maps, lists) → walk recursively, freeze.
+   - Lazy seqs → `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
+     form is the source code that produces it, not a materialized snapshot.
+     Re-eval from :expr to reconstruct.
+   - Functions, SCI vars → `{:vis/ref :expr}`. Same reason.
+   - Plain scalars (strings, numbers, keywords, etc.) → pass through."
+  ([v] (freeze-safe v 8))
+  ([v depth]
+   (cond
+     (nil? v)                         nil
+     (zero? depth)                    {:vis/ref :depth-exceeded}
+     (runtime-object? v)              {:vis/ref :expr}
+     (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
+     (map? v)                         (persistent!
+                                        (reduce-kv
+                                          (fn [m k val]
+                                            (assoc! m k (freeze-safe val (dec depth))))
+                                          (transient {})
+                                          v))
+     (vector? v)                      (mapv #(freeze-safe % (dec depth)) v)
+     (set? v)                         (into #{} (map #(freeze-safe % (dec depth))) v)
+     (list? v)                        (doall (map #(freeze-safe % (dec depth)) v))
+     (seq? v)                         {:vis/ref :expr}
+     :else                            v)))
 
 ;; =============================================================================
 ;; Iteration — iteration table

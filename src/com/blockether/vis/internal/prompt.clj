@@ -518,7 +518,7 @@ RLM control loop:
   VERIFY      run targeted checks, or capture an exact blocker
   ATTEST      close/block Gates with Attestations citing observed provenance refs
   CHECK       run `(v/gate-checks)` and `(v/provenance-guards)`
-  ANSWER      final Markdown only after checks pass, or with explicit blocked gates; must be the only top-level form in its iteration
+  ANSWER      final Markdown only after checks pass, or with explicit blocked gates; after iteration 1 it must be the only top-level form in its iteration
 
 Contract-required classifier:
   REQUIRED for code/debug/change/refactor/test/verify/repo inspection, multi-step plans,
@@ -542,7 +542,7 @@ Loop law:
   3. If you did NOT call `(answer ...)`, the host automatically continues the SAME user turn.
   4. In the next iteration, observe prior refs/results and continue.
   5. Only call `(answer ...)` when the request is satisfied or explicitly blocked with evidence.
-  6. The final iteration must contain exactly one top-level form: the `(answer ...)` form itself, or one wrapper such as `(let [...] (answer ...))`. No sibling forms in the answer iteration.
+  6. After iteration 1, the final iteration must contain exactly one top-level form: the `(answer ...)` form itself, or one wrapper such as `(let [...] (answer ...))`. In iteration 1 only, trivial chat may answer as the last top-level form after earlier setup/title/body forms.
 
 Contract lifecycle for required tasks:
 ```clojure
@@ -553,7 +553,7 @@ intent
 
 ```clojure
 (def plan
-  (v/plan! {:intent-state-id (:id intent)
+  (v/plan! {:intent-id (:id intent)
             :key :main
             :summary \"Inspect, act only on evidence, verify, then answer.\"
             :steps [{:id :inspect}
@@ -564,11 +564,11 @@ plan
 
 ```clojure
 (def inspect-gate
-  (v/gate! {:plan-state-id (:id plan)
+  (v/gate! {:plan-id (:id plan)
             :key :inspect
             :question \"Was the relevant evidence inspected?\"}))
 (def verify-gate
-  (v/gate! {:plan-state-id (:id plan)
+  (v/gate! {:plan-id (:id plan)
             :key :verify
             :question \"Did verification pass, or is there an evidenced blocker?\"}))
 [inspect-gate verify-gate]
@@ -581,9 +581,8 @@ Ref discipline:
 
 Close or block gates with observed evidence:
 ```clojure
-(v/attest! :inspect
-  {:status :proven
-   :summary \"Inspected the relevant code/schema before acting.\"
+(v/prove-gate! :inspect
+  {:summary \"Inspected the relevant code/schema before acting.\"
    :refs [\"i1.2/tool\"]})
 ```
 
@@ -631,7 +630,7 @@ Correct multi-iteration finish pattern:
 checks
 ```
 ```clojure
-;; iteration N+1: final turn-finisher, exactly one top-level form
+;; iteration N+1: final turn-finisher after observed evidence, exactly one top-level form
 (answer
   (v/join
     (v/h2 \"Summary\")
@@ -642,7 +641,7 @@ checks
 
 Error rule: errors are evidence. If a contract API fails, do not pretend the contract exists. Fix it, or block/report the contract failure with the exact error. If reader/parser errors repeat, stop emitting large maps; emit one small form at a time.
 
-Answer shapes. `(answer …)` is the ONLY top-level form of its final iteration. Prefer Markdown helper composition unless the user requested a non-Markdown format:
+Answer shapes. After iteration 1, `(answer …)` is the ONLY top-level form of its final iteration. In iteration 1 only, trivial chat may answer as the last top-level form. Prefer Markdown helper composition unless the user requested a non-Markdown format:
 ```clojure
 (answer (v/p \"Done.\"))
 (answer (v/join (v/h2 \"Summary\") (v/p \"Patched three files.\")))
@@ -650,7 +649,7 @@ Answer shapes. `(answer …)` is the ONLY top-level form of its final iteration.
 (let [body (v/join (v/contract-report) (v/provenance-report))]
   (answer body))
 ```
-If you need any sibling top-level work, do not answer yet; do that work in earlier iterations, surface results, and answer alone in a later iteration.
+If you need any sibling top-level work after iteration 1, do not answer yet; do that work in earlier iterations, surface results, and answer alone in a later iteration.
 
 Each iteration's user msg carries:
   <journal>     recent iterations: thinking + comments + code + results, addressable as iN.K

@@ -10,9 +10,9 @@
    - `(v/provenance-report [conversation-id])`   → compact Markdown audit trail
    - `(v/intent! opts)` / `(v/plan! opts)` / `(v/gate! opts)`
      persist turn-scoped contract versions
-   - `(v/attest! gate opts)` / `(v/block-gate! gate opts)`
-     persist exactly one attestation for exactly one gate version
-   - `(v/contract)` / `(v/gates)` / `(v/attestations)` /
+   - `(v/prove-gate! gate opts)` / `(v/block-gate! gate opts)`
+     resolve exactly one gate version with evidence refs
+   - `(v/contract)` / `(v/gates)` /
      `(v/gate-checks)` / `(v/gate-report)` inspect/enforce gates
 
    Everything else in this namespace is implementation behind that

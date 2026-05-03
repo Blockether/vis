@@ -306,6 +306,25 @@
   (it "ul renders one `- item` per entry"
     (expect (= "- a\n- b\n- c" (md/ul ["a" "b" "c"]))))
 
+  (it "ul coalesces LLM-flattened inline fragments into their parent item"
+    (expect (= (str "- Intencje żyją na poziomie `conversation_soul` — persystują między turami\n"
+                 "- Intent sam jest bramką\n"
+                 "- Nowe API: `v/issue-intent!`, `v/issue-plan!`\n"
+                 "- 5 nowych tabel")
+              (md/ul ["Intencje żyją na poziomie " (md/code "conversation_soul") " — persystują między turami"
+                      "Intent sam jest bramką"
+                      "Nowe API: " (md/code "v/issue-intent!") ", " (md/code "v/issue-plan!")
+                      "5 nowych tabel"]))))
+
+  (it "ol coalesces LLM-flattened inline fragments without eating next item"
+    (expect (= "1. Path: `src/foo.clj`, `src/bar.clj`\n2. Run tests"
+              (md/ol ["Path: " (md/code "src/foo.clj") ", " (md/code "src/bar.clj")
+                      "Run tests"]))))
+
+  (it "ul keeps a code-only item separate when prior text is complete"
+    (expect (= "- Use\n- `foo`"
+              (md/ul ["Use" (md/code "foo")]))))
+
   (it "ul accepts preformatted li output without double bullets"
     (expect (= "- a\n- b"
               (md/ul [(md/li "a") (md/li "b")]))))

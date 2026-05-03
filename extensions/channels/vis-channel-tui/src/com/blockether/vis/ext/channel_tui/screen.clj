@@ -7,6 +7,7 @@
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
+            [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
@@ -170,30 +171,67 @@
       (when-let [tc (.getBackCharacter screen (int x) (int row))]
         (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
 
+(def ^:private bubble-content-h-pad
+  "Horizontal text inset inside `render/draw-chat-bubble!` content rows."
+  2)
+
+(def ^:private transcript-copy-skip-markers
+  "Line markers that paint TUI chrome rather than message content.
+
+   Mouse-selection copy operates on rendered screen cells, so clipping these
+   rows before extraction keeps copied transcript text free of role banners,
+   answer dividers, padding bands, iteration labels, and provider/model footers."
+  #{p/MARKER_ITERATION_HDR
+    p/MARKER_DURATION
+    p/MARKER_STDOUT_SEP
+    p/MARKER_STDOUT_PAD
+    p/MARKER_SEP
+    p/MARKER_ANSWER_SEP
+    p/MARKER_ANSWER_HDR
+    p/MARKER_ANSWER_PAD
+    p/MARKER_CODE_PAD
+    p/MARKER_CODE_OK_PAD
+    p/MARKER_CODE_ERR_PAD
+    p/MARKER_ITERATION_PAD})
+
+(defn- copyable-transcript-line?
+  [line]
+  (let [line (or line "")]
+    (not-any? #(str/starts-with? line %) transcript-copy-skip-markers)))
+
+(defn- projected-content-lines
+  [message content-w]
+  (or (:prewrapped-lines message)
+    (render/wrap-text (:text message) content-w)))
+
 (defn- bubble-selectable-ranges
-  "Return absolute screen-cell ranges that belong to visible transcript bubbles.
+  "Return absolute screen-cell ranges for visible transcript message content.
 
    Selection deliberately excludes the header, input box, footer, scrollbar
-   gutter, and message-area margins. Dragging across those cells may continue a
-   gesture, but highlight/copy is clipped back to these bubble ranges."
+   gutter, message-area margins, role/timestamp row, final inter-bubble gap,
+   assistant provider/model footer, and structural separator/padding rows.
+   Dragging across those cells may continue a gesture, but highlight/copy is
+   clipped back to user/model-authored text rows."
   [layout text-top inner-h cols]
-  (let [left         (long render/MESSAGE_MARGIN_LEFT)
-        width        (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+  (let [bubble-left  (long render/MESSAGE_MARGIN_LEFT)
+        bubble-w     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        text-left    (+ bubble-left bubble-content-h-pad)
+        content-w    (long (max 0 (- bubble-w (* 2 bubble-content-h-pad))))
         top-limit    (long text-top)
         bottom-limit (+ top-limit (long (max 0 inner-h)))]
-    (if (or (not (pos? width)) (<= bottom-limit top-limit))
+    (if (or (not (pos? content-w)) (<= bottom-limit top-limit))
       []
       (vec
-        (for [{:keys [top height]} (:visible layout)
-              ;; `draw-chat-bubble!`'s height includes the final blank gap
-              ;; before the next bubble. That row is spacing, not selectable
-              ;; content; including it made selection show a blank band at the
-              ;; top/bottom while edge-scrolling.
-              :let [selectable-h (max 0 (dec (long height)))
-                    from         (max top-limit (+ top-limit (long top)))
-                    to           (min bottom-limit (+ top-limit (long top) selectable-h))]
-              row (range from to)]
-          {:row row :col left :width width})))))
+        (for [{:keys [top projected]} (:visible layout)
+              :let [message     (or projected {})
+                    top-pad     (if (= :user (:role message)) 1 0)
+                    content-top (+ top-limit (long top) 1 top-pad)]
+              [idx line] (map-indexed vector (projected-content-lines message content-w))
+              :let [row (+ content-top (long idx))]
+              :when (and (<= top-limit row)
+                      (< row bottom-limit)
+                      (copyable-transcript-line? line))]
+          {:row row :col text-left :width content-w})))))
 
 (defn- input-selectable-ranges
   "Return absolute screen-cell ranges for the visible input editor text rows.

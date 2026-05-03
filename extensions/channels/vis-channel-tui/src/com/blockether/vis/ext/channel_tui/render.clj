@@ -6,7 +6,7 @@
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [zprint.core :as zp])
+            [com.blockether.vis.internal.format :as fmt])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [java.util LinkedHashMap]))
@@ -610,7 +610,7 @@
    Lanterna colors; raw ANSI is never written to the terminal."
   [code-text width]
   (try
-    (zp/czprint-str code-text width {:parse-string? true})
+    (fmt/safe-czprint-str code-text width {:parse-string? true})
     (catch Throwable _
       (vis/format-clojure code-text width))))
 

@@ -5,13 +5,42 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.foundation.markdown :as md]
+   [com.blockether.vis.internal.format :as fmt]
    [clojure.string :as str]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+   [lazytest.core :refer [defdescribe describe expect it]])
+  (:import
+   [java.util.concurrent CountDownLatch]))
 
 ;; ─── from render_test.clj ───
 
 (def ^:private md->lines @#'render/markdown->lines)
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
+(def ^:private format-clojure-ansi @#'render/format-clojure-ansi)
+
+(defn- run-concurrently!
+  [thunks]
+  (let [gate    (CountDownLatch. 1)
+        failures (atom [])
+        threads (doall
+                  (map-indexed
+                    (fn [idx thunk]
+                      (doto (Thread.
+                              ^Runnable
+                              (fn []
+                                (.await gate)
+                                (try
+                                  (thunk)
+                                  (catch Throwable t
+                                    (swap! failures conj
+                                      {:idx idx
+                                       :class (.getName (class t))
+                                       :message (ex-message t)})))))
+                        (.start)))
+                    thunks))]
+    (.countDown gate)
+    (doseq [^Thread thread threads]
+      (.join thread))
+    @failures))
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -30,6 +59,19 @@
   [s]
   (when (string? s)
     (if (zero? (count s)) "" (subs s 1))))
+
+(defdescribe zprint-render-concurrency-test
+  (it "TUI Clojure formatting shares the process-wide zprint lock"
+    (let [code     (str "(def data " (pr-str (vec (range 300))) ")")
+          failures (run-concurrently!
+                     (concat
+                       (for [_ (range 4)]
+                         #(dotimes [_ 100]
+                            (format-clojure-ansi code 80)))
+                       (for [_ (range 4)]
+                         #(dotimes [i 100]
+                            (fmt/safe-zprint-str {:i i :data (vec (range 200))})))))]
+      (expect (= [] failures)))))
 
 (defdescribe wrap-text-marker-test
   (describe "structural row markers survive wrapping"

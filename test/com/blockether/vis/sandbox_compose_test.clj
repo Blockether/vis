@@ -412,7 +412,7 @@
    "(def hits (v/rg"
    "turn-state"
    "Correct multi-iteration finish pattern"
-   "iteration N+1: final turn-finisher, exactly one top-level form"
+   "iteration N+1: final turn-finisher after observed evidence, exactly one top-level form"
    "<journal>"
    "<var_index>"
    "TURN_USER_REQUEST"

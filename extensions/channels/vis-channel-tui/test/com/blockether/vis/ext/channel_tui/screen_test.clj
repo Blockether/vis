@@ -8,7 +8,9 @@
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.input :as input]
+   [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
+   [com.blockether.vis.ext.channel-tui.selection :as selection]
    [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private parse-args
@@ -58,20 +60,50 @@
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
 
 (defdescribe selectable-ranges-test
-  (it "clips selectable cells to visible transcript bubbles only"
-    (expect (= [{:row 4 :col 2 :width 15}
-                {:row 7 :col 2 :width 15}]
+  (it "clips transcript selection to message content rows only"
+    (expect (= [{:row 4 :col 4 :width 11}
+                {:row 5 :col 4 :width 11}]
               (bubble-selectable-ranges
-                {:visible [{:top -2 :height 4}
-                           {:top 3 :height 2}]}
+                {:visible [{:top -1
+                            :height 4
+                            :projected {:role :assistant
+                                        :prewrapped-lines ["first" "second"]}}
+                           {:top 4
+                            :height 3
+                            :projected {:role :assistant
+                                        :prewrapped-lines ["below viewport"]}}]}
                 4 5 20))))
 
-  (it "does not mark the final inter-bubble gap row as selectable"
-    (expect (= [{:row 4 :col 2 :width 15}
-                {:row 5 :col 2 :width 15}]
+  (it "does not mark role banners, padding, provider footers, or gap rows as selectable"
+    (expect (= [{:row 6 :col 4 :width 11}]
               (bubble-selectable-ranges
-                {:visible [{:top 0 :height 3}]}
-                4 5 20))))
+                {:visible [{:top 0
+                            :height 5
+                            :projected {:role :user
+                                        :text "siema"}}]}
+                4 6 20))))
+
+  (it "copies transcript content without role labels, answer separators, or model metadata"
+    (let [ranges (bubble-selectable-ranges
+                   {:visible [{:top 0
+                               :height 6
+                               :projected {:role :assistant
+                                           :prewrapped-lines ["(answer (v/p \"hi\"))"
+                                                              (str p/MARKER_ANSWER_SEP "")
+                                                              (str p/MARKER_ANSWER_TXT "hi there")]}}]}
+                   0 6 30)
+          rows   ["  Vis                         "
+                  "    (answer (v/p \"hi\"))    "
+                  "──────────────────────────────"
+                  "    hi there                  "
+                  "          zai/glm · 1 iter    "
+                  "                              "]]
+      (expect (= "(answer (v/p \"hi\"))\nhi there"
+                (selection/selected-text
+                  rows
+                  {:anchor (selection/point 0 0)
+                   :focus  (selection/point 29 5)}
+                  ranges)))))
 
   (it "marks input text rows as selectable without input padding"
     (expect (= [{:row 11 :col 2 :width 16}
