@@ -4,6 +4,7 @@
    [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
+   [com.blockether.vis.ext.channel-tui.theme :as t]
    [com.blockether.vis.ext.foundation.markdown :as md]
    [com.blockether.vis.internal.format :as fmt]
    [clojure.string :as str]
@@ -1613,6 +1614,45 @@
       (fillRectangle [_ _ _] this)
       (setCharacter [_ _ _] this))))
 
+(defdescribe reasoning-preview-rendering-test
+  (it "collapses long reasoning to first and last lines with a clickable summary"
+    (render/invalidate-cache!)
+    (let [cid       "conversation"
+          turn-id   "123e4567-e89b-12d3-a456-426614174000"
+          thinking  (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
+          payload   (render/format-answer-with-thinking-data
+                      "done" [{:thinking thinking}]
+                      96 {:show-thinking true :show-iterations true} nil false
+                      {:conversation-id cid
+                       :conversation-turn-id turn-id})
+          rows      (mapv (comp strip-sentinels body-of) (:lines payload))
+          summaries (filter #(str/includes? % "Reasoning") rows)]
+      (expect (some #(str/includes? % "line-01") rows))
+      (expect (some #(str/includes? % "line-10") rows))
+      (expect (not-any? #(str/includes? % "line-11") rows))
+      (expect (not-any? #(str/includes? % "line-40") rows))
+      (expect (some #(str/includes? % "line-41") rows))
+      (expect (some #(str/includes? % "line-50") rows))
+      (expect (some #(str/includes? % "30 lines hidden") summaries))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
+
+  (it "expands long reasoning when its detail node is toggled open"
+    (render/invalidate-cache!)
+    (let [cid      "conversation"
+          turn-id  "123e4567-e89b-12d3-a456-426614174000"
+          node-id  "thinking:i1:reasoning"
+          thinking (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
+          payload  (render/format-answer-with-thinking-data
+                     "done" [{:thinking thinking}]
+                     96 {:show-thinking true :show-iterations true} nil false
+                     {:conversation-id cid
+                      :conversation-turn-id turn-id
+                      :detail-expansions {[cid node-id] true}})
+          rows     (mapv (comp strip-sentinels body-of) (:lines payload))]
+      (expect (some #(str/includes? % "▾ Reasoning · 30 lines hidden") rows))
+      (expect (some #(str/includes? % "line-11") rows))
+      (expect (some #(str/includes? % "line-40") rows)))))
+
 (defdescribe auto-collapse-rendering-test
   (it "does not wrap collapsed huge result bodies before rendering the summary"
     (render/invalidate-cache!)
@@ -1633,18 +1673,103 @@
       (when (= ::timeout payload)
         (future-cancel fut))
       (expect (not= ::timeout payload))
-      (expect (str/includes? (:text payload) "RESULT (block 1)"))
+      (expect (str/includes? (:text payload) "RESULT (Block 1)"))
       (expect (str/includes? (:text payload) "chars hidden"))
-      (expect (str/includes? (:text payload) "Turn: 123e4567, iteration: 1, block: 1"))
-      (let [suffix       "[Turn: 123e4567, iteration: 1, block: 1]"
+      (expect (str/includes? (:text payload) "Turn: 123e4567, Iteration: 1, Block: 1"))
+      (let [suffix       "[Turn: 123e4567, Iteration: 1, Block: 1]"
             summary-line (some #(when (str/includes? % "Turn: 123e4567") %) (:lines payload))
             visible      (strip-sentinels (body-of summary-line))]
         (expect (str/ends-with? visible suffix))
+        (expect (not (str/includes? summary-line p/INLINE_CODE_ON)))
+        (expect (not (str/includes? summary-line p/INLINE_CODE_OFF)))
         (expect (= 91 (p/display-width visible))))
       (expect (not (str/includes? (:text payload) "t:")))
       (expect (not (str/includes? (:text payload) "i:")))
       (expect (not (str/includes? (:text payload) "b:")))
-      (expect (not (str/includes? (:text payload) huge-result))))))
+      (expect (not (str/includes? (:text payload) huge-result)))))
+
+  (it "expands only the hidden middle reasoning slice and keeps 10-line edges"
+    (render/invalidate-cache!)
+    (let [thinking (str/join "\n" (map #(str "line " %) (range 1 51)))
+          trace    [{:thinking  thinking
+                     :code      []
+                     :results   []
+                     :stdouts   []
+                     :durations []
+                     :successes []}]
+          opts     {:conversation-id "conversation"
+                    :conversation-turn-id "turn-1"}
+          payload  (fn [opts]
+                     (render/format-answer-with-thinking-data
+                       "done" trace 120 {:show-iterations true :show-thinking true}
+                       nil false opts))
+          collapsed (payload opts)
+          expanded  (payload (assoc opts :detail-expansions
+                               {["conversation" "thinking:i1:reasoning"] true}))
+          line-idx  (fn [lines needle]
+                      (first (keep-indexed
+                               (fn [idx line]
+                                 (when (str/includes? line needle) idx))
+                               lines)))]
+      (expect (str/includes? (:text collapsed) "Reasoning · 30 lines hidden"))
+      (expect (str/includes? (:text collapsed) "line 10"))
+      (expect (not (str/includes? (:text collapsed) "line 11")))
+      (expect (not (str/includes? (:text collapsed) "line 40")))
+      (expect (str/includes? (:text collapsed) "line 41"))
+      (expect (str/includes? (:text expanded) "Reasoning · 30 lines hidden"))
+      (expect (< (line-idx (:lines expanded) "line 10")
+                (line-idx (:lines expanded) "Reasoning")))
+      (expect (< (line-idx (:lines expanded) "Reasoning")
+                (line-idx (:lines expanded) "line 11")))
+      (expect (< (line-idx (:lines expanded) "line 40")
+                (line-idx (:lines expanded) "line 41")))))
+
+  (it "paints collapsed provenance rows as bold text on the summary band"
+    (render/invalidate-cache!)
+    (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
+          trace       [{:code      ["(+ 1 2)"]
+                        :comments  [nil]
+                        :results   [huge-result]
+                        :stdouts   [""]
+                        :durations [1]
+                        :successes [true]}]
+          payload     (render/format-answer-with-thinking-data
+                        "" trace 96 {:show-iterations true} nil false
+                        {:conversation-id "conversation"
+                         :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          puts        (atom [])
+          active      (atom #{})
+          bg          (atom nil)
+          graphics    (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                        (clearModifiers []
+                          (reset! active #{})
+                          this)
+                        (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                          (swap! active into (seq arr))
+                          this)
+                        (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                          (apply swap! active disj (seq arr))
+                          this)
+                        (getActiveModifiers []
+                          (if (empty? @active)
+                            (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                            (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                        (setForegroundColor [_] this)
+                        (setBackgroundColor [c] (reset! bg c) this)
+                        (putString [_col _row text]
+                          (swap! puts conj {:text text :bg @bg :sgr @active})
+                          this)
+                        (fillRectangle [_ _ _] this)
+                        (setCharacter [_ _ _] this))]
+      (render/draw-chat-bubble! graphics
+        {:role :assistant :text (:text payload) :prewrapped-lines (:lines payload)}
+        0 2 96 {:viewport-h 50})
+      (let [summary-put (some #(when (str/includes? (:text %) "Turn: 123e4567") %) @puts)]
+        (expect (some? summary-put))
+        (expect (str/includes? (:text summary-put) "Iteration: 1"))
+        (expect (str/includes? (:text summary-put) "Block: 1"))
+        (expect (= t/md-summary-bg (:bg summary-put)))
+        (expect (contains? (:sgr summary-put) com.googlecode.lanterna.SGR/BOLD))))))
 
 (defdescribe message-footer-test
   (it "does not register a per-message copy button"
@@ -1663,6 +1788,47 @@
       (expect (every? nil?
                 (map #(cr/lookup hit-col %)
                   (range viewport-top (+ viewport-top start height)))))))
+
+  (it "renders user messages with a left rail and markdown styling"
+    (let [puts    (atom [])
+          active  (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [_col row text]
+                       (swap! puts conj {:row row :text text :sgr @active})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))
+          message {:role :user :text "**SIEMA**\n> quoted proof"}
+          start   4
+          left    2
+          width   50
+          height  (render/draw-chat-bubble! graphics message start left width
+                    {:viewport-h 40})]
+      (expect (= 6 height))
+      (expect (= [6 7]
+                (->> @puts
+                  (filter #(= "│" (:text %)))
+                  (mapv :row))))
+      (expect (some #(and (= "SIEMA" (:text %))
+                       (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
+                @puts))
+      (expect (not-any? #(str/includes? (:text %) "**") @puts))
+      (expect (some #(str/includes? (:text %) "┃ quoted proof") @puts))))
 
   (it "leaves only the final gap after the user bubble fill"
     (let [fills    (atom [])

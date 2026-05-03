@@ -159,6 +159,7 @@
     (update :show-thinking boolean)
     (update :show-iterations boolean)
     (update :show-timestamps boolean)
+    (update :differentiate-turns boolean)
     (update :mouse-selection-copy boolean)))
 
 (def default-settings
@@ -179,6 +180,10 @@
      show-timestamps — chrome control. Default OFF because timestamps
          duplicate info already on screen.
 
+     differentiate-turns — visual turn separator between a Vis answer and
+         the next You prompt. Default ON so transcript turns read as distinct
+         request/response units without drawing borders inside reasoning.
+
      mouse-selection-copy — app-side terminal selection. Default ON so
          drag-selecting visible text copies it on mouse release even while
          the fullscreen TUI has mouse reporting enabled.
@@ -193,6 +198,7 @@
    :reasoning-level        :balanced
    :openai-codex-verbosity :low
    :show-timestamps        false
+   :differentiate-turns    true
    :mouse-selection-copy   true})
 
 (defn- load-persisted-settings

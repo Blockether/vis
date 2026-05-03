@@ -198,6 +198,26 @@
       :else
       (long (+ chrome-rows (div-ceil (char-count text) content-w))))))
 
+(defn- turn-separator?
+  [messages settings ^long idx]
+  (and (true? (get settings :differentiate-turns true))
+    (pos? idx)
+    (= :user (:role (nth messages idx)))
+    (= :assistant (:role (nth messages (dec idx))))))
+
+(defn- estimated-height-with-turn-separator
+  [messages settings bubble-w idx message]
+  (let [bubble-w (long bubble-w)
+        idx      (long idx)]
+    (long (+ (estimated-height message bubble-w)
+            (if (turn-separator? messages settings idx) 1 0)))))
+
+(defn- with-turn-separator
+  [message messages settings ^long idx]
+  (if (turn-separator? messages settings idx)
+    (assoc message :turn-separator? true)
+    (dissoc message :turn-separator?)))
+
 ;;; ── Per-message projection ─────────────────────────────────────────────────
 
 (defn project-message
@@ -309,10 +329,10 @@
         ;; touched by `pre-warm!`) we keep its real height forever
         ;; — no more `total-h` jitter on scroll, no more
         ;; click-to-position landing in the wrong row.
-        est      (mapv (fn [m]
+        est      (mapv (fn [idx m]
                          (or (height-cache-get m bubble-w settings detail-expansions)
-                           (estimated-height m bubble-w)))
-                   messages)
+                           (estimated-height-with-turn-separator messages settings bubble-w idx m)))
+                   (range n) messages)
         est-off  (vec (reductions + 0 (map long est)))
         est-tot  (long (peek est-off))
         scroll-1 (long (or scroll (max 0 (- est-tot inner-h))))
@@ -350,6 +370,7 @@
                        (project-message m bubble-w settings
                          {:conversation-id conversation-id
                           :detail-expansions detail-expansions}))
+                  pm (with-turn-separator pm messages settings i)
                   real-h (long (render/bubble-height pm bubble-w))]
               ;; Pin the real height in the sticky cache for the
               ;; raw message identity (NOT the loading bubble — its
@@ -456,6 +477,7 @@
                               pm (project-message m bubble-w settings
                                    {:conversation-id conversation-id
                                     :detail-expansions detail-expansions})
+                              pm (with-turn-separator pm messages settings i)
                               h  (long (render/bubble-height pm bubble-w))]
                           (height-cache-put! m bubble-w settings detail-expansions h))
                         (recur (dec i))))

@@ -771,7 +771,7 @@
 ;; section ~900 lines below; the existing forward-decl down there is
 ;; far too late for a chrome helper this high in the file. We pin
 ;; the var here so Clojure can resolve the symbol at compile time.
-(declare markdown->inline)
+(declare markdown->inline markdown->lines)
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -812,6 +812,8 @@
         ;; meta line, dim the role label too. Skips markdown so a
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
+        turn-separator? (boolean (:turn-separator? message))
+        top-sep-h (if turn-separator? 1 0)
         label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
@@ -823,6 +825,7 @@
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
         lines     (or (:prewrapped-lines message)
+                    (and user? (markdown->lines text content-w :answer))
                     (wrap-text text content-w))
         line-meta (or (:line-meta message)
                     (vec (repeat (count lines) nil)))
@@ -876,28 +879,35 @@
     ;; Row 0: label (bold, role-colored) + optional resources badge +
     ;; timestamp. Resources sit in the top-right chrome instead of
     ;; taking one row per link under the answer body.
-    (p/clear-styles! g)
-    (p/set-colors! g role-fg t/terminal-bg)
-    (p/styled g [p/BOLD]
-      (p/put-str! g bx start-row label))
-    (let [right-edge   (+ bx bubble-w)
-          time-w       (if time-str (p/display-width time-str) 0)
-          time-x       (when time-str (- right-edge time-w))
-          badge-end    (if time-x (- time-x 2) right-edge)
-          badge-min-x  (+ bx (p/display-width label) 2)
-          badge-max-w  (max 0 (- badge-end badge-min-x))
-          badge-label  (when (pos? (count refs))
-                         (resources-badge-label (count refs) badge-max-w))
-          badge-w      (if badge-label (p/display-width badge-label) 0)
-          badge-x      (- badge-end badge-w)
-          abs-row      (+ (long viewport-top) (long start-row))]
-      (when badge-label
-        (paint-resources-badge!
-          g badge-label refs badge-x start-row badge-w
-          0 abs-row (long viewport-top) (long viewport-h)))
-      (when time-str
-        (p/set-colors! g t/dialog-hint t/terminal-bg)
-        (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) start-row time-str)))
+    (when turn-separator?
+      (p/clear-styles! g)
+      (p/set-colors! g t/turn-separator-fg t/turn-separator-bg)
+      (p/fill-rect! g bx start-row bubble-w 1)
+      (p/put-str! g bx start-row (repeat-str \─ bubble-w)))
+
+    (let [label-row (+ start-row top-sep-h)]
+      (p/clear-styles! g)
+      (p/set-colors! g role-fg t/terminal-bg)
+      (p/styled g [p/BOLD]
+        (p/put-str! g bx label-row label))
+      (let [right-edge   (+ bx bubble-w)
+            time-w       (if time-str (p/display-width time-str) 0)
+            time-x       (when time-str (- right-edge time-w))
+            badge-end    (if time-x (- time-x 2) right-edge)
+            badge-min-x  (+ bx (p/display-width label) 2)
+            badge-max-w  (max 0 (- badge-end badge-min-x))
+            badge-label  (when (pos? (count refs))
+                           (resources-badge-label (count refs) badge-max-w))
+            badge-w      (if badge-label (p/display-width badge-label) 0)
+            badge-x      (- badge-end badge-w)
+            abs-row      (+ (long viewport-top) (long label-row))]
+        (when badge-label
+          (paint-resources-badge!
+            g badge-label refs badge-x label-row badge-w
+            0 abs-row (long viewport-top) (long viewport-h)))
+        (when time-str
+          (p/set-colors! g t/dialog-hint t/terminal-bg)
+          (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) label-row time-str))))
 
     ;; Content begins directly under the role banner for ASSISTANT
     ;; bubbles — the previous breathing row read as an unwanted top
@@ -909,7 +919,7 @@
     ;; Mirror this in `bubble-height*` so the math stays in sync.
     (let [top-pad    (if user? 1 0)
           bottom-pad (if user? 1 0)
-          btop       (+ start-row 1 top-pad)]
+          btop       (+ start-row top-sep-h 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg — the only fills come from
       ;; structured-trace marker zones (code blocks, stdout, answer
@@ -1445,6 +1455,10 @@
                       (p/paint-styled-line! g x y line
                         line-fg line-bg
                         t/code-block-fg t/code-block-bg)))))
+              (when user?
+                (p/clear-styles! g)
+                (p/set-colors! g role-fg bg-color)
+                (p/put-str! g bx (+ btop i) "│"))
               (recur (inc i))))))
 
       ;; Below-content footer row: optional right-aligned meta.
@@ -1680,11 +1694,14 @@
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status]} max-w]
+  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status turn-separator?]} max-w]
   (let [bubble-w   max-w
+        top-sep-h  (if turn-separator? 1 0)
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
-        lines      (or prewrapped-lines (wrap-text text content-w))
+        lines      (or prewrapped-lines
+                     (and (= role :user) (markdown->lines text content-w :answer))
+                     (wrap-text text content-w))
         top-pad    (if (= role :user) 1 0)
         bottom-pad (if (= role :user) 1 0)
         cancelled? (= :cancelled status)
@@ -1696,17 +1713,18 @@
                                    :cost cost})]
                        (when-not (str/blank? line) line)))
         footer?    (some? meta-str)]
-    (+ 1 top-pad (count lines) bottom-pad (if footer? 1 0) 1)))
+    (+ top-sep-h 1 top-pad (count lines) bottom-pad (if footer? 1 0) 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by projected line identity when
    available; live progress keeps stable prewrapped body lines and only
    appends a cheap spinner row."
-  [{:keys [text role prewrapped-lines] :as message} max-w]
+  [{:keys [text role prewrapped-lines turn-separator?] :as message} max-w]
   (cached* [::bh
             (System/identityHashCode text)
             (System/identityHashCode prewrapped-lines)
             role
+            (boolean turn-separator?)
             (long max-w)]
     #(bubble-height* message max-w)))
 
@@ -1732,6 +1750,7 @@
 
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
+(def ^:private thinking-preview-edge-lines 10)
 
 (defn- short-id-fragment
   ^String [id]
@@ -1760,12 +1779,12 @@
   ^String [{:keys [conversation-turn-id iteration-number block-number details-path]}]
   (let [parts (cond-> []
                 (some? conversation-turn-id) (conj (str "Turn: " (short-id-fragment conversation-turn-id)))
-                iteration-number (conj (str "iteration: " iteration-number))
-                block-number (conj (str "block: " block-number))
-                (seq details-path) (conj (str "details: " (str/join "." details-path))))]
+                iteration-number (conj (str "Iteration: " iteration-number))
+                block-number (conj (str "Block: " block-number))
+                (seq details-path) (conj (str "Details: " (str/join "." details-path))))]
     (if (seq parts)
       (str "[" (str/join ", " parts) "]")
-      "[details]")))
+      "[Details]")))
 
 (defn- ellipsize-cols
   ^String [s max-w]
@@ -1777,18 +1796,19 @@
 
 (defn- format-detail-summary-line
   "Put the human-readable detail provenance on the right edge. The
-   suffix is intentionally rendered as inline code so it gets a distinct
-   colour treatment from the disclosure label."
+   whole row is already painted as a bold disclosure band by
+   `draw-chat-bubble!`, so keep the suffix as plain text. Inline code
+   would drop that inherited bold style and switch to a weaker code
+   background."
   ^String [left suffix max-w]
   (let [suffix-w (p/display-width suffix)
         gap-w    2]
     (if (> (+ suffix-w gap-w 1) max-w)
-      (str left " · `" suffix "`")
-      (let [left-w     (max 1 (- max-w suffix-w gap-w))
-            left       (ellipsize-cols left left-w)
-            pad-w      (max gap-w (- max-w (p/display-width left) suffix-w))
-            suffix-md  (str "`" suffix "`")]
-        (str left (repeat-str \space pad-w) suffix-md)))))
+      (str left " · " suffix)
+      (let [left-w (max 1 (- max-w suffix-w gap-w))
+            left   (ellipsize-cols left left-w)
+            pad-w  (max gap-w (- max-w (p/display-width left) suffix-w))]
+        (str left (repeat-str \space pad-w) suffix)))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-node-id
   ^String [{:keys [iteration-number block-number details-path section kind]}]
@@ -1847,6 +1867,45 @@
                                          :node-id node-id))
                (when-not collapsed? entries)))))))
 
+(defn- maybe-preview-thinking-entries
+  "Collapse long reasoning to first/last preview rows with a clickable
+   disclosure row in the middle. Expanded state uses the same
+   detail-expansions map as result/stdout/details popouts."
+  [{:keys [entries conversation-id detail-expansions conversation-turn-id iteration-number max-w]}]
+  (let [entries (vec entries)
+        n       (count entries)
+        edge    thinking-preview-edge-lines]
+    (if (or (nil? conversation-id)
+          (nil? conversation-turn-id)
+          (<= n (* 2 edge)))
+      entries
+      (let [detail-ctx {:conversation-id conversation-id
+                        :conversation-turn-id conversation-turn-id
+                        :iteration-number iteration-number
+                        :details-path nil
+                        :section :thinking
+                        :kind :reasoning}
+            node-id    (detail-node-id detail-ctx)
+            expanded?  (detail-expanded? detail-expansions conversation-id node-id false)
+            head       (subvec entries 0 edge)
+            tail       (subvec entries (- n edge) n)
+            hidden     (subvec entries edge (- n edge))
+            summary    (detail-summary-entries
+                         (assoc detail-ctx
+                           :marker th-md-summary-marker
+                           :max-w max-w
+                           :summary (if expanded?
+                                      (str "Reasoning · " (hidden-size-hint hidden))
+                                      "Reasoning")
+                           :hidden-entries hidden
+                           :collapsed? (not expanded?)
+                           :node-id node-id))]
+        (vec (concat
+               head
+               summary
+               (when expanded? hidden)
+               tail))))))
+
 (defn- maybe-collapse-raw-text-block
   "Render a result/stdout-like block without wrapping huge collapsed
    bodies first. `wrap-text` is intentionally display-width-aware and
@@ -1888,7 +1947,7 @@
      :line-meta line-meta
      :text      (str/join "\n" lines)}))
 
-(declare markdown->lines markdown->entries)
+(declare markdown->entries)
 
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
@@ -2228,9 +2287,16 @@
                                     (wrap-text thinking-text fill-w))))))
                           texts)]
             (when (seq entries)
-              (vec (concat [(line-entry (str thinking-marker ""))]
-                     entries
-                     [(line-entry (str thinking-marker ""))])))))
+              (let [preview-entries (maybe-preview-thinking-entries
+                                      {:entries              entries
+                                       :conversation-id      conversation-id
+                                       :detail-expansions   detail-expansions
+                                       :conversation-turn-id conversation-turn-id
+                                       :iteration-number    iteration-number
+                                       :max-w               fill-w})]
+                (vec (concat [(line-entry (str thinking-marker ""))]
+                       preview-entries
+                       [(line-entry (str thinking-marker ""))]))))))
         error-lines
         (fn []
           (when (map? error)
@@ -2316,7 +2382,7 @@
                                    :iteration-number    iteration-number
                                    :block-number        block-number
                                    :kind                :result
-                                   :summary             (str "RESULT (block " block-number ")")
+                                   :summary             (str "RESULT (Block " block-number ")")
                                    :summary-marker      md-summary-marker
                                    :body-marker         r-marker
                                    :raw-text            result-str
@@ -2345,7 +2411,7 @@
                                          :iteration-number    iteration-number
                                          :block-number        block-number
                                          :kind                :stdout
-                                         :summary             (str "STDOUT (block " block-number ")")
+                                         :summary             (str "STDOUT (Block " block-number ")")
                                          :summary-marker      md-summary-marker
                                          :body-marker         stdout-marker
                                          :lines               text-lines
@@ -3407,11 +3473,10 @@
                                   md-entries
                                   (mapv line-entry (wrap-text answer-str (max 1 (- fill-w 2)))))
         ans-pad                 (line-entry (str answer-pad-marker ""))
-        ans-sep                 (line-entry (str answer-sep-marker ""))
         cancel-text             (or answer "Cancelled by user.")
         cancel-rows             (mapv line-entry (wrap-text cancel-text (max 1 (- fill-w 2))))
-        cancel-block            (vec (concat [ans-sep (line-entry "")] cancel-rows [(line-entry "")]))
-        answer-block            (cond-> [ans-sep]
+        cancel-block            (vec (concat [(line-entry "")] cancel-rows [(line-entry "")]))
+        answer-block            (cond-> []
                                   fa-hdr (conj fa-hdr)
                                   :always (conj ans-pad)
                                   :always (into ans-entries)
@@ -3419,7 +3484,7 @@
         trailer                 (if cancelled? cancel-block answer-block)
         entries                 (if (seq trace-entries)
                                   (vec (concat trace-entries trailer))
-                                  (vec (rest trailer)))]
+                                  (vec trailer))]
     (entries->payload entries)))
 
 (defn format-answer-with-thinking*
