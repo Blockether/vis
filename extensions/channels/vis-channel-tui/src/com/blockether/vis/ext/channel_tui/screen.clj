@@ -66,6 +66,10 @@
    bigger jump so long iteration traces clear in a few presses."
   5)
 (def ^:private input-max-lines 4)
+
+(def ^:private mouse-double-click-ms
+  "Maximum time between two selection clicks on the same row for line-select."
+  500)
 ;; Hint strip rules
 ;;
 ;; Idle, input EMPTY    → show newline + history cycle + menu. The
@@ -739,7 +743,9 @@
                ;; drag coordinates, highlights the range during render, then
                ;; copies the visible text when the button is released.
                mouse-selection-anchor (volatile! nil)
+               mouse-selection-focus  (volatile! nil)
                mouse-selection-source (volatile! nil)
+               last-selection-click   (volatile! nil)
                ;; `paste-buffer` accumulates every keystroke received
                ;; between `paste-start?` and `paste-end?`. We treat
                ;; the whole block as one paste — newlines included —
@@ -881,7 +887,6 @@
                                    (>= my (long thumb-top))
                                    (< my (+ (long thumb-top) thumb-h)))
                        selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
-                       selectable-ranges (get-in db [:layout :selectable-ranges])
                        transcript-selectable-ranges (get-in db [:layout :transcript-selectable-ranges])
                        input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
                        selection-viewport {:viewport-top bar-top
@@ -956,6 +961,7 @@
                            doc-focus    (selection/screen->document-point
                                           screen-focus selection-viewport)
                            source       @mouse-selection-source]
+                       (vreset! mouse-selection-focus doc-focus)
                        (state/dispatch
                          [:set-mouse-selection
                           {:anchor @mouse-selection-anchor
@@ -989,16 +995,19 @@
                      (let [was-dragging?    (some? @scrollbar-drag-offset)
                            already-handled? @click-action-fired?
                            anchor           @mouse-selection-anchor
+                           focus            (or @mouse-selection-focus
+                                              (selection/screen->document-point
+                                                (selection/point mx my)
+                                                selection-viewport))
                            source           @mouse-selection-source]
                        (vreset! scrollbar-drag-offset nil)
                        (vreset! click-action-fired? false)
                        (vreset! mouse-selection-anchor nil)
+                       (vreset! mouse-selection-focus nil)
                        (vreset! mouse-selection-source nil)
                        (if (and selection-copy? anchor)
                          (let [sel        {:anchor anchor
-                                           :focus  (selection/screen->document-point
-                                                     (selection/point mx my)
-                                                     selection-viewport)
+                                           :focus  focus
                                            :source source}
                                screen-sel (selection/document->screen-selection
                                             sel selection-viewport)
@@ -1054,6 +1063,7 @@
                              ;; the same gesture pair to skip the
                              ;; fallback fire — we just handled it.
                              (vreset! click-action-fired? true)
+                             (vreset! last-selection-click nil)
                              (case (:kind hit)
                              ;; Header copy-id affordance: drop the
                              ;; FULL UUID onto the system clipboard,
@@ -1083,23 +1093,45 @@
                                  (try (opener/open! (:url hit))
                                    (catch Throwable _ nil)))))
                            (when selection-copy?
-                             (let [screen-anchor (selection/point mx my)]
-                               (when (selection/point-in-ranges?
-                                       screen-anchor selectable-ranges
-                                       {:row-padding 2})
-                                 (let [doc-anchor (selection/screen->document-point
-                                                    screen-anchor selection-viewport)
-                                       source     (if (selection/point-in-ranges?
-                                                        screen-anchor input-selectable-ranges
-                                                        {:row-padding 2})
-                                                    :input
-                                                    :transcript)]
+                             (let [screen-anchor (selection/point mx my)
+                                   source        (selection/source-at-point
+                                                   screen-anchor
+                                                   transcript-selectable-ranges
+                                                   input-selectable-ranges
+                                                   {:row-padding 2})]
+                               (if-not source
+                                 (vreset! last-selection-click nil)
+                                 (let [now-ms       (System/currentTimeMillis)
+                                       source-ranges (selectable-ranges-for-source
+                                                       source
+                                                       transcript-selectable-ranges
+                                                       input-selectable-ranges)
+                                       line-sel      (when (selection/double-click?
+                                                             @last-selection-click
+                                                             now-ms
+                                                             source
+                                                             screen-anchor
+                                                             mouse-double-click-ms)
+                                                       (selection/line-selection-at-point
+                                                         screen-anchor
+                                                         source-ranges
+                                                         selection-viewport))
+                                       doc-anchor    (or (:anchor line-sel)
+                                                       (selection/screen->document-point
+                                                         screen-anchor selection-viewport))
+                                       doc-focus     (or (:focus line-sel) doc-anchor)]
+                                   (vreset! last-selection-click
+                                     (when-not line-sel
+                                       {:source source
+                                        :point  screen-anchor
+                                        :time-ms now-ms}))
                                    (vreset! mouse-selection-anchor doc-anchor)
+                                   (vreset! mouse-selection-focus (:focus line-sel))
                                    (vreset! mouse-selection-source source)
                                    (state/dispatch
                                      [:set-mouse-selection
                                       {:anchor doc-anchor
-                                       :focus  doc-anchor
+                                       :focus  doc-focus
                                        :source source}]))))))
                        (recur))
 

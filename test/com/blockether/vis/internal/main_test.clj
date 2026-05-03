@@ -8,12 +8,17 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.main :as main]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
-(def ^:private short-ext-ns #'main/short-ext-ns)
-(def ^:private wrap-str     #'main/wrap-str)
+(def ^:private short-ext-ns            #'main/short-ext-ns)
+(def ^:private wrap-str                #'main/wrap-str)
+(def ^:private expand-table-cols       #'main/expand-table-cols)
+(def ^:private table-width             #'main/table-width)
+(def ^:private terminal-width          #'main/terminal-width)
+(def ^:private conversation-rows       #'main/conversation-rows)
 
 (defdescribe short-ext-ns-test
   (it "rewrites the canonical extension package as `v/`"
@@ -24,6 +29,63 @@
   (it "passes through namespaces outside the canonical package"
     (expect (= "some.third.party.ext"
               (short-ext-ns 'some.third.party.ext)))))
+
+(defdescribe terminal-width-test
+  (it "uses COLUMNS when the shell exports it"
+    (with-redefs-fn {#'main/terminal-env      (fn [_] "177")
+                     #'main/shell-first-line (fn [_] nil)}
+      #(expect (= 177 (terminal-width)))))
+
+  (it "falls back to stty because interactive shells often do not export COLUMNS"
+    (with-redefs-fn {#'main/terminal-env      (fn [_] nil)
+                     #'main/shell-first-line (fn [cmd]
+                                               (case cmd
+                                                 "stty size < /dev/tty" "48 211"
+                                                 "tput cols" "80"
+                                                 nil))}
+      #(expect (= 211 (terminal-width)))))
+
+  (it "uses the non-interactive fallback when no terminal probe succeeds"
+    (with-redefs-fn {#'main/terminal-env      (fn [_] nil)
+                     #'main/shell-first-line (fn [_] nil)}
+      #(expect (= 120 (terminal-width))))))
+
+(defdescribe table-width-test
+  (it "grows marked columns to fill the requested table width"
+    (let [cols     [{:key :id :label "ID" :width 4 :align :left}
+                    {:key :title :label "Title" :width 6 :align :left :grow? true}
+                    {:key :date :label "Date" :width 4 :align :left}]
+          expanded (expand-table-cols cols 40)]
+      (expect (= 40 (table-width expanded)))
+      (expect (= 4 (:width (first expanded))))
+      (expect (= 24 (:width (second expanded))))
+      (expect (= 4 (:width (nth expanded 2))))))
+
+  (it "grows the final column when no column opts into growth"
+    (let [cols     [{:key :a :label "A" :width 4 :align :left}
+                    {:key :b :label "B" :width 4 :align :left}]
+          expanded (expand-table-cols cols 20)]
+      (expect (= 4 (:width (first expanded))))
+      (expect (= 11 (:width (second expanded))))
+      (expect (= 20 (table-width expanded))))))
+
+(defdescribe conversation-rows-test
+  (it "sorts by last turn descending, puts empty conversations last, and includes the last channel"
+    (let [older-id  (java.util.UUID/randomUUID)
+          newer-id  (java.util.UUID/randomUUID)
+          empty-id  (java.util.UUID/randomUUID)
+          convs     [{:id older-id :channel :telegram :title "older" :created-at (java.util.Date. 1000)}
+                     {:id empty-id :channel :cli :title "empty" :created-at (java.util.Date. 9000)}
+                     {:id newer-id :channel :tui :title "newer" :created-at (java.util.Date. 2000)}]
+          turns     {older-id [{:created-at (java.util.Date. 3000)}]
+                     newer-id [{:created-at (java.util.Date. 5000)}]}]
+      (with-redefs [persistance/db-list-conversation-turns
+                    (fn [_ cid] (get turns cid []))]
+        (let [rows (conversation-rows :db convs)]
+          (expect (= ["newer" "older" "empty"] (mapv :title rows)))
+          (expect (= ["tui" "telegram" "cli"] (mapv :last-channel rows)))
+          (expect (= [1 1 0] (mapv :turns rows)))
+          (expect (= "—" (:last-turn (last rows)))))))))
 
 (defdescribe wrap-str-test
   (describe "short input"

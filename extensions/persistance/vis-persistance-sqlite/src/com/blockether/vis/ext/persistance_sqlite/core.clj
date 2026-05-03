@@ -650,7 +650,7 @@
            :where  [:= :id (:id state)]})))))
 
 ;; =============================================================================
-;; Completion contract — turn-scoped intent -> plan -> gate -> attestation
+;; Completion contract — turn-scoped intent -> plan -> blocking gate
 ;; =============================================================================
 
 (defn- require-latest-turn-state
@@ -668,256 +668,12 @@
       (throw (ex-info message {:table table :id id})))
     row))
 
-(defn- next-version
-  [db-info table fk-col fk-value]
-  (or (:next_version
-       (query-one! db-info
-         {:select [[[:coalesce [:+ [:max :version] 1] 0] :next_version]]
-          :from   table
-          :where  [:= fk-col fk-value]}))
-    0))
-
-(defn- latest-state-id-for
-  [db-info table fk-col fk-value]
-  (:id (query-one! db-info
-         {:select [:id]
-          :from   table
-          :where  [:and
-                   [:= fk-col fk-value]
-                   [:= :version
-                    {:select [[[:max :version]]]
-                     :from   table
-                     :where  [:= fk-col fk-value]}]]})))
-
-(defn- find-or-create-intent-soul!
-  [db-info conversation-turn-state-id key metadata now]
-  (let [key-s (->kw key)]
-    (or (:id (query-one! db-info
-               {:select [:id]
-                :from   :intent_soul
-                :where  [:and
-                         [:= :conversation_turn_state_id conversation-turn-state-id]
-                         [:= :key key-s]]}))
-      (let [id (str (UUID/randomUUID))]
-        (execute! db-info
-          {:insert-into :intent_soul
-           :values [{:id                         id
-                     :conversation_turn_state_id conversation-turn-state-id
-                     :key                        key-s
-                     :metadata                   (->json metadata)
-                     :created_at                 now}]})
-        id))))
-
-(defn- find-or-create-plan-soul!
-  [db-info intent-soul-id key metadata now]
-  (let [key-s (->kw key)]
-    (or (:id (query-one! db-info
-               {:select [:id]
-                :from   :plan_soul
-                :where  [:and
-                         [:= :intent_soul_id intent-soul-id]
-                         [:= :key key-s]]}))
-      (let [id (str (UUID/randomUUID))]
-        (execute! db-info
-          {:insert-into :plan_soul
-           :values [{:id             id
-                     :intent_soul_id intent-soul-id
-                     :key            key-s
-                     :metadata       (->json metadata)
-                     :created_at     now}]})
-        id))))
-
-(defn- find-or-create-gate-soul!
-  [db-info plan-soul-id key metadata now]
-  (let [key-s (->kw key)]
-    (or (:id (query-one! db-info
-               {:select [:id]
-                :from   :gate_soul
-                :where  [:and
-                         [:= :plan_soul_id plan-soul-id]
-                         [:= :key key-s]]}))
-      (let [id (str (UUID/randomUUID))]
-        (execute! db-info
-          {:insert-into :gate_soul
-           :values [{:id           id
-                     :plan_soul_id plan-soul-id
-                     :key          key-s
-                     :metadata     (->json metadata)
-                     :created_at   now}]})
-        id))))
-
-(defn- row->intent-state
-  [row]
-  (cond-> {:id            (->uuid (:id row))
-           :soul-id       (->uuid (:intent_soul_id row))
-           :key           (->kw-back (:key row))
-           :version       (:version row)
-           :status        (->kw-back (:status row))
-           :text          (:text row)
-           :created-at    (->date (:created_at row))}
-    (:conversation_turn_state_id row) (assoc :conversation-turn-state-id (->uuid (:conversation_turn_state_id row)))
-    (:supersedes_intent_state_id row) (assoc :supersedes-intent-state-id (->uuid (:supersedes_intent_state_id row)))
-    (:created_iteration_id row)       (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
-    (:created_ref row)                (assoc :created-ref (:created_ref row))
-    (:metadata row)                   (assoc :metadata (<-json (:metadata row)))))
-
-(defn- row->plan-state
-  [row]
-  (cond-> {:id         (->uuid (:id row))
-           :soul-id    (->uuid (:plan_soul_id row))
-           :key        (->kw-back (:key row))
-           :version    (:version row)
-           :intent-state-id (->uuid (:intent_state_id row))
-           :status     (->kw-back (:status row))
-           :summary    (:summary row)
-           :created-at (->date (:created_at row))}
-    (:supersedes_plan_state_id row) (assoc :supersedes-plan-state-id (->uuid (:supersedes_plan_state_id row)))
-    (:steps row)                    (assoc :steps (<-json (:steps row)))
-    (:created_iteration_id row)     (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
-    (:created_ref row)              (assoc :created-ref (:created_ref row))
-    (:metadata row)                 (assoc :metadata (<-json (:metadata row)))))
-
-(defn- row->gate-state
-  [row]
-  (cond-> {:id            (->uuid (:id row))
-           :soul-id       (->uuid (:gate_soul_id row))
-           :key           (->kw-back (:key row))
-           :version       (:version row)
-           :plan-state-id (->uuid (:plan_state_id row))
-           :status        (->kw-back (:status row))
-           :required?     (= 1 (long (:required row)))
-           :question      (:question row)
-           :created-at    (->date (:created_at row))}
-    (:supersedes_gate_state_id row) (assoc :supersedes-gate-state-id (->uuid (:supersedes_gate_state_id row)))
-    (:created_iteration_id row)     (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
-    (:created_ref row)              (assoc :created-ref (:created_ref row))
-    (:metadata row)                 (assoc :metadata (<-json (:metadata row)))))
-
-(defn- row->attestation
-  [row refs]
-  (cond-> {:id            (->uuid (:id row))
-           :gate-state-id (->uuid (:gate_state_id row))
-           :status        (->kw-back (:status row))
-           :refs          refs
-           :created-at    (->date (:created_at row))}
-    (:summary row)              (assoc :summary (:summary row))
-    (:reason row)               (assoc :reason (:reason row))
-    (:created_iteration_id row) (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
-    (:created_ref row)          (assoc :created-ref (:created_ref row))
-    (:metadata row)             (assoc :metadata (<-json (:metadata row)))))
-
-(defn db-store-intent!
-  "Create a new turn-scoped intent_state version. `conversation-turn-id`
-   is the conversation_turn_soul id; the row is scoped to that soul's
-   latest conversation_turn_state so retries get isolated contract."
-  [db-info {:keys [conversation-turn-id key text status created-iteration-id created-ref metadata]}]
-  (when (ds db-info)
-    (let [turn-state (require-latest-turn-state db-info conversation-turn-id)
-          now        (now-ms)
-          soul-id    (find-or-create-intent-soul! db-info (:id turn-state) (or key :main) nil now)
-          version    (next-version db-info :intent_state :intent_soul_id soul-id)
-          supersedes (when (pos? version) (latest-state-id-for db-info :intent_state :intent_soul_id soul-id))
-          id         (str (UUID/randomUUID))]
-      (when supersedes
-        (execute! db-info {:update :intent_state
-                           :set    {:status "superseded"}
-                           :where  [:= :id supersedes]}))
-      (execute! db-info
-        {:insert-into :intent_state
-         :values [(cond-> {:id                         id
-                           :intent_soul_id             soul-id
-                           :version                    version
-                           :supersedes_intent_state_id supersedes
-                           :status                     (->kw (or status :active))
-                           :text                       text
-                           :metadata                   (->json metadata)
-                           :created_at                 now}
-                    created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
-                    created-ref          (assoc :created_ref created-ref))]})
-      (row->intent-state
-        (query-one! db-info
-          {:select [:ist.* :ins.key :ins.conversation_turn_state_id]
-           :from   [[:intent_state :ist]]
-           :join   [[:intent_soul :ins] [:= :ins.id :ist.intent_soul_id]]
-           :where  [:= :ist.id id]})))))
-
-(defn db-store-plan!
-  "Create a plan_state version for an intent_state."
-  [db-info {:keys [intent-state-id key summary steps status created-iteration-id created-ref metadata]}]
-  (when (ds db-info)
-    (let [intent-state (require-row db-info :intent_state intent-state-id "intent_state not found")
-          now          (now-ms)
-          soul-id      (find-or-create-plan-soul! db-info (:intent_soul_id intent-state) (or key :main) nil now)
-          version      (next-version db-info :plan_state :plan_soul_id soul-id)
-          supersedes   (when (pos? version) (latest-state-id-for db-info :plan_state :plan_soul_id soul-id))
-          id           (str (UUID/randomUUID))]
-      (when supersedes
-        (execute! db-info {:update :plan_state
-                           :set    {:status "superseded"}
-                           :where  [:= :id supersedes]}))
-      (execute! db-info
-        {:insert-into :plan_state
-         :values [(cond-> {:id                         id
-                           :plan_soul_id               soul-id
-                           :version                    version
-                           :intent_state_id            (->ref intent-state-id)
-                           :supersedes_plan_state_id   supersedes
-                           :status                     (->kw (or status :active))
-                           :summary                    summary
-                           :steps                      (->json (when steps (vec steps)))
-                           :metadata                   (->json metadata)
-                           :created_at                 now}
-                    created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
-                    created-ref          (assoc :created_ref created-ref))]})
-      (row->plan-state
-        (query-one! db-info
-          {:select [:pst.* :ps.key]
-           :from   [[:plan_state :pst]]
-           :join   [[:plan_soul :ps] [:= :ps.id :pst.plan_soul_id]]
-           :where  [:= :pst.id id]})))))
-
-(defn db-store-gate!
-  "Create a gate_state version for a plan_state. Gates are open by default;
-   close/block them with db-store-attestation! so refs exist first."
-  [db-info {:keys [plan-state-id key question required? status created-iteration-id created-ref metadata]}]
-  (when (ds db-info)
-    (let [plan-state (require-row db-info :plan_state plan-state-id "plan_state not found")
-          now        (now-ms)
-          soul-id    (find-or-create-gate-soul! db-info (:plan_soul_id plan-state) key nil now)
-          version    (next-version db-info :gate_state :gate_soul_id soul-id)
-          supersedes (when (pos? version) (latest-state-id-for db-info :gate_state :gate_soul_id soul-id))
-          id         (str (UUID/randomUUID))]
-      (when supersedes
-        (execute! db-info {:update :gate_state
-                           :set    {:status "superseded"}
-                           :where  [:= :id supersedes]}))
-      (execute! db-info
-        {:insert-into :gate_state
-         :values [(cond-> {:id                        id
-                           :gate_soul_id              soul-id
-                           :version                   version
-                           :plan_state_id             (->ref plan-state-id)
-                           :supersedes_gate_state_id  supersedes
-                           :status                    (->kw (or status :open))
-                           :required                  (if (false? required?) 0 1)
-                           :question                  question
-                           :metadata                  (->json metadata)
-                           :created_at                now}
-                    created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
-                    created-ref          (assoc :created_ref created-ref))]})
-      (row->gate-state
-        (query-one! db-info
-          {:select [:gst.* :gs.key]
-           :from   [[:gate_state :gst]]
-           :join   [[:gate_soul :gs] [:= :gs.id :gst.gate_soul_id]]
-           :where  [:= :gst.id id]})))))
-
-(defn- attestation-refs
-  [db-info attestation-id]
+(defn- gate-refs
+  [db-info gate-id]
   (->> (query! db-info
          {:select [:ref :role :metadata :created_at]
-          :from   :attestation_provenance_ref
-          :where  [:= :attestation_id (->ref attestation-id)]
+          :from   :conversation_turn_gate_ref
+          :where  [:= :gate_id (->ref gate-id)]
           :order-by [[:created_at :asc]]})
     (mapv (fn [row]
             (cond-> {:ref (:ref row)
@@ -925,149 +681,246 @@
                      :created-at (->date (:created_at row))}
               (:metadata row) (assoc :metadata (<-json (:metadata row))))))))
 
-(defn db-store-attestation!
-  "Create the unique attestation for a gate_state, insert its provenance
-   refs, then close/block the gate when status is :proven/:blocked."
-  [db-info {:keys [gate-state-id status summary reason refs created-iteration-id created-ref metadata]}]
+(defn- row->intent
+  [row]
+  (cond-> {:id            (->uuid (:id row))
+           :conversation-turn-state-id (->uuid (:conversation_turn_state_id row))
+           :status        (->kw-back (:status row))
+           :text          (:text row)
+           :created-at    (->date (:created_at row))}
+    (:supersedes_intent_id row) (assoc :supersedes-intent-id (->uuid (:supersedes_intent_id row)))
+    (:created_iteration_id row) (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
+    (:created_ref row)          (assoc :created-ref (:created_ref row))
+    (:metadata row)             (assoc :metadata (<-json (:metadata row)))))
+
+(defn- row->plan
+  [row]
+  (cond-> {:id         (->uuid (:id row))
+           :intent-id  (->uuid (:intent_id row))
+           :status     (->kw-back (:status row))
+           :summary    (:summary row)
+           :created-at (->date (:created_at row))}
+    (:supersedes_plan_id row) (assoc :supersedes-plan-id (->uuid (:supersedes_plan_id row)))
+    (:steps row)              (assoc :steps (<-json (:steps row)))
+    (:created_iteration_id row) (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
+    (:created_ref row)        (assoc :created-ref (:created_ref row))
+    (:metadata row)           (assoc :metadata (<-json (:metadata row)))))
+
+(defn- row->gate
+  ([row] (row->gate row []))
+  ([row refs]
+   (cond-> {:id         (->uuid (:id row))
+            :plan-id    (->uuid (:plan_id row))
+            :status     (->kw-back (:status row))
+            :required?  (= 1 (long (:required row)))
+            :question   (:question row)
+            :refs       refs
+            :created-at (->date (:created_at row))}
+     (:supersedes_gate_id row) (assoc :supersedes-gate-id (->uuid (:supersedes_gate_id row)))
+     (:proof_summary row)      (assoc :proof-summary (:proof_summary row))
+     (:block_reason row)       (assoc :block-reason (:block_reason row))
+     (:created_iteration_id row) (assoc :created-iteration-id (->uuid (:created_iteration_id row)))
+     (:created_ref row)        (assoc :created-ref (:created_ref row))
+     (:resolved_iteration_id row) (assoc :resolved-iteration-id (->uuid (:resolved_iteration_id row)))
+     (:resolved_ref row)       (assoc :resolved-ref (:resolved_ref row))
+     (:resolved_at row)        (assoc :resolved-at (->date (:resolved_at row)))
+     (:metadata row)           (assoc :metadata (<-json (:metadata row))))))
+
+(defn db-store-intent!
+  "Create a turn-scoped intent for the latest run/retry of a conversation turn."
+  [db-info {:keys [conversation-turn-id text status supersedes-intent-id created-iteration-id created-ref metadata]}]
   (when (ds db-info)
-    (let [status-k (or status :proven)
-          refs-v   (vec refs)]
+    (let [turn-state (require-latest-turn-state db-info conversation-turn-id)
+          now        (now-ms)
+          id         (str (UUID/randomUUID))]
+      (when supersedes-intent-id
+        (execute! db-info {:update :conversation_turn_intent
+                           :set    {:status "superseded"}
+                           :where  [:= :id (->ref supersedes-intent-id)]}))
+      (execute! db-info
+        {:insert-into :conversation_turn_intent
+         :values [(cond-> {:id                         id
+                           :conversation_turn_state_id (:id turn-state)
+                           :supersedes_intent_id       (some-> supersedes-intent-id ->ref)
+                           :status                     (->kw (or status :active))
+                           :text                       text
+                           :metadata                   (->json metadata)
+                           :created_at                 now}
+                    created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
+                    created-ref          (assoc :created_ref created-ref))]})
+      (row->intent (query-one! db-info {:select [:*]
+                                        :from   :conversation_turn_intent
+                                        :where  [:= :id id]})))))
+
+(defn db-store-plan!
+  "Create a turn-scoped plan for an intent."
+  [db-info {:keys [intent-id summary steps status supersedes-plan-id created-iteration-id created-ref metadata]}]
+  (when (ds db-info)
+    (let [_intent (require-row db-info :conversation_turn_intent intent-id "conversation_turn_intent not found")
+          now     (now-ms)
+          id      (str (UUID/randomUUID))]
+      (when supersedes-plan-id
+        (execute! db-info {:update :conversation_turn_plan
+                           :set    {:status "superseded"}
+                           :where  [:= :id (->ref supersedes-plan-id)]}))
+      (execute! db-info
+        {:insert-into :conversation_turn_plan
+         :values [(cond-> {:id                 id
+                           :intent_id          (->ref intent-id)
+                           :supersedes_plan_id (some-> supersedes-plan-id ->ref)
+                           :status             (->kw (or status :active))
+                           :summary            summary
+                           :steps              (->json (when steps (vec steps)))
+                           :metadata           (->json metadata)
+                           :created_at         now}
+                    created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
+                    created-ref          (assoc :created_ref created-ref))]})
+      (row->plan (query-one! db-info {:select [:*]
+                                      :from   :conversation_turn_plan
+                                      :where  [:= :id id]})))))
+
+(defn db-store-gate!
+  "Create a blocking-by-default turn-scoped gate for a plan. Required gates
+   start :open; use db-prove-gate! or db-block-gate! to resolve them."
+  [db-info {:keys [plan-id question required? status supersedes-gate-id created-iteration-id created-ref metadata]}]
+  (when (ds db-info)
+    (let [_plan (require-row db-info :conversation_turn_plan plan-id "conversation_turn_plan not found")
+          now   (now-ms)
+          id    (str (UUID/randomUUID))]
+      (when supersedes-gate-id
+        (execute! db-info {:update :conversation_turn_gate
+                           :set    {:status "superseded"}
+                           :where  [:= :id (->ref supersedes-gate-id)]}))
+      (execute! db-info
+        {:insert-into :conversation_turn_gate
+         :values [(cond-> {:id                 id
+                           :plan_id            (->ref plan-id)
+                           :supersedes_gate_id (some-> supersedes-gate-id ->ref)
+                           :status             (->kw (or status :open))
+                           :required           (if (false? required?) 0 1)
+                           :question           question
+                           :metadata           (->json metadata)
+                           :created_at         now}
+                    created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
+                    created-ref          (assoc :created_ref created-ref))]})
+      (row->gate (query-one! db-info {:select [:*]
+                                      :from   :conversation_turn_gate
+                                      :where  [:= :id id]})))))
+
+(defn- store-gate-refs!
+  [db-info gate-id refs now]
+  (doseq [ref refs]
+    (let [{ref-value :ref role :role ref-metadata :metadata} (if (map? ref) ref {:ref ref})]
+      (execute! db-info
+        {:insert-into :conversation_turn_gate_ref
+         :values [{:id         (str (UUID/randomUUID))
+                   :gate_id    (->ref gate-id)
+                   :ref        (str ref-value)
+                   :role       (->kw (or role :evidence))
+                   :metadata   (->json ref-metadata)
+                   :created_at now}]}))))
+
+(defn db-prove-gate!
+  "Resolve a gate as proven. Requires a proof summary and at least one
+   current-turn provenance ref. Returns the resolved gate with refs."
+  [db-info {:keys [gate-id summary refs resolved-iteration-id resolved-ref metadata]}]
+  (when (ds db-info)
+    (let [refs-v (vec refs)]
       (when (empty? refs-v)
-        (throw (ex-info "attestation requires at least one provenance ref" {:gate-state-id gate-state-id})))
+        (throw (ex-info "proven gate requires at least one evidence ref" {:gate-id gate-id})))
+      (when-not (seq (str summary))
+        (throw (ex-info "proven gate requires :summary" {:gate-id gate-id})))
       (jdbc/with-transaction [tx (ds db-info)]
         (let [tx-info (assoc db-info :datasource tx)
-              _gate   (require-row tx-info :gate_state gate-state-id "gate_state not found")
-              now     (now-ms)
-              id      (str (UUID/randomUUID))]
+              _gate   (require-row tx-info :conversation_turn_gate gate-id "conversation_turn_gate not found")
+              now     (now-ms)]
+          (store-gate-refs! tx-info gate-id refs-v now)
           (execute! tx-info
-            {:insert-into :attestation
-             :values [(cond-> {:id            id
-                               :gate_state_id (->ref gate-state-id)
-                               :status        (->kw status-k)
-                               :summary       summary
-                               :reason        reason
+            {:update :conversation_turn_gate
+             :set    (cond-> {:status        "proven"
+                               :proof_summary summary
+                               :block_reason  nil
                                :metadata      (->json metadata)
-                               :created_at    now}
-                        created-iteration-id (assoc :created_iteration_id (->ref created-iteration-id))
-                        created-ref          (assoc :created_ref created-ref))]})
-          (doseq [ref refs-v]
-            (let [{ref-value :ref role :role ref-metadata :metadata} (if (map? ref) ref {:ref ref})]
-              (execute! tx-info
-                {:insert-into :attestation_provenance_ref
-                 :values [{:id             (str (UUID/randomUUID))
-                           :attestation_id id
-                           :ref            (str ref-value)
-                           :role           (->kw (or role :evidence))
-                           :metadata       (->json ref-metadata)
-                           :created_at     now}]})))
-          (when (contains? #{:proven "proven"} status-k)
-            (execute! tx-info {:update :gate_state
-                               :set    {:status "closed"}
-                               :where  [:= :id (->ref gate-state-id)]}))
-          (when (contains? #{:blocked "blocked"} status-k)
-            (execute! tx-info {:update :gate_state
-                               :set    {:status "blocked"}
-                               :where  [:= :id (->ref gate-state-id)]}))
-          (row->attestation
-            (query-one! tx-info {:select [:*] :from :attestation :where [:= :id id]})
-            (attestation-refs tx-info id)))))))
+                               :resolved_at   now}
+                       resolved-iteration-id (assoc :resolved_iteration_id (->ref resolved-iteration-id))
+                       resolved-ref          (assoc :resolved_ref resolved-ref))
+             :where  [:= :id (->ref gate-id)]})
+          (row->gate (query-one! tx-info {:select [:*]
+                                          :from   :conversation_turn_gate
+                                          :where  [:= :id (->ref gate-id)]})
+            (gate-refs tx-info gate-id)))))))
+
+(defn db-block-gate!
+  "Resolve a gate as blocked. Requires a reason and at least one
+   current-turn provenance ref. Returns the resolved gate with refs."
+  [db-info {:keys [gate-id reason refs resolved-iteration-id resolved-ref metadata]}]
+  (when (ds db-info)
+    (let [refs-v (vec refs)]
+      (when (empty? refs-v)
+        (throw (ex-info "blocked gate requires at least one evidence ref" {:gate-id gate-id})))
+      (when-not (seq (str reason))
+        (throw (ex-info "blocked gate requires :reason" {:gate-id gate-id})))
+      (jdbc/with-transaction [tx (ds db-info)]
+        (let [tx-info (assoc db-info :datasource tx)
+              _gate   (require-row tx-info :conversation_turn_gate gate-id "conversation_turn_gate not found")
+              now     (now-ms)]
+          (store-gate-refs! tx-info gate-id refs-v now)
+          (execute! tx-info
+            {:update :conversation_turn_gate
+             :set    (cond-> {:status        "blocked"
+                               :proof_summary nil
+                               :block_reason  reason
+                               :metadata      (->json metadata)
+                               :resolved_at   now}
+                       resolved-iteration-id (assoc :resolved_iteration_id (->ref resolved-iteration-id))
+                       resolved-ref          (assoc :resolved_ref resolved-ref))
+             :where  [:= :id (->ref gate-id)]})
+          (row->gate (query-one! tx-info {:select [:*]
+                                          :from   :conversation_turn_gate
+                                          :where  [:= :id (->ref gate-id)]})
+            (gate-refs tx-info gate-id)))))))
 
 (defn db-completion-contract
-  "Return all turn-scoped intent/plan/gate/attestation state for the
-   latest state of `conversation-turn-id`. This is the read model used
-   by v/contract and v/gate-checks."
+  "Return all turn-scoped intent/plan/gate state for the latest state of
+   `conversation-turn-id`. This is the read model used by v/contract and
+   v/gate-checks. Gate proof/block refs live directly on each gate."
   [db-info conversation-turn-id]
   (if (and (ds db-info) conversation-turn-id)
     (let [turn-state (require-latest-turn-state db-info conversation-turn-id)
           turn-state-id (:id turn-state)
-          intents (mapv row->intent-state
+          intents (mapv row->intent
                     (query! db-info
-                      {:select [:ist.* :ins.key :ins.conversation_turn_state_id]
-                       :from   [[:intent_state :ist]]
-                       :join   [[:intent_soul :ins] [:= :ins.id :ist.intent_soul_id]]
-                       :where  [:= :ins.conversation_turn_state_id turn-state-id]
-                       :order-by [[:ins.created_at :asc] [:ist.version :asc]]}))
-          intent-soul-ids (set (map (comp str :soul-id) intents))
-          plans (if (seq intent-soul-ids)
-                  (mapv row->plan-state
+                      {:select [:*]
+                       :from   :conversation_turn_intent
+                       :where  [:= :conversation_turn_state_id turn-state-id]
+                       :order-by [[:created_at :asc]]}))
+          intent-ids (set (map (comp str :id) intents))
+          plans (if (seq intent-ids)
+                  (mapv row->plan
                     (query! db-info
-                      {:select [:pst.* :ps.key]
-                       :from   [[:plan_state :pst]]
-                       :join   [[:plan_soul :ps] [:= :ps.id :pst.plan_soul_id]]
-                       :where  [:in :ps.intent_soul_id intent-soul-ids]
-                       :order-by [[:ps.created_at :asc] [:pst.version :asc]]}))
+                      {:select [:*]
+                       :from   :conversation_turn_plan
+                       :where  [:in :intent_id intent-ids]
+                       :order-by [[:created_at :asc]]}))
                   [])
-          plan-soul-ids (set (map (comp str :soul-id) plans))
-          gates (if (seq plan-soul-ids)
-                  (mapv row->gate-state
+          plan-ids (set (map (comp str :id) plans))
+          gates (if (seq plan-ids)
+                  (mapv (fn [row] (row->gate row (gate-refs db-info (:id row))))
                     (query! db-info
-                      {:select [:gst.* :gs.key]
-                       :from   [[:gate_state :gst]]
-                       :join   [[:gate_soul :gs] [:= :gs.id :gst.gate_soul_id]]
-                       :where  [:in :gs.plan_soul_id plan-soul-ids]
-                       :order-by [[:gs.created_at :asc] [:gst.version :asc]]}))
-                  [])
-          gate-state-ids (set (map (comp str :id) gates))
-          attestations (if (seq gate-state-ids)
-                         (mapv (fn [row] (row->attestation row (attestation-refs db-info (:id row))))
-                           (query! db-info
-                             {:select [:*]
-                              :from   :attestation
-                              :where  [:in :gate_state_id gate-state-ids]
-                              :order-by [[:created_at :asc]]}))
-                         [])]
+                      {:select [:*]
+                       :from   :conversation_turn_gate
+                       :where  [:in :plan_id plan-ids]
+                       :order-by [[:created_at :asc]]}))
+                  [])]
       {:conversation-turn-id (->uuid (->ref conversation-turn-id))
        :conversation-turn-state-id (->uuid turn-state-id)
        :intents intents
        :plans plans
-       :gates gates
-       :attestations attestations})
+       :gates gates})
     {:conversation-turn-id conversation-turn-id
      :intents []
      :plans []
-     :gates []
-     :attestations []}))
-
-;; =============================================================================
-;; SCI var serialization helpers
-;; =============================================================================
-
-(defn- runtime-object?
-  "True when `v` is a runtime-only object (function, SCI var, SCI internal)
-   that cannot be meaningfully serialized as data. These get a :vis/ref marker
-   so the system knows to re-eval from the `expr` column to reconstruct them."
-  [v]
-  (or (fn? v)
-    (instance? clojure.lang.Var v)
-    (and (some? v) (str/starts-with? (.getName (class v)) "sci."))))
-
-(defn- freeze-safe
-  "Prepare `v` for nippy serialization.
-
-   Rules:
-   - Realized collections (vectors, sets, maps, lists) → walk recursively, freeze.
-   - Lazy seqs → `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
-     form is the source code that produces it, not a materialized snapshot.
-     Re-eval from :expr to reconstruct.
-   - Functions, SCI vars → `{:vis/ref :expr}`. Same reason.
-   - Plain scalars (strings, numbers, keywords, etc.) → pass through."
-  ([v] (freeze-safe v 8))
-  ([v depth]
-   (cond
-     (nil? v)               nil
-     (zero? depth)          {:vis/ref :depth-exceeded}
-     (runtime-object? v)    {:vis/ref :expr}
-     ;; Lazy seq — not yet realized. Keep it unrealized and emit a
-     ;; ref instead so freezing stays side-effect-free.
-     (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
-     ;; Realized collections — walk recursively
-     (map? v)    (persistent! (reduce-kv (fn [m k val] (assoc! m k (freeze-safe val (dec depth)))) (transient {}) v))
-     (vector? v) (mapv #(freeze-safe % (dec depth)) v)
-     (set? v)    (into #{} (map #(freeze-safe % (dec depth))) v)
-     (list? v)   (doall (map #(freeze-safe % (dec depth)) v))
-     ;; Other seqs (cons, range, iterate, etc.) — also lazy by nature
-     (seq? v)    {:vis/ref :expr}
-     :else       v)))
+     :gates []}))
 
 ;; =============================================================================
 ;; Iteration — iteration table

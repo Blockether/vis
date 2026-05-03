@@ -256,91 +256,6 @@
   ^String [^String source]
   (parse-diagnose/try-quote-rebalance source edamame-parses?))
 
-(def ^:private glued-numeric-option-keys
-  "Known option keys LLMs commonly glue to numeric values, producing
-   invalid odd-entry maps such as `{:limit200}` instead of
-   `{:limit 200}`. Keep this whitelist narrow so real data keywords
-   like `:h1` remain data, not silently rewritten."
-  #{"char-limit"
-    "context-lines"
-    "limit"
-    "max-bytes"
-    "max-lines"
-    "max-output-chars"
-    "offset"
-    "timeout-ms"})
-
-(def ^:private keyword-token-delimiters
-  #{\space \tab \newline \return \, \( \) \[ \] \{ \} \" \; \' \` \~ \^ \@})
-
-(defn- split-glued-numeric-option-token
-  [token]
-  (some (fn [k]
-          (let [suffix (subs token (count k))]
-            (when (and (str/starts-with? token k)
-                    (seq suffix)
-                    (every? #(Character/isDigit ^char %) suffix))
-              (str k " " suffix))))
-    (sort-by count > glued-numeric-option-keys)))
-
-(defn glued-numeric-option-rebalance
-  "Repair LLM option-map typos like `{:limit200}` / `{:max-lines260}`
-   to `{:limit 200}` / `{:max-lines 260}` when doing so yields valid
-   Clojure. The scanner intentionally skips strings and line comments;
-   the whitelist in `glued-numeric-option-keys` keeps data keywords
-   from being rewritten by accident. Returns nil when no valid repair
-   is available."
-  [source]
-  (let [s (str source)
-        n (count s)
-        out (StringBuilder.)
-        changed? (volatile! false)]
-    (loop [i 0 in-string? false escaped? false in-comment? false]
-      (if (>= i n)
-        (let [candidate (str out)]
-          (when (and @changed? (edamame-parses? candidate))
-            candidate))
-        (let [ch (.charAt s i)]
-          (cond
-            in-comment?
-            (do (.append out ch)
-              (recur (inc i) false false (not= ch \newline)))
-
-            in-string?
-            (do (.append out ch)
-              (cond
-                escaped?  (recur (inc i) true false false)
-                (= ch \\) (recur (inc i) true true false)
-                (= ch \") (recur (inc i) false false false)
-                :else     (recur (inc i) true false false)))
-
-            (= ch \;)
-            (do (.append out ch)
-              (recur (inc i) false false true))
-
-            (= ch \")
-            (do (.append out ch)
-              (recur (inc i) true false false))
-
-            (= ch \:)
-            (let [j (loop [j (inc i)]
-                      (if (or (>= j n)
-                            (contains? keyword-token-delimiters (.charAt s j)))
-                        j
-                        (recur (inc j))))
-                  token (subs s (inc i) j)]
-              (if-let [replacement (split-glued-numeric-option-token token)]
-                (do (vreset! changed? true)
-                  (.append out \:)
-                  (.append out replacement)
-                  (recur j false false false))
-                (do (.append out ch)
-                  (recur (inc i) false false false))))
-
-            :else
-            (do (.append out ch)
-              (recur (inc i) false false false))))))))
-
 (defn parinfer-rebalance
   "First-line repair for malformed Clojure source. Calls parinfer's
    indent-mode auto-balancer (a battle-tested 1100-line algo from
@@ -385,9 +300,7 @@
         on success every form gets `:repaired? true` so the channel
         can see the repair happened.
      2. quote rebalance for unbalanced string delimiters.
-     3. glued numeric option repair for LLM typos like
-        `{:limit200}` / `{:max-lines260}`.
-     4. on final failure return `[nil parse-error]` and let the
+     3. on final failure return `[nil parse-error]` and let the
         caller (`execute-code`) dispatch to the extension rescue
         chain (`try-extension-parse-rescue`).
 
@@ -857,22 +770,19 @@
 (defn- active-plan-states
   [contract]
   (let [active-intent-ids (->> (:intents contract)
-                            latest-by-soul
                             (filter #(= :active (:status %)))
                             (map :id)
                             set)]
     (->> (:plans contract)
-      latest-by-soul
       (filter #(and (= :active (:status %))
-                 (contains? active-intent-ids (:intent-state-id %))))
+                 (contains? active-intent-ids (:intent-id %))))
       vec)))
 
 (defn- active-gate-states
   [contract]
   (let [active-plan-ids (set (map :id (active-plan-states contract)))]
     (->> (:gates contract)
-      latest-by-soul
-      (filter #(contains? active-plan-ids (:plan-state-id %)))
+      (filter #(contains? active-plan-ids (:plan-id %)))
       vec)))
 
 (defn- block-ref
@@ -913,10 +823,9 @@
 
 (defn- gate-guard-violations
   [contract ref-set]
-  (let [has-contract? (some seq (map contract [:intents :plans :gates :attestations]))
+  (let [has-contract? (some seq (map contract [:intents :plans :gates]))
         gates           (active-gate-states contract)
-        by-gate         (group-by :gate-state-id (:attestations contract))
-        active-intents  (filter #(= :active (:status %)) (latest-by-soul (:intents contract)))
+        active-intents  (filter #(= :active (:status %)) (:intents contract))
         active-plans    (active-plan-states contract)]
     (when has-contract?
       (vec
@@ -927,34 +836,23 @@
             [{:type :missing-active-plan}])
           (mapcat
             (fn [gate]
-              (let [atts (get by-gate (:id gate))
-                    att  (first atts)
-                    refs (mapv :ref (:refs att))]
+              (let [refs (mapv :ref (:refs gate))]
                 (cond-> []
                   (and (:required? gate) (= :open (:status gate)))
-                  (conj {:type :required-gate-open :gate-key (:key gate)})
+                  (conj {:type :required-gate-open :gate-id (:id gate)})
 
-                  (and (= :closed (:status gate)) (not= 1 (count atts)))
-                  (conj {:type :closed-gate-attestation-count :gate-key (:key gate) :count (count atts)})
+                  (and (= :proven (:status gate)) (str/blank? (:proof-summary gate)))
+                  (conj {:type :proven-gate-missing-summary :gate-id (:id gate)})
 
-                  (and (= :closed (:status gate)) (= 1 (count atts)) (not= :proven (:status att)))
-                  (conj {:type :closed-gate-attestation-not-proven :gate-key (:key gate) :attestation-status (:status att)})
+                  (and (= :blocked (:status gate)) (str/blank? (:block-reason gate)))
+                  (conj {:type :blocked-gate-missing-reason :gate-id (:id gate)})
 
-                  (and (= :blocked (:status gate)) (not= 1 (count atts)))
-                  (conj {:type :blocked-gate-attestation-count :gate-key (:key gate) :count (count atts)})
-
-                  (and (= :blocked (:status gate)) (= 1 (count atts)) (not= :blocked (:status att)))
-                  (conj {:type :blocked-gate-attestation-not-blocked :gate-key (:key gate) :attestation-status (:status att)})
-
-                  (and (= :blocked (:status gate)) (= 1 (count atts)) (str/blank? (:reason att)))
-                  (conj {:type :blocked-gate-missing-reason :gate-key (:key gate)})
-
-                  (and (contains? #{:closed :blocked} (:status gate)) (empty? refs))
-                  (conj {:type :attestation-missing-refs :gate-key (:key gate)})
+                  (and (contains? #{:proven :blocked} (:status gate)) (empty? refs))
+                  (conj {:type :resolved-gate-missing-refs :gate-id (:id gate)})
 
                   (and (seq refs) (seq (remove ref-set refs)))
-                  (conj {:type :attestation-ref-missing-from-current-turn-provenance
-                         :gate-key (:key gate)
+                  (conj {:type :gate-ref-missing-from-current-turn-provenance
+                         :gate-id (:id gate)
                          :missing-refs (vec (remove ref-set refs))}))))
             gates))))))
 
@@ -972,8 +870,8 @@
             violations (when contract (gate-guard-violations contract ref-set))]
         (when (seq violations)
           (str "Final answer rejected: current-turn gates are not satisfied. "
-            "Run `(v/gate-checks)` and close/block every required gate with "
-            "exactly one attestation whose refs exist in this turn. "
+            "Run `(v/gate-checks)` and prove/block every required gate with "
+            "evidence refs that exist in this turn. "
             "Violations: " (pr-str violations)))))))
 
 (defn- eval-provenance
@@ -1357,15 +1255,37 @@
              (when recv (str " (" recv ")"))
              ": " body))))
 
+(defn- format-block-error
+  "Render one failed code block from an iteration trace. These are not
+   provider failures, but they are exactly the feedback the model needs
+   after repeated parse/eval failures."
+  [iteration block]
+  (let [pos  (or (:idx block) (:id block))
+        code (some-> (:code block) str str/trim)
+        err  (some-> (:error block) str)]
+    (str "- Iteration " (inc (long (or iteration 0)))
+      (when (some? pos) (str ", form " (inc (long pos))))
+      " failed: " err
+      (when-not (str/blank? code)
+        (str "\n  code: `" (truncate (str/replace code #"\s+" " ") 240) "`")))))
+
 (defn- recent-errors-block
-  "Render the last `n` trace `:error` entries as a Markdown block
-   (\"**Recent provider errors:**\\n\\n- …\"). Returns nil when the
-   trace carries no errors so callers can `(when …)` without churn."
+  "Render recent provider-level and block-level errors as a Markdown
+   feedback block. Returns nil when the trace carries no errors so
+   callers can `(when …)` without churn."
   [trace n]
-  (let [errs (->> trace reverse (keep :error) (take n))]
+  (let [errs (->> trace
+               reverse
+               (mapcat (fn [{:keys [iteration error blocks]}]
+                         (concat
+                           (when error [(format-iteration-error error)])
+                           (keep #(when (:error %)
+                                    (format-block-error iteration %))
+                             blocks))))
+               (take n))]
     (when (seq errs)
-      (str "**Recent provider errors:**\n\n"
-        (str/join "\n" (map format-iteration-error errs))
+      (str "**Recent errors:**\n\n"
+        (str/join "\n" errs)
         "\n\n"))))
 
 ;; -----------------------------------------------------------------------------

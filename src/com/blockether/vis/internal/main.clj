@@ -509,20 +509,96 @@
               (recur (rest tokens) tok (conj lines line)))
             (cond-> lines (seq line) (conj line))))))))
 
+(def ^:private fallback-terminal-width 120)
+
+(defn- terminal-env [k]
+  (System/getenv k))
+
+(defn- parse-positive-long [s]
+  (try
+    (let [n (some-> s str/trim parse-long)]
+      (when (and n (pos? n)) n))
+    (catch Throwable _ nil)))
+
+(defn- shell-first-line
+  "Run a tiny terminal-size probe and return its first stdout line.
+   Kept private and timeout-bounded so table rendering never hangs CLI startup."
+  [cmd]
+  (try
+    (let [process (-> (ProcessBuilder. ["sh" "-c" cmd])
+                    (.redirectErrorStream true)
+                    (.start))]
+      (if (.waitFor process 250 java.util.concurrent.TimeUnit/MILLISECONDS)
+        (some-> process .getInputStream slurp str/split-lines first)
+        (do
+          (.destroyForcibly process)
+          nil)))
+    (catch Throwable _ nil)))
+
+(defn- stty-terminal-width []
+  (when-let [line (shell-first-line "stty size < /dev/tty")]
+    (some-> (re-find #"^\s*\d+\s+(\d+)\s*$" line) second parse-positive-long)))
+
+(defn- tput-terminal-width []
+  (parse-positive-long (shell-first-line "tput cols")))
+
+(defn- terminal-width
+  "Best-effort terminal width for CLI tables. zsh/bash often keep COLUMNS
+   as a shell variable instead of exporting it, so also query the controlling
+   terminal via stty. Falls back to 120 for non-interactive runs."
+  []
+  (or (parse-positive-long (terminal-env "COLUMNS"))
+    (stty-terminal-width)
+    (tput-terminal-width)
+    fallback-terminal-width))
+
+(defn- table-width
+  "Visible width of a rendered table with `cols`: outer padding + cells + separators."
+  [cols]
+  (+ 2
+    (reduce + (map :width cols))
+    (* 3 (max 0 (dec (count cols))))))
+
+(defn- expand-table-cols
+  "Grow table columns to `target-width`. Columns marked `:grow? true`
+   share extra width; otherwise the final column grows. This keeps all
+   CLI tables full-width while preserving fixed ID/count/date columns."
+  [cols target-width]
+  (let [cols (vec cols)
+        extra (max 0 (- (long target-width) (table-width cols)))]
+    (if (zero? extra)
+      cols
+      (let [grow-idxs (let [marked (keep-indexed (fn [idx col]
+                                                   (when (:grow? col) idx))
+                                     cols)]
+                        (if (seq marked) (vec marked) [(dec (count cols))]))
+            n         (count grow-idxs)
+            base      (quot extra n)
+            remainder (rem extra n)
+            additions (into {}
+                        (map-indexed (fn [i idx]
+                                       [idx (+ base (if (< i remainder) 1 0))]))
+                        grow-idxs)]
+        (mapv (fn [idx col]
+                (update col :width + (get additions idx 0)))
+          (range) cols)))))
+
 (defn- print-table!
   "Print a formatted table to stdout!.
    `cols` is `[{:key :k :label \"L\" :width N :align :left|:right}]`.
    Cells are word-wrapped (not truncated) so long descriptions stay
-   visible across multiple physical lines."
+   visible across multiple physical lines. Tables expand to terminal
+   width by growing `:grow?` columns (or the final column by default)."
   [cols rows]
-  (let [align-line (fn [s {:keys [width align]}]
+  (let [cols       (expand-table-cols cols (terminal-width))
+        align-line (fn [s {:keys [width align]}]
                      (if (= align :right)
                        (commandline/pad-left s width)
                        (commandline/pad-right s width)))
-        sep    (str "─" (str/join "─┼─"
-                          (map #(apply str (repeat (:width %) \─)) cols)) "─")
-        header (str " " (str/join " │ "
-                          (map #(commandline/pad-right (:label %) (:width %)) cols)) " ")]
+        sep        (str "─" (str/join "─┼─"
+                              (map #(apply str (repeat (:width %) \─)) cols)) "─")
+        header     (str " " (str/join " │ "
+                              (map #(commandline/pad-right (:label %) (:width %)) cols)) " ")]
     (stdout! header)
     (stdout! sep)
     (doseq [row rows]
@@ -646,6 +722,8 @@
 ;;; ── `vis conversations` ─────────────────────────────────────────────────
 
 (def ^:private known-channels #{"tui" "telegram" "cli"})
+(def ^:private known-channel-filters (conj known-channels "all"))
+(def ^:private default-conversation-channels [:tui :telegram :cli])
 
 (defn- resolve-conversation-by-prefix
   "Resolve a user-supplied conversation reference (full UUID or an
@@ -696,33 +774,62 @@
             (System/exit 1)))
         (shutdown-agents)))))
 
-(defn- cli-list-conversations!
-  "List persisted conversations for one channel. `channel-input` may
-   be nil (defaults to `tui`)."
+(defn- conversation-sort-key
+  [{:keys [last-turn-at created-at id]}]
+  [(- (long (or (some-> last-turn-at inst-ms) 0)))
+   (- (long (or (some-> created-at inst-ms) 0)))
+   (str id)])
+
+(defn- conversation-row
+  [d c]
+  (let [turns        (or (persistance/db-list-conversation-turns d (:id c)) [])
+        last-turn    (last turns)
+        channel-name (name (or (:channel c) :unknown))]
+    {:id           (str (:id c))
+     :title        (or (:title c) "—")
+     :last-channel channel-name
+     :turns        (count turns)
+     :last-turn-at (:created-at last-turn)
+     :last-turn    (or (some-> last-turn :created-at fmt/format-date) "—")
+     :created-at   (:created-at c)
+     :created      (or (fmt/format-date (:created-at c)) "—")}))
+
+(defn- conversation-rows
+  [d convs]
+  (->> convs
+    (mapv #(conversation-row d %))
+    (sort-by conversation-sort-key)
+    vec))
+
+(defn- conversations-for-listing
   [channel-input]
-  (let [channel (or channel-input "tui")
-        ch-kw   (keyword channel)
-        convs   (lp/by-channel ch-kw)
-        d       (lp/db-info)]
+  (let [channels (if channel-input [(keyword channel-input)] default-conversation-channels)]
+    (mapcat lp/by-channel channels)))
+
+(defn- cli-list-conversations!
+  "List persisted conversations. `channel-input` filters to one channel;
+   nil lists every known channel. Rows sort by most recent turn first,
+   with empty conversations after conversations that have turns."
+  [channel-input]
+  (let [channel-label (or channel-input "all")
+        convs         (conversations-for-listing channel-input)
+        d             (lp/db-info)]
     (if (empty? convs)
-      (stdout! (str "No " channel " conversations found."))
-      (let [rows (mapv (fn [c]
-                         (let [queries (persistance/db-list-conversation-turns d (:id c))
-                               turns   (count queries)
-                               last-q  (last queries)]
-                           {:id        (str (:id c))
-                            :title     (or (:title c) "—")
-                            :turns     turns
-                            :last-turn (or (some-> last-q :created-at fmt/format-date) "—")
-                            :created   (or (fmt/format-date (:created-at c)) "—")}))
-                   convs)]
-        (stdout! (str "\n  " (str/upper-case channel) " Conversations\n"))
+      (stdout! (if channel-input
+                 (str "No " channel-input " conversations found.")
+                 "No conversations found."))
+      (let [rows (conversation-rows d convs)]
+        (stdout! (str "\n  " (if channel-input
+                               (str/upper-case channel-label)
+                               "All")
+                   " Conversations\n"))
         (print-table!
-          [{:key :id        :label "ID"        :width 36 :align :left}
-           {:key :title     :label "Title"     :width 24 :align :left}
-           {:key :turns     :label "Turns"     :width 5  :align :right}
-           {:key :last-turn :label "Last Turn" :width 16 :align :left}
-           {:key :created   :label "Created"   :width 16 :align :left}]
+          [{:key :id           :label "ID"           :width 36 :align :left}
+           {:key :title        :label "Title"        :width 24 :align :left :grow? true}
+           {:key :last-channel :label "Last Channel" :width 12 :align :left}
+           {:key :turns        :label "Turns"        :width 5  :align :right}
+           {:key :last-turn    :label "Last Turn"    :width 16 :align :left}
+           {:key :created      :label "Created"      :width 16 :align :left}]
           rows)
         (stdout! (str "\n  " (count rows) " conversation(s)\n"))
         (stdout! "  Resume with: vis channels tui --conversation-id <ID>  (full or short)")
@@ -734,7 +841,7 @@
   "`vis conversations` handler.
 
    Two modes:
-   - List   --  `vis conversations [tui|telegram|cli]`
+   - List   --  `vis conversations [all|tui|telegram|cli]`
    - Fork   --  `vis conversations --fork <CONVERSATION-ID> [--title TITLE]`
 
    The `parsed` map carries the spec'd flags; the bare positional
@@ -750,12 +857,12 @@
       (cli-fork-conversation! fork-target title)
 
       :else
-      (let [ch (when channel
+      (let [ch (when (and channel (not= "all" channel))
                  (when (contains? known-channels channel) channel))]
-        (when (and channel (nil? ch))
+        (when (and channel (not (contains? known-channel-filters channel)))
           (stdout! (str "Unknown channel: " channel
-                     ". Expected one of: " (str/join ", " (sort known-channels))
-                     ". Defaulting to tui."))
+                     ". Expected one of: " (str/join ", " (sort known-channel-filters))
+                     ". Showing all conversations."))
           (stdout! ""))
         (cli-list-conversations! ch)))))
 
@@ -1049,23 +1156,14 @@
    {:key :author    :label "Author"      :width 12 :align :left}
    {:key :owner     :label "Owner"       :width  8 :align :left}
    {:key :license   :label "License"     :width 10 :align :left}
-   {:key :doc       :label "Description" :width 36 :align :left}
+   {:key :doc       :label "Description" :width 36 :align :left :grow? true}
    {:key :version   :label "Version"     :width 10 :align :left}])
-
-(defn- extensions-table-width
-  "Visible width of the rendered table (sum of column widths +
-   separators + leading/trailing pad), used to size group-section
-   rules so they line up with the header rule."
-  [cols]
-  (+ 2                                                  ; outer pads
-    (reduce + (map :width cols))
-    (* 3 (dec (count cols)))))                          ; " │ " between cols
 
 (defn- cli-extensions! [_parsed _residual]
   (config/init-cli!)
   (let [exts  (list-extensions)
-        cols  extensions-table-cols
-        width (extensions-table-width cols)]
+        cols  (expand-table-cols extensions-table-cols (terminal-width))
+        width (table-width cols)]
     (if (empty? exts)
       (stdout! "No extensions registered.")
       (do (stdout! "\n  Extensions\n")
@@ -1109,9 +1207,9 @@
 
          {:cmd/name  "conversations"
           :cmd/doc   "List conversations stored on disk, or fork one."
-          :cmd/usage "vis conversations [tui|telegram|cli] [--fork ID [--title TITLE]]"
+          :cmd/usage "vis conversations [all|tui|telegram|cli] [--fork ID [--title TITLE]]"
           :cmd/args  [{:name "channel" :kind :positional :type :string
-                       :doc  "Channel to list (tui|telegram|cli; default tui)."}
+                       :doc  "Optional channel filter (all|tui|telegram|cli; default all)."}
                       {:name "fork"  :kind :flag :type :string
                        :doc  "Fork the conversation with the given id (full UUID or unambiguous prefix)."}
                       {:name "title" :kind :flag :type :string

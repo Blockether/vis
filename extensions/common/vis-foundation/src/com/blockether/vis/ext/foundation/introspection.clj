@@ -941,39 +941,25 @@
 (defn- current-turn-contract
   [env]
   (safe-call #(vis/db-completion-contract (:db-info env) (current-conversation-turn-id env))
-    {:intents [] :plans [] :gates [] :attestations []}))
-
-(defn- latest-by-soul
-  [xs]
-  (->> xs
-    (group-by :soul-id)
-    vals
-    (mapv #(last (sort-by :version %)))))
+    {:intents [] :plans [] :gates []}))
 
 (defn- current-plan-states
   [contract]
   (let [active-intent-ids (->> (:intents contract)
-                            latest-by-soul
                             (filter #(= :active (:status %)))
                             (map :id)
                             set)]
     (->> (:plans contract)
-      latest-by-soul
       (filter #(and (= :active (:status %))
-                 (contains? active-intent-ids (:intent-state-id %))))
+                 (contains? active-intent-ids (:intent-id %))))
       vec)))
 
 (defn- current-gate-states
   [contract]
   (let [active-plan-ids (set (map :id (current-plan-states contract)))]
     (->> (:gates contract)
-      latest-by-soul
-      (filter #(contains? active-plan-ids (:plan-state-id %)))
+      (filter #(contains? active-plan-ids (:plan-id %)))
       vec)))
-
-(defn- attestations-by-gate
-  [contract]
-  (group-by :gate-state-id (:attestations contract)))
 
 (defn- current-turn-provenance-timeline
   [env]
@@ -982,28 +968,24 @@
       (filter #(same-uuid? (:turn-id %) turn-id))
       vec)))
 
-(defn- resolve-current-gate-state-id
+(defn- resolve-current-gate-id
   [contract gate]
   (cond
     (uuid? gate) gate
-    (string? gate) (or (some #(when (= (str (:id %)) gate) (:id %)) (:gates contract))
-                     (some #(when (= (:key %) (keyword gate)) (:id %)) (current-gate-states contract)))
-    (keyword? gate) (some #(when (= (:key %) gate) (:id %)) (current-gate-states contract))
-    (map? gate) (or (:gate-state-id gate) (:id gate))
+    (string? gate) (some #(when (= (str (:id %)) gate) (:id %)) (:gates contract))
+    (map? gate) (:id gate)
     :else gate))
 
 (defn- foundation-contract
-  "Read the current completion contract projection.
-
-   This is intentionally a projection, not a separate domain object:
-   the domain objects are Intent, Plan, Gate, Attestation, and
-   provenance refs."
+  "Read the current completion contract projection. This is a read
+   projection, not a separate domain object: the domain rows are Intent,
+   Plan, Gate, and gate evidence refs."
   ([env]
    (current-turn-contract env))
   ([env conversation-turn-id]
    (safe-call #(vis/db-completion-contract (:db-info env) conversation-turn-id)
      {:conversation-turn-id conversation-turn-id
-      :intents [] :plans [] :gates [] :attestations []})))
+      :intents [] :plans [] :gates []})))
 
 (defn- foundation-intent!
   [env opts]
@@ -1019,39 +1001,48 @@
   [env opts]
   (vis/db-store-gate! (:db-info env) opts))
 
-(defn- foundation-attest!
+(defn- foundation-prove-gate!
   ([env opts]
    (let [contract (current-turn-contract env)
-         gate-id    (or (:gate-state-id opts)
-                      (resolve-current-gate-state-id contract (:gate opts))
-                      (resolve-current-gate-state-id contract (:gate-key opts)))]
-     (vis/db-store-attestation! (:db-info env)
+         gate-id  (or (:gate-id opts)
+                    (resolve-current-gate-id contract (:gate opts)))]
+     (vis/db-prove-gate! (:db-info env)
        (-> opts
-         (dissoc :gate :gate-key)
-         (assoc :gate-state-id gate-id)))))
+         (dissoc :gate)
+         (assoc :gate-id gate-id)))))
   ([env gate opts]
-   (foundation-attest! env (assoc opts :gate gate))))
+   (foundation-prove-gate! env (assoc opts :gate gate))))
 
 (defn- foundation-block-gate!
   ([env opts]
-   (foundation-attest! env (assoc opts :status :blocked)))
+   (let [contract (current-turn-contract env)
+         gate-id  (or (:gate-id opts)
+                    (resolve-current-gate-id contract (:gate opts)))]
+     (vis/db-block-gate! (:db-info env)
+       (-> opts
+         (dissoc :gate)
+         (assoc :gate-id gate-id)))))
   ([env gate opts]
-   (foundation-attest! env gate (assoc opts :status :blocked))))
+   (foundation-block-gate! env (assoc opts :gate gate))))
+
+(declare foundation-gate-checks gate-report-for-contract)
 
 (defn- foundation-gates
+  "Aggregate current gates, gate checks, and Markdown report in one
+   model-facing read surface. Private helpers stay split for locality;
+   the public interface stays one call."
   [env]
-  (current-gate-states (current-turn-contract env)))
-
-(defn- foundation-attestations
-  [env]
-  (:attestations (current-turn-contract env)))
+  (let [contract (current-turn-contract env)
+        checks   (foundation-gate-checks env)]
+    (assoc checks
+      :gates (current-gate-states contract)
+      :report (gate-report-for-contract contract checks))))
 
 (defn- gate-check-violations
   [contract timeline]
   (let [gates      (current-gate-states contract)
-        by-gate    (attestations-by-gate contract)
         ref-set    (set (keep :ref timeline))
-        active-intents (filter #(= :active (:status %)) (latest-by-soul (:intents contract)))
+        active-intents (filter #(= :active (:status %)) (:intents contract))
         active-plans   (current-plan-states contract)]
     (vec
       (concat
@@ -1061,35 +1052,23 @@
           [{:type :missing-active-plan}])
         (mapcat
           (fn [gate]
-            (let [atts (get by-gate (:id gate))
-                  att  (first atts)
-                  refs (mapv :ref (:refs att))]
+            (let [refs (mapv :ref (:refs gate))]
               (cond-> []
                 (and (:required? gate) (= :open (:status gate)))
                 (conj {:type :required-gate-open :gate gate})
 
-                (and (= :closed (:status gate)) (not= 1 (count atts)))
-                (conj {:type :closed-gate-attestation-count :gate gate :count (count atts)})
+                (and (= :proven (:status gate)) (str/blank? (:proof-summary gate)))
+                (conj {:type :proven-gate-missing-summary :gate gate})
 
-                (and (= :closed (:status gate)) (= 1 (count atts)) (not= :proven (:status att)))
-                (conj {:type :closed-gate-attestation-not-proven :gate gate :attestation att})
+                (and (= :blocked (:status gate)) (str/blank? (:block-reason gate)))
+                (conj {:type :blocked-gate-missing-reason :gate gate})
 
-                (and (= :blocked (:status gate)) (not= 1 (count atts)))
-                (conj {:type :blocked-gate-attestation-count :gate gate :count (count atts)})
-
-                (and (= :blocked (:status gate)) (= 1 (count atts)) (not= :blocked (:status att)))
-                (conj {:type :blocked-gate-attestation-not-blocked :gate gate :attestation att})
-
-                (and (= :blocked (:status gate)) (= 1 (count atts)) (str/blank? (:reason att)))
-                (conj {:type :blocked-gate-missing-reason :gate gate :attestation att})
-
-                (and (contains? #{:closed :blocked} (:status gate)) (empty? refs))
-                (conj {:type :attestation-missing-refs :gate gate :attestation att})
+                (and (contains? #{:proven :blocked} (:status gate)) (empty? refs))
+                (conj {:type :resolved-gate-missing-refs :gate gate})
 
                 (and (seq refs) (seq (remove ref-set refs)))
-                (conj {:type :attestation-ref-missing-from-current-turn-provenance
+                (conj {:type :gate-ref-missing-from-current-turn-provenance
                        :gate gate
-                       :attestation att
                        :missing-refs (vec (remove ref-set refs))}))))
           gates)))))
 
@@ -1103,37 +1082,40 @@
      :conversation-turn-id (current-conversation-turn-id env)
      :conversation-turn-state-id (:conversation-turn-state-id contract)
      :ok? (empty? violations)
-     :checked {:active-intents (count (filter #(= :active (:status %)) (latest-by-soul (:intents contract))))
+     :checked {:active-intents (count (filter #(= :active (:status %)) (:intents contract)))
                :active-plans   (count (current-plan-states contract))
                :gates          (count gates)
                :required-gates (count (filter :required? gates))
-               :attestations   (count (:attestations contract))
                :current-turn-provenance-events (count timeline)}
      :violations violations}))
 
+(defn- gate-label
+  [gate]
+  (str (subs (str (:id gate)) 0 8)))
+
 (defn- gate-report-for-contract
   [contract checks]
-  (let [gates   (current-gate-states contract)
-        by-gate (attestations-by-gate contract)]
+  (let [gates (current-gate-states contract)]
     (str "## Gates\n\n"
       "- Scope: current conversation turn\n"
       "- Status: " (if (:ok? checks) "ok" (str "failed " (count (:violations checks)) " check(s)")) "\n\n"
       (if (seq gates)
         (str/join "\n"
           (map (fn [gate]
-                 (let [att (first (get by-gate (:id gate)))]
-                   (str "- `" (name (:key gate)) "` " (name (:status gate))
-                     " — " (:question gate)
-                     (when att
-                       (str "\n  - attestation: " (name (:status att))
-                         (when-let [summary (:summary att)] (str " — " summary))
-                         (when-let [reason (:reason att)] (str " — " reason))
-                         "\n  - refs: " (str/join ", " (map :ref (:refs att))))))))
+                 (str "- `" (gate-label gate) "` " (name (:status gate))
+                   (when (:required? gate) " required")
+                   " — " (:question gate)
+                   (when-let [summary (:proof-summary gate)]
+                     (str "\n  - proof: " summary))
+                   (when-let [reason (:block-reason gate)]
+                     (str "\n  - blocker: " reason))
+                   (when (seq (:refs gate))
+                     (str "\n  - refs: " (str/join ", " (map :ref (:refs gate)))))))
             gates))
         "_No current gates._")
       (when (seq (:violations checks))
         (str "\n\n### Violations\n"
-          (str/join "\n" (map #(str "- " (pr-str (dissoc % :gate :attestation))) (:violations checks)))))
+          (str/join "\n" (map #(str "- " (pr-str (dissoc % :gate))) (:violations checks)))))
       "\n")))
 
 (defn- foundation-gate-report
@@ -1159,7 +1141,6 @@
                       {:ok? (empty? violations)
                        :violations violations
                        :checked {:gates (count (current-gate-states contract))
-                                 :attestations (count (:attestations contract))
                                  :current-turn-provenance-events (count timeline)}})]
      (str "# Completion Contract\n\n"
        "- Turn: `" conversation-turn-id "`\n"
@@ -1186,7 +1167,7 @@
                       "- Status: " (name (or (:status turn) :unknown)) "\n"
                       "- Request: " (preview (:user-request turn) 180) "\n"
                       "- Contract: " (if (seq gates)
-                                       (str (count gates) " gate(s), " (count (:attestations contract)) " attestation(s)")
+                                       (str (count gates) " gate(s)")
                                        "none") "\n")))
              turns))
          "_No turns found._\n")
@@ -1451,7 +1432,7 @@
 
 (def contract-symbol
   (vis/symbol 'contract foundation-contract
-    {:doc       "Current turn completion contract projection: intents, plans, gates, attestations."
+    {:doc       "Current turn completion contract projection: intents, plans, gates, and gate refs."
      :arglists  '([] [conversation-turn-id])
      :examples  ["(v/contract)"
                  "(:gates (v/contract))"]
@@ -1459,75 +1440,51 @@
 
 (def intent!-symbol
   (vis/symbol 'intent! foundation-intent!
-    {:doc       "Persist a new versioned intent for the current conversation turn."
-     :arglists  '([{:keys [key text status created-ref metadata]}])
-     :examples  ["(def intent (v/intent! {:key :main :text TURN_USER_REQUEST :created-ref \"i1.1\"}))"]
+    {:doc       "Persist a current-turn intent."
+     :arglists  '([{:keys [text status supersedes-intent-id created-ref metadata]}])
+     :examples  ["(def intent (v/intent! {:text TURN_USER_REQUEST}))"]
      :before-fn inject-environment}))
 
 (def plan!-symbol
   (vis/symbol 'plan! foundation-plan!
-    {:doc       "Persist a new versioned plan for an intent_state."
-     :arglists  '([{:keys [intent-state-id key summary steps status created-ref metadata]}])
-     :examples  ["(def plan (v/plan! {:intent-state-id (:id intent) :key :main :summary \"Inspect, change, verify.\" :steps [{:do :inspect}]}))"]
+    {:doc       "Persist a current-turn plan for an intent."
+     :arglists  '([{:keys [intent-id summary steps status supersedes-plan-id created-ref metadata]}])
+     :examples  ["(def plan (v/plan! {:intent-id (:id intent) :summary \"Inspect, change, verify.\" :steps [{:do :inspect}]}))"]
      :before-fn inject-environment}))
 
 (def gate!-symbol
   (vis/symbol 'gate! foundation-gate!
-    {:doc       "Persist a new versioned gate for a plan_state. Gates are open until attested or blocked."
-     :arglists  '([{:keys [plan-state-id key question required? status created-ref metadata]}])
-     :examples  ["(def verify-gate (v/gate! {:plan-state-id (:id plan) :key :verify :question \"Did verification pass?\"}))"]
+    {:doc       "Persist a required open gate for a plan. Gates block final answer by default until proven or blocked with refs."
+     :arglists  '([{:keys [plan-id question required? supersedes-gate-id created-ref metadata]}])
+     :examples  ["(def verify-gate (v/gate! {:plan-id (:id plan) :question \"Did verification pass?\"}))"]
      :before-fn inject-environment}))
 
-(def attest!-symbol
-  (vis/symbol 'attest! foundation-attest!
-    {:doc       "Persist the exactly-one attestation for a gate version. Status :proven closes the gate. Refs must cite current-turn provenance refs."
+(def prove-gate!-symbol
+  (vis/symbol 'prove-gate! foundation-prove-gate!
+    {:doc       "Resolve a gate as proven. Requires :summary and current-turn provenance refs."
      :arglists  '([opts] [gate opts])
-     :examples  ["(v/attest! (:id verify-gate) {:status :proven :summary \"Tests passed.\" :refs [\"i4.1/tool\"]})"
-                 "(v/attest! :verify {:status :proven :summary \"Quick verification passed.\" :refs [\"i4.1/tool\"]})"]
+     :examples  ["(v/prove-gate! (:id verify-gate) {:summary \"Tests passed.\" :refs [\"i4.1\"]})"]
      :before-fn inject-environment}))
 
 (def block-gate!-symbol
   (vis/symbol 'block-gate! foundation-block-gate!
-    {:doc       "Persist a blocked attestation for a gate version. Requires :reason and provenance refs."
+    {:doc       "Resolve a gate as blocked. Requires :reason and current-turn provenance refs."
      :arglists  '([opts] [gate opts])
-     :examples  ["(v/block-gate! :verify {:reason \"verify.sh unavailable\" :refs [\"i3.1/tool\"]})"]
+     :examples  ["(v/block-gate! (:id verify-gate) {:reason \"verify.sh unavailable\" :refs [\"i3.1\"]})"]
      :before-fn inject-environment}))
 
 (def gates-symbol
   (vis/symbol 'gates foundation-gates
-    {:doc       "Current active-plan gate states for this conversation turn."
+    {:doc       "Aggregate current-turn gates, checks, violations, and Markdown report."
      :arglists  '([])
      :examples  ["(v/gates)"
-                 "(filter :required? (v/gates))"]
-     :before-fn inject-environment}))
-
-(def attestations-symbol
-  (vis/symbol 'attestations foundation-attestations
-    {:doc       "Attestations for the current conversation turn."
-     :arglists  '([])
-     :examples  ["(v/attestations)"
-                 "(mapcat :refs (v/attestations))"]
-     :before-fn inject-environment}))
-
-(def gate-checks-symbol
-  (vis/symbol 'gate-checks foundation-gate-checks
-    {:doc       "Enforce the current-turn gate contract before final answer: required gates terminal, exactly one attestation, refs resolve."
-     :arglists  '([])
-     :examples  ["(v/gate-checks)"
-                 "(:violations (v/gate-checks))"]
-     :before-fn inject-environment}))
-
-(def gate-report-symbol
-  (vis/symbol 'gate-report foundation-gate-report
-    {:doc       "Markdown gate/attestation report for final answer proof sections."
-     :arglists  '([])
-     :examples  ["(v/gate-report)"
-                 "(answer (v/join (v/gate-report) (v/provenance-report)))"]
+                 "(:ok? (v/gates))"
+                 "(:report (v/gates))"]
      :before-fn inject-environment}))
 
 (def contract-report-symbol
   (vis/symbol 'contract-report foundation-contract-report
-    {:doc       "Markdown completion-contract report with gates, attestations, and provenance. Optional arg renders a specific turn."
+    {:doc       "Markdown completion-contract report with gates and provenance. Optional arg renders a specific turn."
      :arglists  '([] [conversation-turn-id])
      :examples  ["(v/contract-report)"
                  "(v/contract-report TURN_CONVERSATION_TURN_ID)"]
@@ -1617,12 +1574,9 @@
    intent!-symbol
    plan!-symbol
    gate!-symbol
-   attest!-symbol
+   prove-gate!-symbol
    block-gate!-symbol
    gates-symbol
-   attestations-symbol
-   gate-checks-symbol
-   gate-report-symbol
    contract-report-symbol
    audit-report-symbol
    extensions-symbol
@@ -1643,15 +1597,12 @@
     "  (v/contract turn-id?)         current-turn completion contract projection\n"
     "  (v/contract-report turn-id?)  Markdown contract + proof report\n"
     "  (v/audit-report cid?)         conversation audit: contracts + provenance\n"
-    "  (v/intent! opts)              create current-turn intent_state version\n"
-    "  (v/plan! opts)                create plan_state for an intent_state\n"
-    "  (v/gate! opts)                create gate_state for a plan_state\n"
-    "  (v/attest! gate opts)         prove exactly one gate version with refs\n"
-    "  (v/block-gate! gate opts)     block exactly one gate version with refs + reason\n"
-    "  (v/gates)                     current active-plan gate states\n"
-    "  (v/attestations)              current-turn attestations\n"
-    "  (v/gate-checks)               current-turn gate contract checks\n"
-    "  (v/gate-report)               Markdown gate/attestation report\n"
+    "  (v/intent! opts)              create current-turn intent\n"
+    "  (v/plan! opts)                create plan for an intent\n"
+    "  (v/gate! opts)                create required open gate for a plan\n"
+    "  (v/prove-gate! gate opts)     prove a gate with refs\n"
+    "  (v/block-gate! gate opts)     block a gate with refs + reason\n"
+    "  (v/gates)                     gates + checks + Markdown report\n"
     "  (v/extensions)                loaded extension catalog\n"
     "  (v/extension-docs ext-ref)    manifest doc summaries\n"
     "  (v/extension-doc ext-ref)      README descriptor incl. :content\n"

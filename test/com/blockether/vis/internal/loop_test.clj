@@ -33,18 +33,6 @@
                       (= :vis/invalid-iteration-block (:type (ex-data e)))))]
       (expect (true? thrown?)))))
 
-(defdescribe iteration-feedback-repro-test
-  (it "includes block-level parse errors in restart feedback"
-    (let [out (#'loop/recent-errors-block
-               [{:iteration 0
-                 :blocks [{:code "(v/glob \".\" \"**/*.clj\" {:limit200})"
-                           :error (str "Parse error: The map literal starting with :limit200 "
-                                    "contains 1 form(s). Map literals must contain an even number of forms.")}]}]
-               3)]
-      (expect (string? out))
-      (expect (str/includes? out ":limit200"))
-      (expect (str/includes? out "Map literals must contain an even number")))))
-
 (defdescribe iteration-exception-handling-test
   (it "marks provider HTTP failures as terminal turn errors"
     (let [result (#'loop/handle-iteration-exception!

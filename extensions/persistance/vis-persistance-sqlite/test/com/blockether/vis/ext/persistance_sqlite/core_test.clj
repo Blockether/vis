@@ -1622,7 +1622,7 @@
       (expect (= 50.0 (:val (sci/eval-string+ sci-ctx "(calc 500)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
       (expect (= 100.0 (:val (sci/eval-string+ sci-ctx "answer" {:ns (sci/find-ns sci-ctx 'sandbox)}))))))
 
-  (it "higher-order fn chain: factory → instance → call"
+  (it "higher-order fn factory restores, derived closure is unavailable until recreated intentionally"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
@@ -1641,11 +1641,17 @@
                                            :upstream-soul-id   (soul-by "make-adder")})
           ;; Fresh sandbox
           {:keys [sci-ctx]} (env/create-sci-context nil)]
-      (env/restore-sandbox! sci-ctx s cid)
-      ;; make-adder works (it's a fn, restored via eval)
+      (let [results (env/restore-sandbox! sci-ctx s cid)
+            by-name (into {} (map (fn [r] [(:name r) r])) results)]
+        (expect (= :eval (:restored-via (by-name "make-adder"))))
+        (expect (= :unavailable (:restored-via (by-name "add-5"))))
+        (expect (= :unsafe-restore (:reason (by-name "add-5")))))
+      ;; make-adder works (safe defn source restored via eval)
       (expect (= 15 (:val (sci/eval-string+ sci-ctx "((make-adder 10) 5)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
-      ;; add-5 works (closure created by make-adder, restored via eval)
-      (expect (= 12 (:val (sci/eval-string+ sci-ctx "(add-5 7)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))))
+      ;; add-5 was an effectful/closure-producing def result; recreate intentionally.
+      (expect (try (sci/eval-string+ sci-ctx "(add-5 7)" {:ns (sci/find-ns sci-ctx 'sandbox)})
+                false
+                (catch Exception _ true)))))
 
   (it "system vars are restored: TURN_USER_REQUEST, ITERATION_PREVIOUS_REASONING, CONVERSATION_PREVIOUS_ANSWER"
     (let [s   (h/store)

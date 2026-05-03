@@ -1088,23 +1088,35 @@
 
    Reads `db-restore-blocks` (topologically sorted) and for each entry:
    - Data value (nippy-thawed) → bind directly into the sandbox.
-   - `{:vis/ref :expr}` → eval the `:expr` source code in the sandbox.
-     Dependencies are guaranteed to be bound first (topological order).
+   - Safe `defn` source with `{:vis/ref :expr}` → eval the `defn` source.
+   - Other `{:vis/ref :expr}` values are unavailable and must be recreated
+     intentionally; restore never replays arbitrary effectful source.
 
-   Returns a vec of {:name :restored-via (:data | :eval) :success? :error}."
+   Dependencies are guaranteed to appear first.
+
+   Returns a vec of {:name :restored-via (:data | :eval | :unavailable | :skip)
+                     :success? boolean ...}."
   [sci-ctx db-info conversation-id]
   (let [entries (persistance/db-restore-blocks db-info conversation-id)]
     (mapv (fn [{:keys [name expr result]}]
             (let [sym (symbol name)]
               (try
                 (if (and (map? result) (= :expr (:vis/ref result)))
-                  ;; Function / lazy seq / runtime object → re-eval source
-                  (if (and expr (not= expr ";; SYSTEM var"))
+                  (cond
+                    (or (nil? expr) (= expr ";; SYSTEM var"))
+                    {:name name :restored-via :skip :success? true}
+
+                    (safe-defn-source? expr)
                     (do (sci/eval-string+ sci-ctx expr
                           {:ns (sci/find-ns sci-ctx 'sandbox)})
                       {:name name :restored-via :eval :success? true})
-                    ;; SYSTEM var with :vis/ref but no real expr — skip
-                    {:name name :restored-via :skip :success? true})
+
+                    :else
+                    {:name name
+                     :restored-via :unavailable
+                     :success? false
+                     :reason :unsafe-restore
+                     :guidance "Recreate intentionally to persist a new version."})
                   ;; Data value → bind directly
                   (do (sci-update-binding! sci-ctx sym result)
                     {:name name :restored-via :data :success? true}))
