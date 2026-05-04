@@ -6,21 +6,22 @@
    when the user passes `vis channels tui --standalone`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import [com.googlecode.lanterna TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+           [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.terminal.swing
-            AWTTerminalFontConfiguration
+            SwingTerminalFontConfiguration
             SwingTerminalFrame
             TerminalEmulatorAutoCloseTrigger
             TerminalEmulatorColorConfiguration
             TerminalEmulatorDeviceConfiguration]
-           [java.awt Font GraphicsEnvironment]
-           [java.io File]
-           [javax.swing WindowConstants]))
+           [java.awt Component Dimension Font Frame GraphicsEnvironment]
+           [java.awt.event MouseAdapter MouseEvent MouseWheelEvent]
+           [javax.swing SwingUtilities WindowConstants]))
 
 (def default-font-bundle
-  "Default standalone font bundle. Mono PL gives terminal-friendly metrics plus
-   Powerline glyphs without the much larger Nerd Font payload."
-  :mono-pl)
+  "Default standalone font bundle. Mono NF gives terminal-friendly metrics plus
+   the broadest Cascadia glyph coverage we bundle."
+  :mono-nf)
 
 (def bundled-cascadia-fonts
   "Redistributable Cascadia TTF variants bundled for standalone Swing.
@@ -53,17 +54,19 @@
   {:title       "Vis"
    :columns     120
    :rows        36
-   :font-size   16
-   :font-bundle default-font-bundle
-   :font-family nil
-   :font-path   nil})
+   :font-size    16
+   :font-bundle  default-font-bundle
+   :pixel-width  1200
+   :pixel-height 800
+   :maximized    false})
 
 (defn standalone-options
   "Normalize standalone Swing options. This is pure so CLI parsing and tests can
    verify the conditional standalone contract without starting AWT."
   [opts]
   (merge default-options
-    (select-keys opts [:title :columns :rows :font-size :font-bundle :font-family :font-path])))
+    (select-keys opts [:title :columns :rows :font-size :font-bundle
+                       :pixel-width :pixel-height :maximized])))
 
 (defn- user-error
   [message data]
@@ -76,19 +79,6 @@
       {:standalone true
        :headless   true})))
 
-(defn- clean-family-name
-  [s]
-  (some-> s
-    str/trim
-    (str/replace #"^['\"]|['\"]$" "")))
-
-(defn- family-names
-  [family]
-  (->> (str/split (or family "") #",")
-    (map clean-family-name)
-    (remove str/blank?)
-    vec))
-
 (defn- font-array
   [fonts]
   (into-array Font fonts))
@@ -99,23 +89,18 @@
   (^Font [^Font font style font-size]
    (.deriveFont font (int style) (float font-size))))
 
-(defn- font-from-file
-  ^Font [path font-size]
-  (let [file (io/file path)]
-    (when-not (.isFile ^File file)
-      (user-error (str "--font-path does not point to a file: " path)
-        {:font-path path}))
-    (derive-font (Font/createFont Font/TRUETYPE_FONT file) font-size)))
-
 (defn- font-bundle-key
   [font-bundle]
   (if (keyword? font-bundle)
     font-bundle
     (some-> font-bundle str/lower-case (str/replace #"_" "-") keyword)))
 
-(defn- font-from-resource
+(defn- font-from-resource!
   ^Font [{:keys [resource style]} font-size]
-  (when-let [res (io/resource resource)]
+  (let [res (io/resource resource)]
+    (when-not res
+      (user-error (str "bundled Cascadia font resource is missing from the classpath: " resource)
+        {:resource resource}))
     (with-open [in (io/input-stream res)]
       (derive-font (Font/createFont Font/TRUETYPE_FONT in) style font-size))))
 
@@ -129,31 +114,76 @@
                     (str/join ", " (map name (sort (keys bundled-cascadia-fonts))))
                     ")")
         {:font-bundle font-bundle}))
-    (->> entries
-      (keep #(font-from-resource % font-size))
-      vec)))
+    (mapv #(font-from-resource! % font-size) entries)))
 
-(defn- system-fonts
-  [family font-size]
-  (let [families (or (seq (family-names family)) ["Cascadia Mono PL" "Cascadia Mono" "Monospaced"])]
-    (mapv #(Font. ^String % Font/PLAIN (int font-size)) families)))
+(defn- emoji-fallback-fonts
+  "Monospaced logical fallback, after bundled Cascadia. Lanterna's Swing font
+   configuration accepts only monospaced fonts; the JVM logical `Monospaced`
+   face can still resolve platform emoji glyphs while preserving terminal cell
+   metrics. Cascadia remains the primary terminal/code face."
+  [font-size]
+  [(Font. "Monospaced" Font/PLAIN (int font-size))])
 
 (defn- terminal-font-configuration
-  [{:keys [font-path font-family font-size font-bundle]}]
-  (AWTTerminalFontConfiguration/newInstance
-    (font-array
-      (cond
-        (seq font-path)
-        [(font-from-file font-path font-size)]
+  [{:keys [font-size font-bundle]}]
+  (SwingTerminalFontConfiguration/newInstance
+    (font-array (concat (bundled-fonts font-bundle font-size)
+                  (emoji-fallback-fonts font-size)))))
 
-        (seq font-family)
-        (system-fonts font-family font-size)
+(defn- content-component
+  ^Component [^SwingTerminalFrame terminal]
+  (first (seq (.getComponents (.getContentPane terminal)))))
 
-        :else
-        (let [fonts (bundled-fonts font-bundle font-size)]
-          (if (seq fonts)
-            fonts
-            (system-fonts nil font-size)))))))
+(defn- mouse-position
+  ^TerminalPosition [^SwingTerminalFrame terminal ^Component component ^MouseEvent event]
+  (let [size (.getTerminalSize terminal)
+        cols (max 1 (.getColumns size))
+        rows (max 1 (.getRows size))
+        width (max 1 (.getWidth component))
+        height (max 1 (.getHeight component))
+        col (min (dec cols) (max 0 (long (Math/floor (* cols (/ (.getX event) (double width)))))))
+        row (min (dec rows) (max 0 (long (Math/floor (* rows (/ (.getY event) (double height)))))))]
+    (TerminalPosition. (int col) (int row))))
+
+(defn- mouse-button
+  ^long [^MouseEvent event]
+  (case (.getButton event)
+    1 1
+    2 2
+    3 3
+    0))
+
+(defn- enqueue-mouse!
+  [^SwingTerminalFrame terminal ^Component component action-type button ^MouseEvent event]
+  (.addInput terminal
+    (MouseAction. action-type (int button) (mouse-position terminal component event))))
+
+(defn- install-mouse-input!
+  [^SwingTerminalFrame terminal]
+  (when-let [component (content-component terminal)]
+    (let [listener (proxy [MouseAdapter] []
+                     (mousePressed [event]
+                       (enqueue-mouse! terminal component MouseActionType/CLICK_DOWN
+                         (mouse-button event) event))
+                     (mouseReleased [event]
+                       (enqueue-mouse! terminal component MouseActionType/CLICK_RELEASE
+                         (mouse-button event) event))
+                     (mouseDragged [event]
+                       (enqueue-mouse! terminal component MouseActionType/DRAG
+                         (mouse-button event) event))
+                     (mouseMoved [event]
+                       (enqueue-mouse! terminal component MouseActionType/MOVE
+                         0 event))
+                     (mouseWheelMoved [event]
+                       (let [^MouseWheelEvent wheel event]
+                         (enqueue-mouse! terminal component
+                           (if (neg? (.getWheelRotation wheel))
+                             MouseActionType/SCROLL_UP
+                             MouseActionType/SCROLL_DOWN)
+                           0 event))))]
+      (.addMouseListener component listener)
+      (.addMouseMotionListener component listener)
+      (.addMouseWheelListener component listener))))
 
 (defn create-terminal!
   "Create a visible Lanterna Swing terminal for standalone TUI use.
@@ -161,11 +191,16 @@
    Supported opts:
    - `:font-size`   integer point size, default 16
    - `:font-bundle` one of :code, :code-pl, :code-nf, :mono, :mono-pl, :mono-nf
-   - `:font-family` comma-separated system font stack
-   - `:font-path`   path to a local TTF/OTF file
-   - `:columns` / `:rows` initial terminal character grid size"
+   - `:columns` / `:rows` initial terminal character grid size
+   - `:pixel-width` / `:pixel-height` minimum window size, default 1200x800
+   - `:maximized` request OS/window-manager maximization on startup
+
+   The Swing terminal is configured with bundled Cascadia first. System emoji
+   fonts are appended only as glyph fallback for emoji that Cascadia does not
+   contain."
   [opts]
-  (let [{:keys [title columns rows] :as opts'} (standalone-options opts)]
+  (let [{:keys [title columns rows pixel-width pixel-height maximized] :as opts'}
+        (standalone-options opts)]
     (assert-not-headless!)
     (let [terminal (SwingTerminalFrame.
                      title
@@ -176,7 +211,19 @@
                      (into-array TerminalEmulatorAutoCloseTrigger
                        [TerminalEmulatorAutoCloseTrigger/CloseOnExitPrivateMode]))]
       (.setDefaultCloseOperation terminal WindowConstants/DISPOSE_ON_CLOSE)
+      (.setResizable terminal true)
+      (let [minimum-size (Dimension. (int pixel-width) (int pixel-height))]
+        (.setMinimumSize terminal minimum-size)
+        (.setSize terminal minimum-size))
+      (install-mouse-input! terminal)
       (.setLocationByPlatform terminal true)
+      (when maximized
+        (.setExtendedState terminal Frame/MAXIMIZED_BOTH))
       (.setVisible terminal true)
+      (when maximized
+        (SwingUtilities/invokeLater
+          (fn []
+            (.setExtendedState terminal
+              (bit-or (.getExtendedState terminal) Frame/MAXIMIZED_BOTH)))))
       (.requestFocus terminal)
       terminal)))

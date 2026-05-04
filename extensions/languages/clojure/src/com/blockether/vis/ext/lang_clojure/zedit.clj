@@ -87,8 +87,9 @@
 
 (def z-prompt
   "`z/` Clojure structured edit:
-  (z/zedit path (fn [zl] ...)) ; zl=root zipper, return zipper, file rewritten
-  nav: z/right z/left z/down z/up z/next z/prev
-  find: z/find-value z/find | inspect: z/sexpr z/node z/value z/tag
-  edit: z/replace z/edit z/insert-right z/insert-left z/append-child z/remove
+  (z/zedit path (fn [zl] ...)) ; root zipper -> return zipper -> file rewritten; full rewrite-clj.zip API under z/
+  Go-to/default way to change non-trivial .clj/.cljc/.cljs/.edn forms/data.
+  nav: z/down z/up z/right z/left z/next z/prev ; skips whitespace/comments, preserves output
+  find whole-file: (z/find-value zloc z/next 'sym) ; short form searches siblings only
+  inspect: z/sexpr z/tag z/position-span ; edit: z/replace z/edit z/append-child z/remove
 Example: (z/zedit \"src/foo.clj\" #(-> % (z/find-value z/next 'OLD) (z/replace 'NEW)))")

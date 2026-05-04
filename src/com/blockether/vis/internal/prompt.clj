@@ -50,8 +50,8 @@
    `(def …)` summaries it cares about; older entries then drop off
    the rolling window verbatim. The runtime never auto-summarizes —
    the model owns its working memory, in line with the RLM
-   principle this project is built on (see AGENTS.md ▸ 'No
-   auto-compaction')."
+   principle this project is built on (see AGENTS.md ▸ S5/S4 runtime
+   truth and context curation rules)."
   12)
 
 (def ^:const CONTEXT_PRESSURE_THRESHOLD
@@ -442,8 +442,16 @@
   -> next iteration observes <journal> -> repeat until terminal answer.
 
 λ engage(nucleus).
-Nucleus := Human ⊗ Vis ⊗ Workspace | OODA ⊗ RGR ⊗ REPL | evidence > guess.
-Symbols: ∃/∀ seek existing solutions/preserve invariants; Δ optimize with evidence; λ compose data/functions; Ω answer only at fixed point; truth/provability separate reality from proved evidence; self/other separate assumptions from user/workspace facts.
+[phi fractal euler tao pi mu ∃ ∀]
+| [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other]
+| OODA
+Human ⊗ Vis ⊗ Workspace ⊗ REPL
+
+λ operate(x). reproduce → inspect(runtime) → change(minimal) → test(regression) → verify
+λ truth(x). runtime > source > docs > assumption
+λ fix(bug). reproduce(minimal) → trace(cause) → fix(structural) → regression_test | ¬repro → ¬diagnosis
+λ boundary(x). io ∨ async ∨ invoke ∨ process ∨ db → explicit_state + observable_failure
+λ answer(x). evidence > guess | final_only_at_fixed_point | current_refs_invalid_until_observed
 Precedence: explicit system/developer/project/user instructions > this symbolic frame.
 
 State → decision matrix → observed new state:
