@@ -83,3 +83,39 @@
         (expect (= uuid (:text md-hit)))
         (expect (= {:row 1 :col expected-md-col :width md-w}
                   (:bounds md-hit)))))))
+
+(defdescribe draw-header-color-test
+  (it "renders placeholder/title, conversation id, transcript label, and copy icons in header foreground"
+    (cr/reset!)
+    (let [writes (atom [])
+          g      (dummy-text-graphics writes)
+          uuid   "123e4567-e89b-12d3-a456-426614174000"
+          db     {:title ""
+                  :conversation {:id uuid}}]
+      (header/draw-header! g db 0 80)
+      (let [write-by-text (fn [text]
+                            (some #(when (= text (:text %)) %) @writes))]
+        (expect (= t/header-fg (:fg (write-by-text "Untitled conversation"))))
+        (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567"))))
+        (expect (= t/header-fg (:fg (write-by-text " | "))))
+        (expect (= t/header-fg (:fg (write-by-text "⧉ Transcript")))))))
+
+  (it "uses a subtly different foreground for the hovered header copy affordance only"
+    (cr/reset!)
+    (let [writes (atom [])
+          g      (dummy-text-graphics writes)
+          uuid   "123e4567-e89b-12d3-a456-426614174000"
+          db     {:title "New Conversation"
+                  :conversation {:id uuid}}]
+      (header/draw-header! g db 0 80)
+      (let [copy-hit (some #(when (= :copy-id (:kind %)) %) (cr/current))]
+        (expect (some? copy-hit))
+        (expect (true? (cr/set-hovered! copy-hit)))
+        (reset! writes [])
+        (header/draw-header! g db 0 80)
+        (let [write-by-text (fn [text]
+                              (some #(when (= text (:text %)) %) @writes))]
+          (expect (= t/header-fg (:fg (write-by-text "New Conversation"))))
+          (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567"))))
+          (expect (= t/header-fg (:fg (write-by-text " | "))))
+          (expect (= t/header-fg (:fg (write-by-text "⧉ Transcript")))))))))

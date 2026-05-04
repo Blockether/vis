@@ -215,7 +215,16 @@
     (it "trivial expression eval round-trips"
       (let [ctx (fresh-ctx)]
         (expect (= 3 (eval-in ctx "(+ 1 2)")))
-        (expect (= "vis" (eval-in ctx "(name :vis)")))))))
+        (expect (= "vis" (eval-in ctx "(name :vis)")))))
+
+    (it "Clojure 1.11 map update helpers resolve unqualified and qualified"
+      (let [ctx (fresh-ctx)]
+        (expect (= {:a 2 :b 0}
+                  (eval-in ctx "(update-vals {:a [1 2] :b []} count)")))
+        (expect (= {:A 1 :B 2}
+                  (eval-in ctx "(update-keys {:a 1 :b 2} #(keyword (str/upper-case (name %))))")))
+        (expect (= {:a 2 :b 0}
+                  (eval-in ctx "(clojure.core/update-vals {:a [1 2] :b []} count)")))))))
 
 (defdescribe catch-throwable-allows-getmessage-test
   ;; Regression net for the d8aff512 conversation footgun:

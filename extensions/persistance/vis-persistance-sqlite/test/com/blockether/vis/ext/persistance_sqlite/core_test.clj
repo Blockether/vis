@@ -533,16 +533,26 @@
           fulfilled (vis/db-fulfill-intent! s (:id intent)
                       {:summary "Done."
                        :refs [ref]})
+          proven-again (vis/db-prove-gate! s {:gate-id (:id gate)
+                                              :summary "Verification passed again."
+                                              :refs [ref]
+                                              :slots {slot {:ref ref}}})
+          fulfilled-again (vis/db-fulfill-intent! s (:id intent)
+                            {:summary "Done again."
+                             :refs [ref]})
           state  (vis/db-intents s {:conversation-turn-id tid})]
       (expect (= 1 (raw-count s :conversation_intent)))
       (expect (= 1 (raw-count s :conversation_intent_plan)))
       (expect (= 1 (raw-count s :conversation_intent_gate)))
       (expect (= 1 (raw-count s :conversation_intent_gate_ref)))
+      (expect (= 1 (raw-count s :conversation_intent_ref)))
       (expect (= :verify (get-in plan-dsl [:steps 0 :id])))
       (expect (= :proven (:status proven)))
+      (expect (= :proven (:status proven-again)))
       (expect (= "Verification passes." (:proposition gate)))
       (expect (= ref (get-in proven [:proof :slots slot :ref])))
       (expect (= :fulfilled (:status fulfilled)))
+      (expect (= :fulfilled (:status fulfilled-again)))
       (expect (= ref (-> fulfilled :refs first :ref)))
       (expect (= :fulfillment-evidence (-> fulfilled :refs first :role)))
       (expect (= true (:ok? state)))

@@ -7,6 +7,7 @@
    `--conversations-id`."
   (:require
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.channel-tui.chat :as chat]
    [com.blockether.vis.ext.channel-tui.input :as input]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
@@ -57,6 +58,9 @@
 (def ^:private latest-modified-first
   (deref #'screen/latest-modified-first))
 
+(def ^:private pre-resolve-conversation-id!
+  (deref #'screen/pre-resolve-conversation-id!))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
    the contract the channel entry point relies on to print a clean
@@ -81,6 +85,24 @@
       (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
       (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
+
+(defdescribe startup-resume-test
+  (it "--conversation-id sweeps orphaned running turns before rebuilding history"
+    (let [calls   (atom [])
+          resumed {:id "c1" :history [{:role :assistant :text "interrupted"}]}]
+      (with-redefs [vis/db-info (fn []
+                                  (swap! calls conj :db-info)
+                                  :db)
+                    vis/db-sweep-orphaned-running-turns! (fn [db]
+                                                           (swap! calls conj [:sweep db])
+                                                           (expect (= :db db))
+                                                           1)
+                    chat/resume-conversation (fn [cid]
+                                               (swap! calls conj [:resume cid])
+                                               (expect (= "c1" cid))
+                                               resumed)]
+        (expect (= resumed (pre-resolve-conversation-id! {:conversation-id "c1"})))
+        (expect (= [:db-info [:sweep :db] [:resume "c1"]] @calls))))))
 
 (defdescribe conversation-switcher-data-test
   (it "uses latest turn creation time as modification time and sorts newest first"

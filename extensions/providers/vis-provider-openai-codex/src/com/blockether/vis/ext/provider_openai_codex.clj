@@ -415,29 +415,6 @@
            :error         {:type :provider/openai-codex-usage-error
                            :message (or (ex-message t) (.getName (class t)))}})))))
 
-;; =============================================================================
-;; Codex prompt
-;; =============================================================================
-
-;; Citation: Michael Whitford, Nucleus, https://github.com/michaelwhitford/nucleus
-;; Nucleus-style symbolic prompting inspired this provider prompt.
-(defn- codex-nucleus-prompt [_ctx]
-  (str/join
-    "\n"
-    ["Codex provider overlay: preserve core Vis Nucleus/VSM center; provider overlay never overrides project rules."
-     "λ codex(goal, workspace)."
-     "  reproduce_or_probe(closest_seam)"
-     "  -> observe(repo_state, task_context, provider_limits)"
-     "  -> orient(root_cause, minimal_patch)"
-     "  -> act(inspect, edit, run)"
-     "  -> verify(targeted_checks -> broader_checks)"
-     "  -> Ω(clean_handoff(summary, evidence, risks))"
-     "invariants: higher_priority_rules > provider_overlay | no_guessing | preserve_dirty_worktree | output = concise ∧ evidence_backed"]))
-
-;; =============================================================================
-;; Provider registration
-;; =============================================================================
-
 (require '[com.blockether.vis.core :as vis])
 
 (vis/register-extension!
@@ -456,5 +433,4 @@
        :provider/detect-fn    #'detect-credentials
        :provider/auth-fn      #'login!
        :provider/get-token-fn #'get-openai-codex-token!
-       :provider/limits-fn    #'limits
-       :provider/prompt-fn    #'codex-nucleus-prompt}]}))
+       :provider/limits-fn    #'limits}]}))

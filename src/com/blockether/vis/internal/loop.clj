@@ -53,43 +53,6 @@
    [com.oakmac.parinfer Parinfer ParinferResult]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
-(declare rebuild-router! refresh-cached-routers! try-rescue-parse-error custom-bindings
-  auto-archive-hot-symbols! set-title! set-title-with-broadcast! env-for spawn-auto-title!)
-
-(defn set-provider!
-  "Set the single active provider config. Persists to disk, updates
-   in-memory state, rebuilds the global router, and reseats cached
-   conversation envs. `provider` is a svar-native provider map
-   `{:id :base-url :api-key :models [...]}`. Replaces an existing
-   provider with the same `:id` or appends a new entry."
-  [provider]
-  (let [cfg     (or (config/current-config) {:providers []})
-        pid     (:id provider)
-        provs   (vec (:providers cfg))
-        idx     (some (fn [[i p]] (when (= (:id p) pid) i))
-                  (map-indexed vector provs))
-        updated (if idx (assoc provs idx provider) (conj provs provider))
-        prioritized (vec (cons provider (remove #(= (:id %) pid) updated)))
-        new-cfg {:providers prioritized}]
-    (config/save-config! new-cfg :set-provider!)
-    (reset! @#'config/active-config new-cfg)
-    (try (let [r (rebuild-router! new-cfg)]
-           (refresh-cached-routers! r))
-      (catch Exception e
-        (tel/log! {:level :warn :data {:error (ex-message e)}}
-          "Failed to rebuild router after provider change")))
-    new-cfg))
-
-(defn remove-provider!
-  "Remove a provider by `:id`. Persists to disk and reseats cached envs."
-  [provider-id]
-  (let [cfg     (or (config/current-config) {:providers []})
-        updated (vec (remove #(= (:id %) provider-id) (:providers cfg)))
-        new-cfg {:providers updated}]
-    (config/save-config! new-cfg)
-    (reset! @#'config/active-config new-cfg)
-    new-cfg))
-
 ;; ===========================================================================
 
 ;; =============================================================================
@@ -413,7 +376,7 @@
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 (def ^:private silent-host-form-heads
-  '#{conversation-title})
+  '#{conversation-title silent! v/silent!})
 
 (defn- silent-host-form?
   "True for host side-effect forms that intentionally return
@@ -853,6 +816,56 @@
       "exactly one top-level `(answer …)` form next. No defs, no checks, "
       "no intent calls.")))
 
+(defn- raw-markdown-fence-leak-error [code]
+  (let [fence (apply str (repeat 3 "`"))
+        lines (str/split-lines (or code ""))]
+    (when (some #(str/starts-with? (str/triml %) fence) lines)
+      (str "Raw Markdown fence leaked into extracted :code before evaluation. "
+        "Rejecting whole iteration before eval; remove all " fence
+        " fence marker lines from extracted Clojure before retrying."))))
+
+(defn- code-entries-preflight [iteration-position raw-code]
+  (let [raw-code (or raw-code "")
+        raw-fence-error (raw-markdown-fence-leak-error raw-code)
+        [forms parse-error] (if raw-fence-error
+                              [nil (ex-info raw-fence-error
+                                     {:vis/error :raw-markdown-fence-leak})]
+                              (split-top-level-forms raw-code))
+        parsed-code-entries (cond
+                              raw-fence-error
+                              [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
+                                :parse-error parse-error}]
+
+                              parse-error
+                              [{:expr (str raw-code) :parse-error parse-error}]
+
+                              :else
+                              (vec (filter #(not (str/blank? (:expr %)))
+                                     (or forms []))))
+        parsed-total-blocks (count parsed-code-entries)
+        answer-preflight-form-idx (when (and (not raw-fence-error)
+                                          (pos? parsed-total-blocks))
+                                    (answer-position-preflight-form-idx
+                                      iteration-position
+                                      parsed-code-entries))
+        answer-preflight-error (when (some? answer-preflight-form-idx)
+                                 (answer-position-preflight-error-message
+                                   answer-preflight-form-idx
+                                   parsed-total-blocks))
+        answer-preflight-entry (when (some? answer-preflight-form-idx)
+                                 (nth parsed-code-entries
+                                   answer-preflight-form-idx
+                                   nil))]
+    {:code-entries (if answer-preflight-error
+                     [{:expr (or (:expr answer-preflight-entry)
+                               "(vis/preflight-error :answer-position)")
+                       :parse-error (ex-info answer-preflight-error
+                                      {:vis/error :answer-position-preflight})}]
+                     parsed-code-entries)
+     :answer-preflight-error answer-preflight-error
+     :raw-fence-preflight-error raw-fence-error
+     :original-total-blocks parsed-total-blocks}))
+
 (def ^:private evidence-bearing-request-pattern
   (re-pattern
     (str "(?i)\\b("
@@ -1149,19 +1162,11 @@
           ;; Parse it into top-level forms; each form becomes one
           ;; expression_state row.
           raw-code (or (:result ask-result) "")
-          [forms parse-error] (split-top-level-forms raw-code)
-          code-entries (if parse-error
-                           ;; Whole blob fails to parse — surface as one
-                           ;; failed expression with the raw blob as :code.
-                         [{:expr (str raw-code) :parse-error parse-error}]
-                         (vec (filter #(not (str/blank? (:expr %))) (or forms []))))
+          {:keys [code-entries answer-preflight-error]} (code-entries-preflight
+                                                          iteration-position
+                                                          raw-code)
           total-blocks (count code-entries)
-          answer-preflight-form-idx (answer-position-preflight-form-idx iteration-position code-entries)
-          answer-preflight-error (when (some? answer-preflight-form-idx)
-                                   (answer-position-preflight-error-message
-                                     answer-preflight-form-idx
-                                     total-blocks))
-          executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired? form-comment :comment}]
+          executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk (not answer-preflight-error) (not (silent-host-form? expr)))
@@ -1180,6 +1185,10 @@
                            (reset! current-form-idx-atom idx)
                            (let [iteration-id (form-ref idx)
                                  raw-result (cond
+                                              preflight-error
+                                              {:result nil :error preflight-error
+                                               :stdout "" :stderr "" :execution-time-ms 0
+                                               :op :vis/guard}
                                               answer-preflight-error
                                               {:result nil :error answer-preflight-error
                                                :stdout "" :stderr "" :execution-time-ms 0
@@ -1696,14 +1705,121 @@
   (when-let [conversation-title-atom (:conversation-title-atom environment)]
     (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
+;; =============================================================================
+;; System Prompt
+;; =============================================================================
+
+;; =============================================================================
+;; Auto-Archive
+;; =============================================================================
+
+(defn- system-var-sym?
+  "Local alias — the canonical predicate lives in `sci-env`. Kept here
+   so archive code reads cleanly without an extra namespace bounce on
+   every call."
+  [sym]
+  (env/system-var-sym? sym))
+
+(defn- archive-vars!
+  "Unmap `names` from the SCI sandbox namespace. Archive removes live
+   bindings only; persisted history remains available through
+   `var-history`.
+
+   HARD GUARD: SYSTEM symbols can NEVER be archived — they are contract
+   surfaces the iteration loop re-binds every turn. Filtered out +
+   logged."
+  [sci-ctx names]
+  (let [raw-syms (keep (fn [n]
+                         (cond (symbol? n) n
+                           (string? n) (try (clojure.core/symbol n) (catch Throwable _ nil))
+                           :else       nil))
+                   names)
+        {system-syms true user-syms false} (group-by (comp boolean system-var-sym?) raw-syms)]
+    (when (seq system-syms)
+      (tel/log! {:level :info :id ::archive-system-symbol-refused
+                 :data {:requested (mapv str system-syms)}
+                 :msg "Refusing to archive SYSTEM symbols — ignoring those names"}))
+    (when (seq user-syms)
+      (try
+        (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
+          (fn [ns-map] (apply dissoc ns-map user-syms)))
+        (catch Throwable e
+          (tel/log! {:level :debug :id ::archive-vars-failed
+                     :data {:error (ex-message e) :syms (mapv str user-syms)}
+                     :msg "archive-vars! failed — skipping"}))))))
+
+(def ^:const HOT_SYMBOL_CAP
+  "Maximum live user-defined symbols targeted by RLM hot memory."
+  100)
+
+(def ^:const HOT_SYMBOL_COMPACTION_TARGET
+  "Low-water mark after a final successful answer. Archiving down to 80
+   leaves headroom for the next turn instead of immediately bumping into
+   the hard cap again."
+  80)
+
+(defn auto-archive-candidates
+  "Pure cap-based hot-memory archive selection. Counts every live
+   user-defined symbol toward the target, but only user symbols without a
+   docstring are eligible. Returns the least-recent eligible symbols needed
+   to reach `target-count`; if protected symbols alone exceed the target,
+   returns every eligible symbol and leaves diagnostics to the caller."
+  [sandbox-map initial-ns-keys var-registry target-count]
+  (let [recency-of (fn [sym]
+                     (if-let [ts (some-> (get var-registry sym) :created-at)]
+                       (cond (inst? ts) (inst-ms ts)
+                         (integer? ts) (long ts)
+                         :else Long/MAX_VALUE)
+                       Long/MAX_VALUE))
+        user-symbol? (fn [sym]
+                       (and (symbol? sym)
+                         (not (contains? initial-ns-keys sym))
+                         (not (env/system-var-sym? sym))))
+        live-user-syms (filterv user-symbol? (keys sandbox-map))
+        overflow (max 0 (- (count live-user-syms) (long target-count)))
+        eligible (->> live-user-syms
+                   (remove (fn [sym]
+                             (let [doc (:doc (meta (get sandbox-map sym)))]
+                               (and (string? doc) (not (str/blank? doc))))))
+                   (sort-by (fn [sym] [(long (recency-of sym)) (str sym)]))
+                   vec)]
+    (set (take overflow eligible))))
+
+(defn auto-archive-hot-symbols!
+  "Archive eligible live user symbols after a final successful answer.
+   Archive means removing bindings from the live SCI sandbox only; DB
+   history remains the source of truth for `var-history`."
+  [{:keys [db-info conversation-id sci-ctx initial-ns-keys var-index-atom]}]
+  (when (and db-info conversation-id sci-ctx)
+    (try
+      (let [var-registry (persistance/db-latest-var-registry db-info conversation-id)
+            sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
+            candidates   (auto-archive-candidates sandbox-map initial-ns-keys
+                           var-registry HOT_SYMBOL_COMPACTION_TARGET)]
+        (when (seq candidates)
+          (tel/log! {:level :info :id ::auto-archive
+                     :data {:archived (mapv str candidates)
+                            :count (count candidates)
+                            :target HOT_SYMBOL_COMPACTION_TARGET}
+                     :msg (str "Auto-archive: evicting " (count candidates)
+                            " hot symbols after final answer")})
+          (archive-vars! sci-ctx candidates)
+          (when var-index-atom
+            (swap! var-index-atom update :current-revision inc))))
+      (catch Exception e
+        (tel/log! {:level :warn :id ::auto-archive-failed
+                   :data {:error (ex-message e)}
+                   :msg "Auto-archive failed — skipping"})))))
+
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-turn! (inlined from former base)
 ;; -----------------------------------------------------------------------------
 
 (def ^:private FRESH_ITER_CARRY
   ;; `:journal-iters` is a vec of `[iteration-position {:thinking :blocks}]`
-  ;; pairs covering the LAST `prompt/JOURNAL_KEEP_ITERS` iterations
-  ;; (oldest-first). The format-journal-block renderer reads it as-is.
+  ;; pairs (oldest-first). The prompt renderer trims the rendered
+  ;; journal by token budget (50% of model context), not fixed
+  ;; iteration count.
   {:journal-iters []})
 
 (def ^:private balanced-reasoning :balanced)
@@ -1898,13 +2014,12 @@
     ;; Hot symbol compaction is archive-based and runs only after a
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
-    ;; Cross-turn carry: seed `journal-iters` with the last
-    ;; JOURNAL_KEEP_ITERS iterations of the current conversation
-    ;; (across every prior turn) so a follow-up turn opens with the
-    ;; immediate context of the prior work, not an empty journal.
-    ;; Each entry is `[iter-position {:thinking :blocks}]` matching
-    ;; the in-memory shape the renderer expects. Failures degrade
-    ;; silently to an empty seed.
+    ;; Cross-turn carry: seed `journal-iters` with persisted iterations
+    ;; of the current conversation (across every prior turn) so a
+    ;; follow-up turn opens with prior context. Rendering trims by token
+    ;; budget, so carry is not capped by iteration count. Each entry is
+    ;; `[iter-position {:thinking :blocks}]` matching the in-memory shape
+    ;; the renderer expects. Failures degrade silently to an empty seed.
     (let [seeded-journal-iters
           (try
             (when-let [conv-id (:conversation-id environment)]
@@ -1915,7 +2030,6 @@
                                       (try (persistance/db-list-conversation-turn-iterations d (:id q))
                                         (catch Throwable _ []))))
                             (sort-by :created-at)
-                            (take-last prompt/JOURNAL_KEEP_ITERS)
                             vec)]
                 (mapv (fn [it]
                         [(or (:position it) 1)
@@ -2294,17 +2408,14 @@
                             (let [had-success? (some #(nil? (:error %)) blocks)
                                   next-errors (if had-success? 0 (inc consecutive-errors))
                                   _ (when had-success? (swap! var-index-atom update :current-revision inc))
-                                ;; Carry forward up to JOURNAL_KEEP_ITERS
-                                ;; iterations of `[pos {:thinking :blocks}]`
-                                ;; for the next iteration's `<journal>`.
-                                ;; Drops the oldest entry once the cap
-                                ;; is reached so the projection stays
-                                ;; bounded.
-                                  next-recent (->> (conj (or journal-iters [])
-                                                     [(inc (long iteration)) {:thinking thinking
-                                                                              :blocks   blocks}])
-                                                (take-last prompt/JOURNAL_KEEP_ITERS)
-                                                vec)]
+                                ;; Carry forward all observed iterations
+                                ;; as `[pos {:thinking :blocks}]` for the
+                                ;; next iteration's `<journal>`. The
+                                ;; renderer drops oldest lines by token
+                                ;; budget, not by iteration count.
+                                  next-recent (conj (vec (or journal-iters []))
+                                                [(inc (long iteration)) {:thinking thinking
+                                                                         :blocks   blocks}])]
                               (recur (merge loop-state
                                        {:iteration          (inc iteration)
                                         :messages           messages
@@ -2347,6 +2458,11 @@
              :cost            (:cost result)
              :prior-outcome   prior-outcome})]
     (assoc result :conversation-turn-id conversation-turn-id :prior-outcome prior-outcome)))
+
+(defn custom-bindings
+  "Current custom SCI bindings {sym -> value}."
+  [env]
+  (some-> (:state-atom env) deref :custom-bindings))
 
 ;; -----------------------------------------------------------------------------
 ;; Prepare turn context
@@ -2496,6 +2612,155 @@
      :total-tokens-atom total-tokens-atom
      :total-cost-atom   total-cost-atom
      :merge-cost!       merge-cost!}))
+
+;; =============================================================================
+;; Title listeners + set-title! broadcast
+;;
+;; Channels (TUI, Telegram, ...) that want to react to a conversation
+;; title change — typically because the model emitted `(conversation-title "...")`
+;; mid-turn — register a listener via `add-title-listener!`. The
+;; listener fn receives the new title; it MUST be cheap (typically a
+;; `state/dispatch` into the channel's app-db). Listeners are stored
+;; per conversation-id so a TUI watching conversation A doesn't get
+;; woken by a Telegram bot updating conversation B.
+;;
+;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
+;; `(conversation-title "...")` fn (model-driven) funnel through
+;; `set-title-with-broadcast!`, which is the single mutation point.
+;; That keeps the in-memory env atom + DB column + listener fan-out
+;; in lockstep — no path can update one without the others.
+;; =============================================================================
+
+(defonce ^:private title-listeners
+  ;; {conversation-id-uuid #{listener-fn ...}}
+  (atom {}))
+
+(defn add-title-listener!
+  "Register `listener-fn` for `conversation-id`. The fn is invoked with
+   the new title (a string) every time the title changes. Multiple
+   listeners are supported; they fire in unspecified order.
+
+   Returns the listener fn so callers can pass it to
+   `remove-title-listener!` later."
+  [conversation-id listener-fn]
+  (let [cid (persistance/->uuid conversation-id)]
+    (swap! title-listeners update cid (fnil conj #{}) listener-fn))
+  listener-fn)
+
+(defn remove-title-listener!
+  "Deregister a previously added listener. Idempotent."
+  [conversation-id listener-fn]
+  (let [cid (persistance/->uuid conversation-id)]
+    (swap! title-listeners update cid
+      (fn [existing] (disj (or existing #{}) listener-fn))))
+  nil)
+
+(defn- broadcast-title-change!
+  "Fire every registered listener for `conversation-id` with `title`.
+   Listeners that throw are swallowed and logged — a misbehaving
+   channel must NOT block the iteration loop."
+  [conversation-id title]
+  (let [cid (persistance/->uuid conversation-id)]
+    (doseq [f (get @title-listeners cid)]
+      (try (f title)
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::title-listener-failed
+                     :data {:conversation-id cid
+                            :error (ex-message t)}
+                     :msg (str "Title listener threw: " (ex-message t))}))))))
+
+(defn set-title-with-broadcast!
+  "Single mutation point for conversation titles.
+
+   1. Writes the title to the persisted `conversation_state` row.
+   2. Updates the env's in-memory `:conversation-title-atom` so the next iteration's
+      `CONVERSATION_TITLE` SYSTEM var rebind sees the new value AND so a
+      read from the SCI sandbox returns the fresh string immediately,
+      without a DB round-trip.
+   3. Broadcasts to every registered listener.
+
+   `conversation-title-atom` may be nil (host-driven path with no live env)."
+  [db-info conversation-id conversation-title-atom title]
+  (let [t (str title)]
+    (persistance/db-update-conversation-title! db-info conversation-id t)
+    (when conversation-title-atom (reset! conversation-title-atom t))
+    (broadcast-title-change! conversation-id t)
+    nil))
+
+(def ^:private auto-title-max-words 6)
+(def ^:private auto-title-max-chars 80)
+
+(defn- clean-auto-title
+  "Trim, drop wrapping quotes/backticks, collapse whitespace, drop
+   trailing punctuation, and clamp word count. Returns nil if the
+   result is unusable."
+  [s]
+  (when s
+    (let [t (-> (str s)
+              (str/replace #"^[\s\"'`]+|[\s\"'`]+$" "")
+              (str/replace #"\s+" " ")
+              (str/replace #"[.。\!\?]+$" ""))
+          words (str/split t #"\s+")
+          clamped (str/join " " (take auto-title-max-words words))]
+      (when (and (not (str/blank? clamped))
+              (<= (count clamped) auto-title-max-chars))
+        clamped))))
+
+(defn- auto-title!
+  "Generate a 6-words-max title for `conversation-id` from the user
+   request, persist it, and broadcast. Synchronous — caller picks the
+   thread (we wrap it in a `future` from `turn!` so the answer path
+   is never blocked).
+
+   Skipped silently when:
+     - the conversation already has a non-blank title
+     - the user request is blank
+     - the LLM call fails / returns blank
+     - the post-cleaned candidate is unusable
+
+   Goes through `svar/ask-code!` with `:lang \"text\"` (no JSON spec
+   anywhere in Vis)."
+  [{:keys [router db-info conversation-id conversation-title-atom user-request]}]
+  (when (and router db-info conversation-id
+          (string? user-request)
+          (not (str/blank? user-request)))
+    (let [conv  (try (persistance/db-get-conversation db-info conversation-id)
+                  (catch Throwable _ nil))
+          cur   (some-> conv :title str)]
+      (when (str/blank? cur)
+        (try
+          (let [prompt (str "Pick a short conversation title for this user request — at most "
+                         auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
+                         "User request:\n" user-request "\n\n"
+                         "Reply with ONE fenced ```text block containing only the title.")
+                resp (svar/ask-code! router
+                       {:messages           [(svar/user prompt)]
+                        :lang               "text"
+                        :reasoning          :off
+                        :code-tail-pointer? true})
+                raw  (or (some-> resp :result str/trim not-empty)
+                       (some-> resp :raw str/trim not-empty))
+                title (clean-auto-title raw)]
+            (when title
+              (set-title-with-broadcast! db-info conversation-id
+                conversation-title-atom title)))
+          (catch Throwable t
+            (tel/log! {:level :debug :id ::auto-title-failed
+                       :data  {:conversation-id conversation-id
+                               :error           (ex-message t)}
+                       :msg   "Auto-title generation failed (silently skipped)"})))))))
+
+(defn- spawn-auto-title!
+  "Fire-and-forget wrapper around `auto-title!`. Runs on a JVM future
+   so the iteration loop returns immediately to the channel; the
+   eventual `set-title-with-broadcast!` call wakes title listeners
+   (TUI header, Telegram label) on its own."
+  [args]
+  (when args
+    (future
+      (try (auto-title! args)
+        (catch Throwable _))))
+  nil)
 
 ;; -----------------------------------------------------------------------------
 ;; Finalize turn result
@@ -2697,11 +2962,6 @@
 ;; down (which returns the process-wide shared connection). The defn was
 ;; deleted to keep ONE canonical `db-info` symbol on this namespace.
 
-(defn custom-bindings
-  "Current custom SCI bindings {sym -> value}."
-  [env]
-  (some-> (:state-atom env) deref :custom-bindings))
-
 (defn- normalize-history-symbol
   [sym]
   (cond
@@ -2775,120 +3035,98 @@
       (seq events) (filter #(contains? (set events) (:event %)))
       true vec)))
 
-;; =============================================================================
-;; System Prompt
-;; =============================================================================
+(defn install-extension!
+  "Register a validated extension into `environment` (per-env registration,
+   distinct from the global-registry `register-extension!` defined earlier
+   in this file).
 
-;; =============================================================================
-;; Auto-Archive
-;; =============================================================================
+   Checks `:ext/requires` — if the extension declares dependencies, all
+   listed extension namespaces must already be registered. Throws on
+   missing dependencies.
 
-(defn- system-var-sym?
-  "Local alias — the canonical predicate lives in `sci-env`. Kept here
-   so archive code reads cleanly without an extra namespace bounce on
-   every call."
-  [sym]
-  (env/system-var-sym? sym))
+   If an extension with the same `:ext/namespace` is already registered,
+   it is replaced (not duplicated). Enables hot-swap via
+   `reload-extension!`.
 
-(defn- archive-vars!
-  "Unmap `names` from the SCI sandbox namespace. Archive removes live
-   bindings only; persisted history remains available through
-   `var-history`.
-
-   HARD GUARD: SYSTEM symbols can NEVER be archived — they are contract
-   surfaces the iteration loop re-binds every turn. Filtered out +
-   logged."
-  [sci-ctx names]
-  (let [raw-syms (keep (fn [n]
-                         (cond (symbol? n) n
-                           (string? n) (try (clojure.core/symbol n) (catch Throwable _ nil))
-                           :else       nil))
-                   names)
-        {system-syms true user-syms false} (group-by (comp boolean system-var-sym?) raw-syms)]
-    (when (seq system-syms)
-      (tel/log! {:level :info :id ::archive-system-symbol-refused
-                 :data {:requested (mapv str system-syms)}
-                 :msg "Refusing to archive SYSTEM symbols — ignoring those names"}))
-    (when (seq user-syms)
+   Returns `environment` for chaining."
+  [environment ext]
+  (when-not (:extensions environment)
+    (anomaly/incorrect! "Invalid vis environment — missing :extensions atom"
+      {:type :vis/invalid-env}))
+  (when-let [requires (seq (:ext/requires ext))]
+    (let [registered (into #{} (map :ext/namespace) @(:extensions environment))
+          missing    (vec (remove registered requires))]
+      (when (seq missing)
+        (anomaly/incorrect!
+          (str "Extension '" (:ext/namespace ext)
+            "' requires " missing " but they are not registered. "
+            "Register dependencies first.")
+          {:type       :extension/missing-dependencies
+           :extension  (:ext/namespace ext)
+           :requires   (vec requires)
+           :missing    missing
+           :registered (vec registered)}))))
+  (swap! (:extensions environment)
+    (fn [exts]
+      (let [ns-sym  (:ext/namespace ext)
+            without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
+        (conj without ext))))
+  ;; Bind extension symbols ONLY into the aliased namespace — never
+  ;; into sandbox. The LLM must always use the alias form
+  ;; `(alias/symbol ...)`, not `(vis/symbol ...)`.
+  ;;
+  ;; Multi-extension MERGE: two extensions can share an `:ext/ns-alias`
+  ;; (e.g. one ext registers `v/cat`/`v/ls`, another adds
+  ;; `v/diff` under the same `vis` alias). The bindings are MERGED
+  ;; into the existing namespace map; same-name symbols get last-write-
+  ;; wins (matching how `install-extension!` already replaces an
+  ;; extension with the same `:ext/namespace`). A telemere warn line
+  ;; fires on collisions so reviewers see which extension shadowed
+  ;; whose symbol.
+  (let [wrapped (extension/wrap-extension ext environment)
+        sci-ctx (:sci-ctx environment)]
+    (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+      (let [ext-ns      (sci/create-ns ns-sym)
+            ns-bindings (into {} (map (fn [[sym val]]
+                                        [sym (sci/new-var sym val {:ns ext-ns})]))
+                          wrapped)
+            existing    (get-in @(:env sci-ctx) [:namespaces ns-sym])
+            collisions  (when (seq existing)
+                          (vec (filter #(contains? existing %) (keys ns-bindings))))]
+        (when (seq collisions)
+          (tel/log! {:level :warn :id ::ext-symbol-collision
+                     :data  {:ext       (:ext/namespace ext)
+                             :ns        ns-sym
+                             :alias     alias-sym
+                             :symbols   collisions}
+                     :msg   (str "Extension '" (:ext/namespace ext)
+                              "' shadowed " (count collisions)
+                              " existing symbol(s) under alias '" alias-sym
+                              "': " (str/join ", " collisions))}))
+        (swap! (:env sci-ctx) update-in [:namespaces ns-sym] merge ns-bindings)
+        (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))
+      ;; Auto-require the alias in sandbox so the LLM never has to call
+      ;; `(require ...)` manually.
       (try
-        (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
-          (fn [ns-map] (apply dissoc ns-map user-syms)))
-        (catch Throwable e
-          (tel/log! {:level :debug :id ::archive-vars-failed
-                     :data {:error (ex-message e) :syms (mapv str user-syms)}
-                     :msg "archive-vars! failed — skipping"}))))))
-
-(def ^:const HOT_SYMBOL_CAP
-  "Maximum live user-defined symbols targeted by RLM hot memory."
-  100)
-
-(def ^:const HOT_SYMBOL_COMPACTION_TARGET
-  "Low-water mark after a final successful answer. Archiving down to 80
-   leaves headroom for the next turn instead of immediately bumping into
-   the hard cap again."
-  80)
-
-(defn auto-archive-candidates
-  "Pure cap-based hot-memory archive selection. Counts every live
-   user-defined symbol toward the target, but only user symbols without a
-   docstring are eligible. Returns the least-recent eligible symbols needed
-   to reach `target-count`; if protected symbols alone exceed the target,
-   returns every eligible symbol and leaves diagnostics to the caller."
-  [sandbox-map initial-ns-keys var-registry target-count]
-  (let [recency-of (fn [sym]
-                     (if-let [ts (some-> (get var-registry sym) :created-at)]
-                       (cond (inst? ts) (inst-ms ts)
-                         (integer? ts) (long ts)
-                         :else Long/MAX_VALUE)
-                       Long/MAX_VALUE))
-        user-symbol? (fn [sym]
-                       (and (symbol? sym)
-                         (not (contains? initial-ns-keys sym))
-                         (not (env/system-var-sym? sym))))
-        live-user-syms (filterv user-symbol? (keys sandbox-map))
-        overflow (max 0 (- (count live-user-syms) (long target-count)))
-        eligible (->> live-user-syms
-                   (remove (fn [sym]
-                             (let [doc (:doc (meta (get sandbox-map sym)))]
-                               (and (string? doc) (not (str/blank? doc))))))
-                   (sort-by (fn [sym] [(long (recency-of sym)) (str sym)]))
-                   vec)]
-    (set (take overflow eligible))))
-
-(defn auto-archive-hot-symbols!
-  "Archive eligible live user symbols after a final successful answer.
-   Archive means removing bindings from the live SCI sandbox only; DB
-   history remains the source of truth for `var-history`."
-  [{:keys [db-info conversation-id sci-ctx initial-ns-keys var-index-atom]}]
-  (when (and db-info conversation-id sci-ctx)
-    (try
-      (let [var-registry (persistance/db-latest-var-registry db-info conversation-id)
-            sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
-            candidates   (auto-archive-candidates sandbox-map initial-ns-keys
-                           var-registry HOT_SYMBOL_COMPACTION_TARGET)]
-        (when (seq candidates)
-          (tel/log! {:level :info :id ::auto-archive
-                     :data {:archived (mapv str candidates)
-                            :count (count candidates)
-                            :target HOT_SYMBOL_COMPACTION_TARGET}
-                     :msg (str "Auto-archive: evicting " (count candidates)
-                            " hot symbols after final answer")})
-          (archive-vars! sci-ctx candidates)
-          (when var-index-atom
-            (swap! var-index-atom update :current-revision inc))))
-      (catch Exception e
-        (tel/log! {:level :warn :id ::auto-archive-failed
-                   :data {:error (ex-message e)}
-                   :msg "Auto-archive failed — skipping"})))))
+        (sci/eval-string+ sci-ctx
+          (str "(require '[" ns-sym " :as " alias-sym "])")
+          {:ns (sci/find-ns sci-ctx 'sandbox)})
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::ext-alias-require-failed
+                     :data (assoc (format-exception-short t)
+                             :ext (:ext/namespace ext)
+                             :alias alias-sym)}
+            (str "Auto-require of alias '" alias-sym "' failed")))))
+    ;; Inject extension-declared Java classes and imports.
+    (when-let [classes (seq (:ext/classes ext))]
+      (swap! (:env sci-ctx) update :classes merge (into {} classes)))
+    (when-let [imports (seq (:ext/imports ext))]
+      (swap! (:env sci-ctx) update :imports merge (into {} imports))))
+  environment)
 
 ;; =============================================================================
 ;; Environment Lifecycle
 ;; =============================================================================
-
-;; `create-environment` calls `register-extension!` indirectly via
-;; `register-extensions!`. Forward-declare so the symbol resolves at
-;; load time even though the def comes later in the file.
-(declare install-extension!)
 
 (defn create-environment
   "Creates a vis environment (component) for conversation lifecycle and
@@ -3073,95 +3311,6 @@
   (when-let [db-info (:db-info environment)]
     (persistance/db-dispose-connection! db-info)))
 
-(defn install-extension!
-  "Register a validated extension into `environment` (per-env registration,
-   distinct from the global-registry `register-extension!` defined earlier
-   in this file).
-
-   Checks `:ext/requires` — if the extension declares dependencies, all
-   listed extension namespaces must already be registered. Throws on
-   missing dependencies.
-
-   If an extension with the same `:ext/namespace` is already registered,
-   it is replaced (not duplicated). Enables hot-swap via
-   `reload-extension!`.
-
-   Returns `environment` for chaining."
-  [environment ext]
-  (when-not (:extensions environment)
-    (anomaly/incorrect! "Invalid vis environment — missing :extensions atom"
-      {:type :vis/invalid-env}))
-  (when-let [requires (seq (:ext/requires ext))]
-    (let [registered (into #{} (map :ext/namespace) @(:extensions environment))
-          missing    (vec (remove registered requires))]
-      (when (seq missing)
-        (anomaly/incorrect!
-          (str "Extension '" (:ext/namespace ext)
-            "' requires " missing " but they are not registered. "
-            "Register dependencies first.")
-          {:type       :extension/missing-dependencies
-           :extension  (:ext/namespace ext)
-           :requires   (vec requires)
-           :missing    missing
-           :registered (vec registered)}))))
-  (swap! (:extensions environment)
-    (fn [exts]
-      (let [ns-sym  (:ext/namespace ext)
-            without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
-        (conj without ext))))
-  ;; Bind extension symbols ONLY into the aliased namespace — never
-  ;; into sandbox. The LLM must always use the alias form
-  ;; `(alias/symbol ...)`, not `(vis/symbol ...)`.
-  ;;
-  ;; Multi-extension MERGE: two extensions can share an `:ext/ns-alias`
-  ;; (e.g. one ext registers `v/cat`/`v/ls`, another adds
-  ;; `v/diff` under the same `vis` alias). The bindings are MERGED
-  ;; into the existing namespace map; same-name symbols get last-write-
-  ;; wins (matching how `install-extension!` already replaces an
-  ;; extension with the same `:ext/namespace`). A telemere warn line
-  ;; fires on collisions so reviewers see which extension shadowed
-  ;; whose symbol.
-  (let [wrapped (extension/wrap-extension ext environment)
-        sci-ctx (:sci-ctx environment)]
-    (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-      (let [ext-ns      (sci/create-ns ns-sym)
-            ns-bindings (into {} (map (fn [[sym val]]
-                                        [sym (sci/new-var sym val {:ns ext-ns})]))
-                          wrapped)
-            existing    (get-in @(:env sci-ctx) [:namespaces ns-sym])
-            collisions  (when (seq existing)
-                          (vec (filter #(contains? existing %) (keys ns-bindings))))]
-        (when (seq collisions)
-          (tel/log! {:level :warn :id ::ext-symbol-collision
-                     :data  {:ext       (:ext/namespace ext)
-                             :ns        ns-sym
-                             :alias     alias-sym
-                             :symbols   collisions}
-                     :msg   (str "Extension '" (:ext/namespace ext)
-                              "' shadowed " (count collisions)
-                              " existing symbol(s) under alias '" alias-sym
-                              "': " (str/join ", " collisions))}))
-        (swap! (:env sci-ctx) update-in [:namespaces ns-sym] merge ns-bindings)
-        (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))
-      ;; Auto-require the alias in sandbox so the LLM never has to call
-      ;; `(require ...)` manually.
-      (try
-        (sci/eval-string+ sci-ctx
-          (str "(require '[" ns-sym " :as " alias-sym "])")
-          {:ns (sci/find-ns sci-ctx 'sandbox)})
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::ext-alias-require-failed
-                     :data (assoc (format-exception-short t)
-                             :ext (:ext/namespace ext)
-                             :alias alias-sym)}
-            (str "Auto-require of alias '" alias-sym "' failed")))))
-    ;; Inject extension-declared Java classes and imports.
-    (when-let [classes (seq (:ext/classes ext))]
-      (swap! (:env sci-ctx) update :classes merge (into {} classes)))
-    (when-let [imports (seq (:ext/imports ext))]
-      (swap! (:env sci-ctx) update :imports merge (into {} imports))))
-  environment)
-
 ;; =============================================================================
 ;; Conversation env cache
 ;; =============================================================================
@@ -3200,6 +3349,40 @@
               (assoc entry :environment (assoc environment :router router))))
           {} m))))
   nil)
+
+(defn set-provider!
+  "Set the single active provider config. Persists to disk, updates
+   in-memory state, rebuilds the global router, and reseats cached
+   conversation envs. `provider` is a svar-native provider map
+   `{:id :base-url :api-key :models [...]}`. Replaces an existing
+   provider with the same `:id` or appends a new entry."
+  [provider]
+  (let [cfg     (or (config/current-config) {:providers []})
+        pid     (:id provider)
+        provs   (vec (:providers cfg))
+        idx     (some (fn [[i p]] (when (= (:id p) pid) i))
+                  (map-indexed vector provs))
+        updated (if idx (assoc provs idx provider) (conj provs provider))
+        prioritized (vec (cons provider (remove #(= (:id %) pid) updated)))
+        new-cfg {:providers prioritized}]
+    (config/save-config! new-cfg :set-provider!)
+    (reset! @#'config/active-config new-cfg)
+    (try (let [r (rebuild-router! new-cfg)]
+           (refresh-cached-routers! r))
+      (catch Exception e
+        (tel/log! {:level :warn :data {:error (ex-message e)}}
+          "Failed to rebuild router after provider change")))
+    new-cfg))
+
+(defn remove-provider!
+  "Remove a provider by `:id`. Persists to disk and reseats cached envs."
+  [provider-id]
+  (let [cfg     (or (config/current-config) {:providers []})
+        updated (vec (remove #(= (:id %) provider-id) (:providers cfg)))
+        new-cfg {:providers updated}]
+    (config/save-config! new-cfg)
+    (reset! @#'config/active-config new-cfg)
+    new-cfg))
 
 ;; ---------------------------------------------------------------------------
 ;; Extension hot-reload (F1-lite). See plan §1 Q12-Q16 + caveats.
@@ -3454,78 +3637,12 @@
       (create! :telegram {:external-id ext}))))
 
 ;; =============================================================================
-;; Title listeners + set-title! broadcast
-;;
-;; Channels (TUI, Telegram, ...) that want to react to a conversation
-;; title change — typically because the model emitted `(conversation-title "...")`
-;; mid-turn — register a listener via `add-title-listener!`. The
-;; listener fn receives the new title; it MUST be cheap (typically a
-;; `state/dispatch` into the channel's app-db). Listeners are stored
-;; per conversation-id so a TUI watching conversation A doesn't get
-;; woken by a Telegram bot updating conversation B.
-;;
-;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
-;; `(conversation-title "...")` fn (model-driven) funnel through
-;; `set-title-with-broadcast!`, which is the single mutation point.
-;; That keeps the in-memory env atom + DB column + listener fan-out
-;; in lockstep — no path can update one without the others.
+;; Host title setter + public env accessor
 ;; =============================================================================
 
-(defonce ^:private title-listeners
-  ;; {conversation-id-uuid #{listener-fn ...}}
-  (atom {}))
-
-(defn add-title-listener!
-  "Register `listener-fn` for `conversation-id`. The fn is invoked with
-   the new title (a string) every time the title changes. Multiple
-   listeners are supported; they fire in unspecified order.
-
-   Returns the listener fn so callers can pass it to
-   `remove-title-listener!` later."
-  [conversation-id listener-fn]
-  (let [cid (persistance/->uuid conversation-id)]
-    (swap! title-listeners update cid (fnil conj #{}) listener-fn))
-  listener-fn)
-
-(defn remove-title-listener!
-  "Deregister a previously added listener. Idempotent."
-  [conversation-id listener-fn]
-  (let [cid (persistance/->uuid conversation-id)]
-    (swap! title-listeners update cid
-      (fn [existing] (disj (or existing #{}) listener-fn))))
-  nil)
-
-(defn- broadcast-title-change!
-  "Fire every registered listener for `conversation-id` with `title`.
-   Listeners that throw are swallowed and logged — a misbehaving
-   channel must NOT block the iteration loop."
-  [conversation-id title]
-  (let [cid (persistance/->uuid conversation-id)]
-    (doseq [f (get @title-listeners cid)]
-      (try (f title)
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::title-listener-failed
-                     :data {:conversation-id cid
-                            :error (ex-message t)}
-                     :msg (str "Title listener threw: " (ex-message t))}))))))
-
-(defn set-title-with-broadcast!
-  "Single mutation point for conversation titles.
-
-   1. Writes the title to the persisted `conversation_state` row.
-   2. Updates the env's in-memory `:conversation-title-atom` so the next iteration's
-      `CONVERSATION_TITLE` SYSTEM var rebind sees the new value AND so a
-      read from the SCI sandbox returns the fresh string immediately,
-      without a DB round-trip.
-   3. Broadcasts to every registered listener.
-
-   `conversation-title-atom` may be nil (host-driven path with no live env)."
-  [db-info conversation-id conversation-title-atom title]
-  (let [t (str title)]
-    (persistance/db-update-conversation-title! db-info conversation-id t)
-    (when conversation-title-atom (reset! conversation-title-atom t))
-    (broadcast-title-change! conversation-id t)
-    nil))
+(defn env-for
+  [id]
+  (:environment (ensure-env! id)))
 
 (defn set-title!
   "Host-driven title change. Resolves the live env (if any) so the
@@ -3539,85 +3656,6 @@
       (:conversation-title-atom env)
       title))
   nil)
-
-(def ^:private auto-title-max-words 6)
-(def ^:private auto-title-max-chars 80)
-
-(defn- clean-auto-title
-  "Trim, drop wrapping quotes/backticks, collapse whitespace, drop
-   trailing punctuation, and clamp word count. Returns nil if the
-   result is unusable."
-  [s]
-  (when s
-    (let [t (-> (str s)
-              (str/replace #"^[\s\"'`]+|[\s\"'`]+$" "")
-              (str/replace #"\s+" " ")
-              (str/replace #"[.。\!\?]+$" ""))
-          words (str/split t #"\s+")
-          clamped (str/join " " (take auto-title-max-words words))]
-      (when (and (not (str/blank? clamped))
-              (<= (count clamped) auto-title-max-chars))
-        clamped))))
-
-(defn- auto-title!
-  "Generate a 6-words-max title for `conversation-id` from the user
-   request, persist it, and broadcast. Synchronous — caller picks the
-   thread (we wrap it in a `future` from `turn!` so the answer path
-   is never blocked).
-
-   Skipped silently when:
-     - the conversation already has a non-blank title
-     - the user request is blank
-     - the LLM call fails / returns blank
-     - the post-cleaned candidate is unusable
-
-   Goes through `svar/ask-code!` with `:lang \"text\"` (no JSON spec
-   anywhere in Vis)."
-  [{:keys [router db-info conversation-id conversation-title-atom user-request]}]
-  (when (and router db-info conversation-id
-          (string? user-request)
-          (not (str/blank? user-request)))
-    (let [conv  (try (persistance/db-get-conversation db-info conversation-id)
-                  (catch Throwable _ nil))
-          cur   (some-> conv :title str)]
-      (when (str/blank? cur)
-        (try
-          (let [prompt (str "Pick a short conversation title for this user request — at most "
-                         auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
-                         "User request:\n" user-request "\n\n"
-                         "Reply with ONE fenced ```text block containing only the title.")
-                resp (svar/ask-code! router
-                       {:messages           [(svar/user prompt)]
-                        :lang               "text"
-                        :reasoning          :off
-                        :code-tail-pointer? true})
-                raw  (or (some-> resp :result str/trim not-empty)
-                       (some-> resp :raw str/trim not-empty))
-                title (clean-auto-title raw)]
-            (when title
-              (set-title-with-broadcast! db-info conversation-id
-                conversation-title-atom title)))
-          (catch Throwable t
-            (tel/log! {:level :debug :id ::auto-title-failed
-                       :data  {:conversation-id conversation-id
-                               :error           (ex-message t)}
-                       :msg   "Auto-title generation failed (silently skipped)"})))))))
-
-(defn- spawn-auto-title!
-  "Fire-and-forget wrapper around `auto-title!`. Runs on a JVM future
-   so the iteration loop returns immediately to the channel; the
-   eventual `set-title-with-broadcast!` call wakes title listeners
-   (TUI header, Telegram label) on its own."
-  [args]
-  (when args
-    (future
-      (try (auto-title! args)
-        (catch Throwable _))))
-  nil)
-
-(defn env-for
-  [id]
-  (:environment (ensure-env! id)))
 
 (defn send!
   ([id messages] (send! id messages {}))

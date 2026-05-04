@@ -294,6 +294,33 @@
                     (mapv :phase @chunks)))
           (expect (= :vis/silent (:result (first @chunks)))))))))
 
+  (it "does not emit form-start for v/silent! aggregate-shape forms"
+    (let [chunks (atom [])
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw "```clojure\n(v/silent! {:a 1})\n```"
+                                           :blocks [{:lang "clojure" :source "(v/silent! {:a 1})"}]
+                                           :result "(v/silent! {:a 1})"
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [_ code]
+                                             (expect (= "(v/silent! {:a 1})" code))
+                                             {:result {:rendering-kind :vis/silent}
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
+        (fn []
+          (loop/run-iteration environment
+            [{:role "user" :content "summarize"}]
+            {:iteration 0
+             :resolved-model {:provider :test :name "model"}
+             :on-chunk (fn [chunk] (swap! chunks conj chunk))})
+          (expect (= [:form-result]
+                    (mapv :phase @chunks)))
+          (expect (= :vis/silent (get-in (first @chunks) [:result :rendering-kind]))))))))
+
 (defdescribe run-iteration-answer-position-test
   (it "accepts first-iteration final answers mixed with earlier top-level forms when answer is last"
     (let [environment {:router ::router
@@ -434,7 +461,35 @@
       (expect (string? (:error result)))
       (expect (re-find #"Markdown fence" (:error result)))
       (expect (not (re-find #"StackOverflowError" (:error result))))
-      (expect (= 0 (:execution-time-ms result))))))
+      (expect (= 0 (:execution-time-ms result)))))
+
+  (it "aborts the whole iteration before side effects when malformed fence separators leak from ask-code"
+    (let [executed (atom [])
+          raw-code "(def before :should-not-run)\n``````clojure\n(def after :should-not-run)"
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw (str "```clojure\n" raw-code "\n```")
+                                           :blocks [{:lang "clojure" :source raw-code}]
+                                           :result raw-code
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [_ code]
+                                             (swap! executed conj code)
+                                             {:result :unexpected
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "leak fences"}]
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "model"}})]
+            (expect (empty? @executed))
+            (expect (= 1 (count (:blocks result))))
+            (expect (re-find #"Raw Markdown fence leaked" (-> result :blocks first :error)))
+            (expect (re-find #"Aborting the whole iteration" (-> result :blocks first :error)))))))))
 
 (defdescribe turn-scoped-extension-env-test
   (it "lets installed extension symbols see the current turn id"
@@ -494,3 +549,24 @@
           (expect (= [runtime-provider] @seen-providers)))
         (finally
           (loop/reset-router!))))))
+
+(lazytest.core/describe "code entry preflight"
+  (lazytest.core/it "code-entries-preflight rejects raw Markdown fence leaks before parsing"
+    (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
+                               'code-entries-preflight))
+          fence (apply str (repeat 3 "`"))
+          result (preflight 1 (str fence "clojure\n"
+                                "(def leaked 1)\n"
+                                fence "\n"))]
+      (lazytest.core/expect (= 1 (count (:code-entries result))))
+      (lazytest.core/expect (:raw-fence-preflight-error result))
+      (lazytest.core/expect (not (:answer-preflight-error result)))
+      (lazytest.core/expect (:parse-error (first (:code-entries result))))))
+
+  (lazytest.core/it "code-entries-preflight collapses answer position violations to one failed entry"
+    (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
+                               'code-entries-preflight))
+          result (preflight 2 "(def x 1)\n(answer \"bad\")\n(def y 2)\n")]
+      (lazytest.core/expect (= 1 (count (:code-entries result))))
+      (lazytest.core/expect (:answer-preflight-error result))
+      (lazytest.core/expect (:parse-error (first (:code-entries result)))))))

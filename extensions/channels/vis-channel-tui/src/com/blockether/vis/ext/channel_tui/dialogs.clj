@@ -91,12 +91,13 @@
   (max lo (min hi x)))
 
 (defn ellipsize [s max-w]
-  (let [txt (or s "")]
+  (let [txt   (or s "")
+        max-w (long max-w)]
     (cond
       (<= max-w 0) ""
-      (<= (count txt) max-w) txt
+      (<= (p/display-width txt) max-w) txt
       (= max-w 1) "…"
-      :else (str (subs txt 0 (dec max-w)) "…"))))
+      :else (str (p/truncate-cols txt (dec max-w)) "…"))))
 
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
@@ -303,8 +304,9 @@
           (let [idx (+ @scroll i)
                 row (+ content-top i)]
             (when (< idx total)
-              (draw-list-item! g left row inner-w (= idx @selected)
+              (draw-list-item! g left row (if (> total content-h) (dec inner-w) inner-w) (= idx @selected)
                 (:label (nth items idx))))))
+        (draw-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
 
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "select"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
@@ -507,7 +509,7 @@
   (p/fill-rect! g x row table-w 1)
   (p/put-str! g x row (ellipsize line table-w)))
 
-(defn- file-picker-scrollbar-geometry
+(defn scrollbar-geometry
   [height total scroll]
   (when (pos? height)
     (let [scrollable? (> total height)
@@ -523,16 +525,24 @@
        :thumb-h thumb-h
        :thumb-top thumb-top})))
 
-(defn- draw-file-picker-scrollbar!
+(defn draw-scrollbar!
   [g col top height total scroll]
   (when-let [{:keys [track-h thumb-h thumb-top]}
-             (file-picker-scrollbar-geometry height total scroll)]
+             (scrollbar-geometry height total scroll)]
     (doseq [r (range track-h)]
       (p/set-colors! g t/dialog-border t/dialog-bg)
       (p/set-char! g col (+ top r) Symbols/SINGLE_LINE_VERTICAL))
     (doseq [r (range thumb-h)]
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (p/set-char! g col (+ top thumb-top r) \█))))
+
+(defn- file-picker-scrollbar-geometry
+  [height total scroll]
+  (scrollbar-geometry height total scroll))
+
+(defn- draw-file-picker-scrollbar!
+  [g col top height total scroll]
+  (draw-scrollbar! g col top height total scroll))
 
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
@@ -1132,51 +1142,74 @@
       (.format fmt date))
     "—"))
 
+(defn- conversation-table-row-label
+  "Format one fixed-width conversation table row. Width math is terminal
+   columns, not Java chars, so CJK/emoji titles cannot shift later rows."
+  [prefix id-label turns-label modified-label created-label title-label body-w]
+  (let [fixed   (str (p/pad-right prefix 1) " "
+                  (p/pad-right id-label 8) " "
+                  (p/pad-left turns-label 5) "  "
+                  (p/pad-right modified-label 16) "  "
+                  (p/pad-right created-label 16) "  ")
+        title-w (max 1 (- (long body-w) (p/display-width fixed)))]
+    (p/pad-right (str fixed (ellipsize title-label title-w)) body-w)))
+
 (defn conversation-dialog-label
   "Format one fixed-width conversation table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
   [{:keys [id title turn-count modified-at created-at]} active-id body-w]
-  (let [active? (= (str id) (some-> active-id str))
-        prefix  (if active? "●" " ")
-        id8     (short-conversation-id {:id id})
-        turns   (str (long (or turn-count 0)))
-        mod     (format-conversation-date modified-at)
-        created (format-conversation-date created-at)
-        fixed   (String/format Locale/ROOT "%s %-8s %5s  %-16s  %-16s  "
-                  (into-array Object [prefix id8 turns mod created]))
-        title-w (max 1 (- body-w (count fixed)))]
-    (str fixed (ellipsize (conversation-title {:title title :id id}) title-w))))
+  (let [active? (= (str id) (some-> active-id str))]
+    (conversation-table-row-label
+      (if active? "●" " ")
+      (short-conversation-id {:id id})
+      (str (long (or turn-count 0)))
+      (format-conversation-date modified-at)
+      (format-conversation-date created-at)
+      (conversation-title {:title title :id id})
+      body-w)))
 
 (defn conversation-dialog-header
   [body-w]
-  (let [fixed   (String/format Locale/ROOT "%s %-8s %5s  %-16s  %-16s  "
-                  (into-array Object [" " "ID" "Turns" "Modified" "Created"]))
-        title-w (max 1 (- body-w (count fixed)))]
-    (str fixed (ellipsize "Title" title-w))))
+  (conversation-table-row-label " " "ID" "Turns" "Modified" "Created" "Title" body-w))
+
+(defn- conversation-dialog-command-items
+  [body-w]
+  [{:action :new
+    :label  (conversation-table-row-label " " "new" "—" "—" "—" "Create new conversation" body-w)}
+   {:action :fork
+    :label  (conversation-table-row-label " " "fork" "—" "—" "—" "Fork current conversation" body-w)}])
 
 (defn conversation-dialog-items
   "Build rows for the conversation switcher. `conversations` are already
-   sorted by the caller by latest modification date; this function only
-   formats the fixed-width table labels. New/fork actions live in Ctrl+K."
+   sorted by the caller by latest modification date. New/fork commands are
+   first-class rows so Ctrl+G exposes the full conversation workflow."
   ([conversations active-id]
    (conversation-dialog-items conversations active-id conversation-dialog-content-w))
   ([conversations active-id body-w]
-   (mapv (fn [conversation]
-           {:action :switch
-            :id     (str (:id conversation))
-            :label  (conversation-dialog-label conversation active-id body-w)})
+   (into (conversation-dialog-command-items body-w)
+     (map (fn [conversation]
+            {:action :switch
+             :id     (str (:id conversation))
+             :label  (conversation-dialog-label conversation active-id body-w)}))
      conversations)))
 
 (defn- draw-conversation-row!
   [g left row inner-w selected? label]
-  (draw-list-item! g left row inner-w selected? label))
+  ;; Do not add the generic list selector prefix here. The conversation
+  ;; picker is a table; injected "▸ " shifted body columns two cells right
+  ;; of the header. Full-row highlight is the selection affordance.
+  (if selected?
+    (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+    (p/set-colors! g t/dialog-fg t/dialog-bg))
+  (p/fill-rect! g (inc left) row inner-w 1)
+  (p/put-str! g (+ left 2) row (ellipsize label (max 0 (- inner-w 2)))))
 
 (defn conversation-picker-dialog!
   "Show recent TUI conversations in a fixed-size table. Returns
-   `{:action :switch :id <conversation-id>}` or nil on Esc. New/fork
-   actions live in Ctrl+K, not in this table."
+   `{:action :new}`, `{:action :fork}`, `{:action :switch :id <conversation-id>}`,
+   or nil on Esc."
   [^TerminalScreen screen conversations active-id]
-  (let [selected (atom 0)
+  (let [selected (atom (if (seq conversations) 2 0))
         scroll   (atom 0)]
     (loop []
       (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -1213,7 +1246,7 @@
               (draw-conversation-row! g left row inner-w (= idx @selected)
                 (:label (nth items idx))))))
 
-        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "switch"] ["Esc" "cancel"]])
+        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "select"] ["N" "new"] ["F" "fork"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -1224,6 +1257,12 @@
               KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
               KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
               KeyType/Enter     (when (pos? total) (select-keys (nth items @selected) [:action :id]))
+              KeyType/Character (let [raw-c (.getCharacter key)
+                                      c     (when raw-c (Character/toLowerCase raw-c))]
+                                  (case c
+                                    \n {:action :new}
+                                    \f {:action :fork}
+                                    (recur)))
               (recur))))))))
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────

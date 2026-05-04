@@ -8,8 +8,9 @@
         environment block + each active extension's prompt fragment.
 
      2. The trailing user message — rebuilt every iteration. Two slots:
-          <journal>      last JOURNAL_KEEP_ITERS iterations, code + result,
-                        addressed by canonical provenance refs.
+          <journal>      newest code + result lines that fit the dynamic
+                        journal token budget, addressed by canonical
+                        provenance refs.
           <var_index>   user-defined `(def ...)` bindings in the SCI env.
         Extensions can append `[system_nudge]` lines via `:ext/nudge-fn`.
 
@@ -35,24 +36,21 @@
 ;; =============================================================================
 
 (def ^:const MAX_RESULT_DISPLAY_CHARS
-  "Hard cap on a single value's pr-str when shown to the model in <journal>."
-  6000)
+  "Hard cap on a single value's pr-str when shown to the model in <journal>.
 
-(def ^:const JOURNAL_KEEP_ITERS
-  "Rolling-window size for <journal> entries. 12 carries the last
-   dozen iterations of the conversation (cross-turn) so a follow-up
-   turn sees the immediate context of the prior turn's work without
-   re-fetching via `(v/inspect)`.
+   Keep this small. A journal line is repeated into subsequent provider
+   prompts while it remains inside the token-budgeted window. Full
+   forensic values stay in the DB/transcript; the model-facing journal
+   gets a working-memory preview."
+  1500)
 
-   When the iteration's prompt token count crosses
-   `CONTEXT_PRESSURE_THRESHOLD` of the model's context window the
-   loop fires a `[system_nudge]` instructing the model to curate
-   `(def …)` summaries it cares about; older entries then drop off
-   the rolling window verbatim. The runtime never auto-summarizes —
-   the model owns its working memory, in line with the RLM
-   principle this project is built on (see AGENTS.md ▸ S5/S4 runtime
-   truth and context curation rules)."
-  12)
+(def ^:const JOURNAL_CONTEXT_FRACTION
+  "Fraction of the model context window reserved for rendered <journal>.
+
+   There is no fixed iteration-count cap. The window is token-budgeted:
+   newest evidence stays, oldest journal lines drop when the rendered
+   journal would exceed this fraction of the active model context."
+  0.50)
 
 (def ^:const CONTEXT_PRESSURE_THRESHOLD
   "Fraction of the model's effective input-token budget at which the
@@ -108,8 +106,15 @@
     [bounded truncated?]))
 
 ;; =============================================================================
-;; <journal> — last JOURNAL_KEEP_ITERS iterations of code + results
+;; <journal> — newest token-budgeted code + results
 ;; =============================================================================
+
+(declare count-prompt-tokens model-context-limit)
+
+(defn- journal-token-budget
+  [model]
+  (max 1 (long (Math/floor (* JOURNAL_CONTEXT_FRACTION
+                             (double (model-context-limit model)))))))
 
 (defn- tool-result-journal-text
   [v]
@@ -144,7 +149,7 @@
         display-ref    (or (:ref provenance)
                          (str "<missing-canonical-ref iteration=" iteration-position
                            " block=" (inc k) ">"))
-        code-str      (str/trim (or code ""))
+        code-str      (truncate (str/trim (or code "")) MAX_RESULT_DISPLAY_CHARS)
         stdout-suffix (when-not (str/blank? stdout)
                         (str " :stdout " (pr-str (truncate stdout 600))))
         stderr-suffix (when-not (str/blank? stderr)
@@ -192,24 +197,56 @@
                             (map-indexed vector (or blocks []))))]
     (vec (concat header-lines block-lines))))
 
+(defn- trim-journal-lines
+  "Keep newest journal lines within 50% of the active model context.
+
+   Returns `[lines dropped-count budget-tokens used-tokens]`. Lines are
+   indivisible because each carries one canonical ref; truncating inside
+   a line would create misleading half-evidence. Per-value truncation
+   above keeps individual lines bounded, while this token cap stops
+   repeated reads from dominating every later provider prompt."
+  [model lines]
+  (let [budget-tokens (journal-token-budget model)]
+    (loop [remaining (reverse lines)
+           kept      '()
+           used      0]
+      (if-let [line (first remaining)]
+        (let [line-tokens (or (count-prompt-tokens model line)
+                            (long (quot (count line) 4)))
+              next-used  (+ used line-tokens 1)]
+          (if (and (seq kept) (> next-used budget-tokens))
+            [(vec kept) (count remaining) budget-tokens used]
+            (recur (rest remaining) (conj kept line) next-used)))
+        [(vec kept) 0 budget-tokens used]))))
+
 (defn- format-journal-block
-  "Render the last JOURNAL_KEEP_ITERS iterations with canonical provenance
-   refs when available. `iters` is a seq of `[iteration-position {:thinking :blocks}]`
-   pairs, oldest-first. Each iteration's segment carries:
+  "Render all carried iterations with canonical provenance refs, then
+   trim the rendered lines by token budget instead of by iteration count.
+   `iters` is a seq of `[iteration-position {:thinking :blocks}]` pairs,
+   oldest-first. Each iteration's segment carries:
      - `iteration/N thinking: …` once at the top (when the iteration emitted
        any reasoning text)
      - per-block `<canonical-ref>  ;; <comment>` line above the code line, when
        the model authored a leading `;; …` / `#_(...)` comment for
        that form
      - `<canonical-ref>  <code> → <value>` for every block in the iteration"
-  [iters]
-  (let [kept  (take-last JOURNAL_KEEP_ITERS (or iters []))
-        lines (->> kept
+  [model iters]
+  (let [lines (->> (or iters [])
                 (mapcat (fn [[pos iteration-data]]
                           (format-journal-iteration-block pos iteration-data)))
-                vec)]
-    (when (seq lines)
-      (str "<journal>\n" (str/join "\n" lines) "\n</journal>"))))
+                vec)
+        [trimmed-lines dropped-count budget-tokens used-tokens]
+        (trim-journal-lines model lines)
+        omitted-line (str "  ... " dropped-count
+                       " older journal lines omitted to fit journal token budget "
+                       used-tokens "/" budget-tokens
+                       " tokens (" (long (* 100 JOURNAL_CONTEXT_FRACTION))
+                       "% of model context)")
+        rendered-lines (if (pos? dropped-count)
+                         (vec (cons omitted-line trimmed-lines))
+                         trimmed-lines)]
+    (when (seq rendered-lines)
+      (str "<journal>\n" (str/join "\n" rendered-lines) "\n</journal>"))))
 
 ;; =============================================================================
 ;; <var_index> — read/cache the current SCI sandbox shape
@@ -291,7 +328,7 @@
         (str "[system_nudge] Context window is at "
           (int (Math/round (* 100.0 util))) "% ("
           used-tokens " / " limit-tokens " tokens). Older <journal>\n"
-          "  iterations will roll off the rolling window soon. Curate the\n"
+          "  lines drop when the journal exceeds its token budget. Curate the\n"
           "  insight you've earned BEFORE that happens — emit a structured\n"
           "  `(def …)` so the value lands in <var_index> + persisted history and\n"
           "  survives the roll. Chain-of-Density-style recipe (use only\n"
@@ -340,8 +377,8 @@
   "Assemble the per-iteration trailing user message.
 
    Two slots:
-     <journal>     — last JOURNAL_KEEP_ITERS iterations, thinking +
-                     comments + code + result.
+     <journal>     — newest token-budgeted thinking + comments + code
+                     + result. Budget is 50% of the model context.
      <var_index>   — `(def ...)` bindings in the SCI env.
 
    Plus zero or more `[system_nudge]` lines. Built-ins:
@@ -355,9 +392,10 @@
         :ext/nudge-fn is consulted (rare).
 
    Optional:
-     `:blocks-by-iteration` — last few iterations of
+     `:blocks-by-iteration` — carried iterations as
         `[iteration-position {:thinking :blocks}]` pairs for the
-        <journal> renderer.
+        <journal> renderer. Rendering trims by token budget, not fixed
+        iteration count.
      `:iteration` — current iteration position (1-based for rendered refs;
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
@@ -366,7 +404,7 @@
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [recent-block (format-journal-block blocks-by-iteration)
+  (let [recent-block (format-journal-block model blocks-by-iteration)
         last-iteration-blocks (some-> blocks-by-iteration last second)
         var-index-str (read-var-index-str environment)
         var-block (when (and (string? var-index-str)
@@ -477,7 +515,7 @@ Model discipline:
   run `(v/latest-provenance-refs)` / `(v/provenance-guards)` before citing provenance; inspect before edit; do not guess; use VSM only as compact attention: S5 identity/rules, S4 learn/probe, S3 plans/gates/resources, S2 coordinate journal+vars+tools+intent graph, S1 operate forms.
 
 Protocol:
-  reply with executable ```clojure fences only; host concatenates top-level forms and evaluates in order. If no `(answer ...)`, the host continues the same user turn. `(answer ARG)` is terminal: never use it for progress. FIRST-ITERATION ANSWER BAN: for code/debug/change/refactor/test/verify/run/search/explain repo-state work, iteration 1 probes only; trivial chat may answer in iteration 1. When required user input/material is absent before work can begin, answer with `(v/needs-input ...)`; this is allowed without creating an intent. Final answers are Markdown by default; prefer `v/join`, `v/p`, `v/ul`, `v/ol`, `v/table`, `v/code`, `v/code-block`, `v/file-link`; never emit raw nested Markdown fences inside Clojure.
+  reply with exactly one executable ```clojure fenced block only; host evaluates top-level forms in order. Put every form for the iteration inside that one fence; never emit multiple fenced blocks or nested fences. If no `(answer ...)`, the host continues the same user turn. `(answer ARG)` is terminal: never use it for progress. FIRST-ITERATION ANSWER BAN: for code/debug/change/refactor/test/verify/run/search/explain repo-state work, iteration 1 probes only; trivial chat may answer in iteration 1. When required user input/material is absent before work can begin, answer with `(v/needs-input ...)`; this is allowed without creating an intent. Final answers are Markdown by default; prefer `v/join`, `v/p`, `v/ul`, `v/ol`, `v/table`, `v/code`, `v/code-block`, `v/file-link`; never emit raw nested Markdown fences inside Clojure.
 
 Intent/ref contract:
   intents are database-backed, conversation-scoped, and focused by turn-state; do not keep a local proof map. Plans are persisted Clojure DSL graphs (`:plan`) that join intents/subintents/gates/slots so resolution does not live in model memory. Proof slot IDs are values shaped `[intent-id :slot-name]` — never bare `:slot-name`, never a symbol persisted as the slot. It is fine to bind `(def verification-slot (v/proof-slot intent :verification))`; the var holds the canonical slot value. Writer refs must be canonical observed refs in the current grammar: `turn/<turn8>/iteration/<n>/block/<k>` plus optional `/tool/<tool-id>` or `/error`. Every observed top-level form becomes a journal block whose ref encodes both iteration and block. Use refs copied from `<journal>`, `(v/latest-provenance-refs)`, or `(v/provenance-timeline)`, e.g. `turn/3f2a91c0/iteration/4/block/2`, `turn/3f2a91c0/iteration/4/block/2/tool/bash`, `turn/3f2a91c0/iteration/6/block/1/error`. Never construct refs from the current iteration number; current-iteration refs are not valid until the next iteration observes them in the journal. Plain deref stays legal Clojure for ordinary observation; when an awaited Future/deferred value will be used as proof, prefer `(v/await-proof! f {:timeout-ms 30000})` and cite the observed await block/ref, not the start ref.
@@ -609,7 +647,7 @@ Answer shapes. After iteration 1, `(answer …)` is the ONLY top-level form of i
 If you need any sibling top-level work after iteration 1, do not answer yet; do that work in earlier iterations, surface results, and answer alone in a later iteration.
 
 Each iteration's user msg carries:
-  <journal>     recent iterations: thinking + comments + code + results, with canonical provenance refs
+  <journal>     newest thinking + comments + code + results that fit the token-budgeted journal window (50% of model context), with canonical provenance refs
   <var_index>   your `(def name val)` / `defn` bindings still alive in the sandbox
   [system_nudge] lines (when relevant) — e.g. set the conversation title or manage context pressure
 
