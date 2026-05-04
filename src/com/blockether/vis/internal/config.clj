@@ -474,6 +474,60 @@
                        "or set BLOCKETHER_OPENAI_API_KEY env var.")
               {})))))
 
+(def ^:private extension-env-config-key :environment)
+
+(defn extension-env-overrides
+  "Persisted extension environment overrides from `~/.vis/config.edn`
+   under `:environment`. Keys are environment variable names as
+   strings. Values are strings. This does NOT mutate the process
+   environment; extension code should call `extension-env-value` when
+   it wants config-over-env resolution."
+  []
+  (let [raw (load-config-raw)
+        m   (when (map? raw) (get raw extension-env-config-key))]
+    (if (map? m)
+      (into {}
+        (keep (fn [[k v]]
+                (when (and (string? k) (string? v) (not (str/blank? v)))
+                  [k v])))
+        m)
+      {})))
+
+(defn extension-env-status
+  "Return source and value metadata for an extension-declared env var.
+   `:source` is one of `:config`, `:env`, or `:unset`."
+  [name]
+  (let [name'     (str name)
+        overrides (extension-env-overrides)]
+    (if-let [configured (get overrides name')]
+      {:name name' :source :config :value configured}
+      (if-let [from-env (not-empty (str/trim (or (System/getenv name') "")))]
+        {:name name' :source :env :value from-env}
+        {:name name' :source :unset :value nil}))))
+
+(defn extension-env-value
+  "Resolve an extension-declared env var as config override → real env.
+   Blank/missing values return nil."
+  [name]
+  (:value (extension-env-status name)))
+
+(defn save-extension-env-var!
+  "Persist or clear one extension env override in `~/.vis/config.edn`.
+   Blank/nil `value` removes the override, revealing the process env
+   value again if one exists. Preserves all other config keys."
+  [name value]
+  (let [name' (str name)
+        raw   (or (load-config-raw) {})
+        value' (when (string? value) (not-empty (str/trim value)))
+        envs  (cond-> (or (get raw extension-env-config-key) {})
+                value' (assoc name' value')
+                (not value') (dissoc name'))]
+    (save-config! (if (seq envs)
+                    (assoc raw extension-env-config-key envs)
+                    (dissoc raw extension-env-config-key))
+      :environment)
+    (extension-env-status name')))
+
 (defn resolve-db-spec
   "Resolve DB spec: explicit → VIS_DB_PATH env → `:db-spec` from
    config.edn → default sqlite at `~/.vis/vis.mdb`."

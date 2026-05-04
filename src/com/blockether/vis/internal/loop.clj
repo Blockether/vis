@@ -935,8 +935,8 @@
       "appears in form " actual-1 ". Do not answer in this iteration. "
       "If sibling work is still required, emit that work alone and omit "
       "`(answer …)` so the host loops. If the work is already done, emit "
-      "exactly one top-level `(answer …)` form next. No defs, no checks, "
-      "no intent calls.")))
+      "exactly one top-level answer-bearing form next. Intent resolution may "
+      "be inside that one wrapper only when all cited refs are already observed.")))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))

@@ -31,15 +31,15 @@
 (defn- drop-conversation-intent-schema!
   [db-file]
   (let [ds (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" db-file)})]
-    (doseq [ddl ["PRAGMA foreign_keys = OFF"
-                 "DROP TABLE IF EXISTS conversation_intent_focus"
-                 "DROP TABLE IF EXISTS conversation_intent_gate_ref"
-                 "DROP TABLE IF EXISTS conversation_intent_gate"
-                 "DROP TABLE IF EXISTS conversation_intent_plan"
-                 "DROP TABLE IF EXISTS conversation_intent_relation"
-                 "DROP TABLE IF EXISTS conversation_intent_ref"
-                 "DROP TABLE IF EXISTS conversation_intent"]]
-      (jdbc/execute! ds [ddl]))))
+    (jdbc/execute! ds ["PRAGMA foreign_keys = OFF"])
+    (doseq [table [:conversation_intent_focus
+                   :conversation_intent_gate_ref
+                   :conversation_intent_gate
+                   :conversation_intent_plan
+                   :conversation_intent_relation
+                   :conversation_intent_ref
+                   :conversation_intent]]
+      (jdbc/execute! ds (sql/format {:drop-table [:if-exists table]})))))
 
 (defn- private-core-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
@@ -247,26 +247,25 @@
       (expect (= :ok result))
       (expect (= 2 @attempts)))))
 
-(defdescribe inline-v1-schema-repair-test
-  (it "repairs existing V1 developer databases that predate conversation-scoped intents"
-    (let [dir (fs/create-temp-dir {:prefix "vis-inline-v1-repair-"})]
+(defdescribe v1-schema-resource-only-test
+  (it "does not repair local databases that are missing migration-owned tables"
+    (let [dir (fs/create-temp-dir {:prefix "vis-v1-no-repair-"})]
       (try
         (let [s (vis/db-create-connection! (str dir))]
           (vis/db-dispose-connection! s))
         (drop-conversation-intent-schema! (fs/file dir "vis.db"))
         (let [s (vis/db-create-connection! (str dir))]
           (try
-            (let [cid    (vis/db-store-conversation! s {:channel :cli})
-                  tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                             :user-request "fix the schema"
-                                                             :status :running})
-                  state  (vis/db-intents s {:conversation-turn-id tid})
-                  intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                                  :title "Repair intent"
-                                                  :rationale "The user asked for schema repair."})]
-              (expect (false? (:ok? state)))
-              (expect (= :missing-focused-intent (-> state :violations first :type)))
-              (expect (= "Repair intent" (:title intent))))
+            (let [cid (vis/db-store-conversation! s {:channel :cli})
+                  tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                          :user-request "missing schema"
+                                                          :status :running})]
+              (expect (some? (try
+                               (vis/db-store-intent! s {:conversation-turn-id tid
+                                                        :title "No repair"
+                                                        :rationale "Schema must come from migration resource."})
+                               nil
+                               (catch Throwable t t)))))
             (finally
               (vis/db-dispose-connection! s))))
         (finally

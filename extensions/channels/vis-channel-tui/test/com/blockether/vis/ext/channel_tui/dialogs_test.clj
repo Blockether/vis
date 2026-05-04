@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest testing is]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input MouseActionType]))
 
@@ -128,6 +129,22 @@
               (mapv :label))))
       (is (some #(= :differentiate-turns (:key %)) (settings-rows)))
       (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
+
+    (testing "extension-declared env vars render as editable extension rows without UNKNOWN labels"
+      (with-redefs [vis/registered-extensions (fn [] [{:ext/namespace 'test.ext
+                                                       :ext/ns-alias {:alias 'exa}
+                                                       :ext/env [{:name "EXA_API_KEY"
+                                                                  :label "Exa API key"
+                                                                  :description "Optional key."
+                                                                  :secret? true}]}])
+                    vis/extension-env-status (fn [name]
+                                               {:name name :source :config :value "secret"})]
+        (let [rows (settings-rows)
+              row  (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
+          (is (= :env-var (:type row)))
+          (is (= "Exa API key: set in Vis config"
+                (settings-option-label row {})))
+          (is (not (str/includes? (settings-option-label row {}) "UNKNOWN"))))))
 
     (testing "conversation picker keeps new/fork out of the table and renders justified cells"
       (let [body-w 96

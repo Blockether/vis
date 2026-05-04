@@ -181,8 +181,7 @@
 
 (def ^:private migration-checksum-mismatch-user-message
   (str "Database schema mismatch: local migrations changed since this database was created. "
-    "If you do not need old local conversations, remove ~/.vis/vis.mdb and restart Vis. "
-    "If you need to keep it, run Flyway repair on that database first."))
+    "Close all Vis processes, remove ~/.vis/vis.mdb, then restart Vis to recreate it from packaged migration resources."))
 
 (defn- migration-checksum-mismatch?
   "True when any throwable in the causal chain looks like Flyway's
