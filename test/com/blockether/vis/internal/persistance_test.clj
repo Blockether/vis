@@ -51,7 +51,8 @@
       (expect (= :vis/db-migration-checksum-mismatch (:type (ex-data e))))
       (expect (= root (.getCause ^Throwable e)))
       (expect (str/includes? (.getMessage ^Throwable e) "~/.vis/vis.mdb"))
-      (expect (str/includes? (.getMessage ^Throwable e) "Flyway repair"))))
+      (expect (str/includes? (.getMessage ^Throwable e) "packaged migration resources"))
+      (expect (not (str/includes? (.getMessage ^Throwable e) "Flyway repair")))))
 
   (it "passes non-migration bootstrap failures through unchanged"
     (let [root (IllegalStateException. "totally unrelated failure")
@@ -69,10 +70,11 @@
       (expect (nil? (ex-data e))))))
 
 (defdescribe wrapped-message-contents-test
-  (it "mentions both reset and repair paths"
+  (it "mentions reset path and does not suggest repair"
     (expect (str/includes? migration-checksum-mismatch-user-message "schema mismatch"))
     (expect (str/includes? migration-checksum-mismatch-user-message "~/.vis/vis.mdb"))
-    (expect (str/includes? migration-checksum-mismatch-user-message "Flyway repair")))
+    (expect (str/includes? migration-checksum-mismatch-user-message "packaged migration resources"))
+    (expect (not (str/includes? migration-checksum-mismatch-user-message "Flyway repair"))))
 
   (it "helper leaves unrelated errors untouched"
     (let [e (ex-info "x" {})]

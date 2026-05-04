@@ -49,7 +49,7 @@
 
 (defn- env
   [k]
-  (not-empty (str/trim (or (System/getenv k) ""))))
+  (not-empty (str/trim (or (vis/extension-env-value k) ""))))
 
 (defn- parse-long*
   [x]
@@ -606,6 +606,37 @@
 (def exa-prompt
   "`exa/` web search: (exa/web-search query opts?) for current web facts; (exa/code-context query opts?) for code/docs/API examples. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :pi-max-bytes, :pi-max-lines. code-context supports :tokens-num, :pi-max-bytes, :pi-max-lines. Tool results are envelopes; read payload with (get-in r [:result :content]), not (:content r). PI-compatible aliases: exa/web-search-exa, exa/get-code-context-exa.")
 
+(def exa-env
+  [{:name "EXA_API_KEY"
+    :label "Exa API key"
+    :description "Optional Exa key for higher MCP limits. Also read as EXA_MCP_API_KEY."
+    :secret? true}
+   {:name "EXA_MCP_API_KEY"
+    :label "Exa MCP API key"
+    :description "Alias for EXA_API_KEY. Use one, not both."
+    :secret? true}
+   {:name "EXA_MCP_URL"
+    :label "Exa MCP URL"
+    :description "Override Exa MCP endpoint URL."}
+   {:name "EXA_MCP_TOOLS"
+    :label "Exa MCP tools"
+    :description "Comma-separated MCP tool allow-list."}
+   {:name "EXA_MCP_TIMEOUT_MS"
+    :label "Exa MCP timeout"
+    :description "HTTP timeout in milliseconds."}
+   {:name "EXA_MCP_PROTOCOL_VERSION"
+    :label "Exa MCP protocol version"
+    :description "MCP protocol version sent during initialize."}
+   {:name "EXA_MCP_MAX_BYTES"
+    :label "Exa max bytes"
+    :description "Client-side maximum response bytes before truncation."}
+   {:name "EXA_MCP_MAX_LINES"
+    :label "Exa max lines"
+    :description "Client-side maximum response lines before truncation."}
+   {:name "EXA_MCP_CONFIG"
+    :label "Exa MCP config file"
+    :description "Optional JSON config file path. Lower priority than explicit vars."}])
+
 (def vis-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.exa.core
@@ -616,6 +647,7 @@
      :ext/license "Apache-2.0"
      :ext/ns-alias {:ns 'vis.ext.exa :alias 'exa}
      :ext/kind "search"
+     :ext/env exa-env
      :ext/prompt exa-prompt
      :ext/symbols exa-symbols}))
 

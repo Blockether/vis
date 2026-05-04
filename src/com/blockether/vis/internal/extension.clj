@@ -382,6 +382,20 @@
 (s/def :ext/on-iteration-end-fn   fn?)
 (s/def :ext/on-turn-end-fn        fn?)
 
+;; Optional extension-owned environment/config declarations. These name
+;; OS-style environment variables that can also be overridden from
+;; Vis config/TUI under `:environment`. The host never mutates the
+;; process env; extension code resolves them through config helpers.
+(s/def :ext.env/name non-blank-string?)
+(s/def :ext.env/label non-blank-string?)
+(s/def :ext.env/description string?)
+(s/def :ext.env/secret? boolean?)
+(s/def :ext.env/required? boolean?)
+(s/def ::env-entry
+  (s/keys :req-un [:ext.env/name]
+    :opt-un [:ext.env/label :ext.env/description :ext.env/secret? :ext.env/required?]))
+(s/def :ext/env (s/coll-of ::env-entry :kind vector?))
+
 ;; Optional dependency declaration. Vector of extension namespace symbols.
 (s/def :ext/requires (s/coll-of symbol? :kind vector?))
 
@@ -526,7 +540,7 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/nudge-fn
-            :ext/on-parse-error-fn :ext/requires
+            :ext/on-parse-error-fn :ext/env :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
             :ext/doctor-check-fn
@@ -1008,6 +1022,7 @@
       (not (:ext/symbols spec))                        (assoc :ext/symbols [])
       (not (:ext/classes spec))                        (assoc :ext/classes {})
       (not (:ext/imports spec))                        (assoc :ext/imports {})
+      (not (:ext/env spec))                            (assoc :ext/env [])
       (not (:ext/requires spec))                       (assoc :ext/requires [])
       (not (:ext/cli spec))                            (assoc :ext/cli [])
       (not (:ext/channels spec))                       (assoc :ext/channels [])

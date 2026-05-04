@@ -15,12 +15,12 @@ Single alias: `exa/`.
 ## Tools
 
 ```clojure
-(exa/web-search "latest Clojure release" {:num-results 5})
-(exa/code-context "rewrite-clj z/find-value examples" {:tokens-num 12000})
+(exa/web-search \"latest Clojure release\" {:num-results 5})
+(exa/code-context \"rewrite-clj z/find-value examples\" {:tokens-num 12000})
 
 ;; PI-compatible spellings also exist:
-(exa/web-search-exa "latest Clojure release")
-(exa/get-code-context-exa "HoneySQL SQLite examples")
+(exa/web-search-exa \"latest Clojure release\")
+(exa/get-code-context-exa \"HoneySQL SQLite examples\")
 ```
 
 The extension talks to Exa MCP at `https://mcp.exa.ai/mcp`. Basic usage works without an API key; set `EXA_API_KEY` or `EXA_MCP_API_KEY` for higher limits.
@@ -39,13 +39,13 @@ JSON shape mirrors PI's `@benvargas/pi-exa-mcp` package. String values can refer
 
 ```json
 {
-  "url": "https://mcp.exa.ai/mcp",
-  "apiKey": "${EXA_API_KEY}",
-  "tools": ["web_search_exa", "get_code_context_exa"],
-  "timeoutMs": 30000,
-  "protocolVersion": "2025-06-18",
-  "maxBytes": 51200,
-  "maxLines": 2000
+  \"url\": \"https://mcp.exa.ai/mcp\",
+  \"apiKey\": \"${EXA_API_KEY}\",
+  \"tools\": [\"web_search_exa\", \"get_code_context_exa\"],
+  \"timeoutMs\": 30000,
+  \"protocolVersion\": \"2025-06-18\",
+  \"maxBytes\": 51200,
+  \"maxLines\": 2000
 }
 ```
 
