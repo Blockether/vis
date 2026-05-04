@@ -752,6 +752,36 @@
     (state/dispatch [:set-title title]))
   (subscribe-title-listener! id))
 
+(defn- standalone?
+  [opts]
+  (true? (:standalone opts)))
+
+(defn- create-terminal!
+  [opts]
+  (if (standalone? opts)
+    ((requiring-resolve 'com.blockether.vis.ext.channel-tui.standalone/create-terminal!) opts)
+    (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset))))
+
+(defn- configure-terminal-input!
+  [terminal opts]
+  (when (instance? UnixTerminal terminal)
+    (input/register-custom-patterns! terminal))
+  (when-not (standalone? opts)
+    (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
+      (catch Throwable _ nil))))
+
+(defn- enable-terminal-escape-modes!
+  [opts]
+  (when-not (standalone? opts)
+    (input/enable-bracketed-paste! @vis/tty-out)
+    (input/enable-sgr-mouse! @vis/tty-out)))
+
+(defn- disable-terminal-escape-modes!
+  [opts]
+  (when-not (standalone? opts)
+    (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
+    (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))))
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -784,23 +814,8 @@
      (when-let [c (vis/load-config)]
        (state/dispatch [:set-config c]))
 
-     (let [terminal (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset))
-           _        (input/register-custom-patterns! terminal)
-           ;; Enable mouse capture: scrollbar drag, wheel scroll,
-           ;; AND click-to-open + hover-highlight on link/image
-           ;; chrome rows. CLICK_RELEASE_DRAG_MOVE is the most
-           ;; verbose mode but it's the only one that delivers bare
-           ;; `MOVE` events — we need them so a hovered link row
-           ;; can repaint with a hover-bg before the user clicks.
-           ;; The MOVE handler debounces by row so it never re-paints
-           ;; on cursor twitches inside the same chrome row. Wheel
-           ;; scroll arrives as `MouseActionType/SCROLL_UP/_DOWN`
-           ;; in every mode. If the host terminal doesn't honour the
-           ;; mode-set escape, the entire mouse surface becomes
-           ;; inert (no clicks, no hover) — by design, since the
-           ;; mouse picker is the only entry point to the opener.
-           _        (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
-                      (catch Throwable _ nil))
+     (let [terminal (create-terminal! opts)
+           _        (configure-terminal-input! terminal opts)
            screen   (TerminalScreen. terminal)
         ;; Render thread handle is held in a volatile so the `finally`
         ;; clause can join it. (Locals from the `try` body aren't in
@@ -891,18 +906,19 @@
          ;; subsequent pastes in `ESC[200~ … ESC[201~`. Disabling
          ;; happens in the outer `finally` block, so a crashed TUI
          ;; can't leave the user's shell stuck with bracketing on.
-         (input/enable-bracketed-paste! @vis/tty-out)
+         (enable-terminal-escape-modes! opts)
          ;; SGR mouse mode (1006). Lanterna's `setMouseCaptureMode`
-         ;; above already enabled legacy 1003, but its parser only
-         ;; understands the X10 binary encoding — which corrupts
-         ;; coordinates the moment `col + 32` exceeds 0x7F (i.e.
-         ;; col >= 96), because the JVM UTF-8 decoder replaces the
-         ;; high byte with U+FFFD. SGR sends the same payload as
-         ;; pure ASCII text, so wide terminals (the copy-id glyph
-         ;; lives near the right edge!) survive intact. The custom
-         ;; pattern registered above turns SGR sequences into
-         ;; `MouseAction` instances with correct integer mx/my.
-         (input/enable-sgr-mouse! @vis/tty-out)
+         ;; above already enabled legacy 1003 on the native terminal
+         ;; backend, but its parser only understands the X10 binary
+         ;; encoding — which corrupts coordinates the moment
+         ;; `col + 32` exceeds 0x7F (i.e. col >= 96), because the JVM
+         ;; UTF-8 decoder replaces the high byte with U+FFFD. SGR sends
+         ;; the same payload as pure ASCII text, so wide terminals (the
+         ;; copy-id glyph lives near the right edge!) survive intact.
+         ;; The custom pattern registered above turns SGR sequences into
+         ;; `MouseAction` instances with correct integer mx/my. The
+         ;; standalone Swing backend receives mouse input from Swing and
+         ;; intentionally skips terminal escape-mode writes.
          (let [scrollbar-drag-offset (volatile! nil)
                ;; `click-action-fired?` is set to true when the
                ;; CLICK_DOWN branch already handled a click region
@@ -1549,17 +1565,10 @@
 
                        :continue (recur))))))))
          (finally
-        ;; Tell the terminal to stop wrapping pastes. Always before
-        ;; tear-down so a crash leaves the user's shell in a clean
-        ;; state — a half-disabled bracketed-paste mode would make
-        ;; every subsequent shell paste arrive with stray
-        ;; `ESC[200~`/`ESC[201~` literals.
-           (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
-        ;; Reverse the SGR mouse-mode enable from boot. Same
-        ;; rationale as the bracketed-paste disable above: a
-        ;; crashed TUI must not leave the user's shell receiving
-        ;; raw `ESC[<...M` sequences from every later mouse click.
-           (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
+        ;; Tell native terminals to stop wrapping pastes and reporting
+        ;; SGR mouse events. Standalone Swing never writes these escape
+        ;; modes to the user's controlling TTY.
+           (disable-terminal-escape-modes! opts)
         ;; Drop the notifications watcher so the next TUI session
         ;; doesn't accumulate stale hooks (the screen is short-lived
         ;; relative to the JVM — leaving stale watchers around would
@@ -1588,12 +1597,48 @@
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
 (def ^:private tui-usage
-  "vis channels tui [--conversation-id ID | --resume]")
+  (str "vis channels tui [--conversation-id ID | --resume] [--standalone] "
+    "[--font-size N] [--font-bundle NAME] [--font-family FAMILY] [--font-path PATH] "
+    "[--standalone-cols N] [--standalone-rows N]"))
+
+(defn- missing-value?
+  [v]
+  (or (nil? v) (str/starts-with? v "--")))
+
+(defn- flag-value
+  [flag more]
+  (let [v (first more)]
+    (when (missing-value? v)
+      (throw (ex-info (str flag " requires a value"
+                        "\nUsage: " tui-usage)
+               {:vis/user-error true})))
+    v))
+
+(defn- parse-positive-int
+  [flag value]
+  (try
+    (let [n (Integer/parseInt value)]
+      (when-not (pos? n)
+        (throw (NumberFormatException. value)))
+      n)
+    (catch NumberFormatException _
+      (throw (ex-info (str flag " requires a positive integer, got: " value
+                        "\nUsage: " tui-usage)
+               {:vis/user-error true
+                :flag           flag
+                :value          value})))))
 
 (defn- parse-args
   "Parse `vis channels tui` flags.
      --conversation-id ID   Resume a conversation (full UUID or short prefix)
      --resume               Resume the latest :tui conversation
+     --standalone           Use Lanterna's Swing backend instead of /dev/tty
+     --font-size N          Standalone Swing font size, default 16
+     --font-bundle NAME     Bundled Cascadia variant: code, code-pl, code-nf, mono, mono-pl, mono-nf
+     --font-family FAMILY   Standalone Swing system font stack
+     --font-path PATH       Standalone Swing TTF/OTF file
+     --standalone-cols N    Standalone initial columns, default 120
+     --standalone-rows N    Standalone initial rows, default 36
 
    Unknown flags and missing flag values throw a `:vis/user-error` ex-info
    so the user sees a clean error instead of the TUI silently swallowing a
@@ -1606,14 +1651,39 @@
             more (next args)]
         (case arg
           "--conversation-id"
-          (let [v (first more)]
-            (when (or (nil? v) (str/starts-with? v "--"))
-              (throw (ex-info (str "--conversation-id requires a value (UUID or short prefix)"
-                                "\nUsage: " tui-usage)
-                       {:vis/user-error true})))
+          (let [v (flag-value arg more)]
             (recur (next more) (assoc opts :conversation-id v)))
+
           "--resume"
           (recur more (assoc opts :resume true))
+
+          "--standalone"
+          (recur more (assoc opts :standalone true))
+
+          "--font-size"
+          (let [v (flag-value arg more)]
+            (recur (next more) (assoc opts :font-size (parse-positive-int arg v))))
+
+          "--font-bundle"
+          (let [v (flag-value arg more)]
+            (recur (next more) (assoc opts :font-bundle (keyword v))))
+
+          "--font-family"
+          (let [v (flag-value arg more)]
+            (recur (next more) (assoc opts :font-family v)))
+
+          "--font-path"
+          (let [v (flag-value arg more)]
+            (recur (next more) (assoc opts :font-path v)))
+
+          "--standalone-cols"
+          (let [v (flag-value arg more)]
+            (recur (next more) (assoc opts :columns (parse-positive-int arg v))))
+
+          "--standalone-rows"
+          (let [v (flag-value arg more)]
+            (recur (next more) (assoc opts :rows (parse-positive-int arg v))))
+
           (throw (ex-info (str "unknown flag: " arg
                             "\nUsage: " tui-usage)
                    {:vis/user-error true})))))))
