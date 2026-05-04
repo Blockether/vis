@@ -316,6 +316,7 @@
 (def display-label                       config/display-label)
 (def model-name                          config/model-name)
 (def provider-base-url                   config/provider-base-url)
+(def provider-model-visible?             config/provider-model-visible?)
 (def provider-presets                    config/provider-presets)
 (def provider-template                   config/provider-template)
 (def ->svar-model                        config/->svar-model)

@@ -38,8 +38,8 @@
 
 (defn- fetch-models
   "GET /models from the provider's API. Returns vec of chat model id strings or nil on failure.
-    Filters out TTS, embedding, speech, and image models automatically."
-  [base-url api-key]
+    Filters out TTS, embedding, speech, image, and provider-excluded models automatically."
+  [provider-id base-url api-key]
   (try
     (let [url     (str base-url "/models")
           builder (-> (HttpRequest/newBuilder)
@@ -57,6 +57,7 @@
       (->> models
         (map (fn [m] (or (:id m) (str m))))
         (filter chat-model?)
+        (filter #(vis/provider-model-visible? provider-id %))
         sort
         vec))
     (catch Exception _ nil)))
@@ -81,9 +82,9 @@
   "Build the model selection list. Fetched + defaults, deduped, sorted.
     When `show-all?` is false, hides dated variants (e.g. gpt-4o-2024-08-06).
     Appends 'Show all models...' toggle when variants were hidden."
-  [base-url api-key default-models show-all?]
-  (let [fetched  (or (fetch-models base-url api-key) [])
-        defaults (or default-models [])
+  [provider-id base-url api-key default-models show-all?]
+  (let [fetched  (or (fetch-models provider-id base-url api-key) [])
+        defaults (filterv #(vis/provider-model-visible? provider-id %) (or default-models []))
         all-ids  (->> (concat fetched defaults) distinct sort vec)
         pinned   (pin-default all-ids)
         ;; Filter dated variants unless show-all
@@ -101,9 +102,9 @@
 (defn- select-model!
   "Show model selection dialog. Hides dated variants by default, with toggle to show all.
     Returns model id string or nil on cancel."
-  [^TerminalScreen screen base-url api-key default-models]
+  [^TerminalScreen screen provider-id base-url api-key default-models]
   (loop [show-all? false]
-    (let [models (build-model-list base-url api-key default-models show-all?)]
+    (let [models (build-model-list provider-id base-url api-key default-models show-all?)]
       (when-let [choice (dlg/select-dialog! screen "Select Model" models)]
         (if (= (:id choice) :show-all)
           (recur true)
@@ -117,7 +118,7 @@
                    (remove nil?)
                    distinct
                    vec)]
-    (select-model! screen (vis/provider-base-url provider) (:api-key provider) defaults)))
+    (select-model! screen (:id provider) (vis/provider-base-url provider) (:api-key provider) defaults)))
 
 (defn- default-model-configs
   [preset]
@@ -537,7 +538,7 @@
         selected (atom 0)]
     ;; If still empty after init, prompt for a model
     (when (empty? @models)
-      (if-let [model-name (select-model! screen base-url api-key
+      (if-let [model-name (select-model! screen (:id provider) base-url api-key
                             (:default-models (vis/provider-template (:id provider))))]
         (swap! models conj {:name model-name})
         ;; User cancelled — return nil (no changes)
@@ -623,6 +624,7 @@
                       (= c \a)
                       (do
                         (when-let [model-name (select-model! screen
+                                                (:id provider)
                                                 (vis/provider-base-url provider)
                                                 (:api-key provider)
                                                 (->> (concat (map vis/model-name @models)

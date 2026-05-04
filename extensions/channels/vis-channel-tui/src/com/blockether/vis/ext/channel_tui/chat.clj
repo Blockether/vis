@@ -28,6 +28,14 @@
      :ex-data (ex-data e)
      :stack   (.toString sw)}))
 
+(def ^:private encrypted-reasoning-placeholder
+  "[provider returned encrypted reasoning; plaintext reasoning is unavailable]")
+
+(defn- visible-thinking [thinking]
+  (let [s (some-> thinking str)]
+    (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
+      s)))
+
 (defn user-message
   "Create a structured user message with timestamp."
   ([text] (user-message text (java.util.Date.)))
@@ -104,7 +112,7 @@
                                                            exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]
-                                         {:thinking  (:thinking it)
+                                         {:thinking  (visible-thinking (:thinking it))
                                           :code      (mapv :code exprs)
                                           :comments  (mapv :comment exprs)
                                           :results   result-strs

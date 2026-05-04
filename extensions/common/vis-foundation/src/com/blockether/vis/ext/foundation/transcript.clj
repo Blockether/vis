@@ -74,6 +74,14 @@
 ;; Data layer.
 ;; =============================================================================
 
+(def ^:private encrypted-reasoning-placeholder
+  "[provider returned encrypted reasoning; plaintext reasoning is unavailable]")
+
+(defn- visible-thinking [thinking]
+  (let [s (some-> thinking str)]
+    (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
+      s)))
+
 (defn- iteration-rollup
   "Sum the per-iteration token + cost columns across a vec of
    iteration maps. Every value is numeric on the read side (the
@@ -107,6 +115,7 @@
         vars   (try (vec (vis/db-list-iteration-vars db-info (:id iter)))
                  (catch Throwable _ []))]
     (-> iter
+      (update :thinking visible-thinking)
       (assoc :blocks blocks)
       (assoc :vars   vars)
       (assoc :failure-count (count (filter :error blocks))))))
